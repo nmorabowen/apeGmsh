@@ -126,7 +126,7 @@ def test_app_floor_table_covers_the_zones_the_app_reads(read_ts: str) -> None:
     floors = parse_zone_floors(read_ts)
     assert {
         "neutral", "opensees", "geometry", "provenance", "sequence",
-        "user_meta", "combinations", "user_results", "modes",
+        "user_meta", "combinations", "user_results", "modes", "spectra",
     } <= set(floors), floors
 
 

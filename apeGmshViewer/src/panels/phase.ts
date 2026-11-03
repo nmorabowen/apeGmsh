@@ -10,11 +10,14 @@
 //
 // ADR 0130 D1 (VU3b): the results are listed by state family. Stages and
 // Modes are the results file's stages by kind, and a click opens the first
-// one; the stage picker then lists that family only. Spectra and User
-// Combinations come from the set's `.user.h5` and are listed, not drawn (the
-// Spectra family is read by VU7, combinations are evaluated by VU4): their
-// buttons are disabled and their tooltip names every member. A stale member
-// or zone says so on its family's button (A6), and a refused zone or row too.
+// one; the stage picker then lists that family only. The Modes button counts
+// the stale rows of the `.user.h5` modal table (A6, per row; VU7a), which the
+// modal table panel shows beside the mode list. Spectra and User Combinations
+// come from the `.user.h5` and are listed, not drawn (no rule is evaluated
+// over a spectrum case or a combination yet: VU4, VU7b): their buttons are
+// disabled and their tooltip names every member, a spectrum case with its
+// direction, scale, modes and results. A stale member or zone says so on its
+// family's button (A6), and a refused zone or row too.
 
 import { inactiveElements, SCRUBBER_TOP_PX, scrubberRow, timelineOf, type Timeline } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
@@ -38,18 +41,14 @@ export interface PhaseFamily {
   key: FamilyKey;
   /** the results stages of the family that record a step (Stages, Modes), in reader order; [] for the `.user.h5` families */
   stages: number[];
-  /** how many members it lists; null when its zone is listed by name only (Spectra) */
-  count: number | null;
-  /** stale members (User Combinations), or 1 for a stale zone (Spectra, the modal table under Modes) */
+  /** how many members it lists */
+  count: number;
+  /** stale members: combinations, cases, or rows of the modal table under Modes */
   stale: number;
+  /** every member is stale (a stale zone, or every row): the button says "stale", not a count */
+  staleAll: boolean;
   /** refused rows, or 1 for a refused zone */
   refused: number;
-  /**
-   * Modes only: the `.user.h5` modal table reads, but its rows are not judged
-   * against the `.ladruno`'s eigenvalues (A6's per-row rule is VU7's), so it is
-   * never shown as current. Python stales every row whose lambda moved.
-   */
-  unjudged: boolean;
   /** a click opens its first stage */
   drawable: boolean;
   /** the button's tooltip: what it lists, what is stale or refused and why, and why it is not drawn */
@@ -57,6 +56,11 @@ export interface PhaseFamily {
 }
 
 const staleLine = (what: string, m: StaleMark): string => `${what} is stale: ${m.reason || "the reader gave no reason"}`;
+
+/** At most this many stale rows are named in a tooltip; the rest are counted. */
+export const TITLE_ROWS_MAX = 8;
+
+const fmt = (x: number): string => (Number.isNaN(x) ? "none" : String(Number(x.toPrecision(6))));
 
 /** The family a results stage belongs to: a mode shape is a Mode, any other stage a Stage. */
 export const familyOfStage = (s: State, stage: number): "stages" | "modes" => (s.results?.stages[stage]?.kind === "mode" ? "modes" : "stages");
@@ -70,7 +74,7 @@ export function familiesOf(s: State): PhaseFamily[] {
   const out: PhaseFamily[] = [];
   const info = s.user?.status === "ready" ? s.user.info : null;
   const file = s.user ? baseName(s.user.path) : "";
-  const recorded = (key: "stages" | "modes", notes: string[], stale: number, refused: number, unjudged = false) => {
+  const recorded = (key: "stages" | "modes", notes: string[], stale: number, staleAll: boolean, refused: number) => {
     const stages = s.phase.axis.flatMap((k) => (k.kind === "results" && familyOfStage(s, k.stage) === key ? [k.stage] : []));
     if (!stages.length || !s.results) return;
     const results = s.results;
@@ -80,37 +84,52 @@ export function familiesOf(s: State): PhaseFamily[] {
     const shown = stages.filter((i) => results.stages[i]!.time.length > 0);
     const lines = [`${FAMILY_LABEL[key]} of ${baseName(results.path)}: ${stages.map(name).join(", ")}`];
     if (empty.length) lines.push(`${empty.map(name).join(", ")} ${empty.length === 1 ? "records" : "record"} no step`);
-    out.push({ key, stages: shown, count: stages.length, stale, refused, unjudged, drawable: shown.length > 0, title: [...lines, ...notes].join("\n") });
+    out.push({ key, stages: shown, count: stages.length, stale, staleAll, refused, drawable: shown.length > 0, title: [...lines, ...notes].join("\n") });
   };
-  recorded("stages", [], 0, 0);
+  recorded("stages", [], 0, false, 0);
   const modeNotes: string[] = [];
   let modeStale = 0;
+  let modeStaleAll = false;
   let modeRefused = 0;
-  let modeUnjudged = false;
-  if (info?.modes) {
-    if (info.modes.ok) modeNotes.push(`the modal table of ${file} has ${info.modes.rows} rows; this app does not show it yet`);
+  const m = info?.modes;
+  if (m && !m.ok) {
+    modeRefused = 1;
+    modeNotes.push(`the modal table of ${file} is refused: ${m.reason}`);
+    if (m.stale.stale) modeNotes.push(staleLine(`the modal table of ${file}`, m.stale));
+  } else if (m) {
+    // A6 per row: each row's lambda against the results file's LAMBDA of that mode.
+    const bad = m.rows.filter((r) => r.verdict.stale);
+    modeStale = bad.length;
+    modeStaleAll = bad.length === m.rows.length;
+    const count = `${m.rows.length} ${m.rows.length === 1 ? "row" : "rows"}`;
+    modeNotes.push(`the modal table of ${file}: ${count}, ${bad.length ? `${bad.length} stale` : "every row current"}; the modal table panel shows it beside a mode`);
+    if (m.stale.stale) modeNotes.push(staleLine(`the modal table of ${file}`, m.stale));
     else {
-      modeRefused = 1;
-      modeNotes.push(`the modal table of ${file} is refused: ${info.modes.reason}`);
-    }
-    if (info.modes.stale.stale) {
-      modeStale = 1;
-      modeNotes.push(staleLine(`the modal table of ${file}`, info.modes.stale));
-    } else if (info.modes.ok) {
-      modeUnjudged = true;
-      const run = s.results ? baseName(s.results.path) : "the results file";
-      modeNotes.push(`its rows are not judged against the eigenvalues of ${run} yet, so the table is not shown as current`);
+      for (const r of bad.slice(0, TITLE_ROWS_MAX)) modeNotes.push(`mode ${r.mode} of ${r.host} is stale: ${r.verdict.reason || "the reader gave no reason"}`);
+      if (bad.length > TITLE_ROWS_MAX) modeNotes.push(`and ${bad.length - TITLE_ROWS_MAX} more stale rows`);
     }
   }
-  recorded("modes", modeNotes, modeStale, modeRefused, modeUnjudged);
-  if (info?.spectra) {
-    const lines = [`Spectra: ${file} holds /spectra; this app lists it and does not read or draw it yet`];
-    if (info.spectra.stale.stale) lines.push(staleLine("/spectra", info.spectra.stale));
-    out.push({ key: "spectra", stages: [], count: null, stale: info.spectra.stale.stale ? 1 : 0, refused: 0, unjudged: false, drawable: false, title: lines.join("\n") });
+  recorded("modes", modeNotes, modeStale, modeStaleAll, modeRefused);
+  const sp = info?.spectra;
+  if (sp && !sp.ok) {
+    const lines = [`Spectra: /spectra of ${file} is refused: ${sp.reason}`];
+    if (sp.stale.stale) lines.push(staleLine("/spectra", sp.stale));
+    out.push({ key: "spectra", stages: [], count: 0, stale: 0, staleAll: false, refused: 1, drawable: false, title: lines.join("\n") });
+  } else if (sp) {
+    const lines = ["Spectra, listed; this app does not combine or draw a case yet:"];
+    for (const x of sp.items) {
+      const modes = `${x.modes.length} ${x.modes.length === 1 ? "mode" : "modes"}`;
+      const damping = x.damping === null ? "damping per mode" : `damping ${fmt(x.damping)}`;
+      lines.push(`${x.name}: direction ${x.direction}, scale ${fmt(x.scale)}, ${modes}, ${damping}; ${x.results.join(", ")}`);
+    }
+    for (const x of sp.refused) lines.push(`${x.name || "(no name)"}: refused, ${x.reason}: ${x.detail}`);
+    if (sp.stale.stale) lines.push(staleLine("/spectra", sp.stale));
+    const n = sp.items.length;
+    out.push({ key: "spectra", stages: [], count: n, stale: sp.stale.stale ? n : 0, staleAll: sp.stale.stale, refused: sp.refused.length, drawable: false, title: lines.join("\n") });
   }
   const c = info?.combinations;
   if (c && !c.ok) {
-    out.push({ key: "combinations", stages: [], count: 0, stale: 0, refused: 1, unjudged: false, drawable: false, title: `User Combinations: /combinations of ${file} is refused: ${c.reason}` });
+    out.push({ key: "combinations", stages: [], count: 0, stale: 0, staleAll: false, refused: 1, drawable: false, title: `User Combinations: /combinations of ${file} is refused: ${c.reason}` });
   } else if (c) {
     const lines = ["User Combinations, listed; this app does not evaluate them yet:"];
     for (const x of c.items) {
@@ -118,7 +137,7 @@ export function familiesOf(s: State): PhaseFamily[] {
     }
     for (const x of c.refused) lines.push(`${x.name || "(no name)"}: refused, ${x.reason}: ${x.detail}`);
     const stale = c.items.filter((x) => x.stale).length;
-    out.push({ key: "combinations", stages: [], count: c.items.length, stale, refused: c.refused.length, unjudged: false, drawable: false, title: lines.join("\n") });
+    out.push({ key: "combinations", stages: [], count: c.items.length, stale, staleAll: false, refused: c.refused.length, drawable: false, title: lines.join("\n") });
   }
   return out;
 }
@@ -135,13 +154,13 @@ export function userBadgeOf(s: State): { text: string; title: string; refused: b
   return null;
 }
 
-/** A family button's text after its label: the count, then what is stale (or not judged) and refused. */
+/** A family button's text after its label: the count, then what is stale and refused. */
 export function familyMarks(f: PhaseFamily): { count: string; stale: string; refused: string } {
-  const whole = f.count === null || f.key === "modes";
   return {
-    count: f.count === null ? "" : ` ${f.count}`,
-    stale: f.stale ? (whole ? " · stale" : ` · ${f.stale} stale`) : f.unjudged ? " · rows not judged" : "",
-    refused: f.refused ? (whole || f.count === 0 ? " · refused" : ` · ${f.refused} refused`) : "",
+    count: ` ${f.count}`,
+    stale: f.staleAll ? " · stale" : f.stale ? ` · ${f.stale} stale` : "",
+    // Under Modes a refusal is the modal table's, a zone: never a count of modes.
+    refused: f.refused ? (f.key === "modes" || f.count === 0 ? " · refused" : ` · ${f.refused} refused`) : "",
   };
 }
 
