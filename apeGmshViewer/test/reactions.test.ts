@@ -15,6 +15,7 @@ import { LoadsLayer, ReactionsLayer } from "../src/renderer/loads.ts";
 import { ARROW, ARROW_STRIDE, BAR, buildReactions3D, reactionComponentsOf, supportedNodesOf } from "../src/state/loads.ts";
 import { opened, until } from "./contour/harness.ts";
 import { makeReactionSet, reactionAt } from "./spec/reactions.ts";
+import { reduce } from "../src/state/store.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "agv-reactions-"));
 const set = await makeReactionSet(join(tmp, "set"));
@@ -172,7 +173,8 @@ test("supports only by default: a free node's residual or a constraint's force d
   // The model's supports are the sp_holds of stage 0: exactly the held nodes.
   assert.deepEqual([...supportedNodesOf(h.store.get())].sort((a, b) => a - b), [...set.held].sort((a, b) => a - b));
   // A second set that also records a value at every free node: a tiny residual, and a large "constraint force" at one.
-  const loud = Math.min(...[...set.held]) + 1;
+  const loud = Math.max(...[...set.held]) + 1;
+  assert.ok(!set.held.has(loud), "the loud node is a free one");
   const noisy = await makeReactionSet(join(tmp, "noisy"), (n) => (n === loud ? 500 : 1e-9));
   const g = await opened(noisy.model, noisy.results);
   try {
@@ -184,25 +186,90 @@ test("supports only by default: a free node's residual or a constraint's force d
     assert.equal(supportsOnly.count, noisy.held.size, "only the supports");
     g.store.dispatch({ type: "setReactions", allNodes: true });
     const all = buildReactions3D(g.store.get(), g.blobs, data.nodal, ids);
-    assert.equal(all.count, ids.length, "every recorded node once 'all nodes' is on");
+    // 'all nodes' adds the free node's large constraint force; the 1e-9 residuals stay under the noise floor.
+    assert.equal(all.count, noisy.held.size + 1, "the supports, plus the one large free-node force");
   } finally {
     g.effects.dispose();
     g.host.close();
   }
 });
 
-test("the supports of a model with fix rows: a node fixed in some DOF, not one whose mask is all zero", () => {
-  const fixRows = (s: ReturnType<typeof h.store.get>) => s.definitions?.bcs?.fix?.rows ?? [];
+test("the supports of a model with fix rows: a node fixed in some DOF, not one whose mask is all zero, whatever the mask's form", () => {
   const s = h.store.get();
-  const withFix = {
-    ...s,
-    definitions: {
-      ...s.definitions!,
-      bcs: { fix: { path: "/opensees/bcs/fix", columns: ["target_kind", "target", "dofs"], rows: [["node", "7", [1, 0, 0]], ["node", "8", [0, 0, 0]]] }, mass: null },
-    },
-  };
-  assert.equal(fixRows(withFix).length, 2);
-  const nodes = supportedNodesOf(withFix);
-  assert.ok(nodes.has(7), "fixed in x");
-  assert.ok(!nodes.has(8) || set.held.has(8), "an all-zero mask fixes nothing");
+  const free = (h.blobs.get(s.mesh!.nodes!.ids) as Float64Array).filter((n) => !set.held.has(n));
+  const [a, b, c, d] = [free[0]!, free[1]!, free[2]!, free[3]!];
+  const withFix = (rows: unknown[][]) =>
+    supportedNodesOf({
+      ...s,
+      definitions: { ...s.definitions!, bcs: { fix: { path: "/opensees/bcs/fix", columns: ["target_kind", "target", "dofs"], rows: rows as never }, mass: null } },
+    });
+  const nodes = withFix([["node", String(a), [1, 0, 0]], ["node", String(b), [0, 0, 0]], ["node", String(c), new Float64Array([0, 0, 0])], ["node", String(d), "0 1 0"]]);
+  assert.ok(nodes.has(a), "fixed in x");
+  assert.ok(!nodes.has(b), "an all-zero mask fixes nothing");
+  assert.ok(!nodes.has(c), "nor does an all-zero typed-array mask");
+  assert.ok(nodes.has(d), "a string mask fixed in y");
+});
+
+test("solver noise is not a reaction: a component under 1e-6 of the step's largest draws nothing", async () => {
+  const data = await atStep(2, 3);
+  const s = h.store.get();
+  const ids = h.blobs.get(s.results!.stages[2]!.nodeIds!) as Float64Array;
+  const noisy = { ...data.nodal, reaction_force_x: data.nodal["reaction_force_x"]!.map((v) => (Number.isFinite(v) ? 1e-12 : v)) };
+  h.store.dispatch({ type: "setReactions", component: "xyz" });
+  assert.equal(buildReactions3D(h.store.get(), h.blobs, noisy, ids).count, 2 * set.held.size, "y and z at every held node; no x");
+  h.store.dispatch({ type: "setReactions", component: "resultant" });
+});
+
+test("supports follow the stage: a stage's remove_sp releases a node from that stage on", async () => {
+  await atStep(2, 3);
+  const s = h.store.get();
+  const node = [...set.held][0]!;
+  const stages = s.definitions!.stages.map((st, k) =>
+    k === 1 ? { ...st, removeSp: { path: "/opensees/stages/stage_001/remove_sp", columns: ["node_tag", "dof"], rows: [[node, 1], [node, 2], [node, 3]] } } : st,
+  );
+  const released = { ...s, definitions: { ...s.definitions!, stages } };
+  const name = (k: number) => s.results!.stages[k]!.name;
+  assert.equal(s.definitions!.stages[1]!.name, name(1), "the model's stage 1 is the results' stage 1");
+  assert.ok(!supportedNodesOf(released).has(node), `released at ${name(1)}, so not a support at ${name(2)}`);
+  const atBase = { ...released, phase: { ...released.phase, at: { kind: "results" as const, stage: 0, step: 0 } } };
+  assert.ok(supportedNodesOf(atBase).has(node), `still a support at ${name(0)}, before the release`);
+});
+
+test("another stage's arrows never stay: a stage change hides them until its step arrives, and so does a failed read", async () => {
+  const data = await atStep(2, 3);
+  h.store.dispatch({ type: "setReactions", on: true });
+  const layer = new ReactionsLayer();
+  assert.equal(layer.sync(h.store.get(), h.blobs, null, data), true);
+  assert.equal(layer.root.visible, true);
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 1, step: 0 } });
+  layer.sync(h.store.get(), h.blobs, null, null);
+  assert.equal(layer.root.visible, false, "stage 1 shows nothing of stage 2");
+  const back = await atStep(2, 3);
+  layer.sync(h.store.get(), h.blobs, null, back);
+  assert.equal(layer.root.visible, true);
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+  h.store.dispatch({ type: "resultStep", status: { stage: 2, step: 1, status: "failed", error: "probe" } });
+  layer.sync(h.store.get(), h.blobs, null, null);
+  assert.equal(layer.root.visible, false, "a failed read hides the last step's arrows");
+  h.store.dispatch({ type: "setReactions", on: false });
+  layer.dispose();
+});
+
+test("a single axis the stage does not record draws the resultant, as the card shows", async () => {
+  const data = await atStep(2, 3);
+  const s = h.store.get();
+  const ids = h.blobs.get(s.results!.stages[2]!.nodeIds!) as Float64Array;
+  const stages = s.results!.stages.map((st, k) => (k === 2 ? { ...st, nodal: st.nodal.filter((c) => c !== "reaction_force_z") } : st));
+  const noZ = { ...s, results: { ...s.results!, stages }, reactions: { ...s.reactions, component: "z" as const } };
+  const r = buildReactions3D(noZ, h.blobs, data.nodal, ids);
+  assert.equal(r.count, set.held.size, "one resultant arrow per held node");
+  assert.ok(Math.abs(r.arrows[ARROW.dir + 2]!) < 1e-6, "in the x-y plane: the z rows are not read");
+});
+
+test("setReactions refuses what setLoads refuses: a non-boolean switch, a scale or head at or below 0, an unknown menu value", () => {
+  const s = h.store.get();
+  for (const bad of [{ on: "yes" }, { scale: -1 }, { headSize: 0 }, { component: "w" }, { colorBy: "rainbow" }, { allNodes: 1 }]) {
+    assert.throws(() => reduce(s, { type: "setReactions", ...(bad as object) } as never), RangeError, JSON.stringify(bad));
+  }
+  assert.equal(reduce(s, { type: "setReactions", component: s.reactions.component }), s, "an unchanged value changes nothing");
 });

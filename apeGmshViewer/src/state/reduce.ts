@@ -1249,6 +1249,19 @@ export function reduce(s: State, e: Event): State {
       if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
     case "setReactions": {
+      for (const k of ["on", "thin", "allNodes"] as const) {
+        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setReactions: ${k} ${JSON.stringify(e[k])}`);
+      }
+      for (const k of ["scale", "headSize"] as const) {
+        const v = e[k];
+        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
+          throw new RangeError(`setReactions: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
+        }
+      }
+      if (e.colorBy !== undefined && !["mono", "type", "magnitude"].includes(e.colorBy)) throw new RangeError(`setReactions: colorBy ${JSON.stringify(e.colorBy)}`);
+      if (e.component !== undefined && !["resultant", "xyz", "x", "y", "z"].includes(e.component)) {
+        throw new RangeError(`setReactions: component ${JSON.stringify(e.component)}`);
+      }
       const cur = s.reactions;
       const pos = (v: number | undefined, was: number) => (v !== undefined && Number.isFinite(v) && v > 0 ? v : was);
       const next: ReactionsState = {

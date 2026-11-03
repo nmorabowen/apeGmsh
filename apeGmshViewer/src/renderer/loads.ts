@@ -323,12 +323,15 @@ export class ReactionsLayer extends ArrowLayer {
   private appliedKey: string | null = null;
   /** The step data drawn: a re-read of the same step rebuilds the arrows. */
   private drawnStep: StepValues | null = null;
+  /** The results stage the arrows on screen were built for. */
+  private drawnStage: number | null = null;
 
   sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
     const at = s.phase.at;
     if (!s.reactions.on || !s.mesh || at?.kind !== "results") {
       this.appliedKey = null;
       this.drawnStep = null;
+      this.drawnStage = null;
       return this.hide();
     }
     const sized = this.size(s.reactions);
@@ -336,9 +339,22 @@ export class ReactionsLayer extends ArrowLayer {
     // Until the step's data is here (a scrub), the last step's arrows stay.
     const here = step && step.stage === at.stage && step.step === at.step && ids && blobs.has(ids) ? step : null;
     const nextKey = [s.mesh.linePositions.id, full ? full.key : "base", s.reactions.scale, s.reactions.colorBy, s.reactions.component, s.reactions.allNodes, s.contour.sourceUnits ?? "", s.contour.targetUnits ?? "", this.theme].join("|");
-    if (!here || (this.appliedKey === nextKey && here === this.drawnStep)) return sized;
+    if (!here) {
+      // A scrub within the stage keeps the last arrows until the step arrives; another stage's, or a
+      // step whose read failed, are not this step's reactions.
+      const failed = s.resultStep?.stage === at.stage && s.resultStep.step === at.step && s.resultStep.status === "failed";
+      if (this.drawnStage !== at.stage || failed) {
+        this.appliedKey = null;
+        this.drawnStep = null;
+        this.drawnStage = null;
+        return this.hide() || sized;
+      }
+      return sized;
+    }
+    if (this.appliedKey === nextKey && here === this.drawnStep) return sized;
     const arrows = buildReactions3D(s, blobs, here.nodal, blobs.get(ids!) as Float64Array, drawnOpts(this.theme, full)).arrows;
     this.drawnStep = here;
+    this.drawnStage = at.stage;
     this.appliedKey = nextKey;
     return this.upload(arrows, NO_RECORDS, s.mesh.radius);
   }

@@ -2261,50 +2261,94 @@ export function buildLoads3D(
 }
 
 // ---- Reactions -----------------------------------------------------------------
-/** The supported nodes, memoised on the definitions and neutral loads they come from. */
-const supportMemo = new WeakMap<object, { neutral: unknown; nodes: ReadonlySet<number> }>();
+/** The supported nodes, memoised on the definitions, the neutral loads and the stage they are read at. */
+const supportMemo = new WeakMap<object, { neutral: unknown; stage: number | null; nodes: ReadonlySet<number> }>();
+
+/** A DOF mask as stored (a JSON array, a typed array, or a space- or comma-separated string): its 1-based restrained DOFs. */
+function maskDofs(mask: unknown): number[] | null {
+  const values = Array.isArray(mask) ? mask : ArrayBuffer.isView(mask) ? Array.from(mask as unknown as ArrayLike<number>) : typeof mask === "string" ? mask.split(/[\s,]+/).filter(Boolean) : null;
+  if (!values) return null;
+  return values.flatMap((v, i) => (Number(v) !== 0 ? [i + 1] : []));
+}
 
 /**
- * The nodes the model supports: every node a `fix` row (global or any stage)
- * fixes in some DOF, every node of an SP row in a pattern (homogeneous ones
- * included: they are fixities) or of a support hold (`sp_holds`), and every
- * node of a neutral `/loads/sp` case. A reaction recorded anywhere else is a
- * free node's residual or a constraint's force, not a support reaction.
+ * The nodes the model supports at the stage on screen: a node is supported
+ * while it keeps a restrained DOF. Restraints come from `fix` rows (their DOF
+ * masks), pattern SP rows (homogeneous ones included: they are fixities),
+ * support holds (`sp_holds`) and neutral `/loads/sp` cases. The global rows
+ * apply first; then each stage up to the one on screen removes its `remove_sp`
+ * DOFs and adds its own rows, the order the loads path uses
+ * (`removedSpStageMapUpTo`). With no stage resolved, every stage's rows count
+ * and none is removed. A reaction recorded anywhere else is a free node's
+ * residual or a constraint's force, not a support reaction.
  */
 export function supportedNodesOf(s: State): ReadonlySet<number> {
   const defs = s.definitions;
+  const stage = resolveActiveStage(s).index;
   const key = (defs ?? s) as object;
   const hit = supportMemo.get(key);
-  if (hit && hit.neutral === s.neutralLoads) return hit.nodes;
-  const out = new Set<number>();
-  const read = (t: Table | null | undefined, fixMask: boolean) => {
-    if (!t) return;
+  if (hit && hit.neutral === s.neutralLoads && hit.stage === stage) return hit.nodes;
+  const held = new Map<number, Set<number>>();
+  const hold = (node: number, dof: number) => {
+    let d = held.get(node);
+    if (!d) held.set(node, (d = new Set()));
+    d.add(dof);
+  };
+  const nodesOf = (s0: State, t: Table, row: readonly unknown[]): number[] => {
     const c = t.columns;
     const nodeIdx = ["node_id", "node_tag", "col_0", "[0]", "node"].map((n) => c.indexOf(n)).find((i) => i >= 0) ?? -1;
-    const kindIdx = c.indexOf("target_kind");
+    const id = nodeIdx >= 0 ? Number(row[nodeIdx]) : Number.NaN;
+    if (Number.isInteger(id)) return [id];
     const targetIdx = c.indexOf("target");
-    const dofsIdx = c.indexOf("dofs");
+    const kindIdx = c.indexOf("target_kind");
+    return targetIdx >= 0 ? resolveTargetNodes(s0, kindIdx >= 0 ? String(row[kindIdx] ?? "node") : "node", row[targetIdx]) : [];
+  };
+  const readFix = (t: Table | null | undefined) => {
+    if (!t) return;
+    const dofsIdx = t.columns.indexOf("dofs");
     for (const row of t.rows) {
-      if (fixMask && dofsIdx >= 0) {
-        const mask = row[dofsIdx];
-        if (Array.isArray(mask) && !mask.some((v) => Number(v) !== 0)) continue;
-      }
-      const id = nodeIdx >= 0 ? Number(row[nodeIdx]) : Number.NaN;
-      if (Number.isInteger(id)) out.add(id);
-      else if (targetIdx >= 0) for (const n of resolveTargetNodes(s, kindIdx >= 0 ? String(row[kindIdx] ?? "node") : "node", row[targetIdx])) out.add(n);
+      // A row with no readable mask is a fixity of unknown DOFs: counted as restraining DOF 0.
+      const dofs = dofsIdx >= 0 ? maskDofs(row[dofsIdx]) : null;
+      if (dofs && dofs.length === 0) continue;
+      for (const n of nodesOf(s, t, row)) for (const d of dofs ?? [0]) hold(n, d);
     }
   };
+  const readSp = (t: Table | null | undefined) => {
+    if (!t) return;
+    const c = t.columns;
+    const dofIdx = ["dof", "col_1", "[1]"].map((n) => c.indexOf(n)).find((i) => i >= 0) ?? -1;
+    for (const row of t.rows) {
+      const dof = dofIdx >= 0 ? Number(row[dofIdx]) : 0;
+      for (const n of nodesOf(s, t, row)) hold(n, Number.isInteger(dof) ? dof : 0);
+    }
+  };
+  const readRemoved = (t: Table | null | undefined) => {
+    if (!t) return;
+    const c = t.columns;
+    const nCol = c.indexOf("node_tag") >= 0 ? c.indexOf("node_tag") : c.indexOf("target") >= 0 ? c.indexOf("target") : 0;
+    const dCol = c.indexOf("dof") >= 0 ? c.indexOf("dof") : 1;
+    for (const row of t.rows) held.get(Number(row[nCol]))?.delete(Number(row[dCol]));
+  };
   if (defs) {
-    read(defs.bcs?.fix, true);
-    for (const st of defs.stages ?? []) read(st.bcs?.fix, true);
-    for (const p of [...(defs.patterns ?? []), ...(defs.stages ?? []).flatMap((st) => st.patterns)]) {
-      read(p.tables["sps"], false);
-      read(p.tables["sp_holds"], false);
+    readFix(defs.bcs?.fix);
+    for (const p of defs.patterns ?? []) {
+      readSp(p.tables["sps"]);
+      readSp(p.tables["sp_holds"]);
+    }
+    for (const st of [...(defs.stages ?? [])].sort((a, b) => a.index - b.index)) {
+      if (stage !== null && st.index > stage) continue;
+      if (stage !== null) readRemoved(st.removeSp);
+      readFix(st.bcs?.fix);
+      for (const p of st.patterns) {
+        readSp(p.tables["sps"]);
+        readSp(p.tables["sp_holds"]);
+      }
     }
   }
-  for (const t of Object.values(s.neutralLoads?.sp ?? {})) read(t, false);
-  supportMemo.set(key, { neutral: s.neutralLoads, nodes: out });
-  return out;
+  for (const t of Object.values(s.neutralLoads?.sp ?? {})) readSp(t);
+  const nodes = new Set([...held].filter(([, d]) => d.size > 0).map(([n]) => n));
+  supportMemo.set(key, { neutral: s.neutralLoads, stage, nodes });
+  return nodes;
 }
 
 
@@ -2316,6 +2360,9 @@ export function reactionComponentsOf(s: State): readonly (string | null)[] | nul
   const comps = ["x", "y", "z"].map((c) => (nodal.includes(`reaction_force_${c}`) ? `reaction_force_${c}` : null));
   return comps.some((c) => c !== null) ? comps : null;
 }
+
+/** A reaction arrow below this fraction of the step's largest is solver noise, not drawn. */
+export const REACTION_FLOOR = 1e-6;
 
 export interface Reactions3D {
   /** One record per reaction arrow, `ARROW_STRIDE` floats, its mark `BAR.tick`. */
@@ -2352,7 +2399,9 @@ export function buildReactions3D(
   // By default only the supports: a free node's residual or a constraint's force is not a reaction to draw.
   const supported = s.reactions.allNodes ? null : supportedNodesOf(s);
   const want = s.reactions.component;
-  const axes = want === "xyz" ? [0, 1, 2] : want === "x" ? [0] : want === "y" ? [1] : want === "z" ? [2] : null;
+  const picked = want === "xyz" ? [0, 1, 2] : want === "x" ? [0] : want === "y" ? [1] : want === "z" ? [2] : null;
+  // A single axis the stage does not record (z on a 2-D model) draws the resultant, as the card then shows.
+  const axes = picked && picked.length === 1 && comps[picked[0]!] === null ? null : picked;
   const items: { tip: Vec3; vec: Vec3; mag: number; node: number }[] = [];
   let maxMag = 0;
   let node = -1;
@@ -2373,6 +2422,11 @@ export function buildReactions3D(
     if (!axes) add(tip, vec);
     else for (const a of axes) add(tip, [a === 0 ? vec[0] : 0, a === 1 ? vec[1] : 0, a === 2 ? vec[2] : 0]);
   }
+  // Solver noise is not a reaction: a component near 1e-12 where the true value is 0 would otherwise get
+  // the shortest arrow, 35 % of the longest. Anything under 1e-6 of the step's largest arrow is left out.
+  const kept = items.filter((it) => it.mag >= REACTION_FLOOR * maxMag);
+  items.length = 0;
+  items.push(...kept);
   if (items.length === 0) return none;
   const radius = s.mesh.radius > 0 && Number.isFinite(s.mesh.radius) ? s.mesh.radius : 1;
   const baseLen = Math.max(radius * 0.22, 1e-4) * s.reactions.scale;
