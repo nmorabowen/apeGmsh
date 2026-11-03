@@ -3,13 +3,20 @@
 // app's twin of src/apeGmsh/results/user/_spectra.py `case_problem`.
 //
 // reader/userFile.ts reads a case's attributes, its spectrum table, its modes
-// table and the index of its results (label, family, columns, ids and the
+// columns and the index of its results (label, family, columns, ids and the
 // shape of DATA); this module judges them. DATA itself is never read here: a
 // case is listed, and no CQC or other rule is evaluated over it (VU7b, after
 // the evaluator of VU4).
+//
+// A refusal's detail is Python's text, character for character: the printing
+// helpers of reader/userModes.ts print a string, a list, a shape and a dtype as
+// Python and numpy do.
 
-import { MODE_KINDS } from "./userModes.ts";
+import { pyFloat } from "./rf1.ts";
+import { MODE_KINDS, pyList, pyShape, pyStr } from "./userModes.ts";
 import { nameProblem } from "./userRules.ts";
+
+export { npDtype, pyList, pyShape, pyStr } from "./userModes.ts";
 
 /** The families a 1.0.0 case may hold, by target (Python's `_ON`). */
 export const SPECTRA_FAMILIES = { domain: "ON_DOMAIN", nodes: "ON_NODES" } as const;
@@ -26,7 +33,31 @@ export interface SpectrumQuantity {
   ids: number[] | null;
 }
 
-/** `/spectra/s<k>`: one case. */
+/** A case's `modes/` columns as stored: their lengths are judged by `caseProblem`. */
+export interface CaseColumns {
+  mode: number[];
+  kind: string[];
+  lambda: number[];
+  saPeriod: number[];
+  gamma: number[];
+  sa: number[];
+  damping: number[];
+}
+
+/** A case as read, before `caseProblem` judges it. */
+export interface CaseDraft {
+  name: string;
+  link: string;
+  direction: number;
+  scale: number;
+  periods: number[];
+  sa: number[];
+  columns: CaseColumns;
+  results: SpectrumQuantity[];
+  reference: SpectrumQuantity[];
+}
+
+/** `/spectra/s<k>`: one case that stands. */
 export interface SpectrumCase {
   name: string;
   /** the `s<k>` link under `/spectra` */
@@ -56,18 +87,26 @@ export interface SpectrumMode {
   damping: number;
 }
 
+/** A draft `caseProblem` passed, as its rows. */
+export function caseOf(d: CaseDraft): SpectrumCase {
+  const c = d.columns;
+  const modes = c.mode.map((mode, i) => ({ mode, kind: c.kind[i]!, lambda: c.lambda[i]!, saPeriod: c.saPeriod[i]!, gamma: c.gamma[i]!, sa: c.sa[i]!, damping: c.damping[i]! }));
+  return { name: d.name, link: d.link, direction: d.direction, scale: d.scale, periods: d.periods, sa: d.sa, modes, results: d.results, reference: d.reference };
+}
+
 const linkProblem = (name: string): string | null => {
   const problem = nameProblem(name);
   if (problem === null && (name.includes("/") || name.replace(/^\.+|\.+$/g, "") === "")) return "cannot be an HDF5 link";
   return problem;
 };
 
+/** Python's `_token_problem`. */
 function tokensProblem(tokens: readonly string[], what: string): string | null {
   if (tokens.length === 0) return `${what} is empty`;
   for (const token of tokens) {
     let problem = nameProblem(token);
     if (problem === null && (token.includes(",") || token.includes("\n"))) problem = "has a comma or a newline";
-    if (problem !== null) return `${what} ${JSON.stringify(token)}: ${problem}`;
+    if (problem !== null) return `${what} ${pyStr(token)}: ${problem}`;
   }
   return null;
 }
@@ -77,18 +116,19 @@ function quantitiesProblem(qs: readonly SpectrumQuantity[], s: number, what: str
   if (qs.length === 0) return `${what} holds no result`;
   const seen = new Set<string>();
   for (const q of qs) {
-    if (!Object.hasOwn(SPECTRA_FAMILIES, q.target)) return `${what} ${JSON.stringify(q.label)}: target ${JSON.stringify(q.target)} is not one of domain, nodes`;
+    const label = pyStr(q.label);
+    if (!Object.hasOwn(SPECTRA_FAMILIES, q.target)) return `${what} ${label}: target ${pyStr(q.target)} is not one of ${pyList(Object.keys(SPECTRA_FAMILIES).sort())}`;
     const link = linkProblem(q.label);
-    if (link !== null) return `${what} label ${JSON.stringify(q.label)}: ${link}`;
+    if (link !== null) return `${what} label ${label}: ${link}`;
     const key = JSON.stringify([q.target, q.label]);
-    if (seen.has(key)) return `${what} holds ${JSON.stringify(q.label)} twice`;
+    if (seen.has(key)) return `${what} holds ${label} twice`;
     seen.add(key);
     const tokens = tokensProblem(q.components, `${what} ${q.label} component`);
     if (tokens !== null) return tokens;
     const [s0, n, c] = q.shape;
-    if (s0 !== s || c !== q.components.length) return `${what} ${JSON.stringify(q.label)} has shape (${q.shape.join(", ")}), expected (${s}, n, ${q.components.length})`;
-    if (q.target === "domain" && n !== 1) return `${what} ${JSON.stringify(q.label)}: a domain value has n = 1, got ${n}`;
-    if (q.target === "nodes" && (q.ids === null || q.ids.length !== n)) return `${what} ${JSON.stringify(q.label)}: ids must be ${n} integers`;
+    if (s0 !== s || c !== q.components.length) return `${what} ${label} has shape ${pyShape(q.shape)}, expected (${s}, n, ${q.components.length})`;
+    if (q.target === "domain" && n !== 1) return `${what} ${label}: a domain value has n = 1, got ${n}`;
+    if (q.target === "nodes" && (q.ids === null || q.ids.length !== n)) return `${what} ${label}: ids must be ${n} integers`;
   }
   return null;
 }
@@ -103,28 +143,29 @@ const layoutOf = (qs: readonly SpectrumQuantity[]): string =>
 
 const allFinite = (xs: readonly number[]) => xs.every((x) => Number.isFinite(x));
 
-/** Why `c` cannot be a `/spectra` case, or null (Python's `case_problem`). */
-export function caseProblem(c: SpectrumCase): string | null {
+/** Why `c` cannot be a `/spectra` case, or null (Python's `case_problem`, check for check and word for word). */
+export function caseProblem(c: CaseDraft): string | null {
   const name = nameProblem(c.name);
-  if (name !== null) return `name ${JSON.stringify(c.name)}: ${name}`;
+  if (name !== null) return `name ${pyStr(c.name)}: ${name}`;
   if (c.direction < 1) return `direction ${c.direction} is 1-based`;
-  if (!(Number.isFinite(c.scale) && c.scale > 0)) return `scale ${c.scale} must be finite and > 0`;
+  if (!(Number.isFinite(c.scale) && c.scale > 0)) return `scale ${pyFloat(c.scale)} must be finite and > 0`;
   const t = c.periods;
-  if (t.length === 0 || c.sa.length !== t.length) return `spectrum T (${t.length}) and Sa (${c.sa.length}) must be equal, non-empty columns`;
-  if (!allFinite(t) || t.some((x) => x < 0) || t.some((x, i) => i > 0 && x - t[i - 1]! <= 0)) return "spectrum T must be non-negative and strictly increasing";
+  if (t.length === 0 || c.sa.length !== t.length) return `spectrum T ${pyShape([t.length])} and Sa ${pyShape([c.sa.length])} must be equal, non-empty columns`;
+  if (t.some((x) => x < 0) || t.some((x, i) => i > 0 && !(x - t[i - 1]! > 0)) || !allFinite(t)) return "spectrum T must be non-negative and strictly increasing";
   if (!allFinite(c.sa) || c.sa.some((x) => x < 0)) return "spectrum Sa must be finite and non-negative";
-  const m = c.modes.length;
-  if (m === 0) return "modes/mode must be integers, got an empty column";
-  if (c.modes.some((r) => r.mode < 1) || new Set(c.modes.map((r) => r.mode)).size !== m) return "modes/mode must be distinct, 1-based and fit i4";
-  if (c.modes.some((r) => !(MODE_KINDS as readonly string[]).includes(r.kind))) return `modes/kind must be one of ${[...MODE_KINDS].sort().join(", ")} per mode`;
-  const lam = c.modes.map((r) => r.lambda);
-  if (!allFinite(lam) || lam.some((x) => x <= 0)) return "every lambda must be finite and > 0 (lambda <= 0 is refused)";
-  const saPeriod = c.modes.map((r) => r.saPeriod);
-  if (!allFinite(saPeriod) || saPeriod.some((x) => x < 0)) return "sa_period must be finite and >= 0 (0 = the mode's own period)";
-  if (!allFinite(c.modes.map((r) => r.gamma))) return "gamma must be finite";
-  const sa = c.modes.map((r) => r.sa);
-  if (!allFinite(sa) || sa.some((x) => x < 0)) return "sa must be finite and non-negative";
-  if (c.modes.some((r) => !Number.isNaN(r.damping) && !(r.damping > 0 && r.damping < 1))) return "damping must be NaN or lie in (0, 1)";
+  const col = c.columns;
+  const m = col.mode.length;
+  if (m === 0) return `modes/mode must be integers, got int32 ${pyShape([0])}`;
+  if (col.mode.some((k) => k < 1) || new Set(col.mode).size !== m) return "modes/mode must be distinct, 1-based and fit i4";
+  if (col.kind.length !== m || col.kind.some((k) => !(MODE_KINDS as readonly string[]).includes(k))) return `modes/kind must be one of ${pyList([...MODE_KINDS].sort())} per mode`;
+  for (const [what, xs] of [["lambda", col.lambda], ["sa_period", col.saPeriod], ["gamma", col.gamma], ["sa", col.sa], ["damping", col.damping]] as const) {
+    if (xs.length !== m) return `modes/${what} has shape ${pyShape([xs.length])}, expected (${m},)`;
+  }
+  if (!allFinite(col.lambda) || col.lambda.some((x) => x <= 0)) return "every lambda must be finite and > 0 (lambda <= 0 is refused)";
+  if (!allFinite(col.saPeriod) || col.saPeriod.some((x) => x < 0)) return "sa_period must be finite and >= 0 (0 = the mode's own period)";
+  if (!allFinite(col.gamma)) return "gamma must be finite";
+  if (!allFinite(col.sa) || col.sa.some((x) => x < 0)) return "sa must be finite and non-negative";
+  if (col.damping.some((x) => !Number.isNaN(x) && !(x > 0 && x < 1))) return "damping must be NaN or lie in (0, 1)";
   for (const [qs, s, what] of [[c.results, m, "RESULTS"], [c.reference, 1, "reference/RESULTS"]] as const) {
     const problem = quantitiesProblem(qs, s, what);
     if (problem !== null) return problem;

@@ -46,7 +46,7 @@ export interface ModalTableView {
   note: string | null;
   /** the zone itself is refused or stale */
   bad: boolean;
-  /** the mode shown has no row in the table (D6), else null */
+  /** the mode shown has no row in the table (D6): no row of its number has its LAMBDA; else null */
   missing: number | null;
 }
 
@@ -57,15 +57,26 @@ const sig = (x: number) => num(x, (v) => (Math.abs(v) >= 1e-3 && Math.abs(v) < 1
 
 const verdictText = (m: StaleMark) => (m.stale ? "stale" : "current");
 
-/** The mode index the viewport shows, when it shows a mode stage; else null. */
-function shownMode(s: State): number | null {
+/** A6's tolerance: a row is the mode shown when its lambda equals the shown stage's LAMBDA to this, relative. */
+export const SHOWN_RTOL = 1e-9;
+
+/** The mode the viewport shows (its 1-based index and recorded LAMBDA), when it shows a mode stage; else null. */
+function shownMode(s: State): { index: number; eigenvalue: number } | null {
   const at = s.phase.at;
   if (at?.kind !== "results") return null;
   const stage = s.results?.stages[at.stage];
-  return stage?.kind === "mode" && stage.mode ? stage.mode.index : null;
+  return stage?.kind === "mode" && stage.mode ? { index: stage.mode.index, eigenvalue: stage.mode.eigenvalue } : null;
 }
 
-function lineOf(r: UserModeRow, components: string[], shown: number | null, unique: boolean): ModalLine {
+/**
+ * Whether a row is the mode shown: the same mode number, and its lambda equal
+ * to the shown stage's LAMBDA (a mode number alone names a mode of any modal
+ * set; the table may hold another set's).
+ */
+const isShown = (r: UserModeRow, shown: { index: number; eigenvalue: number }): boolean =>
+  r.mode === shown.index && Math.abs(r.lambda - shown.eigenvalue) <= SHOWN_RTOL * Math.abs(shown.eigenvalue);
+
+function lineOf(r: UserModeRow, components: string[], shown: boolean): ModalLine {
   const gamma = components.map((c, i) => `${c} ${sig(r.participation[i]!)}`).join(", ");
   const title = [
     `mode ${r.mode} (${r.kind}) of ${r.host}, ${r.step === -1 ? "its only set" : `STEP_${r.step}`}`,
@@ -81,7 +92,7 @@ function lineOf(r: UserModeRow, components: string[], shown: number | null, uniq
     stale: r.verdict.stale,
     verdict: verdictText(r.verdict),
     title,
-    shown: unique && shown === r.mode,
+    shown,
   };
 }
 
@@ -96,14 +107,15 @@ export function modalTableOf(s: State): ModalTableView | null {
   if (m === null || shown === null) return null;
   const file = baseName(s.user.path);
   if (!m.ok) return { file, components: [], lines: [], status: "refused", note: `the modal table of ${file} is refused: ${m.reason}`, bad: true, missing: null };
-  // A mode number names one row only when the table holds one set; with several, no row is marked.
-  const unique = m.rows.filter((r) => r.mode === shown).length === 1;
-  const lines = m.rows.map((r) => lineOf(r, m.components, shown, unique));
+  // One row is marked, and only when one row alone is the mode shown; none is, and the mode is shown without a row (D6).
+  const matches = m.rows.map((r) => isShown(r, shown));
+  const unique = matches.filter(Boolean).length === 1;
+  const lines = m.rows.map((r, i) => lineOf(r, m.components, unique && matches[i]!));
   const stale = lines.filter((l) => l.stale).length;
   const rows = `${lines.length} ${lines.length === 1 ? "row" : "rows"}`;
   const status = stale === 0 ? `${rows} · current` : stale === lines.length ? `${rows} · stale` : `${rows} · ${stale} stale`;
   const note = m.stale.stale ? `the modal table of ${file} is stale: ${m.stale.reason || "the reader gave no reason"}` : null;
-  return { file, components: m.components, lines, status, note, bad: m.stale.stale, missing: m.rows.some((r) => r.mode === shown) ? null : shown };
+  return { file, components: m.components, lines, status, note, bad: m.stale.stale, missing: matches.some(Boolean) ? null : shown.index };
 }
 
 const CARD = "flex: 0 0 auto; min-height: 0; max-height: 45%; overflow: auto; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line);";
@@ -143,7 +155,7 @@ export function mountModalTable(store: Store): () => void {
       parts.push(note);
     }
     if (v.missing !== null) {
-      const miss = el("div", "modal-missing", `mode ${v.missing} has no row in this table`);
+      const miss = el("div", "modal-missing", `mode ${v.missing}: no row of this table has its eigenvalue`);
       miss.style.cssText = "font-size: 12px; margin: 0 0 4px; color: var(--muted);";
       parts.push(miss);
     }

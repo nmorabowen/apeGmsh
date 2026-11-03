@@ -177,6 +177,12 @@ interface CaseOpts {
   periods?: number[];
   results?: Quantity[];
   reference?: Quantity[];
+  scale?: number;
+  /** the gamma and lambda columns as given (their length is judged by the case's rules) */
+  gamma?: number[];
+  lambda?: number[];
+  /** the mode column as int64, which a case refuses */
+  modeI8?: boolean;
 }
 
 const BASE_SHEAR: Quantity = ["ON_DOMAIN", "base_shear", null, ["Vx", "Vy"]];
@@ -188,17 +194,18 @@ function spectrumCase(z: G, link: string, o: CaseOpts = {}): G {
   g.create_attribute("name", o.name ?? "Ex");
   g.create_attribute("KIND", o.kind ?? "static");
   g.create_attribute("direction", Int32Array.of(o.direction ?? 1));
-  g.create_attribute("scale", Float64Array.of(9.81));
+  g.create_attribute("scale", Float64Array.of(o.scale ?? 9.81));
   const sp = g.create_group("spectrum") as G;
   f8(sp, "T", o.periods ?? [0, 0.5, 1, 2]);
   f8(sp, "Sa", [0.4, 1, 0.6, 0.3]);
   const modes = o.modes ?? [1, 2];
   const m = g.create_group("modes") as G;
-  i4(m, "mode", modes);
+  if (o.modeI8) m.create_dataset({ name: "mode", data: BigInt64Array.from(modes.map(BigInt)), shape: [modes.length] });
+  else i4(m, "mode", modes);
   str(m, "kind", modes.map(() => "eigen"));
-  f8(m, "lambda", modes.map((k) => LAMBDAS[k - 1] ?? 100 * k));
+  f8(m, "lambda", o.lambda ?? modes.map((k) => LAMBDAS[k - 1] ?? 100 * k));
   f8(m, "sa_period", modes.map(() => 0));
-  f8(m, "gamma", modes.map((k) => 1 / k));
+  f8(m, "gamma", o.gamma ?? modes.map((k) => 1 / k));
   f8(m, "sa", modes.map(() => 5));
   f8(m, "damping", o.damping ?? modes.map(() => 0.05));
   const results = o.results ?? [BASE_SHEAR, DISP];
@@ -753,14 +760,14 @@ test("a bad /spectra case refuses alone, with Python's reason; duplicate names r
     ["flat", "bad-param", 9],
     ["down", "bad-param", 10],
   ]);
-  assert.match(by("elements")[0]!.detail, /\/spectra\/s2\/RESULTS\/ON_ELEMENTS: the family ON_ELEMENTS is not in spectra 1\.0\.0, whose cases hold ON_DOMAIN, ON_NODES only$/);
-  assert.match(by("dynamic")[0]!.detail, /@KIND is "transient", not 'static'$/);
+  assert.equal(by("elements")[0]!.detail, "/spectra/s2/RESULTS/ON_ELEMENTS: the family ON_ELEMENTS is not in spectra 1.0.0, whose cases hold ['ON_DOMAIN', 'ON_NODES'] only");
+  assert.equal(by("dynamic")[0]!.detail, "/spectra/s5@KIND is 'transient', not 'static'");
   assert.match(by("wet")[0]!.detail, /damping must be NaN or lie in \(0, 1\)$/);
   assert.match(by("unmatched")[0]!.detail, /reference\/RESULTS must hold the results of RESULTS, with their ids and columns$/);
   assert.match(by("repeat")[0]!.detail, /modes\/mode must be distinct, 1-based and fit i4$/);
   assert.match(by("flat")[0]!.detail, /spectrum T must be non-negative and strictly increasing$/);
   assert.match(by("down")[0]!.detail, /direction 0 is 1-based$/);
-  assert.equal(by("Ey")[0]!.detail, '2 cases are named "Ey"');
+  assert.equal(by("Ey")[0]!.detail, "2 cases are named 'Ey'");
 });
 
 test("/spectra is versioned as its zone: another major refuses it, a newer minor opens with one banner, and it stales by the model", () => {
@@ -775,4 +782,24 @@ test("/spectra is versioned as its zone: another major refuses it, a newer minor
   const s = set();
   writeModel(s.model, { fem: "00000000000000000000000000000000", rows: [M1] });
   assert.match(staleness(H5, readUserFile(H5, s.user, s.model), s.model, s.results, list).zones["spectra"]!.reason, /^fem_hash differs/);
+});
+
+// #2744 review, F3: a refusal's detail is Python's text, and Python's first fault is the one named.
+test("a refused case's detail is Python's, word for word, and names the fault Python meets first", () => {
+  const s = set({
+    spectra: (z) => {
+      spectrumCase(z, "s0", { name: "both", scale: 0, gamma: [1] });
+      spectrumCase(z, "s1", { name: "short", lambda: [LAMBDAS[0]!] });
+      spectrumCase(z, "s2", { name: "i8mode", modeI8: true });
+      spectrumCase(z, "s3", { name: "it's", scale: -1 });
+    },
+  });
+  const sp = ok(readUserFile(H5, s.user, s.model).spectra!);
+  assert.deepEqual(sp.refused.map((r) => [r.name, r.detail]), [
+    // Python's `case_problem` checks the scale before the modes columns' lengths.
+    ["both", "/spectra/s0: scale 0.0 must be finite and > 0"],
+    ["short", "/spectra/s1: modes/lambda has shape (1,), expected (2,)"],
+    ["i8mode", "/spectra/s2/modes/mode is int64 (2,), expected i4"],
+    ["it's", "/spectra/s3: scale -1.0 must be finite and > 0"],
+  ]);
 });

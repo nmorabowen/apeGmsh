@@ -76,7 +76,7 @@ test("a .ladruno whose modal record cannot be read refuses, naming why (Python r
     return p;
   };
   const noLambda = edit("nolambda.ladruno", (f) => (f.get("/MODEL_STAGE[1]/RESULTS/ON_NODES/MODES_OF_VIBRATION(U)/DATA/STEP_0/MODE_1") as h5wasm.Dataset).delete_attribute("LAMBDA"));
-  assert.throws(() => recordedLambdas(H5, noLambda, list), (e: unknown) => e instanceof LambdasRefused && /MODE_1 has no LAMBDA attribute; the eigenvalue of this mode is not recorded$/.test((e as Error).message));
+  assert.throws(() => recordedLambdas(H5, noLambda, list), (e: unknown) => e instanceof LambdasRefused && /^nolambda\.ladruno MODEL_STAGE\[1\]: ON_NODES\/MODES_OF_VIBRATION\(U\)\/DATA\/STEP_0\/MODE_1 has no LAMBDA attribute; the eigenvalue of this mode is not recorded\.$/.test((e as Error).message));
   const differ = edit("differ.ladruno", (f) => {
     const ds = f.get("/MODEL_STAGE[1]/RESULTS/ON_NODES/MODES_OF_VIBRATION(R)/DATA/STEP_0/MODE_0") as h5wasm.Dataset;
     ds.delete_attribute("LAMBDA");
@@ -100,4 +100,18 @@ test("the table's rules are Python's table_problem", () => {
     ["mass_ratio holds an infinite value", table([{ ...row("stage_0", 0, 1, 4), massRatio: [Infinity, 0] }])],
   ];
   for (const [why, t] of bad) assert.equal(modeTableProblem(t), why);
+});
+
+// #2744 review, F2: Python's `discover_partition_files` refuses a part set that is not numbered 0..n-1.
+test("a part set is read from part 0; a set whose parts are not numbered from 0 refuses, in Python's words", () => {
+  const d = mkdtempSync(join(tmpdir(), "agv-parts-"));
+  copyFileSync(MODES, join(d, "run.part-1.ladruno"));
+  assert.throws(
+    () => recordedLambdas(H5, join(d, "run.part-1.ladruno"), list),
+    (e: unknown) => e instanceof LambdasRefused && (e as Error).message === "Partition files for stem 'run' are not contiguous from 0 — found indices [1]. Expected [0, 1].",
+  );
+  copyFileSync(MODES, join(d, "run.part-0.ladruno"));
+  assert.deepEqual([...recordedLambdas(H5, join(d, "run.part-1.ladruno"), list).sets.values()].map((m) => [...m]), [[[1, L1], [2, L2]]]);
+  copyFileSync(MODES, join(d, "run.part-3.ladruno"));
+  assert.throws(() => recordedLambdas(H5, join(d, "run.part-0.ladruno"), list), /found indices \[0, 1, 3\]\. Expected \[0, 1, 2, 3\]\.$/);
 });

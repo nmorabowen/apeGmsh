@@ -26,7 +26,7 @@ import { openH5 } from "./h5open.ts";
 import { checkZoneVersion, COMBINATIONS_TARGET, MODES_TARGET, OPENSEES_TARGET, SchemaError, SPECTRA_TARGET, USER_META_TARGET, USER_RESULTS_TARGET, ZONE_FLOOR } from "./read.ts";
 import { byCodePoint, FingerprintRefused, resultsFingerprint, type FpDataset, type FpFile, type FpGroup, type FpH5, type H5Meta } from "./rf1.ts";
 import { LambdasRefused, modeTableProblem, recordedLambdas, rowVerdicts, type ModeRow, type ModeTable, type RowVerdict } from "./userModes.ts";
-import { caseProblem, SPECTRA_FAMILIES, type SpectrumCase, type SpectrumMode, type SpectrumQuantity, type SpectrumTarget } from "./userSpectra.ts";
+import { caseOf, caseProblem, npDtype, pyList, pyShape, pyStr, SPECTRA_FAMILIES, type CaseDraft, type SpectrumCase, type SpectrumQuantity, type SpectrumTarget } from "./userSpectra.ts";
 import { addressProblem, nameProblem, resolve, type Combination, type Refusal, type StateAddress, type Term } from "./userRules.ts";
 
 export type { Combination, Refusal, StateAddress, Term } from "./userRules.ts";
@@ -640,7 +640,7 @@ function modeColumn(t: Tree, zone: FpGroup, name: string, code: string, ndim: nu
   const ds = t.dataset(zone, name);
   if (ds === null) throw new ZoneRefused("/modes", `it has no ${name} column`);
   if (!isCode(ds, code) || shape(ds).length !== ndim) {
-    throw new ZoneRefused("/modes", `${name} is ${dtypeText(ds)} (${shape(ds).join(", ")}), expected ${code}, rank ${ndim}`);
+    throw new ZoneRefused("/modes", `${name} is ${npDtype(ds.metadata)} ${pyShape(shape(ds))}, expected ${code}, rank ${ndim}`);
   }
   return { values: values(ds), shape: shape(ds) };
 }
@@ -664,9 +664,13 @@ function readModes(t: Tree, f: FpFile, warnings: string[]): ModeTable {
   const tables = tableNames.map((n) => modeColumn(t, zone, n, "f8", 2));
   const m = host.length;
   const c = components.length;
-  // The shapes are read here; the rules on the values are `modeTableProblem`'s.
-  for (const [what, col] of [["kind", kind], ["step", step], ["mode", mode], ["lambda", lam], ["period", period], ["generalized_mass", mass]] as const) {
-    if (col.length !== m) throw new ZoneRefused("/modes", `${what} has ${col.length} rows, expected ${m}`);
+  // The lengths are checked here, in Python's `table_problem` words; the rules on the values are `modeTableProblem`'s.
+  if (kind.length !== m) throw new ZoneRefused("/modes", `${kind.length} kinds for ${m} rows`);
+  for (const [what, col] of [["step", step], ["mode", mode]] as const) {
+    if (col.length !== m) throw new ZoneRefused("/modes", `${what} must be ${m} integers, got int32 ${pyShape([col.length])}`);
+  }
+  for (const [what, col] of [["lambda", lam], ["period", period], ["generalized_mass", mass]] as const) {
+    if (col.length !== m) throw new ZoneRefused("/modes", `${what} has shape ${pyShape([col.length])}, expected (${m},)`);
   }
   tableNames.forEach((what, k) => {
     if (!sameShape(tables[k]!.shape, [m, c])) throw new ZoneRefused("/modes", `${what} has shape (${tables[k]!.shape.join(", ")}), expected (${m}, ${c})`);
@@ -721,13 +725,13 @@ function readSpectra(t: Tree, f: FpFile, warnings: string[]): SpectraIndex {
   for (const [, c] of read) counts.set(c.name, (counts.get(c.name) ?? 0) + 1);
   for (const [at, c] of read) {
     const n = counts.get(c.name)!;
-    if (n > 1) refused.push({ name: c.name, reason: "duplicate", detail: `${n} cases are named ${JSON.stringify(c.name)}`, origin: "user", row: at });
+    if (n > 1) refused.push({ name: c.name, reason: "duplicate", detail: `${n} cases are named ${pyStr(c.name)}`, origin: "user", row: at });
   }
   return { cases: read.filter(([, c]) => counts.get(c.name) === 1).map(([, c]) => c), refused };
 }
 
-/** One float attribute (an `f` kind only), or the case refuses (Python's `_number(group, key, "f")`). */
-function floatAttr(g: FpGroup, key: string): number {
+/** One numeric attribute of a numpy kind in `kinds` ("iu" or "f"), or the case refuses (Python's `_attr` and `_number`). */
+function numberAttr(g: FpGroup, key: string, kinds: "iu" | "f"): number {
   const a = g.attrs[key];
   if (a === undefined) throw new EntryRefused("bad-param", `${g.path} has no @${key}`);
   let v = a.value;
@@ -736,56 +740,59 @@ function floatAttr(g: FpGroup, key: string): number {
     if (arr.length !== 1) throw new EntryRefused("bad-param", `${g.path}@${key} holds ${arr.length} values`);
     v = arr[0];
   }
-  if (a.metadata.type !== H5T_FLOAT || typeof v !== "number") throw new EntryRefused("bad-param", `${g.path}@${key} is ${dtypeOfAttr(a.metadata)}, expected f`);
-  return v;
+  const ok = kinds === "f" ? a.metadata.type === H5T_FLOAT : a.metadata.type === H5T_INTEGER;
+  if (!ok || (typeof v !== "number" && typeof v !== "bigint")) throw new EntryRefused("bad-param", `${g.path}@${key} is ${npDtype(a.metadata)}, expected ${kinds}`);
+  return Number(v);
 }
 
-const dtypeOfAttr = (m: H5Meta) => (m.type === H5T_STRING ? "str" : `${m.type === H5T_FLOAT ? "f" : m.signed ? "i" : "u"}${m.size}`);
+/** One `modes/` or `spectrum/` column: one-dimensional and of its dtype, or the case refuses (Python's `_column`). */
+function caseColumn(t: Tree, g: FpGroup, name: string, code: string): unknown[] {
+  const ds = t.dataset(g, name);
+  if (ds === null) throw new EntryRefused("bad-param", `${g.path} has no ${name} column`);
+  if (!isCode(ds, code) || shape(ds).length !== 1) throw new EntryRefused("bad-param", `${ds.path} is ${npDtype(ds.metadata)} ${pyShape(shape(ds))}, expected ${code}`);
+  return values(ds);
+}
 
-/** One case, judged by `caseProblem`, or `EntryRefused` (Python's `read_case`). Its DATA is not read. */
+/** One case, judged by `caseProblem`, or `EntryRefused` (Python's `read_case`, in its order). Its DATA is not read. */
 function readCase(t: Tree, link: string, g: FpGroup): SpectrumCase {
   if (g.attrs["name"] === undefined) throw new EntryRefused("bad-param", `${g.path} has no @name`);
   const name = textAttr(g, "name") ?? "";
   const problem = nameProblem(name);
   if (problem !== null) throw new EntryRefused("empty-name", `${g.path}@name: ${problem}`);
   if (g.attrs["KIND"] === undefined) throw new EntryRefused("bad-param", `${g.path} has no @KIND`);
-  const kindAttr = textAttr(g, "KIND");
-  if (kindAttr !== "static") throw new EntryRefused("bad-param", `${g.path}@KIND is ${JSON.stringify(kindAttr)}, not 'static'`);
+  const kindAttr = textAttr(g, "KIND") ?? "";
+  if (kindAttr !== "static") throw new EntryRefused("bad-param", `${g.path}@KIND is ${pyStr(kindAttr)}, not 'static'`);
   const spectrum = t.group(g, "spectrum");
   const modes = t.group(g, "modes");
   const reference = t.group(g, "reference");
-  if (spectrum === null || modes === null || reference === null) throw new EntryRefused("bad-param", `${g.path} needs spectrum, modes and reference groups`);
-  if (g.attrs["direction"] === undefined) throw new EntryRefused("bad-param", `${g.path} has no @direction`);
-  const direction = intAttr(g, "direction", true);
-  if (direction === null) throw new EntryRefused("bad-param", `${g.path}@direction is ${dtypeOfAttr(g.attrs["direction"]!.metadata)}, expected iu`);
-  const scale = floatAttr(g, "scale");
-  const col = (holder: FpGroup, n: string, code: string) => values(entryDataset(t, holder, n, code, 1));
-  const mode = col(modes, "mode", "i4") as number[];
-  const kind = col(modes, "kind", "str").map((x) => cell(x, "/spectra", `${modes.path}/kind`));
-  const lam = col(modes, "lambda", "f8") as number[];
-  const saPeriod = col(modes, "sa_period", "f8") as number[];
-  const gamma = col(modes, "gamma", "f8") as number[];
-  const sa = col(modes, "sa", "f8") as number[];
-  const damping = col(modes, "damping", "f8") as number[];
-  const m = mode.length;
-  for (const [what, c] of [["kind", kind], ["lambda", lam], ["sa_period", saPeriod], ["gamma", gamma], ["sa", sa], ["damping", damping]] as const) {
-    if (c.length !== m) throw new EntryRefused("bad-param", `${g.path}: modes/${what} has ${c.length} rows, expected (${m},)`);
-  }
-  const rows: SpectrumMode[] = mode.map((k, i) => ({ mode: k, kind: kind[i]!, lambda: lam[i]!, saPeriod: saPeriod[i]!, gamma: gamma[i]!, sa: sa[i]!, damping: damping[i]! }));
-  const c: SpectrumCase = {
+  if (spectrum === null || modes === null || reference === null) throw new EntryRefused("bad-param", `${g.path} needs spectrum, modes and reference`);
+  // Python builds the case in this order: the first fault it meets is the one it names.
+  const direction = numberAttr(g, "direction", "iu");
+  const scale = numberAttr(g, "scale", "f");
+  const periods = caseColumn(t, spectrum, "T", "f8") as number[];
+  const sa = caseColumn(t, spectrum, "Sa", "f8") as number[];
+  const draft: CaseDraft = {
     name,
     link,
     direction,
     scale,
-    periods: col(spectrum, "T", "f8") as number[],
-    sa: col(spectrum, "Sa", "f8") as number[],
-    modes: rows,
+    periods,
+    sa,
+    columns: {
+      mode: caseColumn(t, modes, "mode", "i4") as number[],
+      kind: caseColumn(t, modes, "kind", "str").map((x) => cell(x, "/spectra", `${modes.path}/kind`)),
+      lambda: caseColumn(t, modes, "lambda", "f8") as number[],
+      saPeriod: caseColumn(t, modes, "sa_period", "f8") as number[],
+      gamma: caseColumn(t, modes, "gamma", "f8") as number[],
+      sa: caseColumn(t, modes, "sa", "f8") as number[],
+      damping: caseColumn(t, modes, "damping", "f8") as number[],
+    },
     results: readQuantities(t, g, "RESULTS"),
     reference: readQuantities(t, reference, "reference/RESULTS"),
   };
-  const bad = caseProblem(c);
+  const bad = caseProblem(draft);
   if (bad !== null) throw new EntryRefused("bad-param", `${g.path}: ${bad}`);
-  return c;
+  return caseOf(draft);
 }
 
 /** `ON_DOMAIN` and `ON_NODES` to their targets (Python's `_TARGET`). */
@@ -799,7 +806,7 @@ function readQuantities(t: Tree, root: FpGroup, where: string): SpectrumQuantity
   for (const on of results.keys()) {
     const target = SPECTRUM_TARGET_OF.get(on);
     if (target === undefined) {
-      throw new EntryRefused("bad-param", `${results.path}/${on}: the family ${on} is not in spectra 1.0.0, whose cases hold ${[...SPECTRUM_TARGET_OF.keys()].sort().join(", ")} only`);
+      throw new EntryRefused("bad-param", `${results.path}/${on}: the family ${on} is not in spectra 1.0.0, whose cases hold ${pyList([...SPECTRUM_TARGET_OF.keys()].sort())} only`);
     }
     const family = t.group(results, on);
     if (family === null) throw new EntryRefused("bad-param", `${results.path}/${on} is not a group`);

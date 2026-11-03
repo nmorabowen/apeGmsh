@@ -467,7 +467,7 @@ test("the Spectra family lists its cases, a refused case, and a refused zone", (
   assert.ok(two.title.split("\n").includes("Ey: direction 2, scale 1, 2 modes, damping 0.05; domain/base_shear"));
   const dup = familiesOf(readInto(initialState, writeSet({ cases: ["Ex", "Ex", "Ey"] }))).find((f) => f.key === "spectra")!;
   assert.deepEqual([dup.count, dup.refused, familyMarks(dup).refused], [1, 2, " · 2 refused"]);
-  assert.ok(dup.title.split("\n").includes('Ex: refused, duplicate: 2 cases are named "Ex"'));
+  assert.ok(dup.title.split("\n").includes("Ex: refused, duplicate: 2 cases are named 'Ex'"));
   const empty = familiesOf(readInto(initialState, writeSet({ cases: [] }))).find((f) => f.key === "spectra")!;
   assert.deepEqual([empty.count, familyMarks(empty).count], [0, " 0"]);
 });
@@ -759,13 +759,16 @@ test("the modal table: shown beside a mode, each row with its period, ratios and
   const cur = readInto(initialState, writeSet({ modes: [LAMBDAS[0]!, LAMBDAS[1]! * 1.5], results: "modes" }));
   assert.equal(modalTableOf(atMode(cur, null)), null, "not beside the mesh");
   assert.equal(modalTableOf(atMode(initialState, 1)), null, "no user file");
-  const v = modalTableOf(atMode(cur, 2))!;
+  const v = modalTableOf(atMode(cur, 1))!;
   assert.deepEqual([v.file, v.components, v.status, v.note, v.bad, v.missing], ["run.user.h5", ["MX", "MY"], "2 rows · 1 stale", null, false, null]);
   // T = 2 pi / sqrt(lambda); the ratios are fractions, drawn in percent.
   assert.deepEqual(v.lines.map((l) => [l.mode, l.period, l.ratios, l.cumulative, l.verdict, l.shown]), [
-    [1, "0.3215", ["60.0", "5.0"], ["60.0", "5.0"], "current", false],
-    [2, "0.1003", ["30.0", "5.0"], ["80.0", "10.0"], "stale", true],
+    [1, "0.3215", ["60.0", "5.0"], ["60.0", "5.0"], "current", true],
+    [2, "0.1003", ["30.0", "5.0"], ["80.0", "10.0"], "stale", false],
   ]);
+  // Mode 2's row holds another lambda than the stage shown: it is not that mode's row, so none is marked (#2744 review, F1).
+  const two = modalTableOf(atMode(cur, 2))!;
+  assert.deepEqual([two.lines.map((l) => l.shown), two.missing], [[false, false], 2]);
   assert.match(v.lines[1]!.title, /^mode 2 \(eigen\) of stage_0, STEP_0\nlambda 3927, period 0\.1003 s, generalised mass 1\nparticipation factor: MX 0\.5, MY 0\.1\nstale: lambda 3927\.05\d* here, 2618\.0339887498953 in the results file/);
   // A mode beyond the table is shown without its row, not refused (D6).
   const short = modalTableOf(atMode(readInto(initialState, writeSet({ modes: [LAMBDAS[0]!], results: "modes" })), 2))!;
@@ -826,4 +829,70 @@ test("mounted, the modal table shows while a mode is shown, one row per mode, an
     (globalThis as { document?: unknown }).document = prevDoc;
   }
   assert.equal((rail.children[0] as FakeEl).removed, true);
+});
+
+// ---- which row is the mode shown (#2744 review, F1 and F4) ---------------------
+
+const modeRow = (host: string, step: number, mode: number, lambda: number) => ({
+  host, kind: "eigen", step, mode, lambda, period: (2 * Math.PI) / Math.sqrt(lambda), generalizedMass: 1,
+  participation: [1], massRatio: [0.5], cumulativeRatio: [0.5], verdict: { stale: false, reason: "" },
+});
+const withTable = (s: State, rows: ReturnType<typeof modeRow>[]): State => ({
+  ...s,
+  user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: { ok: true, components: ["MX"], rows, stale: { stale: false, reason: "" } } } },
+});
+/** `atMode`, with the shown stage's LAMBDA replaced: another modal set's mode of the same number. */
+const atOtherSet = (s: State, k: number, eigenvalue: number): State => {
+  const t = atMode(s, k);
+  const stages = t.results!.stages.map((x, i) => (i === k - 1 ? { ...x, mode: { ...x.mode!, eigenvalue } } : x));
+  return { ...t, results: { ...t.results!, stages } };
+};
+
+test("a row is the mode shown only when its lambda is the shown stage's LAMBDA: another set's mode 1 marks no row", () => {
+  // The table holds stage_0's modes; the viewport shows stage_2's mode 1 (lambda 9999). The review's repro.
+  const s = withTable(initialState, [modeRow("stage_0", 0, 1, LAMBDAS[0]!), modeRow("stage_0", 0, 2, LAMBDAS[1]!)]);
+  const other = modalTableOf(atOtherSet(s, 1, 9999))!;
+  assert.deepEqual([other.lines.map((l) => l.shown), other.missing], [[false, false], 1]);
+  // Inside 1e-9 relative it is that row; past it, it is not.
+  assert.deepEqual(modalTableOf(atOtherSet(s, 1, LAMBDAS[0]! * (1 + 5e-10)))!.lines.map((l) => l.shown), [true, false]);
+  assert.deepEqual(modalTableOf(atOtherSet(s, 1, LAMBDAS[0]! * (1 + 2e-9)))!.lines.map((l) => l.shown), [false, false]);
+});
+
+test("two rows that are both the mode shown (two sets, one lambda) mark neither; the mode is not reported missing", () => {
+  const s = withTable(initialState, [modeRow("stage_0", 0, 1, LAMBDAS[0]!), modeRow("stage_1", 0, 1, LAMBDAS[0]!), modeRow("stage_0", 0, 2, LAMBDAS[1]!)]);
+  const v = modalTableOf(atMode(s, 1))!;
+  assert.deepEqual([v.lines.map((l) => l.shown), v.missing], [[false, false, false], null]);
+});
+
+test("mounted, the modal table redraws when the user file or the results change under the same phase", () => {
+  const prevDoc = (globalThis as { document?: unknown }).document;
+  const rail = new FakeEl("div");
+  (globalThis as { document?: unknown }).document = { createElement: (t: string) => new FakeEl(t), getElementById: (id: string) => (id === "rail" ? rail : null) };
+  let state = atMode(withTable(initialState, [modeRow("stage_0", 0, 1, LAMBDAS[0]!), modeRow("stage_0", 0, 2, LAMBDAS[1]!)]), 1);
+  const listeners: ((s: State, prev: State) => void)[] = [];
+  const store = { get: () => state, dispatch: () => undefined, subscribe: (l: (s: State, prev: State) => void) => (listeners.push(l), () => undefined) } as unknown as Store;
+  const set = (next: State) => {
+    const prev = state;
+    state = next;
+    for (const l of listeners) l(state, prev);
+  };
+  const off = mountModalTable(store);
+  try {
+    const panel = rail.children[0] as FakeEl;
+    const shown = () => panel.all((e) => e.tagName === "TR" && e.dataset["mode"] !== undefined).map((r) => r.className);
+    const status = () => panel.all((e) => e.className === "modal-status")[0]!.textContent;
+    assert.deepEqual([shown(), status()], [["modal-row shown", "modal-row"], "2 rows · current"]);
+    // A re-read of the user file, the phase object untouched: row 2 is now stale.
+    const phase = state.phase;
+    const reread = withTable(state, [modeRow("stage_0", 0, 1, LAMBDAS[0]!), { ...modeRow("stage_0", 0, 2, LAMBDAS[1]!), verdict: { stale: true, reason: "x" } }]);
+    set({ ...reread, phase });
+    assert.equal(status(), "2 rows · 1 stale");
+    // Another results file, the phase and the user file untouched: its mode 1 is another set's, so no row is marked.
+    const other = atOtherSet(state, 1, 9999);
+    set({ ...other, phase: state.phase, user: state.user });
+    assert.deepEqual(shown(), ["modal-row", "modal-row"]);
+  } finally {
+    off();
+    (globalThis as { document?: unknown }).document = prevDoc;
+  }
 });

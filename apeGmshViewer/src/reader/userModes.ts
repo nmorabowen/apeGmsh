@@ -10,8 +10,41 @@
 
 import { openH5 } from "./h5open.ts";
 import { partOf, partSiblings } from "./ladrunoParts.ts";
-import { pyFloat, type FpAttr, type FpDataset, type FpFile, type FpGroup, type FpH5 } from "./rf1.ts";
+import { pyFloat, type FpAttr, type H5Meta, type FpDataset, type FpFile, type FpGroup, type FpH5 } from "./rf1.ts";
 import { nameProblem } from "./userRules.ts";
+
+// Python's printing, for refusal texts that match Python's word for word (here and in reader/userSpectra.ts).
+
+/** Python's `repr` of a str. */
+export function pyStr(s: string): string {
+  const q = s.includes("'") && !s.includes('"') ? '"' : "'";
+  let out = "";
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    if (ch === "\\") out += "\\\\";
+    else if (ch === q) out += `\\${q}`;
+    else if (ch === "\n") out += "\\n";
+    else if (ch === "\r") out += "\\r";
+    else if (ch === "\t") out += "\\t";
+    else if (c < 0x20 || (c >= 0x7f && c < 0xa0)) out += `\\x${c.toString(16).padStart(2, "0")}`;
+    else out += ch;
+  }
+  return q + out + q;
+}
+
+/** Python's `repr` of a list of str. */
+export const pyList = (xs: readonly string[]): string => `[${xs.map(pyStr).join(", ")}]`;
+
+/** A numpy shape as Python prints the tuple: `()`, `(3,)`, `(2, 3)`. */
+export const pyShape = (shape: readonly number[]): string => (shape.length === 1 ? `(${shape[0]},)` : `(${shape.join(", ")})`);
+
+/** A numpy dtype's name as `str(dtype)` prints it; an HDF5 string reads as h5py's `object`. */
+export function npDtype(m: H5Meta): string {
+  if (m.type === 3) return "object";
+  if (m.type === 1) return `float${8 * m.size}`;
+  if (m.type === 0) return `${m.signed ? "int" : "uint"}${8 * m.size}`;
+  return `<HDF5 class ${m.type}>`;
+}
 
 /** `modalProperties` component tokens, in the order a table lists them (Python's `COMPONENTS`). */
 export const MODE_COMPONENTS = ["MX", "MY", "MZ", "RMX", "RMY", "RMZ"] as const;
@@ -103,16 +136,26 @@ const STAGE = "MODEL_STAGE[";
 const H5T_INTEGER = 0;
 const H5T_FLOAT = 1;
 
-/** The file to read: `path` alone, or the first part of its set (Python's `discover_partition_files(path)[0]`). */
+/**
+ * The file to read: `path` alone, or the first part of its set (Python's
+ * `discover_partition_files(path)[0]`). A set whose parts are not numbered
+ * 0..n-1 is a partial set and refuses, in Python's words.
+ */
 function firstPart(path: string, list: (dir: string) => readonly string[]): string {
-  if (partOf(path) === null) return path;
+  const me = partOf(path);
+  if (me === null) return path;
   let parts: { index: number; path: string }[];
   try {
     parts = partSiblings(path, list).sort((a, b) => a.index - b.index);
   } catch (err) {
     throw new LambdasRefused(`the part files of ${path} cannot be listed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (parts.length === 0) throw new LambdasRefused(`no part file of ${path} is found`);
+  if (parts.length === 0) return path;
+  const indices = parts.map((x) => x.index);
+  if (indices.some((x, k) => x !== k)) {
+    const expected = Array.from({ length: Math.max(...indices) + 1 }, (_, k) => k);
+    throw new LambdasRefused(`Partition files for stem ${pyStr(me.stem)} are not contiguous from 0 — found indices [${indices.join(", ")}]. Expected [${expected.join(", ")}].`);
+  }
   return parts[0]!.path;
 }
 
@@ -143,6 +186,8 @@ function scalar(attr: FpAttr, where: string): number {
  */
 export function recordedLambdas(h5: FpH5, path: string, list: (dir: string) => readonly string[]): RecordedLambdas {
   const first = firstPart(path, list);
+  // Python names the file by its base name (`Path.name`).
+  const file = first.split(/[\\/]/).pop() ?? first;
   let f: FpFile;
   try {
     f = openH5(h5, first);
@@ -171,7 +216,7 @@ export function recordedLambdas(h5: FpH5, path: string, list: (dir: string) => r
       const perGroup = names.map((name) => {
         const g = sub(onNodes, name);
         const data = g === null ? null : sub(g, "DATA");
-        if (data === null) throw new LambdasRefused(`${first} ${stage}: ON_NODES/${name} has no DATA group; the modal record is incomplete`);
+        if (data === null) throw new LambdasRefused(`${file} ${stage}: ON_NODES/${name} has no DATA group; the modal record is incomplete.`);
         const sets: [number, [number, number][]][] = [];
         for (const stepKey of keyed(data, "STEP_")) {
           const sg = sub(data, stepKey);
@@ -179,10 +224,10 @@ export function recordedLambdas(h5: FpH5, path: string, list: (dir: string) => r
           const modes: [number, number][] = [];
           for (const modeKey of keyed(sg, "MODE_")) {
             const ds = sg.get(modeKey);
-            const where = `${first} ${stage}: ON_NODES/${name}/DATA/${stepKey}/${modeKey}`;
+            const where = `${file} ${stage}: ON_NODES/${name}/DATA/${stepKey}/${modeKey}`;
             if (!isDataset(ds) && !isGroup(ds)) throw new LambdasRefused(`${where} is not a dataset`);
             const lam = (ds as FpDataset).attrs["LAMBDA"];
-            if (lam === undefined) throw new LambdasRefused(`${where} has no LAMBDA attribute; the eigenvalue of this mode is not recorded`);
+            if (lam === undefined) throw new LambdasRefused(`${where} has no LAMBDA attribute; the eigenvalue of this mode is not recorded.`);
             modes.push([Number(modeKey.slice("MODE_".length)) + 1, scalar(lam, `${where}@LAMBDA`)]);
           }
           if (modes.length > 0) sets.push([Number(stepKey.slice("STEP_".length)), modes]);
@@ -192,7 +237,7 @@ export function recordedLambdas(h5: FpH5, path: string, list: (dir: string) => r
       const ref = JSON.stringify(perGroup[0]);
       names.slice(1).forEach((name, k) => {
         if (JSON.stringify(perGroup[k + 1]) !== ref) {
-          throw new LambdasRefused(`${first} ${stage}: ON_NODES/${name} lists different modes or eigenvalues than ON_NODES/${names[0]}; the modal record is inconsistent`);
+          throw new LambdasRefused(`${file} ${stage}: ON_NODES/${name} lists different modes or eigenvalues than ON_NODES/${names[0]}; the modal record is inconsistent.`);
         }
       });
       const host = `stage_${i}`;
