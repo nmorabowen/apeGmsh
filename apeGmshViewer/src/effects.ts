@@ -8,21 +8,23 @@
 // `goToSource` to the bridge; each is feature-detected here, so this module
 // works before and after that PR.
 
+import { CombinationRefused, evaluate, type CombinationTable } from "./combination/evaluate.ts";
 import type { ModelFile } from "./model/types.ts";
 import type { GeometryZone } from "./reader/geometry.ts";
 import type { LadrunoLineStationStep } from "./reader/ladruno.ts";
 import type { ProvenanceZone } from "./reader/provenance.ts";
 import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZONE_FLOOR } from "./reader/read.ts";
+import { spectrumSource, type CaseQuantityName, type CaseRead, type SpectraStaleness, type SpectrumTarget } from "./reader/userSpectra.ts";
 import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
-import { columnOf, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isNodeTopology, joinElements } from "./state/contour.ts";
+import { columnOf, combinedColumn, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isNodeTopology, joinElements, type CombinedColumn } from "./state/contour.ts";
 import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
 import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
-import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, resultsPairing, sourceFor, summarizeDrawnBeams } from "./state/selectors.ts";
+import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
@@ -113,6 +115,38 @@ export interface Bridge {
   /** V2f: ask main to open a dropped file; main answers through `onOpen` */
   requestOpen?(path: string): Promise<unknown>;
   goToSource?(file: string, line: number): Promise<{ ok: boolean; reason?: string }>;
+  /** VU7b-1 (ADR 0130 D5): one result of one `/spectra` case, with its values (main's `user:readCase`); VU7b-2 exposes it in preload.ts. */
+  readUserCase?(req: { path: string; case: string; target: SpectrumTarget; label: string }): Promise<CaseRead>;
+}
+
+/** What `userCombinationColumn` answers: the contour column, or the evaluator's refusal. */
+export type CombinationColumnRead = { ok: true; column: CombinedColumn } | { ok: false; refusal: CombinationRefused };
+
+/**
+ * VU7b-1 (#2740): User Combination `name` of `table` for one nodal quantity of
+ * the `/spectra` cases in the `.user.h5` at `path`, as a contour column. Every
+ * case the combination reaches is read first (`readUserCase`), then VU4's
+ * evaluator combines them (combination/evaluate.ts; no rule is evaluated
+ * here). `staleness` is `/spectra`'s A6 verdict from `user:read`; a stale zone
+ * refuses unless `allowStale`. A refusal answers `ok: false`; a bridge with no
+ * `readUserCase`, or a field that is no nodal contour, throws.
+ */
+export async function userCombinationColumn(
+  bridge: Pick<Bridge, "readUserCase">,
+  req: { path: string; table: CombinationTable; name: string; quantity: CaseQuantityName; staleness: SpectraStaleness; allowStale?: boolean },
+): Promise<CombinationColumnRead> {
+  if (typeof bridge.readUserCase !== "function") throw new Error("this build's bridge has no readUserCase (main's user:readCase)");
+  try {
+    const reads = new Map<string, CaseRead>();
+    for (const name of spectrumCasesOf(req.table, req.name)) {
+      reads.set(name, await bridge.readUserCase({ path: req.path, case: name, target: "nodes", label: req.quantity.label }));
+    }
+    const combined = evaluate(req.table, req.name, spectrumSource(reads, req.quantity, req.staleness, req.allowStale ?? false));
+    return { ok: true, column: combinedColumn(combined) };
+  } catch (err) {
+    if (err instanceof CombinationRefused) return { ok: false, refusal: err };
+    throw err;
+  }
 }
 
 /**

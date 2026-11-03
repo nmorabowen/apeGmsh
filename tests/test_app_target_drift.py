@@ -66,6 +66,7 @@ EXPECTED_HOME: dict[str, str] = {
     COMBINATIONS: "apeGmshViewer/src/reader/read.ts",
     USER_RESULTS: "apeGmshViewer/src/reader/read.ts",
     MODES: "apeGmshViewer/src/reader/read.ts",
+    SPECTRA: "apeGmshViewer/src/reader/read.ts",
 }
 
 #: Python zones the app does not read, each with the reason. A zone here
@@ -74,10 +75,6 @@ NOT_READ_BY_APP: dict[str, str] = {
     ASSEMBLY: (
         "/assembly (ADR 0117 D5) is written only by Assembly.h5 archives; "
         "the app opens model.h5 / results.h5 and has no assembly reader"
-    ),
-    SPECTRA: (
-        "/spectra of <stem>.user.h5 (ADR 0130): the app reads the spectrum "
-        "cases in slice VU7, which adds the target and drops this row"
     ),
     ENTITIES: (
         "/entities of <stem>.user.h5 (ADR 0130): the app reads the cuts, "

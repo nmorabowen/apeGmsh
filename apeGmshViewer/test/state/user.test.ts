@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { candidates } from "../../src/main/pairing.ts";
 import { barClearPx, familiesOf, familyMarks, mountPhase, userBadgeOf } from "../../src/panels/phase.ts";
+import { modalTableOf, mountModalTable } from "../../src/panels/modalTable.ts";
 import { bannerTopBelowScrubber, mountBanner } from "../../src/panels/banner.ts";
 import { userResultsGroup } from "../../src/panels/legend.ts";
 import { readUserSet, type UserH5, type UserRead } from "../../src/reader/userFile.ts";
@@ -28,6 +29,9 @@ import type { ArtifactInfo, Event, ResultsInfo, ResultsStage, State, UserReadIn 
 await h5wasm.ready;
 const H5 = h5wasm as unknown as UserH5;
 const TRUSS = fileURLToPath(new URL("../../../tests/fixtures/ladruno/truss2d.ladruno", import.meta.url));
+const MODES = fileURLToPath(new URL("../../fixtures/ladruno_modes.ladruno", import.meta.url));
+/** fixtures/ladruno_modes.ladruno's LAMBDA of modes 1 and 2 (stage_0, STEP_0), as Python's `recorded_lambdas` reads them. */
+const LAMBDAS = [381.9660112501052, 2618.0339887498953];
 /** truss2d.ladruno's rf1, a cross-language golden (test/reader/rf1.test.ts). */
 const TRUSS_RF1 = "rf1:76a404478cbb9ef919c2d79a676fbe1a0a300712819b344edd9a43e7289cfcc3";
 const FEM = "fedcba9876543210fedcba9876543210";
@@ -112,6 +116,10 @@ interface SetOpts {
   extraZone?: string;
   /** a `/modes` table (h5-schema.md `/modes`) with these lambdas, one row per mode of `stage_0` */
   modes?: number[];
+  /** the results file: the truss (default, no mode) or fixtures/ladruno_modes.ladruno */
+  results?: "truss" | "modes";
+  /** the `/spectra` cases, by name (default: one, `Ex`); [] writes an empty zone */
+  cases?: string[];
 }
 
 /** A `/modes` table over MX, MY (the layout test/reader/userFile.test.ts writes). */
@@ -121,19 +129,48 @@ function modesTable(z: G, lam: number[]): void {
   z.create_attribute("components", "MX,MY");
   str(z, "host", k.map(() => "stage_0"));
   str(z, "kind", k.map(() => "eigen"));
-  i4(z, "step", k.map(() => 1));
+  i4(z, "step", k.map(() => 0));
   i4(z, "mode", k.map((i) => i + 1));
   f8(z, "lambda", lam);
   f8(z, "period", lam.map((x) => (2 * Math.PI) / Math.sqrt(x)));
   f8(z, "generalized_mass", k.map(() => 1));
-  for (const c of ["participation", "mass_ratio", "cumulative_ratio"]) f8(z, c, k.flatMap(() => [0, 0]), [n, 2]);
+  f8(z, "participation", k.flatMap((i) => [1 / (i + 1), 0.1]), [n, 2]);
+  f8(z, "mass_ratio", k.flatMap((i) => [0.6 / (i + 1), 0.05]), [n, 2]);
+  f8(z, "cumulative_ratio", k.flatMap((i) => [0.6 + 0.2 * i, 0.05 * (i + 1)]), [n, 2]);
+}
+
+/** One `/spectra/s<k>` case over modes 1 and 2, a domain base shear (h5-schema.md `/spectra`). */
+function spectrumCase(z: G, link: string, name: string, direction: number): void {
+  const g = z.create_group(link) as G;
+  g.create_attribute("name", name);
+  g.create_attribute("KIND", "static");
+  g.create_attribute("direction", Int32Array.of(direction));
+  g.create_attribute("scale", Float64Array.of(1));
+  const sp = g.create_group("spectrum") as G;
+  f8(sp, "T", [0.1, 0.5, 1, 2]);
+  f8(sp, "Sa", [0.8, 1, 0.6, 0.3]);
+  const m = g.create_group("modes") as G;
+  i4(m, "mode", [1, 2]);
+  str(m, "kind", ["eigen", "eigen"]);
+  f8(m, "lambda", LAMBDAS);
+  f8(m, "sa_period", [0, 0]);
+  f8(m, "gamma", [1, 0.5]);
+  f8(m, "sa", [0.9, 0.9]);
+  f8(m, "damping", [0.05, 0.05]);
+  for (const [root, s] of [[g, 2], [g.create_group("reference") as G, 1]] as const) {
+    const h = ((root.create_group("RESULTS") as G).create_group("ON_DOMAIN") as G).create_group("base_shear") as G;
+    f8(h, "DATA", Array.from({ length: s }, (_, k) => 100 - k), [s, 1, 1]);
+    i4(h, "STEP", Array.from({ length: s }, (_, k) => k));
+    f8(h, "TIME", Array.from({ length: s }, (_, k) => k));
+    h.create_attribute("COMPONENTS", "Vx");
+  }
 }
 
 /** A set: `run.h5` (lineage only, with one `/opensees/combinations` row), a copy of truss2d.ladruno, and `run.user.h5`. */
 function writeSet(o: SetOpts = {}): { user: string; model: string; results: string } {
   const d = mkdtempSync(join(tmpdir(), "agv-vu3b-"));
   const results = join(d, "run.ladruno");
-  copyFileSync(TRUSS, results);
+  copyFileSync(o.results === "modes" ? MODES : TRUSS, results);
   const model = join(d, "run.h5");
   const m = new h5wasm.File(model, "w");
   try {
@@ -162,7 +199,8 @@ function writeSet(o: SetOpts = {}): { user: string; model: string; results: stri
     const r = f.create_group("results") as G;
     entry(r, "r0", "Delta_after (L/480)", "nodes", "model", [["stage", "gravity", -1, 0], ["combination", "1.2D+1.6L", -1, 0]]);
     entry(r, "r1", "base shear", "domain", "results", null);
-    f.create_group("spectra"); // listed by name only (VU7)
+    const spectra = f.create_group("spectra") as G;
+    (o.cases ?? ["Ex"]).forEach((name, k) => spectrumCase(spectra, `s${k}`, name, k + 1));
     if (o.extraZone) f.create_group(o.extraZone);
     if (o.modes) modesTable(f.create_group("modes") as G, o.modes);
   } finally {
@@ -240,7 +278,12 @@ test("a current user file: the combinations of both files, the user results, /sp
     ["Delta_after (L/480)", "nodes", "model", true, false],
     ["base shear", "domain", "results", false, false],
   ]);
-  assert.deepEqual(info.spectra, { stale: { stale: false, reason: "" } });
+  assert.deepEqual(info.spectra, {
+    ok: true,
+    items: [{ name: "Ex", direction: 1, scale: 1, modes: [1, 2], damping: 0.05, results: ["domain/base_shear"] }],
+    refused: [],
+    stale: { stale: false, reason: "" },
+  });
   assert.equal(info.modes, null, "no /modes zone");
 });
 
@@ -277,8 +320,9 @@ const IDX: UserReadIn & { ok: true } = {
     combinations: { ok: true, value: { rows: [], modelRows: [], refused: [] } },
     results: { ok: true, value: { entries: [{ name: "constructor", target: "nodes", basis: "model", perState: false, linear: true }], refused: [] } },
     modes: null,
+    spectra: null,
   },
-  staleness: { zones: {}, results: {}, combinations: [] },
+  staleness: { zones: {}, results: {}, combinations: [], modes: [] },
 };
 
 test("userInfoOf fails closed: an unknown target refuses the answer; a missing verdict is stale, `constructor` included", () => {
@@ -340,17 +384,21 @@ test("the phase bar lists Stages, Modes, Spectra and User Combinations, each wit
   assert.deepEqual(f.map((x) => [x.key, x.stages, x.count, x.stale, x.refused, x.drawable]), [
     ["stages", [0, 1], 2, 0, 0, true],
     ["modes", [2, 3], 2, 0, 0, true],
-    ["spectra", [], null, 1, 0, false],
+    ["spectra", [], 1, 1, 0, false],
     ["combinations", [], 4, 2, 2, false],
   ]);
   assert.deepEqual(f.map((x) => familyMarks(x)), [
     { count: " 2", stale: "", refused: "" },
     { count: " 2", stale: "", refused: "" },
-    { count: "", stale: " · stale", refused: "" },
+    { count: " 1", stale: " · stale", refused: "" },
     { count: " 4", stale: " · 2 stale", refused: " · 2 refused" },
   ]);
   assert.match(f[0]!.title, /^Stages of run\.ladruno: gravity, stage_1 \(unnamed\)$/);
   assert.match(f[2]!.title, /\/spectra is stale: /);
+  assert.deepEqual(f[2]!.title.split("\n").slice(0, 2), [
+    "Spectra, listed; this app does not combine or draw a case yet:",
+    "Ex: direction 1, scale 1, 2 modes, damping 0.05; domain/base_shear",
+  ]);
   const combos = f[3]!.title.split("\n");
   assert.equal(combos[0], "User Combinations, listed; this app does not evaluate them yet:");
   assert.ok(combos.includes("E: cqc, 1 term (stale: a source of it is stale)"));
@@ -372,19 +420,56 @@ test("a stage that records no step is listed and never opened (San Ramon's MODEL
   assert.equal(f[0]!.title, "Stages of run.ladruno: MODEL_STAGE[1]\nMODEL_STAGE[1] records no step");
 });
 
-test("a current /modes table is never shown as current: its rows are not judged against the .ladruno (#2737 review, F2)", () => {
-  // Lambdas 1.5x a run's: Python's staleness() stales every row (A6: more than 1e-9 relative), with the zone current.
-  // The reviewer's modes.py does the same on San Ramon; this app judges the zone only, until VU7 judges rows.
-  const s = withResults(readInto(initialState, writeSet({ modes: [4, 9].map((x) => x * 1.5) })));
-  const info = ready(s);
-  assert.deepEqual(info.modes, { ok: true, rows: 2, stale: { stale: false, reason: "" } }, "the zone itself is current");
-  const m = familiesOf(s).find((f) => f.key === "modes")!;
-  assert.deepEqual([m.stale, m.refused, m.unjudged], [0, 0, true]);
-  assert.deepEqual(familyMarks(m), { count: " 2", stale: " · rows not judged", refused: "" });
-  assert.match(m.title, /its rows are not judged against the eigenvalues of run\.ladruno yet, so the table is not shown as current/);
+test("each /modes row carries A6's verdict against the .ladruno; the Modes button counts the stale rows (replaces #2737's 'rows not judged')", () => {
+  // Lambdas equal to the run's: every row current.
+  const cur = withResults(readInto(initialState, writeSet({ modes: LAMBDAS, results: "modes" })));
+  const info = ready(cur);
+  assert.ok(info.modes?.ok);
+  assert.deepEqual(info.modes.rows.map((r) => [r.mode, r.verdict]), [[1, { stale: false, reason: "" }], [2, { stale: false, reason: "" }]]);
+  const m = familiesOf(cur).find((f) => f.key === "modes")!;
+  assert.deepEqual([m.stale, m.staleAll, m.refused, familyMarks(m).stale], [0, false, 0, ""]);
+  assert.match(m.title, /the modal table of run\.user\.h5: 2 rows, every row current/);
+  // One lambda moved past 1e-9 relative: that row alone is stale, and the button counts it.
+  const one = withResults(readInto(initialState, writeSet({ modes: [LAMBDAS[0]!, LAMBDAS[1]! * 1.5], results: "modes" })));
+  const f1 = familiesOf(one).find((f) => f.key === "modes")!;
+  assert.deepEqual([f1.stale, f1.staleAll, familyMarks(f1).stale], [1, false, " · 1 stale"]);
+  assert.match(f1.title, /mode 2 of stage_0 is stale: lambda 3927\.05\d* here, 2618\.0339887498953 in the results file/);
+  // Lambdas 1.5x a run's (#2737 review, F2): Python's staleness() stales every row, with the zone current.
+  const all = withResults(readInto(initialState, writeSet({ modes: LAMBDAS.map((x) => x * 1.5), results: "modes" })));
+  assert.deepEqual(ready(all).modes?.stale, { stale: false, reason: "" }, "the zone itself is current");
+  const fa = familiesOf(all).find((f) => f.key === "modes")!;
+  assert.deepEqual([fa.stale, fa.staleAll, familyMarks(fa).stale], [2, true, " · stale"]);
+  // The truss records no mode: no row can be proven current.
+  const truss = ready(readInto(initialState, writeSet({ modes: LAMBDAS })));
+  assert.ok(truss.modes?.ok);
+  assert.deepEqual(truss.modes.rows.map((r) => r.verdict.reason), ["the results file records no modes on stage_0", "the results file records no modes on stage_0"]);
   // No /modes zone: nothing to judge, and the family reads plainly.
   const plain = familiesOf(withResults(readInto(initialState, writeSet()))).find((f) => f.key === "modes")!;
-  assert.deepEqual([plain.unjudged, familyMarks(plain).stale], [false, ""]);
+  assert.deepEqual([plain.stale, familyMarks(plain).stale], [0, ""]);
+});
+
+test("userInfoOf fails closed on the row verdicts: a count that disagrees with the table is no verdict for any row", () => {
+  const set = writeSet({ modes: LAMBDAS, results: "modes" });
+  const read = readUserSet(H5, set.user, set.model, set.results, list);
+  assert.ok(read.ok);
+  const short = userInfoOf(read.user, { ...read.staleness, modes: read.staleness.modes.slice(0, 1) });
+  assert.ok(short.modes?.ok);
+  assert.deepEqual(short.modes.rows.map((r) => r.verdict), [0, 1].map(() => ({ stale: true, reason: "the reader gave no staleness verdict for it" })));
+  // A spectrum target this app does not know refuses the answer.
+  assert.ok(read.user.spectra?.ok);
+  const odd = { ...read.user, spectra: { ok: true as const, value: { ...read.user.spectra.value, cases: [{ ...read.user.spectra.value.cases[0]!, results: [{ label: "x", target: "elements" }] }] } } };
+  assert.throws(() => userInfoOf(odd, read.staleness), (e: unknown) => e instanceof RangeError && /the target of Ex x "elements"/.test((e as Error).message));
+});
+
+test("the Spectra family lists its cases, a refused case, and a refused zone", () => {
+  const two = familiesOf(readInto(initialState, writeSet({ cases: ["Ex", "Ey"] }))).find((f) => f.key === "spectra")!;
+  assert.deepEqual([two.count, two.stale, two.refused, two.drawable, familyMarks(two)], [2, 0, 0, false, { count: " 2", stale: "", refused: "" }]);
+  assert.ok(two.title.split("\n").includes("Ey: direction 2, scale 1, 2 modes, damping 0.05; domain/base_shear"));
+  const dup = familiesOf(readInto(initialState, writeSet({ cases: ["Ex", "Ex", "Ey"] }))).find((f) => f.key === "spectra")!;
+  assert.deepEqual([dup.count, dup.refused, familyMarks(dup).refused], [1, 2, " · 2 refused"]);
+  assert.ok(dup.title.split("\n").includes("Ex: refused, duplicate: 2 cases are named 'Ex'"));
+  const empty = familiesOf(readInto(initialState, writeSet({ cases: [] }))).find((f) => f.key === "spectra")!;
+  assert.deepEqual([empty.count, familyMarks(empty).count], [0, " 0"]);
 });
 
 test("a refused /combinations zone, and a stale or refused modal table, show on their families", () => {
@@ -396,11 +481,16 @@ test("a refused /combinations zone, and a stale or refused modal table, show on 
   const refused = familiesOf(user({ combinations: { ok: false, reason: "refused: /combinations@current names no generation" } }));
   assert.deepEqual(refused.map((x) => [x.key, x.count, x.refused]).at(-1), ["combinations", 0, 1]);
   assert.deepEqual(familyMarks(refused.at(-1)!), { count: " 0", stale: "", refused: " · refused" });
-  const stale = familiesOf(user({ modes: { ok: true, rows: 2, stale: { stale: true, reason: "the model hashes differ" } } }))[1]!;
-  assert.deepEqual([stale.key, stale.stale, stale.refused, familyMarks(stale).stale], ["modes", 1, 0, " · stale"]);
+  const zoneStale = { stale: true, reason: "the model hashes differ" };
+  const row = (mode: number) => ({ host: "stage_0", kind: "eigen", step: 0, mode, lambda: 4, period: 1, generalizedMass: 1, participation: [1], massRatio: [0.5], cumulativeRatio: [0.5], verdict: zoneStale });
+  const stale = familiesOf(user({ modes: { ok: true, components: ["MX"], rows: [row(1), row(2)], stale: zoneStale } }))[1]!;
+  assert.deepEqual([stale.key, stale.stale, stale.staleAll, stale.refused, familyMarks(stale).stale], ["modes", 2, true, 0, " · stale"]);
   assert.match(stale.title, /the modal table of run\.user\.h5 is stale: the model hashes differ/);
   const bad = familiesOf(user({ modes: { ok: false, reason: "refused: /modes has no lambda", stale: { stale: true, reason: "the zone is refused" } } }))[1]!;
-  assert.deepEqual([bad.stale, bad.refused, familyMarks(bad).refused], [1, 1, " · refused"]);
+  assert.deepEqual([bad.refused, familyMarks(bad).refused, familyMarks(bad).stale], [1, " · refused", ""]);
+  assert.match(bad.title, /the modal table of run\.user\.h5 is refused: refused: \/modes has no lambda/);
+  const spectra = familiesOf(user({ spectra: { ok: false, reason: "refused: /spectra: spectra_schema_version 2.0.0: this app reads major 1 only", stale: { stale: false, reason: "" } } })).at(-1)!;
+  assert.deepEqual([spectra.key, spectra.count, spectra.refused, familyMarks(spectra).refused], ["spectra", 0, 1, " · refused"]);
 });
 
 test("the contour picker's User Results group: each entry, what it is, and what is stale", () => {
@@ -471,6 +561,17 @@ class FakeEl {
   set textContent(v: string) {
     this.children = [v];
   }
+  prepend(...xs: (FakeEl | string)[]) {
+    this.children.unshift(...xs);
+  }
+  /** The rail holds no #offers in these tests. */
+  querySelector(): null {
+    return null;
+  }
+  removed = false;
+  remove() {
+    this.removed = true;
+  }
   all(pred: (e: FakeEl) => boolean): FakeEl[] {
     const out: FakeEl[] = pred(this) ? [this] : [];
     for (const c of this.children) if (typeof c !== "string") out.push(...c.all(pred));
@@ -513,7 +614,7 @@ test("mounted, the bar shows each family as a button; the user families are disa
     assert.deepEqual(families().map((b) => [b.textContent, b.disabled]), [
       ["Stages 2", false],
       ["Modes 2", false],
-      ["Spectra · stale", true],
+      ["Spectra 1 · stale", true],
       ["User Combinations 4 · 2 stale · 2 refused", true],
     ]);
     // With results on the axis the bar sits on the scrubber row, so its height is published already.
@@ -641,5 +742,157 @@ test("F1: #windows and #left-rail sit below a wrapped bar, and where they were u
   for (const h of [77, 116]) {
     assert.equal(cssTop("#windows", h), 58 + h + 6);
     assert.equal(cssTop("#left-rail", h), 58 + h + 6);
+  }
+});
+
+// ---- the modal table panel (VU7a) ---------------------------------------------
+
+/** A run of the modal fixture's two modes, shown at mode `shown` (1-based), or at the mesh (null). */
+function atMode(s: State, shown: number | null): State {
+  const mode = (k: number): ResultsStage => ({ ...stage(`stage_0_mode_${k}`, `mode_${k}`, "mode"), time: [0], mode: { index: k, eigenvalue: LAMBDAS[k - 1]!, frequencyHz: 0, periodS: 0 } });
+  const results: ResultsInfo = { path: "C:/w/run.ladruno", version: "1.0.0", sourceType: "ladruno", lineage: null, partial: null, stages: [mode(1), mode(2)], unavailableZones: [], openseesVersion: null, programDecl: null };
+  const axis = [{ kind: "mesh" as const }, ...results.stages.map((_, i) => ({ kind: "results" as const, stage: i, step: 0 }))];
+  return { ...s, results, phase: { axis, at: shown === null ? { kind: "mesh" } : { kind: "results", stage: shown - 1, step: 0 } } };
+}
+
+test("the modal table: shown beside a mode, each row with its period, ratios and A6 verdict; the shown mode is marked", () => {
+  const cur = readInto(initialState, writeSet({ modes: [LAMBDAS[0]!, LAMBDAS[1]! * 1.5], results: "modes" }));
+  assert.equal(modalTableOf(atMode(cur, null)), null, "not beside the mesh");
+  assert.equal(modalTableOf(atMode(initialState, 1)), null, "no user file");
+  const v = modalTableOf(atMode(cur, 1))!;
+  assert.deepEqual([v.file, v.components, v.status, v.note, v.bad, v.missing], ["run.user.h5", ["MX", "MY"], "2 rows · 1 stale", null, false, null]);
+  // T = 2 pi / sqrt(lambda); the ratios are fractions, drawn in percent.
+  assert.deepEqual(v.lines.map((l) => [l.mode, l.period, l.ratios, l.cumulative, l.verdict, l.shown]), [
+    [1, "0.3215", ["60.0", "5.0"], ["60.0", "5.0"], "current", true],
+    [2, "0.1003", ["30.0", "5.0"], ["80.0", "10.0"], "stale", false],
+  ]);
+  // Mode 2's row holds another lambda than the stage shown: it is not that mode's row, so none is marked (#2744 review, F1).
+  const two = modalTableOf(atMode(cur, 2))!;
+  assert.deepEqual([two.lines.map((l) => l.shown), two.missing], [[false, false], 2]);
+  assert.match(v.lines[1]!.title, /^mode 2 \(eigen\) of stage_0, STEP_0\nlambda 3927, period 0\.1003 s, generalised mass 1\nparticipation factor: MX 0\.5, MY 0\.1\nstale: lambda 3927\.05\d* here, 2618\.0339887498953 in the results file/);
+  // A mode beyond the table is shown without its row, not refused (D6).
+  const short = modalTableOf(atMode(readInto(initialState, writeSet({ modes: [LAMBDAS[0]!], results: "modes" })), 2))!;
+  assert.deepEqual([short.missing, short.status, short.lines.map((l) => l.shown)], [2, "1 row · current", [false]]);
+});
+
+test("the modal table says a stale or refused zone, whole", () => {
+  const remodel = modalTableOf(atMode(readInto(initialState, writeSet({ modes: LAMBDAS, results: "modes", modelHash: "ffffffffffffffffffffffffffffffff" })), 1))!;
+  assert.deepEqual([remodel.status, remodel.bad], ["2 rows · stale", true]);
+  assert.match(remodel.note!, /^the modal table of run\.user\.h5 is stale: model_hash differs/);
+  const base = atMode(initialState, 1);
+  const refused = modalTableOf({ ...base, user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: { ok: false, reason: "refused: /modes: it has no period column", stale: { stale: true, reason: "x" } } } } })!;
+  assert.deepEqual([refused.status, refused.lines, refused.bad, refused.note], ["refused", [], true, "the modal table of run.user.h5 is refused: refused: /modes: it has no period column"]);
+});
+
+test("mounted, the modal table shows while a mode is shown, one row per mode, and leaves the rail when unmounted", () => {
+  const prevDoc = (globalThis as { document?: unknown }).document;
+  const rail = new FakeEl("div");
+  (globalThis as { document?: unknown }).document = {
+    createElement: (t: string) => new FakeEl(t),
+    getElementById: (id: string) => (id === "rail" ? rail : null),
+  };
+  let state = atMode(readInto(initialState, writeSet({ modes: [LAMBDAS[0]!, LAMBDAS[1]! * 1.5], results: "modes" })), null);
+  const listeners: ((s: State, prev: State) => void)[] = [];
+  const store = {
+    get: () => state,
+    dispatch: () => {
+      throw new Error("the modal table dispatches nothing");
+    },
+    subscribe: (l: (s: State, prev: State) => void) => {
+      listeners.push(l);
+      return () => listeners.splice(listeners.indexOf(l), 1);
+    },
+  } as unknown as Store;
+  const set = (next: State) => {
+    const prev = state;
+    state = next;
+    for (const l of listeners) l(state, prev);
+  };
+  const off = mountModalTable(store);
+  try {
+    const panel = rail.children[0] as FakeEl & { id?: string };
+    assert.equal(panel.id, "modal-table");
+    assert.equal(panel.hidden, true, "hidden beside the mesh");
+    set(atMode(state, 1));
+    assert.equal(panel.hidden, false);
+    const rows = panel.all((e) => e.tagName === "TR" && e.dataset["mode"] !== undefined);
+    assert.deepEqual(rows.map((r) => r.children.map((c) => (c as FakeEl).textContent)), [
+      ["1", "0.3215", "60.0", "5.0", "60.0", "5.0", "current"],
+      ["2", "0.1003", "30.0", "5.0", "80.0", "10.0", "stale"],
+    ]);
+    assert.deepEqual(rows.map((r) => r.className), ["modal-row shown", "modal-row"]);
+    assert.equal(panel.all((e) => e.className === "modal-status")[0]!.textContent, "2 rows · 1 stale");
+    set(atMode(state, null));
+    assert.equal(panel.hidden, true);
+  } finally {
+    off();
+    (globalThis as { document?: unknown }).document = prevDoc;
+  }
+  assert.equal((rail.children[0] as FakeEl).removed, true);
+});
+
+// ---- which row is the mode shown (#2744 review, F1 and F4) ---------------------
+
+const modeRow = (host: string, step: number, mode: number, lambda: number) => ({
+  host, kind: "eigen", step, mode, lambda, period: (2 * Math.PI) / Math.sqrt(lambda), generalizedMass: 1,
+  participation: [1], massRatio: [0.5], cumulativeRatio: [0.5], verdict: { stale: false, reason: "" },
+});
+const withTable = (s: State, rows: ReturnType<typeof modeRow>[]): State => ({
+  ...s,
+  user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: { ok: true, components: ["MX"], rows, stale: { stale: false, reason: "" } } } },
+});
+/** `atMode`, with the shown stage's LAMBDA replaced: another modal set's mode of the same number. */
+const atOtherSet = (s: State, k: number, eigenvalue: number): State => {
+  const t = atMode(s, k);
+  const stages = t.results!.stages.map((x, i) => (i === k - 1 ? { ...x, mode: { ...x.mode!, eigenvalue } } : x));
+  return { ...t, results: { ...t.results!, stages } };
+};
+
+test("a row is the mode shown only when its lambda is the shown stage's LAMBDA: another set's mode 1 marks no row", () => {
+  // The table holds stage_0's modes; the viewport shows stage_2's mode 1 (lambda 9999). The review's repro.
+  const s = withTable(initialState, [modeRow("stage_0", 0, 1, LAMBDAS[0]!), modeRow("stage_0", 0, 2, LAMBDAS[1]!)]);
+  const other = modalTableOf(atOtherSet(s, 1, 9999))!;
+  assert.deepEqual([other.lines.map((l) => l.shown), other.missing], [[false, false], 1]);
+  // Inside 1e-9 relative it is that row; past it, it is not.
+  assert.deepEqual(modalTableOf(atOtherSet(s, 1, LAMBDAS[0]! * (1 + 5e-10)))!.lines.map((l) => l.shown), [true, false]);
+  assert.deepEqual(modalTableOf(atOtherSet(s, 1, LAMBDAS[0]! * (1 + 2e-9)))!.lines.map((l) => l.shown), [false, false]);
+});
+
+test("two rows that are both the mode shown (two sets, one lambda) mark neither; the mode is not reported missing", () => {
+  const s = withTable(initialState, [modeRow("stage_0", 0, 1, LAMBDAS[0]!), modeRow("stage_1", 0, 1, LAMBDAS[0]!), modeRow("stage_0", 0, 2, LAMBDAS[1]!)]);
+  const v = modalTableOf(atMode(s, 1))!;
+  assert.deepEqual([v.lines.map((l) => l.shown), v.missing], [[false, false, false], null]);
+});
+
+test("mounted, the modal table redraws when the user file or the results change under the same phase", () => {
+  const prevDoc = (globalThis as { document?: unknown }).document;
+  const rail = new FakeEl("div");
+  (globalThis as { document?: unknown }).document = { createElement: (t: string) => new FakeEl(t), getElementById: (id: string) => (id === "rail" ? rail : null) };
+  let state = atMode(withTable(initialState, [modeRow("stage_0", 0, 1, LAMBDAS[0]!), modeRow("stage_0", 0, 2, LAMBDAS[1]!)]), 1);
+  const listeners: ((s: State, prev: State) => void)[] = [];
+  const store = { get: () => state, dispatch: () => undefined, subscribe: (l: (s: State, prev: State) => void) => (listeners.push(l), () => undefined) } as unknown as Store;
+  const set = (next: State) => {
+    const prev = state;
+    state = next;
+    for (const l of listeners) l(state, prev);
+  };
+  const off = mountModalTable(store);
+  try {
+    const panel = rail.children[0] as FakeEl;
+    const shown = () => panel.all((e) => e.tagName === "TR" && e.dataset["mode"] !== undefined).map((r) => r.className);
+    const status = () => panel.all((e) => e.className === "modal-status")[0]!.textContent;
+    assert.deepEqual([shown(), status()], [["modal-row shown", "modal-row"], "2 rows · current"]);
+    // A re-read of the user file, the phase object untouched: row 2 is now stale.
+    const phase = state.phase;
+    const reread = withTable(state, [modeRow("stage_0", 0, 1, LAMBDAS[0]!), { ...modeRow("stage_0", 0, 2, LAMBDAS[1]!), verdict: { stale: true, reason: "x" } }]);
+    set({ ...reread, phase });
+    assert.equal(status(), "2 rows · 1 stale");
+    // Another results file, the phase and the user file untouched: its mode 1 is another set's, so no row is marked.
+    const other = atOtherSet(state, 1, 9999);
+    set({ ...other, phase: state.phase, user: state.user });
+    assert.deepEqual(shown(), ["modal-row", "modal-row"]);
+  } finally {
+    off();
+    (globalThis as { document?: unknown }).document = prevDoc;
   }
 });

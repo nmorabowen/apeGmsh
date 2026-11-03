@@ -470,11 +470,15 @@ function oneOf<T extends string>(v: string, allowed: readonly T[], who: string):
 
 const refusalsOf = (rows: readonly UserRefusalIn[]): UserRefusal[] => rows.map((r) => ({ name: r.name, reason: r.reason, detail: r.detail }));
 
+/** The targets a 1.0.0 spectrum case holds (h5-schema.md `/spectra`: ON_NODES and ON_DOMAIN only). */
+const SPECTRUM_TARGETS = ["nodes", "domain"] as const;
+
 /**
  * ADR 0130: the renderer's view of a `.user.h5` (`user:read`'s index and A6
  * staleness): the User Combinations and Spectra families of the phase bar, the
- * User Results picker group, and `/modes` as a zone. A target or basis this app
- * does not know raises, so the caller refuses the answer, never shows it.
+ * User Results picker group, and the modal table with each row's verdict. A
+ * target or basis this app does not know raises, so the caller refuses the
+ * answer, never shows it.
  */
 export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): UserInfo {
   // Own keys only: a user result may be named `constructor`.
@@ -509,8 +513,31 @@ export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): User
     };
   }
   const m = index.modes;
-  const modes: UserInfo["modes"] = m === null ? null : m.ok ? { ok: true, rows: m.value.rows, stale: zoneMark("modes") } : { ok: false, reason: m.reason, stale: zoneMark("modes") };
-  const spectra = index.zones.includes("spectra") ? { stale: zoneMark("spectra") } : null;
+  let modes: UserInfo["modes"] = null;
+  if (m !== null && !m.ok) modes = { ok: false, reason: m.reason, stale: zoneMark("modes") };
+  else if (m !== null) {
+    // One verdict per row, in table order; a count that disagrees is no verdict at all.
+    const verdicts = staleness.modes.length === m.value.rows.length ? staleness.modes : null;
+    modes = { ok: true, components: [...m.value.components], rows: m.value.rows.map((r, i) => ({ ...r, verdict: verdicts?.[i] ?? NO_VERDICT })), stale: zoneMark("modes") };
+  }
+  const sp = index.spectra;
+  let spectra: UserInfo["spectra"] = null;
+  if (sp !== null && !sp.ok) spectra = { ok: false, reason: sp.reason, stale: zoneMark("spectra") };
+  else if (sp !== null) {
+    const items = sp.value.cases.map((c) => {
+      const d = c.modes.map((x) => x.damping);
+      const same = d.length > 0 && d.every((x) => Object.is(x, d[0]));
+      return {
+        name: c.name,
+        direction: c.direction,
+        scale: c.scale,
+        modes: c.modes.map((x) => x.mode),
+        damping: same ? d[0]! : null,
+        results: c.results.map((q) => `${oneOf(q.target, SPECTRUM_TARGETS, `the target of ${c.name} ${q.label}`)}/${q.label}`),
+      };
+    });
+    spectra = { ok: true, items, refused: refusalsOf(sp.value.refused), stale: zoneMark("spectra") };
+  }
   return { warnings, combinations, results, spectra, modes };
 }
 

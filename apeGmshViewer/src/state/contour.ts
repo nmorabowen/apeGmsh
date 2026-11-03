@@ -20,6 +20,7 @@
 //   element connectivity, `MeshInfo.vertexNodes`), never a node found by
 //   position: coincident nodes (interfaces, ties) keep their own values.
 
+import type { Combined } from "../combination/evaluate.ts";
 import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
 import type { NodeTopology } from "./extrapolation.ts";
 import { CMAP_NAMES, type ContourCmap, type ContourRange, type ContourScan, type ContourSource, type ContourState, type DeclPath, type Decl, type GaussGroup, type GaussMode, type ResultsStage, type State } from "./types.ts";
@@ -571,6 +572,44 @@ export function vertexValues(vertexNodes: Float64Array, column: ReadonlyMap<numb
     out[i] = Number.isFinite(v) ? v : NaN;
   }
   return out;
+}
+
+/** A combination's nodal value as a contour column (`combinedColumn`). */
+export interface CombinedColumn {
+  /** the combination */
+  name: string;
+  /** the field's one label (`DISPLACEMENT/Ux`) */
+  label: string;
+  /** node ids, in the field's row order: `columnOf(ids)` joins them to the vertices */
+  ids: Float64Array;
+  /** one value per id; NaN is "not defined here" (drawn as no data) */
+  values: Float64Array;
+  /** the finite min and max, null when no value is finite */
+  range: { min: number; max: number } | null;
+  /** whether it may draw as a deformed shape: an unsigned value is a contour only (ADR 0130 D4, A3) */
+  signed: boolean;
+}
+
+/**
+ * VU7b-1 (#2740): a combination's value for one nodal quantity
+ * (combination/evaluate.ts `Combined`) as the column a nodal contour colours
+ * by; `vertexValues(vertexNodes, columnOf(ids), [values], false)` then gives
+ * each vertex. A combination is evaluated per component (ADR 0130 D4), so its
+ * field holds one label and has no magnitude. A field keyed by anything but a
+ * node id, or with another number of labels, is not a nodal contour: it throws.
+ */
+export function combinedColumn(c: Combined): CombinedColumn {
+  const f = c.field;
+  if (f.keyNames.length !== 1 || f.keyNames[0] !== "id") throw new RangeError(`${JSON.stringify(c.name)} is keyed by (${f.keyNames.join(", ")}), not by node id: it is not a nodal contour`);
+  if (f.components.length !== 1) throw new RangeError(`${JSON.stringify(c.name)} holds ${f.components.length} labels; a nodal contour colours by one`);
+  const ids = new Float64Array(f.keys.length);
+  f.keys.forEach((k, i) => {
+    const id = k[0];
+    if (typeof id !== "number") throw new RangeError(`${JSON.stringify(c.name)} has a node id that is not a number: ${JSON.stringify(id)}`);
+    ids[i] = id;
+  });
+  const values = Float64Array.from(f.values);
+  return { name: c.name, label: f.components[0]!, ids, values, range: finiteRange([values], false), signed: c.signed };
 }
 
 /**

@@ -12,6 +12,7 @@ import { mountLegend } from "../panels/legend.ts";
 import { mountLineDiagram } from "../panels/lineDiagram.ts";
 import { mountLoads } from "../panels/loads.ts";
 import { mountReactions } from "../panels/reactions.ts";
+import { mountModalTable } from "../panels/modalTable.ts";
 import { mountOfferBadge, mountOffers } from "../panels/offers.ts";
 import { mountPhase } from "../panels/phase.ts";
 import { mountPlanes } from "../panels/planes.ts";
@@ -55,6 +56,8 @@ viewport.setStationsSource(() => effects.stationsOfStep());
 const panels = [
   // VA5 (ADR 0128 D5): first, so its box opens the right rail above the inspector.
   mountOffers(store),
+  // ADR 0130 D6 (VU7a): the .user.h5 modal table, below the offers, while a mode is shown.
+  mountModalTable(store),
   mountHeader(store),
   mountBanner(store),
   mountLineDiagram(store, (fn) => viewport.onViewChange(fn)),
@@ -93,7 +96,7 @@ panels.push(
   }),
 );
 const chrome = mountCollapsibleChrome({
-  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram", "loads", "reactions", "offers"],
+  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram", "loads", "reactions", "offers", "modal-table"],
   visible: () => {
     const s = store.get();
     return s.mesh !== null || s.provenance.length > 0;

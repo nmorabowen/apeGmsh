@@ -426,7 +426,32 @@ export interface UserIndexIn {
   warnings: string[];
   combinations: UserZoneIn<{ rows: UserCombinationIn[]; modelRows: UserCombinationIn[]; refused: UserRefusalIn[] }>;
   results: UserZoneIn<{ entries: UserResultEntryIn[]; refused: UserRefusalIn[] }>;
-  modes: UserZoneIn<{ rows: number; components: string[] }> | null;
+  modes: UserZoneIn<UserModeTableIn> | null;
+  spectra: UserZoneIn<{ cases: UserSpectrumCaseIn[]; refused: UserRefusalIn[] }> | null;
+}
+/** reader/userModes.ts `ModeTable`. */
+export interface UserModeTableIn {
+  components: string[];
+  rows: {
+    host: string;
+    kind: string;
+    step: number;
+    mode: number;
+    lambda: number;
+    period: number;
+    generalizedMass: number;
+    participation: number[];
+    massRatio: number[];
+    cumulativeRatio: number[];
+  }[];
+}
+/** reader/userSpectra.ts `SpectrumCase`, the part the renderer lists. */
+export interface UserSpectrumCaseIn {
+  name: string;
+  direction: number;
+  scale: number;
+  modes: { mode: number; damping: number }[];
+  results: { label: string; target: string }[];
 }
 export interface StaleMark {
   stale: boolean;
@@ -437,6 +462,8 @@ export interface UserStalenessIn {
   zones: Record<string, StaleMark>;
   results: Record<string, StaleMark>;
   combinations: string[];
+  /** A6's verdict on each `/modes` row, in table order */
+  modes: StaleMark[];
 }
 
 /** The `.user.h5` zones the app knows by name (h5-schema.md "`<stem>.user.h5`"); any other root member is named in a warning. */
@@ -462,6 +489,37 @@ export interface UserResult {
   linear: boolean;
   stale: StaleMark;
 }
+/** One `/modes` row (D6) and its A6 verdict against the paired `.ladruno`. */
+export interface UserModeRow {
+  host: string;
+  kind: string;
+  step: number;
+  /** 1-based */
+  mode: number;
+  lambda: number;
+  period: number;
+  /** NaN where every participation factor is zero */
+  generalizedMass: number;
+  /** one value per component of the table, in its order; the ratios are fractions */
+  participation: number[];
+  massRatio: number[];
+  cumulativeRatio: number[];
+  /** stale when its lambda differs from the recorded one, or cannot be matched to it */
+  verdict: StaleMark;
+}
+/** One `/spectra` case (D5), listed: no rule is evaluated over it here (VU7b). */
+export interface UserSpectrumCase {
+  name: string;
+  /** 1-based */
+  direction: number;
+  scale: number;
+  /** the case's modes, 1-based */
+  modes: number[];
+  /** the case's damping when every mode gives the same one, else null (NaN for none) */
+  damping: number | null;
+  /** its results, `target/label` */
+  results: string[];
+}
 /** A row the reader refused (A3), with its reason. */
 export interface UserRefusal {
   name: string;
@@ -479,10 +537,10 @@ export interface UserInfo {
   combinations: UserGroup<UserCombination> | null;
   /** the User Results picker group; null when the file has no `/results` entry */
   results: UserGroup<UserResult> | null;
-  /** the Spectra family: `/spectra` is listed by name and not read (VU7); null when the file has none */
-  spectra: { stale: StaleMark } | null;
-  /** `/modes`, the modal table, checked as a zone (VU7 shows it); null when the file has none */
-  modes: { ok: true; rows: number; stale: StaleMark } | { ok: false; reason: string; stale: StaleMark } | null;
+  /** the Spectra family: its cases and each refused one, or why the zone is refused; null when the file has none */
+  spectra: { ok: true; items: UserSpectrumCase[]; refused: UserRefusal[]; stale: StaleMark } | { ok: false; reason: string; stale: StaleMark } | null;
+  /** `/modes`, the modal table, each row with its verdict; null when the file has none */
+  modes: { ok: true; components: string[]; rows: UserModeRow[]; stale: StaleMark } | { ok: false; reason: string; stale: StaleMark } | null;
 }
 
 /** ADR 0130: the set's `.user.h5`. Read on request, after the model's first frame (renderer/app.ts). */
