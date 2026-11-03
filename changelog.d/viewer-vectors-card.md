@@ -10,5 +10,5 @@ offered, because it may hold a pore pressure. The card draws the resultant, the 
 components, or one axis. It colours the glyphs in one colour, by type (translation or
 rotation), or in jet by magnitude. Head size, scale and thin-out work as on the Reactions
 card. Vectors below 1e-6 of the step's largest are left out as noise, and thinning is
-decided per node. The arrow record gains an `anchor` field: a vector's tail sits on its
-node, while a load's or a reaction's tip still does.
+decided per node. Each arrow is tail-anchored on its node
+(the record anchor from #2815).
