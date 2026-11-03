@@ -1,7 +1,8 @@
 // VU7b-1 (#2740, ADR 0130 D4, D5): a `/spectra` case's CQC, through VU4's evaluator,
 // as a nodal contour column.
 //
-// The oracle is Python. test/fixtures/vu7b/make_sanramon_case.py writes a SYNTHETIC
+// The oracle is Python. The generator kept as text in test/fixtures/vu7b/README.md
+// (saved as `make_sanramon_case.py` outside the app, ADR 0112 D4) writes a SYNTHETIC
 // nodal case on San Ramon (its mode shapes and eigenvalues are the .ladruno's, its
 // participation factors are seeded random numbers) with apeGmsh's own writer, and
 // records what `Results.combinations().evaluate(name, component, level="nodes")`

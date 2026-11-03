@@ -23,6 +23,9 @@
 //                          staleness against the model and results files the
 //                          request names (`user:read`, reader/userFile.ts
 //                          `UserRead`); never raises, a refusal is `ok: false`
+//   readUserCase(req)       VU7b-2: one result of one `/spectra` case of that
+//                          file, with its values (`user:readCase`,
+//                          reader/userSpectra.ts `CaseRead`); never raises
 //   renderJob() ... renderDone(result)  the ADR 0128 agent modes (below)
 //   onOffers(cb) onSnapshotRequest(cb) snapshotReply(id, reply)  ADR 0128 D5, D6 (below)
 // onOpen and onFileChanged return a function that removes the listener.
@@ -115,6 +118,10 @@ contextBridge.exposeInMainWorld("viewer", {
   cancelResultsScan: (scanId: number) => ipcRenderer.invoke("results:scanCancel", scanId),
   // ADR 0130 (VU3b, #2688): the `.user.h5` index, read on request after the first frame (renderer/app.ts).
   readUser: (req: { path: string; model: string | null; results: string | null }) => ipcRenderer.invoke("user:read", req),
+  // VU7b-2 (#2747): one result of one `/spectra` case with its values (`user:readCase`, VU7b-1). The path is the
+  // one `readUser` named, which main gave the page; main reads only the open set's user file (VU11), so this door
+  // opens nothing else.
+  readUserCase: (req: { path: string; case: string; target: string; label: string }) => ipcRenderer.invoke("user:readCase", req),
   onScanProgress: (cb: (p: { scanId: number; done: number; total: number }) => void) => {
     const handler = (_e: IpcRendererEvent, p: { scanId: number; done: number; total: number }) => cb(p);
     ipcRenderer.on("results:scanProgress", handler);

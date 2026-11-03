@@ -196,8 +196,14 @@ export interface CaseValues {
   reference: Float64Array;
 }
 
-/** What `user:readCase` answers. A refusal carries the evaluator's reason, so a term over it refuses with it. */
-export type CaseRead = { ok: true; value: CaseValues } | { ok: false; reason: Extract<EvalReason, "refused" | "unresolved">; detail: string };
+/**
+ * What `user:readCase` answers. A refusal carries the evaluator's reason, so a
+ * term over it refuses with it. `zone` marks a refusal of the whole `/spectra`
+ * (the file holds none, or it cannot be read): Python's `UserSpectra._load`
+ * refuses that before it judges staleness, so `spectrumSource` does too
+ * (#2748 review). Absent: the refusal is of one case or one request.
+ */
+export type CaseRead = { ok: true; value: CaseValues } | { ok: false; reason: Extract<EvalReason, "refused" | "unresolved">; detail: string; zone?: true };
 
 /** `/spectra` as reader/userFile.ts `UserIndex.spectra` holds it (structural: that module imports this one). */
 export type SpectraZone = { ok: true; value: { cases: readonly SpectrumCase[]; refused: readonly Refusal[] } } | { ok: false; reason: string } | null;
@@ -235,8 +241,8 @@ function dataOf(g: FpGroup, path: string, shape: readonly number[]): Float64Arra
  * file with no `/spectra`. It raises only for a file h5wasm cannot open.
  */
 export function readCaseValues(h5: FpH5, path: string, spectra: SpectraZone, name: string, target: SpectrumTarget, label: string): CaseRead {
-  if (spectra === null) return { ok: false, reason: "unresolved", detail: `${path} holds no /spectra, so no case ${pyStr(name)}` };
-  if (!spectra.ok) return { ok: false, reason: "refused", detail: `/spectra cannot be read: ${spectra.reason}` };
+  if (spectra === null) return { ok: false, reason: "unresolved", detail: `${path} holds no /spectra, so no case ${pyStr(name)}`, zone: true };
+  if (!spectra.ok) return { ok: false, reason: "refused", detail: `/spectra cannot be read: ${spectra.reason}`, zone: true };
   const found = spectra.value.cases.find((c) => c.name === name);
   if (found === undefined) {
     const ref = spectra.value.refused.find((r) => r.name === name);
@@ -291,6 +297,47 @@ export interface SpectraStaleness {
 const termName = (a: StateAddress) => `<${a.kind} ${a.source}>`;
 
 /**
+ * The `ON_NODES` results Python's reader names canonically, and their prefix:
+ * `_NODAL_RESULT_NAME_MAP` in src/apeGmsh/results/readers/_mpco_translation.py,
+ * copied here because the app cannot import it (ADR 0112 D4). `PRESSURE` is a
+ * scalar: every one of its columns is the one quantity.
+ */
+export const CANONICAL_NODAL: Readonly<Record<string, { prefix: string; scalar: boolean }>> = {
+  DISPLACEMENT: { prefix: "displacement", scalar: false },
+  ROTATION: { prefix: "rotation", scalar: false },
+  VELOCITY: { prefix: "velocity", scalar: false },
+  ANGULAR_VELOCITY: { prefix: "angular_velocity", scalar: false },
+  ACCELERATION: { prefix: "acceleration", scalar: false },
+  ANGULAR_ACCELERATION: { prefix: "angular_acceleration", scalar: false },
+  REACTION_FORCE: { prefix: "reaction_force", scalar: false },
+  REACTION_MOMENT: { prefix: "reaction_moment", scalar: false },
+  REACTION_FORCE_INCLUDING_INERTIA: { prefix: "reaction_force", scalar: false },
+  REACTION_MOMENT_INCLUDING_INERTIA: { prefix: "reaction_moment", scalar: false },
+  UNBALANCED_FORCE: { prefix: "force", scalar: false },
+  UNBALANCED_MOMENT: { prefix: "moment", scalar: false },
+  UNBALANCED_FORCE_INCLUDING_INERTIA: { prefix: "force", scalar: false },
+  UNBALANCED_MOMENT_INCLUDING_INERTIA: { prefix: "moment", scalar: false },
+  PRESSURE: { prefix: "pore_pressure", scalar: true },
+  CONSTRAINT_TIE_FORCE: { prefix: "constraint_tie_force", scalar: false },
+};
+
+/**
+ * Python's `canonical_node_component(label, component)`: the canonical name of
+ * one column (`DISPLACEMENT`, `Ux` -> `displacement_x`), read from the last
+ * character of the column, ignoring case (`component_axis`). So `Ux` and `X`
+ * are one quantity there, and a case that holds both is ambiguous. Null where
+ * Python names nothing: a result it does not map (which the app reads by the
+ * file's spelling, ADR 0122 D7), or a column with no axis.
+ */
+export function canonicalNodal(q: CaseQuantityName): string | null {
+  const m = Object.hasOwn(CANONICAL_NODAL, q.label) ? CANONICAL_NODAL[q.label]! : null;
+  if (m === null) return null;
+  if (m.scalar) return m.prefix;
+  const last = q.component.slice(-1).toLowerCase();
+  return last === "x" || last === "y" || last === "z" ? `${m.prefix}_${last}` : null;
+}
+
+/**
  * The cases in `reads` (by case name, each as `user:readCase` answered it) as
  * the evaluator's `Source` for quantity `q`. A whole case gives one signed
  * increment per mode, `spectrum` mode `k` one of them, and `reference` the
@@ -301,21 +348,35 @@ const termName = (a: StateAddress) => `<${a.kind} ${a.source}>`;
 export function spectrumSource(reads: ReadonlyMap<string, CaseRead>, q: CaseQuantityName, staleness: SpectraStaleness, allowStale: boolean): Source {
   const fieldLabel = `${q.label}/${q.component}`;
   const located = (name: string, who: string): { values: CaseValues; column: number } => {
+    const read = reads.get(name);
+    // Python's order (#2748 review): a /spectra that cannot be read refuses before staleness is judged; a refused case on a stale zone is stale.
+    if (read !== undefined && !read.ok && read.zone === true) throw new CombinationRefused(who, read.reason, read.detail);
     if (staleness.stale && !allowStale) {
       throw new CombinationRefused(who, "stale", `/spectra is stale (${staleness.reason || "no reason given"}); pass allowStale to read it (ADR 0130 A6)`);
     }
-    const read = reads.get(name);
     if (read === undefined) throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} was not read`);
     if (!read.ok) throw new CombinationRefused(who, read.reason, read.detail);
     const v = read.value;
     if (v.quantity.target !== "nodes" || v.quantity.label !== q.label) {
       throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} was read for ${v.quantity.target}/${v.quantity.label}, not nodes/${q.label}`);
     }
-    const hits = v.quantity.components.flatMap((c, i) => (c === q.component ? [i] : []));
+    // Which column is the quantity (#2772 review). Where Python names the result, its rule decides first: the
+    // columns of one axis (`Ux` and `X` are both `displacement_x`), and two of them are ambiguous, refused in
+    // Python's words. The app then reads the column the file spells as asked (ADR 0122 D7), so it never draws
+    // where Python refuses, nor under another column's name. A result Python does not name is read by spelling.
+    const canonical = canonicalNodal(q);
+    const comps = v.quantity.components;
+    let named = fieldLabel;
+    let hits = comps.flatMap((c, i) => (c === q.component ? [i] : []));
+    if (Object.hasOwn(CANONICAL_NODAL, q.label)) {
+      const axis = canonical === null ? [] : comps.flatMap((c, i) => (canonicalNodal({ label: q.label, component: c }) === canonical ? [i] : []));
+      if (axis.length !== 1 || hits.length === 1) named = canonical ?? fieldLabel;
+      hits = axis.length > 1 ? axis : axis.filter((i) => comps[i] === q.component);
+    }
     if (hits.length !== 1) {
-      const what = hits.length === 0 ? "no" : `${hits.length} columns for`;
+      const what = hits.length === 0 ? "no" : `${hits.length} results for`;
       const held = v.case.results.map((r) => `${r.target}/${r.label}(${r.components.join(",")})`);
-      throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} holds ${what} nodes quantity ${pyStr(fieldLabel)}; it holds ${pyList(held)}`);
+      throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} holds ${what} nodes quantity ${pyStr(named)}; it holds ${pyList(held)}`);
     }
     return { values: v, column: hits[0]! };
   };
@@ -332,7 +393,12 @@ export function spectrumSource(reads: ReadonlyMap<string, CaseRead>, q: CaseQuan
     field(address: StateAddress): Field {
       const who = termName(address);
       if (address.kind !== "spectrum" && address.kind !== "reference") {
-        throw new CombinationRefused(who, "unresolved", `a ${address.kind} term is read from the results file; this evaluation reads the /spectra cases only`);
+        // A gap stated, not hidden (#2748 review): Python's Results combines a stage or a mode with a case; this app does not yet.
+        throw new CombinationRefused(
+          who,
+          "unresolved",
+          `a ${address.kind} term is read from the results file; this evaluation reads the /spectra cases only (Python's Results also reads stage and mode terms; this app does not yet)`,
+        );
       }
       if (address.kind === "spectrum" && address.mode === 0) throw new CombinationRefused(who, "bad-term", "a whole case is not one state; combine it with a rule");
       const { values, column } = located(address.source, who);
@@ -344,7 +410,11 @@ export function spectrumSource(reads: ReadonlyMap<string, CaseRead>, q: CaseQuan
       return field(values, values.data, rows[0]!, column);
     },
     eigenvalue(address: StateAddress): number {
-      throw new CombinationRefused(termName(address), "unresolved", "an eigenvalue is read from the results file; this evaluation reads the /spectra cases only");
+      throw new CombinationRefused(
+        termName(address),
+        "unresolved",
+        "an eigenvalue is read from the results file; this evaluation reads the /spectra cases only (Python's Results also reads stage and mode terms; this app does not yet)",
+      );
     },
     case(name: string): Case {
       const { values, column } = located(name, `<spectrum ${name}>`);

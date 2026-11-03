@@ -14,7 +14,7 @@ import {
 } from "./lineDiagram.ts";
 import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
 import { elementsOfDecl, selectedElementsOf } from "./search.ts";
-import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
+import { combinationFieldsOf, combinationRequestOf, deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
 import { initialSearch, initialSpotlight } from "./spotlight.ts";
 import { THEME_MODES } from "../theme/tokens.ts";
 import {
@@ -250,6 +250,7 @@ export const initialState: State = {
   results: null,
   resultStep: null,
   user: null,
+  combination: null,
   contour: initialContour,
   ndm: NO_NDM,
   units: null,
@@ -287,7 +288,28 @@ function samePhase(a: PhaseKey, b: PhaseKey): boolean {
   if (a.kind === "stage" && b.kind === "stage") return a.index === b.index;
   // The same results stage is the same phase; the step is the position within it.
   if (a.kind === "results" && b.kind === "results") return a.stage === b.stage;
+  if (a.kind === "combination" && b.kind === "combination") return a.name === b.name;
   return true;
+}
+
+/**
+ * Why User Combination `name` cannot be shown now, or null when it can: the
+ * mesh is loaded and the set's `.user.h5` lists it (a refused row is never
+ * shown). While the file is read again the combination stays (`pending`), so a
+ * re-read does not drop the state the user picked; its old value is not shown.
+ */
+function combinationProblem(s: State, name: string): string | null {
+  if (!s.mesh) return "no mesh is loaded";
+  const u = s.user;
+  if (u === null) return "the set has no .user.h5";
+  if (u.status === "reading") return null;
+  if (u.status === "failed") return `the user file is refused: ${u.error}`;
+  const c = u.info.combinations;
+  if (c === null) return `${u.path} holds no User Combination`;
+  if (!c.ok) return `/combinations is refused: ${c.reason}`;
+  if (c.items.some((x) => x.name === name)) return null;
+  const r = c.refused.find((x) => x.name === name);
+  return r ? `User Combination ${JSON.stringify(name)} is refused: ${r.reason} (${r.detail})` : `the user file lists no User Combination ${JSON.stringify(name)}`;
 }
 
 /** The steps of results stage `stage`, or 0 when there is no such stage. */
@@ -328,7 +350,9 @@ function withPhase(s: State, preserveLineNotice = false): State {
     s.results.stages.forEach((_, i) => axis.push({ kind: "results", stage: i, step: 0 }));
   }
   const prev = s.phase.at;
-  let at = prev && axis.some((k) => samePhase(k, prev)) ? prev : (axis.find((k) => k.kind === "mesh") ?? axis[0] ?? null);
+  // VU7b-2: a User Combination is off the axis; it stays shown while the user file still lists it.
+  const kept = prev !== null && (prev.kind === "combination" ? combinationProblem(s, prev.name) === null : axis.some((k) => samePhase(k, prev)));
+  let at = kept ? prev : (axis.find((k) => k.kind === "mesh") ?? axis[0] ?? null);
   // A results position keeps its step while the stage still has it; a stage
   // that shrank (a re-read) clamps it to its last step.
   if (at?.kind === "results") {
@@ -337,7 +361,9 @@ function withPhase(s: State, preserveLineNotice = false): State {
     else if (at.step >= n) at = { ...at, step: n - 1 };
   }
   const resultStep = at?.kind === "results" && s.resultStep && s.resultStep.stage === at.stage && s.resultStep.step === at.step ? s.resultStep : null;
-  return withLineDiagramPick(withContourPick({ ...s, phase: { axis, at }, resultStep }), preserveLineNotice);
+  // A combination's read belongs to the combination shown, and to nothing after it.
+  const combination = at?.kind === "combination" ? s.combination : null;
+  return withLineDiagramPick(withContourPick({ ...s, phase: { axis, at }, resultStep, combination }), preserveLineNotice);
 }
 
 /** The stage a contour pick is checked against: the results stage shown. */
@@ -349,9 +375,26 @@ const shownStage = (s: State) => (s.phase.at?.kind === "results" ? s.results?.st
  * notice stands, and the user picks again (`setContourField` clears it).
  */
 function withContourPick(s: State): State {
+  if (s.phase.at?.kind === "combination") return withCombinationPick(s, s.phase.at.name);
   if (s.visibility.colourBy !== "contour" || s.contour.field !== null || s.contour.notice !== null) return s;
   const pick = defaultPick(shownStage(s));
   return pick ? { ...s, contour: { ...s.contour, ...pick } } : s;
+}
+
+/**
+ * VU7b-2: on a User Combination, a pick it offers stays; any other is replaced
+ * by its first component (a stage's `DISPLACEMENT/Ux` carries over, because a
+ * case names its columns as a `.ladruno` stage does). A combination colours by
+ * one nodal component; it never offers a magnitude.
+ */
+function withCombinationPick(s: State, name: string): State {
+  if (s.visibility.colourBy !== "contour") return s;
+  const f = combinationFieldsOf(s, name);
+  if (!f.ok) return s;
+  const c = s.contour;
+  if (c.source === "nodal" && f.fields.some((x) => x.name === c.field && x.components.some((y) => y.key === c.component))) return s;
+  const first = f.fields[0]!;
+  return { ...s, contour: { ...c, source: "nodal", field: first.name, component: first.components[0]!.key, join: null, notice: null } };
 }
 
 /**
@@ -489,12 +532,16 @@ export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): User
   const warnings = [...index.warnings];
   for (const z of index.zones) if (!known.includes(z)) warnings.push(`${index.path.split(/[\\/]/).pop()} holds /${z}, a zone this app does not know; it is not read`);
   let combinations: UserInfo["combinations"] = null;
+  let table: UserInfo["table"] = null;
   const c = index.combinations;
   if (!c.ok) combinations = { ok: false, reason: c.reason };
   else if (c.value.rows.length || c.value.modelRows.length || c.value.refused.length) {
     const stale = new Set(staleness.combinations);
     const item = (origin: "user" | "model") => (r: UserCombinationIn): UserCombination => ({ name: r.name, rule: r.rule, origin, terms: r.terms.length, stale: stale.has(r.name) });
     combinations = { ok: true, items: [...c.value.rows.map(item("user")), ...c.value.modelRows.map(item("model"))], refused: refusalsOf(c.value.refused) };
+    // VU7b-2: the rows as the evaluator takes them, copied so the state owns them.
+    const row = (r: UserCombinationIn): UserCombinationIn => ({ ...r, terms: r.terms.map((t) => ({ ...t })) });
+    table = { rows: c.value.rows.map(row), modelRows: c.value.modelRows.map(row), refused: c.value.refused.map((r) => ({ ...r })) };
   }
   let results: UserInfo["results"] = null;
   const r = index.results;
@@ -535,11 +582,12 @@ export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): User
         modes: c.modes.map((x) => x.mode),
         damping: same ? d[0]! : null,
         results: c.results.map((q) => `${oneOf(q.target, SPECTRUM_TARGETS, `the target of ${c.name} ${q.label}`)}/${q.label}`),
+        nodal: c.results.filter((q) => q.target === "nodes").map((q) => ({ label: q.label, components: [...q.components] })),
       };
     });
     spectra = { ok: true, items, refused: refusalsOf(sp.value.refused), stale: zoneMark("spectra") };
   }
-  return { warnings, combinations, results, spectra, modes, entities: entitiesOf(index.entities ?? null, zoneMark("entities")) };
+  return { warnings, combinations, table, results, spectra, modes, entities: entitiesOf(index.entities ?? null, zoneMark("entities")) };
 }
 
 /** VU8: `/entities` as the renderer draws it: the standing rows, each with its `ENTITY_ROW`, and the refused ones. */
@@ -588,6 +636,17 @@ export function userPathOf(set: { model: string | null; results: string | null }
 
 /** reader/userFile.ts `readUserFile`'s refusal of a path with no file: the set has no `.user.h5`, which is not a failure. */
 export const NO_USER_FILE = (path: string): string => `no such file: ${path}`;
+
+/**
+ * The state with another `.user.h5` state. VU7b-2: a combination's value read
+ * from the file before is dropped, and a combination shown that the file no
+ * longer lists leaves for the mesh (`withPhase`); off a combination the phase
+ * is not touched.
+ */
+function withUser(s: State, user: State["user"]): State {
+  const next = { ...s, user, combination: null };
+  return s.phase.at?.kind === "combination" ? withPhase(next) : next;
+}
 
 /** The event a `user:read` answer for `path` becomes: no file there is `userClosed`; any other answer is `userRead`. */
 export function userEventOf(path: string, read: UserReadIn): Event {
@@ -878,7 +937,13 @@ export function reduce(s: State, e: Event): State {
       return { ...s, gaussPoints: { ...s.gaussPoints, measured: { stage: e.stage, count: e.count, refused: e.refused, notes: e.notes } } };
     }
     case "setPhase":
-      if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
+      if (e.at.kind === "combination") {
+        if (typeof e.at.name !== "string") throw new RangeError(`setPhase: a combination is named by a string; got ${JSON.stringify(e.at)}`);
+        const why = combinationProblem(s, e.at.name);
+        if (why !== null) throw new Error(`setPhase: User Combination ${JSON.stringify(e.at.name)} cannot be shown: ${why}`);
+        // The user file must be read: a pending re-read keeps a combination shown, it does not open one.
+        if (s.user?.status !== "ready") throw new Error(`setPhase: User Combination ${JSON.stringify(e.at.name)} cannot be shown: the user file is not read yet`);
+      } else if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
       if (e.at.kind === "results") checkStep(s, e.at.stage, e.at.step, "setPhase");
       return withPhase({
         ...s,
@@ -979,6 +1044,18 @@ export function reduce(s: State, e: Event): State {
     case "setContourField": {
       const source = e.source ?? "nodal";
       if (source !== "nodal" && source !== "element") throw new RangeError(`setContourField: source ${JSON.stringify(source)}`);
+      const at = s.phase.at;
+      if (at?.kind === "combination") {
+        // VU7b-2: what the combination offers: one nodal component of the cases it reaches.
+        const f = combinationFieldsOf(s, at.name);
+        if (!f.ok) throw new RangeError(`setContourField: User Combination ${JSON.stringify(at.name)} offers no field: ${f.reason}`);
+        if (source !== "nodal" || !f.fields.some((x) => x.name === e.field && x.components.some((y) => y.key === e.component))) {
+          throw new RangeError(`setContourField: ${e.field} / ${e.component} is not a ${source} component User Combination ${JSON.stringify(at.name)} offers`);
+        }
+        const c = s.contour;
+        if (c.source === source && c.field === e.field && c.component === e.component && c.notice === null) return s;
+        return { ...s, contour: { ...c, source, field: e.field, component: e.component, join: null, notice: null } };
+      }
       const stage = shownStage(s);
       const ok = stage ? hasPick(stage, source, e.field, e.component) : (s.results?.stages ?? []).some((st) => hasPick(st, source, e.field, e.component));
       if (!ok) throw new RangeError(`setContourField: ${e.field} / ${e.component} is not a ${source} field component of ${stage ? `stage ${stage.id}` : "the results"}`);
@@ -1448,16 +1525,26 @@ export function reduce(s: State, e: Event): State {
       if (typeof e.path !== "string" || e.path === "") throw new RangeError(`userOpened: ${JSON.stringify(e.path)} is not a path`);
       // A re-read of the same file is pending too: a verdict read before the change (to it, the model or the results) is not shown as current.
       if (s.user?.path === e.path && s.user.status === "reading") return s;
-      return { ...s, user: { status: "reading", path: e.path } };
+      // VU7b-2: a combination's value read before the change is not shown as current.
+      return withUser(s, { status: "reading", path: e.path });
     }
     case "userRead": {
       if (!s.user || s.user.path !== e.path) throw new Error(`userRead: ${e.path} is not the open .user.h5`);
-      if (!e.read.ok) return { ...s, user: { status: "failed", path: e.path, error: e.read.error } };
+      if (!e.read.ok) return withUser(s, { status: "failed", path: e.path, error: e.read.error });
       if (e.read.user.path !== e.path) throw new Error(`userRead: the answer is for ${e.read.user.path}, not ${e.path}`);
-      return { ...s, user: { status: "ready", path: e.path, info: userInfoOf(e.read.user, e.read.staleness) } };
+      return withUser(s, { status: "ready", path: e.path, info: userInfoOf(e.read.user, e.read.staleness) });
     }
     case "userClosed":
-      return s.user === null ? s : { ...s, user: null };
+      return s.user === null ? s : withUser(s, null);
+    case "combinationRead": {
+      const r = e.read;
+      if (r === null || typeof r !== "object" || typeof r.key !== "string" || !["loading", "ready", "refused", "failed"].includes(r.status)) {
+        throw new RangeError(`combinationRead: ${JSON.stringify(r)} is not a combination read`);
+      }
+      // Only for the combination and quantity shown now: a late answer for another is dropped.
+      if (combinationRequestOf(s)?.key !== r.key) return s;
+      return { ...s, combination: r };
+    }
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);

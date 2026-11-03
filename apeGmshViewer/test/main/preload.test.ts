@@ -52,3 +52,11 @@ test("VU12: pathForFile (the drop fallback onto openModel) records the drop befo
   assert.equal(viewer.pathForFile({}), "");
   assert.deepEqual(sent, [], "a File with no path is no drop");
 });
+
+test("VU7b-2: readUserCase asks main's user:readCase with the request as given, and records no drop (option A: main confines the path, test/main/userDoors.test.ts)", async () => {
+  const door = viewer as unknown as { readUserCase(req: object): Promise<unknown> };
+  const req = { path: "C:\\work\\frame.user.h5", case: "Ex", target: "nodes", label: "DISPLACEMENT" };
+  sent.length = 0;
+  await door.readUserCase(req);
+  assert.deepEqual(sent, [{ how: "invoke", channel: "user:readCase", args: [req] }], "one invoke, and no viewer:dropped that would let main open the path");
+});

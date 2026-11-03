@@ -69,6 +69,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   resultsLoaded: { kind: "system", reason: "dispatched by effects when results metadata finishes reading" },
   userOpened: { kind: "system", reason: "dispatched by the app's user-file feed when the set's .user.h5 is read" },
   userRead: { kind: "system", reason: "dispatched by the app's user-file feed with the user:read answer" },
+  combinationRead: { kind: "system", reason: "dispatched by the app's combination feed with the evaluator's answer for the User Combination shown" },
   userClosed: { kind: "system", reason: "dispatched by the app's user-file feed when the set has no .user.h5" },
   resultStep: { kind: "system", reason: "dispatched by effects to report step fetch status" },
   contourElementJoin: { kind: "system", reason: "dispatched by effects after verifying element contour join" },
@@ -1054,7 +1055,9 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
               ? "Mesh (undeformed model)"
               : k.kind === "stage"
                 ? `Stage ${k.index + 1}`
-                : `Results Stage ${k.stage + 1}: ${s.results?.stages[k.stage]?.name || s.results?.stages[k.stage]?.id || k.stage}`;
+                : k.kind === "results"
+                  ? `Results Stage ${k.stage + 1}: ${s.results?.stages[k.stage]?.name || s.results?.stages[k.stage]?.id || k.stage}`
+                  : `User Combination ${k.name}`;
         const active =
           s.phase.at?.kind === k.kind &&
           (k.kind !== "results" || (s.phase.at.kind === "results" && s.phase.at.stage === k.stage));

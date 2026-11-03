@@ -2,7 +2,8 @@
 // from. A panel imports this module and store.ts, nothing else of the app.
 
 import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
-import type { CombinationTable } from "../combination/evaluate.ts";
+import { CombinationRefused, CombinationTable, isSigned } from "../combination/evaluate.ts";
+import { REASONS, type Refusal as RuleRefusal } from "../reader/userRules.ts";
 import type { OpsFamily, Param } from "../model/types.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
@@ -20,6 +21,7 @@ import {
   elementTopology,
   fieldsOf,
   isNodeTopology,
+  nodalFields,
   topologyLabel,
   type Clim,
   type ElementComponent,
@@ -29,7 +31,7 @@ import {
   type NodalField,
 } from "./contour.ts";
 import { usesMatrix } from "./extrapolation.ts";
-import type { BlobRef, ContourCmap } from "./types.ts";
+import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 import {
   beamLocalAxes,
@@ -521,7 +523,7 @@ export function noticesOf(s: State): string[] {
   // V4c2a: element components refused one by one on the stage shown, and why a picked element field is not drawn.
   for (const g of st?.gauss ?? []) for (const r of g.refused) out.push(`Element component ${r.component} of group ${g.id} not read: ${r.reason}.`);
   const ev = contourView(s);
-  if (ev.state === "refused") out.push(`Element contour refused: ${ev.reason}.`);
+  if (ev.state === "refused") out.push(ev.code === "combination" ? `Contour not drawn: ${ev.reason}.` : `Element contour refused: ${ev.reason}.`);
   if (s.contour.notice) out.push(s.contour.notice);
   // V4d: drawn nodes the deformed shape leaves undeformed, or why it is not drawn.
   const d = deformNotice(s);
@@ -558,7 +560,7 @@ export type ContourView =
    * components, or rows that do not join the mesh. Drawn as no data, never
    * "with a warning"; the banner says why.
    */
-  | { state: "refused"; code: ElementRefusal; reason: string }
+  | { state: "refused"; code: ElementRefusal | "combination"; reason: string }
   /**
    * V4c2a: an element topology whose drawing was not built yet. V4c2b draws
    * every topology, so no view is in this state any more; the variant stays
@@ -598,6 +600,24 @@ export type ContourView =
       stepMeasured: boolean;
       /** how many times the results were read (each read can carry other data at the same path, so the colour key names it) */
       reads: number;
+    }
+  /**
+   * VU7b-2 (ADR 0130 D4): a User Combination's value for one nodal quantity,
+   * one state with no step. The colours come from the read under `key`
+   * (renderer/contour.ts `combinationColours`).
+   */
+  | {
+      state: "combination";
+      /** the combination */
+      name: string;
+      field: string;
+      component: FieldComponent;
+      /** `combinationRequestOf(s).key`: the read whose values are drawn */
+      key: string;
+      clim: Clim;
+      cmap: ContourCmap;
+      /** whether it may draw as a deformed shape (an unsigned one is a contour only) */
+      signed: boolean;
     };
 
 /** A results file's element-id verdict; a results info without one is unverified (fail closed). */
@@ -676,6 +696,7 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
 /** What the contour colours, or why it cannot (V4c1; V4c2a adds element fields). */
 export function contourView(s: State): ContourView {
   if (s.visibility.colourBy !== "contour") return { state: "off" };
+  if (s.phase.at?.kind === "combination") return combinationContour(s, s.phase.at.name);
   const p = resultsPairing(s);
   if (!s.results || p.state !== "paired") return { state: "unavailable", reason: "no results file pairs with this model, so there is no field to colour by" };
   const at = s.phase.at;
@@ -720,6 +741,11 @@ export function contourFieldsOf(s: State): {
   elementsVerified: boolean;
 } | null {
   const at = s.phase.at;
+  // VU7b-2: a User Combination offers the nodal quantities of the cases it reaches, each component alone.
+  if (at?.kind === "combination") {
+    const f = combinationFieldsOf(s, at.name);
+    return f.ok ? { fields: f.fields, refused: [], elements: [], elementsVerified: false } : null;
+  }
   const st = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
   return st ? { fields: fieldsOf(st), refused: st.refusedNodal, elements: gaussFields(st.gauss), elementsVerified: elementVerdictOf(s.results!).verified } : null;
 }
@@ -765,6 +791,7 @@ export type DeformView =
  * reason; `deformView` adds the user's toggle and the effects' count.
  */
 export function deformOf(s: State): { ok: true; draw: DeformDraw } | { ok: false; state: "unavailable" | "refused"; reason: string } {
+  if (s.phase.at?.kind === "combination") return combinationDeform(s, s.phase.at.name);
   const p = resultsPairing(s);
   if (!s.results || p.state !== "paired") return { ok: false, state: "unavailable", reason: "no results file pairs with this model, so there is no displacement" };
   const at = s.phase.at;
@@ -1270,4 +1297,164 @@ export function spectrumCasesOf(table: CombinationTable, name: string): string[]
     }
   }
   return cases;
+}
+
+// -- VU7b-2: the User Combination shown (ADR 0130 D1, D4, A3) ---------------------
+
+const quoted = (name: string): string => JSON.stringify(name);
+
+/** A refused row as the evaluator's table takes it; a reason or origin the reader never gives is a bug, and raises. */
+function ruleRefusal(r: UserRefusalIn): RuleRefusal {
+  if (!(REASONS as readonly string[]).includes(r.reason)) throw new RangeError(`combinationTableOf: refusal reason ${quoted(r.reason)} of ${quoted(r.name)} is not one of ${REASONS.join(", ")}`);
+  if (r.origin !== "user" && r.origin !== "model") throw new RangeError(`combinationTableOf: refusal origin ${quoted(r.origin)} of ${quoted(r.name)} is not user or model`);
+  return { name: r.name, reason: r.reason as RuleRefusal["reason"], detail: r.detail, origin: r.origin, row: r.row };
+}
+
+let tableMemo: { of: object; table: CombinationTable } | null = null;
+
+/** The user file's combination rows as VU4's evaluator takes them, or null when it holds none (or `/combinations` is refused). */
+export function combinationTableOf(s: State): CombinationTable | null {
+  const t = s.user?.status === "ready" ? s.user.info.table : null;
+  if (!t) return null;
+  if (tableMemo?.of !== t) tableMemo = { of: t, table: new CombinationTable({ rows: t.rows, modelRows: t.modelRows, refused: t.refused.map(ruleRefusal) }) };
+  return tableMemo.table;
+}
+
+/**
+ * What a combination can colour by: the `ON_NODES` columns of the `/spectra`
+ * cases it reaches (`DISPLACEMENT/Ux`, grouped as a `.ladruno` stage's are),
+ * each component alone. A combination is evaluated per component (D4), so no
+ * magnitude is offered: the CQC of a magnitude is not the magnitude of the
+ * CQCs. When there is nothing, the reason says why; a combination of stage or
+ * mode terms only is read from the results file, which this app does not
+ * combine.
+ */
+export function combinationFieldsOf(s: State, name: string): { ok: true; fields: NodalField[]; cases: string[] } | { ok: false; reason: string } {
+  const u = s.user;
+  if (u?.status !== "ready") return { ok: false, reason: "the user file is not read" };
+  const file = baseName(u.path);
+  const table = combinationTableOf(s);
+  if (!table) return { ok: false, reason: `${file} holds no /combinations row` };
+  let cases: string[];
+  try {
+    cases = spectrumCasesOf(table, name);
+  } catch (err) {
+    if (err instanceof CombinationRefused) return { ok: false, reason: err.message };
+    throw err;
+  }
+  if (!cases.length) {
+    return {
+      ok: false,
+      reason:
+        `User Combination ${quoted(name)} reaches no /spectra case: its stage and mode terms are read from the results file, ` +
+        "and this app combines /spectra cases only (Python's Results also combines stages and modes)",
+    };
+  }
+  const sp = u.info.spectra;
+  if (sp === null) return { ok: false, reason: `${file} holds no /spectra, so no case ${cases.map(quoted).join(", ")}` };
+  if (!sp.ok) return { ok: false, reason: `/spectra of ${file} is refused: ${sp.reason}` };
+  const names: string[] = [];
+  for (const c of cases) {
+    const found = sp.items.find((x) => x.name === c);
+    for (const q of found?.nodal ?? []) for (const comp of q.components) if (!names.includes(`${q.label}/${comp}`)) names.push(`${q.label}/${comp}`);
+  }
+  if (!names.length) return { ok: false, reason: `the /spectra cases ${quoted(name)} reaches (${cases.map(quoted).join(", ")}) hold no nodal result` };
+  const fields = nodalFields(names)
+    .map((f) => ({
+      name: f.name,
+      components: f.components.filter((c) => !c.magnitude),
+      magnitudeRefused: f.components.some((c) => c.magnitude)
+        ? "a combination is evaluated per component (ADR 0130 D4): the combination of a magnitude is not the magnitude of the combinations"
+        : null,
+    }))
+    .filter((f) => f.components.length > 0);
+  return { ok: true, fields, cases };
+}
+
+/**
+ * What the app reads for the combination shown, or null when nothing is to be
+ * read (not a combination, not colouring by contour, nothing picked that the
+ * combination offers). `quantity` is the picked column as the case spells it;
+ * a result's label never holds a `/` (reader/userSpectra.ts refuses one), so
+ * the component key splits at its first. `key` names the read: the user file,
+ * the combination, the column, and whether `/spectra` is stale (A6).
+ */
+export function combinationRequestOf(s: State): { key: string; path: string; name: string; quantity: { label: string; component: string }; staleness: StaleMark } | null {
+  const at = s.phase.at;
+  const u = s.user;
+  const c = s.contour;
+  if (at?.kind !== "combination" || s.visibility.colourBy !== "contour" || u?.status !== "ready" || c.source !== "nodal" || c.field === null || c.component === null) return null;
+  const f = combinationFieldsOf(s, at.name);
+  if (!f.ok || !f.fields.some((x) => x.name === c.field && x.components.some((y) => y.key === c.component))) return null;
+  const sp = u.info.spectra;
+  if (!sp?.ok) return null;
+  const slash = c.component.indexOf("/");
+  const quantity = { label: c.component.slice(0, slash), component: c.component.slice(slash + 1) };
+  return { key: JSON.stringify([u.path, at.name, c.component, sp.stale.stale]), path: u.path, name: at.name, quantity, staleness: sp.stale };
+}
+
+/**
+ * The User Combination shown, as the phase bar states it: its rule, whether it
+ * is stale (A6), and its sign from the descriptors (A3; null with why, when the
+ * table cannot say). Null off a combination.
+ */
+export function combinationShownOf(s: State): { name: string; rule: string; stale: boolean; signed: boolean | null; why: string | null } | null {
+  const at = s.phase.at;
+  if (at?.kind !== "combination" || s.user?.status !== "ready") return null;
+  const c = s.user.info.combinations;
+  const item = c?.ok ? c.items.find((x) => x.name === at.name) : undefined;
+  if (!item) return null;
+  const sign = combinationSign(s, at.name);
+  return { name: at.name, rule: item.rule, stale: item.stale, signed: sign.signed, why: combinationDeform(s, at.name).reason };
+}
+
+/** Whether combination `name` is signed, from the descriptors (A3), or null with why the table cannot say. */
+function combinationSign(s: State, name: string): { signed: boolean } | { signed: null; why: string } {
+  const table = combinationTableOf(s);
+  if (!table) return { signed: null, why: `User Combination ${quoted(name)} is not in the user file` };
+  try {
+    return { signed: isSigned(table, name) };
+  } catch (err) {
+    if (err instanceof CombinationRefused) return { signed: null, why: err.message };
+    throw err;
+  }
+}
+
+/** A combination's colour range: the user's when fixed, else its own values (one state: there is no history to scan). */
+function combinationClim(c: ContourState, range: { min: number; max: number } | null): Clim {
+  if (c.range === "fixed") return climOf(c, null, null, "");
+  return { min: range?.min ?? null, max: range?.max ?? null, mode: c.range, label: "range: this combination (one state, no history)" };
+}
+
+/** `contourView` on a User Combination. */
+function combinationContour(s: State, name: string): ContourView {
+  if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
+  const f = combinationFieldsOf(s, name);
+  if (!f.ok) return { state: "unavailable", reason: f.reason };
+  const c = s.contour;
+  if (c.source !== "nodal" || c.field === null || c.component === null) return { state: "unavailable", reason: "pick a field" };
+  const hit = f.fields.find((x) => x.name === c.field)?.components.find((x) => x.key === c.component);
+  if (!hit) return { state: "unavailable", reason: `User Combination ${quoted(name)} has no ${c.field} ${componentName(c.component)}` };
+  const want = combinationRequestOf(s)!;
+  const r = s.combination;
+  if (!r || r.key !== want.key || r.status === "loading") return { state: "unavailable", reason: `User Combination ${quoted(name)} is being evaluated` };
+  if (r.status === "refused") return { state: "refused", code: "combination", reason: `User Combination ${quoted(name)} is refused (${r.reason}): ${r.detail}` };
+  if (r.status === "failed") return { state: "refused", code: "combination", reason: `User Combination ${quoted(name)} could not be evaluated: ${r.error}` };
+  return { state: "combination", name, field: c.field, component: hit, key: r.key, clim: combinationClim(c, r.range), cmap: c.cmap, signed: r.signed };
+}
+
+/**
+ * `deformOf` on a User Combination. An unsigned one (a modal rule, an
+ * envelope, or a `linear` over one) is refused with the reason: it has lost
+ * the signs a shape needs (ADR 0130 D4, A3). A signed one is not drawn yet,
+ * because the deformed shape reads a results step's displacement.
+ */
+function combinationDeform(s: State, name: string): { ok: false; state: "unavailable" | "refused"; reason: string } {
+  const sign = combinationSign(s, name);
+  if (sign.signed === null) return { ok: false, state: "unavailable", reason: sign.why };
+  if (!sign.signed) {
+    const rule = combinationTableOf(s)!.row(name, name).rule;
+    return { ok: false, state: "refused", reason: `User Combination ${quoted(name)} (${rule}) is unsigned, so it is shown as a contour only, never as a deformed shape (ADR 0130 D4, A3)` };
+  }
+  return { ok: false, state: "unavailable", reason: `User Combination ${quoted(name)} is signed; this app draws the deformed shape of a results step only` };
 }

@@ -277,7 +277,15 @@ export type PhaseKey =
   | { kind: "geometry" }
   | { kind: "mesh" }
   | { kind: "stage"; index: number }
-  | { kind: "results"; stage: number; step: number };
+  | { kind: "results"; stage: number; step: number }
+  /**
+   * VU7b-2 (ADR 0130 D1): a User Combination of the set's `.user.h5`, by name,
+   * shown as the current state. It is never on the axis: the phase bar's User
+   * Combinations family picks it, and it stays shown while the user file still
+   * lists it (reduce.ts `withPhase`). Off the results phases, a stage's layers
+   * (a step, a deformed shape, a line diagram) are not drawn.
+   */
+  | { kind: "combination"; name: string };
 
 /** `/meta/lineage` of a model.h5 or a results.h5: the ADR 0021 hashes, null where the writer stamped none. */
 export interface Lineage {
@@ -401,16 +409,22 @@ export interface ResultsInfo {
  */
 export type UserReadIn = { ok: true; user: UserIndexIn; staleness: UserStalenessIn } | { ok: false; error: string };
 export type UserZoneIn<T> = { ok: true; value: T } | { ok: false; reason: string };
+/** reader/userRules.ts `Combination`: a resolved row, its terms by source address (A3). VU7b-2 evaluates it, so its terms are typed. */
 export interface UserCombinationIn {
   name: string;
   rule: string;
-  terms: readonly unknown[];
+  terms: { kind: string; source: string; step: number; mode: number; factor: number }[];
+  envelope: string;
+  fraction: number | null;
+  damping: number | null;
 }
 export interface UserRefusalIn {
   name: string;
   reason: string;
   detail: string;
   origin: string;
+  /** the row's position in its table */
+  row: number;
 }
 export interface UserResultEntryIn {
   name: string;
@@ -460,7 +474,7 @@ export interface UserSpectrumCaseIn {
   direction: number;
   scale: number;
   modes: { mode: number; damping: number }[];
-  results: { label: string; target: string }[];
+  results: { label: string; target: string; components: string[] }[];
 }
 export interface StaleMark {
   stale: boolean;
@@ -480,7 +494,7 @@ export const USER_ZONES = ["combinations", "results", "modes", "spectra", "entit
 export const USER_RESULT_TARGETS = ["nodes", "elements", "entities", "domain"] as const;
 export const USER_RESULT_BASES = ["results", "model"] as const;
 
-/** One User Combination (D4), from `.user.h5` or `model.h5` (`origin`). Listed only: VU4 evaluates them. */
+/** One User Combination (D4), from `.user.h5` or `model.h5` (`origin`). VU7b-2: picked from the phase bar, and evaluated by VU4's evaluator. */
 export interface UserCombination {
   name: string;
   rule: string;
@@ -528,6 +542,8 @@ export interface UserSpectrumCase {
   damping: number | null;
   /** its results, `target/label` */
   results: string[];
+  /** VU7b-2: its `ON_NODES` results, each with its columns as the file spells them (`DISPLACEMENT`, `Ux`): what a combination over it can colour by */
+  nodal: { label: string; components: string[] }[];
 }
 /** A row the reader refused (A3), with its reason. */
 export interface UserRefusal {
@@ -580,6 +596,12 @@ export interface UserInfo {
   warnings: string[];
   /** the User Combinations family: `.user.h5` rows, then `model.h5` rows; null when neither file has one */
   combinations: UserGroup<UserCombination> | null;
+  /**
+   * VU7b-2: the descriptor rows in force across both files and the refused ones,
+   * as VU4's evaluator takes them (selectors `combinationTableOf`); null when
+   * `/combinations` is refused or neither file has a row.
+   */
+  table: { rows: UserCombinationIn[]; modelRows: UserCombinationIn[]; refused: UserRefusalIn[] } | null;
   /** the User Results picker group; null when the file has no `/results` entry */
   results: UserGroup<UserResult> | null;
   /** the Spectra family: its cases and each refused one, or why the zone is refused; null when the file has none */
@@ -596,6 +618,32 @@ export interface UserInfo {
     | { ok: false; reason: string; stale: StaleMark }
     | null;
 }
+
+/**
+ * VU7b-2 (ADR 0130 D4): what the app read for the User Combination shown
+ * (`PhaseKey` `combination`) and the quantity picked, under `key` (selectors
+ * `combinationRequestOf`): being read, the evaluator's value, its refusal
+ * (`CombinationRefused`, with its reason), or a failure the evaluator raised
+ * (a case that repeats a node id raises in Python too). The values stay in
+ * renderer/contour.ts `CombinationColumns`, as a results step's stay in the
+ * effects; the state keeps what the legend and the deformed toggle need.
+ */
+export type CombinationRead =
+  | { key: string; status: "loading" }
+  | {
+      key: string;
+      status: "ready";
+      /** the field's one label (`DISPLACEMENT/Ux`) */
+      label: string;
+      /** the finite min and max, null when no value is finite */
+      range: { min: number; max: number } | null;
+      /** how many nodes it gives a value for */
+      nodes: number;
+      /** whether it may draw as a deformed shape (ADR 0130 A3) */
+      signed: boolean;
+    }
+  | { key: string; status: "refused"; reason: string; detail: string }
+  | { key: string; status: "failed"; error: string };
 
 /** ADR 0130: the set's `.user.h5`. Read on request, after the model's first frame (renderer/app.ts). */
 export type UserFileState =
@@ -1156,6 +1204,8 @@ export interface State {
   resultStep: ResultStepStatus | null;
   /** ADR 0130: the set's `.user.h5` (the phase bar's Spectra and User Combinations, the User Results group); null when the set has none */
   user: UserFileState | null;
+  /** VU7b-2: the read of the User Combination shown, for the quantity picked; null off a combination, and after the user file is read again */
+  combination: CombinationRead | null;
   /** V4c1: the nodal contour (shown when `visibility.colourBy` is `contour`) */
   contour: ContourState;
   /** V4d: the model's spatial dimension (`/meta/ndm`), or why it is not known */
@@ -1539,6 +1589,8 @@ export type Event =
   /** ADR 0130: `user:read` answered for the open `.user.h5` */
   | { type: "userRead"; path: string; read: UserReadIn }
   /** ADR 0130: the set has no `.user.h5` (none beside it, or it was deleted) */
-  | { type: "userClosed" };
+  | { type: "userClosed" }
+  /** VU7b-2 (renderer/app.ts): the User Combination shown is being read, or its read answered; one for another key is dropped */
+  | { type: "combinationRead"; read: CombinationRead };
 
 export type EventType = Event["type"];

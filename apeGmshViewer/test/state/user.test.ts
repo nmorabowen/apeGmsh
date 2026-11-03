@@ -280,7 +280,8 @@ test("a current user file: the combinations of both files, the user results, /sp
   ]);
   assert.deepEqual(info.spectra, {
     ok: true,
-    items: [{ name: "Ex", direction: 1, scale: 1, modes: [1, 2], damping: 0.05, results: ["domain/base_shear"] }],
+    // VU7b-2: `nodal` is what a combination over the case colours by; this case holds a domain result only.
+    items: [{ name: "Ex", direction: 1, scale: 1, modes: [1, 2], damping: 0.05, results: ["domain/base_shear"], nodal: [] }],
     refused: [],
     stale: { stale: false, reason: "" },
   });
@@ -396,11 +397,12 @@ test("the phase bar lists Stages, Modes, Spectra and User Combinations, each wit
   assert.match(f[0]!.title, /^Stages of run\.ladruno: gravity, stage_1 \(unnamed\)$/);
   assert.match(f[2]!.title, /\/spectra is stale: /);
   assert.deepEqual(f[2]!.title.split("\n").slice(0, 2), [
-    "Spectra, listed; this app does not combine or draw a case yet:",
+    "Spectra, listed; a case is drawn through a User Combination over it:",
     "Ex: direction 1, scale 1, 2 modes, damping 0.05; domain/base_shear",
   ]);
   const combos = f[3]!.title.split("\n");
-  assert.equal(combos[0], "User Combinations, listed; this app does not evaluate them yet:");
+  // VU7b-2: a combination is drawn over the mesh; this state has none, so the family says why it shows nothing.
+  assert.equal(combos[0], "User Combinations, listed; none is shown (no mesh is loaded):");
   assert.ok(combos.includes("E: cqc, 1 term (stale: a source of it is stale)"));
   assert.ok(combos.includes("M1: linear, 1 term, from model.h5"));
   assert.ok(combos.some((l) => l.startsWith("dup: refused, duplicate: ")));
@@ -457,7 +459,7 @@ test("userInfoOf fails closed on the row verdicts: a count that disagrees with t
   assert.deepEqual(short.modes.rows.map((r) => r.verdict), [0, 1].map(() => ({ stale: true, reason: "the reader gave no staleness verdict for it" })));
   // A spectrum target this app does not know refuses the answer.
   assert.ok(read.user.spectra?.ok);
-  const odd = { ...read.user, spectra: { ok: true as const, value: { ...read.user.spectra.value, cases: [{ ...read.user.spectra.value.cases[0]!, results: [{ label: "x", target: "elements" }] }] } } };
+  const odd = { ...read.user, spectra: { ok: true as const, value: { ...read.user.spectra.value, cases: [{ ...read.user.spectra.value.cases[0]!, results: [{ label: "x", target: "elements", components: ["a"] }] }] } } };
   assert.throws(() => userInfoOf(odd, read.staleness), (e: unknown) => e instanceof RangeError && /the target of Ex x "elements"/.test((e as Error).message));
 });
 
@@ -476,7 +478,7 @@ test("a refused /combinations zone, and a stale or refused modal table, show on 
   const base = withResults(initialState);
   const user = (info: Partial<NonNullable<ReturnType<typeof userInfoOf>>>): State => ({
     ...base,
-    user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: null, ...info } },
+    user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, table: null, results: null, spectra: null, modes: null, ...info } },
   });
   const refused = familiesOf(user({ combinations: { ok: false, reason: "refused: /combinations@current names no generation" } }));
   assert.deepEqual(refused.map((x) => [x.key, x.count, x.refused]).at(-1), ["combinations", 0, 1]);
@@ -579,7 +581,7 @@ class FakeEl {
   }
 }
 
-test("mounted, the bar shows each family as a button; the user families are disabled, and Modes opens the first mode", () => {
+test("mounted, the bar shows each family as a button; with no mesh the user families are disabled, and Modes opens the first mode", () => {
   const prevDoc = (globalThis as { document?: unknown }).document;
   const bar = Object.assign(new FakeEl("div"), { getBoundingClientRect: () => ({ height: 76.4 }) });
   // The root's custom properties, as style.css reads them (`--phase-bar-h` moves #left-rail below a wrapped bar).
@@ -780,7 +782,7 @@ test("the modal table says a stale or refused zone, whole", () => {
   assert.deepEqual([remodel.status, remodel.bad], ["2 rows · stale", true]);
   assert.match(remodel.note!, /^the modal table of run\.user\.h5 is stale: model_hash differs/);
   const base = atMode(initialState, 1);
-  const refused = modalTableOf({ ...base, user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: { ok: false, reason: "refused: /modes: it has no period column", stale: { stale: true, reason: "x" } } } } })!;
+  const refused = modalTableOf({ ...base, user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, table: null, results: null, spectra: null, modes: { ok: false, reason: "refused: /modes: it has no period column", stale: { stale: true, reason: "x" } } } } })!;
   assert.deepEqual([refused.status, refused.lines, refused.bad, refused.note], ["refused", [], true, "the modal table of run.user.h5 is refused: refused: /modes: it has no period column"]);
 });
 
@@ -839,7 +841,7 @@ const modeRow = (host: string, step: number, mode: number, lambda: number) => ({
 });
 const withTable = (s: State, rows: ReturnType<typeof modeRow>[]): State => ({
   ...s,
-  user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: { ok: true, components: ["MX"], rows, stale: { stale: false, reason: "" } } } },
+  user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, table: null, results: null, spectra: null, modes: { ok: true, components: ["MX"], rows, stale: { stale: false, reason: "" } } } },
 });
 /** `atMode`, with the shown stage's LAMBDA replaced: another modal set's mode of the same number. */
 const atOtherSet = (s: State, k: number, eigenvalue: number): State => {

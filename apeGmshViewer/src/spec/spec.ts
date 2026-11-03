@@ -83,6 +83,13 @@ export interface SpecShot {
   caption: string | null;
   /** a results stage, by name or by 0-based index into the results file's stages; null is the mesh */
   stage: string | number | null;
+  /**
+   * VU7b-2 (ADR 0130 D1): a User Combination of the set's `.user.h5`, by name,
+   * as the state shown instead of a stage; it has no step. Absent or null: none.
+   * A snapshot never writes one (spec/snapshot.ts names a combination phase as
+   * outside what it can state).
+   */
+  combination?: string | null;
   step: SpecStep;
   camera: SpecCamera;
   colour_by: "group" | "role" | "contour";
@@ -261,7 +268,7 @@ interface Defaults {
 }
 
 function shot(v: unknown, key: string, d: Defaults): SpecShot {
-  const o = object(v, key, ["name", "caption", "stage", "step", "camera", "colour_by", "contour", "deform", "clip", "isolate", "chrome", "layers", "background"]);
+  const o = object(v, key, ["name", "caption", "stage", "combination", "step", "camera", "colour_by", "contour", "deform", "clip", "isolate", "chrome", "layers", "background"]);
   const name = text(o["name"], `${key}.name`);
   if (!NAME.test(name)) throw new SpecError(`${key}.name`, `is the PNG's file name: letters, digits, _, . and -, starting with a letter or digit, at most 100 characters; got ${show(name)}`);
   const c = o["contour"] === undefined ? null : contour(o["contour"], `${key}.contour`);
@@ -269,7 +276,11 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
   if (colourBy === "contour" && !c) throw new SpecError(`${key}.colour_by`, `is "contour", but the shot has no contour key naming the field`);
   if (colourBy !== "contour" && c) throw new SpecError(`${key}.colour_by`, `is "${colourBy}", but the shot has a contour; a contour colours by "contour"`);
   const st = o["stage"] === undefined ? null : stage(o["stage"], `${key}.stage`);
-  if (o["step"] !== undefined && st === null) throw new SpecError(`${key}.step`, "needs a stage: a step is a position in a results stage");
+  const comb = o["combination"] === undefined ? null : text(o["combination"], `${key}.combination`);
+  if (comb !== null && st !== null) throw new SpecError(`${key}.combination`, "names the state shown, as stage does: a shot shows a stage or a User Combination, not both");
+  if (o["step"] !== undefined && st === null) {
+    throw new SpecError(`${key}.step`, comb !== null ? "a User Combination is one state: it has no step" : "needs a stage: a step is a position in a results stage");
+  }
   const caption = o["caption"] === undefined ? null : text(o["caption"], `${key}.caption`);
   const chrome = o["chrome"] === undefined ? d.chrome : oneOf(o["chrome"], `${key}.chrome`, CHROMES);
   const background = o["background"] === undefined ? d.background : oneOf(o["background"], `${key}.background`, BACKGROUNDS);
@@ -284,6 +295,7 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
     name,
     caption,
     stage: st,
+    ...(comb === null ? {} : { combination: comb }),
     step: o["step"] === undefined ? "last" : step(o["step"], `${key}.step`),
     camera: o["camera"] === undefined ? "iso" : camera(o["camera"], `${key}.camera`),
     colour_by: colourBy,

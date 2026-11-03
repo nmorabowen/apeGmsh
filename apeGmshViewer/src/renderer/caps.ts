@@ -35,7 +35,7 @@ import { activationNow, contourView, deformView, hiddenElementsOf, NO_SOLID_CELL
 import { SOLID_CORNERS, SOLID_SHAPES, sliceSolids, sliceExtent, solidShapeOf, type Slice, type Solids } from "../state/slice.ts";
 import type { Decl, DeclPath, State } from "../state/types.ts";
 import { DARK_ROLE } from "../theme/tokens.ts";
-import { elementJoinAt, toLinear, type StepValues } from "./contour.ts";
+import { elementJoinAt, toLinear, type CombinationColumnOf, type StepValues } from "./contour.ts";
 
 /** How far a cap steps into the discarded half: a fraction of its own extent (the Qt S3 measurement: less speckles against the gizmo quad). */
 export const CAP_STEP = 1e-3;
@@ -216,6 +216,10 @@ export function capKeys(s: State): { cuts: string; slice: string; colour: string
       values = `read ${v.reads}|${v.keys.step}|${v.topology}|join ${v.joinKey}`;
       colour = `${v.clim.min}|${v.clim.max}|${v.cmap}`;
       break;
+    case "combination":
+      values = `combination ${v.key}`;
+      colour = `${v.clim.min}|${v.clim.max}|${v.cmap}`;
+      break;
     default:
       values = `no-data:${v.reason}`;
       colour = "no-data";
@@ -240,14 +244,19 @@ function row(step: StepValues, name: string, what: string): Float64Array {
   return r;
 }
 
-/** The cap pass's inputs from the state, the blobs and the effects' step data. */
-export function capInputs(s: State, blobs: BlobStore, step: StepValues | null): CapInputs {
+/**
+ * The cap pass's inputs from the state, the blobs and the effects' step data.
+ * VU7b-2: `combination` is the User Combination column on hand (renderer/contour.ts
+ * `CombinationFeed.held`); a combination contour waits until it is the read shown.
+ */
+export function capInputs(s: State, blobs: BlobStore, step: StepValues | null, combination: CombinationColumnOf | null = null): CapInputs {
   const t = solidTable(s, blobs);
   if ("none" in t) return t;
   // Wait, before any work, while the step shown is not all here: its data, its measured range, its element component.
   const d = deformView(s);
   const deformed = d.state === "loading" || d.state === "ready" || d.state === "partial";
   const v = contourView(s);
+  if (v.state === "combination" && combination?.key !== v.key) return { wait: true };
   if ((deformed || v.state === "ready" || v.state === "element") && !stepIsShown(s, step)) return { wait: true };
   if ((v.state === "ready" || v.state === "element") && !v.stepMeasured) return { wait: true };
   if (v.state === "element" && (step!.element !== v.component.key || !step!.gauss)) return { wait: true };
@@ -295,6 +304,12 @@ export function capInputs(s: State, blobs: BlobStore, step: StepValues | null): 
       }
       break;
     }
+    case "combination": {
+      // Checked above: the column on hand is the read shown.
+      const held = combination!.column;
+      values = vertexValues(sub.cornerNodes, columnOf(held.ids), [held.values], false);
+      break;
+    }
     default:
       values = new Float64Array(sub.solids.slot.length).fill(NaN);
   }
@@ -308,7 +323,7 @@ export function capColours(slice: Slice, view: ContourView): Float32Array {
   if (view.state === "off") {
     rgb = new Float32Array(9 * n);
     for (let i = 0; i < rgb.length; i += 3) rgb.set(CAP_FILL, i);
-  } else if (view.state === "ready" || view.state === "element") {
+  } else if (view.state === "ready" || view.state === "element" || view.state === "combination") {
     rgb = primitiveColours(slice.values!, Int32Array.from({ length: n }, (_, i) => i), 3, view.clim, view.cmap).rgb;
   } else {
     rgb = new Float32Array(9 * n);
@@ -367,7 +382,7 @@ export class CapLayer {
    * the colour key did, kept while the step shown is still on its way. True
    * when the drawing changed.
    */
-  sync(s: State, blobs: BlobStore, step: StepValues | null, dragging: boolean): boolean {
+  sync(s: State, blobs: BlobStore, step: StepValues | null, dragging: boolean, combination: CombinationColumnOf | null = null): boolean {
     const keys = capKeys(s);
     if (!keys) {
       this.note = null;
@@ -393,7 +408,7 @@ export class CapLayer {
       }
       return changed;
     }
-    const inputs = capInputs(s, blobs, step);
+    const inputs = capInputs(s, blobs, step, combination);
     if ("wait" in inputs) {
       // The step is on its way: keep the caps while they are still on the same planes, else hide them.
       const show = this.keys?.cuts === keys.cuts && this.caps.length > 0;

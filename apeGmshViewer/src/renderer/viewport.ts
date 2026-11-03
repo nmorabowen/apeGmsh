@@ -19,7 +19,7 @@ import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import type { LadrunoLineStationStep } from "../reader/ladruno.ts";
 import { contourView, geometryPairing, gizmoPlanes, legendEntryColour, selectedElementsOf } from "../state/selectors.ts";
-import { contourColours, contourShownKey, elementColours, noDataColours, toLinear, type StepValues } from "./contour.ts";
+import { combinationColours, contourColours, contourShownKey, elementColours, noDataColours, toLinear, type CombinationColumnOf, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
@@ -139,6 +139,8 @@ export class Viewport {
   continuous = false;
   /** V4c1: the step data the effects fetched (effects.currentStep); the contour colours from it. */
   private stepSource: () => StepValues | null = () => null;
+  /** VU7b-2: the User Combination column on hand (renderer/contour.ts `CombinationFeed.held`); app.ts wires it. */
+  private combinationSource: () => CombinationColumnOf | null = () => null;
   /** V4c1: what the contour colours show now: the step, range and colormap key, or `no-data`; null when not colouring by contour. */
   contourApplied: string | null = null;
   /** V4d: the displacement the effects computed for the step shown (effects.currentDisplacement). */
@@ -735,7 +737,7 @@ export class Viewport {
    * change, after a gizmo release (`releaseAware`) and a slider release.
    */
   private settleCaps(s: State = this.store.get()): void {
-    if (this.caps.sync(s, this.blobs, this.stepSource(), this.gizmoInput.dragging || this.sliding)) this.requestRender();
+    if (this.caps.sync(s, this.blobs, this.stepSource(), this.gizmoInput.dragging || this.sliding, this.combinationSource())) this.requestRender();
   }
 
   /** V4e3: a panel offset slider is held (true) or released (app.ts wires the planes panel). */
@@ -843,6 +845,13 @@ export class Viewport {
     this.settleCaps();
   }
 
+  /** VU7b-2: where a User Combination's contour values come from (app.ts wires the feed). */
+  setCombinationSource(source: () => CombinationColumnOf | null): void {
+    this.combinationSource = source;
+    this.recolour(this.store.get());
+    this.settleCaps();
+  }
+
   /**
    * The contour colours of the drawn primitives: the step on screen once its
    * data and range are here, no data everywhere when nothing can be coloured
@@ -857,6 +866,7 @@ export class Viewport {
       return { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: `no-data:${v.reason}` };
     }
     if (v.state === "element") return elementColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
+    if (v.state === "combination") return combinationColours(v, info, this.blobs, this.combinationSource(), drawn.lineMap, drawn.triMap);
     return contourColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
   }
 

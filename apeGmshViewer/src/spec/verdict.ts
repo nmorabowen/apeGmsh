@@ -8,7 +8,7 @@
 // whose whole-history range could not be read is refused, never drawn at
 // the step's range under the history's name.
 
-import { contourView, deformView } from "../state/selectors.ts";
+import { combinationRequestOf, contourView, deformView } from "../state/selectors.ts";
 import type { State } from "../state/types.ts";
 import type { ShotPlan } from "./compile.ts";
 import type { SpecShot } from "./spec.ts";
@@ -26,7 +26,13 @@ export interface OnScreen {
 }
 
 export function viewVerdict(s: State, shot: SpecShot, plan: ShotPlan, on: OnScreen): Verdict {
-  const loading = s.resultStep?.status === "loading" || s.artifacts.results?.status === "opened" || s.artifacts.model?.status === "opened";
+  // VU7b-2: a User Combination being evaluated, or its user file being read, is still coming.
+  const loading =
+    s.resultStep?.status === "loading" ||
+    s.artifacts.results?.status === "opened" ||
+    s.artifacts.model?.status === "opened" ||
+    (s.phase.at?.kind === "combination" &&
+      (s.user?.status === "reading" || (s.combination === null ? combinationRequestOf(s) !== null : s.combination.status === "loading")));
   if (plan.stage && s.resultStep?.status === "failed") {
     return { kind: "refused", reason: `step ${plan.step} of stage ${JSON.stringify(plan.stage.name)} could not be read: ${s.resultStep.error ?? "unknown error"}` };
   }
@@ -52,6 +58,9 @@ export function viewVerdict(s: State, shot: SpecShot, plan: ShotPlan, on: OnScre
         if (!(scan?.key === v.keys.scan && scan.status === "done")) ready = false;
       }
       if (!v.stepMeasured || !on.contour) ready = false;
+    } else if (v.state === "combination") {
+      // One state: no step to measure and no history to scan; shown once its colours are applied.
+      if (!on.contour) ready = false;
     } else ready = false;
   }
   if (shot.deform) {
