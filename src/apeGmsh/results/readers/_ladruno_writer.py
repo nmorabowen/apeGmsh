@@ -66,11 +66,15 @@ import shutil
 import warnings
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ..._atomic_io import replace_with_retry
 from ._ladruno_provenance import stamp_provenance
+
+if TYPE_CHECKING:
+    import h5py
 
 __all__ = ["check_target", "write_modes"]
 
@@ -82,6 +86,17 @@ _MODAL = 1                  # the recorder's ResultType::Modal
 _INT32_MAX = 2**31 - 1
 #: What this writer leaves out of the file (``PROVENANCE@unsupported``).
 UNSUPPORTED: tuple[str, ...] = ("elements",)
+
+
+class MPCOConversionRefused(RuntimeError):
+    """:func:`convert_mpco` refused before any target file existed.
+
+    Raised for an existing target (unless ``overwrite=True``), a missing
+    or unreadable ``model_h5``, MPCO stages or kinds that do not match the
+    program's, a partition set that is incomplete or inconsistent, and a
+    source that is unreadable or holds something this converter does not
+    know how to carry. The source is never modified.
+    """
 
 
 def write_modes(
@@ -353,3 +368,79 @@ def _write_file(
                 dset.attrs["OMEGA"] = _d(omega)
                 dset.attrs["FREQUENCY"] = _d(freq)
                 dset.attrs["PERIOD"] = _d(period)
+
+
+# ---------------------------------------------------------------------------
+# META -> COLUMN_MAP
+# ---------------------------------------------------------------------------
+
+
+def _meta_column(meta: "h5py.Group", name: str, where: str) -> np.ndarray:
+    if name not in meta:
+        raise MPCOConversionRefused(f"{where}/META has no {name}.")
+    return np.asarray(meta[name][...], dtype=np.int64).ravel()
+
+
+def _split_block(block: str, n_comp: int, where: str) -> "tuple[list[int], list[str]]":
+    """``"0.1.4.s11,s22"`` -> ``([0, 1, 4], ["s11", "s22"])``.
+
+    The path is the leading run of integer fields; a component name may
+    itself contain a dot or be a number, so the split is the one whose
+    name count equals the block's ``NUM_COMPONENTS``, taking the longest
+    integer path.
+    """
+    fields = block.split(".")
+    for n_path in range(len(fields) - 1, 0, -1):
+        head = fields[:n_path]
+        if not all(f.lstrip("-").isdigit() for f in head):
+            continue
+        names = ".".join(fields[n_path:]).split(",")
+        if len(names) == n_comp:
+            return [int(f) for f in head], names
+    raise MPCOConversionRefused(
+        f"{where}: META COMPONENTS block {block!r} does not split into a "
+        f"level path and {n_comp} component names.")
+
+
+def _write_column_map(
+    meta: "h5py.Group", bucket: "h5py.Group", n_cols: int, *, where: str,
+) -> None:
+    mult = _meta_column(meta, "MULTIPLICITY", where)
+    gauss = _meta_column(meta, "GAUSS_IDS", where)
+    ncomp = _meta_column(meta, "NUM_COMPONENTS", where)
+    if "COMPONENTS" not in meta:
+        raise MPCOConversionRefused(f"{where}/META has no COMPONENTS.")
+    raw = np.asarray(meta["COMPONENTS"][...]).ravel()
+    if raw.size != 1:
+        raise MPCOConversionRefused(
+            f"{where}/META/COMPONENTS holds {raw.size} strings, expected 1.")
+    text = raw[0].decode("utf-8") if isinstance(raw[0], bytes) else str(raw[0])
+    blocks = text.split(";")
+    k = ncomp.size
+    if not (mult.size == gauss.size == k == len(blocks)) or k == 0:
+        raise MPCOConversionRefused(
+            f"{where}/META: {mult.size} MULTIPLICITY, {gauss.size} "
+            f"GAUSS_IDS, {k} NUM_COMPONENTS and {len(blocks)} COMPONENTS "
+            "blocks; they must agree.")
+    if int(np.sum(mult * ncomp)) != n_cols:
+        raise MPCOConversionRefused(
+            f"{where}: sum(MULTIPLICITY * NUM_COMPONENTS) = "
+            f"{int(np.sum(mult * ncomp))} != NUM_COLUMNS {n_cols}.")
+    levels = np.zeros(k, dtype=np.int32)
+    lines = []
+    for i, block in enumerate(blocks):
+        path, names = _split_block(block, int(ncomp[i]), where)
+        levels[i] = path[-1]
+        lines.append(",".join(names))
+    cmap = bucket.create_group("COLUMN_MAP", track_order=True)
+
+    def col(values: np.ndarray) -> np.ndarray:
+        return np.asarray(values, dtype=np.int32).reshape(k, 1)
+
+    cmap.create_dataset("LEVELS", data=col(levels))
+    cmap.create_dataset("GAUSS_ID", data=col(gauss))
+    cmap.create_dataset("SECTION_TAG", data=col(np.full(k, -1)))
+    cmap.create_dataset("FIBER_ID", data=col(np.full(k, -1)))
+    cmap.create_dataset("NUM_COMP", data=col(ncomp))
+    cmap.create_dataset("MULTIPLICITY", data=col(mult))
+    cmap.attrs["COMP_NAMES"] = _s("\n".join(lines))

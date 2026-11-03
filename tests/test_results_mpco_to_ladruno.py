@@ -1269,13 +1269,13 @@ def test_overwrite_never_leaves_the_old_set_with_a_gap(
     ("0.1.a.b,c", 2, ([0, 1], ["a.b", "c"])),  # a dotted component name
 ])
 def test_meta_blocks_split_into_path_and_names(block, n, want) -> None:
-    from apeGmsh.results.readers._ladruno_from_mpco import _split_block
+    from apeGmsh.results.readers._ladruno_writer import _split_block
 
     assert _split_block(block, n, "x") == want
 
 
 def test_a_meta_block_that_does_not_split_refuses() -> None:
-    from apeGmsh.results.readers._ladruno_from_mpco import _split_block
+    from apeGmsh.results.readers._ladruno_writer import _split_block
 
     with pytest.raises(MPCOConversionRefused, match="does not split"):
         _split_block("x.y", 1, "where")
