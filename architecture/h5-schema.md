@@ -3097,7 +3097,9 @@ plots and views, and does not evaluate plots in 1.0.0. Python reads a set's memb
 as tags, for example for `results.nodes.get(ids=...)`.
 
 **File-level refusals:** `not-hdf5`, `no-version`, `bad-version`, `too-old`, `newer`
-(Python; the app opens read-only), `major`, `missing-table`. **Row refusals:**
+(Python; the app opens read-only), `major`, `missing-table`, `bad-meta` (`/meta@revision`
+is not an integer >= 1; such a file is unreadable, so a writer renames it aside;
+erratum, #2806). **Row refusals:**
 `empty-name`, `duplicate`, `bad-members`, `bad-param`, `no-tag-map`,
 `unknown-grammar`, `bad-json`, `bad-plot`, `bad-shot`.
 
@@ -3158,7 +3160,9 @@ Rows are compared by the app's path rule, case-folded on Windows and macOS
 
 **Row refusals:** `empty-name` (a label or a `params` key), `duplicate` (a label,
 both rows), `bad-path`, `escapes`, `missing`, `duplicate-path`, `bad-param`. A bad
-row refuses alone, and the manifest still opens.
+row refuses alone, and the manifest still opens. **File refusals:** `not-a-manifest`,
+`bad-version`, `too-old`, `newer` (Python), `major`, and `bad-envelope` (a top-level key
+the schema does not name, or `variants` missing or empty; erratum, #2806).
 
 **Opening a variant** (ADR 0132 D9, under owner ruling option A, #2753). Main reads
 a manifest only from a path the user gave: a dialog, a drop or argv. It keeps the
