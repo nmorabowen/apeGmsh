@@ -448,3 +448,15 @@ the recommended reading below unless the acceptance PR says otherwise:
 - **The superposition badge (D4) shows on every `linear` over a stage.** No file
   says which stage is nonlinear: `/sequence`'s `algorithm` would badge nearly
   everything anyway, so detection would add nothing.
+
+## Pointer (2026-11-03): ADR 0132
+
+[ADR 0132](0132-workspace-file-and-variants-manifest.md) (Accepted 2026-11-03)
+decides two things this ADR left to later. The first is `<stem>.workspace.h5`, a
+file separate from `.user.h5` that holds what a user makes in the app (named sets,
+plot definitions, saved views). The app now writes that file as well as the
+`/combinations` zone; ADR 0132 supersedes D2's "only in the combination zone" in
+part. The second is the completed variants manifest `<study>.variants.json` from
+A7 item 1: its list key, `path`, `version` and `params`, and how main opens a
+variant. Workspace sets are not judged by A6's model-hash rule; ADR 0132 D3 gives
+them a per-member verdict. The decision text above is unchanged.
