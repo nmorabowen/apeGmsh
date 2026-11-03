@@ -67,11 +67,15 @@ to its file:
 | `from_ladruno` | `path` |
 | `from_fem` | whichever of the three above it calls, with a cached `model.h5` |
 
-A stage scope (`stage`, `modes[i]`) passes the path on. Only a `.ladruno`
-reaches v2 unchanged. The other sources are refused:
+A stage scope (`stage`, `modes[i]`) passes the path on. The other sources
+are refused:
 
-- a native `.h5`, including the recorder cache: v2 opens results only as
-  `<stem>.results.h5` beside `<stem>.h5` (`main/pairing.ts`);
+- a native `.h5`, including the recorder cache. This refusal follows the
+  owner's literal "Only ladruno" ruling, not a limit of v2. A native
+  `<stem>.results.h5` beside its `<stem>.h5` reaches v2 unchanged
+  (`main/pairing.ts`; probe A renders `contour_staged.results.h5`), so a
+  paired native file could repoint. Only a file under another name could
+  not. Refusing paired native files is **pending owner confirmation**;
 - an `.mpco`: the app does not open it, and its conversion is lossy;
 - some state lives only in memory and is in no file. That is a `fem=` or
   `bind(fem)` that replaces the file's model, and the units overrides
@@ -164,7 +168,7 @@ colour-range probe. All of them are under "Evidence".
 | R20 | `step=k ≥ 0`, `-1`, `-k` | `k`, `"last"`, or `n − k` with `n` from `--describe` | repoint (covered) | A:`refuse-step` refused; V:`step -2` refused |
 | R21 | returns the `Path`, or `None` on a skip | `agent_view.render_stills(spec, out)` returns the manifest and raises on a refusal (G9) | repoint, take v2's raise, ruled 2026-11-02 | `agent_view.py`; `main.ts` exit codes 0, 1, 2 |
 | R22 | the stage: the `results.stage(s)` scope, or the `results.modes[i]` scope (a mode stage), else the last stage, with a warning (`_results_stills._resolve_stage`) | `stage`, by name or index, is required for every results shot. A mode is its mode stage (`--describe` `kind: "mode"`), named by index | repoint (covered) | A:`refuse-stage` refused |
-| R22b | `results.render` on a `Results` held only in memory | the `.ladruno` the `Results` was read from, named in `files`. `main` has no `Results` writer: `save_definitions` is the only file writer, and `Results.viewer` refuses the conversion as lossy (#1664) | **repoint** when the source is a `.ladruno`. Otherwise **refuse** with a message naming `.ladruno`: `.mpco`, native `.h5`, recorders, and a `fem=` or units override held only in memory. Ruled 2026-11-02 ([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595544718)) | `Results.py` constructors (`from_native`, `from_recorders`, `from_mpco`, `from_ladruno`, `from_fem`); `readers/_ladruno_from_mpco.py` docstring |
+| R22b | `results.render` on a `Results` held only in memory | the `.ladruno` the `Results` was read from, named in `files`. `main` has no `Results` writer: `save_definitions` is the only file writer, and `Results.viewer` refuses the conversion as lossy (#1664) | **repoint** when the source is a `.ladruno`. Otherwise **refuse** with a message naming `.ladruno`: `.mpco`, native `.h5`, recorders, and a `fem=` or units override held only in memory. Refusing native `.h5` follows the literal ruling, not a limit of v2: a paired `<stem>.results.h5` does reach v2 (probe A), so that refusal is **pending owner confirmation**. Ruled 2026-11-02 ([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595544718)) | `Results.py` constructors (`from_native`, `from_recorders`, `from_mpco`, `from_ladruno`, `from_fem`); `readers/_ladruno_from_mpco.py` docstring |
 
 ### `results.render_pack(out_dir, *, camera=None, window_size=(1280, 720))`
 
