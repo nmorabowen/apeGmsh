@@ -1197,6 +1197,6 @@ test("each glyph shader compiles to its own program: the comb bars and the arrow
   const layer = new LoadsLayer();
   const key = (o: { material: THREE.Material | THREE.Material[] }) => (o.material as THREE.Material).customProgramCacheKey();
   assert.notEqual(key(layer.lines), key(layer.combs), "shafts and comb bars: two programs");
-  assert.equal(key(layer.lines), key(layer.cones), "shafts and heads share the arrow program by design");
+  assert.equal(key(layer.lines), key(layer.cones), "shafts and heads share the custom key (one shader source); three still keys the double-sided heads apart");
   layer.dispose();
 });
