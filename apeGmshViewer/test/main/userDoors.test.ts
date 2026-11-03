@@ -27,11 +27,16 @@ after(() => rmSync(root, { recursive: true, force: true }));
 for (const d of ["set", "outside", "elsewhere"]) mkdirSync(join(root, d));
 for (const p of ["set/s.user.h5", "set/t.user.h5", "outside/s.user.h5", "elsewhere/s.user.h5"]) copyFileSync(USER, join(root, p));
 copyFileSync(MODEL, join(root, "set", "s.h5"));
+// a readable model in another folder: once it opens on the window, the set is there
+copyFileSync(MODEL, join(root, "elsewhere", "s.h5"));
 
-type Answer = { resolved: { ok: boolean; error?: string; reason?: string; detail?: string; values?: number } } | { rejected: string };
+type Answer = { resolved: { ok: boolean; error?: string; reason?: string; detail?: string; values?: number } } | { rejected: string } | { user: string | null } | null;
+
+/** `viewer:currentSet`'s user file, as the driver recorded it. */
+const userAt = (answers: Record<string, Answer>, name: string) => (answers[name] as { user: string | null } | null)?.user ?? null;
 
 function run(withSet: boolean): Record<string, Answer> {
-  const args = [DRIVER, ...(withSet ? [`--file=${join(root, "set", "s.h5")}`] : []), `--dir=${root}`];
+  const args = [DRIVER, ...(withSet ? [`--file=${join(root, "set", "s.h5")}`, "--steer"] : []), `--dir=${root}`];
   const stdout = execFileSync(process.execPath, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
   const line = stdout.split(/\r?\n/).find((l) => l.startsWith("USER_DOORS "));
   assert.ok(line, `the driver printed no answers:\n${stdout}`);
@@ -87,6 +92,24 @@ test("VU11: a BigInt or circular request resolves with the shape it needed, neve
   }
   assert.match(resolved(withSet, "read:bigint").error ?? "", /path: 5n/);
   assert.match(resolved(withSet, "read:circular").error ?? "", /\[Circular \*1\]/);
+});
+
+test("#2752 F1: a model:open that fails never moves the set the user doors read", () => {
+  assert.equal(resolved(withSet, "steer:1 readCase").ok, false, "before: refused");
+  assert.equal(resolved(withSet, "steer:2 model:open user file").ok, false, "a user file does not open as a model");
+  assert.equal(userAt(withSet, "steer:3 currentSet"), join(root, "set", "s.user.h5"), "the set did not move");
+  for (const step of ["steer:4 readCase", "steer:4 read"]) {
+    const r = resolved(withSet, step);
+    assert.equal(r.ok, false, `${step} is still refused`);
+    assert.match(r.error ?? r.detail ?? "", /reads only the open set's user file .*s\.user\.h5; refused .*elsewhere/);
+  }
+});
+
+test("#2752 F1: a model:open that reads moves the set, and the doors follow it", () => {
+  assert.equal(resolved(withSet, "steer:5 model:open model").ok, true);
+  assert.equal(userAt(withSet, "steer:6 currentSet"), join(root, "elsewhere", "s.user.h5"));
+  const c = resolved(withSet, "steer:7 readCase");
+  assert.equal(c.ok, true, c.detail);
 });
 
 test("VU11: with no set open, both doors refuse even the stem's user file", () => {

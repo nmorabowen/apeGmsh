@@ -69,7 +69,7 @@ import { LadrunoFile, openLadruno } from "../reader/ladruno.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
 import { readUserFile, readUserSet, type UserH5 } from "../reader/userFile.ts";
 import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } from "../reader/userSpectra.ts";
-import { candidates, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type OpenSet } from "./pairing.ts";
+import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
 import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
 import { OpenSession } from "./session.ts";
@@ -589,15 +589,30 @@ ipcMain.handle("app:config", () => ({
   results: (mode === "capture" || mode === "measure") && file ? pairSet(resolve(file), existsSync).results : null,
 }));
 
+/** The kind of `path` as the pairing names it, or null for a file the app does not pair. */
+function kindOf(path: string): Kind | null {
+  try {
+    return classify(path).kind;
+  } catch {
+    return null;
+  }
+}
+
 ipcMain.handle("model:open", async (_e, path: string) => {
-  // A model the renderer opened on its own (a drop on the P0 page): the open
-  // set follows what is on screen (./session.ts).
-  if (mode === "view" && typeof path === "string") session.rendererOpened(path);
   let model;
   try {
     model = await openModel(path);
   } catch (err) {
+    // Nothing new is on screen, so the open set stays: a path that failed to
+    // open never moves it, and so never moves what the user doors read (#2752 review F1).
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  // A model the renderer opened on its own (a drop on the P0 page): once it
+  // has read, the open set follows what is on screen (./session.ts). A file
+  // read as a model that is no `<stem>.h5` is outside any set, so the old set ends.
+  if (mode === "view" && typeof path === "string") {
+    if (kindOf(path) === "model") session.rendererOpened(path);
+    else session.close();
   }
   // /provenance rides with the model; a refused or broken zone does not stop
   // the model from loading (the renderer shows why go-to-source is off).

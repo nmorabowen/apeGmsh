@@ -64,5 +64,28 @@ for (const [name, [channel, req]] of Object.entries(battery)) {
     out[name] = { rejected: err instanceof Error ? err.message : String(err) };
   }
 }
+// After the battery, in order: steer the set through `model:open` (the
+// renderer's own door), and read through the user doors after each step.
+const call = async (channel: string, ...args: unknown[]) => {
+  try {
+    const r = (await handlers.get(channel)!({}, ...args)) as { ok: boolean; error?: string; reason?: string; detail?: string; value?: { data: Float64Array } } | null;
+    return { resolved: r === null ? null : { ok: r.ok, error: r.error, reason: r.reason, detail: r.detail, values: r.value?.data.length } };
+  } catch (err) {
+    return { rejected: err instanceof Error ? err.message : String(err) };
+  }
+};
+const userOf = async () => ((await handlers.get("viewer:currentSet")!({})) as { user: string | null; model: string | null } | null) ?? null;
+const elsewhere = PATHS.elsewhere!;
+const elsewhereModel = join(root, "elsewhere", "s.h5");
+if (process.argv.includes("--steer")) {
+  out["steer:1 readCase"] = await call("user:readCase", { path: elsewhere, ...CASE });
+  out["steer:2 model:open user file"] = await call("model:open", elsewhere);
+  out["steer:3 currentSet"] = await userOf();
+  out["steer:4 readCase"] = await call("user:readCase", { path: elsewhere, ...CASE });
+  out["steer:4 read"] = await call("user:read", { path: elsewhere, model, results: null });
+  out["steer:5 model:open model"] = await call("model:open", elsewhereModel);
+  out["steer:6 currentSet"] = await userOf();
+  out["steer:7 readCase"] = await call("user:readCase", { path: elsewhere, ...CASE });
+}
 process.stdout.write(`USER_DOORS ${JSON.stringify(out)}\n`);
 process.exit(0);
