@@ -11,9 +11,9 @@ plate's Young's modulus:
 * ``plate_uncracked.h5`` and ``plate_uncracked.ladruno``: E = 30e9 (Ie/Ig 1.0);
 * ``cracked/plate_cracked.h5`` and ``cracked/plate_cracked.ladruno``:
   E = 10.5e9 (Ie/Ig 0.35), in a subfolder (D8 allows one);
-* ``study.variants.json``: the manifest, written by hand to
-  ``architecture/schemas/variants.schema.json`` (VU9a-py's ``write_variants``
-  had not landed).
+* ``study.variants.json``: the manifest, written by VU9a-py's
+  ``apeGmsh.results.user.write_variants`` (#2806) to
+  ``architecture/schemas/variants.schema.json``.
 
 Each model is composed by the bridge (``apeSees(fem)``, ``ops.h5``) from one
 gmsh mesh: a 2 x 1 rectangle of 4 x 2 ``FourNodeQuad`` (``Panel``) at z = 0,
@@ -34,7 +34,6 @@ so the difference Uncracked minus Cracked at a node is
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import gmsh
@@ -76,6 +75,7 @@ def main() -> None:
     from apeGmsh.mesh.FEMData import FEMData
     from apeGmsh.opensees import apeSees
     from apeGmsh.results.readers._ladruno_writer import write_nodal_history
+    from apeGmsh.results.user import VariantDef, read_variants, write_variants
 
     with tempfile.TemporaryDirectory() as tmp:
         fem = mesh(Path(tmp))
@@ -97,11 +97,12 @@ def main() -> None:
             kind="static", time=(np.arange(STEPS) + 1.0) / STEPS, results={"DISPLACEMENT": disp},
             source="viewer-fixture", opensees_backend="unknown",
         )
-        rows.append({"label": label, "path": rel, "params": {"state": label.lower(), "Ie/Ig": ratio, "E": E}})
+        rows.append(VariantDef(label=label, path=rel, params={"state": label.lower(), "Ie/Ig": ratio, "E": E}))
         print(f"wrote {rel} and its .ladruno: {ids.size} nodes, E = {E:g}")
-    manifest = {"format": "apegmsh-variants", "version": "1.0.0", "variants": rows}
-    (HERE / "study.variants.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print("wrote study.variants.json")
+    manifest = HERE / "study.variants.json"
+    manifest.unlink(missing_ok=True)
+    write_variants(manifest, rows)
+    print(f"wrote {manifest.name}: {[r.label for r in read_variants(manifest).variants]}")
 
 
 if __name__ == "__main__":

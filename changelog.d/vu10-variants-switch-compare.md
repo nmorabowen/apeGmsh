@@ -1,6 +1,7 @@
 ### ADDED — apeGmshViewer opens a study of variants, switches them and shows their difference (ADR 0132 D8, D9; program slice VU10, #2694)
 
-apeGmshViewer reads `<study>.variants.json` (ADR 0132 D8) from a path the user gave: a double-click, a
+apeGmshViewer reads `<study>.variants.json` (ADR 0132 D8; written by `apeGmsh.results.user.write_variants`
+or by hand) from a path the user gave: a double-click, a
 drop, argv, or a view spec's new `files.variants`. Each row that passes opens as the window set on
 **Switch**; a refused row is listed with its code. **Compare** opens another row read-only in a compare
 slot with its own results host, which never becomes the window set. **Show difference** colours by the

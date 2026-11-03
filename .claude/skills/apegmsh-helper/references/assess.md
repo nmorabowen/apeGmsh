@@ -138,15 +138,23 @@ except AgentViewError as e:
 
 Runs of one model that differ in one parameter (stiffness, a cracked
 section, a mesh option) are a **study**. A manifest beside their sets lists
-them; the app reads it and never writes it. Write it as JSON, by hand or
-from a pipeline, to `architecture/schemas/variants.schema.json`:
+them; the app reads it and never writes it. Write it from Python (a
+partial and a replace; a row given again replaces its label in place, and
+`remove=` drops rows by label):
 
-```json
-{ "format": "apegmsh-variants", "version": "1.0.0",
-  "variants": [
-    { "label": "Uncracked", "path": "plate_uncracked.h5", "params": { "Ie/Ig": 1.0 } },
-    { "label": "Cracked", "path": "cracked/plate_cracked.h5", "params": { "Ie/Ig": 0.35 } } ] }
+```python
+from apeGmsh.results.user import VariantDef, write_variants, read_variants
+
+write_variants("study.variants.json", [
+    VariantDef("Uncracked", "plate_uncracked.h5", {"Ie/Ig": 1.0}),
+    VariantDef("Cracked", "cracked/plate_cracked.h5", {"Ie/Ig": 0.35}),
+])
+read_variants("study.variants.json").variants   # the rows that stand
 ```
+
+or as JSON by hand, to `architecture/schemas/variants.schema.json`
+(`{"format": "apegmsh-variants", "version": "1.0.0", "variants": [{"label",
+"path", "params"}, ...]}`).
 
 - `path` names each variant's model file `<stem>.h5`, relative to the
   manifest's folder, `/`-separated; subfolders are fine, leaving the folder
