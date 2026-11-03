@@ -89,6 +89,7 @@ def make_demo_results(
     from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.section.fiber import FiberPoint
     from apeGmsh.results import Results
+    from apeGmsh.results.readers._ladruno_live import FORK_SUFFIX
     from apeGmsh.results.readers._ladruno_writer import write_nodal_history
 
     if path is None:
@@ -143,7 +144,7 @@ def make_demo_results(
     # 0131 D6: the writer refuses ``elements`` in PROVENANCE@unsupported);
     # the elements bind from ``demo_model.h5``. No engine solved the
     # values, so the stamp says ``opensees_backend="unknown"``.
-    results_path = out_dir / "demo_results.ladruno"
+    results_path = out_dir / f"demo_results{FORK_SUFFIX}"
     write_nodal_history(
         results_path, model_h5=model_path, node_ids=node_ids,
         coords=coords, ndm=3, kind="static", time=amp,
