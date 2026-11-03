@@ -2242,7 +2242,7 @@ This section describes the layout those modules write at results zone
 `/meta` holds only the lineage, and the model is embedded under `/model`
 rather than written at the root.
 
-Six writers produce the file, and files from a seventh, deleted writer stay readable. `source_type` names the writer, but it is a stamp, not proof of origin:
+Five writers produce the file, and files from two former writers stay readable. `source_type` names the writer, but it is a stamp, not proof of origin:
 
 | `source_type` | Writer | `/model` | `/opensees` | Stages |
 |---|---|---|---|---|
@@ -2252,11 +2252,11 @@ Six writers produce the file, and files from a seventh, deleted writer stay read
 | `tcl_recorders` | the recorder transcoder (`Results.from_recorders`) | yes | when `model=` is given | one stage per transcode |
 | `parallel_modal` | `ParallelModalResult` harvest (`opensees/analysis/modal.py`) | yes | no | one `mode` stage per mode |
 | `footfall_walking` | `FootfallResult` (`opensees/analysis/footfall_result.py`) | no | no | one `static` stage named `footfall` |
-| `domain_capture` (the `NativeWriter.open` default) | `make_demo_results` (`results/demo.py`): synthetic nodal displacements, no element groups | yes | yes | one `static` stage named `pushover` |
+| `domain_capture` (legacy, the `NativeWriter.open` default) | `make_demo_results` (`results/demo.py`) before #2778: synthetic nodal displacements, no element groups. It now writes `demo_results.ladruno` (ADR 0131 D10) | yes | yes | one `static` stage named `pushover` |
 
 Because `domain_capture` is also `NativeWriter.open`'s default, that stamp
-does not prove that `DomainCapture` wrote the file: the demo writer, or
-any caller that keeps the default, stamps it too.
+does not prove that `DomainCapture` wrote the file: the demo's files from
+before #2778, or any caller that keeps the default, carry it too.
 
 ### Layout
 
@@ -2385,10 +2385,10 @@ Who writes it:
 | recorder transcoder (`tcl_recorders`) | `"fem"` when it can prove it, whatever apeGmsh version emitted the recorders; otherwise absent (below) |
 | `DomainCapture` (`domain_capture`, legacy files; the writer was deleted in #2191) | `"fem"` on every capture from #1764 on. An element-scoped capture refused unless a `{fem_eid: ops_tag}` pairing covered every recorded id ([Domain capture eras](#domain-capture-eras)) |
 | `EigenResult.to_native`, `capture_live_modes` (`eigen`) | never: they write nodal rows only |
-| `make_demo_results` (`domain_capture`) | `"fem"`, from #1764 on. It writes nodal rows only, in every version |
+| `make_demo_results` (`domain_capture`, legacy files; it writes a `.ladruno` since #2778) | `"fem"`, from #1764 until #2778. It wrote nodal rows only, in every version |
 | `ParallelModalResult` (`parallel_modal`) | never: absent |
 | `FootfallResult` (`footfall_walking`) | never: absent |
-| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder and `make_demo_results` are the callers in `src/` |
+| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder is the caller in `src/` |
 | MPCO (`Results.from_mpco`) | writes no `results.h5` at all: it reads the `.mpco` file directly |
 
 The transcoder labels element rows with the recorder spec's FEM ids. Those

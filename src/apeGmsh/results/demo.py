@@ -16,6 +16,10 @@ OpenSees analysis is run — the model is only emitted, and the deflection
 is written directly — so this stays fast, deterministic, and free of an
 ``openseespy`` solve.
 
+The deflection is written as a ``.ladruno`` (ADR 0131 D10), stamped
+against the emitted ``demo_model.h5`` (ADR 0122 D3), and opened with
+:meth:`Results.from_ladruno`. It holds nodal displacements only.
+
 The results are written to a temporary directory that persists for the
 process (so the returned :class:`Results` keeps a valid backing file);
 pass ``path=`` to write somewhere stable instead.
@@ -58,13 +62,15 @@ def make_demo_results(
     tip_drift
         Final lateral tip displacement (along ``+x``) at the last step.
     path
-        Directory to write ``demo_model.h5`` / ``demo_results.h5`` into.
-        Defaults to a fresh temp directory kept alive for the process.
+        Directory to write ``demo_model.h5`` / ``demo_results.ladruno``
+        into. Defaults to a fresh temp directory kept alive for the
+        process.
 
     Returns
     -------
     Results
-        Backed by a native composed file; ``.show_web()`` /
+        :meth:`Results.from_ladruno` of ``demo_results.ladruno``, bound to
+        ``demo_model.h5`` (``model_h5=``); ``.show_web()`` /
         ``.viewer()`` render it immediately. Turn deformation on for the
         boot geometry (Geometry settings → Deformation, or
         ``geometries.set_deformation(geom_id, enabled=True,
@@ -80,10 +86,11 @@ def make_demo_results(
     # mesh / bridge / writer stack in at ``apeGmsh.results`` import time,
     # and avoid an import cycle through the apeGmsh package facade.
     from apeGmsh import apeGmsh
-    from apeGmsh.opensees import OpenSeesModel, apeSees
+    from apeGmsh.opensees import apeSees
     from apeGmsh.opensees.section.fiber import FiberPoint
     from apeGmsh.results import Results
-    from apeGmsh.results.writers import NativeWriter
+    from apeGmsh.results.readers._ladruno_live import FORK_SUFFIX
+    from apeGmsh.results.readers._ladruno_writer import write_nodal_history
 
     if path is None:
         out_dir = Path(tempfile.mkdtemp(prefix="apegmsh_demo_"))
@@ -120,43 +127,33 @@ def make_demo_results(
 
     model_path = out_dir / "demo_model.h5"
     ops.h5(str(model_path))
-    model = OpenSeesModel.from_h5(str(model_path))
 
     # ── Synthetic pushover displacement: analytic cantilever shape ─────
     # u_x(z) = (z^2)(3L - z) / (2 L^3) is the unit tip-load deflection
     # shape (1.0 at the tip), ramped 0 .. tip_drift over the steps.
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
-    z = np.asarray(fem.nodes.coords, dtype=np.float64)[:, 2]
+    coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+    z = coords[:, 2]
     shape = (z ** 2) * (3.0 * length - z) / (2.0 * length ** 3)
     amp = np.linspace(0.0, float(tip_drift), int(n_steps))
     ux = np.outer(amp, shape)                       # (n_steps, n_nodes)
     zeros = np.zeros_like(ux)
 
-    results_path = out_dir / "demo_results.h5"
-    with NativeWriter(results_path) as w:
-        w.open(fem=fem, model_h5_src=model_path)
-        # Nodal rows only: no element row can carry a non-FEM id.
-        w.stamp_element_index_space("fem")
-        sid = w.begin_stage(
-            name="pushover", kind="static", time=amp.astype(np.float64),
-        )
-        w.write_nodes(
-            sid, "partition_0", node_ids=node_ids,
-            components={
-                "displacement_x": ux,
-                "displacement_y": zeros,
-                "displacement_z": zeros,
-            },
-        )
-        w.end_stage()
-
-    # Pass ``model_path`` so the non-blocking subprocess viewer
-    # (``Results.viewer(blocking=False)``) forwards ``--model-h5
-    # demo_model.h5`` to the child — the composed ``demo_results.h5`` does
-    # not carry an independently-readable ``/model`` zone, so the child
-    # must re-read the model from the sibling archive, not from the
-    # results file.
-    return Results.from_native(results_path, model=model, model_path=model_path)
+    # One static stage of nodal displacements, stamped against the bridge
+    # archive (ADR 0122 D3). Nodal rows only, and no element bucket (ADR
+    # 0131 D6: the writer refuses ``elements`` in PROVENANCE@unsupported);
+    # the elements bind from ``demo_model.h5``. No engine solved the
+    # values, so the stamp says ``opensees_backend="unknown"``.
+    results_path = out_dir / f"demo_results{FORK_SUFFIX}"
+    write_nodal_history(
+        results_path, model_h5=model_path, node_ids=node_ids,
+        coords=coords, ndm=3, kind="static", time=amp,
+        results={"DISPLACEMENT": np.stack([ux, zeros, zeros], axis=-1)},
+        source="demo", opensees_backend="unknown",
+    )
+    # ``model_h5=`` binds the archive's FEMData (physical groups, labels)
+    # and model; the subprocess viewer forwards it as ``--model-h5``.
+    return Results.from_ladruno(results_path, model_h5=model_path)
 
 
 __all__ = ["make_demo_results"]

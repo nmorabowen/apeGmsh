@@ -387,8 +387,17 @@ def _refuse_if_open_here(parts: list[Path]) -> None:
 
     held: dict[str, int] = {}
     for fid in h5py.h5f.get_obj_ids(types=h5py.h5f.OBJ_FILE):
-        name = os.path.normcase(os.path.realpath(os.fsdecode(fid.name)))
-        held[name] = fid.get_intent()
+        try:
+            raw, intent = fid.name, fid.get_intent()
+        except ValueError:
+            # Closed after it was listed (a reader the garbage collector
+            # finalised in between), so this process no longer holds it.
+            # A still-valid id that fails is not that case.
+            if fid.valid:
+                raise
+            continue
+        name = os.path.normcase(os.path.realpath(os.fsdecode(raw)))
+        held[name] = intent
     for part in parts:
         key = os.path.normcase(os.path.realpath(part))
         if key in held:
