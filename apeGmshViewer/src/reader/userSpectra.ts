@@ -196,8 +196,14 @@ export interface CaseValues {
   reference: Float64Array;
 }
 
-/** What `user:readCase` answers. A refusal carries the evaluator's reason, so a term over it refuses with it. */
-export type CaseRead = { ok: true; value: CaseValues } | { ok: false; reason: Extract<EvalReason, "refused" | "unresolved">; detail: string };
+/**
+ * What `user:readCase` answers. A refusal carries the evaluator's reason, so a
+ * term over it refuses with it. `zone` marks a refusal of the whole `/spectra`
+ * (the file holds none, or it cannot be read): Python's `UserSpectra._load`
+ * refuses that before it judges staleness, so `spectrumSource` does too
+ * (#2748 review). Absent: the refusal is of one case or one request.
+ */
+export type CaseRead = { ok: true; value: CaseValues } | { ok: false; reason: Extract<EvalReason, "refused" | "unresolved">; detail: string; zone?: true };
 
 /** `/spectra` as reader/userFile.ts `UserIndex.spectra` holds it (structural: that module imports this one). */
 export type SpectraZone = { ok: true; value: { cases: readonly SpectrumCase[]; refused: readonly Refusal[] } } | { ok: false; reason: string } | null;
@@ -235,8 +241,8 @@ function dataOf(g: FpGroup, path: string, shape: readonly number[]): Float64Arra
  * file with no `/spectra`. It raises only for a file h5wasm cannot open.
  */
 export function readCaseValues(h5: FpH5, path: string, spectra: SpectraZone, name: string, target: SpectrumTarget, label: string): CaseRead {
-  if (spectra === null) return { ok: false, reason: "unresolved", detail: `${path} holds no /spectra, so no case ${pyStr(name)}` };
-  if (!spectra.ok) return { ok: false, reason: "refused", detail: `/spectra cannot be read: ${spectra.reason}` };
+  if (spectra === null) return { ok: false, reason: "unresolved", detail: `${path} holds no /spectra, so no case ${pyStr(name)}`, zone: true };
+  if (!spectra.ok) return { ok: false, reason: "refused", detail: `/spectra cannot be read: ${spectra.reason}`, zone: true };
   const found = spectra.value.cases.find((c) => c.name === name);
   if (found === undefined) {
     const ref = spectra.value.refused.find((r) => r.name === name);
@@ -301,17 +307,22 @@ const termName = (a: StateAddress) => `<${a.kind} ${a.source}>`;
 export function spectrumSource(reads: ReadonlyMap<string, CaseRead>, q: CaseQuantityName, staleness: SpectraStaleness, allowStale: boolean): Source {
   const fieldLabel = `${q.label}/${q.component}`;
   const located = (name: string, who: string): { values: CaseValues; column: number } => {
+    const read = reads.get(name);
+    // Python's order (#2748 review): a /spectra that cannot be read refuses before staleness is judged; a refused case on a stale zone is stale.
+    if (read !== undefined && !read.ok && read.zone === true) throw new CombinationRefused(who, read.reason, read.detail);
     if (staleness.stale && !allowStale) {
       throw new CombinationRefused(who, "stale", `/spectra is stale (${staleness.reason || "no reason given"}); pass allowStale to read it (ADR 0130 A6)`);
     }
-    const read = reads.get(name);
     if (read === undefined) throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} was not read`);
     if (!read.ok) throw new CombinationRefused(who, read.reason, read.detail);
     const v = read.value;
     if (v.quantity.target !== "nodes" || v.quantity.label !== q.label) {
       throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} was read for ${v.quantity.target}/${v.quantity.label}, not nodes/${q.label}`);
     }
-    const hits = v.quantity.components.flatMap((c, i) => (c === q.component ? [i] : []));
+    // The app names a column as the file spells it (ADR 0122 D7). Python's reader reads a column by its axis, ignoring
+    // case, so `Ux` and `ux` in one result are two columns for one quantity there: refused as ambiguous here too (#2748 review).
+    const folded = v.quantity.components.flatMap((c, i) => (c.toLowerCase() === q.component.toLowerCase() ? [i] : []));
+    const hits = folded.length > 1 ? folded : folded.filter((i) => v.quantity.components[i] === q.component);
     if (hits.length !== 1) {
       const what = hits.length === 0 ? "no" : `${hits.length} columns for`;
       const held = v.case.results.map((r) => `${r.target}/${r.label}(${r.components.join(",")})`);
@@ -332,7 +343,12 @@ export function spectrumSource(reads: ReadonlyMap<string, CaseRead>, q: CaseQuan
     field(address: StateAddress): Field {
       const who = termName(address);
       if (address.kind !== "spectrum" && address.kind !== "reference") {
-        throw new CombinationRefused(who, "unresolved", `a ${address.kind} term is read from the results file; this evaluation reads the /spectra cases only`);
+        // A gap stated, not hidden (#2748 review): Python's Results combines a stage or a mode with a case; this app does not yet.
+        throw new CombinationRefused(
+          who,
+          "unresolved",
+          `a ${address.kind} term is read from the results file; this evaluation reads the /spectra cases only (Python's Results also reads stage and mode terms; this app does not yet)`,
+        );
       }
       if (address.kind === "spectrum" && address.mode === 0) throw new CombinationRefused(who, "bad-term", "a whole case is not one state; combine it with a rule");
       const { values, column } = located(address.source, who);
@@ -344,7 +360,11 @@ export function spectrumSource(reads: ReadonlyMap<string, CaseRead>, q: CaseQuan
       return field(values, values.data, rows[0]!, column);
     },
     eigenvalue(address: StateAddress): number {
-      throw new CombinationRefused(termName(address), "unresolved", "an eigenvalue is read from the results file; this evaluation reads the /spectra cases only");
+      throw new CombinationRefused(
+        termName(address),
+        "unresolved",
+        "an eigenvalue is read from the results file; this evaluation reads the /spectra cases only (Python's Results also reads stage and mode terms; this app does not yet)",
+      );
     },
     case(name: string): Case {
       const { values, column } = located(name, `<spectrum ${name}>`);

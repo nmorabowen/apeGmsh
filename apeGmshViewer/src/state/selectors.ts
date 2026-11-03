@@ -1393,6 +1393,33 @@ export function combinationRequestOf(s: State): { key: string; path: string; nam
   return { key: JSON.stringify([u.path, at.name, c.component, sp.stale.stale]), path: u.path, name: at.name, quantity, staleness: sp.stale };
 }
 
+/**
+ * The User Combination shown, as the phase bar states it: its rule, whether it
+ * is stale (A6), and its sign from the descriptors (A3; null with why, when the
+ * table cannot say). Null off a combination.
+ */
+export function combinationShownOf(s: State): { name: string; rule: string; stale: boolean; signed: boolean | null; why: string | null } | null {
+  const at = s.phase.at;
+  if (at?.kind !== "combination" || s.user?.status !== "ready") return null;
+  const c = s.user.info.combinations;
+  const item = c?.ok ? c.items.find((x) => x.name === at.name) : undefined;
+  if (!item) return null;
+  const sign = combinationSign(s, at.name);
+  return { name: at.name, rule: item.rule, stale: item.stale, signed: sign.signed, why: combinationDeform(s, at.name).reason };
+}
+
+/** Whether combination `name` is signed, from the descriptors (A3), or null with why the table cannot say. */
+function combinationSign(s: State, name: string): { signed: boolean } | { signed: null; why: string } {
+  const table = combinationTableOf(s);
+  if (!table) return { signed: null, why: `User Combination ${quoted(name)} is not in the user file` };
+  try {
+    return { signed: isSigned(table, name) };
+  } catch (err) {
+    if (err instanceof CombinationRefused) return { signed: null, why: err.message };
+    throw err;
+  }
+}
+
 /** A combination's colour range: the user's when fixed, else its own values (one state: there is no history to scan). */
 function combinationClim(c: ContourState, range: { min: number; max: number } | null): Clim {
   if (c.range === "fixed") return climOf(c, null, null, "");
@@ -1423,17 +1450,10 @@ function combinationContour(s: State, name: string): ContourView {
  * because the deformed shape reads a results step's displacement.
  */
 function combinationDeform(s: State, name: string): { ok: false; state: "unavailable" | "refused"; reason: string } {
-  const table = combinationTableOf(s);
-  if (!table) return { ok: false, state: "unavailable", reason: `User Combination ${quoted(name)} is not in the user file` };
-  let signed: boolean;
-  try {
-    signed = isSigned(table, name);
-  } catch (err) {
-    if (err instanceof CombinationRefused) return { ok: false, state: "unavailable", reason: err.message };
-    throw err;
-  }
-  if (!signed) {
-    const rule = table.row(name, name).rule;
+  const sign = combinationSign(s, name);
+  if (sign.signed === null) return { ok: false, state: "unavailable", reason: sign.why };
+  if (!sign.signed) {
+    const rule = combinationTableOf(s)!.row(name, name).rule;
     return { ok: false, state: "refused", reason: `User Combination ${quoted(name)} (${rule}) is unsigned, so it is shown as a contour only, never as a deformed shape (ADR 0130 D4, A3)` };
   }
   return { ok: false, state: "unavailable", reason: `User Combination ${quoted(name)} is signed; this app draws the deformed shape of a results step only` };

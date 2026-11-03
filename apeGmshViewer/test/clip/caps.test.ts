@@ -285,6 +285,8 @@ function dragRig(h: H) {
     caps,
     sliding: false,
     stepSource: () => h.effects.currentStep(),
+    // VU7b-2: the viewport's User Combination column; none here.
+    combinationSource: () => null,
     geometryInfo: null,
     aim: proto.aim,
     selectAt: proto.selectAt,

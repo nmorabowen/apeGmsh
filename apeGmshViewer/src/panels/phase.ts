@@ -13,21 +13,26 @@
 // one; the stage picker then lists that family only. The Modes button counts
 // the stale rows of the `.user.h5` modal table (A6, per row; VU7a), which the
 // modal table panel shows beside the mode list. Spectra and User Combinations
-// come from the `.user.h5` and are listed, not drawn (no rule is evaluated
-// over a spectrum case or a combination yet: VU4, VU7b): their buttons are
-// disabled and their tooltip names every member, a spectrum case with its
-// direction, scale, modes and results. A stale member or zone says so on its
-// family's button (A6), and a refused zone or row too.
+// come from the `.user.h5`; their tooltip names every member, a spectrum case
+// with its direction, scale, modes and results. A stale member or zone says so
+// on its family's button (A6), and a refused zone or row too. Spectra are
+// listed; a case is drawn through a User Combination over it. VU7b-2: a click
+// on User Combinations shows the first combination as a contour (VU4's
+// evaluator, in the app), and a picker in the bar chooses another; a
+// combination is one state, so the bar shows no step scrubber for it.
 
-import { inactiveElements, SCRUBBER_TOP_PX, scrubberRow, timelineOf, type Timeline } from "../state/selectors.ts";
+import { combinationShownOf, inactiveElements, SCRUBBER_TOP_PX, scrubberRow, timelineOf, type Timeline } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { PhaseKey, StaleMark } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 
-const label = (k: PhaseKey): string => (k.kind === "stage" ? `stage ${k.index + 1}` : k.kind);
+const label = (k: PhaseKey): string => (k.kind === "stage" ? `stage ${k.index + 1}` : k.kind === "combination" ? k.name : k.kind);
 
 const same = (a: PhaseKey | null, b: PhaseKey): boolean =>
-  a !== null && a.kind === b.kind && (a.kind !== "stage" || (b.kind === "stage" && a.index === b.index));
+  a !== null &&
+  a.kind === b.kind &&
+  (a.kind !== "stage" || (b.kind === "stage" && a.index === b.index)) &&
+  (a.kind !== "combination" || (b.kind === "combination" && a.name === b.name));
 
 const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path;
 
@@ -49,8 +54,10 @@ export interface PhaseFamily {
   staleAll: boolean;
   /** refused rows, or 1 for a refused zone */
   refused: number;
-  /** a click opens its first stage */
+  /** a click opens its first stage (Stages, Modes) or shows its first combination (User Combinations) */
   drawable: boolean;
+  /** User Combinations: the combinations a click and the picker can show, in the family's order; [] otherwise */
+  members: string[];
   /** the button's tooltip: what it lists, what is stale or refused and why, and why it is not drawn */
   title: string;
 }
@@ -84,7 +91,7 @@ export function familiesOf(s: State): PhaseFamily[] {
     const shown = stages.filter((i) => results.stages[i]!.time.length > 0);
     const lines = [`${FAMILY_LABEL[key]} of ${baseName(results.path)}: ${stages.map(name).join(", ")}`];
     if (empty.length) lines.push(`${empty.map(name).join(", ")} ${empty.length === 1 ? "records" : "record"} no step`);
-    out.push({ key, stages: shown, count: stages.length, stale, staleAll, refused, drawable: shown.length > 0, title: [...lines, ...notes].join("\n") });
+    out.push({ key, stages: shown, count: stages.length, stale, staleAll, refused, drawable: shown.length > 0, members: [], title: [...lines, ...notes].join("\n") });
   };
   recorded("stages", [], 0, false, 0);
   const modeNotes: string[] = [];
@@ -114,9 +121,9 @@ export function familiesOf(s: State): PhaseFamily[] {
   if (sp && !sp.ok) {
     const lines = [`Spectra: /spectra of ${file} is refused: ${sp.reason}`];
     if (sp.stale.stale) lines.push(staleLine("/spectra", sp.stale));
-    out.push({ key: "spectra", stages: [], count: 0, stale: 0, staleAll: false, refused: 1, drawable: false, title: lines.join("\n") });
+    out.push({ key: "spectra", stages: [], count: 0, stale: 0, staleAll: false, refused: 1, drawable: false, members: [], title: lines.join("\n") });
   } else if (sp) {
-    const lines = ["Spectra, listed; this app does not combine or draw a case yet:"];
+    const lines = ["Spectra, listed; a case is drawn through a User Combination over it:"];
     for (const x of sp.items) {
       const modes = `${x.modes.length} ${x.modes.length === 1 ? "mode" : "modes"}`;
       const damping = x.damping === null ? "damping per mode" : `damping ${fmt(x.damping)}`;
@@ -125,19 +132,25 @@ export function familiesOf(s: State): PhaseFamily[] {
     for (const x of sp.refused) lines.push(`${x.name || "(no name)"}: refused, ${x.reason}: ${x.detail}`);
     if (sp.stale.stale) lines.push(staleLine("/spectra", sp.stale));
     const n = sp.items.length;
-    out.push({ key: "spectra", stages: [], count: n, stale: sp.stale.stale ? n : 0, staleAll: sp.stale.stale, refused: sp.refused.length, drawable: false, title: lines.join("\n") });
+    out.push({ key: "spectra", stages: [], count: n, stale: sp.stale.stale ? n : 0, staleAll: sp.stale.stale, refused: sp.refused.length, drawable: false, members: [], title: lines.join("\n") });
   }
   const c = info?.combinations;
   if (c && !c.ok) {
-    out.push({ key: "combinations", stages: [], count: 0, stale: 0, staleAll: false, refused: 1, drawable: false, title: `User Combinations: /combinations of ${file} is refused: ${c.reason}` });
+    out.push({ key: "combinations", stages: [], count: 0, stale: 0, staleAll: false, refused: 1, drawable: false, members: [], title: `User Combinations: /combinations of ${file} is refused: ${c.reason}` });
   } else if (c) {
-    const lines = ["User Combinations, listed; this app does not evaluate them yet:"];
+    // VU7b-2: a standing combination is shown as a contour over the model, so it needs the mesh.
+    const members = s.mesh ? c.items.map((x) => x.name) : [];
+    const lines = [
+      members.length
+        ? "User Combinations; a click shows the first as a contour, and the picker in the bar chooses another:"
+        : `User Combinations, listed; none is shown (${s.mesh ? "none of them stands" : "no mesh is loaded"}):`,
+    ];
     for (const x of c.items) {
       lines.push(`${x.name}: ${x.rule}, ${x.terms} ${x.terms === 1 ? "term" : "terms"}${x.origin === "model" ? ", from model.h5" : ""}${x.stale ? " (stale: a source of it is stale)" : ""}`);
     }
     for (const x of c.refused) lines.push(`${x.name || "(no name)"}: refused, ${x.reason}: ${x.detail}`);
     const stale = c.items.filter((x) => x.stale).length;
-    out.push({ key: "combinations", stages: [], count: c.items.length, stale, staleAll: false, refused: c.refused.length, drawable: false, title: lines.join("\n") });
+    out.push({ key: "combinations", stages: [], count: c.items.length, stale, staleAll: false, refused: c.refused.length, drawable: members.length > 0, members, title: lines.join("\n") });
   }
   return out;
 }
@@ -228,7 +241,7 @@ export function mountPhase(store: Store): () => void {
     return true;
   };
   const render = (s: State, prev: State | null) => {
-    if (prev && s.phase === prev.phase && s.resultStep === prev.resultStep && s.results === prev.results && s.user === prev.user) return;
+    if (prev && s.phase === prev.phase && s.resultStep === prev.resultStep && s.results === prev.results && s.user === prev.user && s.mesh === prev.mesh) return;
     for (const u of unlisten) u();
     unlisten = [];
     const t = timelineOf(s);
@@ -253,7 +266,8 @@ export function mountPhase(store: Store): () => void {
         unlisten.push(listen(b, "click", () => store.dispatch({ type: "setPhase", at: k })));
         return b;
       });
-    const shown = s.phase.at?.kind === "results" ? familyOfStage(s, s.phase.at.stage) : null;
+    const at = s.phase.at;
+    const shown = at?.kind === "results" ? familyOfStage(s, at.stage) : at?.kind === "combination" ? "combinations" : null;
     for (const f of families) buttons.push(familyButton(f, shown === f.key));
     if (badge) {
       const b = el("span", "phase user-badge", badge.text);
@@ -262,7 +276,8 @@ export function mountPhase(store: Store): () => void {
       buttons.push(b);
     }
     for (const b of buttons) rigid(b);
-    bar.replaceChildren(...buttons, ...(t ? scrubber(t, s) : []));
+    const combos = families.find((f) => f.key === "combinations");
+    bar.replaceChildren(...buttons, ...(t ? scrubber(t, s) : at?.kind === "combination" && combos ? combinationPicker(at.name, combos, s) : []));
     publishHeight();
   };
   /** The bar's drawn height for style.css (`#left-rail` clears a wrapped bar), or none off the scrubber row. */
@@ -296,10 +311,38 @@ export function mountPhase(store: Store): () => void {
       listen(b, "click", () => {
         if (on) return;
         stop();
+        if (f.key === "combinations") return show(f.members[0]!);
         store.dispatch({ type: "setPhase", at: { kind: "results", stage: f.stages[0]!, step: 0 } });
       }),
     );
     return b;
+  };
+  /** VU7b-2: show User Combination `name`, as a contour (it is drawn as nothing else). */
+  const show = (name: string) => {
+    store.dispatch({ type: "setPhase", at: { kind: "combination", name } });
+    if (store.get().visibility.colourBy !== "contour") store.dispatch({ type: "setColourBy", by: "contour" });
+  };
+  /** VU7b-2: the combination picker, and what the combination shown is: its rule, and whether it can be a deformed shape. */
+  const combinationPicker = (name: string, f: PhaseFamily, s: State): HTMLElement[] => {
+    const box = el("span", "combination");
+    box.style.cssText = "display: flex; flex: 0 1 auto; align-items: center; gap: 6px; padding: 0 6px; font: 600 12px var(--font); color: var(--text);";
+    const pick = el("select", "combination-pick");
+    pick.style.cssText = "font: 600 12px var(--font); color: var(--text); background: var(--bg-1); border: 1px solid var(--line); border-radius: 5px;";
+    pick.title = "User Combination shown";
+    for (const m of f.members) {
+      const o = el("option", undefined, m);
+      o.value = m;
+      o.selected = m === name;
+      pick.append(o);
+    }
+    unlisten.push(listen(pick, "change", () => show(pick.value)));
+    const c = combinationShownOf(s);
+    const readout = el("span", "combination-readout", c ? `${c.rule} · ${c.signed === null ? "sign unknown" : c.signed ? "signed" : "unsigned: contour only"}${c.stale ? " · stale" : ""}` : "");
+    readout.title = c?.why ?? readout.textContent ?? "";
+    readout.style.cssText = `display: inline-block; flex: 0 1 auto; min-width: 0; max-width: ${READOUT_MAX_PX}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);`;
+    rigid(pick);
+    box.append(pick, readout);
+    return [box];
   };
   const scrubber = (t: Timeline, s: State): HTMLElement[] => {
     const box = el("span", "scrubber");

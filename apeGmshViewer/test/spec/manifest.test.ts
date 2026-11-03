@@ -237,6 +237,8 @@ test("INV-6: a shot that throws is refused and the run reaches its manifest, so 
       },
       inLayout: () => [],
     },
+    // VU7b-2: the User Combination column on screen; none here.
+    combination: () => null,
   } as unknown as RenderDeps;
   let boomed = false;
   try {

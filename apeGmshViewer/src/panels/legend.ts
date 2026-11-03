@@ -59,22 +59,31 @@ const css = (rgb: readonly number[]): string => `rgb(${rgb.map((c) => Math.round
  */
 export function contourLines(
   s: State,
-  v: Extract<ContourView, { state: "ready" | "element" }>,
+  v: Extract<ContourView, { state: "ready" | "element" | "combination" }>,
 ): { title: string; min: string; max: string; ticks: string[]; range: string; units: string; state: string | null; topology: string | null; axes: string | null } {
   const c = v.clim;
   const constant = c.min !== null && c.max !== null && c.min === c.max;
   const stageKind = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage]?.kind : undefined;
   const u = resolveFieldUnits(v.field, s.contour.source, s.contour.sourceUnits, s.contour.targetUnits, stageKind, s.contour.declaredUnits);
   const unitSuffix = u.unit ? ` [${u.unit}]` : "";
+  // VU7b-2: a User Combination's scale names the combination, and says when it can be no deformed shape.
+  const what = v.state === "combination" ? `${v.name} · ` : "";
   return {
-    title: `${v.field} · ${v.component.label}${unitSuffix}`,
+    title: `${what}${v.field} · ${v.component.label}${unitSuffix}`,
     min: c.min === null ? "no finite value" : fmtValue(c.min * u.factor),
     max: c.max === null ? "" : constant ? "(constant)" : fmtValue(c.max * u.factor),
     // The scale is the only colour bar, so it also says when there is no range to show.
     ticks: c.min === null || c.max === null ? ["no finite value"] : constant ? [fmtValue(c.min * u.factor), "(constant)"] : [0, 0.25, 0.5, 0.75, 1].map((f) => fmtValue((c.min! + (c.max! - c.min!) * f) * u.factor)),
     range: c.label,
     units: u.note,
-    state: !v.stepMeasured ? `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading` : null,
+    state:
+      v.state === "combination"
+        ? v.signed
+          ? "User Combination: signed"
+          : "User Combination: unsigned, shown as a contour only (ADR 0130 D4)"
+        : !v.stepMeasured
+          ? `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading`
+          : null,
     topology: v.state === "element" ? v.topologyLabel : null,
     axes: v.state === "element" && v.component.local ? "Axes: local (the component's name says so)." : null,
   };
@@ -406,7 +415,14 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         const of = options.filter((x) => x.source === source);
         if (!of.length) continue;
         const group = el("optgroup");
-        group.label = source === "nodal" ? "Results · nodal" : picker?.elementsVerified ? "Results · element (Gauss points)" : "Results · element (Gauss points, unverified file)";
+        group.label =
+          s.phase.at?.kind === "combination"
+            ? `User Combination ${s.phase.at.name} · nodal`
+            : source === "nodal"
+              ? "Results · nodal"
+              : picker?.elementsVerified
+                ? "Results · element (Gauss points)"
+                : "Results · element (Gauss points, unverified file)";
         for (const f of of) {
           const o = el("option", undefined, f.name);
           o.value = valueOf(f.source, f.name);
@@ -490,7 +506,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       }
       contourCard.append(modes);
     }
-    if (v.state !== "ready" && v.state !== "element") {
+    if (v.state !== "ready" && v.state !== "element" && v.state !== "combination") {
       const note =
         v.state === "unavailable"
           ? `Nothing to colour: ${v.reason}.`
@@ -526,7 +542,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
           if (m.range !== "fixed") return store.dispatch({ type: "setContourRange", range: m.range });
           // A fixed range starts from the range shown, when it has one.
           const c = contourView(store.get());
-          const from = store.get().contour.fixed ?? ((c.state === "ready" || c.state === "element") && c.clim.min !== null && c.clim.max !== null && c.clim.min < c.clim.max ? { min: c.clim.min, max: c.clim.max } : null);
+          const from = store.get().contour.fixed ?? ((c.state === "ready" || c.state === "element" || c.state === "combination") && c.clim.min !== null && c.clim.max !== null && c.clim.min < c.clim.max ? { min: c.clim.min, max: c.clim.max } : null);
           if (from) store.dispatch({ type: "setContourRange", range: "fixed", fixed: from });
         }),
       );
@@ -662,8 +678,8 @@ function contourSignature(s: State): string {
   const picker = contourFieldsOf(s);
   return JSON.stringify([
     userResultsGroup(s),
-    v.state === "ready" || v.state === "element" ? contourLines(s, v) : v,
-    v.state === "ready" || v.state === "element" ? v.cmap : null,
+    v.state === "ready" || v.state === "element" || v.state === "combination" ? contourLines(s, v) : v,
+    v.state === "ready" || v.state === "element" || v.state === "combination" ? v.cmap : null,
     picker,
     s.contour.source,
     s.contour.gauss,
