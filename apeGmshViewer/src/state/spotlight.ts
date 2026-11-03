@@ -13,6 +13,7 @@
 
 import { gaussUnavailable } from "./gaussNotes.ts";
 import { reactionComponentsOf } from "./loads.ts";
+import { springCountOf } from "./springs.ts";
 import { CMAP_NAMES, fieldsOf, gaussFields, RANGE_MODES } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
 import {
@@ -152,6 +153,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
   setSupports: { kind: "expose", command: "toggle-supports", description: "Toggle the restraint glyphs at the supports (the Display card's BC)" },
   setReactions: { kind: "expose", command: "toggle-reactions", description: "Toggle or configure the reaction-force arrows of the results step" },
+  setSprings: { kind: "expose", command: "toggle-springs", description: "Toggle or configure the zero-length spring force arrows of the results step" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
   toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },
   toggleShowOffsets: { kind: "expose", command: "toggle-show-offsets", description: "Toggle rigid joint-offset links and markers on or off" },
@@ -697,6 +699,21 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
         [{ type: "setReactions", on: !s.reactions.on }],
       ),
       keywords: "reactions reaction forces supports arrows toggle results",
+    });
+  }
+
+  if (springCountOf(s) > 0) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-springs",
+        "loads",
+        s.springs.on ? "Turn Off Spring Force Arrows" : "Turn On Spring Force Arrows",
+        `Zero-length spring forces of the step on screen are currently ${s.springs.on ? "ON" : "OFF"}`,
+        [{ type: "setSprings", on: !s.springs.on }],
+        s.springs.on,
+        [{ type: "setSprings", on: !s.springs.on }],
+      ),
+      keywords: "springs spring zerolength zero-length interface forces arrows toggle results",
     });
   }
 

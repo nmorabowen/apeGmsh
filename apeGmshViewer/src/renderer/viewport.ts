@@ -27,6 +27,7 @@ import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameF
 import { LineDiagramLayer } from "./lineDiagram.ts";
 import { EntitiesLayer } from "./entities.ts";
 import { LoadsLayer, ReactionsLayer, SupportsLayer } from "./loads.ts";
+import { SpringsLayer } from "./springs.ts";
 import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
 import { deformedPositions } from "../state/deform.ts";
 import { dropUnplaced, gaussBasePositions, gaussDisplacements, gaussLayoutOf, type GaussLayout, type StationPoints } from "../state/gaussPoints.ts";
@@ -150,6 +151,8 @@ export class Viewport {
   readonly lineDiagram: LineDiagramLayer;
   readonly loads = new LoadsLayer();
   readonly reactions = new ReactionsLayer();
+  /** The Springs card: one force arrow per zero-length spring of the results step. */
+  readonly springs = new SpringsLayer();
   /** The Display card's BC toggle: restraint glyphs at the supports. */
   readonly supports = new SupportsLayer();
   /** VU8: the `/entities` of the set's `.user.h5` (renderer/entities.ts). */
@@ -207,7 +210,7 @@ export class Viewport {
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
     this.lineDiagram = new LineDiagramLayer(this.camera);
-    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.supports.root, this.entities.root);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.springs.root, this.supports.root, this.entities.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers, this.gaussGroup);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
@@ -277,6 +280,7 @@ export class Viewport {
     this.lineDiagram.setTheme(mode);
     this.loads.setTheme(mode);
     this.reactions.setTheme(mode);
+    this.springs.setTheme(mode);
     this.supports.setTheme(mode);
     this.entities.setTheme(mode);
     const s = this.store.get();
@@ -518,6 +522,7 @@ export class Viewport {
     this.lineDiagram.dispose();
     this.loads.dispose();
     this.reactions.dispose();
+    this.springs.dispose();
     this.supports.dispose();
     this.entities.dispose();
     this.halo.dispose();
@@ -547,6 +552,7 @@ export class Viewport {
         this.lineDiagram.setClippingPlanes(this.clip.planes);
         this.loads.setClippingPlanes(this.clip.planes);
         this.reactions.setClippingPlanes(this.clip.planes);
+        this.springs.setClippingPlanes(this.clip.planes);
         this.supports.setClippingPlanes(this.clip.planes);
         this.requestRender();
       }
@@ -716,10 +722,11 @@ export class Viewport {
   }
 
   private syncLoads(s: State = this.store.get()): void {
-    // The Reactions card's arrows follow the same inputs, plus the step's data.
+    // The Reactions and Springs cards' arrows follow the same inputs, plus the step's data.
     const loads = this.loads.sync(s, this.blobs, this.full);
     const supports = this.supports.sync(s, this.blobs, this.full);
-    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports) {
+    const springs = this.springs.sync(s, this.blobs, this.full, this.stepSource());
+    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || springs) {
       this.requestRender();
     }
   }

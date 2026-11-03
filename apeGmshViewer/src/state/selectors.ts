@@ -168,6 +168,7 @@ export {
   type LoadsSummary,
   type LoadsUnitLabels,
 } from "./loads.ts";
+export { springCountOf } from "./springs.ts";
 import type {
   AnalysisDef,
   ArtifactInfo,

@@ -12,6 +12,7 @@ import { cellVertexValues, columnOf, elementCellValues, gaussCellValues, isNodeT
 import { applyPlan, cornerVertexValues, planFor, vertexCorners, type NodeTopology } from "../state/extrapolation.ts";
 import { combinationRequestOf, combinationTableOf, type ContourView } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
+import type { SpringStepData } from "../state/springs.ts";
 import type { CombinationRead, MeshInfo, State } from "../state/types.ts";
 
 /** One step's nodal values, as the effects hold them (effects.ts `StepData`). */
@@ -22,6 +23,8 @@ export interface StepValues {
   /** V4c2a: the element component fetched with the step (null: none), and its values by gauss group, (E * G,) */
   element?: string | null;
   gauss?: Record<string, Float64Array>;
+  /** The zero-length springs' force, fetched while the Springs card is on; null when its read failed */
+  springs?: SpringStepData | null;
 }
 
 /** sRGB (0..1) to linear, per channel (the sRGB transfer function). */

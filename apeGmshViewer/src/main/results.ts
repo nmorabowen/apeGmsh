@@ -36,6 +36,7 @@ import {
   LadrunoFile,
   openLadruno,
   type LadrunoLineStationStep,
+  type LadrunoSpringStep,
   type LineStationComponent,
 } from "../reader/ladruno.ts";
 import { LadrunoPartSet, openLadrunoSet, partOf, partSiblings } from "../reader/ladrunoParts.ts";
@@ -85,6 +86,8 @@ export interface ResultsStageMeta {
   elementIndexSpace?: string | null;
   /** 1-D beam line-station components recorded in this stage (.ladruno) */
   lineStations?: LineStationComponent[];
+  /** zero-length springs this stage records a global `force` for (.ladruno, one file; reader/ladruno.ts `springCount`) */
+  springs?: number;
   /** a `.ladruno` mode stage's eigen scalars (reader/ladruno.ts `LadrunoMode`); absent on every other stage */
   mode?: ModeFacts;
 }
@@ -155,6 +158,8 @@ export interface StepRequest {
   element?: string;
   /** .ladruno: one 1-D beam line-station component to read for this step */
   lineDiagram?: LineStationComponent;
+  /** .ladruno: the zero-length springs' force at this step too */
+  springs?: boolean;
 }
 
 export type StepAnswer =
@@ -168,6 +173,9 @@ export type StepAnswer =
       gauss: Record<string, Float64Array>;
       lineDiagram?: LadrunoLineStationStep | null;
       lineDiagramError?: string;
+      /** the springs' step when asked for (null: the read failed, `springsError` says why) */
+      springs?: LadrunoSpringStep | null;
+      springsError?: string;
     }
   /** `changed`: the file on disk is not the one indexed; re-open it (`open`) before reading */
   | { ok: false; seq: number; error: string; changed?: true };
@@ -318,6 +326,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
         unread: [...s.unread],
         elementIndexSpace,
         lineStations: rf.availableLineStations(s.id, warningsOut),
+        springs: rf instanceof LadrunoFile ? rf.springCount(s.id, warningsOut) : 0,
         ...(modes.has(s.id) ? { mode: modes.get(s.id)! } : {}),
       })),
     };
@@ -497,6 +506,17 @@ export class ResultsHost {
           lineDiagramError = message(err);
         }
       }
+      let springs: LadrunoSpringStep | null | undefined;
+      let springsError: string | undefined;
+      if (req.springs) {
+        try {
+          if (!(rf instanceof LadrunoFile)) throw new Error(`${req.path} is not one .ladruno file: only it records zero-length spring forces the viewer reads`);
+          springs = rf.readSpringStep(s.id, req.step);
+        } catch (err) {
+          springs = null;
+          springsError = message(err);
+        }
+      }
       return {
         ok: true,
         seq: req.seq,
@@ -506,6 +526,8 @@ export class ResultsHost {
         gauss,
         ...(lineDiagram !== undefined ? { lineDiagram } : {}),
         ...(lineDiagramError !== undefined ? { lineDiagramError } : {}),
+        ...(springs !== undefined ? { springs } : {}),
+        ...(springsError !== undefined ? { springsError } : {}),
       };
     } catch (err) {
       return { ok: false, seq: req.seq, error: message(err) };

@@ -46,6 +46,7 @@ import {
   type LineDiagramState,
   type LoadsState,
   type ReactionsState,
+  type SpringsState,
   type SupportsState,
   type MeshInfo,
   type Offer,
@@ -81,6 +82,7 @@ export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
 export const initialSupports: SupportsState = { on: false, scale: 1 };
 
 export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
+export const initialSprings: SpringsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant" };
 
 export const initialLoads: LoadsState = {
   on: false,
@@ -262,6 +264,7 @@ export const initialState: State = {
   lineDiagram: initialLineDiagram,
   loads: initialLoads,
   reactions: initialReactions,
+  springs: initialSprings,
   supports: initialSupports,
   spotlight: initialSpotlight,
   search: initialSearch,
@@ -1366,6 +1369,31 @@ export function reduce(s: State, e: Event): State {
         moments: e.moments ?? cur.moments,
       };
       return (Object.keys(next) as (keyof ReactionsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, reactions: next };
+    }
+    case "setSprings": {
+      for (const k of ["on", "thin"] as const) {
+        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setSprings: ${k} ${JSON.stringify(e[k])}`);
+      }
+      for (const k of ["scale", "headSize"] as const) {
+        const v = e[k];
+        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
+          throw new RangeError(`setSprings: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
+        }
+      }
+      if (e.colorBy !== undefined && !["mono", "magnitude"].includes(e.colorBy)) throw new RangeError(`setSprings: colorBy ${JSON.stringify(e.colorBy)}`);
+      if (e.component !== undefined && !["resultant", "xyz", "x", "y", "z"].includes(e.component)) {
+        throw new RangeError(`setSprings: component ${JSON.stringify(e.component)}`);
+      }
+      const cur = s.springs;
+      const next: SpringsState = {
+        on: e.on ?? cur.on,
+        scale: e.scale ?? cur.scale,
+        headSize: e.headSize ?? cur.headSize,
+        colorBy: e.colorBy ?? cur.colorBy,
+        thin: e.thin ?? cur.thin,
+        component: e.component ?? cur.component,
+      };
+      return (Object.keys(next) as (keyof SpringsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, springs: next };
     }
     case "setLoads": {
       if (e.on !== undefined && typeof e.on !== "boolean") {

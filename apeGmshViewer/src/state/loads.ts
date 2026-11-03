@@ -1587,7 +1587,7 @@ export function expandArrows(geom: Pick<Loads3DGeometry, "arrows" | "combs">, he
   return { linePositions: new Float32Array(lines), conePositions: new Float32Array(cones) };
 }
 
-function buildNodeCoordsMap(
+export function buildNodeCoordsMap(
   s: State,
   blobs: BlobStore,
   opts?: BuildLoads3DOptions,

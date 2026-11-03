@@ -409,6 +409,17 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   app: no Python under it imports apeGmsh, ADR 0112 D4).
   `test/results/ladrunoParts.test.ts` compares the stitch against it and
   mutates scratch copies of the set.
+- `ladruno_springs3d.ladruno` and `ladruno_springs3d.h5` are a fork run (fork
+  build `79e0623670`, FORMAT_MINOR_VERSION 0) and the model.h5 it pairs with:
+  two 3-D `zeroLength` springs from a fixed node to a coincident free node, one
+  along the global axes (`-dir 1 2 3`) and one skewed (`-dir 1 2 -orient 1 1 0
+  -1 1 0`), recorded with `force`, `basicForce`, `localForce`, the deformations
+  and the material state. `force` holds both springs in one bucket (global,
+  `P<node>_<dof>`); the per-direction tokens split by slot count into
+  `19-ZeroLength[1:0:0]` and `[1:0:1]`, and the fork writes no `-dir` code and no
+  `LOCAL_AXES` for them. The script checks the closed forms (node j's `force` is
+  the load times the load factor) and stamps the file; the model is written by
+  hand. `test/springs.test.ts` reads it for the Springs card.
 
 The test, `test/results/ladruno.test.ts`, edits scratch copies through h5wasm
 for every refusal: another `GENERATOR`, `FORMAT_VERSION = 2`, a part-file name,
@@ -426,6 +437,8 @@ modal record.
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --quad2d
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_viewer_gauss_oracle.py
+# and the zero-length springs and their model (fork build)
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --springs
 ```
 
 The part set needs OpenSeesMP from a fork build with WP-126 and its MPI
