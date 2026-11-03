@@ -570,28 +570,16 @@ _AXES = ("x", "y", "z")
 
 
 def _app_backend() -> bool:
-    """Whether the stills take the Windows path (``render._stills_backend``).
-
-    Looked up on the module at each call, so a test that patches
-    ``render._stills_backend`` reaches either path on any platform.
-    """
+    """The Windows path? ``render._stills_backend`` looked up per call (tests patch it)."""
     from .. import render as render_mod
 
     return render_mod._stills_backend() == "app"
 
 
 def results_files(results: Any, verb: str) -> dict[str, str]:
-    """The spec's ``files`` for a ``Results`` (R22b, ruled 2026-11-02).
-
-    The app draws the file a ``Results`` was read from, so only a
-    ``Results`` read from a ``.ladruno`` (:attr:`Results.path`) is
-    drawn; every other source is refused with a message naming
-    ``.ladruno``. A units view (:meth:`Results.to_units`) is held only
-    in memory, so it is refused too: the app would label the file's
-    units. The model is the ``<stem>.h5`` beside the file
-    (:func:`ladruno_files`), and the bound ``FEMData`` must be its mesh:
-    a ``fem=`` or ``bind()`` override is refused (``_require_pair_fem``).
-    """
+    """The spec's ``files`` for a ``Results`` (R22b): only the ``.ladruno`` its
+    :attr:`Results.path` names, with ``<stem>.h5`` beside it. A ``to_units`` view
+    and a ``fem=`` / ``bind()`` override (``_require_pair_fem``) are refused."""
     source = results.path
     if source is None:
         raise ValueError(
@@ -608,29 +596,36 @@ def results_files(results: Any, verb: str) -> dict[str, str]:
             f"Results the .ladruno opened, without to_units."
         )
     files = ladruno_files(source)
-    _require_pair_fem(results, files["model"], verb)
+    _require_pair_fem(results, files, verb)
     return files
 
 
-def _require_pair_fem(results: Any, model_h5: str, verb: str) -> None:
-    """R22b: the bound FEMData must be ``model_h5``'s (the app draws that mesh):
-    the same lineage ``fem_hash``, or the same nodes and, when it has any, the
-    same elements (a ``.ladruno``'s own MODEL group may record nodes only)."""
+def _require_pair_fem(results: Any, files: dict[str, str], verb: str) -> None:
+    """R22b: the bound FEMData is the ``<stem>.h5`` mesh: the same ``fem_hash``, or the same
+    nodes, any ``.ladruno`` ``fem_hash`` stamp equal to it, and, where the stamp's
+    ``element_index_space`` is ``"fem"``, the same element ids and connectivity (not types)."""
+    import h5py
     import numpy as np
 
     from apeGmsh.opensees import OpenSeesModel
 
-    pair, fem = OpenSeesModel.from_h5(model_h5), results.fem
+    pair, fem = OpenSeesModel.from_h5(files["model"]), results.fem
+    with h5py.File(files["results"], "r") as h5:
+        attrs = h5["INFO/PROVENANCE"].attrs if "INFO/PROVENANCE" in h5 else {}
+        stamp = {k: v.decode() if isinstance(v, bytes) else str(v) for k, v in attrs.items()}
 
-    def key(f: Any, part: str) -> list:
-        if part == "nodes":
-            return sorted(zip(np.asarray(f.nodes.ids).tolist(), np.asarray(f.nodes.coords, dtype=float).tolist()))
-        return sorted((g.element_type.name, sorted(zip(np.asarray(g.ids).tolist(), np.asarray(g.connectivity).tolist()))) for g in f.elements)
-    if fem.snapshot_id == pair.lineage.fem_hash or (key(fem, "nodes") == key(pair.fem, "nodes") and (
-            not key(fem, "elements") or key(fem, "elements") == key(pair.fem, "elements"))):
+    def nodes(f: Any) -> list:
+        return sorted(zip(np.asarray(f.nodes.ids).tolist(), np.asarray(f.nodes.coords, dtype=float).tolist()))
+
+    def elements(f: Any) -> list:
+        return sorted(e for g in f.elements for e in zip(np.asarray(g.ids).tolist(), np.asarray(g.connectivity).tolist()))
+    want = pair.lineage.fem_hash
+    same_space = stamp.get("element_index_space") == "fem" and bool(elements(fem))
+    if fem.snapshot_id == want or (nodes(fem) == nodes(pair.fem) and stamp.get("fem_hash", want) == want and (
+            not same_space or elements(fem) == elements(pair.fem))):
         return
     raise ValueError(
-        f"results.{verb} on Windows draws {Path(model_h5).name}'s mesh, but these Results are bound "
+        f"results.{verb} on Windows draws {Path(files['model']).name}'s mesh, but these Results are bound "
         f"to another FEMData (a fem= or bind() override, R22b). Render them without it."
     )
 

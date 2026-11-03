@@ -281,6 +281,32 @@ def test_the_pair_fem_passes_with_or_without_model_h5(app_backend, ladruno_set, 
     assert len(app_backend.specs) == 2
 
 
+def test_a_matching_pair_is_never_refused_by_element_type_name(app_backend, tmp_path):
+    """The .ladruno types its elements by OpenSees class (``truss``); the
+    ``<stem>.h5`` FEMData by gmsh type (``line2``). Same node ids,
+    coordinates, element ids and connectivity: the pair draws."""
+    from apeGmsh.mesh._element_types import make_type_info
+
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ladruno" / "truss2d.ladruno"
+    src = tmp_path / "truss2d.ladruno"
+    shutil.copy(fixture, src)
+    with Results.from_ladruno(src) as r:
+        own = r.fem
+        ids, conn = [], []
+        for g in own.elements:
+            ids.extend(np.asarray(g.ids).tolist())
+            conn.extend(np.asarray(g.connectivity).tolist())
+        assert {g.element_type.name for g in own.elements} != {"line2"}
+        line2 = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=len(ids))
+        _make_fem(
+            node_ids=np.asarray(own.nodes.ids).tolist(),
+            coords=[tuple(c) for c in np.asarray(own.nodes.coords, dtype=float).tolist()],
+            groups=[(line2, ids, conn)],
+        ).to_h5(str(tmp_path / "truss2d.h5"))
+        r.render(tmp_path / "x.png", view="mesh")
+    assert len(app_backend.specs) == 1
+
+
 # ---------------------------------------------------------------------
 # G9 and G2
 # ---------------------------------------------------------------------
