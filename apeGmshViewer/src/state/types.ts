@@ -817,6 +817,8 @@ export interface ReactionsState {
   readonly thin: boolean;
   /** What each node draws: the resultant, its three global-axis components as separate arrows, or one of them (default resultant). */
   readonly component: ReactionComponent;
+  /** Draw every node the results record a reaction at, not only the supports (default false): free nodes then show their residual, constrained nodes their constraint force. */
+  readonly allNodes: boolean;
 }
 
 /** A reaction arrow per node along the resultant, per global axis (`xyz`), or along one global axis. */
@@ -1375,7 +1377,7 @@ export type Event =
     }
   | { type: "lineDiagramScan"; scan: ContourScan }
   /** The Reactions card's controls */
-  | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent }
+  | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean }
   /** 3-D structural loading and prescribed-SP visualization controls */
   | {
       type: "setLoads";

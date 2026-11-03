@@ -335,7 +335,7 @@ export class ReactionsLayer extends ArrowLayer {
     const ids = s.results?.stages[at.stage]?.nodeIds;
     // Until the step's data is here (a scrub), the last step's arrows stay.
     const here = step && step.stage === at.stage && step.step === at.step && ids && blobs.has(ids) ? step : null;
-    const nextKey = [s.mesh.linePositions.id, full ? full.key : "base", s.reactions.scale, s.reactions.colorBy, s.reactions.component, s.contour.sourceUnits ?? "", s.contour.targetUnits ?? "", this.theme].join("|");
+    const nextKey = [s.mesh.linePositions.id, full ? full.key : "base", s.reactions.scale, s.reactions.colorBy, s.reactions.component, s.reactions.allNodes, s.contour.sourceUnits ?? "", s.contour.targetUnits ?? "", this.theme].join("|");
     if (!here || (this.appliedKey === nextKey && here === this.drawnStep)) return sized;
     const arrows = buildReactions3D(s, blobs, here.nodal, blobs.get(ids!) as Float64Array, drawnOpts(this.theme, full)).arrows;
     this.drawnStep = here;

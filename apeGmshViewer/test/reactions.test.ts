@@ -12,7 +12,7 @@ import { after, test } from "node:test";
 import type * as THREE from "three";
 import { renderReactions } from "../src/panels/reactions.ts";
 import { LoadsLayer, ReactionsLayer } from "../src/renderer/loads.ts";
-import { ARROW, ARROW_STRIDE, BAR, buildReactions3D, reactionComponentsOf } from "../src/state/loads.ts";
+import { ARROW, ARROW_STRIDE, BAR, buildReactions3D, reactionComponentsOf, supportedNodesOf } from "../src/state/loads.ts";
 import { opened, until } from "./contour/harness.ts";
 import { makeReactionSet, reactionAt } from "./spec/reactions.ts";
 
@@ -166,4 +166,43 @@ test("the Reactions card shows when the step records reactions; its switch and c
   } finally {
     (globalThis as { document?: unknown }).document = prevDoc;
   }
+});
+
+test("supports only by default: a free node's residual or a constraint's force draws no arrow unless 'all nodes' is on", async () => {
+  // The model's supports are the sp_holds of stage 0: exactly the held nodes.
+  assert.deepEqual([...supportedNodesOf(h.store.get())].sort((a, b) => a - b), [...set.held].sort((a, b) => a - b));
+  // A second set that also records a value at every free node: a tiny residual, and a large "constraint force" at one.
+  const loud = Math.min(...[...set.held]) + 1;
+  const noisy = await makeReactionSet(join(tmp, "noisy"), (n) => (n === loud ? 500 : 1e-9));
+  const g = await opened(noisy.model, noisy.results);
+  try {
+    g.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 3 } });
+    await until(() => g.effects.currentStep()?.step === 3, "the noisy step");
+    const data = g.effects.currentStep()!;
+    const ids = g.blobs.get(g.store.get().results!.stages[2]!.nodeIds!) as Float64Array;
+    const supportsOnly = buildReactions3D(g.store.get(), g.blobs, data.nodal, ids);
+    assert.equal(supportsOnly.count, noisy.held.size, "only the supports");
+    g.store.dispatch({ type: "setReactions", allNodes: true });
+    const all = buildReactions3D(g.store.get(), g.blobs, data.nodal, ids);
+    assert.equal(all.count, ids.length, "every recorded node once 'all nodes' is on");
+  } finally {
+    g.effects.dispose();
+    g.host.close();
+  }
+});
+
+test("the supports of a model with fix rows: a node fixed in some DOF, not one whose mask is all zero", () => {
+  const fixRows = (s: ReturnType<typeof h.store.get>) => s.definitions?.bcs?.fix?.rows ?? [];
+  const s = h.store.get();
+  const withFix = {
+    ...s,
+    definitions: {
+      ...s.definitions!,
+      bcs: { fix: { path: "/opensees/bcs/fix", columns: ["target_kind", "target", "dofs"], rows: [["node", "7", [1, 0, 0]], ["node", "8", [0, 0, 0]]] }, mass: null },
+    },
+  };
+  assert.equal(fixRows(withFix).length, 2);
+  const nodes = supportedNodesOf(withFix);
+  assert.ok(nodes.has(7), "fixed in x");
+  assert.ok(!nodes.has(8) || set.held.has(8), "an all-zero mask fixes nothing");
 });

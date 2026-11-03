@@ -115,11 +115,14 @@ export function renderReactions(s: State, dispatch: (e: Event) => void = () => {
   }
   const thinBtn = el("button", "reactions-thin" + (r.thin ? " on" : ""), "thin out");
   thinBtn.title = "Draw one arrow where several would overlap on screen (the largest reaction); zoom in to see the rest";
+  const allBtn = el("button", "reactions-all" + (r.allNodes ? " on" : ""), "all nodes");
+  allBtn.title = "Also draw the reactions recorded away from the supports: a free node's residual, a constrained node's constraint force";
   unlisten.push(
     listen(colorSelect, "change", () => dispatch({ type: "setReactions", colorBy: colorSelect.value as LoadsColorBy })),
     listen(thinBtn, "click", () => dispatch({ type: "setReactions", thin: !r.thin })),
+    listen(allBtn, "click", () => dispatch({ type: "setReactions", allNodes: !r.allNodes })),
   );
-  optsRow.append(colorSelect, thinBtn);
+  optsRow.append(colorSelect, thinBtn, allBtn);
   box.append(optsRow);
 
   const unit = loadsUnitsOf(s).force.unit;
@@ -128,7 +131,7 @@ export function renderReactions(s: State, dispatch: (e: Event) => void = () => {
   if (r.colorBy === "magnitude") chip.style.background = rampCss("jet");
   else chip.style.backgroundColor = cssRgb(r.colorBy === "type" ? palette.reaction : palette.mono);
   const axes = comps.flatMap((c, i) => (c ? ["xyz"[i]!] : [])).join(", ");
-  row.append(chip, el("span", undefined, unit ? `Reaction force [${unit}]` : "Reaction force (R)"), el("span", "legend-count", axes));
+  row.append(chip, el("span", undefined, unit ? `Reaction force [${unit}]` : "Reaction force (R)"), el("span", "legend-count", `${axes} · ${r.allNodes ? "all nodes" : "supports"}`));
   box.append(row);
   return box;
 }

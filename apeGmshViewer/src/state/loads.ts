@@ -2261,6 +2261,52 @@ export function buildLoads3D(
 }
 
 // ---- Reactions -----------------------------------------------------------------
+/** The supported nodes, memoised on the definitions and neutral loads they come from. */
+const supportMemo = new WeakMap<object, { neutral: unknown; nodes: ReadonlySet<number> }>();
+
+/**
+ * The nodes the model supports: every node a `fix` row (global or any stage)
+ * fixes in some DOF, every node of an SP row in a pattern (homogeneous ones
+ * included: they are fixities) or of a support hold (`sp_holds`), and every
+ * node of a neutral `/loads/sp` case. A reaction recorded anywhere else is a
+ * free node's residual or a constraint's force, not a support reaction.
+ */
+export function supportedNodesOf(s: State): ReadonlySet<number> {
+  const defs = s.definitions;
+  const key = (defs ?? s) as object;
+  const hit = supportMemo.get(key);
+  if (hit && hit.neutral === s.neutralLoads) return hit.nodes;
+  const out = new Set<number>();
+  const read = (t: Table | null | undefined, fixMask: boolean) => {
+    if (!t) return;
+    const c = t.columns;
+    const nodeIdx = ["node_id", "node_tag", "col_0", "[0]", "node"].map((n) => c.indexOf(n)).find((i) => i >= 0) ?? -1;
+    const kindIdx = c.indexOf("target_kind");
+    const targetIdx = c.indexOf("target");
+    const dofsIdx = c.indexOf("dofs");
+    for (const row of t.rows) {
+      if (fixMask && dofsIdx >= 0) {
+        const mask = row[dofsIdx];
+        if (Array.isArray(mask) && !mask.some((v) => Number(v) !== 0)) continue;
+      }
+      const id = nodeIdx >= 0 ? Number(row[nodeIdx]) : Number.NaN;
+      if (Number.isInteger(id)) out.add(id);
+      else if (targetIdx >= 0) for (const n of resolveTargetNodes(s, kindIdx >= 0 ? String(row[kindIdx] ?? "node") : "node", row[targetIdx])) out.add(n);
+    }
+  };
+  if (defs) {
+    read(defs.bcs?.fix, true);
+    for (const st of defs.stages ?? []) read(st.bcs?.fix, true);
+    for (const p of [...(defs.patterns ?? []), ...(defs.stages ?? []).flatMap((st) => st.patterns)]) {
+      read(p.tables["sps"], false);
+      read(p.tables["sp_holds"], false);
+    }
+  }
+  for (const t of Object.values(s.neutralLoads?.sp ?? {})) read(t, false);
+  supportMemo.set(key, { neutral: s.neutralLoads, nodes: out });
+  return out;
+}
+
 
 /** The reaction-force components a results stage records (`reaction_force_x`, `_y`, `_z`), in that order; null for none. */
 export function reactionComponentsOf(s: State): readonly (string | null)[] | null {
@@ -2303,6 +2349,8 @@ export function buildReactions3D(
   if (rows.every((r) => !r)) return none;
   const factor = loadsUnitsOf(s).force.factor;
   const nodeCoords = buildNodeCoordsMap(s, blobs, opts);
+  // By default only the supports: a free node's residual or a constraint's force is not a reaction to draw.
+  const supported = s.reactions.allNodes ? null : supportedNodesOf(s);
   const want = s.reactions.component;
   const axes = want === "xyz" ? [0, 1, 2] : want === "x" ? [0] : want === "y" ? [1] : want === "z" ? [2] : null;
   const items: { tip: Vec3; vec: Vec3; mag: number; node: number }[] = [];
@@ -2317,6 +2365,7 @@ export function buildReactions3D(
   for (let i = 0; i < nodeIds.length; i++) {
     const v = rows.map((r) => (r ? r[i]! : 0)) as [number, number, number];
     if (!v.every(Number.isFinite)) continue;
+    if (supported && !supported.has(nodeIds[i]!)) continue;
     const tip = nodeCoords.get(nodeIds[i]!);
     if (!tip) continue;
     const vec: Vec3 = [v[0] * factor, v[1] * factor, v[2] * factor];
