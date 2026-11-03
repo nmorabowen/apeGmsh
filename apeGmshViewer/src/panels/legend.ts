@@ -153,6 +153,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       s.visibility.extrudeFrames === prev.visibility.extrudeFrames &&
       s.visibility.showOffsets === prev.visibility.showOffsets &&
       s.nodes.on === prev.nodes.on &&
+      s.supports === prev.supports &&
       s.contour.cmap === prev.contour.cmap &&
       gaussSig === lastGauss
     ) {
@@ -281,7 +282,11 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     }
     syncSizeControls(s);
     const supportsRow = el("div", "legend-mode");
-    supportsRow.append(pendingBtn("BC", "not built yet"));
+    // BC: the restraint glyphs at the supports (renderer/loads.ts SupportsLayer), from the model alone.
+    const bc = el("button", "supports-show" + (s.supports.on ? " on" : ""), "BC");
+    bc.title = "draw the supports: an arrow into the node per restrained translation, a half circle per restrained rotation";
+    unlisten.push(listen(bc, "click", () => store.dispatch({ type: "setSupports", on: !store.get().supports.on })));
+    supportsRow.append(bc);
     labelled("Supports", supportsRow);
     const cm = el("select", "contour-cmap");
     cm.title = "contour colormap";

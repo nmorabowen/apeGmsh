@@ -44,7 +44,30 @@ if TYPE_CHECKING:
     from ..node import Node
 
 
-__all__ = ["FootfallModes", "FootfallResult"]
+__all__ = ["USER_COMPONENTS", "USER_RESULT", "FootfallModes", "FootfallResult"]
+
+#: The ``.user.h5`` entry :meth:`FootfallResult.to_results` writes (ADR 0131 D6).
+USER_RESULT = "footfall"
+#: Its components, in ``DATA`` column order: fraction of g, ratio, Hz.
+USER_COMPONENTS = ("footfall_ap", "footfall_ratio", "footfall_fdom")
+
+
+def _writer_text() -> str:
+    """``/meta@writer``: this driver, apeGmsh's version, and the F2-b backend.
+
+    footfall_walking ran on the live modal basis, in this process, on the
+    module the live resolver bound, so that module's verdict is the one to
+    stamp: ``opensees fork <sha>`` or ``opensees stock``.
+    """
+    import apeGmsh
+
+    from ..emitter.live import get_backend_info
+
+    backend = get_backend_info()
+    engine = f"opensees {backend.kind}"
+    if backend.build:
+        engine += f" {backend.build}"
+    return f"apeGmsh footfall_walking {apeGmsh.__version__}; {engine}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,64 +213,94 @@ class FootfallResult:
         a_p_m = 2.0 * np.pi * f_n * phi_i * phi_j * i_eff / self.g
         return f_n, phi_i, phi_j, np.asarray(a_p_m)
 
-    def to_results(self, fem: Any, path: "str | Path") -> "Path":
-        """Write this evaluation as a one-frame native results file.
+    def to_results(
+        self, fem: Any, path: "str | Path", *, model_h5: "str | Path",
+    ) -> "Path":
+        """Write this evaluation into ``<stem>.user.h5`` as a user result.
 
-        ADR 0109 D5: one stage (``kind="static"``), one time station
-        (``t = 0``), one partition, three nodal components —
-        ``footfall_ap``, ``footfall_ratio``, ``footfall_fdom`` — each
-        shape ``(1, N)`` over **every** node in ``fem``. Nodes outside
-        :attr:`nodes` (the response set) are ``NaN``. ``fem`` needs only
-        ``fem.nodes.ids`` — the model itself is not embedded here; feed
-        the returned path and the same ``fem`` to
-        ``Results.from_fem(fem, path, kind="native").viewer()`` (that
-        call materialises the model side) and the ratio map renders
-        with the ordinary nodal-scalar machinery — not a recorder, not
-        a ``RESPONSE_CATALOG`` entry.
+        ADR 0131 D6: footfall is a **state-free** user result (ADR 0130
+        D7), written by :func:`~apeGmsh.results.user.write_user_file`.
+        The entry is named :data:`USER_RESULT` (``"footfall"``), on the
+        nodes, ``@basis="model"``, with three components —
+        ``footfall_ap`` (fraction of g), ``footfall_ratio`` and
+        ``footfall_fdom`` (Hz) — over **every** node in ``fem``, so
+        ``DATA`` has shape ``(1, N, 3)``. Nodes outside :attr:`nodes`
+        (the response set) are ``NaN``.
+
+        ``path`` must be named ``<stem>.user.h5``; an existing file
+        gains (or replaces) the ``"footfall"`` entry and keeps the rest,
+        under that writer's rules. ``model_h5`` is the model archive
+        of ``fem`` (``ops.h5(...)`` or ``fem.to_h5(...)``): it supplies
+        the pairing hashes, and its ``fem_hash`` must equal
+        ``fem.snapshot_id``. There is no default — a guessed archive
+        would pair the map with another model.
+
+        ``/meta@writer`` carries the provenance: this driver, the
+        apeGmsh version, and the OpenSees backend (and fork build) the
+        live modal basis ran on.
+
+        Read it back with
+        ``UserFile(path).read_result("footfall")`` from
+        :mod:`apeGmsh.results.user`.
 
         Returns the path written, as a :class:`pathlib.Path`.
+
+        Raises :class:`~apeGmsh.results.user.UserWriteRefused` when
+        ``model_h5`` is missing or belongs to another fem, when ``fem``
+        has no nodes, or when a response node is not in ``fem``; nothing
+        is written then.
         """
         from pathlib import Path as _Path
 
-        from ...results.writers._native import NativeWriter
-
-        out_path = _Path(path)
-        all_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
-        row_of = {int(tag): row for row, tag in enumerate(all_ids)}
-
-        def _scatter(values: np.ndarray) -> np.ndarray:
-            out = np.full((1, all_ids.size), np.nan, dtype=np.float64)
-            for j, tag in enumerate(self.nodes):
-                out[0, row_of[int(tag)]] = values[j]
-            return out
-
-        # F2-b provenance: footfall_walking ran on the live modal basis, in
-        # this process, on the module the live resolver bound.
-        from ..emitter.live import get_backend_info
-
-        backend = get_backend_info()
-        writer = NativeWriter(out_path)
-        writer.open(
-            source_type="footfall_walking", source_path="",
-            opensees_backend=backend.kind, opensees_build=backend.build,
+        from ...results.user import (
+            UserResult,
+            UserWriteRefused,
+            model_hashes,
+            write_user_file,
         )
-        try:
-            sid = writer.begin_stage(
-                name="footfall", kind="static", time=np.array([0.0]),
+
+        if model_h5 is None:
+            raise UserWriteRefused(
+                "FootfallResult.to_results: model_h5= is required — the model "
+                "archive of this fem, whose /meta/lineage pairs the .user.h5."
             )
-            writer.write_nodes(
-                sid, "partition_0",
-                node_ids=all_ids,
-                components={
-                    "footfall_ap": _scatter(self.a_p),
-                    "footfall_ratio": _scatter(self.ratio),
-                    "footfall_fdom": _scatter(self.f_dom),
-                },
+        all_ids = np.asarray(fem.nodes.ids, dtype=np.int64).ravel()
+        if all_ids.size == 0:
+            raise UserWriteRefused(
+                "FootfallResult.to_results: fem has no nodes — there is "
+                "nothing to place the footfall map on."
             )
-            writer.end_stage()
-        finally:
-            writer.close()
-        return out_path
+        row_of = {int(tag): row for row, tag in enumerate(all_ids)}
+        missing = [int(t) for t in self.nodes if int(t) not in row_of]
+        if missing:
+            raise UserWriteRefused(
+                f"FootfallResult.to_results: response nodes {missing} are not "
+                "in fem.nodes.ids — the evaluation was run on another model."
+            )
+        fem_hash, _ = model_hashes(model_h5)
+        snapshot = str(fem.snapshot_id)
+        if fem_hash != snapshot:
+            raise UserWriteRefused(
+                f"FootfallResult.to_results: {model_h5} is not this fem's "
+                f"archive (its fem_hash {fem_hash} is not fem.snapshot_id "
+                f"{snapshot})."
+            )
+
+        data = np.full((1, all_ids.size, 3), np.nan, dtype=np.float64)
+        for j, tag in enumerate(self.nodes):
+            row = row_of[int(tag)]
+            data[0, row, 0] = self.a_p[j]
+            data[0, row, 1] = self.ratio[j]
+            data[0, row, 2] = self.f_dom[j]
+
+        result = UserResult(
+            name=USER_RESULT, target="nodes", basis="model",
+            components=USER_COMPONENTS, units=("g", "1", "Hz"),
+            data=data, ids=all_ids,
+        )
+        return write_user_file(
+            _Path(path), model_h5, results=(result,), writer=_writer_text(),
+        )
 
     def to_dataframe(self) -> Any:
         """Per-response-node table as a ``pandas.DataFrame``."""

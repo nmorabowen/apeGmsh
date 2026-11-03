@@ -445,20 +445,25 @@ class ResolvedRecorderSpec:
 
         The route follows the build (``run.route``): the fork records its
         own results file, stamps it with ``model_h5``'s pairing and opens
-        it; a stock build with the MPCO recorder records ``run.mpco`` and
-        reads it with :meth:`Results.from_mpco`; a build without MPCO
-        records classic ``.out`` files in ``run_out/`` and reads them with
-        :meth:`Results.from_recorders`. The two stock routes warn once
-        (:class:`~apeGmsh.results.live.DefaultRouteWarning`), naming why.
+        it; a stock build with the MPCO recorder records ``run.mpco``,
+        converts it to ``run.ladruno`` beside it and opens that with
+        :meth:`Results.from_ladruno`; a build without MPCO records classic
+        ``.out`` files in ``run_out/`` and reads them with
+        :meth:`Results.from_recorders`, after one
+        :class:`~apeGmsh.results.live.DefaultRouteWarning`.
 
-        A stock in-process ``.mpco`` is never converted: the loop's own
-        ``analysis`` calls never reach ``model_h5``, so its stage kind is
-        not a fact. :func:`~apeGmsh.results.live.read_deck_mpco` converts
-        the ``.mpco`` of the bridge's own staged deck, run out of process.
+        The stock MPCO route converts only when ``model_h5`` declares the
+        stage kinds in ``ops.stage`` blocks (ADR 0131 D5). An unstaged
+        program refuses by name at ``__enter__``
+        (``StageKindRefused``), with no default kind: the loop's own
+        ``analysis`` calls never reach ``model_h5``. Declare the stages
+        with ``ops.stage(...)``, or run the program as a deck emitted with
+        ``analyze_steps`` and read it with
+        :func:`~apeGmsh.results.live.read_deck_mpco`.
 
         ``model_h5`` is the bridge archive the live domain was built from.
-        ``overwrite=True`` replaces the fork's file of an earlier run, which
-        otherwise refuses. Modal records refuse: no default route records
+        ``overwrite=True`` replaces the ``.ladruno`` of an earlier run,
+        which otherwise refuses. Modal records refuse: no default route records
         modes.
         """
         from ..live._default import LiveDefault
