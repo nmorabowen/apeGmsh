@@ -108,7 +108,10 @@ a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<
   `--assemble` at release time; never in CI.
 - **PR bodies:** `gh pr create --body-file -` with a heredoc. `--body -` sets a literal "-".
 - **Skill changes** follow the adr-docs guide, "The skill": edit `skills/apegmsh/` only and
-  regenerate the mirror with `python scripts/sync_skill.py`.
+  regenerate the mirror with `python scripts/sync_skill.py`. After `git pull` on each PC, run
+  `python scripts/refresh_user_skill.py` (`--check` reports each skill): it refreshes
+  `~/.claude/skills/` for `apegmsh` and every `.claude/skills/*` from origin/main and leaves other
+  user skills alone.
 - **A worktree does not follow `origin/main`.** Before concluding a feature is unmerged, check
   `git log HEAD..origin/main` or `git show origin/main:<path>`.
 
