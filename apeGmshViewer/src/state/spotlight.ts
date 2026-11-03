@@ -150,6 +150,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramFill: { kind: "expose", command: "toggle-line-diagram-fill", description: "Toggle 3-D line diagram ribbon fill" },
   setLineDiagramFlipSign: { kind: "expose", command: "toggle-line-diagram-flip-sign", description: "Toggle 3-D line diagram tension-side / sign convention" },
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
+  setSupports: { kind: "expose", command: "toggle-supports", description: "Toggle the restraint glyphs at the supports (the Display card's BC)" },
   setReactions: { kind: "expose", command: "toggle-reactions", description: "Toggle or configure the reaction-force arrows of the results step" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
   toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },

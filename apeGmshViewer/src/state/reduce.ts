@@ -46,6 +46,7 @@ import {
   type LineDiagramState,
   type LoadsState,
   type ReactionsState,
+  type SupportsState,
   type MeshInfo,
   type Offer,
   type OffersState,
@@ -77,7 +78,9 @@ export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, m
 
 export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
 
-export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false };
+export const initialSupports: SupportsState = { on: false, scale: 1 };
+
+export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
 
 export const initialLoads: LoadsState = {
   on: false,
@@ -259,6 +262,7 @@ export const initialState: State = {
   lineDiagram: initialLineDiagram,
   loads: initialLoads,
   reactions: initialReactions,
+  supports: initialSupports,
   spotlight: initialSpotlight,
   search: initialSearch,
   camera: initialCamera,
@@ -1325,8 +1329,17 @@ export function reduce(s: State, e: Event): State {
     case "lineDiagramScan":
       if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
+    case "setSupports": {
+      if (e.on !== undefined && typeof e.on !== "boolean") throw new RangeError(`setSupports: on ${JSON.stringify(e.on)}`);
+      if (e.scale !== undefined && (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0)) {
+        throw new RangeError(`setSupports: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
+      }
+      const on = e.on ?? s.supports.on;
+      const scale = e.scale ?? s.supports.scale;
+      return on === s.supports.on && scale === s.supports.scale ? s : { ...s, supports: { on, scale } };
+    }
     case "setReactions": {
-      for (const k of ["on", "thin", "allNodes"] as const) {
+      for (const k of ["on", "thin", "allNodes", "forces", "moments"] as const) {
         if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setReactions: ${k} ${JSON.stringify(e[k])}`);
       }
       for (const k of ["scale", "headSize"] as const) {
@@ -1349,6 +1362,8 @@ export function reduce(s: State, e: Event): State {
         thin: e.thin ?? cur.thin,
         component: e.component ?? cur.component,
         allNodes: e.allNodes ?? cur.allNodes,
+        forces: e.forces ?? cur.forces,
+        moments: e.moments ?? cur.moments,
       };
       return (Object.keys(next) as (keyof ReactionsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, reactions: next };
     }

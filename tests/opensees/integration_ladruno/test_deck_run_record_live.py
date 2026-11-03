@@ -10,8 +10,8 @@ tip displacement is ``P L / E A``. Its unstaged deck, emitted with
   equals the ``.mpco`` read and the closed form at ``rtol=1e-12``;
 * F2 of #2224's review: the same bridge's deck exported, ``ops.h5()``, then
   an in-process gravity, ``loadConst`` and Transient run into the same
-  ``.mpco``: no record exists, and ``read_deck_mpco`` warns once (check 1)
-  and reads the ``.mpco``.
+  ``.mpco``: no record exists, and ``read_deck_mpco`` refuses by name
+  (check 1), never reading the ``.mpco`` in its place (ADR 0131 D5).
 
 The fork cases carry ``ladruno_fork`` (the live-fork lane); the stock cases
 carry ``live`` and run on stock openseespy (live-stock). The Tcl deck needs
@@ -35,7 +35,8 @@ import pytest
 
 import apeGmsh
 from apeGmsh.results import Results
-from apeGmsh.results.live import DefaultRouteWarning, read_deck_mpco
+from apeGmsh.results.live import read_deck_mpco
+from apeGmsh.results.readers._ladruno_from_mpco import StageKindRefused
 from tests.test_deck_run_record import STEPS, TIP, truss_bridge
 
 _FORK_IMPORT = (
@@ -209,20 +210,18 @@ def _stale_record_then_in_process(
 
 def _assert_refuses_once(tmp_path: Path, mpco: Path, model: Path,
                          check: str = "1 (the record)") -> None:
+    """``read_deck_mpco`` refuses by name (ADR 0131 D5): no warning, no
+    ``.ladruno``, and the ``.mpco`` kept, never read in its place."""
     if check.startswith("1"):
         assert list(tmp_path.glob("*.run.json*")) == []
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        res = read_deck_mpco(mpco, model_h5=model)
-    try:
-        ours = [w for w in caught if w.category is DefaultRouteWarning]
-        assert len(ours) == 1, [str(w.message) for w in caught]
-        assert f"check {check}" in str(ours[0].message)
-        if check.startswith("1"):
-            np.testing.assert_allclose(tip_x(res)[STEPS - 1], TIP, rtol=1e-12)
-    finally:
-        res.close()
-    assert not (tmp_path / "deck.ladruno").exists()
+        with pytest.raises(StageKindRefused) as e:
+            read_deck_mpco(mpco, model_h5=model)
+    assert f"check {check}" in str(e.value)
+    assert "ops.stage(...)" in str(e.value) and "analyze_steps" in str(e.value)
+    assert [str(w.message) for w in caught] == []
+    assert mpco.exists() and not (tmp_path / "deck.ladruno").exists()
 
 
 @pytest.mark.ladruno_fork

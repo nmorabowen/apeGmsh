@@ -159,6 +159,7 @@ export {
   loadsSummaryOf,
   loadsUnitsOf,
   reactionComponentsOf,
+  reactionMomentComponentsOf,
   type BuildLoads3DOptions,
   type LoadPatternCounts,
   type LoadPatternEntry,

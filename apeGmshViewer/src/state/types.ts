@@ -979,6 +979,17 @@ export interface ReactionsState {
   readonly component: ReactionComponent;
   /** Draw every node the results record a reaction at, not only the supports (default false): free nodes then show their residual, constrained nodes their constraint force. */
   readonly allNodes: boolean;
+  /** Draw the reaction forces (default true). */
+  readonly forces: boolean;
+  /** Draw the reaction moments as half-circle arcs about their axes (default true). */
+  readonly moments: boolean;
+}
+
+/** The Display card's BC toggle: restraint glyphs at the supports (state/loads.ts `buildSupports3D`). */
+export interface SupportsState {
+  readonly on: boolean;
+  /** Glyph length multiplier (default 1, > 0). */
+  readonly scale: number;
 }
 
 /** A reaction arrow per node along the resultant, per global axis (`xyz`), or along one global axis. */
@@ -1221,6 +1232,7 @@ export interface State {
   /** 3-D structural loading and prescribed-SP visualization state */
   loads: LoadsState;
   reactions: ReactionsState;
+  supports: SupportsState;
   /** Spotlight (`Ctrl+K`) command and search palette */
   spotlight: SpotlightState;
   /** Search window query builder and text filter */
@@ -1538,8 +1550,10 @@ export type Event =
       drawnBeams?: readonly LineDiagramBeamSummary[];
     }
   | { type: "lineDiagramScan"; scan: ContourScan }
+  /** The Display card's BC toggle */
+  | { type: "setSupports"; on?: boolean; scale?: number }
   /** The Reactions card's controls */
-  | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean }
+  | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean; forces?: boolean; moments?: boolean }
   /** 3-D structural loading and prescribed-SP visualization controls */
   | {
       type: "setLoads";

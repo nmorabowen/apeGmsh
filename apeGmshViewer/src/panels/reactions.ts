@@ -7,7 +7,7 @@
 // Follows ADR 0112 D6 (`panel-allow-list`): imports only `store`, `selectors`,
 // `types`, and `ui/dom`.
 
-import { loadsColourPalette, loadsUnitsOf, rampCss, reactionComponentsOf } from "../state/selectors.ts";
+import { loadsColourPalette, loadsUnitsOf, rampCss, reactionComponentsOf, reactionMomentComponentsOf } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { Event, LoadsColorBy, ReactionComponent } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
@@ -30,8 +30,7 @@ export function mountReactions(store: Store, subscribeTheme?: (fn: () => void) =
   let unlisten: (() => void)[] = [];
   let lastSig = "";
   const render = (s: State) => {
-    const comps = reactionComponentsOf(s);
-    const sig = JSON.stringify([s.reactions, comps, s.contour.sourceUnits, s.contour.targetUnits, s.contour.declaredUnits, currentTheme()]);
+    const sig = JSON.stringify([s.reactions, reactionComponentsOf(s), reactionMomentComponentsOf(s), s.contour.sourceUnits, s.contour.targetUnits, s.contour.declaredUnits, currentTheme()]);
     if (sig === lastSig) return;
     lastSig = sig;
     for (const u of unlisten) u();
@@ -52,7 +51,8 @@ export function mountReactions(store: Store, subscribeTheme?: (fn: () => void) =
 
 export function renderReactions(s: State, dispatch: (e: Event) => void = () => {}, unlisten: (() => void)[] = []): HTMLElement | null {
   const comps = reactionComponentsOf(s);
-  if (!s.mesh || !comps) return null;
+  const mcomps = reactionMomentComponentsOf(s);
+  if (!s.mesh || (!comps && !mcomps)) return null;
   const r = s.reactions;
   const palette = loadsColourPalette(currentTheme());
   const box = el("div", "reactions");
@@ -60,12 +60,12 @@ export function renderReactions(s: State, dispatch: (e: Event) => void = () => {
 
   const modes = el("div", "legend-mode reactions-modes");
   const toggle = el("button", "reactions-toggle" + (r.on ? " on" : ""), "3D reactions");
-  toggle.title = "Show the step's reaction forces: arrows pointing at the supports, a 45° tick across the tail";
+  toggle.title = "Show the step's reactions: force arrows pointing at the supports and moment half circles about their axes, each with a 45° tick";
   const which = el("select", "reactions-component");
   which.title = "the resultant at each node, or its components along the global axes";
   for (const [value, label] of COMPONENTS) {
-    // A 2-D model records no z reaction: no Z arrow to offer.
-    if (value === "z" && comps[2] === null) continue;
+    // A 2-D model records no z force (its moment, if any, is about z): offer Z only when a kind records it.
+    if (value === "z" && !comps?.[2] && !mcomps?.[2]) continue;
     const o = el("option", undefined, label);
     o.value = value;
     o.selected = r.component === value;
@@ -75,7 +75,19 @@ export function renderReactions(s: State, dispatch: (e: Event) => void = () => {
     listen(toggle, "click", () => dispatch({ type: "setReactions", on: !r.on })),
     listen(which, "change", () => dispatch({ type: "setReactions", component: which.value as ReactionComponent })),
   );
-  modes.append(toggle, which);
+  modes.append(toggle);
+  // F and M switch the kinds the step records; a kind it does not record gets no switch.
+  for (const [kind, label, title, on, rec] of [
+    ["forces", "F", "Show the reaction forces (arrows)", r.forces, comps],
+    ["moments", "M", "Show the reaction moments (half circles about their axes, right-hand rule)", r.moments, mcomps],
+  ] as const) {
+    if (!rec) continue;
+    const b = el("button", `reactions-${kind}` + (on ? " on" : ""), label);
+    b.title = title;
+    unlisten.push(listen(b, "click", () => dispatch({ type: "setReactions", [kind]: !on })));
+    modes.append(b);
+  }
+  modes.append(which);
   box.append(modes);
 
   const scaleRow = el("div", "deform-scale-row reactions-scale-row");
@@ -125,13 +137,19 @@ export function renderReactions(s: State, dispatch: (e: Event) => void = () => {
   optsRow.append(colorSelect, thinBtn, allBtn);
   box.append(optsRow);
 
-  const unit = loadsUnitsOf(s).force.unit;
-  const row = el("div", "legend-row reactions-kind-row");
-  const chip = el("span", "chip");
-  if (r.colorBy === "magnitude") chip.style.background = rampCss("jet");
-  else chip.style.backgroundColor = cssRgb(r.colorBy === "type" ? palette.reaction : palette.mono);
-  const axes = comps.flatMap((c, i) => (c ? ["xyz"[i]!] : [])).join(", ");
-  row.append(chip, el("span", undefined, unit ? `Reaction force [${unit}]` : "Reaction force (R)"), el("span", "legend-count", `${axes} · ${r.allNodes ? "all nodes" : "supports"}`));
-  box.append(row);
+  const units = loadsUnitsOf(s);
+  for (const [rec, unit, named, bare] of [
+    [comps, units.force.unit, "Reaction force", "Reaction force (R)"],
+    [mcomps, units.moment.unit, "Reaction moment", "Reaction moment (M)"],
+  ] as const) {
+    if (!rec) continue;
+    const row = el("div", "legend-row reactions-kind-row");
+    const chip = el("span", "chip");
+    if (r.colorBy === "magnitude") chip.style.background = rampCss("jet");
+    else chip.style.backgroundColor = cssRgb(r.colorBy === "type" ? palette.reaction : palette.mono);
+    const axes = rec.flatMap((c, i) => (c ? ["xyz"[i]!] : [])).join(", ");
+    row.append(chip, el("span", undefined, unit ? `${named} [${unit}]` : bare), el("span", "legend-count", `${axes} · ${r.allNodes ? "all nodes" : "supports"}`));
+    box.append(row);
+  }
   return box;
 }
