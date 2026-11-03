@@ -283,6 +283,41 @@ test("D5: an offer the set cannot draw is listed as refused, with the compiler's
   assert.equal(offerNamed(s, "ok").status, "pending");
 });
 
+// VU15 (#2776): the offer path has no User Combination resolver, and says so. Before, the compiler's
+// no-resolver reason ("this view has no user file ...") reached the list, which is wrong whenever the set's
+// user file is open. The oracle is the named reason, word for word, on both of D5's paths.
+const COMBINATION_REASON = 'User Combination "C1": combination offers are not supported yet';
+
+test("VU15: an offer of a combination contour is listed as refused, with the reason that it is a combination offer", async () => {
+  const r = await rig();
+  const contour = { field: "displacement", component: "z" };
+  r.runner.receive(offers([{ name: "combo", combination: "C1", contour }, { name: "combo-phase", combination: "C1" }]));
+  await r.tick();
+  await r.tick();
+  const s = r.store.get();
+  const o = offerNamed(s, "combo");
+  assert.equal(o.status, "refused");
+  assert.equal(o.reason, COMBINATION_REASON);
+  assert.doesNotMatch(o.reason!, /user file/);
+  assert.throws(() => r.store.dispatch({ type: "applyOffer", id: o.id }), /cannot be applied/);
+  // Only a combination contour is refused here: a shot that only shows a combination is the reducer's to judge.
+  assert.notEqual(offerNamed(s, "combo-phase").reason, COMBINATION_REASON);
+});
+
+test("VU15: a combination contour offered on another set is refused at the click with the same reason, and the view goes back", async () => {
+  const r = await rig();
+  r.runner.receive(offers([{ name: "combo-there", combination: "C1", contour: { field: "displacement", component: "z" } }], {}, DEFORM_2D, DEFORM_2D_RESULTS));
+  await r.tick();
+  await r.tick();
+  const listed = offerNamed(r.store.get(), "combo-there");
+  assert.equal(listed.status, "pending", "it cannot be judged until its set is open");
+  await r.click(listed.id);
+  const s = r.store.get();
+  assert.equal(offerNamed(s, "combo-there").status, "refused");
+  assert.equal(offerNamed(s, "combo-there").reason, COMBINATION_REASON);
+  assert.equal(s.offers.back.length, 0, "a refused click leaves nothing to go back from");
+});
+
 test("D5: an offer naming files outside the open set says so; its click opens them first, and Back returns", async () => {
   const r = await rig();
   r.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 1, step: 1 } });

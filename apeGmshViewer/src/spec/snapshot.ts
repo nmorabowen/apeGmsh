@@ -29,7 +29,7 @@ import { MAGNITUDE } from "../state/contour.ts";
 import type { Store } from "../state/store.ts";
 import type { CameraPose, DeclPath, Event, Offer, OfferIn, State, Vec3, ViewMemo } from "../state/types.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
-import { compileShot, type ShotPlan } from "./compile.ts";
+import { compileShot, type Compiled, type ShotPlan } from "./compile.ts";
 import { describeSet, SPEC_MAGNITUDE, type SetDescription } from "./describe.ts";
 import { manifestEntry, manifestOf, type EntryInput, type Manifest, type ManifestEntry } from "./manifest.ts";
 import { APP_LAYERS, SPEC_VERSION, validateSpec, type SpecShot, type ViewSpec } from "./spec.ts";
@@ -52,6 +52,19 @@ export interface OfferPayload {
 export type Presented = { ok: true; offers: OfferIn[] } | { ok: false; key: string; reason: string };
 
 const IGNORED = "A still's chrome, layers and background are not applied to this window.";
+
+/**
+ * An offer's shot, compiled as D4 compiles it (INV-2). VU15 (#2776): the
+ * offer path has no User Combination resolver yet (VU7b-2 gave one to the
+ * render mode only), so an offer of a combination contour is refused for that
+ * reason, which is the true one, and not as if the set had no user file.
+ */
+function compileOffer(shot: SpecShot, d: SetDescription): Compiled {
+  if (shot.combination != null && shot.contour) {
+    return { ok: false, reason: `User Combination ${JSON.stringify(shot.combination)}: combination offers are not supported yet` };
+  }
+  return compileShot(shot, d);
+}
 
 /** D9: whether a shot carries a still-only key this window will not apply. */
 function stillOnly(shot: SpecShot): boolean {
@@ -644,7 +657,7 @@ export class OfferRunner {
       // Files outside the open set cannot be judged until they are open: the click finds out.
       if (opens.length === 0) {
         d ??= describe(s);
-        const c = compileShot(p.shot, d);
+        const c = compileOffer(p.shot, d);
         refused = c.ok ? null : c.reason;
       }
       store.dispatch({ type: "offerAssessed", id: o.id, refused, opens });
@@ -672,7 +685,7 @@ export class OfferRunner {
         const failed = await this.openSet(p.files.results ?? p.files.model, p.files.model, p.files.results, p.fold);
         if (failed) return await refuse(failed);
       }
-      const c = compileShot(p.shot, describe(store.get()));
+      const c = compileOffer(p.shot, describe(store.get()));
       if (!c.ok) return await refuse(c.reason);
       if (p.theme) store.dispatch({ type: "setTheme", theme: p.theme });
       for (const e of freshViewEvents(store.get())) store.dispatch(e);
