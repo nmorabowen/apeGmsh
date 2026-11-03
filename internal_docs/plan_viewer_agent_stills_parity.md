@@ -1,157 +1,185 @@
-# Parity of the VTK stills with `apegmsh-view/1` (ADR 0128 slice 6)
+# Outcomes for the VTK stills under `apegmsh-view/1` (ADR 0128 slice 6)
 
-This page maps every still the ADR 0094 VTK renderer can write today to an
-`apegmsh-view/1` spec that `apeGmshViewer --render` draws, or marks it a gap,
-so the owner can rule on the deletion in VA6
-([#2655](https://github.com/nmorabowen/apeGmsh/issues/2655)). Slice card:
-VA6a ([#2741](https://github.com/nmorabowen/apeGmsh/issues/2741)). Status:
-**awaiting the owner's sign-off**. VA6 deletes nothing until the owner signs.
+This page decides, for every still the ADR 0094 VTK renderer can write
+today, whether VA6 ([#2655](https://github.com/nmorabowen/apeGmsh/issues/2655))
+**repoints** it to an `apegmsh-view/1` spec, **adds** what v2 lacks,
+**drops** it, or **keeps** the VTK path. The old renderer is not a target:
+it was buggy, so where v1 and v2 disagree, v2's behaviour is not a defect.
+Slice card: VA6a ([#2741](https://github.com/nmorabowen/apeGmsh/issues/2741)).
 
-## Gaps
+**Ruling.** On 2026-11-02 the owner ruled "Accept all" on the recommended
+outcomes ([#2655 comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6591785652)).
+A row marked **ruled 2026-11-02** carries one of those outcomes. Two rows
+are marked **needs ruling**: in each, the code check changed the
+recommended outcome, so the ruling does not cover it (see "Needs ruling").
 
-Nine gaps stand between the VTK stills and `apegmsh-view/1`. Each row below
-is backed by a probe from the "Evidence" section. G1 and G2 are the two gaps
-the card asked to confirm, and both are confirmed.
+**Platform rule.** G2 keeps the VTK path on Linux. Every "repoint" below is
+a repoint on Windows. On Linux the same call keeps drawing through VTK
+until v2 can capture headless there.
 
-| # | Gap | What v1 does | What v2 lacks | Rows |
-|---|---|---|---|---|
-| G1 | **Reaction arrows** | `view="reactions"` draws a reaction glyph at each support, every axis (session `Reactions()` slot); the pack writes `reactions.png` for a static stage that recorded reactions | No spec key draws reactions (`reactions` and `view` are refused as keys). The nearest view is a nodal contour of `reaction_force`, a different picture (the e2e test `test/spec/render.e2e.ts` says so) | R11, R26 |
-| G2 | **Headless stills on Linux** (and macOS) | VTK offscreen renders on Linux/Mesa. CI's image goldens (`tests/viewers/test_x2_golden_stills.py`) are Linux frames | No PNG under xvfb on ubuntu: WebGL2 is blocklisted under software GL (VA0p, #2649, probe PR #2656). macOS was not measured. There is no installer outside Windows, and `agent_view.find_viewer` finds no install there | P2, P3 |
-| G3 | **Deform auto-scale** | `deform=None` on `view="deformed"` scales the largest \|u\| at the drawn step to 0.12 of the model diagonal (`_results_stills` → session `Deform(scale=None)`) | `deform.scale` is a number. Left out, it is 1, not a fit, and `"auto"` is refused | R10, R18, R25 |
-| G4 | **Deform by velocity or acceleration** | `deform=(field, scale)` with `field` in displacement, velocity, acceleration | `deform` has only `scale` and `ghost` (`deform.field` is refused). The app warps by displacement only (`apeGmshViewer/src/state/deform.ts`) | R17 |
-| G5 | **The canned pack** | `render_pack` chooses the stage, the default component (uz, ux, uy, then the first nodal), whether to add reactions, and the file set | No pack. Each choice has to be made by a caller that reads `--describe` and writes the shots | R23–R28 |
-| G6 | **History plot** | `history.png`, a labelled matplotlib history at the extrema node | v2 draws no 2-D chart (`history` is refused as a key). This still was never VTK: it can stay as `results.plot.history` | R27 |
-| G7 | **Live-session stills** | `g.model.render` draws the BRep, and `g.mesh.render` draws the live mesh, both from the open Gmsh kernel | The app reads files only (ADR 0112 D4). A spec cannot name a geometry file (`files.geometry` is refused). A live mesh is drawable only after it is saved to `model.h5` | R29, R30 |
-| G8 | **Inputs the app cannot open** | Any `FEMData` or `Results` in memory, including `Results.from_mpco` / `from_recorders`, and a native results file under any name | `files` takes only paths on disk: `<stem>.h5` with a `<stem>.results.h5`, `<stem>.ladruno` or part-set sibling. An `.mpco` is refused before the run starts, with exit 2 | R1, R31 |
-| G9 | **The skip contract** | `None` or `()` with a `[skip viewer]` line, under `APEGMSH_SKIP_VIEWER=1` or without GL | No skip. `agent_view.render_stills` raises `FileNotFoundError` when no app is installed, and `AgentViewError` when the app refuses. This is the fail-closed design of ADR 0128 D2, but the callers below rely on `None` | R21 |
+## Gaps and outcomes
 
-Two facts outside the table bear on the deletion ruling:
+| # | Gap | What v1 does | What v2 lacks | Outcome | Rows |
+|---|---|---|---|---|---|
+| G1 | Reaction arrows | `view="reactions"` draws a reaction glyph at each support, every axis; the pack writes `reactions.png` for a static stage that recorded reactions | No spec key draws reactions. The nearest view is a nodal contour of `reaction_force` | **drop**, ruled 2026-11-02 | R11, R26 |
+| G2 | Headless stills on Linux (and macOS) | VTK offscreen renders on Linux/Mesa. CI's image goldens (`tests/viewers/test_x2_golden_stills.py`) are Linux frames | No PNG under xvfb on ubuntu: WebGL2 is blocklisted under software GL (VA0p, #2649, probe PR #2656). macOS was not measured: no installer target, and `agent_view.find_viewer` finds none outside Windows | **keep** on Linux, ruled 2026-11-02 | P2, P3 |
+| G3 | Deform auto-scale | `deform=None` on `view="deformed"`: the largest \|u\| component at the drawn step becomes 0.12 of the model diagonal (`session/_realize.py`, `_DEFORM_FRACTION`) | `deform.scale` is a number. Left out, it is 1, and `"auto"` is refused | **add** an auto scale to v2, ruled 2026-11-02 | R10, R18, R25 |
+| G4 | Deform by velocity or acceleration | `deform=(field, scale)` with `field` in displacement, velocity, acceleration | `deform` has only `scale` and `ghost`. The app warps by displacement only (`apeGmshViewer/src/state/deform.ts`) | **drop**, ruled 2026-11-02 | R17 |
+| G5 | The canned pack | `render_pack` chooses the stage, the default component (uz, ux, uy, then the first nodal) and the file set | No pack. Each choice has to be made by a caller that reads `--describe` | **repoint** as one v2 pack spec built for `assess`, ruled 2026-11-02 | R23–R28 |
+| G6 | History plot | `history.png`, a labelled matplotlib history at the extrema node | No 2-D chart in v2. This still was never VTK | **keep** (matplotlib), ruled 2026-11-02 | R27 |
+| G7 | Live-session stills | `g.model.render` draws the BRep; `g.mesh.render` draws the live mesh, both from the open Gmsh kernel | The app reads files only. A job does open `<stem>.geometry.h5` (`job.ts:95`), but `compileShot` never sets the geometry phase: it sets `mesh` or `results` only (`compile.ts:113-130`). A saved file therefore yields the mesh, never the BRep | **repoint** through a temporary `model.h5`, ruled 2026-11-02, for `g.mesh.render` (R30). For `g.model.render`, **needs ruling** (R29) | R29, R30 |
+| G8 | Inputs the app cannot open | Any `FEMData` or `Results` in memory, `Results.from_mpco` / `from_recorders`, and a native results file under any name | `files` takes paths on disk only: `<stem>.h5` with a `<stem>.results.h5`, `<stem>.ladruno` or part-set sibling. An `.mpco` is refused before the run starts (exit 2). A conversion does exist on `origin/main`: `apeGmsh.results.convert_mpco(src, dst, model_h5=...)` writes `.ladruno` (ADR 0122 D5) | **drop**, ruled 2026-11-02. The converter is the user's route for `.mpco` | R1, R31 |
+| G9 | The skip contract | `None` or `()` with a `[skip viewer]` line, under `APEGMSH_SKIP_VIEWER=1` or without GL | No skip. `agent_view.render_stills` raises `FileNotFoundError` with no app, and `AgentViewError` on a refusal | **take v2's raise**, ruled 2026-11-02. Callers that test for `None` change with VA6 | R21 |
+| G10 | Derived-scalar contours | `component=` accepts a scalar computed from the recorded components, such as `von_mises_stress` (`session/_specs.resolve_contour_topology`, `available_derived`) | The app offers only recorded datasets. A derived name is refused as an unknown component or field (`compile.ts` `fieldOf`) | **add** derived scalars to v2, ruled 2026-11-02 | R16c |
 
-- **`results.render` and `render_pack` no longer run through `viewers/render.py`.**
-  `Results.render` calls `viewers/session/_results_stills.py`, which draws
-  through `ResultsSession.render` (`viewers/session/_stills.py`). In
-  `render.py`, `render_results` and `render_pack` are reached only from
-  `tests/viewers/test_render.py`. The live callers of `render.py` are
-  `fem.render`, `g.model.render`, `g.mesh.render` and the CLI.
-- **The session path imports both files.** `session/_stills.py`,
-  `session/_animation.py` and `session/_results_stills.py` import
-  `_resolve_camera`, `_require_view`, `_require_deform` and `_CAMERAS` from
-  `render.py`, and the plotter, theme, camera and screenshot helpers from
-  `_stills.py`. Deleting either file breaks `ResultsSession.render` and
-  `export_animation`. Neither of those is an ADR 0094 still. The deletion
-  therefore has to move those helpers, or narrow to the still verbs.
+Stored Gauss components are **not** a gap. The review expected one, but
+v2 draws them through `contour.source: "element"` with a `gauss` mode
+(R16b). That row's outcome is repoint, and it is listed under "Needs
+ruling".
 
-The other v1 callers that VA6 must rewrite or retire are
-`assess(figures=True)` (`assess/_results.py` → `render_pack`,
-`assess/_fem.py` → `fem.render`), `python -m apeGmsh.viewers render`
-(`viewers/__main__.py`) and the studio `render` verb (`studio/_mcp.py`).
+### Needs ruling
 
-## The table
+- **R16b, stored Gauss components → repoint.** The coordinator's pick was
+  "add" for the Gauss and derived-scalar gap. The probe shows v2 already
+  draws stored components: `gauss-cell` and `gauss-node` were drawn on
+  `elem_solid`. Only derived scalars (G10) need adding.
+- **R29, `g.model.render` (the BRep).** "Repoint through a temporary
+  `model.h5`" draws the mesh, not the BRep, because no spec reaches the
+  geometry phase (G7). The two choices are to add a geometry phase to the
+  spec and compiler, or to drop BRep stills.
+
+### Open
+
+- **INV-6 for unopenable inputs.** An `.mpco` results file is refused at
+  start-up, and no `manifest.json` is written. Other spec refusals write
+  one. No outcome is proposed.
+
+## Deletion scope
+
+Because of the "keep" outcomes, VA6 cannot delete either file whole.
+
+| File | Stays because |
+|---|---|
+| `src/apeGmsh/viewers/_stills.py` | The Qt session imports it (`session/_stills.py`, `session/_animation.py`, `session/_results_stills.py`): plotter, theme, camera, screenshot and skip. Linux also keeps the VTK path (G2) |
+| `src/apeGmsh/viewers/render.py`: `render_fem`, `render_model`, `render_mesh`, `_resolve_camera`, `_require_camera`, `_require_view`, `_require_deform`, `_require_live_kernel`, `_require_live_mesh`, `_VIEWS`, `_CAMERAS`, `DeformArg` | The session modules import `_resolve_camera`, `_require_view`, `_require_deform`, `_CAMERAS` and `DeformArg`. The CLI imports `_VIEWS`, `_CAMERAS` and `_DEFAULT_WINDOW`. The three verbs keep the Linux path (G2) |
+| `src/apeGmsh/viewers/session/_results_stills.py` | `results.render` and `render_pack` run through it (not through `render.py`), on Linux (G2). It also holds `_try_history` (G6, keep) |
+| `src/apeGmsh/viewers/session/_stills.py`, `_animation.py` | `ResultsSession.render` and `export_animation`, the Qt session (kept: R32, R33) |
+
+What VA6 may delete is the director path in `render.py`: `render_results`,
+`render_pack`, `_ensure_stage`, `_resolve_step`, `_require_deform_field`,
+`_apply_deform`, `_read_deform_field`, `_pack_primary_component`,
+`_has_static_reactions`, `_extrema_node`, `_try_history`,
+`_DEFORM_FRACTION` and `_HISTORY_LABEL`. The only callers outside
+`render.py` are in `tests/viewers/test_render.py`, plus one string in
+`tests/assess/test_import_guard.py`. The live versions of these helpers are
+in `session/_results_stills.py`. VA6 also repoints the Windows callers:
+`assess(figures=True)`, the CLI and the studio `render(path=)` door.
+
+## The rows
 
 Each v1 row was read from the code: `python scripts/nav.py map` on
 `viewers/render.py`, `viewers/_stills.py` and
 `viewers/session/_results_stills.py`, plus the public signatures in
 `FEMData.render`, `Results.render`, `Results.render_pack`, `Model.render`,
-`Mesh.render` and the CLI `_main_render`. "Covered" means that a spec gives
-the same view, though not the same pixels. ADR 0128 Amendment 2 makes the
-camera and the view the contract, and the look comes from the app's own
-theme (D8).
-
-The evidence names a probe from the next section. `A:<shot>` and `B:<shot>`
-are shots of a real `--render` run (`ok` wrote a PNG; `refused` gives the
-app's reason). `V:<case>` is an offline run of the validator
-(`src/spec/spec.ts` `validateSpec`). A source path is code that refuses or
-decides the case.
+`Mesh.render`, `ResultsSession.render`, the CLI `_main_render` and
+`studio/_mcp.render`. In the Evidence column, `A:`, `B:` and `C:` name shots
+of a real `--render` run, `V:` an offline validator case, and `K:` the v1
+colour-range probe. All of them are under "Evidence".
 
 ### `fem.render(path, *, camera=None, window_size=(1280, 720))`
 
-| # | v1 call and option | v2 spec | Evidence |
-|---|---|---|---|
-| R1 | `fem.render(path)`: the undeformed mesh of a `FEMData` | `files.model` names a saved `model.h5`; one shot with no `stage`. Covered, **once the FEMData is on disk** (`fem.to_h5`): G8 for one held in memory only | B:`fem-mesh` ok; B:`fem-refuse-stage` refused, "the set has no results file, so it has no stage 0" |
-| R2 | the mesh look: a grey substrate with edges (`_stills._add_substrate`) | `colour_by` is `group` (default) or `role`. Nothing draws a single uniform colour. This is a difference in look, not a gap | `spec.ts` `shot()`, closed set `group, role, contour` |
-| R3 | `camera=None`: `xy` for a planar model, else `iso` (`render._resolve_camera`, ADR 0094 Amendment 3) | No planar rule: `camera` defaults to `iso`. A spec for a planar model sets `"camera": "top"` | V:`camera omitted` → `"iso"` |
-| R4 | `camera="iso"` (VTK: looks along (−1, −1, −1), up +z) | v2 `iso` looks along (−1, 1.3, −0.9) (`navigation.ts` `ISO_FORWARD`), a different side of the model. For the VTK direction, use an explicit `camera: {eye: c + d(1,1,1), target: c, up: [0,0,1]}`, with `c` the centre of `--describe`'s `bbox` | A:`mesh-iso-vtk` ok (the app keeps the eye and target and makes up roll-free); A:`mesh-iso-app` ok |
-| R5 | `camera="xy"` (looks along −z, up +y) | `"camera": "top"`: the same heading (`navigation.ts`: "top looks down -Z with +Y up") | A:`mesh-top` ok, up (0, 1, 0); V:`camera xy` refused |
-| R6 | `camera="xz"` (looks along +y, up +z) | `"camera": "-y"` (the front face) | A:`mesh-front` ok, eye on −y, up +z |
-| R7 | `camera="yz"` (looks along −x, up +z) | `"camera": "+x"` (the right face) | A:`mesh-right` ok, eye on +x, up +z |
-| R8 | `window_size=(w, h)`, any size; default 1280 × 720 | `"size": [w, h]`, whole numbers from 64 to 8192; default 1600 × 1000. Covered for any real still | V:`size 1280x720` accepted; V:`size 32x32` refused |
+| # | v1 call and option | v2 spec | Outcome | Evidence |
+|---|---|---|---|---|
+| R1 | `fem.render(path)`: the undeformed mesh | `files.model` names a `model.h5` on disk; one shot with no `stage`. A `FEMData` held only in memory falls under G8 | repoint, ruled 2026-11-02 | B:`fem-mesh` ok; B:`fem-refuse-stage` refused, "the set has no results file, so it has no stage 0" |
+| R2 | the mesh look: a grey substrate with edges | `colour_by` is `group` (default) or `role` | repoint (the look changes), ruled 2026-11-02 | `spec.ts` `shot()` |
+| R3 | `camera=None`: `xy` for a planar model, else `iso` | `camera` defaults to `iso`; a planar spec sets `"top"` | repoint, ruled 2026-11-02 | V:`camera omitted` → `"iso"` |
+| R4 | `camera="iso"`: VTK looks along (−1, −1, −1), up +z | v2's `iso` looks along (−1, 1.3, −0.9) (`navigation.ts` `ISO_FORWARD`). The VTK direction is reached through an explicit `{eye: c + d(1,1,1), target: c, up: [0,0,1]}`, with `c` the centre of `--describe`'s bbox | repoint to v2's `iso`, ruled 2026-11-02 | A:`mesh-iso-app`, A:`mesh-iso-vtk` ok |
+| R5 | `camera="xy"`: looks along −z, up +y | `"top"` | repoint, ruled 2026-11-02 | A:`mesh-top` ok; V:`camera xy` refused |
+| R6 | `camera="xz"`: looks along +y, up +z | `"-y"` | repoint, ruled 2026-11-02 | A:`mesh-front` ok |
+| R7 | `camera="yz"`: looks along −x, up +z | `"+x"` | repoint, ruled 2026-11-02 | A:`mesh-right` ok |
+| R8 | `window_size=(w, h)`; default 1280 × 720 | `"size": [w, h]`, from 64 to 8192; default 1600 × 1000 | repoint, ruled 2026-11-02 | V:`size 1280x720` accepted; V:`size 32x32` refused |
 
 ### `results.render(path, *, view="contour", component=None, step=-1, deform=None, camera=None, window_size=(1280, 720))`
 
-`camera` and `window_size` map as R3–R8 do.
+`camera` and `window_size` follow R3–R8.
 
-| # | v1 call and option | v2 spec | Evidence |
-|---|---|---|---|
-| R9 | `view="mesh"`: the undeformed mesh of the bound model (`deform=` is ignored) | A shot with no `stage` | A:`mesh-top` ok |
-| R10 | `view="deformed"`: a contour of `component` on the shape warped by `deform` | `stage` + `contour` + `deform: {scale: s}`. Covered with an explicit scale. **G3** without one | A:`contour-deform`, A:`deformed-ghost` ok |
-| R11 | `view="reactions"` (`component` None or `"reactions"`): reaction arrows at the supports | **G1**. The nearest view is `contour: {field: "reaction_force", component: "magnitude"}`, a contour, not arrows | V:`reactions key` and V:`view key` refused; `test/spec/compile.test.ts` "the four ADR 0094 views" |
-| R12 | `view="reactions"`, `component="reaction_x"` etc. | Not applicable: v1 already refuses a one-axis reaction still (`_results_stills._refuse_unsupported`) | code |
-| R13 | `view="contour"`, `component="displacement_z"` | `contour: {field: "displacement", component: "displacement_z"}`. The component may also be the legend's label (`"z"`) or `"magnitude"` | A:`contour-last`, A:`contour-step1` ok |
-| R14 | `component=None`: the starter heuristic (uz, ux, uy, then the first nodal component) | No default: `contour.field` and `contour.component` are required. The caller picks one from `--describe` (G5) | `spec.ts` `contour()`, `text()` |
-| R15 | a component the stage lacks: `ContourDataError` | The shot is refused, the reason listed, and no PNG written | A:`refuse-component`, A:`refuse-field` refused |
-| R16 | the contour's range: auto-fit to the step drawn; the colormap from the palette | `contour.range: "step"` (the default is `"history"`); `contour.cmap` from a closed set, default `jet` (D8) | `spec.ts` `range()`; manifest `contour.range` |
-| R17 | `deform=("velocity" \| "acceleration", s)` | **G4** | V:`deform field key` refused |
-| R18 | `deform=None` on `view="deformed"`: auto-fit to 0.12 of the diagonal | **G3**: a left-out scale is 1. A workaround takes two runs: read `contour.extrema` from a first manifest and `bbox` from `--describe`, then set `scale = 0.12 · diag / max\|u\|`. That uses the history maximum where v1 uses the step's | V:`deform scale auto` refused; V:`deform {}` → `scale: 1` |
-| R19 | `deform=s` or `deform=("displacement", s)` on `contour` or `reactions` | `deform: {scale: s}` with the contour. The `reactions` case falls under G1 | A:`contour-deform` ok |
-| R20 | `step=k ≥ 0`, `step=-1`, `step=-k` | `step: k`, `"last"` (default), or `n − k`, with `n` from `--describe` `stages[i].steps`. Out of range: v1 raises `ValueError`, and v2 refuses the shot | A:`refuse-step` refused ("stage "unprop" has 4 steps (0 to 3)"); V:`step -2` refused |
-| R21 | the return value: the `Path`, or `None` under `APEGMSH_SKIP_VIEWER` or without GL | `agent_view.render_stills(spec, out)` returns the manifest. PNGs are `<name>.png` in an empty `out` folder. A refusal raises (**G9**) | `agent_view.py`; `main.ts` exit codes 0, 1, 2 |
-| R22 | the stage: the `results.stage(s)` scope, else the last stage, with a warning (`_resolve_stage`) | `stage`, by name or index, is required for any results shot. A scoped results object has no counterpart; the spec names the stage | A:`refuse-stage` refused ("the results have 3 stages") |
+| # | v1 call and option | v2 spec | Outcome | Evidence |
+|---|---|---|---|---|
+| R9 | `view="mesh"` (`deform=` is ignored) | a shot with no `stage` | repoint, ruled 2026-11-02 | A:`mesh-top` ok |
+| R10 | `view="deformed"`: a contour on the warped shape | `stage` + `contour` + `deform: {scale}`; the auto scale is G3 | repoint, plus add (G3), ruled 2026-11-02 | A:`contour-deform`, A:`deformed-ghost` ok |
+| R11 | `view="reactions"`: arrows at the supports | none (G1) | drop, ruled 2026-11-02 | V:`reactions key`, V:`view key` refused |
+| R12 | `view="reactions"`, `component="reaction_x"` etc. | v1 already refuses it (`_refuse_unsupported`) | drop, ruled 2026-11-02 | code |
+| R13 | `component="displacement_z"` (a recorded nodal component) | `contour: {field: "displacement", component: "displacement_z"}`. The component may also be its label (`"z"`) or `"magnitude"` | repoint, ruled 2026-11-02 | A:`contour-last`, A:`contour-step1` ok |
+| R14 | `component=None`: the starter heuristic | no default; the caller picks one from `--describe`. For the pack, G5 | repoint, ruled 2026-11-02 | `spec.ts` `contour()` |
+| R15 | a component the stage lacks: `ContourDataError` | the shot is refused, with the reason; no PNG | repoint, ruled 2026-11-02 | A:`refuse-component`, A:`refuse-field` refused |
+| R16 | the colour range: the field's **whole history** (`_contour._compute_initial_clim` takes the visual store's history range; it falls back to the step's range only with no store, or under a plane override). The colormap comes from the palette | `contour.range: "history"`, which is v2's default. `contour.cmap` defaults to `jet` (D8) | repoint, ruled 2026-11-02 | K: on `unprop`, `displacement_z`, steps 0, 1 and 3 are mapped over (−0.033, 0) each time; the step data is (−0.00825, 0), (−0.0165, 0), (−0.033, 0). A:`deformed-ghost` manifest `range.mode: "history"` |
+| R16b | `component` a stored Gauss (element) component, e.g. `stress_xx` | `contour: {field: "stress", component: "stress_xx", source: "element", gauss: "cell" \| "cell_averaged" \| "node" \| "node_discrete"}`. The range is history, as in R16 | repoint, **needs ruling** | C:`gauss-cell` ok (`topology: element_mean`), C:`gauss-node` ok (`topology: gauss_node`) |
+| R16c | `component` a derived scalar, e.g. `von_mises_stress` | none (G10) | add, ruled 2026-11-02 | C:`refuse-von-mises` and C:`refuse-von-mises-field` refused, "element field "stress" of stage "load" has no component "von_mises_stress"" |
+| R17 | `deform=("velocity" \| "acceleration", s)` | none (G4) | drop, ruled 2026-11-02 | V:`deform field key` refused |
+| R18 | `deform=None` on `view="deformed"`: auto-fit | none (G3); a scale left out is 1 | add, ruled 2026-11-02 | V:`deform scale auto` refused; V:`deform {}` → `scale: 1` |
+| R19 | `deform=s` or `("displacement", s)` on `contour` | `deform: {scale: s}` with the contour | repoint, ruled 2026-11-02 | A:`contour-deform` ok |
+| R20 | `step=k ≥ 0`, `-1`, `-k` | `k`, `"last"`, or `n − k` with `n` from `--describe` | repoint, ruled 2026-11-02 | A:`refuse-step` refused; V:`step -2` refused |
+| R21 | returns the `Path`, or `None` on a skip | `agent_view.render_stills(spec, out)` returns the manifest and raises on a refusal (G9) | repoint, take v2's raise, ruled 2026-11-02 | `agent_view.py`; `main.ts` exit codes 0, 1, 2 |
+| R22 | the stage: the `results.stage(s)` scope, or the `results.modes[i]` scope (a mode stage), else the last stage, with a warning (`_results_stills._resolve_stage`) | `stage`, by name or index, is required for every results shot. A mode is its mode stage (`--describe` `kind: "mode"`), named by index | repoint, ruled 2026-11-02 | A:`refuse-stage` refused |
 
 ### `results.render_pack(out_dir, *, camera=None, window_size=(1280, 720))`
 
-The pack is five calls of `results.render` (`_results_stills.render_results_pack`),
-so each still maps through the rows above. What v2 lacks is the pack's own
-logic (G5).
+| # | Pack still | v2 spec | Outcome | Evidence |
+|---|---|---|---|---|
+| R23 | `mesh.png` | a shot with no `stage` | repoint into the pack spec (G5), ruled 2026-11-02 | A:`mesh-top` ok |
+| R24 | `contour.png`: the default component, last step | a `contour` shot | repoint into the pack spec (G5), ruled 2026-11-02 | A:`contour-last` ok |
+| R25 | `deformed.png`, auto-scaled | R10, with G3's auto scale | repoint into the pack spec, plus add (G3), ruled 2026-11-02 | A:`deformed-ghost` ok |
+| R26 | `reactions.png` | none (G1) | drop, ruled 2026-11-02 | as R11 |
+| R27 | `history.png` (matplotlib) | none (G6) | keep, ruled 2026-11-02 | V:`history key` refused |
+| R28 | the pack's choices | one pack spec for `assess`, built from `--describe` (G5) | repoint, ruled 2026-11-02 | none |
 
-| # | Pack still | v2 spec | Evidence |
-|---|---|---|---|
-| R23 | `mesh.png` | a shot with no `stage` (R9) | A:`mesh-top` ok |
-| R24 | `contour.png`: the default component at the last step | a `contour` shot (R13). The component is picked by the caller (R14, G5) | A:`contour-last` ok |
-| R25 | `deformed.png`: the same, auto-scaled | R10 with an explicit scale (**G3**) | A:`deformed-ghost` ok |
-| R26 | `reactions.png`: written only for a `static` stage that recorded `reaction_*` | **G1** | as R11 |
-| R27 | `history.png`: matplotlib at the extrema node | **G6**. This still never came from VTK | V:`history key` refused |
-| R28 | the pack's choices (stage, component, whether to add reactions) | **G5**: none in v2 | none |
+### Live-session stills
 
-### Live-session stills (`Model.render`, `Mesh.render`)
+| # | v1 call | v2 spec | Outcome | Evidence |
+|---|---|---|---|---|
+| R29 | `g.model.render(path, camera="iso", window_size)`: the BRep | none. A temporary `model.h5` would draw the mesh, because `compileShot` never sets the geometry phase (G7) | **needs ruling**: add a geometry phase, or drop | V:`files geometry key` refused; `compile.ts:113-130` |
+| R30 | `g.mesh.render(path, camera="iso", window_size)`: the live mesh | write a temporary `model.h5`, then R1 | repoint, ruled 2026-11-02 | as R1 |
 
-| # | v1 call | v2 spec | Evidence |
-|---|---|---|---|
-| R29 | `g.model.render(path, camera="iso", window_size)`: the BRep of the open kernel | **G7**. The spec has no geometry key, and the app opens no kernel | V:`files geometry key` refused |
-| R30 | `g.mesh.render(path, camera="iso", window_size)`: the live mesh | Covered only after `g.save()` or `fem.to_h5`, through R1. There is no live path (G7) | as R1 |
+### The Qt session
 
-### The command line
+| # | v1 call | v2 spec | Outcome | Evidence |
+|---|---|---|---|---|
+| R32 | `ResultsSession.render(path, pane=None, *, camera=None, window_size)`: one pane of a session, drawn from the ADR 0098 slot catalog | none: the slot catalog is the Qt session's, not a view spec | keep, ruled 2026-11-02 (the Qt session callers) | `results/session/_session.py:262`; `session/_stills.render_still` |
+| R33 | studio `render(session=...)`: one pane of a saved snapshot, out of process (`python -m apeGmsh.results.session render`) | none | keep, ruled 2026-11-02 (the Qt session callers) | `studio/_mcp.py:600`, `_render_session` |
 
-| # | v1 call | v2 spec | Evidence |
-|---|---|---|---|
-| R31 | `python -m apeGmsh.viewers render PATH [OUT] --view --component --step --deform --camera --window --pack --model-h5 --json` | `apeGmshViewer --render spec.json --out DIR`. The flags become R9–R22, `--pack` becomes G5, and `--json` becomes `manifest.json`. `--model-h5` with an `.mpco` falls under G8. The CLI's `--camera` defaults to `iso`, with no planar rule, so R3 does not apply there | the `.mpco` probe: exit 2, "apeGmshViewer opens <stem>.h5, <stem>.geometry.h5, <stem>.ladruno, <stem>.results.h5 or <stem>.user.h5" |
+### The command line and the studio door
+
+| # | v1 call | v2 spec | Outcome | Evidence |
+|---|---|---|---|---|
+| R31 | `python -m apeGmsh.viewers render PATH [OUT] --view --component --step --deform --camera --window --pack --model-h5 --json` | `apeGmshViewer --render spec.json --out DIR`. The flags map as R9–R22, `--pack` as G5, `--json` as `manifest.json`; `.mpco` falls under G8. `--camera` defaults to `iso` here, with no planar rule | repoint, ruled 2026-11-02 | `.mpco` probe: exit 2, "apeGmshViewer opens <stem>.h5, <stem>.geometry.h5, <stem>.ladruno, <stem>.results.h5 or <stem>.user.h5" |
+| R34 | studio `render(path=...)`: runs R31 out of process (`studio/_mcp.py:689`) | as R31 | repoint, ruled 2026-11-02 | as R31 |
 
 ### Platforms
 
-| # | Platform | v1 (VTK offscreen) | v2 (`apeGmshViewer --render`) |
-|---|---|---|---|
-| P1 | Windows desktop | yes | yes: probes A and B on this machine; the installer is per-user NSIS |
-| P2 | Linux, headless (CI, SSH) | yes: Mesa offscreen; CI's goldens are Linux frames | **no** (G2): VA0p, #2649 / PR #2656. The sandbox can be fixed; WebGL2 under software GL needs Chromium switches set in the app |
-| P3 | macOS | where PyVista offscreen runs | **unmeasured** (G2): no installer target in `electron-builder.yml`, and `find_viewer` refuses outside Windows unless `$APEGMSH_VIEWER` is set |
-
-VA0p already settles the deletion: while P2 is "no", VA6 can only narrow the
-renderer, not delete it. That is ADR 0128's open question on Linux and CI,
-answered.
+| # | Platform | v1 (VTK) | v2 (`--render`) | Outcome |
+|---|---|---|---|---|
+| P1 | Windows desktop | yes | yes: probes A, B and C | repoint, ruled 2026-11-02 |
+| P2 | Linux, headless | yes (Mesa) | **no** (G2) | keep, ruled 2026-11-02 |
+| P3 | macOS | where PyVista offscreen runs | unmeasured (G2) | keep, ruled 2026-11-02 |
 
 ## Evidence
 
 The probes ran on 2026-11-02 on Windows 11, against this branch's base
-(`a9609e869`), with the viewer built in the worktree (`node scripts/build.mjs`)
-and run through `node scripts/launch.mjs render|describe`.
+(`a9609e869`). The viewer was built in the worktree and run through
+`node scripts/launch.mjs render|describe`. Python probes ran with
+`PYTHONPATH=<worktree>/src`.
 
 `--describe fixtures/contour_staged.results.h5` reported the set as
-`paired`, with three static stages (`base` 3 steps, `erect` 2, `unprop` 4).
-Each stage has one nodal field, `displacement`, with components
-`magnitude, displacement_x, displacement_y, displacement_z`. The groups are
-`Col`, `Prop` and `Top`, and the bbox runs from (0, 0, 0) to (2, 1, 3.5).
+paired, with three static stages: `base` (3 steps), `erect` (2) and
+`unprop` (4). Each stage has the nodal field `displacement`
+(`magnitude, displacement_x, displacement_y, displacement_z`). The groups
+are `Col`, `Prop` and `Top`, and the bbox runs from (0, 0, 0) to (2, 1, 3.5).
+`--describe fixtures/elem_solid.results.h5` reported one stage, `load`
+(3 steps), with the nodal field `displacement` and the element field
+`stress` (`stress_xx, stress_yy`).
 
-**Probe A.** `files.model` is `fixtures/contour_staged.h5`, with
-`"size": [1280, 720]` and `"chrome": "model"`. The run exits 1: nine stills
-are written and four shots refused.
+**Probe A** (`contour_staged.h5`, `"size": [1280, 720]`, `"chrome": "model"`)
+exits 1: nine stills are written and four shots refused.
 
 ```json
 [
@@ -171,47 +199,70 @@ are written and four shots refused.
 ]
 ```
 
-The manifest gives each camera as resolved. `mesh-top` has its eye on +z
-with up (0, 1, 0); `mesh-front` has its eye on −y with up +z; `mesh-right`
-has its eye on +x with up +z. `mesh-iso-vtk` keeps eye (11, 10.5, 11.75) and
-target (1, 0.5, 1.75), with up made roll-free. `deformed-ghost` records scale
-10 with 216 of 216 nodes drawn, the range mode `history`, and its extrema:
-0 at node 2 and 0.11408 at node 21. The VTK side's camera directions come
-from PyVista 0.46.4: `view_isometric` looks along (−0.577, −0.577, −0.577),
-`view_xy` along (0, 0, −1) with up y, `view_xz` along (0, 1, 0) with up z,
-and `view_yz` along (−1, 0, 0) with up z.
+The resolved cameras in the manifest:
 
-**Probe B.** `files.model` is `fixtures/shoebuckle.h5`, a model with no
-results. `fem-mesh` is written, and `fem-refuse-stage` (`"stage": 0`) is
-refused because the set has no results file.
+- `mesh-top` has its eye on +z, with up (0, 1, 0).
+- `mesh-front` has its eye on −y; `mesh-right` has its eye on +x. Both
+  have up +z.
+- `mesh-iso-vtk` keeps its eye and target, and its up is made roll-free.
 
-**The `.mpco` probe.** `files: {model: "m.h5", results: "m.mpco"}`, where
-`m.mpco` is a copy of `contour_staged.results.h5`. The run exits 2 with
-"render failed to start", and writes no manifest. This also shows that an
-unopenable results file is refused before a manifest exists. Other
-spec-level refusals write one, so the owner may want this run to as well
-(INV-6).
+The VTK directions come from PyVista 0.46.4:
 
-**V: the validator, offline.** A Node script imports
-`apeGmshViewer/src/spec/spec.ts` and runs `validateSpec` on single-shot
-specs. Each case gives the key the validator refused, or what it accepted:
+| PyVista call | Looks along | Up |
+|---|---|---|
+| `view_isometric` | (−0.577, −0.577, −0.577) | +z |
+| `view_xy` | (0, 0, −1) | +y |
+| `view_xz` | (0, 1, 0) | +z |
+| `view_yz` | (−1, 0, 0) | +z |
+
+**Probe B** (`shoebuckle.h5`, a model with no results). `fem-mesh` is
+written, and `fem-refuse-stage` is refused.
+
+**Probe C** (`elem_solid.h5`) exits 1: two stills are written and two shots
+refused.
+
+```json
+[
+  { "name": "gauss-cell", "stage": 0, "contour": { "field": "stress", "component": "stress_xx", "source": "element", "gauss": "cell" } },
+  { "name": "gauss-node", "stage": 0, "contour": { "field": "stress", "component": "stress_xx", "source": "element", "gauss": "node" } },
+  { "name": "refuse-von-mises", "stage": 0, "contour": { "field": "stress", "component": "von_mises_stress", "source": "element" } },
+  { "name": "refuse-von-mises-field", "stage": 0, "contour": { "field": "von_mises_stress", "component": "von_mises_stress" } }
+]
+```
+
+**K: v1's colour range.** The probe ran `results.stage("unprop").render(...,
+view="contour", component="displacement_z", step=k)` with
+`BasePlotter.screenshot` hooked, as `tests/viewers/test_x2_numeric_oracle.py`
+does, and read the colour-mapped mapper's range at each step:
+
+| Step | Mapped range | Step data |
+|---|---|---|
+| 0 | (−0.033, 0) | (−0.00825, 0) |
+| 1 | (−0.033, 0) | (−0.0165, 0) |
+| 3 | (−0.033, 0) | (−0.033, 0) |
+
+**The `.mpco` probe.** `files: {model: "m.h5", results: "m.mpco"}` exits 2
+with "render failed to start", and writes no manifest.
+
+**V: the validator, offline.** A Node script ran
+`apeGmshViewer/src/spec/spec.ts` `validateSpec` on single-shot specs:
 
 | Case | Result |
 |---|---|
 | `camera xy` | refused, `shots[0].camera`: must be one of iso, +x, -x, +y, -y, top, bottom, fit |
 | `step -2` | refused, `shots[0].step`: "first", "last" or an integer from 0 |
 | `step without stage` | refused, `shots[0].step`: needs a stage |
-| `deform field key` | refused, `shots[0].deform.field`: not a key; the keys are scale, ghost |
+| `deform field key` | refused, `shots[0].deform.field`: the keys are scale, ghost |
 | `deform scale auto` | refused, `shots[0].deform.scale`: must be a finite number |
 | `deform {}` | accepted as `{scale: 1, ghost: false}` |
-| `reactions key`, `view key`, `history key`, `colour literal` | refused as keys that are not part of the spec |
+| `reactions key`, `view key`, `history key`, `colour literal` | refused as keys outside the spec |
 | `files geometry key` | refused, `files.geometry`: the keys are model, results |
 | `size 1280x720` / `size 32x32` | accepted / refused, `size[0]`: from 64 to 8192 |
 | `camera omitted`, `theme omitted` | accepted as `iso` and `light` |
 
 ## Next
 
-The owner signs off this table or amends it on #2655. That ruling decides
-what VA6 deletes, given G1–G9 and the two facts under the gap list: VA6 can
-retire the VTK renderer only on Windows, and only where the gaps are closed
-or ruled acceptable.
+The owner rules on the two "needs ruling" rows on #2655. VA6 then works
+within the deletion scope above: it repoints the Windows callers, deletes
+the director path in `render.py`, and leaves the VTK verbs and the Qt
+session path in place.
