@@ -21,7 +21,7 @@ from apeGmsh.results.readers._buckets import (
     canonical_node_component,
     component_axis,
 )
-from apeGmsh.results.readers._buckets import (
+from apeGmsh.results.readers._mpco_translation import (
     all_known_mpco_result_names,
     canonical_to_mpco_lookup,
     has_canonical_mapping,
