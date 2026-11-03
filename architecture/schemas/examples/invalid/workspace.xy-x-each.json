@@ -1,0 +1,251 @@
+{
+  "format": "apegmsh-workspace",
+  "version": "1.0.0",
+  "revision": 4,
+  "saved_by": {
+    "writer": "apeGmshViewer 0.9.0",
+    "save_id": "q7Xc2LmA9fZt"
+  },
+  "sets": [
+    {
+      "name": "roof",
+      "kind": "nodes",
+      "id_space": "fem",
+      "fem_hash": "5d41402abc4b2a76b9719d911017c592",
+      "ids": [
+        31,
+        32,
+        33
+      ],
+      "xyz": [
+        [
+          0.0,
+          0.0,
+          9.0
+        ],
+        [
+          6.0,
+          0.0,
+          9.0
+        ],
+        [
+          12.0,
+          0.0,
+          9.0
+        ]
+      ]
+    },
+    {
+      "name": "base",
+      "kind": "nodes",
+      "id_space": "fem",
+      "fem_hash": "5d41402abc4b2a76b9719d911017c592",
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "xyz": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          6.0,
+          0.0,
+          0.0
+        ],
+        [
+          12.0,
+          0.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "name": "Column line A",
+      "kind": "nodes",
+      "id_space": "fem",
+      "fem_hash": "5d41402abc4b2a76b9719d911017c592",
+      "ids": [
+        1,
+        11,
+        21,
+        31
+      ],
+      "xyz": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          3.0
+        ],
+        [
+          0.0,
+          0.0,
+          6.0
+        ],
+        [
+          0.0,
+          0.0,
+          9.0
+        ]
+      ]
+    },
+    {
+      "name": "Columns, level 1",
+      "kind": "elements",
+      "id_space": "fem",
+      "fem_hash": "5d41402abc4b2a76b9719d911017c592",
+      "ids": [
+        101,
+        102,
+        103
+      ],
+      "xyz": [
+        [
+          0.0,
+          0.0,
+          1.5
+        ],
+        [
+          6.0,
+          0.0,
+          1.5
+        ],
+        [
+          12.0,
+          0.0,
+          1.5
+        ]
+      ]
+    }
+  ],
+  "plots": [
+    {
+      "name": "Roof drift ratio",
+      "kind": "history",
+      "over": {
+        "kind": "stage",
+        "source": "pushover",
+        "axis": "step"
+      },
+      "series": [
+        {
+          "label": "(roof - base) / H",
+          "quantity": {
+            "group": "results",
+            "field": "DISPLACEMENT",
+            "component": "Ux"
+          },
+          "target": {
+            "kind": "set",
+            "name": "roof"
+          },
+          "reduce": "mean",
+          "minus": {
+            "target": {
+              "kind": "set",
+              "name": "base"
+            },
+            "reduce": "mean"
+          },
+          "scale": 0.1111111111111111
+        }
+      ]
+    },
+    {
+      "name": "Pushover curve",
+      "kind": "xy",
+      "over": {
+        "kind": "stage",
+        "source": "pushover",
+        "steps": [
+          0,
+          -1
+        ],
+        "axis": "step"
+      },
+      "x": {
+        "quantity": {
+          "group": "results",
+          "field": "DISPLACEMENT",
+          "component": "Ux"
+        },
+        "target": {
+          "kind": "set",
+          "name": "roof"
+        },
+        "reduce": "each"
+      },
+      "y": [
+        {
+          "label": "Base shear",
+          "quantity": {
+            "group": "results",
+            "field": "REACTION_FORCE",
+            "component": "RFx"
+          },
+          "target": {
+            "kind": "set",
+            "name": "base"
+          },
+          "reduce": "sum",
+          "scale": -1.0
+        }
+      ]
+    },
+    {
+      "name": "Ux up column line A, last step",
+      "kind": "profile",
+      "state": {
+        "kind": "stage",
+        "source": "pushover",
+        "step": -1,
+        "mode": 0
+      },
+      "axis": "z",
+      "series": [
+        {
+          "quantity": {
+            "group": "results",
+            "field": "DISPLACEMENT",
+            "component": "Ux"
+          },
+          "target": {
+            "kind": "set",
+            "name": "Column line A"
+          },
+          "reduce": "each"
+        }
+      ]
+    }
+  ],
+  "views": [
+    {
+      "name": "Roof Ux, last pushover step",
+      "spec": "apegmsh-view/1",
+      "shot": {
+        "name": "roof-ux-last",
+        "caption": "Horizontal displacement Ux at the last pushover step.",
+        "stage": "pushover",
+        "step": "last",
+        "camera": "+y",
+        "contour": {
+          "field": "DISPLACEMENT",
+          "component": "Ux",
+          "range": "history"
+        },
+        "deform": {
+          "scale": 20,
+          "ghost": true
+        }
+      }
+    }
+  ]
+}

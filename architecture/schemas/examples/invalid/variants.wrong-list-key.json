@@ -1,0 +1,32 @@
+{
+  "format": "apegmsh-variants",
+  "version": "1.0.0",
+  "sets": [
+    {
+      "label": "Uncracked",
+      "path": "slab_uncracked.h5",
+      "params": {
+        "state": "uncracked",
+        "Ie/Ig": 1.0
+      }
+    },
+    {
+      "label": "Cracked",
+      "path": "slab_cracked.h5",
+      "params": {
+        "state": "cracked",
+        "Ie/Ig": 0.35
+      }
+    },
+    {
+      "label": "Bischoff D+SD+0.25L",
+      "path": "bischoff/slab_pass2.h5",
+      "params": {
+        "state": "cracked",
+        "bischoff": "D+SD+0.25L",
+        "pass": 2,
+        "converged": false
+      }
+    }
+  ]
+}

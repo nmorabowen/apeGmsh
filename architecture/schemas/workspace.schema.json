@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nmorabowen/apeGmsh/architecture/schemas/workspace.schema.json",
+  "title": "<stem>.workspace.json, version 1.0.0 (ADR 0132, Proposed)",
+  "description": "What a user makes in apeGmshViewer, as definitions only: named node and element sets, plot definitions and saved views. Values stay in <stem>.user.h5. This schema checks the shape of a 1.0.x file. Rules it cannot express (equal column lengths, unique names, the name rule's NFC test, the set verdict against the model, a view's shot) are in architecture/workspace-schema.md, and a reader applies them per row.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "revision", "saved_by", "sets", "plots", "views"],
+  "properties": {
+    "format": { "const": "apegmsh-workspace" },
+    "version": { "$ref": "#/$defs/version" },
+    "revision": {
+      "description": "Every save adds 1. A file at rest has revision >= 1; an absent file counts as 0.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "saved_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["writer", "save_id"],
+      "properties": {
+        "writer": {
+          "description": "The program and its version, for example \"apeGmshViewer 0.9.0\" or \"apeGmsh 1.4.0\".",
+          "type": "string",
+          "minLength": 1
+        },
+        "save_id": {
+          "description": "A random token written once per save, so the app recognises its own save when the watcher reports a change.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{8,64}$"
+        }
+      }
+    },
+    "sets": { "type": "array", "items": { "$ref": "#/$defs/set" } },
+    "plots": { "type": "array", "items": { "$ref": "#/$defs/plot" } },
+    "views": { "type": "array", "items": { "$ref": "#/$defs/view" } }
+  },
+  "$defs": {
+    "version": {
+      "description": "MAJOR.MINOR.PATCH as a string, read by the floor rule of ADR 0113 (floor 1.0.0).",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "name": {
+      "description": "ADR 0130 A2: non-empty, no control character, no leading or trailing whitespace. NFC is checked by the reader, not here.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f](?:[^\\u0000-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u001f\\u007f-\\u009f])?$"
+    },
+    "id": {
+      "description": "A FEM id as <stem>.h5 /nodes/ids or /elements/*/ids carries it (an i4).",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "xyz": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "type": "number" }
+    },
+    "set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "id_space", "fem_hash", "ids", "xyz"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "kind": { "enum": ["nodes", "elements"] },
+        "id_space": {
+          "description": "1.0.0 has one value: the ids are FEM ids, the ids <stem>.h5 carries and fem_hash covers.",
+          "const": "fem"
+        },
+        "fem_hash": {
+          "description": "<stem>.h5 /meta/lineage@fem_hash when the set was saved or last confirmed.",
+          "type": "string",
+          "minLength": 1
+        },
+        "ids": {
+          "description": "Ordered members; no id twice.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "xyz": {
+          "description": "Row i is the coordinates of node ids[i], or the centroid of element ids[i]. Same length as ids.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/xyz" }
+        }
+      }
+    },
+    "target": {
+      "description": "What a series reads: a workspace set, a physical group, a label, or a /mesh_selections entry of <stem>.h5.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "enum": ["set", "physical", "label", "mesh_selection"] },
+        "name": { "$ref": "#/$defs/name" }
+      }
+    },
+    "quantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group", "field", "component"],
+      "properties": {
+        "group": { "enum": ["results", "user_results"] },
+        "field": { "type": "string", "minLength": 1 },
+        "component": { "type": "string", "minLength": 1 },
+        "source": {
+          "description": "1.0.0: nodal only. Absent means nodal.",
+          "const": "nodal"
+        }
+      }
+    },
+    "reduce": { "enum": ["each", "sum", "mean", "min", "max", "absmax"] },
+    "reducer": {
+      "description": "One reduced value per state: a target and a reduction other than each.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "reduce"],
+      "properties": {
+        "target": { "$ref": "#/$defs/target" },
+        "reduce": { "enum": ["sum", "mean", "min", "max", "absmax"] }
+      }
+    },
+    "series": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quantity", "target", "reduce"],
+      "properties": {
+        "label": { "$ref": "#/$defs/name" },
+        "quantity": { "$ref": "#/$defs/quantity" },
+        "target": { "$ref": "#/$defs/target" },
+        "reduce": { "$ref": "#/$defs/reduce" },
+        "minus": { "$ref": "#/$defs/reducer" },
+        "scale": { "type": "number" }
+      }
+    },
+    "stepPair": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "type": "integer", "minimum": -1 }
+    },
+    "over": {
+      "description": "The sweep address. 1.0.0 sweeps the steps of one stage; step -1 is the last; steps absent is every step.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "axis"],
+      "properties": {
+        "kind": { "const": "stage" },
+        "source": { "type": "string", "minLength": 1 },
+        "steps": { "$ref": "#/$defs/stepPair" },
+        "axis": { "enum": ["time", "step"] }
+      }
+    },
+    "state": {
+      "description": "The ADR 0130 A3 source address, verbatim.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "step", "mode"],
+      "properties": {
+        "kind": { "enum": ["stage", "mode", "spectrum", "reference", "combination"] },
+        "source": { "type": "string", "minLength": 1 },
+        "step": { "type": "integer", "minimum": -1 },
+        "mode": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "plot": {
+      "type": "object",
+      "required": ["name", "kind"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "kind": { "enum": ["history", "xy", "profile"] }
+      },
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["name", "kind", "over", "series"],
+          "properties": {
+            "name": true,
+            "kind": { "const": "history" },
+            "over": { "$ref": "#/$defs/over" },
+            "series": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/series" } }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["name", "kind", "over", "x", "y"],
+          "properties": {
+            "name": true,
+            "kind": { "const": "xy" },
+            "over": { "$ref": "#/$defs/over" },
+            "x": { "$ref": "#/$defs/reducedSeries" },
+            "y": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/reducedSeries" } }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["name", "kind", "state", "axis", "series"],
+          "properties": {
+            "name": true,
+            "kind": { "const": "profile" },
+            "state": { "$ref": "#/$defs/state" },
+            "axis": { "enum": ["member", "x", "y", "z", "path"] },
+            "series": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/eachSeries" } }
+          }
+        }
+      ]
+    },
+    "reducedSeries": {
+      "description": "A series with one value per state (reduce is not each).",
+      "allOf": [
+        { "$ref": "#/$defs/series" },
+        { "properties": { "reduce": { "enum": ["sum", "mean", "min", "max", "absmax"] } } }
+      ]
+    },
+    "eachSeries": {
+      "description": "A profile series: one value per member, in set order, so reduce is each.",
+      "allOf": [
+        { "$ref": "#/$defs/series" },
+        { "properties": { "reduce": { "const": "each" } } }
+      ]
+    },
+    "view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "spec", "shot"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "spec": {
+          "description": "The grammar of shot. 1.0.0 knows apegmsh-view/1 (ADR 0128 D1).",
+          "const": "apegmsh-view/1"
+        },
+        "shot": {
+          "description": "One apegmsh-view/1 shot object, validated by the app's view-spec validator (apeGmshViewer/src/spec/spec.ts), not by this schema.",
+          "type": "object"
+        }
+      }
+    }
+  }
+}
