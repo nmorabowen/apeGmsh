@@ -1,8 +1,9 @@
-### ADDED — apeGmshViewer: reaction-force arrows on a results step
+### ADDED — apeGmshViewer: a Reactions card with reaction-force arrows on a results step
 
-When the results step on screen records reaction forces (`reaction_force_x/y/z`), the Loads card offers a
-**reactions** switch (off by default). It draws one arrow per node with a reaction: the tip on the node, pointing
-along the reaction so it points at the support from outside, with a short tick across the tail at 45° to the shaft's
-perpendicular to tell it from a load. Reactions follow the step as it changes, and share the load arrows' head size,
-scale, colour menu and thinning; by type they take the theme's dark teal. The card now also shows on a model with
-no loads when its results record reactions.
+When the results step on screen records reaction forces (`reaction_force_x/y/z`), a **Reactions** card appears
+in the left rail. Its **3D reactions** switch (off by default) draws the reactions as arrows: the tip on the node,
+pointing along the force so it points at the support from outside, with a short tick across the tail at 45° to the
+shaft's perpendicular to tell it from a load. A menu draws the **resultant** at each node, its **X, Y, Z
+components** along the global axes as three arrows, or one of them. The arrows follow the step as it changes. The
+card has its own scale, head size (pixels), colour (one colour, the reaction colour, or jet over the magnitude) and
+thinning, which keeps or drops a node's arrows together.

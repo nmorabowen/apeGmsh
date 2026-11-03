@@ -10,8 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import type * as THREE from "three";
-import { renderLoads } from "../src/panels/loads.ts";
-import { LoadsLayer } from "../src/renderer/loads.ts";
+import { renderReactions } from "../src/panels/reactions.ts";
+import { LoadsLayer, ReactionsLayer } from "../src/renderer/loads.ts";
 import { ARROW, ARROW_STRIDE, BAR, buildReactions3D, reactionComponentsOf } from "../src/state/loads.ts";
 import { opened, until } from "./contour/harness.ts";
 import { makeReactionSet, reactionAt } from "./spec/reactions.ts";
@@ -62,27 +62,60 @@ test("one reaction arrow per held node, its tip on the node, pointing along the 
   assert.equal(reactionAt(2, 3, 0, 0), 12, "the closed form the fixture writes");
 });
 
-test("the layer draws reactions with the step: on with the switch, alone or with the loads, and again at a new step", async () => {
+test("components along the global axes: three arrows per node for xyz, one for x, y or z, each along ±its axis", async () => {
+  const data = await atStep(2, 3);
+  const ids = () => h.blobs.get(h.store.get().results!.stages[2]!.nodeIds!) as Float64Array;
+  const build = () => buildReactions3D(h.store.get(), h.blobs, data.nodal, ids());
+  const dirs = (r: ReturnType<typeof build>) => new Set(Array.from({ length: r.count }, (_, i) => [0, 1, 2].map((c) => r.arrows[i * ARROW_STRIDE + ARROW.dir + c]).join(",")));
+  h.store.dispatch({ type: "setReactions", component: "xyz" });
+  const all = build();
+  assert.equal(all.count, 3 * set.held.size, "three arrows at each held node");
+  assert.deepEqual([...dirs(all)].sort(), ["0,0,1", "0,1,0", "1,0,0"]);
+  // The longest arrow is the largest component, z: 3 · 4 · 3 · (1 + n mod 4).
+  const maxZ = 3 * 4 * 3 * Math.max(...[...set.held].map((n) => 1 + (n % 4)));
+  assert.ok(Math.abs(all.maxMag - maxZ) < 1e-9 * maxZ, `largest arrow ${all.maxMag}, expected ${maxZ}`);
+  // Thinning is per node: the three arrows sharing a tip share a level, so the smaller components are never thinned by their own node.
+  const levelAt = new Map<string, Set<number>>();
+  for (let i = 0; i < all.count; i++) {
+    const tip = [0, 1, 2].map((c) => all.arrows[i * ARROW_STRIDE + c]).join(",");
+    levelAt.set(tip, (levelAt.get(tip) ?? new Set()).add(all.arrows[i * ARROW_STRIDE + ARROW.level]!));
+  }
+  assert.equal(levelAt.size, set.held.size);
+  for (const [tip, levels] of levelAt) assert.equal(levels.size, 1, `node at ${tip}: its components have levels ${[...levels]}`);
+  for (const [c, d] of [["x", "1,0,0"], ["y", "0,1,0"], ["z", "0,0,1"]] as const) {
+    h.store.dispatch({ type: "setReactions", component: c });
+    const one = build();
+    assert.equal(one.count, set.held.size, `${c}: one arrow per held node`);
+    assert.deepEqual([...dirs(one)], [d]);
+  }
+  h.store.dispatch({ type: "setReactions", component: "resultant" });
+});
+
+test("the Reactions layer: its own switch, independent of the loads, rebuilt at a new step", async () => {
   const data = await atStep(2, 1);
-  const layer = new LoadsLayer();
-  let s = h.store.get();
-  assert.equal(layer.sync(s, h.blobs, null, data), false, "off by default: nothing drawn");
-  h.store.dispatch({ type: "setLoads", showReactions: true });
-  s = h.store.get();
+  const layer = new ReactionsLayer();
+  const loads = new LoadsLayer();
+  assert.equal(h.store.get().reactions.on, false);
+  assert.equal(layer.sync(h.store.get(), h.blobs, null, data), false, "off by default: nothing drawn");
+  h.store.dispatch({ type: "setReactions", on: true, headSize: 16 });
+  const s = h.store.get();
+  assert.equal(s.loads.on, false);
   assert.equal(layer.sync(s, h.blobs, null, data), true);
+  assert.equal(loads.sync(s, h.blobs), false, "the loads layer stays off");
   const count = () => (layer.cones.geometry as THREE.InstancedBufferGeometry).instanceCount;
-  assert.equal(count(), set.held.size, "the reactions alone, the loads switch being off");
+  assert.equal(count(), set.held.size);
+  assert.equal(layer.uniforms.uHeadPx.value, 16, "its own head size");
   assert.equal(layer.sync(s, h.blobs, null, data), false, "the same step draws nothing new");
   const next = await atStep(2, 2);
   assert.equal(layer.sync(h.store.get(), h.blobs, null, next), true, "a new step rebuilds them");
-  assert.equal(count(), set.held.size);
-  h.store.dispatch({ type: "setLoads", showReactions: false });
+  h.store.dispatch({ type: "setReactions", on: false });
   assert.equal(layer.sync(h.store.get(), h.blobs, null, next), true);
   assert.equal(layer.root.visible, false, "off again: hidden");
   layer.dispose();
+  loads.dispose();
 });
 
-test("the Loads card offers the reactions switch when the step records reactions, and it dispatches showReactions", async () => {
+test("the Reactions card shows when the step records reactions; its switch and component menu dispatch setReactions", async () => {
   await atStep(2, 0);
   const prevDoc = (globalThis as { document?: unknown }).document;
   class El {
@@ -115,12 +148,21 @@ test("the Loads card offers the reactions switch when the step records reactions
   (globalThis as { document?: unknown }).document = { documentElement: { dataset: { theme: "dark" } }, createElement: () => new El(), createElementNS: () => new El() };
   try {
     const events: unknown[] = [];
-    const box = renderLoads(h.store.get(), (e) => events.push(e)) as unknown as El | null;
+    const box = renderReactions(h.store.get(), (e) => events.push(e)) as unknown as El | null;
     assert.ok(box, "the card shows: the step records reactions");
-    const btn = box.all((e) => e.className.startsWith("loads-reactions"));
-    assert.equal(btn.length, 1, "one reactions button");
-    for (const fn of btn[0]!.listeners) fn();
-    assert.deepEqual(events, [{ type: "setLoads", showReactions: true }]);
+    const one = (cls: string) => {
+      const found = box.all((e) => e.className.split(" ")[0] === cls);
+      assert.equal(found.length, 1, cls);
+      return found[0]!;
+    };
+    for (const fn of one("reactions-toggle").listeners) fn();
+    const menu = one("reactions-component");
+    assert.deepEqual(menu.all((e) => e !== menu).map((o) => o.value), ["resultant", "xyz", "x", "y", "z"]);
+    menu.value = "xyz";
+    for (const fn of menu.listeners) fn();
+    assert.deepEqual(events, [{ type: "setReactions", on: true }, { type: "setReactions", component: "xyz" }]);
+    h.store.dispatch({ type: "setPhase", at: { kind: "mesh" } });
+    assert.equal(renderReactions(h.store.get()), null, "no results step on screen: no card");
   } finally {
     (globalThis as { document?: unknown }).document = prevDoc;
   }

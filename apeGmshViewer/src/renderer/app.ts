@@ -11,6 +11,7 @@ import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountLineDiagram } from "../panels/lineDiagram.ts";
 import { mountLoads } from "../panels/loads.ts";
+import { mountReactions } from "../panels/reactions.ts";
 import { mountOfferBadge, mountOffers } from "../panels/offers.ts";
 import { mountPhase } from "../panels/phase.ts";
 import { mountPlanes } from "../panels/planes.ts";
@@ -58,6 +59,7 @@ const panels = [
   mountBanner(store),
   mountLineDiagram(store, (fn) => viewport.onViewChange(fn)),
   mountLoads(store, (fn) => viewport.onViewChange(fn)),
+  mountReactions(store, (fn) => viewport.onViewChange(fn)),
   mountLegend(store, (fn) => viewport.onViewChange(fn)),
   mountInspector(store),
   mountEmpty(store),
@@ -91,7 +93,7 @@ panels.push(
   }),
 );
 const chrome = mountCollapsibleChrome({
-  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram", "loads", "offers"],
+  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram", "loads", "reactions", "offers"],
   visible: () => {
     const s = store.get();
     return s.mesh !== null || s.provenance.length > 0;

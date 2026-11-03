@@ -1,7 +1,6 @@
 // Standalone 3-D Structural Loads & Prescribed-SP panel (`#loads`), positioned
 // on the left stack so loads, contours, and line diagrams can be controlled
-// and inspected together. Auto-hidden when the loaded model has no loads and
-// the results step on screen records no reaction forces.
+// and inspected together. Auto-hidden when the loaded model has no loads.
 //
 // Follows ADR 0112 D6 (`panel-allow-list`): imports only `store`, `selectors`,
 // `types`, and `ui/dom`.
@@ -11,7 +10,6 @@ import {
   loadsColourPalette,
   loadsSummaryOf,
   rampCss,
-  reactionComponentsOf,
   scaleLabel,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
@@ -75,8 +73,7 @@ export function renderLoads(
 ): HTMLElement | null {
   if (!s.mesh || s.phase.at?.kind === "geometry") return null;
   const summary = loadsSummaryOf(s);
-  const hasReactions = reactionComponentsOf(s) !== null;
-  if (!summary.hasLoads && !hasReactions) return null;
+  if (!summary.hasLoads) return null;
 
   const ld = s.loads;
   const theme = currentTheme();
@@ -111,13 +108,6 @@ export function renderLoads(
     listen(spBtn, "click", () => dispatch({ type: "setLoads", showSp: !ld.showSp })),
   );
   modes.append(toggleBtn, forceBtn, momentBtn, elemBtn, spBtn);
-  if (hasReactions) {
-    // Reactions are results: the step on screen, drawn with the same head, scale, colour and thinning as the loads.
-    const reactBtn = el("button", "loads-reactions" + (ld.showReactions ? " on" : ""), "reactions");
-    reactBtn.title = "Show the step's reaction forces: arrows pointing at the support, a 45° tick across the tail";
-    unlisten.push(listen(reactBtn, "click", () => dispatch({ type: "setLoads", showReactions: !ld.showReactions })));
-    modes.append(reactBtn);
-  }
   box.append(modes);
 
   const optsRow = el("div", "legend-mode loads-options");

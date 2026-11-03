@@ -802,6 +802,26 @@ export interface LineDiagramState {
   hover: LineDiagramHoverReadout | null;
 }
 
+/**
+ * The Reactions card: the results step's reaction forces as arrows pointing at
+ * the support, a 45° tick across the tail; sized, coloured and thinned like the
+ * load arrows but on their own settings.
+ */
+export interface ReactionsState {
+  readonly on: boolean;
+  /** Shaft multiplier (default 1, > 0). */
+  readonly scale: number;
+  /** Arrowhead length on screen, in CSS pixels (default 12, > 0). */
+  readonly headSize: number;
+  readonly colorBy: LoadsColorBy;
+  readonly thin: boolean;
+  /** What each node draws: the resultant, its three global-axis components as separate arrows, or one of them (default resultant). */
+  readonly component: ReactionComponent;
+}
+
+/** A reaction arrow per node along the resultant, per global axis (`xyz`), or along one global axis. */
+export type ReactionComponent = "resultant" | "xyz" | "x" | "y" | "z";
+
 /** How the load arrows are coloured. */
 export type LoadsColorBy = "mono" | "type" | "magnitude";
 
@@ -822,8 +842,6 @@ export interface LoadsState {
   readonly headSize: number;
   /** Thin out arrows closer on screen than about a head length (default true). */
   readonly thin: boolean;
-  /** Draw the results step's reaction forces as arrows with a 45° tick across the tail (default false). */
-  readonly showReactions: boolean;
   /** Arrow colour: one colour for every load (default), the load type's, or jet over the magnitude. */
   readonly colorBy: LoadsColorBy;
   /** null = all active patterns/cases for current phase/stage; string[] = explicit pattern h5 paths or `neutral:<case>` keys */
@@ -1038,6 +1056,7 @@ export interface State {
   lineDiagram: LineDiagramState;
   /** 3-D structural loading and prescribed-SP visualization state */
   loads: LoadsState;
+  reactions: ReactionsState;
   /** Spotlight (`Ctrl+K`) command and search palette */
   spotlight: SpotlightState;
   /** Search window query builder and text filter */
@@ -1355,6 +1374,8 @@ export type Event =
       drawnBeams?: readonly LineDiagramBeamSummary[];
     }
   | { type: "lineDiagramScan"; scan: ContourScan }
+  /** The Reactions card's controls */
+  | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent }
   /** 3-D structural loading and prescribed-SP visualization controls */
   | {
       type: "setLoads";
@@ -1368,7 +1389,6 @@ export type Event =
       scaleBySeries?: boolean;
       headSize?: number;
       thin?: boolean;
-      showReactions?: boolean;
       colorBy?: LoadsColorBy;
       selectedPatterns?: readonly string[] | null;
       togglePattern?: string;

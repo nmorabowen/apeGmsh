@@ -102,12 +102,12 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 #left-rail > * { pointer-events: auto; }
 #left-rail > [hidden] { display: none; }
 
-#line-diagram, #loads {
+#line-diagram, #loads, #reactions {
   flex: 0 1 auto; min-height: 0; overflow: auto;
   padding: 10px 12px; border-radius: 10px;
   background: var(--panel); border: 1px solid var(--line);
 }
-#line-diagram[hidden], #loads[hidden] { display: none; }
+#line-diagram[hidden], #loads[hidden], #reactions[hidden] { display: none; }
 .loads-patterns { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
 .loads-pattern-title { overflow-wrap: anywhere; }
 
@@ -118,7 +118,7 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 }
 .legend-refusals > summary { cursor: pointer; }
 .line-diagram-span-badge { max-height: 4.2em; overflow-y: auto; }
-#legend h3, #line-diagram h3, #loads h3, #inspector h3 {
+#legend h3, #line-diagram h3, #loads h3, #reactions h3, #inspector h3 {
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
@@ -239,7 +239,7 @@ code { font-family: var(--mono); }
 .sibling { color: var(--muted); }
 .legend-row.clickable { cursor: pointer; }
 .legend-row.hidden-group { opacity: 0.4; text-decoration: line-through; }
-#legend h3, #line-diagram h3, #loads h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
+#legend h3, #line-diagram h3, #loads h3, #reactions h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
 .legend-all, .pin {
   margin-left: auto; padding: 0 6px; border-radius: 4px; cursor: pointer;
   font: 600 11px var(--font); letter-spacing: 0; text-transform: none;
@@ -477,25 +477,25 @@ code { font-family: var(--mono); }
 .vc-theme { flex: 0 0 auto; }
 
 /* Universal collapsible panels (ui/collapse.ts): every <aside> in #rail, #legend, #line-diagram, and #loads */
-#rail > aside > h3:first-child, #legend > h3:first-child, #line-diagram > h3:first-child, #loads > h3:first-child {
+#rail > aside > h3:first-child, #legend > h3:first-child, #line-diagram > h3:first-child, #loads > h3:first-child, #reactions > h3:first-child {
   cursor: pointer; user-select: none;
 }
-#rail > aside > h3:first-child::before, #legend > h3:first-child::before, #line-diagram > h3:first-child::before, #loads > h3:first-child::before {
+#rail > aside > h3:first-child::before, #legend > h3:first-child::before, #line-diagram > h3:first-child::before, #loads > h3:first-child::before, #reactions > h3:first-child::before {
   content: "\25be"; font-size: 11px; color: var(--muted);
 }
-#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before, #loads > h3:first-child:hover::before {
+#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before, #loads > h3:first-child:hover::before, #reactions > h3:first-child:hover::before {
   color: var(--accent);
 }
-body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child::before {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] > h3:first-child::before {
   content: "\25b8";
 }
-body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"], body:not([data-still-chrome="app"]) #legend[data-collapsed="true"], body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"], body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"], body:not([data-still-chrome="app"]) #legend[data-collapsed="true"], body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"], body:not([data-still-chrome="app"]) #loads[data-collapsed="true"], body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] {
   flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px;
 }
-body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] > h3:first-child {
   margin-bottom: 0;
 }
-body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > :not(:first-child) {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] > :not(:first-child) {
   display: none;
 }
 #inspector[data-collapsed="true"] + #sources { max-height: 100%; }

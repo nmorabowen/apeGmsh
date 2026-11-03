@@ -44,6 +44,7 @@ import {
   type Event,
   type LineDiagramState,
   type LoadsState,
+  type ReactionsState,
   type MeshInfo,
   type Offer,
   type OffersState,
@@ -75,6 +76,8 @@ export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, m
 
 export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
 
+export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant" };
+
 export const initialLoads: LoadsState = {
   on: false,
   scale: 1,
@@ -86,7 +89,6 @@ export const initialLoads: LoadsState = {
   scaleBySeries: false,
   headSize: 12,
   thin: true,
-  showReactions: false,
   colorBy: "mono",
   selectedPatterns: null,
 };
@@ -254,6 +256,7 @@ export const initialState: State = {
   clip: initialClip,
   lineDiagram: initialLineDiagram,
   loads: initialLoads,
+  reactions: initialReactions,
   spotlight: initialSpotlight,
   search: initialSearch,
   camera: initialCamera,
@@ -1190,6 +1193,19 @@ export function reduce(s: State, e: Event): State {
     case "lineDiagramScan":
       if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
+    case "setReactions": {
+      const cur = s.reactions;
+      const pos = (v: number | undefined, was: number) => (v !== undefined && Number.isFinite(v) && v > 0 ? v : was);
+      const next: ReactionsState = {
+        on: e.on ?? cur.on,
+        scale: pos(e.scale, cur.scale),
+        headSize: pos(e.headSize, cur.headSize),
+        colorBy: e.colorBy ?? cur.colorBy,
+        thin: e.thin ?? cur.thin,
+        component: e.component ?? cur.component,
+      };
+      return (Object.keys(next) as (keyof ReactionsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, reactions: next };
+    }
     case "setLoads": {
       if (e.on !== undefined && typeof e.on !== "boolean") {
         throw new RangeError(`setLoads: on ${JSON.stringify(e.on)}`);
@@ -1208,7 +1224,6 @@ export function reduce(s: State, e: Event): State {
       const scaleBySeries = e.scaleBySeries ?? cur.scaleBySeries;
       const headSize = e.headSize ?? cur.headSize;
       const thin = e.thin ?? cur.thin;
-      const showReactions = e.showReactions ?? cur.showReactions;
       const colorBy = e.colorBy ?? cur.colorBy;
       let selectedPatterns = cur.selectedPatterns;
       if (e.selectedPatterns !== undefined) {
@@ -1247,7 +1262,6 @@ export function reduce(s: State, e: Event): State {
         scaleBySeries === cur.scaleBySeries &&
         headSize === cur.headSize &&
         thin === cur.thin &&
-        showReactions === cur.showReactions &&
         colorBy === cur.colorBy &&
         samePatterns
       ) {
@@ -1266,7 +1280,6 @@ export function reduce(s: State, e: Event): State {
           scaleBySeries,
           headSize,
           thin,
-          showReactions,
           colorBy,
           selectedPatterns,
         },

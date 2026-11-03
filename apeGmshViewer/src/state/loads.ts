@@ -2272,18 +2272,21 @@ export function reactionComponentsOf(s: State): readonly (string | null)[] | nul
 }
 
 export interface Reactions3D {
-  /** One record per reaction, `ARROW_STRIDE` floats, its mark `BAR.tick`. */
+  /** One record per reaction arrow, `ARROW_STRIDE` floats, its mark `BAR.tick`. */
   readonly arrows: Float32Array;
+  /** Arrows drawn: one per node for the resultant or one axis, up to three for `xyz`. */
   readonly count: number;
-  /** The step's largest reaction-force magnitude (in the display units), which sets the longest arrow. */
+  /** The step's largest arrow (resultant or component, in the display units), which sets the longest arrow. */
   readonly maxMag: number;
 }
 
 /**
- * The reaction-force arrows of one results step: one per node with a finite,
- * non-zero reaction, its tip on the node and pointing along the reaction (so
- * it points at the support from outside), a 45° tick across its tail. Lengths
- * follow the step's largest reaction, as the load arrows follow their peak.
+ * The reaction-force arrows of one results step, at each node with a finite,
+ * non-zero reaction: along the resultant, or along the global axes as
+ * `s.reactions.component` asks (all three, or one), each tip on the node and
+ * pointing along its force (so it points at the support from outside), a 45°
+ * tick across its tail. Lengths follow the step's largest arrow, as the load
+ * arrows follow their peak, so components compare with one another.
  * `nodal` and `nodeIds` are the step's rows and the stage's node ids.
  */
 export function buildReactions3D(
@@ -2300,32 +2303,53 @@ export function buildReactions3D(
   if (rows.every((r) => !r)) return none;
   const factor = loadsUnitsOf(s).force.factor;
   const nodeCoords = buildNodeCoordsMap(s, blobs, opts);
-  const items: { tip: Vec3; vec: Vec3; mag: number }[] = [];
+  const want = s.reactions.component;
+  const axes = want === "xyz" ? [0, 1, 2] : want === "x" ? [0] : want === "y" ? [1] : want === "z" ? [2] : null;
+  const items: { tip: Vec3; vec: Vec3; mag: number; node: number }[] = [];
   let maxMag = 0;
+  let node = -1;
+  const add = (tip: Vec3, vec: Vec3) => {
+    const mag = Math.hypot(...vec);
+    if (mag <= 1e-30) return;
+    items.push({ tip, vec, mag, node });
+    if (mag > maxMag) maxMag = mag;
+  };
   for (let i = 0; i < nodeIds.length; i++) {
     const v = rows.map((r) => (r ? r[i]! : 0)) as [number, number, number];
     if (!v.every(Number.isFinite)) continue;
-    const vec: Vec3 = [v[0] * factor, v[1] * factor, v[2] * factor];
-    const mag = Math.hypot(...vec);
-    if (mag <= 1e-30) continue;
     const tip = nodeCoords.get(nodeIds[i]!);
     if (!tip) continue;
-    items.push({ tip, vec, mag });
-    if (mag > maxMag) maxMag = mag;
+    const vec: Vec3 = [v[0] * factor, v[1] * factor, v[2] * factor];
+    node++;
+    if (!axes) add(tip, vec);
+    else for (const a of axes) add(tip, [a === 0 ? vec[0] : 0, a === 1 ? vec[1] : 0, a === 2 ? vec[2] : 0]);
   }
   if (items.length === 0) return none;
   const radius = s.mesh.radius > 0 && Number.isFinite(s.mesh.radius) ? s.mesh.radius : 1;
-  const baseLen = Math.max(radius * 0.22, 1e-4) * s.loads.scale;
+  const baseLen = Math.max(radius * 0.22, 1e-4) * s.reactions.scale;
   const palette = loadsColourPalette(opts?.theme ?? "dark");
   const g: GlyphBuffers = { arrows: [], combs: [] };
   for (const it of items) {
     const ratio = it.mag / maxMag;
-    const rgb = s.loads.colorBy === "type" ? palette.reaction : s.loads.colorBy === "magnitude" ? sampleCmap("jet", ratio) : palette.mono;
+    const rgb = s.reactions.colorBy === "type" ? palette.reaction : s.reactions.colorBy === "magnitude" ? sampleCmap("jet", ratio) : palette.mono;
     const dir: Vec3 = [it.vec[0] / it.mag, it.vec[1] / it.mag, it.vec[2] / it.mag];
     pushArrowToPoint(g, it.tip, dir, baseLen * (0.35 + 0.65 * ratio), rgb, ratio);
     g.arrows[g.arrows.length - ARROW_STRIDE + ARROW.bar] = BAR.tick;
   }
   const arrows = new Float32Array(g.arrows);
-  thinningLevels(arrows, radius);
+  // Thinning is decided per node: one record per node (its largest arrow), then each
+  // arrow takes its node's level, so a node's components show or hide together.
+  const firstOf = new Map<number, number>();
+  items.forEach((it, i) => {
+    const k = firstOf.get(it.node);
+    if (k === undefined || it.mag > items[k]!.mag) firstOf.set(it.node, i);
+  });
+  const reps = [...firstOf.values()];
+  const perNode = new Float32Array(reps.length * ARROW_STRIDE);
+  reps.forEach((i, j) => perNode.set(arrows.subarray(i * ARROW_STRIDE, (i + 1) * ARROW_STRIDE), j * ARROW_STRIDE));
+  thinningLevels(perNode, radius);
+  const levelOf = new Map<number, number>();
+  reps.forEach((i, j) => levelOf.set(items[i]!.node, perNode[j * ARROW_STRIDE + ARROW.level]!));
+  items.forEach((it, i) => (arrows[i * ARROW_STRIDE + ARROW.level] = levelOf.get(it.node)!));
   return { arrows, count: items.length, maxMag };
 }
