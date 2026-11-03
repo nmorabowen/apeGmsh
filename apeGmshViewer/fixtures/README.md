@@ -397,7 +397,15 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   components (`LadrunoReader.read_gauss`), written by
   `tests/fixtures/ladruno/make_viewer_gauss_oracle.py` (outside the app, which never
   imports apeGmsh: ADR 0112 D4); `test/results/ladrunoGauss.test.ts` compares
-  the app's reader against it.
+  the app's reader against it. `ladruno_quad2d.principal.oracle.json` holds
+  Python's principal frame of the stress and strain at step 1
+  (`_derived.principal_frame` over the same reads: per Gauss point the values
+  p1 >= p2 >= p3 and their sign-canonical unit vectors), written by
+  `tests/fixtures/ladruno/make_viewer_principal_oracle.py`;
+  `test/results/ladrunoPrincipal.test.ts` compares state/principal.ts against it.
+  The same script writes `principal_random.oracle.json`: `principal_frame` of
+  300 seeded random 3-D tensors with distinct values, whose signed vectors
+  `test/tensor.test.ts` checks (the canonical sign the `arrow` head draws).
 - `ladruno_parts2d.part-0.ladruno`, `ladruno_parts2d.part-1.ladruno` and
   `ladruno_parts2d.h5` (#2188) are a 2-rank OpenSeesMP run (fork build
   `80dd3f13d`, which writes `PARTITION_REDUCTION`, WP-126) and its model,

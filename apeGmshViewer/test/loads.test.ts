@@ -1103,7 +1103,7 @@ test("the arrow colour: one colour for every load by default, the load type's co
 
 test("thinning: level k keeps, by priority, the arrows with no stronger kept arrow within radius·2^(k−12); an arrow's level is the last level that kept it", () => {
   // Three arrows on a model of radius 1: a close pair near x = 0.3 and one far away.
-  const rec = (x: number, priority: number) => [x, 0, 0, 0, -1, 0, 0.2, 1, 1, 1, 1, 0, priority, 0];
+  const rec = (x: number, priority: number) => [x, 0, 0, 0, -1, 0, 0.2, 1, 1, 1, 1, 0, priority, 0, 0];
   const a = new Float32Array([...rec(0, 0.4), ...rec(0.3, 0.5), ...rec(0.3001, 0.9)]);
   thinningLevels(a, 1);
   const level = (i: number) => a[i * ARROW_STRIDE + ARROW.level]!;

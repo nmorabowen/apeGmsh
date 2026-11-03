@@ -31,6 +31,7 @@ import {
   type NodalField,
 } from "./contour.ts";
 import { usesMatrix } from "./extrapolation.ts";
+import { tensorFields, type TensorField } from "./tensor.ts";
 import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 import {
@@ -624,6 +625,21 @@ export type ContourView =
 /** A results file's element-id verdict; a results info without one is unverified (fail closed). */
 export function elementVerdictOf(info: ResultsInfo): { verified: true } | { verified: false; reason: string } {
   return info.elementIndex ?? { verified: false, reason: "this results info carries no element-index verdict" };
+}
+
+/** The stress and strain fields of a verified file's results stage on screen; a field with no group that makes a tensor is kept, for its refusals. */
+export function principalFieldsOf(s: State): TensorField[] {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results || !s.mesh || !elementVerdictOf(s.results).verified) return [];
+  const st = s.results.stages[at.stage];
+  return st ? tensorFields(st.gauss) : [];
+}
+
+/** The field the Principal card draws: the one picked, else the first stress that can draw, then the first field that can; null when the stage has none. */
+export function principalFieldOf(s: State): TensorField | null {
+  const fields = principalFieldsOf(s);
+  const drawable = fields.filter((f) => f.groups.length > 0);
+  return fields.find((f) => f.name === s.principal.field) ?? drawable.find((f) => f.family === "stress") ?? drawable[0] ?? fields[0] ?? null;
 }
 
 /**

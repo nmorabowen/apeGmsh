@@ -24,7 +24,7 @@ import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplace
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
 import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
-import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
+import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
@@ -94,9 +94,9 @@ export interface Bridge {
   measureMemory?(): Promise<{ main: number; renderer: number }>;
   /** V4c1: the progress of the running scans; returns the unsubscribe. */
   onScanProgress?(cb: (p: { scanId: number; done: number; total: number }) => void): (() => void) | void;
-  /** V4b: one step of the open results file; the reply echoes `seq`. V4c2a: `element` reads one Gauss component too (`gauss`, by group). */
-  readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: LineStationComponent }): Promise<
-    | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array>; gauss?: Record<string, Float64Array>; lineDiagram?: LadrunoLineStationStep | null; lineDiagramError?: string }
+  /** V4b: one step of the open results file; the reply echoes `seq`. V4c2a: `element` reads one Gauss component too (`gauss`, by group); `tensor` several (by component, then group). */
+  readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: LineStationComponent; tensor?: string[] }): Promise<
+    | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array>; gauss?: Record<string, Float64Array>; tensor?: Record<string, Record<string, Float64Array>>; lineDiagram?: LadrunoLineStationStep | null; lineDiagramError?: string }
     | { ok: false; seq: number; error: string; changed?: true }
   >;
   /** V2f: read a /geometry sibling (null: the file has no such zone). */
@@ -288,6 +288,8 @@ export interface StepData {
   /** V4c2a: the element component fetched with the step, or null; and its values by gauss group, (E * G,) element-major */
   element: string | null;
   gauss: Record<string, Float64Array>;
+  /** The Principal card's tensor components fetched with the step, by component then group; absent with none asked */
+  tensor?: Record<string, Record<string, Float64Array>>;
   /** Line diagram component fetched with the step, or null */
   lineDiagram?: LadrunoLineStationStep | null;
   /** Refusal message when the step's line-station read failed while nodal/gauss succeeded */
@@ -1031,13 +1033,16 @@ export class Effects {
         : s.gaussPoints.on
           ? (st.lineStations?.[0] ?? null)
           : null;
-    const key = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}`;
+    // The Principal card reads the components of its tensor field (a verified file's only: `principalFieldOf`).
+    const components = s.principal.on ? principalFieldOf(s)?.components : undefined;
+    const tensor = components?.length ? components : null;
+    const key = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
     if (key === this.stepKey) return;
     this.stepKey = key;
     const seq = ++this.stepSeq;
     this.step = null;
     // Not from inside this listener: the other listeners have not seen `s` yet.
-    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram));
+    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor));
   }
 
   private async fetchStep(
@@ -1048,6 +1053,7 @@ export class Effects {
     seq: number,
     element: string | null = null,
     lineDiagram: LineStationComponent | null = null,
+    tensor: string[] | null = null,
   ): Promise<void> {
     if (seq !== this.stepSeq) return;
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "loading", error: null } });
@@ -1063,6 +1069,7 @@ export class Effects {
         seq,
         ...(element !== null ? { element } : {}),
         ...(lineDiagram !== null ? { lineDiagram } : {}),
+        ...(tensor !== null ? { tensor } : {}),
       })
       .catch((err: unknown) => ({ ok: false as const, seq, error: err instanceof Error ? err.message : String(err) }));
     // Latest wins: a slow reply for an older request never paints over a newer step.
@@ -1079,6 +1086,7 @@ export class Effects {
       nodal: res.nodal,
       element,
       gauss: res.gauss ?? {},
+      ...(res.tensor ? { tensor: res.tensor } : {}),
       lineDiagram: res.lineDiagram ?? null,
       lineDiagramError: res.lineDiagramError ?? null,
     };
