@@ -9,6 +9,7 @@
 
 import { DARK_MAIN, hexToRgb, LIGHT_MAIN, themeTokens, type ThemeMode } from "../theme/tokens.ts";
 import { activationOf } from "./activation.ts";
+import { sampleCmap } from "./contour.ts";
 import type { BlobStore } from "./blobs.ts";
 import { beamLocalAxes, elementTransformVecxzFromState } from "./lineDiagram.ts";
 import type {
@@ -149,6 +150,14 @@ export interface Loads3DGeometry {
   readonly triPositions: Float32Array;
   /** Alias for `coneColors` (9 floats per arrowhead triangle). */
   readonly triColors: Float32Array;
+  /** 3 floats per line vertex: the arrow direction a flat bar lies across (zero on a plain segment). */
+  readonly lineDirs: Float32Array;
+  /** 1 float per line vertex: its offset across the arrow, toward the camera-facing side (world units). */
+  readonly lineSides: Float32Array;
+  /** 3 floats per head vertex: the arrow direction. */
+  readonly coneDirs: Float32Array;
+  /** 1 float per head vertex: its offset across the arrow (the tip 0, the base corners ± a quarter of the head length). */
+  readonly coneSides: Float32Array;
   readonly nodalForcesCount: number;
   readonly nodalMomentsCount: number;
   readonly beamUniformCount: number;
@@ -192,6 +201,7 @@ export function loadsColourPalette(mode: ThemeMode = "dark"): {
   readonly nodalMoment: [number, number, number];
   readonly elementLoad: [number, number, number];
   readonly sp: [number, number, number];
+  readonly mono: [number, number, number];
 } {
   const t = themeTokens(mode);
   const ring = mode === "light" ? LIGHT_MAIN : DARK_MAIN;
@@ -204,6 +214,7 @@ export function loadsColourPalette(mode: ThemeMode = "dark"): {
     nodalMoment: moment,
     elementLoad: hexToRgb(t.ok),
     sp: hexToRgb(ring[4]!),
+    mono: hexToRgb(t.text),
   };
 }
 
@@ -1443,78 +1454,74 @@ export function loadsSummaryOf(s: State): LoadsSummary {
 
 // ---- 3-D Arrow & Comb Primitive Geometry Builder ----------------------------
 
-function orthoBasis(dir: readonly [number, number, number]): {
-  u: [number, number, number];
-  v: [number, number, number];
-} {
-  const [dx, dy, dz] = dir;
-  const ref: [number, number, number] = Math.abs(dz) < 0.85 ? [0, 0, 1] : [1, 0, 0];
-  let ux = dy * ref[2] - dz * ref[1];
-  let uy = dz * ref[0] - dx * ref[2];
-  let uz = dx * ref[1] - dy * ref[0];
-  const uNorm = Math.hypot(ux, uy, uz) || 1;
-  ux /= uNorm;
-  uy /= uNorm;
-  uz /= uNorm;
-  const vx = dy * uz - dz * uy;
-  const vy = dz * ux - dx * uz;
-  const vz = dx * uy - dy * ux;
-  return { u: [ux, uy, uz], v: [vx, vy, vz] };
+/**
+ * The glyph buffers. Every vertex carries the arrow's direction and a signed
+ * side offset: the renderer moves it that far across the arrow, in the plane
+ * that holds the arrow and faces the camera (renderer/loads.ts), so a head is
+ * a flat triangle at any view while its tip and base stay where they are in 3-D.
+ */
+interface GlyphBuffers {
+  readonly linePos: number[];
+  readonly lineCol: number[];
+  readonly lineDir: number[];
+  readonly lineSide: number[];
+  readonly conePos: number[];
+  readonly coneCol: number[];
+  readonly coneDir: number[];
+  readonly coneSide: number[];
+  /** Head length (world units), the same for every arrow; its width is half of it (2:1). */
+  readonly headLen: number;
+}
+
+const NO_DIR = [0, 0, 0] as const;
+
+function pushVertex(
+  pos: number[],
+  col: number[],
+  dirs: number[],
+  sides: number[],
+  p: readonly [number, number, number],
+  rgb: readonly [number, number, number],
+  dir: readonly [number, number, number],
+  side: number,
+): void {
+  pos.push(p[0], p[1], p[2]);
+  col.push(rgb[0], rgb[1], rgb[2]);
+  dirs.push(dir[0], dir[1], dir[2]);
+  sides.push(side);
 }
 
 function pushSegment(
-  linePos: number[],
-  lineCol: number[],
+  g: GlyphBuffers,
   p0: readonly [number, number, number],
   p1: readonly [number, number, number],
   rgb: readonly [number, number, number],
 ): void {
-  linePos.push(p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]);
-  lineCol.push(rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2]);
+  pushVertex(g.linePos, g.lineCol, g.lineDir, g.lineSide, p0, rgb, NO_DIR, 0);
+  pushVertex(g.linePos, g.lineCol, g.lineDir, g.lineSide, p1, rgb, NO_DIR, 0);
 }
 
-function pushConeHead(
-  conePos: number[],
-  coneCol: number[],
+/** One flat 2:1 head: the tip, and the base's two corners a quarter of the head length to each side. */
+function pushFlatHead(
+  g: GlyphBuffers,
   tip: readonly [number, number, number],
   dir: readonly [number, number, number],
   headLen: number,
-  headRadius: number,
   rgb: readonly [number, number, number],
 ): void {
-  const { u, v } = orthoBasis(dir);
-  const bx = tip[0] - dir[0] * headLen;
-  const by = tip[1] - dir[1] * headLen;
-  const bz = tip[2] - dir[2] * headLen;
-  const nSides = 6;
-  const ring: [number, number, number][] = [];
-  for (let i = 0; i < nSides; i++) {
-    const ang = (2 * Math.PI * i) / nSides;
-    const c = Math.cos(ang) * headRadius;
-    const s = Math.sin(ang) * headRadius;
-    ring.push([
-      bx + c * u[0] + s * v[0],
-      by + c * u[1] + s * v[1],
-      bz + c * u[2] + s * v[2],
-    ]);
-  }
-  for (let i = 0; i < nSides; i++) {
-    const a = ring[i]!;
-    const b = ring[(i + 1) % nSides]!;
-    conePos.push(tip[0], tip[1], tip[2], a[0], a[1], a[2], b[0], b[1], b[2]);
-    for (let k = 0; k < 3; k++) coneCol.push(rgb[0], rgb[1], rgb[2]);
-  }
+  const base: [number, number, number] = [tip[0] - dir[0] * headLen, tip[1] - dir[1] * headLen, tip[2] - dir[2] * headLen];
+  pushVertex(g.conePos, g.coneCol, g.coneDir, g.coneSide, tip, rgb, dir, 0);
+  pushVertex(g.conePos, g.coneCol, g.coneDir, g.coneSide, base, rgb, dir, -headLen / 4);
+  pushVertex(g.conePos, g.coneCol, g.coneDir, g.coneSide, base, rgb, dir, headLen / 4);
 }
 
 /**
- * Push a 3-D arrow whose tip touches `targetPoint` (pointing along `dir`) and
- * whose shaft has length `arrowLen`.
+ * Push an arrow whose tip touches `targetPoint` (pointing along `dir`) and
+ * whose overall length is `arrowLen`: a line shaft and a flat head of
+ * `g.headLen`, shortened to the arrow when the arrow is shorter.
  */
 function pushArrowToPoint(
-  linePos: number[],
-  lineCol: number[],
-  conePos: number[],
-  coneCol: number[],
+  g: GlyphBuffers,
   targetPoint: readonly [number, number, number],
   dir: readonly [number, number, number],
   arrowLen: number,
@@ -1522,40 +1529,32 @@ function pushArrowToPoint(
   doubleHead = false,
   spCrossbar = false,
 ): void {
+  const headLen = Math.min(g.headLen, arrowLen);
   const tail: [number, number, number] = [
     targetPoint[0] - dir[0] * arrowLen,
     targetPoint[1] - dir[1] * arrowLen,
     targetPoint[2] - dir[2] * arrowLen,
   ];
-  pushSegment(linePos, lineCol, tail, targetPoint, rgb);
-  const headLen = Math.min(arrowLen * 0.34, arrowLen * 0.48);
-  const headRad = headLen * 0.36;
-  pushConeHead(conePos, coneCol, targetPoint, dir, headLen, headRad, rgb);
+  // The shaft stops at the head's base, so the line never pokes through the tip.
+  const shaftEnd: [number, number, number] = [
+    targetPoint[0] - dir[0] * headLen,
+    targetPoint[1] - dir[1] * headLen,
+    targetPoint[2] - dir[2] * headLen,
+  ];
+  if (arrowLen > headLen) pushSegment(g, tail, shaftEnd, rgb);
+  pushFlatHead(g, targetPoint, dir, headLen, rgb);
   if (doubleHead) {
     const secondTip: [number, number, number] = [
       targetPoint[0] - dir[0] * (headLen * 0.72),
       targetPoint[1] - dir[1] * (headLen * 0.72),
       targetPoint[2] - dir[2] * (headLen * 0.72),
     ];
-    pushConeHead(conePos, coneCol, secondTip, dir, headLen, headRad, rgb);
+    pushFlatHead(g, secondTip, dir, headLen, rgb);
   }
   if (spCrossbar) {
-    const { u, v } = orthoBasis(dir);
-    const barHalf = headRad * 1.35;
-    pushSegment(
-      linePos,
-      lineCol,
-      [targetPoint[0] - u[0] * barHalf, targetPoint[1] - u[1] * barHalf, targetPoint[2] - u[2] * barHalf],
-      [targetPoint[0] + u[0] * barHalf, targetPoint[1] + u[1] * barHalf, targetPoint[2] + u[2] * barHalf],
-      rgb,
-    );
-    pushSegment(
-      linePos,
-      lineCol,
-      [targetPoint[0] - v[0] * barHalf, targetPoint[1] - v[1] * barHalf, targetPoint[2] - v[2] * barHalf],
-      [targetPoint[0] + v[0] * barHalf, targetPoint[1] + v[1] * barHalf, targetPoint[2] + v[2] * barHalf],
-      rgb,
-    );
+    // A flat bar across the tip, as wide as the head is long.
+    pushVertex(g.linePos, g.lineCol, g.lineDir, g.lineSide, targetPoint, rgb, dir, -headLen / 2);
+    pushVertex(g.linePos, g.lineCol, g.lineDir, g.lineSide, targetPoint, rgb, dir, headLen / 2);
   }
 }
 
@@ -1642,6 +1641,10 @@ export function buildLoads3D(
       coneColors: z,
       triPositions: z,
       triColors: z,
+      lineDirs: z,
+      lineSides: z,
+      coneDirs: z,
+      coneSides: z,
       nodalForcesCount: 0,
       nodalMomentsCount: 0,
       beamUniformCount: 0,
@@ -1827,10 +1830,22 @@ export function buildLoads3D(
   }
   const maxSpMag = Math.max(maxSpTranslationMag, maxSpRotationMag, maxBaseExcitationMag);
 
-  const linePos: number[] = [];
-  const lineCol: number[] = [];
-  const conePos: number[] = [];
-  const coneCol: number[] = [];
+  const g: GlyphBuffers = {
+    linePos: [],
+    lineCol: [],
+    lineDir: [],
+    lineSide: [],
+    conePos: [],
+    coneCol: [],
+    coneDir: [],
+    coneSide: [],
+    headLen: baseLen * s.loads.headSize,
+  };
+  // The arrow's colour: one colour for every load (the default), its load type's, or jet over
+  // its magnitude relative to its own kind's peak (forces, moments and pressures have different units).
+  const mono = palette.mono;
+  const colourOf = (typeRgb: readonly [number, number, number], ratio: number): readonly [number, number, number] =>
+    s.loads.colorBy === "type" ? typeRgb : s.loads.colorBy === "magnitude" ? sampleCmap("jet", ratio) : mono;
 
   let nodalForcesCount = 0;
   let nodalMomentsCount = 0;
@@ -1849,7 +1864,7 @@ export function buildLoads3D(
       if (mag <= 1e-30) continue;
       const dir: [number, number, number] = [f[0] / mag, f[1] / mag, f[2] / mag];
       const len = baseLen * (0.35 + 0.65 * (mag / maxForceMag));
-      pushArrowToPoint(linePos, lineCol, conePos, coneCol, pt, dir, len, palette.force, false, false);
+      pushArrowToPoint(g, pt, dir, len, colourOf(palette.force, mag / maxForceMag), false, false);
       nodalForcesCount++;
     }
   }
@@ -1863,7 +1878,7 @@ export function buildLoads3D(
       if (mag <= 1e-30) continue;
       const dir: [number, number, number] = [mVec[0] / mag, mVec[1] / mag, mVec[2] / mag];
       const len = baseLen * (0.35 + 0.65 * (mag / maxMomentMag));
-      pushArrowToPoint(linePos, lineCol, conePos, coneCol, pt, dir, len, palette.moment, true, false);
+      pushArrowToPoint(g, pt, dir, len, colourOf(palette.moment, mag / maxMomentMag), true, false);
       nodalMomentsCount++;
     }
   }
@@ -1877,14 +1892,14 @@ export function buildLoads3D(
       if (tMag > 1e-30 && maxSpTranslationMag > 0) {
         const dir: [number, number, number] = [sp.trans[0] / tMag, sp.trans[1] / tMag, sp.trans[2] / tMag];
         const len = baseLen * 0.85 * (0.35 + 0.65 * (tMag / maxSpTranslationMag));
-        pushArrowToPoint(linePos, lineCol, conePos, coneCol, pt, dir, len, palette.sp, false, true);
+        pushArrowToPoint(g, pt, dir, len, colourOf(palette.sp, tMag / maxSpTranslationMag), false, true);
         spCount++;
       }
       const rMag = Math.hypot(sp.rot[0], sp.rot[1], sp.rot[2]);
       if (rMag > 1e-30 && maxSpRotationMag > 0) {
         const dir: [number, number, number] = [sp.rot[0] / rMag, sp.rot[1] / rMag, sp.rot[2] / rMag];
         const len = baseLen * 0.85 * (0.35 + 0.65 * (rMag / maxSpRotationMag));
-        pushArrowToPoint(linePos, lineCol, conePos, coneCol, pt, dir, len, palette.sp, true, true);
+        pushArrowToPoint(g, pt, dir, len, colourOf(palette.sp, rMag / maxSpRotationMag), true, true);
         spCount++;
       }
     }
@@ -1895,14 +1910,11 @@ export function buildLoads3D(
         const dir: [number, number, number] =
           dIdx === 1 ? [1, 0, 0] : dIdx === 2 ? [0, 1, 0] : [0, 0, 1];
         pushArrowToPoint(
-          linePos,
-          lineCol,
-          conePos,
-          coneCol,
+          g,
           s.mesh.center,
           dir,
           baseLen * 1.1,
-          palette.sp,
+          colourOf(palette.sp, 1),
           false,
           true,
         );
@@ -2167,7 +2179,7 @@ export function buildLoads3D(
           item.pStart[1] + item.xL * (item.pEnd[1] - item.pStart[1]),
           item.pStart[2] + item.xL * (item.pEnd[2] - item.pStart[2]),
         ];
-        pushArrowToPoint(linePos, lineCol, conePos, coneCol, pt, dir, len, palette.elementLoad, false, false);
+        pushArrowToPoint(g, pt, dir, len, colourOf(palette.elementLoad, item.mag / (kindMax || 1)), false, false);
         beamPointCount++;
       } else {
         // Five ticks over the loaded span [aL, bL], each the load interpolated
@@ -2201,11 +2213,11 @@ export function buildLoads3D(
             pt[2] - dir[2] * len,
           ];
           tails.push(tail);
-          pushArrowToPoint(linePos, lineCol, conePos, coneCol, pt, dir, len, palette.elementLoad, false, false);
+          pushArrowToPoint(g, pt, dir, len, colourOf(palette.elementLoad, qMag / (kindMax || 1)), false, false);
         }
         // Top profile bar connecting the comb arrow tails
         for (let i = 0; i + 1 < tails.length; i++) {
-          pushSegment(linePos, lineCol, tails[i]!, tails[i + 1]!, palette.elementLoad);
+          pushSegment(g, tails[i]!, tails[i + 1]!, colourOf(palette.elementLoad, item.mag / (kindMax || 1)));
         }
         beamUniformCount++;
       }
@@ -2215,7 +2227,7 @@ export function buildLoads3D(
     for (const item of surfaceItems) {
       const len = baseLen * 0.65 * (0.35 + 0.65 * (item.mag / (maxSurfacePressureMag || 1)));
       for (const pt of item.points) {
-        pushArrowToPoint(linePos, lineCol, conePos, coneCol, pt, item.normal, len, palette.elementLoad, false, false);
+        pushArrowToPoint(g, pt, item.normal, len, colourOf(palette.elementLoad, item.mag / (maxSurfacePressureMag || 1)), false, false);
       }
       surfacePressureCount++;
     }
@@ -2226,10 +2238,10 @@ export function buildLoads3D(
   const skippedCount = skippedBeamDecls.length;
   const notice = joinNotices(skippedBeamNotice(skippedCount), s.loads.showElementLoads ? undrawnNotice(activePatterns) : null);
 
-  const linePositions = new Float32Array(linePos);
-  const lineColors = new Float32Array(lineCol);
-  const conePositions = new Float32Array(conePos);
-  const coneColors = new Float32Array(coneCol);
+  const linePositions = new Float32Array(g.linePos);
+  const lineColors = new Float32Array(g.lineCol);
+  const conePositions = new Float32Array(g.conePos);
+  const coneColors = new Float32Array(g.coneCol);
   const elementLoadArrows = beamUniformCount * 5 + beamPointCount + surfacePressureCount;
 
   return {
@@ -2239,6 +2251,10 @@ export function buildLoads3D(
     coneColors,
     triPositions: conePositions,
     triColors: coneColors,
+    lineDirs: new Float32Array(g.lineDir),
+    lineSides: new Float32Array(g.lineSide),
+    coneDirs: new Float32Array(g.coneDir),
+    coneSides: new Float32Array(g.coneSide),
     nodalForcesCount,
     nodalMomentsCount,
     beamUniformCount,

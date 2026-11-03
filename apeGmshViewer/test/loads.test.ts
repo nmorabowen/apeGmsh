@@ -16,7 +16,9 @@ import { view as patternsView } from "../src/panels/windows/patterns.ts";
 import { openModel } from "../src/reader/node.ts";
 import { LoadsLayer } from "../src/renderer/loads.ts";
 import { BlobStore } from "../src/state/blobs.ts";
+import { sampleCmap } from "../src/state/contour.ts";
 import { loadModel } from "../src/state/load.ts";
+import { loadsColourPalette } from "../src/state/loads.ts";
 import {
   buildLoads3D,
   evaluatePatternSeriesFactor,
@@ -1056,3 +1058,55 @@ test("3-D beam with nearly-parallel vecxz (||vecxz - (vecxz · xLocal) xLocal|| 
   assert.match(geom.notice ?? "", /missing geomTransf vecxz/);
 });
 
+
+test("every arrowhead is one flat 2:1 triangle: a tip, and two base corners a quarter of the head length across the arrow, which the renderer turns toward the camera", () => {
+  const radius = defState.mesh!.radius;
+  for (const headSize of [0.3, 0.12]) {
+    const s = reduce(defState, { type: "setLoads", on: true, headSize });
+    const g = buildLoads3D(s, defBlobs);
+    const headLen = Math.max(radius * 0.22, 1e-4) * headSize;
+    const nTri = g.conePositions.length / 9;
+    assert.ok(nTri > 0, "definitions.h5 draws heads");
+    assert.equal(g.coneDirs.length, g.conePositions.length);
+    assert.equal(g.coneSides.length, nTri * 3);
+    for (let t = 0; t < nTri; t++) {
+      const p = (k: number) => [0, 1, 2].map((c) => g.conePositions[t * 9 + k * 3 + c]!);
+      const d = [0, 1, 2].map((c) => g.coneDirs[t * 9 + c]!);
+      const [tip, b1, b2] = [p(0), p(1), p(2)];
+      const [s0, s1, s2] = [g.coneSides[t * 3]!, g.coneSides[t * 3 + 1]!, g.coneSides[t * 3 + 2]!];
+      // Stored flat: both corners sit on the base point; the shader spreads them by their side offsets.
+      assert.deepEqual(b1, b2);
+      const len = Math.hypot(tip[0]! - b1[0]!, tip[1]! - b1[1]!, tip[2]! - b1[2]!);
+      assert.ok(len <= headLen * (1 + 1e-5), `head ${t}: ${len} longer than the head length ${headLen}`);
+      const along = ((tip[0]! - b1[0]!) * d[0]! + (tip[1]! - b1[1]!) * d[1]! + (tip[2]! - b1[2]!) * d[2]!) / len;
+      assert.ok(Math.abs(along - 1) < 1e-4, "the base is straight behind the tip");
+      assert.equal(s0, 0);
+      assert.ok(Math.abs(s1 + len / 4) < 1e-4 * headLen && Math.abs(s2 - len / 4) < 1e-4 * headLen, `head ${t}: width ${s2 - s1} is not half its length ${len}`);
+    }
+    // The longest arrows carry the full head: the head size sets it.
+    let longest = 0;
+    for (let t = 0; t < nTri; t++) longest = Math.max(longest, g.coneSides[t * 3 + 2]! * 4);
+    assert.ok(Math.abs(longest - headLen) < 1e-5 * headLen, `head size ${headSize}: longest head ${longest}, expected ${headLen}`);
+  }
+});
+
+test("the arrow colour: one colour for every load by default, the load type's colour, or jet over the magnitude", () => {
+  assert.equal(initialState.loads.colorBy, "mono");
+  assert.equal(initialState.loads.headSize, 0.3);
+  const on = reduce(defState, { type: "setLoads", on: true });
+  const pal = loadsColourPalette("dark");
+  const colours = (g: ReturnType<typeof buildLoads3D>) => {
+    const out = new Set<string>();
+    for (let i = 0; i < g.coneColors.length; i += 3) out.add([0, 1, 2].map((c) => g.coneColors[i + c]!.toFixed(4)).join(","));
+    return out;
+  };
+  const key = (rgb: readonly number[]) => rgb.map((v) => v.toFixed(4)).join(",");
+  assert.deepEqual([...colours(buildLoads3D(on, defBlobs))], [key(pal.mono)], "monochrome: every head is the theme's text colour");
+  const byType = colours(buildLoads3D(reduce(on, { type: "setLoads", colorBy: "type" }), defBlobs));
+  assert.ok(byType.size >= 1 && !byType.has(key(pal.mono)), "by type: the type palette, not the monochrome colour");
+  for (const c of byType) assert.ok([pal.force, pal.moment, pal.elementLoad, pal.sp].some((p) => key(p) === c), `by type: ${c} is a load type's colour`);
+  const byMag = buildLoads3D(reduce(on, { type: "setLoads", colorBy: "magnitude" }), defBlobs);
+  const jetKeys = colours(byMag);
+  assert.ok([...jetKeys].includes(key(sampleCmap("jet", 1))), "by magnitude: each kind's peak is jet's top colour");
+  assert.ok(reduce(on, { type: "setLoads", colorBy: "magnitude" }) !== on && reduce(on, { type: "setLoads", headSize: 0.3 }) === on, "an unchanged head size changes nothing");
+});
