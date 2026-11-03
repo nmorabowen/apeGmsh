@@ -439,3 +439,27 @@ test("the renderer's CSS and HTML hold no control bytes: a merge once turned the
     assert.equal(at, -1, `${name} has a control byte at character ${at}`);
   }
 });
+
+test("an app-chrome still draws every card and the banner open, so no closed arrow or closed-header rule reaches it", () => {
+  // Innermost blocks only, so a rule inside @media is read as itself.
+  const ungatedIn = (css: string): string[] => {
+    const ungated: string[] = [];
+    for (const [, selectors, body] of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{};]+)\{([^{}]*)\}/g)) {
+      if (!/content:\s*"(\\0*25b8|▸)/i.test(body!) && !/margin-bottom:\s*0(px)?\s*(;|$)/.test(body!)) continue;
+      for (const sel of selectors!.split(",").map((x) => x.trim())) {
+        if (/\[data-collapsed="true"\]|#banner:not\(\[data-open\]\)/.test(sel) && !sel.startsWith('body:not([data-still-chrome="app"])')) ungated.push(sel);
+      }
+    }
+    return ungated;
+  };
+  assert.deepEqual(ungatedIn(readFileSync(join(src, "renderer", "style.css"), "utf8")), []);
+  for (const planted of [
+    '#legend[data-collapsed="true"] > h3::before { content: "\\25B8"; }',
+    '#legend[data-collapsed="true"] > h3::before { content: "▸"; }',
+    '#legend[data-collapsed="true"] > h3 { margin-bottom: 0 }',
+    '@media (min-width: 1px) { #legend[data-collapsed="true"] > h3::before { content: "\\25b8"; } }',
+    '#x { color: red; } #banner:not([data-open]) > .banner-summary::before { content: "\\25b8\\a0"; }',
+  ]) {
+    assert.equal(ungatedIn(planted).length, 1, `the lint misses ${planted}`);
+  }
+});

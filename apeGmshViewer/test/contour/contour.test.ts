@@ -21,7 +21,7 @@ import { CMAPS, CMAP_NAMES, climOf, fieldsOf, gaussFields, LADRUNO_AXIS_MAP, MAG
 import { classifyFieldDimension, contourFieldsOf, contourView, noticesOf, resolveFieldUnits } from "../../src/state/selectors.ts";
 import { Store } from "../../src/state/store.ts";
 import type { ContourScan } from "../../src/state/types.ts";
-import { opened, STAGED_RESULTS, tick, until } from "./harness.ts";
+import { opened, STAGED, STAGED_RESULTS, tick, until } from "./harness.ts";
 
 // -- fields and labels ----------------------------------------------------------
 
@@ -510,6 +510,11 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 0 } });
     assert.equal(rowOf(), row0, "the same row element after a step change");
     h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+    // A colormap set elsewhere than its own select (Spotlight, the agent) still reaches the Display card's select.
+    const other = CMAP_NAMES.find((n) => n !== h.store.get().contour.cmap)!;
+    h.store.dispatch({ type: "setContourCmap", cmap: other });
+    const cmapShown = () => displayEl.all((e) => e.className === "contour-cmap")[0]!.children.find((o) => typeof o !== "string" && o.selected) as FakeDomEl | undefined;
+    assert.equal(cmapShown()?.value, other, "the Display card shows the colormap in use");
     // The switch: Physical groups has no contour button; off returns to the mode contour came from.
     assert.ok(!legendEl.all((e) => e.tagName === "BUTTON").some((b) => b.textContent === "contour"));
     const toggle = () => contourEl.all((e) => e.className.includes("contour-toggle"))[0]!;
@@ -525,6 +530,33 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     assert.equal(h.store.get().visibility.colourBy, "role", "off returns to by role, the mode it came from");
     assert.equal(contourEl.hidden, false, "the card stays while a mesh is loaded");
     h.store.dispatch({ type: "setColourBy", by: "contour" });
+    // With no mesh there is nothing to colour: the card is hidden.
+    const unEmpty = mountLegend(new Store());
+    assert.equal(contourEl.hidden, true, "no mesh, no Contour card");
+    unEmpty();
+    unLegend();
+    unLegend = mountLegend(h.store);
+    // An element field picked while contoured goes the Contour card's own way, and until its rows are joined to the
+    // mesh there are no values: the scale is hidden, then shown once they are.
+    const mixed = (name: string) => fileURLToPath(new URL(`../../fixtures/${name}`, import.meta.url));
+    assert.ok(await h.effects.open(mixed("elem_mixed.h5")));
+    assert.ok(await h.effects.openResults(mixed("elem_mixed.results.h5")));
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    h.store.dispatch({ type: "setContourField", field: "displacement", component: "|magnitude|" });
+    await until(() => contourView(h.store.get()).state === "ready", "the nodal contour");
+    assert.equal(scaleEl.hidden, false, "the nodal contour shows its scale");
+    const row1 = rowOf();
+    h.store.dispatch({ type: "setContourField", field: "stress", component: "stress_xx", source: "element" });
+    assert.equal(contourView(h.store.get()).state, "unavailable", "the join is not pending: this case no longer tests the hide");
+    assert.equal(rowOf(), row1, "the pick went the Contour card's own way");
+    assert.equal(scaleEl.hidden, true, "no values joined yet, no scale");
+    await until(() => contourView(h.store.get()).state === "element", "the element rows joined");
+    assert.equal(scaleEl.hidden, false, "the scale shows once the rows are joined");
+    assert.ok(await h.effects.open(STAGED));
+    assert.ok(await h.effects.openResults(STAGED_RESULTS));
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+    h.store.dispatch({ type: "setContourField", field: "displacement", component: "|magnitude|" });
 
     // 2. Selecting source and target in #header dispatches setContourUnits and updates the scale's title & tooltip
     const srcSel = headerEl.all((e) => e.className === "header-units-source")[0]!;
