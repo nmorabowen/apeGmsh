@@ -675,6 +675,35 @@ def test_a_rewritten_mpco_under_an_open_read_refuses_by_name(
         r3.close()
 
 
+def test_a_conversion_os_error_on_a_first_read_quotes_the_plain_reason(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """#2796 review 3: a first read with no ``.ladruno`` on disk replaces
+    nothing, so a disk-full ``OSError`` from the converter is quoted by
+    name and never blamed on an open Results."""
+    from apeGmsh.results.readers import _ladruno_from_mpco as conv
+
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    assert ladrunos(run_dir) == []
+
+    def full(*a: Any, **k: Any) -> Any:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(conv, "_convert_part", full)
+    with pytest.raises(BridgeError) as info:
+        ops.results("run/deck.py")
+    msg = str(info.value)
+    assert "converting its .mpco to a .ladruno failed (OSError: [Errno 28] " \
+        "No space left on device)." in msg
+    assert "open" not in msg.split("failed", 1)[1].lower()
+    assert "close it" not in msg.lower()
+    assert ladrunos(run_dir) == []
+
+
 def doubled(src: Path, where: Path) -> Path:
     """``src`` with every displacement doubled: the same bytes count."""
     import shutil

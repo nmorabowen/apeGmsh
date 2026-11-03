@@ -857,14 +857,22 @@ def _write_and_read_mpco(
             f"{_WHERE}: {origin}: its .mpco does not convert: {e}"
         ) from e
     except OSError as e:
-        raise BridgeError(
+        failed = (
             f"{_WHERE}: {origin}: converting its .mpco to a .ladruno failed "
-            f"({type(e).__name__}: {e}). This read converts afresh, "
-            f"replacing the .ladruno already there, because {why_not}; a "
-            "Results still open on that file (an earlier ops.results or "
-            "Results.from_ladruno) blocks the replace. Close it "
-            "(results.close()) and read again."
-        ) from e
+            f"({type(e).__name__}: {e})."
+        )
+        # Only a replace of an existing .ladruno can meet an open Results,
+        # and only a sharing violation says one holds it: Windows raises
+        # its ERROR_SHARING_VIOLATION (winerror 32) as PermissionError.
+        if overwrite and isinstance(e, PermissionError):
+            raise BridgeError(
+                f"{failed} This read converts afresh, replacing the "
+                f".ladruno already there, because {why_not}; a Results "
+                "still open on that file (an earlier ops.results or "
+                "Results.from_ladruno) blocks the replace. Close it "
+                "(results.close()) and read again."
+            ) from e
+        raise BridgeError(failed) from e
     _remember_conversion(run, rec, files)
     return results
 
