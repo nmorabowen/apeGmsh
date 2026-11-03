@@ -563,6 +563,7 @@ def test_the_old_file_is_parsed_and_signed_from_one_read(model: Path, monkeypatc
     """A newer file that lands after the one read is caught by the signature of that
     read, so it is neither overwritten nor renamed aside."""
     target = _hand_file(model.with_name("frame.workspace.h5"))
+    newer = _hand_file(model.with_name("newer.h5"), version="1.1.0").read_bytes()
     reads: list[Path] = []
     real = Path.read_bytes
 
@@ -576,12 +577,12 @@ def test_the_old_file_is_parsed_and_signed_from_one_read(model: Path, monkeypatc
 
     def newer_lands(partial: Path) -> None:
         real_fsync(partial)
-        _hand_file(target, version="1.1.0")
+        target.write_bytes(newer)
 
     monkeypatch.setattr(_workspace, "_fsync", newer_lands)
     with pytest.raises(WorkspaceWriteRefused) as err:
         write_workspace(target, views=[ViewDef("v", SHOT)])
     assert err.value.reason == "revision-moved"
     assert len(reads) == 2, "one read to parse and sign, one to compare before the replace"
-    with h5py.File(target, "r") as f:
-        assert f["meta"].attrs["workspace_schema_version"] == "1.1.0"
+    monkeypatch.undo()
+    assert target.read_bytes() == newer, "the newer file was overwritten or moved"
