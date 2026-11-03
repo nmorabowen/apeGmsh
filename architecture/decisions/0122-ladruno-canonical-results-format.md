@@ -306,3 +306,11 @@ changes, and the D5 text above stands as written.
 - D10, the rest of row 9 and all of row 10.
 
 D1 stands and gains one clause there. Every other decision above stands.
+
+## Superseded in part by ADR 0133 (2026-11-03)
+
+[ADR 0133](0133-fem-hash-pairing-for-femdata-archives.md) supersedes D3's
+first attribute item for archives that carry only `fem_hash`: a bare
+FEMData archive is stamped with `fem_hash` alone and pairs by it. A bridge
+archive is still stamped with both hashes. Every other decision above
+stands.
