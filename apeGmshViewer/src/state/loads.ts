@@ -2401,6 +2401,9 @@ function recordedReactionOf(s: State, kind: "force" | "moment"): readonly (strin
   if (at?.kind !== "results" || !s.results) return null;
   const stage = s.results.stages[at.stage];
   const groups = [`reaction_${kind}`, `REACTION_${kind.toUpperCase()}`];
+  // A refused axis (a partial write) refuses the kind: a resultant of the axes that survived is a guessed value.
+  const refused = (stage?.refusedNodal ?? []).some((r) => groups.some((g) => r.component === g || r.component.startsWith(`${g}/`) || r.component.startsWith(`${g}_`)));
+  if (refused) return null;
   const field = nodalFields(stage?.nodal ?? []).find((f) => groups.includes(f.name));
   const comps = ["x", "y", "z"].map((c) => field?.components.find((k) => !k.magnitude && k.label === c)?.key ?? null);
   return comps.some((c) => c !== null) ? comps : null;

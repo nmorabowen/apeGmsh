@@ -190,6 +190,19 @@ test("a .ladruno stage's REACTION_FORCE/RFx and REACTION_MOMENT/RMx are the reac
   const twoD = withStage(["REACTION_FORCE/RFx", "REACTION_FORCE/RFy", "REACTION_MOMENT/RMz"]);
   assert.deepEqual(reactionComponentsOf(twoD), ["REACTION_FORCE/RFx", "REACTION_FORCE/RFy", null]);
   assert.equal(reactionMomentComponentsOf(twoD), null, "a lone z of a rotational group may be a pore pressure (ladruno_schema_v1 §7.1.1)");
+  const variantsFirst = withStage(["REACTION_FORCE_INCLUDING_INERTIA/RFx", "RAYLEIGH_FORCE/RFx", ...LAD.slice(0, 3)]);
+  assert.deepEqual(reactionComponentsOf(variantsFirst), LAD.slice(0, 3), "the base group by its exact name, not an inertia or Rayleigh variant listed first");
+});
+
+test("a refused reaction axis refuses that kind: no resultant of the axes that survived", () => {
+  const LAD = ["REACTION_FORCE/RFx", "REACTION_FORCE/RFy", "REACTION_MOMENT/RMx", "REACTION_MOMENT/RMy", "REACTION_MOMENT/RMz"];
+  const s = withStage(LAD);
+  const stage = { ...s.results!.stages[0]!, refusedNodal: [{ component: "REACTION_FORCE/RFz", reason: "not recorded in part-1" }] };
+  const partial = { ...s, results: { ...s.results!, stages: [stage] } } as State;
+  assert.equal(reactionComponentsOf(partial), null);
+  assert.deepEqual(reactionMomentComponentsOf(partial), LAD.slice(2), "the other kind is untouched");
+  const native = { ...stage, nodal: NAMES.filter((n) => n !== "reaction_force_z"), refusedNodal: [{ component: "reaction_force_z", reason: "partial" }] };
+  assert.equal(reactionComponentsOf({ ...s, results: { ...s.results!, stages: [native] } } as State), null);
 });
 
 test("setReactions refuses non-boolean forces and moments switches", () => {
