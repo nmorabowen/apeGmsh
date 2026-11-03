@@ -1016,6 +1016,19 @@ class Results:
         """
         return self._model
 
+    @property
+    def path(self) -> Optional[Path]:
+        """The results file these Results read, or ``None`` when none.
+
+        The path the constructor opened: a ``.ladruno`` (the first
+        partition of a merged ``<stem>.part-<N>.ladruno`` set), an
+        ``.mpco``, a native ``.h5``, or the recorders' cache. Stage and
+        mode scopes carry it. Read-only. The Windows stills draw this
+        file with apeGmshViewer, which opens a ``.ladruno`` only
+        (ADR 0128 slice 6, VA6b).
+        """
+        return self._path
+
     # ------------------------------------------------------------------
     # Units & unit-system translation
     # ------------------------------------------------------------------

@@ -44,7 +44,13 @@ verbs: each ``view=`` token becomes one ``apegmsh-view/1`` shot drawn
 by apeGmshViewer through ``apeGmsh.agent_view`` (the parity plan,
 ``internal_docs/plan_viewer_agent_stills_parity.md``), from a
 ``.ladruno`` and its ``<stem>.h5`` (``ladruno_files``). They take the
-files explicitly: the CLI holds them. Linux keeps the session path (G2).
+files explicitly: the CLI holds them, and ``render_results_still`` /
+``render_results_pack`` take them from ``Results.path``
+(``results_files``, R22b), so ``results.render``, ``render_pack`` and
+``assess(figures=True)`` reach the app on Windows. Every source but a
+``.ladruno`` is refused by name there. Linux keeps the session path (G2).
+A stored Gauss component (R16b) is refused for now: follow-up slice
+#2794.
 """
 from __future__ import annotations
 
@@ -105,7 +111,16 @@ def render_results_still(
     ``APEGMSH_SKIP_VIEWER=1`` or with no GL context. An unscoped
     multi-stage Results draws its last stage and warns (#1750);
     ``_warn_unscoped=False`` is the pack's, which warned once already.
+
+    On Windows the still is apeGmshViewer's (:func:`app_still`, from
+    the ``.ladruno`` :attr:`Results.path` names; R22b).
     """
+    if _app_backend():
+        return app_still(
+            results, path, files=results_files(results, "render"),
+            view=view, component=component, step=step, deform=deform,
+            camera=camera, window_size=window_size,
+        )
     if _warn_unscoped:
         _warn_if_unscoped(results, "render")
     view = _require_view(view)
@@ -143,7 +158,16 @@ def render_results_pack(
 
     An unscoped multi-stage Results packs its last stage and warns
     once (#1750).
+
+    On Windows the pack is ONE ``apegmsh-view/1`` spec drawn by
+    apeGmshViewer (:func:`app_pack`, G5), from the ``.ladruno``
+    :attr:`Results.path` names (R22b).
     """
+    if _app_backend():
+        return app_pack(
+            results, out_dir, files=results_files(results, "render_pack"),
+            camera=camera, window_size=window_size,
+        )
     _warn_if_unscoped(results, "render_pack")
     if results.fem is None:
         raise RuntimeError(
@@ -606,6 +630,46 @@ def ladruno_files(
     return {"model": str(model.resolve()), "results": str(path.resolve())}
 
 
+def _app_backend() -> bool:
+    """Whether the stills take the Windows path (``render._stills_backend``).
+
+    Looked up on the module at each call, so a test that patches
+    ``render._stills_backend`` reaches either path on any platform.
+    """
+    from .. import render as render_mod
+
+    return render_mod._stills_backend() == "app"
+
+
+def results_files(results: Any, verb: str) -> dict[str, str]:
+    """The spec's ``files`` for a ``Results`` (R22b, ruled 2026-11-02).
+
+    The app draws the file a ``Results`` was read from, so only a
+    ``Results`` read from a ``.ladruno`` (:attr:`Results.path`) is
+    drawn; every other source is refused with a message naming
+    ``.ladruno``. A units view (:meth:`Results.to_units`) is held only
+    in memory, so it is refused too: the app would label the file's
+    units. The model is the ``<stem>.h5`` beside the file
+    (:func:`ladruno_files`).
+    """
+    source = results.path
+    if source is None:
+        raise ValueError(
+            f"results.{verb} on Windows draws through apeGmshViewer, which "
+            f"reads a .ladruno file; these Results have no source file "
+            f"(ADR 0122 D1; R22b). Open the run's .ladruno with "
+            f"Results.from_ladruno."
+        )
+    if results.units != results.source_units:
+        raise ValueError(
+            f"results.{verb} on Windows draws {Path(source).name} as recorded, "
+            f"in {results.source_units}; a to_units({results.units!r}) view is "
+            f"held only in memory, so it is refused (R22b). Render the "
+            f"Results the .ladruno opened, without to_units."
+        )
+    return ladruno_files(source)
+
+
 def _stage_index(results: Any, stage_id: str) -> int:
     for i, stage in enumerate(results.stages):
         if str(stage.id) == str(stage_id):
@@ -629,8 +693,9 @@ def _app_contour(results: Any, stage_id: str, component: str) -> dict[str, str]:
         raise ContourDataError(
             f"component {component!r} has no apegmsh-view/1 contour here: the "
             f"Windows stills draw a recorded nodal axis component of "
-            f"{sorted(table)} (e.g. displacement_z). For another one, write "
-            f"a spec and call apeGmsh.agent_view.render_stills."
+            f"{sorted(table)} (e.g. displacement_z). A stored Gauss "
+            f"component (R16b) waits on follow-up slice #2794. For another "
+            f"one, write a spec and call apeGmsh.agent_view.render_stills."
         )
     return {"field": table[prefix], "component": axis}
 
@@ -847,5 +912,6 @@ __all__ = [
     "ladruno_files",
     "render_results_pack",
     "render_results_still",
+    "results_files",
     "session_for_view",
 ]
