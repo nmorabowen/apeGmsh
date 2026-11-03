@@ -629,3 +629,46 @@ def test_results_binds_the_archive_it_is_given(
     (path, model_h5), = opened
     assert path.suffix == ".ladruno"
     assert Path(model_h5) == archive
+
+
+def test_results_refuses_another_models_archive(
+    fem2: Any, fem3: Any, bind: Any, opened: list[tuple[Path, Any]],
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``model_h5`` with another ``model_hash`` (an ndm=2 archive given
+    to an ndm=3 eigen run) raises, naming both hashes, and leaves no temp
+    file. Before this check (PR #2774 at 5091660) it bound silently, with
+    ``lineage.warnings == ()``; on main (ec45e2c98), through
+    ``to_native``, it bound too and only recorded "[lineage] model hash
+    mismatch" in ``lineage.warnings``."""
+    from apeGmsh.opensees.analysis import eigen as _eigen
+
+    other = tmp_path / "other.h5"
+    _frame(fem2, ndm=2).h5(str(other))
+    with h5py.File(other, "r") as f:
+        theirs = str(f["meta/lineage"].attrs["model_hash"])
+
+    written: list[Path] = []
+    real = _eigen.EigenResult._write_ladruno
+
+    def _spy(self: Any, path: Any) -> Path:
+        out = real(self, path)
+        written.append(out)
+        return out
+
+    monkeypatch.setattr(_eigen.EigenResult, "_write_ladruno", _spy)
+    bind(_fake_for(fem3, 2))
+    ops = _frame(fem3)
+    mine = tmp_path / "mine.h5"
+    ops.h5(str(mine))
+    with h5py.File(mine, "r") as f:
+        ours = str(f["meta/lineage"].attrs["model_hash"])
+    assert theirs != ours
+
+    with pytest.raises(_eigen.ModesArchiveMismatchError) as e:
+        ops.eigen(2).results(other)
+    msg = str(e.value)
+    assert theirs in msg and ours in msg and "model_h5=None" in msg
+    assert opened == []                     # nothing was bound
+    (p,) = written
+    assert not p.parent.exists()            # the temp modes are gone
