@@ -767,7 +767,9 @@ def test_a_partitioned_bridge_deck_skips_its_record_without_composing(
     deck, ours = _emit_partitioned(tmp_path, dialect, monkeypatch)
     assert len(ours) == 1, ours
     assert "partitioned" in ours[0] and "no lineage" in ours[0]
-    assert "Results.from_mpco" in ours[0]
+    # ADR 0131 D5: no from_mpco fallback is promised; the refusal is.
+    assert "Results.from_mpco" not in ours[0]
+    assert "refuses an unstaged program by name" in ours[0]
     assert str(deck) in ours[0]  # names the deck
     text = deck.read_text(encoding="utf-8")
     assert "getPID" in text  # a partitioned deck
