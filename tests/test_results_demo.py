@@ -134,6 +134,46 @@ def test_demo_ladruno_passes_fork_validate(tmp_path: Path):
             str(tmp_path / "demo" / "demo_results.ladruno")) == []
 
 
+def test_demo_survives_a_file_closed_while_the_stamp_lists_open_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """#2778: the stamp's open-file guard lists this process's HDF5 files,
+    then reads each one's name. A file closed in between (an unclosed
+    ``Results`` the garbage collector finalises there, as an earlier
+    ``Results.demo()`` fixture did in ``tests/viewers/test_render.py``)
+    left an invalid ``FileID`` whose ``.name`` raised ``ValueError: Not a
+    file or file object``, and the demo crashed. That file is not held,
+    so the guard skips it; a file still open is still refused."""
+    import h5py
+
+    from apeGmsh.results import make_demo_results
+    from apeGmsh.results.readers._ladruno_provenance import (
+        ProvenanceStampRefused,
+        _refuse_if_open_here,
+    )
+
+    real = h5py.h5f.get_obj_ids
+    other = h5py.File(tmp_path / "finalised_between.h5", "w")
+
+    def listed_then_closed(*args, **kwargs):
+        ids = real(*args, **kwargs)
+        if other.id.valid:
+            other.close()  # the GC finalising a reader mid-iteration
+        return ids
+
+    monkeypatch.setattr(h5py.h5f, "get_obj_ids", listed_then_closed)
+    make_demo_results(path=tmp_path / "demo", n_elements=2,
+                      n_steps=2).close()
+    assert (tmp_path / "demo" / "demo_results.ladruno").is_file()
+
+    # Fail-closed is kept: a file this process still holds is refused.
+    monkeypatch.setattr(h5py.h5f, "get_obj_ids", real)
+    held = tmp_path / "held.h5"
+    with h5py.File(held, "w"):
+        with pytest.raises(ProvenanceStampRefused, match="open for writing"):
+            _refuse_if_open_here([held])
+
+
 @pytest.mark.parametrize("results, match", [
     ({"VELOCITY": np.zeros((2, 2, 3))}, "not a nodal group"),
     ({"DISPLACEMENT": np.zeros((2, 2, 2))}, "has shape"),
