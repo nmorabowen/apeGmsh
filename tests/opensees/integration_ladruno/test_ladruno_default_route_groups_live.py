@@ -244,14 +244,20 @@ def test_a_raw_deck_over_a_femdata_archive_reads_by_group(
     finally:
         ops.wipe()
     assert run.route == "fork" and caught == []
-    # A FEMData archive carries no model_hash, so the fork file cannot be
-    # stamped: that is the one warning (no ModelFemMismatchWarning).
+    # A FEMData archive carries no model_hash: the fork file is stamped with
+    # fem_hash alone and pairs by it, with no warning (ADR 0133, #2233).
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         res = run.results()
-    assert [w.category for w in caught] == [DefaultRouteWarning], [
-        str(w.message) for w in caught]
-    assert "unstamped" in str(caught[0].message)
+    assert caught == [], [str(w.message) for w in caught]
+    import h5py
+
+    with h5py.File(archive, "r") as m:
+        want = m["meta/lineage"].attrs["fem_hash"]
+    (stamped,) = sorted((tmp_path).glob("run*.ladruno"))
+    with h5py.File(stamped, "r") as f:
+        prov = f["INFO/PROVENANCE"].attrs
+        assert "model_hash" not in prov and prov["fem_hash"] == want
     try:
         for d, comp in enumerate(_DISP):
             ids, vals = _read(res, comp, **sel)
