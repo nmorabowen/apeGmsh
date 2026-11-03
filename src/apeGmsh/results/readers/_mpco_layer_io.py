@@ -77,7 +77,7 @@ from ...opensees._response_catalog import (
     mpco_layer_group_aliases,
     parse_mpco_element_key,
 )
-from ._buckets import LayerBucketUnreadWarning
+from ._buckets import LayerBucketUnreadWarning, ShellFrameUnavailableWarning
 from ._mpco_element_io import _attr_scalar
 from ._mpco_fiber_io import _SECTION_KEY_RE
 
@@ -438,16 +438,6 @@ def build_layer_section_index_for_bucket(
 # =====================================================================
 # LOCAL_AXES lookup → per-element quaternions
 # =====================================================================
-
-class ShellFrameUnavailableWarning(UserWarning):
-    """A layered-shell row has no local frame: its quaternion reads NaN.
-
-    The file stores no frame for the element and its frame cannot be
-    computed from the file's connectivity and node coordinates (missing
-    rows, a class without a corner-node convention, or degenerate
-    geometry). The warning names the elements and the reason (#1996).
-    """
-
 
 def _connectivity_bracket_key(elem_key: MPCOElementKey) -> str:
     """Reconstruct the MODEL/ELEMENTS bracket key (no ``:hdr``)."""

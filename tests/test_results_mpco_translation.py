@@ -21,7 +21,7 @@ from apeGmsh.results.readers._buckets import (
     canonical_node_component,
     component_axis,
 )
-from apeGmsh.results.readers._mpco_translation import (
+from apeGmsh.results.readers._buckets import (
     all_known_mpco_result_names,
     canonical_to_mpco_lookup,
     has_canonical_mapping,
@@ -254,7 +254,7 @@ def test_regression_mpco_modes_beside_steps_do_not_raise(tmp_path: Path) -> None
 
 
 def test_modal_component_translation() -> None:
-    from apeGmsh.results.readers._mpco_translation import (
+    from apeGmsh.results.readers._buckets import (
         canonical_modal_component,
         is_modal_result_name,
     )

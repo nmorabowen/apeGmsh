@@ -35,7 +35,7 @@ from apeGmsh.results.readers._mpco_line_io import (
     MPCO_SECTION_NAME_TO_CODE,
     canonical_to_line_station_token,
 )
-from apeGmsh.results.readers._mpco_material_io import parent_token_for_canonical
+from apeGmsh.results.readers._buckets import parent_token_for_canonical
 from apeGmsh.results.spec._emit import (
     collect_mpco_tokens,
     emit_logical,

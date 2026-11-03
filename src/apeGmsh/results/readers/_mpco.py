@@ -60,7 +60,7 @@ from ._buckets import (
     read_mode_shape,
 )
 from ._gauss_refusals import GaussDimensionMixed
-from ._mpco_refusals import MPCOElementInTwoBuckets
+from ._buckets import MPCOElementInTwoBuckets
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 from ._tag_translation import ElementTagTranslator
 
