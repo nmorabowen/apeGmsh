@@ -54,7 +54,7 @@
 // subscribed (the P0 page) is reloaded instead, and reads the new model from
 // `app:config`.
 
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, type IpcMainEvent, type WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import { connect, createServer } from "node:net";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -544,7 +544,31 @@ function heardFromAgent(reach: Reach): void {
   }
 }
 
-ipcMain.on("viewer:offersReady", () => {
+/**
+ * VU15 (#2776): the page that may say it listens for offers, as Electron names
+ * a sender: the window's main frame as the current load committed it
+ * (`did-navigate`). A load (`did-start-loading`) clears it until the new page
+ * commits, because until then the page on screen is the one being replaced;
+ * a page that commits in a new frame has a new process or frame id. So a late
+ * `viewer:offersReady` from a page being replaced re-arms nothing.
+ */
+let pageFrame: { processId: number; routingId: number } | null = null;
+
+function pageCommitted(contents: WebContents): void {
+  const f = contents.mainFrame;
+  pageFrame = { processId: f.processId, routingId: f.routingId };
+}
+
+/** Whether `e` comes from the current load of the window's page (VU15). */
+function fromCurrentPage(e: IpcMainEvent): boolean {
+  return win !== null && e.sender === win.webContents && pageFrame !== null && e.processId === pageFrame.processId && e.frameId === pageFrame.routingId;
+}
+
+ipcMain.on("viewer:offersReady", (e: IpcMainEvent) => {
+  if (!fromCurrentPage(e)) {
+    process.stderr.write(`apeGmshViewer: viewer:offersReady from a page that is not the window's current load (process ${shown(e.processId)}, frame ${shown(e.frameId)}) is ignored\n`);
+    return;
+  }
   offersReady = true;
   for (const { offers } of offersWaiting) win?.webContents.send("viewer:offers", offers);
   offersWaiting = [];
@@ -554,6 +578,7 @@ ipcMain.on("viewer:offersReady", () => {
 function pageLoading(): void {
   subscribed.clear();
   offersReady = false;
+  pageFrame = null;
   const waiting = new Set(offersWaiting.flatMap((b) => b.rows));
   offerRows = offerRows.filter((r) => waiting.has(r));
 }
@@ -1387,6 +1412,8 @@ app.whenReady().then(() => {
   if (renderJob) w.setContentSize(renderJob.spec.size[0], renderJob.spec.size[1]);
   // A page load drops the old page's subscriptions and the offers it listed.
   w.webContents.on("did-start-loading", pageLoading);
+  // VU15: the load that commits is the one whose page may listen for offers.
+  w.webContents.on("did-navigate", () => pageCommitted(w.webContents));
   w.on("closed", () => {
     win = null;
   });

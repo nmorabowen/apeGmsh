@@ -315,6 +315,7 @@ test("VU15: a combination contour offered on another set is refused at the click
   const s = r.store.get();
   assert.equal(offerNamed(s, "combo-there").status, "refused");
   assert.equal(offerNamed(s, "combo-there").reason, COMBINATION_REASON);
+  assert.equal(s.artifacts.model!.path, STAGED, "the set the click opened is put back");
   assert.equal(s.offers.back.length, 0, "a refused click leaves nothing to go back from");
 });
 

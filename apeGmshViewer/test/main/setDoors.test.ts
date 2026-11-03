@@ -278,6 +278,26 @@ test("VU14: a page load leaves no offer openable that the new page is not sent; 
   assert.equal(shown("reload:5 model"), join(root, "outside", "s.h5"));
 });
 
+// VU15 (#2776): the oracle is the count of `viewer:offers` sends. A stale offersReady that re-armed the page would
+// send the waiting batch at once (and every later one), so each refused message leaves the count at 0.
+test("VU15: offersReady from a page being replaced, another frame or another webContents re-arms nothing; the current load's page does", () => {
+  const r = run("stale", [`--file=${join(SET, "s.h5")}`]);
+  const sent = (name: string) => {
+    const a = r[name];
+    assert.ok(a && "sent" in a, `no send count for ${name}`);
+    return a.sent;
+  };
+  assert.equal(sent("stale:1 replaced page, mid-load"), 0, "the page being replaced, before the new one commits");
+  assert.equal(sent("stale:2 replaced page, after commit"), 0, "the page being replaced, after the new one commits in another frame");
+  assert.equal(sent("stale:3 another frame"), 0, "a frame that is not the window's page");
+  assert.equal(sent("stale:4 another webContents"), 0, "another webContents with the page's frame ids");
+  assert.equal(sent("stale:5 no sender"), 0, "a message with no sender");
+  assert.equal(sent("stale:6 a later offer"), 0, "no stale message armed the page, so a later offer waits too");
+  assert.equal(sent("stale:7 current page"), 2, "the current load's page listens: both waiting batches are sent");
+  assert.equal(sent("stale:9 same frame, mid-load"), 2, "a load that will commit in the same frame: before the commit, the message is the old page's");
+  assert.equal(sent("stale:10 same frame, committed"), 3, "and after it, the new page's");
+});
+
 const source = run("source", [`--file=${join(SRC_SET, "s.h5")}`]);
 const editorLog = () => (existsSync(join(root, "editor.log")) ? readFileSync(join(root, "editor.log"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as string[]) : []);
 
