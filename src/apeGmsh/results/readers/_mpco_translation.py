@@ -26,9 +26,8 @@ from ._buckets import (
     _NODAL_NOT_CANONICAL,
     _NODAL_PRECEDENCE,
     _NODAL_RESULT_NAME_MAP,
-    canonical_modal_component,
-    component_axis,
-    is_modal_result_name,
+    canonical_modal_component,  # noqa: F401  (re-exported name)
+    is_modal_result_name,  # noqa: F401  (re-exported name)
 )
 
 
