@@ -35,7 +35,7 @@ import { opened, STAGED, STAGED_RESULTS, until } from "./contour/harness.ts";
 
 const FIX = fileURLToPath(new URL("../fixtures/", import.meta.url));
 const DEFORM_2D = join(FIX, "deform_2d.h5");
-const DEFORM_2D_RESULTS = join(FIX, "deform_2d.results.h5");
+const DEFORM_2D_RESULTS = join(FIX, "deform_2d.ladruno");
 
 type Opened = Awaited<ReturnType<typeof opened>>;
 const sets: Opened[] = [];
