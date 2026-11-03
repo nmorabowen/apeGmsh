@@ -228,20 +228,34 @@ The V4d 2-D pair (#1765). `deform_2d.h5` is composed by the bridge with
 `/meta/ndm` is the declared dimension): a 2 x 1 rectangle of 4 x 2
 `FourNodeQuad` (`Panel`) at z = 0, a tie of 4 `Truss` segments (`Tie`) along
 y = 1.5, and the rectangle's boundary lines, which gmsh meshes and the
-extraction keeps (20 nodes, 30 cells). `deform_2d.results.h5` holds one static
-stage, `load`, of 3 steps with `displacement_x` and `displacement_y` only (the
-shorthand is clipped to `ndm`, so a 2-D file has no `displacement_z`):
+extraction keeps (20 nodes, 30 cells).
+
+`deform_2d.ladruno` (V1a, #2763; ADR 0131 D10 stage 0) replaces the native
+`deform_2d.results.h5`. It is written by `write_nodal_history`
+(`_ladruno_writer.py`) in the fork recorder's `-N displacement` layout: one
+static `MODEL_STAGE[1]` of 3 steps, `TIME` = 1/3, 2/3, 1, whose
+`ON_NODES/DISPLACEMENT` holds `Ux,Uy` only (`ndm` columns, so a 2-D file has
+no `Uz`):
 
     s = 0.01 (k + 1)
-    displacement_x = s y,   displacement_y = s (0.5 x + 0.25 y)
+    Ux = s y,   Uy = s (0.5 x + 0.25 y)
 
-The file is written by this checkout's apeGmsh, whose `/opensees` and results
-zones are a minor ahead of what this app reads, so it opens with those two
-banners. The values are synthetic; no solve runs.
+It is stamped against the committed `deform_2d.h5` (ADR 0122 D3: `model_hash`
+`04344b85…`, `fem_hash` `5cfb615f…`), so the app pairs the two by
+`model_hash` and opens them with no banner. No engine solved the values, so
+`PROVENANCE@opensees_backend` is `"unknown"`. No element bucket is written
+(`PROVENANCE@unsupported` is `["elements"]`); the elements bind from
+`deform_2d.h5`. The file passes the fork's `ladruno_format.validate()` at
+`FORK_PIN`. The stage has no name of its own, because the model declares no
+`ops.stage`, so it reads as `MODEL_STAGE[1]`.
+
+`--deform-ladruno` rewrites the `.ladruno` alone, against the `deform_2d.h5`
+already here. `--deform` composes the model again and writes both. A fresh
+compose writes this checkout's schema versions, and so another `model_hash`.
 
 ```powershell
 $env:PYTHONPATH = "src"
-& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --deform
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --deform-ladruno
 ```
 
 ## `elem_*` (V4c2a, #1833)

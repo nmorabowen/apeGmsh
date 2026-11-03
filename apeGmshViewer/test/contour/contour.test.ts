@@ -820,6 +820,7 @@ test("#2214: a fixture copy whose DISPLACEMENT labels are X,Y contours X and Y a
  * fixtures landed (#2241 parts2d, simplex_gp tet/tri).
  */
 const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
+  "deform_2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "ladruno_frame3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz]",
   "ladruno_modes.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] MODES_OF_VIBRATION(R)[Rz=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] MODES_OF_VIBRATION(R)[Rz=Rz]",
   "ladruno_parts2d.part-0.ladruno": "refused: part 0 of ladruno_parts2d",

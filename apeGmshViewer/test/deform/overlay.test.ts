@@ -24,7 +24,7 @@ import { NODATA, NODATA_RESULTS, opened, until } from "../contour/harness.ts";
 import { openModel } from "../../src/reader/node.ts";
 
 const DEFORM_2D = fileURLToPath(new URL("../../fixtures/deform_2d.h5", import.meta.url));
-const DEFORM_2D_RESULTS = fileURLToPath(new URL("../../fixtures/deform_2d.results.h5", import.meta.url));
+const DEFORM_2D_RESULTS = fileURLToPath(new URL("../../fixtures/deform_2d.ladruno", import.meta.url));
 
 type H = Awaited<ReturnType<typeof opened>>;
 

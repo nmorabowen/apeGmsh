@@ -194,7 +194,7 @@ for (const [name, body, key] of [
   ["wrong-type", JSON.stringify(base({ size: "big" })), "size"],
   ["no-model", JSON.stringify(base({ files: { model: "missing.h5" } })), "files.model"],
   ["not-a-model", JSON.stringify(base({ files: { model: join(FIX, "contour_staged.results.h5") } })), "files.model"],
-  ["results-elsewhere", JSON.stringify(base({ files: { model: MODEL, results: join(FIX, "deform_2d.results.h5") } })), "files.results"],
+  ["results-elsewhere", JSON.stringify(base({ files: { model: MODEL, results: join(FIX, "deform_2d.ladruno") } })), "files.results"],
   ["fit-selection", JSON.stringify(base({}, { camera: "fit-selection" })), "shots[0].camera"],
 ] as const) {
   test(`D2: a refused spec (${name}) writes manifest.json naming ${key}, and no PNG`, () => {

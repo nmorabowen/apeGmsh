@@ -37,12 +37,12 @@ import * as h5wasm from "h5wasm/node";
 import { columnOf, nodalFields } from "../../src/state/contour.ts";
 import { displacementAxes, LADRUNO_TRANSLATION, modeNote, spatialNdm, vertexDisplacements } from "../../src/state/deform.ts";
 import { loadModel } from "../../src/state/load.ts";
-import { deformView, noticesOf } from "../../src/state/selectors.ts";
+import { deformView, noticesOf, resultsPairing } from "../../src/state/selectors.ts";
 import type { ResultsStage, SpatialNdm } from "../../src/state/types.ts";
 import { closedForm, harness, NODATA, NODATA_RESULTS, opened, STAGED, STAGED_RESULTS, STAGES, until } from "../contour/harness.ts";
 
 const DEFORM_2D = fileURLToPath(new URL("../../fixtures/deform_2d.h5", import.meta.url));
-const DEFORM_2D_RESULTS = fileURLToPath(new URL("../../fixtures/deform_2d.results.h5", import.meta.url));
+const DEFORM_2D_RESULTS = fileURLToPath(new URL("../../fixtures/deform_2d.ladruno", import.meta.url));
 
 /** The generator's 2-D closed form (scripts/make_viewer_results_fixtures.py `deform_values`), restated. */
 const closed2d = (x: number, y: number, k: number): [number, number] => {
@@ -179,11 +179,17 @@ test("oracle (3-D): every deformed vertex is x + s u of its node, at two steps a
 test("oracle (2-D, ndm 2): z stays at the node's z, x and y follow the closed form, truss chords stay straight", async () => {
   const h = await opened(DEFORM_2D, DEFORM_2D_RESULTS);
   assert.deepEqual(h.store.get().ndm.ndm, 2, JSON.stringify(h.store.get().ndm));
+  // V1a (#2763): the fixture is a .ladruno stamped against deform_2d.h5, so it pairs by model_hash,
+  // and its one static stage records the fork schema's 2-D translation (§7.1.1), Ux and Uy only.
+  assert.deepEqual(resultsPairing(h.store.get()), { state: "paired", by: "model_hash" });
+  const st = h.store.get().results!.stages;
+  assert.deepEqual(st.map((x) => [x.kind, x.nodal]), [["static", ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy"]]]);
   const coords = await coordsOf(DEFORM_2D);
   const scale = 4, k = 2;
   const { s, v, full } = await showDeformed(h, 0, k, scale);
   assert.equal(v.state, "ready");
   assert.ok(v.state === "ready" && v.datasets[2] === null && /2-D model/.test(v.note!));
+  assert.deepEqual(v.state === "ready" && v.datasets, ["DISPLACEMENT/Ux", "DISPLACEMENT/Uy", null]);
   const base = basePositions(s.mesh!, h.blobs);
   for (const [pos, b, vn] of [[full.tri, base.tri, s.mesh!.vertexNodes.tri], [full.line, base.line, s.mesh!.vertexNodes.line]] as const) {
     const nodes = h.blobs.get(vn) as Float64Array;
