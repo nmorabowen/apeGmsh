@@ -1010,3 +1010,125 @@ four-component read. The count is 2 for its 2 parts and 3 for a scratch
 3-part copy. With the per-component loop restored, the count is 4 for
 `DISPLACEMENT`'s two components on 2 parts. A timed row needs a partitioned
 run as large as V4L-c's `block.ladruno`.
+
+## Profiler (`npm run profile`)
+
+`npm run measure` answers "is it interactive" with one row per model.
+`npm run profile -- <model.h5>` answers "where does the time go": it drives a
+real window through named scenarios and names the functions that cost most.
+Each run writes `result.json` (machine-readable, `version: 1`) and a ranked
+`summary.md`, by default into `out/profile/<stem>-<time>/`.
+
+### Why a separate command, not more `measure` rows
+
+`measure` runs inside the app: its scenarios are code in
+`src/renderer/app.ts` and `src/main/main.ts`, and a new scenario is a change
+to both (and to `launch.mjs`, which refuses any flag it does not know). The
+profiler runs outside the app instead. It starts the ordinary `view` mode with
+`--remote-debugging-port` and `--inspect`, and drives it over the DevTools
+protocol, as a user would: real mouse events through
+`Input.dispatchMouseEvent`, real clicks on the legend and the scrubber. So it
+measures the shipped code paths, needs no hook in the viewer, and does not
+change viewer behaviour. The two commands share the PNG reader
+(`test/spec/png.ts`) and nothing else; `measure` stays the ledger of rows
+above.
+
+### How it runs
+
+1. It starts Electron in `view` mode with no file, on a scratch
+   `--user-data-dir` that it deletes at the end, so the owner's profile and
+   localStorage are untouched. Window occlusion and background throttling
+   are switched off, so a covered window still paints.
+2. It arms a one-shot breakpoint on the first statement of `Store.dispatch`
+   in `dist/renderer.js`. At the first dispatch it installs the probe
+   (`scripts/profile/probe.ts`) with the store as `this`, removes the
+   breakpoint and disables the debugger. The probe wraps each subscriber for
+   the length of one dispatch and times it, counts events by type, and
+   records the `requestAnimationFrame` intervals and long tasks.
+3. It opens the file with a second start on the same profile (`--file=`):
+   the app's own single-instance path for "Open with". Load is timed from
+   that hand-over to the first frame painted with the mesh.
+4. Each scenario runs between `Profiler.start` and `Profiler.stop` on both
+   the renderer and the main process (200 us sampling; 1 ms for load). The
+   profiles are mapped to `src/` through `dist/*.map`. The tool's own page
+   code is named `agv-probe` and taken out of every number.
+5. Each scenario then proves that it did something. The store must show the
+   change (the step it walked to, the field it picked, the scan of that
+   field). A visual scenario must also change at least 0.05% of the
+   viewport's pixels. Otherwise the scenario is `no-effect`, and the run
+   exits 1.
+
+| scenario | what it does |
+|---|---|
+| `load` | the file handed over, to the first painted frame of the mesh |
+| `orbit` | right-drag over the canvas, 120 mouse moves; per op is per move |
+| `store-event-mesh` | 40 `hover` events on and off: the cheapest real store change, and the cost of every subscriber per event |
+| `enter-results` | a click on the results phase, to the first step shown |
+| `contour-on` | a click on **contour**, to the whole-history scan of the picked field done and painted |
+| `scrub` | clicks on step +1 on the longest stage, each to its step painted |
+| `switch-contour`, `switch-contour-element` | the legend's field picker to another nodal field, then to an element (Gauss) field, each to its own scan done |
+| `toggle-deformed` | clicks on **deformed**, on and off; if the shape is below a pixel at true scale, the scale is raised first (×10 steps) and stated |
+| `orbit-contour` | the orbit again, with results, contour and deformed shape on |
+| `hover` | mouse moves over the canvas with a line diagram on; skipped, with the reason, on a stage with no line stations, where hover does nothing |
+| `store-event-results` | the store event again, with results and contour on |
+
+A scenario that cannot run on a model is `skipped` with its reason (one
+step, one nodal field, no element field, no line stations, no results).
+
+### Reading the result
+
+- **status**: `ok`; `slow`, which means it finished over its budget and the
+  time shown is the true time (never a timeout); `skipped`; `no-effect`; or
+  `failed`. A wait ends only at `--hard-cap` (default 1800 s), and it reads
+  the state once more first, so a job that finished is never reported as
+  unfinished (#2669 item 4). `failed` names what the wait last saw. A
+  contour the legend refuses ("Refused:", "Nothing to colour:", or "Not
+  drawn:" for 30 s) ends its wait at once and is `skipped`, quoting the
+  legend. It is never `ok`: the no-data grey changes pixels, so pixels alone
+  would pass it. If
+  the app exits mid-run, the scenario in flight and every later one are
+  `failed`, and `result.json` is still written, marked as cut short; a call
+  that never settles fails the run instead of exiting 0.
+- **per op**: the median of the repetitions (`--reps`, default 5, always odd
+  so a toggle ends changed).
+- **renderer busy / main busy**: sampled time that was not idle, in ms.
+  **GC %** is the renderer's garbage collection as a share of busy time.
+- **machine %**: the whole machine's busy share over the scenario (from
+  `os.cpus()`). Above 70% the summary marks the scenario noisy; treat its
+  times as upper bounds, and compare runs, never one run.
+- **subscribers**: the median ms of each subscriber per event, named
+  `file:function:line` where the function is defined. A subscriber that
+  costs tens of ms here costs that on every hover, camera move and step.
+- `--keep-profiles` also writes each scenario's `.cpuprofile`, for the
+  DevTools Performance panel.
+
+Limits: the JS profile has no GPU time (fps is the only GPU-side number); the
+page clock is quantised to 0.1 ms, so sub-0.1 ms subscribers read 0; the
+window appears on the desktop, and a real mouse over it adds events; and
+`view` mode takes a single-instance lock per profile, which the scratch
+profile keeps private to the run.
+
+### First findings (2026-11-02, commit 9f15eede)
+
+Machine: i7-13700KF (24 logical cores), RTX 3070 through ANGLE on Direct3D 11,
+canvas 1584 x 961 at 1x. Other sessions were loading the machine, so each
+model ran at least twice at different loads. The two runs bracket each
+number below: the first run at about 100% busy, the second at 30 to 70%.
+`frame_04b` (24 cells) has no scenario above 60 ms per operation; nothing
+there is worth fixing. `tims_c3b` (#2670) was not run.
+
+| # | bottleneck | where | measured | proposed fix |
+|---|---|---|---|---|
+| 1 | The model read is quadratic in a group's children. `has()` re-lists `g.keys()` on every probe, and `group()` / `dataset()` call it for each child, so `readSidePartitioned` and `readLoads` are O(n²). | `src/reader/read.ts:1189` (`has`), via `group` (`:1038`) from `readSidePartitioned` (`:433`) and `readLoads` (`:368`); main process | Building load **150 to 196 s**. Main is busy 130 to 167 s, of which `has` is 119 to 155 s inclusive (`readSidePartitioned` 68 to 82 s, `readLoads` 60 to 82 s). Slab: `readLoads` 0.4 to 0.7 s. | List each group's keys once (a `Set` per group, or open the children while iterating `keys()`). Keep the "is it listed" probe, not `get()`, because of the broken-link hazard of #424. |
+| 2 | The loads panel recomputes on every store event: `loadsSignature` calls `loadsSummaryOf` for any change, including a hover or camera move. | `src/panels/loads.ts:262` → `src/state/loads.ts:1218`; renderer, subscriber `loads.ts:render:30` | **34 ms per event** on the slab (33.8 to 34.3, all runs) and **87 to 108 ms** on the building. One 120-move orbit spends 10.7 to 25.5 s of renderer time in it on the building (p95 frame 100 to 250 ms), with GC up to 48% under load. | Memoize the summary on the state slices it reads, and return at once when they are the same references. A fix is in flight on another branch; measure it with `--scenarios=store-event-mesh,orbit`. |
+| 3 | The provenance lookups at load are quadratic: one linear search per record. | `src/reader/provenance.ts:220` (`sourceOf`: `records.path.indexOf`) via `provenanceEntries` (`src/state/load.ts:376`); `src/state/selectors.ts:939` (`sourceFor`: `s.provenance.find`) via `sourcesOf` (`:997`) | Building: `sourceOf` 6.2 to 6.4 s; `sourceFor` 3.2 to 3.9 s self (6.5 to 8.1 s inclusive). | Build a path → row map and a key → entry map once per zone. |
+| 4 | The windows frame renders for 4 to 6 s at load with no window open. | `src/panels/windows/frame.ts:92` (`render`, self time) | Building: 4.2 to 5.9 s self, in one call. | Cause not proven. It fits a forced synchronous layout at the `host.scrollTop` read just after the sources panel adds its rows. Confirm with a trace (`--keep-profiles` and DevTools) before fixing; skipping the work when there is no card is the likely fix. |
+| 5 | The deformed toggle on a large mesh. | `src/renderer/viewport.ts:205` (subscriber) → `redeform` / `writePositions` (`src/renderer/deform.ts:164`); and finding 2 | Building: **200 to 1033 ms per toggle**: loads panel 92 to 225 ms, viewport 46 to 55 ms. Slab: 65 to 83 ms. | Finding 2 first; then reuse the position buffer instead of rewriting every vertex. |
+| 6 | Hover with a line diagram recomputes the element join on every hover. | `joinLadrunoElements` (`src/state/spanLoads.ts:48`), called from `src/renderer/lineDiagram.ts:316` | Slab: **37.7 ms per hover event**: loads panel 32.7 ms, viewport subscriber 12 ms. The join is 330 to 395 ms over 33 events, about 10 to 12 ms each. | Cache the join per `(decls, results pairing)`, as `effects.ts:501` could share. |
+| 7 | Entering results and turning the contour on are slow on a large mesh. | the legend (`src/panels/legend.ts:94`) and phase (`src/panels/phase.ts:53`) renders, plus finding 2 | Building: enter results 1.3 to 3.4 s, contour on 0.84 to 2.0 s. The worst legend render is 277 to 406 ms, phase 308 to 311 ms. | After finding 2, re-profile; then render only the legend rows that changed. |
+
+One finding is about data, not speed. The slab's `.ladruno` element field is
+refused ("INFO/PROVENANCE has no @element_index_space = "fem""), so
+`switch-contour-element` is skipped there. Before the profiler waited for the
+picked field's own scan, it passed that scenario on the previous field's
+finished scan. The stricter check is why it is reported as skipped now.
