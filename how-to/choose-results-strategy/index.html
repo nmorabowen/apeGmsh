@@ -3877,7 +3877,7 @@ domain, so the recipes never import it.</p>
 <tbody>
 <tr>
 <td><strong>Run: in-process</strong></td>
-<td><code>recorder_spec.emit_default("run", model_h5=...)</code>. The default: on the fork it records the fork's own file; on a stock build it falls back to the MPCO cell, and on pip openseespy to the classic cell, so one script runs on every build.</td>
+<td><code>recorder_spec.emit_default("run", model_h5=...)</code>. The default: on the fork it records the fork's own file; on a stock build with MPCO it converts the <code>.mpco</code> of a staged program to <code>.ladruno</code> and refuses an unstaged one by name; on pip openseespy it falls back to the classic cell.</td>
 <td><code>recorder_spec.emit_recorders("out", model=model)</code>. Nodes, element forces, gauss points, line stations and fibres; layer and modal records raise by name.</td>
 <td><code>ops.recorder.MPCO(...)</code> before <code>ops.run()</code>, or <code>recorder_spec.emit_mpco(...)</code>. Fibres, layers and modes, on a build that has the MPCO recorder.</td>
 </tr>
@@ -3989,7 +3989,7 @@ your own loop:</p>
 <tr>
 <td>stock, with MPCO</td>
 <td><code>run.mpco</code></td>
-<td><code>Results.from_mpco</code>, after one <code>DefaultRouteWarning</code></td>
+<td>converts it to <code>run.ladruno</code> beside it, then <code>Results.from_ladruno</code>; an unstaged program refuses at the <code>with</code> line</td>
 </tr>
 <tr>
 <td>pip, no MPCO</td>
@@ -4001,14 +4001,23 @@ your own loop:</p>
 <p>Don't step with the bridge's own <code>ops.analyze(steps=1)</code> here: it rebuilds
 the domain from scratch, and the recorder the block opened goes with it.
 Read with <code>run.results()</code> after the block has closed.</p>
-<p>The stock MPCO file is not converted to <code>.ladruno</code>, and it stays on
-<code>from_mpco</code>. An unstaged run maps to one stage, and that stage's kind
-(static or transient) has to be a fact. Your loop drives OpenSees
-directly, so a <code>loadConst</code> or a second <code>opspy.analysis(...)</code> inside the
-block never reaches <code>model.h5</code>. <code>read_deck_mpco</code> below does not apply to
-an in-process run.
-<code>emit_default</code> refuses a rerun onto an existing <code>run.ladruno</code> unless you
-pass <code>overwrite=True</code>. It has no route for modal records; modes come from
+<p>On a stock build with MPCO the route converts only when each stage's kind
+(static or transient) is a fact: the program declares it in an
+<code>ops.stage(...)</code> block. An unstaged program has no kind as fact. Your loop
+drives OpenSees directly, so a <code>loadConst</code> or a second
+<code>opspy.analysis(...)</code> inside the block never reaches <code>model.h5</code>, and an
+in-process run writes no run record. So <code>emit_default</code> refuses it by name
+as the block opens, before your loop runs, with a <code>StageKindRefused</code> that
+names the two remedies: declare the stages with <code>ops.stage(...)</code>, or run
+the program as a deck emitted with <code>analyze_steps</code> and read it with
+<code>read_deck_mpco</code> (below). It never guesses a kind and never reads the
+<code>.mpco</code> with <code>from_mpco</code> instead. <code>ops.run()</code> refuses a staged program
+today, so a staged script runs as a deck (<code>ops.py</code> or <code>ops.tcl</code>) until
+the in-process route can emit stages. A converted file whose stages do not pair
+with the declared ones refuses on <code>run.results()</code> and writes nothing; the
+<code>.mpco</code> is kept either way.
+<code>emit_default</code> refuses a rerun onto an existing <code>run.ladruno</code> (on the fork,
+or the converted file on stock) unless you pass <code>overwrite=True</code>. It has no route for modal records; modes come from
 <code>ops.eigen(n)</code>, as the grid says.</p>
 <h3 id="in-process-classic-recorders">In-process, classic recorders<a class="headerlink" href="#in-process-classic-recorders" title="Permanent link">&para;</a></h3>
 <p>Reach for this when you want plain OpenSees recorder files from a notebook
@@ -4098,10 +4107,12 @@ An unstaged deck converts on its own run record: a deck emitted with
 <code>analyze_steps=</code>, like the one above, writes <code>run.mpco.run.json</code> beside the
 <code>.mpco</code> once its analyze loop has returned, and the conversion checks that
 record against the <code>.mpco</code>, <code>model.h5</code> and the program (one <code>analysis</code>
-declaration, and the steps it ran). When a check fails, the deck is read
-with <code>from_mpco</code> after one warning that names the check. Other refusals
-raise, such as an archive of another model or an incomplete partition set. An in-process run is not a deck, so read its
-<code>.mpco</code> with <code>from_mpco</code>.</p>
+declaration, and the steps it ran). When a check fails, <code>read_deck_mpco</code>
+refuses with a <code>StageKindRefused</code> that names the check and the remedies,
+and writes nothing; it never falls back to <code>from_mpco</code>. Other refusals
+raise as they are, such as an archive of another model or an incomplete
+partition set. An in-process run is not a deck: it writes no run record,
+so <code>read_deck_mpco</code> refuses its <code>.mpco</code> on check 1.</p>
 <h2 id="the-read-side-is-identical">The read side is identical<a class="headerlink" href="#the-read-side-is-identical" title="Permanent link">&para;</a></h2>
 <p>Whichever recipe ran, the query is the same:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">tip</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">"Tip"</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">"displacement_y"</span><span class="p">)</span>

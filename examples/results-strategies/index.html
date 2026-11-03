@@ -3727,7 +3727,9 @@
 That's the right default, and the tutorials pick it on purpose so you reach
 an answer without a detour. It already chooses for you: the Ladruno fork
 records its own <code>.ladruno</code> file, a stock build with the MPCO recorder writes
-<code>.mpco</code>, and pip openseespy writes classic <code>.out</code> recorder files. But sooner
+<code>.mpco</code> and converts it to <code>.ladruno</code> when the program declares its stages
+(an unstaged program refuses there by name), and pip openseespy writes
+classic <code>.out</code> recorder files. But sooner
 or later you'll have a reason to choose yourself — a colleague wants the
 output in <strong>STKO</strong>, or you're driving a workflow built around classic
 <code>.out</code> <strong>recorder files</strong>.</p>
@@ -3932,7 +3934,9 @@ the <a href="../../how-to/read-results/">read displacement &amp; reactions</a> h
   you read it back</em> — and the read API (<code>results.nodes.get(pg=...,
   component=...)</code>) is identical across all three.</li>
 <li><strong>The default is <code>emit_default</code></strong> (in-process, the recorder your build
-  has) — fewest moving parts, and the same script on every build.</li>
+  has) — fewest moving parts. On a stock build with MPCO it needs the
+  program's stages declared with <code>ops.stage(...)</code>, and refuses by name
+  without them.</li>
 <li><strong><code>from_mpco</code></strong> gives you STKO-compatible output; it needs a sibling
   <code>model.h5</code> (<code>ops.h5</code>) + <code>fem=</code> to resolve names, and a local-disk path.</li>
 <li><strong><code>from_recorders</code></strong> reads classic <code>.out</code> files — the path for consuming

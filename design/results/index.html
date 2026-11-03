@@ -3796,10 +3796,14 @@ execution strategy</strong>, and the strategies are just its consumers.</p>
   at <code>__enter__</code> and picks one of the three strategies above: the fork's
   own <code>.ladruno</code> recorder (stamped with <code>model_h5</code>'s pairing, read with
   <code>Results.from_ladruno</code>), a live MPCO recorder on a stock build that
-  has one (read with <code>Results.from_mpco</code>), or live classic recorders
-  over one stage (read with <code>Results.from_recorders</code>). The two stock
-  routes warn once with a <code>DefaultRouteWarning</code>; <code>run.results()</code> opens
-  whichever file the route wrote. Modal records have no default route:
+  has one (converted to <code>.ladruno</code> beside it and read with
+  <code>Results.from_ladruno</code>), or live classic recorders over one stage (read
+  with <code>Results.from_recorders</code>, after one <code>DefaultRouteWarning</code>). The
+  MPCO route converts only when the stage kinds are facts, declared in
+  <code>ops.stage</code> blocks; otherwise it refuses by name at <code>__enter__</code>, with
+  no default kind. <code>read_deck_mpco</code> follows the same rule for a deck's
+  <code>.mpco</code>, where an unstaged deck's run record can also make the kind a
+  fact. <code>run.results()</code> opens whichever file the route wrote. Modal records have no default route:
   modes come from <code>EigenResult.to_native()</code> / <code>.results()</code> on stock, and
   from the fork's <code>.ladruno</code> on the fork.</li>
 </ul>
