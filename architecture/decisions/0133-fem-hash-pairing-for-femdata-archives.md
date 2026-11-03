@@ -1,7 +1,8 @@
 # ADR 0133 — A `.ladruno` pairs to a bare FEMData archive by `fem_hash`
 
-**Status:** Proposed (2026-11-03). Merging its PR (`human-gate`) is the
-maintainer's acceptance. The pointer on ADR 0122 lands in that same PR, as
+**Status:** Accepted (2026-11-03, owner merge of #2789). Merging that PR
+(`human-gate`) is the maintainer's acceptance. The pointer on ADR 0122
+lands in that same PR, as
 [ADR 0121](0121-charter-v2-b-with-amendments.md) D5 requires.
 
 **Owner:** nmora
