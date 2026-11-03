@@ -16,16 +16,14 @@ removed that route; invariants 1-3 still pin every value written.
 The live solve is ``tests/opensees/live/test_eigen_to_native_live.py``.
 
 ``results()`` (#2762, ADR 0131 D10 stage 0) no longer goes through
-``to_native``: ``EigenResult.results()`` and
-``ParallelModalResult.results()`` write a ``.ladruno`` through
-``to_ladruno`` and open it with ``Results.from_ladruno``. Their oracles:
+``to_native``: ``EigenResult.results()`` writes a ``.ladruno`` through
+``to_ladruno`` and opens it with ``Results.from_ladruno``. Its oracles:
 no native file is written, the file passes the fork's own
 ``ladruno_format.validate()`` at ``FORK_PIN``, and the modes read back
 equal the fake's table (atol 0).
 """
 from __future__ import annotations
 
-import json
 import math
 import tempfile
 import urllib.error
@@ -41,7 +39,6 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh.opensees.analysis.eigen import EigenResult
-from apeGmsh.opensees.analysis.modal import ParallelModalResult
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.emitter import live
 from apeGmsh.opensees.opensees_model import OpenSeesModel
@@ -632,69 +629,3 @@ def test_results_binds_the_archive_it_is_given(
     (path, model_h5), = opened
     assert path.suffix == ".ladruno"
     assert Path(model_h5) == archive
-
-
-def _job(
-    tmp_path: Path, ids: np.ndarray, lams: list[float], ndf: int, ndm: int,
-) -> tuple[Path, np.ndarray]:
-    """A replicated-deck run dir; returns it and the ``(k, n, ndf)`` shapes."""
-    job = tmp_path / "job"
-    job.mkdir()
-    (job / "eigenvalues.out").write_text(" ".join(repr(v) for v in lams))
-    (job / "mode_shapes.json").write_text(json.dumps(
-        {"nodes": ids.tolist(), "ndf": ndf, "ndm": ndm}))
-    shapes = np.array([
-        [[100.0 * k + row + 0.125 * (d + 1) for d in range(ndf)]
-         for row in range(ids.size)]
-        for k in range(1, len(lams) + 1)
-    ])
-    for k in range(len(lams)):
-        (job / f"mode_shape_{k + 1}.out").write_text(
-            " ".join(repr(float(v)) for v in shapes[k].ravel()))
-    return job, shapes
-
-
-@pytest.mark.parametrize("ndm", [2, 3])
-def test_parallel_results_writes_a_valid_ladruno_by_default(
-    ndm: int, fem2: Any, fem3: Any, spec: ModuleType,
-    opened: list[tuple[Path, Any]], tmp_path: Path,
-) -> None:
-    """``ParallelModalResult.results(model_h5)`` writes through
-    ``to_ladruno`` into a temp ``.ladruno``, valid to the fork's spec and
-    bound to ``model_h5``, holding the harvested shapes (atol 0)."""
-    fem = fem2 if ndm == 2 else fem3
-    ndf = 3 if ndm == 2 else 6
-    ids = _node_ids(fem)
-    archive = tmp_path / "model.h5"
-    _frame(fem, ndm=ndm).h5(str(archive))
-    lams = [16.0, 81.0, 625.0]
-    job, shapes = _job(tmp_path, ids, lams, ndf, ndm)
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        res = ParallelModalResult.from_job(job).results(archive)
-    with res:
-        modes = sorted(res.modes, key=lambda m: m.mode_index)
-        assert [m.eigenvalue for m in modes] == lams           # bit for bit
-        for k, m in enumerate(modes):
-            for d, comp in enumerate(_COMPS[ndm]):
-                assert _slab(m, comp) == {
-                    int(n): shapes[k, i, d] for i, n in enumerate(ids)}
-
-    (path, model_h5), = opened
-    assert path.suffix == ".ladruno"
-    assert Path(tempfile.gettempdir()).resolve() in path.resolve().parents
-    assert Path(model_h5) == archive
-    assert spec.validate(str(path)) == []
-
-
-def test_parallel_results_without_a_harvest_writes_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _no_write(*a: Any, **k: Any) -> Any:
-        raise AssertionError("a filesystem write before the refusal")
-
-    monkeypatch.setattr(tempfile, "mkdtemp", _no_write)
-    res = ParallelModalResult(eigenvalues=np.array([4.0]))
-    with pytest.raises(FileNotFoundError):
-        res.results(tmp_path / "model.h5")
