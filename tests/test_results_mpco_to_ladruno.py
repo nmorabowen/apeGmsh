@@ -629,9 +629,8 @@ def test_each_failed_check_refuses_by_name(
     fx, model_name, override, check, tmp_path,
 ) -> None:
     """Each check refuses on its own, naming itself; read_deck_mpco then
-    warns once and reads the ``.mpco`` (nothing converted)."""
-    from apeGmsh.results.live import DefaultRouteWarning, read_deck_mpco
-
+    refuses by name too, converting nothing and never reading the
+    ``.mpco`` in its place (ADR 0131 D5)."""
     model = fx[f"flat_{model_name}"]
     src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
     if callable(override):
@@ -641,12 +640,7 @@ def test_each_failed_check_refuses_by_name(
     _refuses(src, tmp_path / "deck.ladruno",
              rf"not archived as fact.*check {check} ",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        res = read_deck_mpco(src, model_h5=model)
-    res.close()
-    ours = [w for w in caught if w.category is DefaultRouteWarning]
-    assert len(ours) == 1 and f"check {check} " in str(ours[0].message)
+    assert f"check {check} " in _refused_once(src, model)
     assert not (tmp_path / "deck.ladruno").exists()
 
 
@@ -667,23 +661,33 @@ def test_the_files_step_count_must_be_the_records(fx, tmp_path) -> None:
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
 
 
-def _read_once(src: Path, model: Path) -> str:
-    """``read_deck_mpco``'s one warning, after a read with ``from_mpco``."""
-    from apeGmsh.results.live import DefaultRouteWarning, read_deck_mpco
+def _refused_once(src: Path, model: Path) -> str:
+    """``read_deck_mpco``'s refusal by name: a :class:`StageKindRefused`
+    naming the remedies, with no warning and no ``from_mpco`` read in its
+    place (ADR 0131 D5)."""
+    from apeGmsh.results.live import read_deck_mpco
 
-    with warnings.catch_warnings(record=True) as caught:
+    def no_from_mpco(*a: Any, **k: Any) -> None:
+        raise AssertionError("read_deck_mpco fell back to Results.from_mpco")
+
+    with pytest.MonkeyPatch.context() as m, \
+            warnings.catch_warnings(record=True) as caught:
+        m.setattr(Results, "from_mpco", no_from_mpco)
         warnings.simplefilter("always")
-        read_deck_mpco(src, model_h5=model).close()
-    ours = [str(w.message) for w in caught if w.category is DefaultRouteWarning]
-    assert len(ours) == 1, ours
-    return ours[0]
+        with pytest.raises(StageKindRefused) as e:
+            read_deck_mpco(src, model_h5=model)
+    assert caught == [], [str(w.message) for w in caught]
+    msg = str(e.value)
+    assert msg.startswith("read_deck_mpco: ") and "ops.stage(...)" in msg
+    assert "analyze_steps" in msg and "convert_mpco(" not in msg
+    return msg
 
 
 def test_a_stale_record_beside_a_later_writer_refuses(fx, tmp_path) -> None:
     """F1 of the review of #2255: a deck ran and recorded; then another run
     (in process, which writes no record and removes none) wrote the same
     ``.mpco``. Every other check still holds; check 6 sees a file the deck
-    did not close, and the read warns once, converting nothing."""
+    did not close, and the read refuses by name, converting nothing."""
     model = fx["flat_static"]
     src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
     _record(src, model)
@@ -693,7 +697,7 @@ def test_a_stale_record_beside_a_later_writer_refuses(fx, tmp_path) -> None:
     os.utime(src, ns=(before.st_atime_ns, before.st_mtime_ns + 2_000_000_000))
     _refuses(src, tmp_path / "deck.ladruno", r"check 6 \(the files\)",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
-    assert "check 6 (the files)" in _read_once(src, model)
+    assert "check 6 (the files)" in _refused_once(src, model)
     assert not (tmp_path / "deck.ladruno").exists()
 
 
@@ -746,7 +750,7 @@ def test_a_same_size_overwrite_in_the_records_second_refuses(fx, tmp_path) -> No
     _refuses(src, tmp_path / "deck.ladruno",
              r"check 6 \(the files\).*after the record",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
-    assert "check 6 (the files)" in _read_once(src, model)
+    assert "check 6 (the files)" in _refused_once(src, model)
     assert not (tmp_path / "deck.ladruno").exists()
 
 
@@ -758,7 +762,7 @@ def test_a_whole_second_clock_in_the_records_second_refuses(fx, tmp_path) -> Non
     _refuses(src, tmp_path / "deck.ladruno",
              r"check 6 \(the files\).*whole-second times in the same second",
              exc=StageKindRefused, model_h5=model, _implicit_stage=True)
-    assert "whole-second" in _read_once(src, model)
+    assert "whole-second" in _refused_once(src, model)
     os.utime(rec, ns=((_S + 1) * _NS,) * 2)
     _implicit(src, tmp_path / "deck.ladruno", model)
 
@@ -837,9 +841,7 @@ def test_an_in_process_run_after_a_deck_export_refuses(tmp_path) -> None:
     """F2 of #2224's review: ``b.py(..., analyze_steps=N)``, then ``b.h5()``,
     then an in-process run of the same model. The export writes no record
     (only the deck's own run does), so the in-process ``.mpco`` refuses on
-    check 1, with one warning, and nothing is converted."""
-    from apeGmsh.results.live import DefaultRouteWarning, read_deck_mpco
-
+    check 1, by name, and nothing is converted or read in its place."""
     mpco = tmp_path / "deck.mpco"
     bridge = _unstaged_springs_bridge(["static"])
     bridge.recorder.MPCO(file=str(mpco), nodal_responses=("displacement",))
@@ -850,12 +852,7 @@ def test_an_in_process_run_after_a_deck_export_refuses(tmp_path) -> None:
     bridge.h5(str(model))
     assert sorted(p.name for p in tmp_path.glob("*.run.json*")) == []
     src = _bridge_copy(SPRINGS, model, mpco)  # what the in-process run wrote
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        res = read_deck_mpco(src, model_h5=model)
-    res.close()
-    ours = [w for w in caught if w.category is DefaultRouteWarning]
-    assert len(ours) == 1 and "check 1 (the record)" in str(ours[0].message)
+    assert "check 1 (the record)" in _refused_once(src, model)
     assert not (tmp_path / "deck.ladruno").exists()
 
 
