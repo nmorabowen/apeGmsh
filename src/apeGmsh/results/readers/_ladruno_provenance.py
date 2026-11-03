@@ -902,6 +902,9 @@ def _write(prov: "h5py.Group", wanted: "dict[str, str]") -> None:
     import h5py
 
     vlen = h5py.string_dtype("utf-8")
+    # model_hash before fem_hash (_OWNED_ATTRS order): a two-hash stamp cut
+    # short is model_hash alone, which pairs with nothing, never a
+    # fem_hash-only stamp (ADR 0133 D2), which pairs by the mesh.
     for name in _OWNED_ATTRS:
         if name in wanted:
             prov.attrs.create(name, data=wanted[name], dtype=vlen)
