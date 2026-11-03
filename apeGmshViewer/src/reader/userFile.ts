@@ -7,29 +7,32 @@
 // refuses that zone and the others still read (`ZoneRead.ok === false`); a bad
 // row refuses alone, with a reason (`refused`).
 //
-// What this reader never does: read the `DATA` of a `/results` entry or of a
-// `/spectra` case (only its shape), or any value of `/entities`, which is listed
-// by name in `zones` (its reader, VU8, adds its version target). `/modes` is read
-// whole (reader/userModes.ts judges it), and each row gets A6's lambda verdict
+// What the index never does: read the `DATA` of a `/results` entry or of a
+// `/spectra` case (only its shape). `readEntityValues` reads one `ON_ENTITIES`
+// entry's `DATA` on request, bound to its rows. `/modes` is read whole
+// (reader/userModes.ts judges it), and each row gets A6's lambda verdict
 // against the paired `.ladruno` (`Staleness.modes`). `/spectra` is read as an
 // index of its cases (reader/userSpectra.ts judges each): a bad case refuses
-// alone, as in Python's `read_spectra`. Until VU8:
-// - an `ON_ENTITIES` user result is refused, `unresolved`, because its rows
-//   cannot be checked against `/entities` (Python's `_bound_entries`);
-// - an element entry's `GP_PARAM` frame is not checked against its topology
-//   (Python's `_check_frame`); its placement attributes and shapes are.
+// alone, as in Python's `read_spectra`. `/entities` is read whole
+// (reader/userEntities.ts judges its rows): a bad row refuses alone and keeps
+// its position, and an `ON_ENTITIES` user result naming a row the zone does not
+// hold or refuses is refused alone, `unresolved` (Python's `_bound_entries`).
+// An element entry's `GP_PARAM` frame is not checked against its topology
+// (Python's `_check_frame`); its placement attributes and shapes are.
 //
 // The staleness table is A6's, as `staleness()` in _staleness.py: whatever cannot
 // be compared is stale, so nothing is drawn as current on no proof.
 
 import { openH5 } from "./h5open.ts";
-import { checkZoneVersion, COMBINATIONS_TARGET, MODES_TARGET, OPENSEES_TARGET, SchemaError, SPECTRA_TARGET, USER_META_TARGET, USER_RESULTS_TARGET, ZONE_FLOOR } from "./read.ts";
+import { checkZoneVersion, COMBINATIONS_TARGET, ENTITIES_TARGET, MODES_TARGET, OPENSEES_TARGET, SchemaError, SPECTRA_TARGET, USER_META_TARGET, USER_RESULTS_TARGET, ZONE_FLOOR } from "./read.ts";
 import { byCodePoint, FingerprintRefused, resultsFingerprint, type FpDataset, type FpFile, type FpGroup, type FpH5, type H5Meta } from "./rf1.ts";
 import { LambdasRefused, modeTableProblem, recordedLambdas, rowVerdicts, type ModeRow, type ModeTable, type RowVerdict } from "./userModes.ts";
 import { caseOf, caseProblem, npDtype, pyList, pyShape, pyStr, SPECTRA_FAMILIES, type CaseDraft, type SpectrumCase, type SpectrumQuantity, type SpectrumTarget } from "./userSpectra.ts";
 import { addressProblem, nameProblem, resolve, type Combination, type Refusal, type StateAddress, type Term } from "./userRules.ts";
+import { bindingProblem, ELEMENT_INDEX_SPACE, entityRow, isEntityKind, noEntities, rowRefusals, type CutEntity, type Entities, type EntityKind, type PointSet, type Storey, type Vec3 } from "./userEntities.ts";
 
 export type { Combination, Refusal, StateAddress, Term } from "./userRules.ts";
+export type { CutEntity, Entities, EntityKind, EntityRefusal, PointSet, Storey } from "./userEntities.ts";
 export type { ModeRow, ModeTable, RowVerdict } from "./userModes.ts";
 export type { SpectrumCase, SpectrumMode, SpectrumQuantity } from "./userSpectra.ts";
 export type UserH5 = FpH5;
@@ -103,6 +106,8 @@ export interface UserIndex {
   modes: ZoneRead<ModeTable> | null;
   /** `/spectra`, its cases (every value but DATA), or null when the file holds none */
   spectra: ZoneRead<SpectraIndex> | null;
+  /** `/entities`, its cuts, storeys and point sets, or null when the file holds none */
+  entities: ZoneRead<Entities> | null;
 }
 
 /** The `/spectra` cases that stand, and each refused one (Python's `SpectraIndex`). */
@@ -274,12 +279,16 @@ export function readUserFile(h5: UserH5, path: string, model: string | null): Us
     // Python's staleness passes the model only when its hashes read (`_readable`).
     let modelRows: ZoneRead<Combination[]> = { ok: true, value: [] };
     if (model !== null && modelHashes(h5, model).ok) modelRows = readModelCombinations(h5, model, meta.warnings);
+    // Read once: the index lists it, and the /results binding checks its rows against it.
+    // A stamped key with no group refuses here, as Python's `_held_entities`, and lists nothing.
+    const held = zoneRead(() => readEntities(t, f, meta.warnings));
     return {
       ...meta,
       combinations: zoneRead(() => readCombinations(t, f, meta.warnings, modelRows)),
-      results: zoneRead(() => readResults(t, f, meta.warnings)),
+      results: zoneRead(() => readResults(t, f, meta.warnings, held)),
       modes: f.keys().includes("modes") ? zoneRead(() => readModes(t, f, meta.warnings)) : null,
       spectra: f.keys().includes("spectra") ? zoneRead(() => readSpectra(t, f, meta.warnings)) : null,
+      entities: f.keys().includes("entities") ? held : null,
     };
   } finally {
     f.close();
@@ -295,7 +304,7 @@ function zoneRead<T>(read: () => T): ZoneRead<T> {
   }
 }
 
-function readMeta(t: Tree, f: FpFile, path: string): Omit<UserIndex, "combinations" | "results" | "modes" | "spectra"> {
+function readMeta(t: Tree, f: FpFile, path: string): Omit<UserIndex, "combinations" | "results" | "modes" | "spectra" | "entities"> {
   const m = t.group(f, "meta");
   if (m === null) throw new UserFileRefused(`${path} has no /meta group`);
   const key = "user_meta_schema_version";
@@ -447,7 +456,7 @@ function readModelCombinations(h5: UserH5, model: string, warnings: string[]): Z
 // /results: the index, never DATA
 // ---------------------------------------------------------------------------
 
-function readResults(t: Tree, f: FpFile, warnings: string[]): ResultIndex {
+function readResults(t: Tree, f: FpFile, warnings: string[], held: ZoneRead<Entities>): ResultIndex {
   if (!zoneVersionChecked(t, f, "user_results", "results", USER_RESULTS_TARGET, ZONE_FLOOR.user_results, warnings)) {
     return { entries: [], refused: [] };
   }
@@ -471,11 +480,19 @@ function readResults(t: Tree, f: FpFile, warnings: string[]): ResultIndex {
       else refused.push({ name, reason: "bad-param", detail: message(err), origin: "user", row: at });
     }
   });
-  // Python's `_bound_entries` checks an ON_ENTITIES entry's rows against /entities,
-  // which this slice does not read: such an entry cannot be shown to stand.
+  // Python's `_bound_entries`: an ON_ENTITIES entry naming a row /entities does
+  // not hold, or refuses, is refused alone; so is every one when the zone does not read.
   entries = entries.filter((e) => {
     if (e.target !== "entities") return true;
-    refused.push({ name: e.name, reason: "unresolved", detail: `user result ${JSON.stringify(e.name)}: the app does not read /entities yet (ADR 0130 slice VU8)`, origin: "user", row: links.indexOf(e.link) });
+    let problem: string | null;
+    if (!held.ok) {
+      problem = `user result ${pyStr(e.name)}: /entities cannot be read: ${held.reason.replace(/^refused: /, "")}`;
+    } else {
+      const { kinds, rows } = entityColumns(t, zone, e);
+      problem = bindingProblem(held.value, e.name, kinds, rows);
+    }
+    if (problem === null) return true;
+    refused.push({ name: e.name, reason: "unresolved", detail: problem, origin: "user", row: links.indexOf(e.link) });
     return false;
   });
   const counts = new Map<string, number>();
@@ -832,6 +849,164 @@ function readQuantities(t: Tree, root: FpGroup, where: string): SpectrumQuantity
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// /entities (Python's `read_entities`; reader/userEntities.ts holds `row_refusals`)
+// ---------------------------------------------------------------------------
+
+const ENTITIES = "/entities";
+
+/** A column's values; [] for a dataset with an empty axis, whose h5wasm `value` is not an array. */
+function columnValues(ds: FpDataset): unknown[] {
+  return shape(ds).some((n) => n === 0) ? [] : values(ds);
+}
+
+/** `(None, 3)` for a wanted shape, as Python prints it. */
+const wantedShape = (want: readonly (number | null)[]) => (want.length === 1 ? `(${want[0] ?? "None"},)` : `(${want.map((w) => w ?? "None").join(", ")})`);
+
+/** One column of `code` and shape `want` (null: any length), or the zone refuses (Python's `_col`). */
+function entityColumn(t: Tree, g: FpGroup, name: string, code: string, want: readonly (number | null)[]): unknown[] {
+  const ds = t.dataset(g, name);
+  if (ds === null) throw new ZoneRefused(ENTITIES, `${g.path} has no ${name} column`);
+  const got = shape(ds);
+  const fits = got.length === want.length && want.every((w, i) => w === null || got[i] === w);
+  if (!isCode(ds, code) || !fits) throw new ZoneRefused(ENTITIES, `${ds.path} is ${npDtype(ds.metadata)} ${pyShape(got)}, expected ${code} ${wantedShape(want)}`);
+  const v = columnValues(ds);
+  return code === "str" ? v.map((x) => cell(x, ENTITIES, ds.path)) : v;
+}
+
+/** The rows' `[start, end)` from `<kind>_offsets`, which runs from 0 to the column's length (Python's `_spans`). */
+function spans(t: Tree, g: FpGroup, offsets: string, k: number, total: number): [number, number][] {
+  const off = entityColumn(t, g, offsets, "i4", [k + 1]) as number[];
+  if (off[0] !== 0 || off[k] !== total || off.some((o, i) => i > 0 && o < off[i - 1]!)) {
+    throw new ZoneRefused(ENTITIES, `${g.path}/${offsets} [${off.join(", ")}] does not run from 0 to ${total}`);
+  }
+  return off.slice(0, -1).map((a, i) => [a, off[i + 1]!]);
+}
+
+function entityTable(t: Tree, zone: FpGroup, name: string): FpGroup {
+  const g = t.group(zone, name);
+  if (g === null) throw new ZoneRefused(ENTITIES, `it has no ${name} table`);
+  return g;
+}
+
+const vec3 = (flat: readonly number[], i: number): Vec3 => [flat[3 * i]!, flat[3 * i + 1]!, flat[3 * i + 2]!];
+const points = (flat: readonly number[], [a, b]: [number, number]): Vec3[] => Array.from({ length: b - a }, (_, j) => vec3(flat, a + j));
+
+/** `/entities`: a missing table, a malformed column or bad offsets refuse the zone; a bad row refuses alone. */
+function readEntities(t: Tree, f: FpFile, warnings: string[]): Entities {
+  if (!zoneVersionChecked(t, f, "entities", "entities", ENTITIES_TARGET, ZONE_FLOOR.entities, warnings)) return noEntities();
+  const zone = t.group(f, "entities");
+  if (zone === null) throw new ZoneRefused(ENTITIES, "it is not a group");
+  const space = zone.attrs["element_index_space"] === undefined ? null : textAttr(zone, "element_index_space");
+  if (space !== ELEMENT_INDEX_SPACE) {
+    throw new ZoneRefused(ENTITIES, `@element_index_space is ${space === null ? "None" : pyStr(space)}; this reader knows ${pyStr(ELEMENT_INDEX_SPACE)} only`);
+  }
+
+  let g = entityTable(t, zone, "cuts");
+  let names = entityColumn(t, g, "name", "str", [null]) as string[];
+  let k = names.length;
+  const side = entityColumn(t, g, "side", "str", [k]) as string[];
+  const [point, normal, reference] = ["point", "normal", "reference"].map((c) => entityColumn(t, g, c, "f8", [k, 3]) as number[]) as [number[], number[], number[]];
+  const eids = entityColumn(t, g, "element_ids", "i4", [null]) as number[];
+  const poly = entityColumn(t, g, "polygon", "f8", [null, 3]) as number[];
+  const eSpan = spans(t, g, "element_offsets", k, eids.length);
+  const pSpan = spans(t, g, "polygon_offsets", k, poly.length / 3);
+  const cuts: CutEntity[] = names.map((name, i) => ({
+    name,
+    side: side[i]!,
+    point: vec3(point, i),
+    normal: vec3(normal, i),
+    reference: vec3(reference, i),
+    elementIds: eids.slice(...eSpan[i]!),
+    polygon: points(poly, pSpan[i]!),
+  }));
+
+  g = entityTable(t, zone, "storeys");
+  names = entityColumn(t, g, "name", "str", [null]) as string[];
+  k = names.length;
+  const level = entityColumn(t, g, "level", "f8", [k]) as number[];
+  const ref = entityColumn(t, g, "reference", "f8", [k, 3]) as number[];
+  const nids = entityColumn(t, g, "node_ids", "i4", [null]) as number[];
+  const nSpan = spans(t, g, "node_offsets", k, nids.length);
+  const storeys: Storey[] = names.map((name, i) => ({ name, level: level[i]!, reference: vec3(ref, i), nodeIds: nids.slice(...nSpan[i]!) }));
+
+  g = entityTable(t, zone, "point_sets");
+  names = entityColumn(t, g, "name", "str", [null]) as string[];
+  k = names.length;
+  const xyz = entityColumn(t, g, "xyz", "f8", [null, 3]) as number[];
+  const host = entityColumn(t, g, "host_element", "i4", [xyz.length / 3]) as number[];
+  const xSpan = spans(t, g, "point_offsets", k, xyz.length / 3);
+  const pointSets: PointSet[] = names.map((name, i) => ({ name, xyz: points(xyz, xSpan[i]!), hostElement: host.slice(...xSpan[i]!) }));
+
+  return { cuts, storeys, pointSets, refused: rowRefusals({ cuts, storeys, pointSets }) };
+}
+
+/** An `ON_ENTITIES` entry's `ENTITY_KIND` and `ENTITY_ROW`; `checkHolder` has checked their shapes and kinds. */
+function entityColumns(t: Tree, zone: FpGroup, e: ResultEntry): { kinds: string[]; rows: number[] } {
+  const v = t.group(zone, `${e.link}/RESULTS/ON_ENTITIES/values`)!;
+  const kinds = t.dataset(v, "ENTITY_KIND")!;
+  return {
+    kinds: columnValues(kinds).map((x) => cell(x, "/results", kinds.path)),
+    rows: columnValues(t.dataset(v, "ENTITY_ROW")!) as number[],
+  };
+}
+
+/** One `ON_ENTITIES` user result with its values, each `DATA` row bound to the entity it names. */
+export interface EntityValues {
+  name: string;
+  components: string[];
+  /** one per `DATA` axis-0 row; null for a state-free result */
+  states: StateAddress[] | null;
+  /** one per `DATA` axis-1 row: the `(ENTITY_KIND, ENTITY_ROW)` it names, and that row */
+  rows: { kind: EntityKind; row: number; entity: CutEntity | Storey | PointSet }[];
+  /** `DATA` `(S, n, c)`, row-major */
+  shape: [number, number, number];
+  data: number[];
+}
+
+/** A user result that cannot be given: absent, refused, or not on entities. */
+export class EntityValuesRefused extends Error {}
+
+/**
+ * The values of the `ON_ENTITIES` user result `name` in the `.user.h5` at
+ * `path`, read on request (never by the index). It must stand in the index,
+ * which binds every row it names to `/entities`; otherwise it refuses with why.
+ */
+export function readEntityValues(h5: UserH5, path: string, name: string): EntityValues {
+  const user = readUserFile(h5, path, null);
+  if (!user.results.ok) throw new EntityValuesRefused(`${path}: /results ${user.results.reason}`);
+  const entry = user.results.value.entries.find((e) => e.name === name);
+  if (entry === undefined) {
+    const why = user.results.value.refused.find((r) => r.name === name);
+    throw new EntityValuesRefused(why ? `user result ${pyStr(name)} is refused: ${why.reason}: ${why.detail}` : `${path} holds no user result ${pyStr(name)}`);
+  }
+  if (entry.target !== "entities") throw new EntityValuesRefused(`user result ${pyStr(name)} is on ${entry.target}, not on entities`);
+  // The entry stands, so it bound its rows to a zone that read.
+  const held = user.entities;
+  if (held === null || !held.ok) throw new EntityValuesRefused(`user result ${pyStr(name)} stands with no /entities that reads`);
+  const t = new Tree(h5);
+  const f = openH5(h5, path);
+  try {
+    const zone = t.group(f, "results")!;
+    const { kinds, rows } = entityColumns(t, zone, entry);
+    const v = t.group(zone, `${entry.link}/RESULTS/ON_ENTITIES/values`)!;
+    const data = t.dataset(v, "DATA")!;
+    return {
+      name,
+      components: (textAttr(v, "COMPONENTS") ?? "").split(","),
+      states: entry.perState ? entry.states : null,
+      rows: kinds.map((kind, i) => {
+        if (!isEntityKind(kind)) throw new EntityValuesRefused(`user result ${pyStr(name)}: entity kind ${pyStr(kind)}`);
+        return { kind, row: rows[i]!, entity: entityRow(held.value, kind, rows[i]!) };
+      }),
+      shape: shape(data) as [number, number, number],
+      data: columnValues(data) as number[],
+    };
+  } finally {
+    f.close();
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -118,15 +118,16 @@ def test_app_floor_table_covers_the_zones_the_app_reads(read_ts: str) -> None:
     """The app reads these zones today; each must sit in its floor table.
 
     The set is the app's, not Python's: Python's ``_ZONE_KEY`` also holds
-    results, which the app does not read yet (see the next test), and the
-    ``.user.h5`` zones ``spectra`` and ``entities``, which slices VU7 and VU8
-    read. ``user_meta``, ``combinations``, ``user_results`` and ``modes`` are
-    the ``.user.h5`` zones the app checks since slice VU3a (#2687).
+    results, which the app does not read yet (see the next test).
+    ``user_meta``, ``combinations``, ``user_results`` and ``modes`` are the
+    ``.user.h5`` zones the app checks since slice VU3a (#2687), ``spectra``
+    since VU7a, and ``entities`` since VU8 (#2692).
     """
     floors = parse_zone_floors(read_ts)
     assert {
         "neutral", "opensees", "geometry", "provenance", "sequence",
         "user_meta", "combinations", "user_results", "modes", "spectra",
+        "entities",
     } <= set(floors), floors
 
 

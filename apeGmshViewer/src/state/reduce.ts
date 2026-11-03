@@ -20,6 +20,7 @@ import { THEME_MODES } from "../theme/tokens.ts";
 import {
   LINE_STATION_COMPONENTS,
   NAMED_VIEWS,
+  USER_ENTITY_KINDS,
   USER_RESULT_BASES,
   USER_RESULT_TARGETS,
   USER_ZONES,
@@ -534,7 +535,34 @@ export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): User
     });
     spectra = { ok: true, items, refused: refusalsOf(sp.value.refused), stale: zoneMark("spectra") };
   }
-  return { warnings, combinations, results, spectra, modes };
+  return { warnings, combinations, results, spectra, modes, entities: entitiesOf(index.entities ?? null, zoneMark("entities")) };
+}
+
+/** VU8: `/entities` as the renderer draws it: the standing rows, each with its `ENTITY_ROW`, and the refused ones. */
+function entitiesOf(e: NonNullable<UserIndexIn["entities"]> | null, stale: StaleMark): UserInfo["entities"] {
+  if (e === null) return null;
+  if (!e.ok) return { ok: false, reason: e.reason, stale };
+  const refused = e.value.refused.map((r) => ({ kind: oneOf(r.kind, USER_ENTITY_KINDS, `the kind of the refused entity ${r.name}`), row: r.row, name: r.name, reason: r.reason, detail: r.detail }));
+  /** The rows of `kind` that stand, each with its position. */
+  const standing = <T>(kind: (typeof USER_ENTITY_KINDS)[number], rows: readonly T[]) =>
+    rows.map((x, row) => ({ x, row })).filter(({ row }) => !refused.some((r) => r.kind === kind && r.row === row));
+  return {
+    ok: true,
+    cuts: standing("cut", e.value.cuts).map(({ x: c, row }) => ({
+      row,
+      name: c.name,
+      side: oneOf(c.side, ["positive", "negative"] as const, `the side of the cut ${c.name}`),
+      point: c.point,
+      normal: c.normal,
+      reference: c.reference,
+      elementIds: [...c.elementIds],
+      polygon: [...c.polygon],
+    })),
+    storeys: standing("storey", e.value.storeys).map(({ x: s, row }) => ({ row, name: s.name, level: s.level, reference: s.reference, nodeIds: [...s.nodeIds] })),
+    pointSets: standing("point_set", e.value.pointSets).map(({ x: p, row }) => ({ row, name: p.name, xyz: [...p.xyz], hostElement: [...p.hostElement] })),
+    refused,
+    stale,
+  };
 }
 
 /** The suffixes main/pairing.ts `classify` knows, longest first; a part file `<stem>.part-<N>.ladruno` is its stem's results. */
