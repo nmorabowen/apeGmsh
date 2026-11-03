@@ -181,11 +181,13 @@ if (which === "view") {
   // an offer still waiting to be sent (the new page will list it) is. main.ts makes its window once the app is ready.
   ready();
   await new Promise((r) => setImmediate(r));
-  const deliver = (name: string) => {
+  const deliver = (name: string, details: object = {}) => {
     const fns = pageEvents.get(name) ?? [];
     if (fns.length === 0) throw new Error(`main.ts listens for no ${name}`);
-    for (const fn of fns) fn({});
+    for (const fn of fns) fn(details);
   };
+  /** A navigation starts (Electron's `did-start-navigation` details); a reload while loading starts no `did-start-loading`. */
+  const navigate = (isMainFrame: boolean, isSameDocument: boolean) => deliver("did-start-navigation", { isMainFrame, isSameDocument });
   // VU15 (#2776): a load starts (`did-start-loading`) and commits its page in a frame (`did-navigate`);
   // only that frame's offersReady counts. Each load here commits a new frame, as Chromium may.
   let frames = 0;
@@ -233,6 +235,23 @@ if (which === "view") {
     commit(current);
     listening();
     out["stale:10 same frame, committed"] = { sent: offersSent() };
+    // VU15 review: navigations that replace no page leave it armed: an in-page one, and one in a subframe.
+    navigate(true, true);
+    present("present.json");
+    out["stale:11 in-page navigation"] = { sent: offersSent() };
+    navigate(false, false);
+    present("present.json");
+    out["stale:12 subframe navigation"] = { sent: offersSent() };
+    // A reload while the page is still loading: no did-start-loading, only the main frame's new navigation.
+    const loading = current;
+    navigate(true, false);
+    present("present.json");
+    out["stale:13 reload during load"] = { sent: offersSent() };
+    listening(pageEvent(loading)); // the page being replaced, still named by its frame until the new one commits
+    out["stale:14 reload during load, old page"] = { sent: offersSent() };
+    commit();
+    listening();
+    out["stale:15 reload during load, new page"] = { sent: offersSent() };
     process.stdout.write(`SET_DOORS ${JSON.stringify(out)}\n`);
     process.exit(0);
   }

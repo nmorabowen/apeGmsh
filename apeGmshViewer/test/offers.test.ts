@@ -286,15 +286,21 @@ test("D5: an offer the set cannot draw is listed as refused, with the compiler's
 // VU15 (#2776): the offer path has no User Combination resolver, and says so. Before, the compiler's
 // no-resolver reason ("this view has no user file ...") reached the list, which is wrong whenever the set's
 // user file is open. The oracle is the named reason, word for word, on both of D5's paths.
-const COMBINATION_REASON = 'User Combination "C1": combination offers are not supported yet';
+const COMBINATION_REASON = 'User Combination "C1" colours by nothing: combination offers are not supported yet';
 
 test("VU15: an offer of a combination contour is listed as refused, with the reason that it is a combination offer", async () => {
   const r = await rig();
   const contour = { field: "displacement", component: "z" };
-  r.runner.receive(offers([{ name: "combo", combination: "C1", contour }, { name: "combo-phase", combination: "C1" }]));
+  const element = { name: "combo-element", combination: "C1", contour: { ...contour, source: "element" } };
+  r.runner.receive(offers([{ name: "combo", combination: "C1", contour }, { name: "combo-phase", combination: "C1" }, element]));
   await r.tick();
   await r.tick();
   const s = r.store.get();
+  // A shot the compiler refuses before it asks for the combination keeps the compiler's own reason (VU15 review).
+  const invalid = compileShot(shotOf(offerNamed(s, "combo-element")), describeSet(s, []));
+  assert.equal(invalid.ok, false);
+  if (!invalid.ok) assert.equal(offerNamed(s, "combo-element").reason, invalid.reason);
+  assert.match(offerNamed(s, "combo-element").reason!, /contour\.source is "element"/);
   const o = offerNamed(s, "combo");
   assert.equal(o.status, "refused");
   assert.equal(o.reason, COMBINATION_REASON);

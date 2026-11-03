@@ -296,6 +296,22 @@ test("VU15: offersReady from a page being replaced, another frame or another web
   assert.equal(sent("stale:7 current page"), 2, "the current load's page listens: both waiting batches are sent");
   assert.equal(sent("stale:9 same frame, mid-load"), 2, "a load that will commit in the same frame: before the commit, the message is the old page's");
   assert.equal(sent("stale:10 same frame, committed"), 3, "and after it, the new page's");
+  assert.equal(sent("stale:11 in-page navigation"), 4, "an in-page navigation replaces no page: an offer is sent at once");
+  assert.equal(sent("stale:12 subframe navigation"), 5, "nor does a subframe's");
+});
+
+// VU15 review (#2790): on Electron 44 `did-start-loading` fires only on the idle-to-loading edge, so a reload while
+// the page loads is seen only as the main frame's new-document navigation.
+test("VU15: a reload while the page is still loading disarms it; the old page's late offersReady re-arms nothing", () => {
+  const r = run("stale", [`--file=${join(SET, "s.h5")}`]);
+  const sent = (name: string) => {
+    const a = r[name];
+    assert.ok(a && "sent" in a, `no send count for ${name}`);
+    return a.sent;
+  };
+  assert.equal(sent("stale:13 reload during load"), 5, "the reload started: a new offer waits");
+  assert.equal(sent("stale:14 reload during load, old page"), 5, "the page being replaced says it listens: nothing is sent");
+  assert.equal(sent("stale:15 reload during load, new page"), 6, "the new page commits and listens: the waiting offer is sent");
 });
 
 const source = run("source", [`--file=${join(SRC_SET, "s.h5")}`]);

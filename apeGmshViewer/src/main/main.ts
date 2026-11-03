@@ -547,7 +547,8 @@ function heardFromAgent(reach: Reach): void {
 /**
  * VU15 (#2776): the page that may say it listens for offers, as Electron names
  * a sender: the window's main frame as the current load committed it
- * (`did-navigate`). A load (`did-start-loading`) clears it until the new page
+ * (`did-navigate`). A load (`did-start-loading`, or a new document's
+ * `did-start-navigation` in the main frame) clears it until the new page
  * commits, because until then the page on screen is the one being replaced;
  * a page that commits in a new frame has a new process or frame id. So a late
  * `viewer:offersReady` from a page being replaced re-arms nothing.
@@ -1412,6 +1413,12 @@ app.whenReady().then(() => {
   if (renderJob) w.setContentSize(renderJob.spec.size[0], renderJob.spec.size[1]);
   // A page load drops the old page's subscriptions and the offers it listed.
   w.webContents.on("did-start-loading", pageLoading);
+  // VU15 review: `did-start-loading` fires only when the page goes from idle to loading, so a reload while the page
+  // is still loading (`deliver` reloads a page that has not subscribed yet) starts no such event. A new document
+  // in the main frame starts a navigation every time, so it is a page load too; an in-page or subframe one is not.
+  w.webContents.on("did-start-navigation", (d) => {
+    if (d.isMainFrame && !d.isSameDocument) pageLoading();
+  });
   // VU15: the load that commits is the one whose page may listen for offers.
   w.webContents.on("did-navigate", () => pageCommitted(w.webContents));
   w.on("closed", () => {
