@@ -1447,13 +1447,16 @@ export function loadsSummaryOf(s: State): LoadsSummary {
 /**
  * One arrow per record, `ARROW_STRIDE` floats: tip (3), unit direction (3),
  * nominal length in world units (1), sRGB colour (3), head count (1: 1 or 2),
- * mark (1: `BAR`), priority (1: magnitude over its kind's peak), and
- * thinning level (1, `thinningLevels`). The renderer draws each record as an
+ * mark (1: `BAR`), priority (1: magnitude over its kind's peak),
+ * thinning level (1, `thinningLevels`), and anchor (1: `ANCHOR`, whether the
+ * point is the arrow's tip or its tail). The renderer draws each record as an
  * instance (renderer/loads.ts): a line shaft and flat 2:1 heads sized in
  * pixels, with the shaft's length capped to a pixel band.
  */
-export const ARROW_STRIDE = 14;
-export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, priority: 12, level: 13 } as const;
+export const ARROW_STRIDE = 15;
+export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, priority: 12, level: 13, anchor: 14 } as const;
+/** The `anchor` field: the record's point is the tip (a load or reaction, pointing at the node) or the tail (a nodal vector, starting at it). */
+export const ANCHOR = { tip: 0, tail: 1 } as const;
 /** The `bar` field: no mark, an SP bar across the tip, or a reaction's 45° tick across the tail. */
 export const BAR = { none: 0, sp: 1, tick: 2 } as const;
 
@@ -1486,7 +1489,7 @@ function pushArrowToPoint(
   doubleHead = false,
   spCrossbar = false,
 ): void {
-  g.arrows.push(tip[0], tip[1], tip[2], dir[0], dir[1], dir[2], len, rgb[0], rgb[1], rgb[2], doubleHead ? 2 : 1, spCrossbar ? 1 : 0, priority, 0);
+  g.arrows.push(tip[0], tip[1], tip[2], dir[0], dir[1], dir[2], len, rgb[0], rgb[1], rgb[2], doubleHead ? 2 : 1, spCrossbar ? 1 : 0, priority, 0, ANCHOR.tip);
 }
 
 /** Push a comb bar joining the tails of two arrows (tip, unit or zero direction, nominal length). */
@@ -1564,9 +1567,11 @@ export function expandArrows(geom: Pick<Loads3DGeometry, "arrows" | "combs">, he
   const at = (tip: Vec3, dir: Vec3, back: number): [number, number, number] => [tip[0] - dir[0] * back, tip[1] - dir[1] * back, tip[2] - dir[2] * back];
   for (let o = 0; o < geom.arrows.length; o += ARROW_STRIDE) {
     const a = geom.arrows;
-    const tip: Vec3 = [a[o]!, a[o + 1]!, a[o + 2]!];
     const dir: Vec3 = [a[o + 3]!, a[o + 4]!, a[o + 5]!];
     const len = a[o + ARROW.len]!;
+    // A tail-anchored record's point is where the shaft starts: its tip is `len` along it.
+    const ahead = a[o + ARROW.anchor] === ANCHOR.tail ? len : 0;
+    const tip: Vec3 = [a[o]! + dir[0] * ahead, a[o + 1]! + dir[1] * ahead, a[o + 2]! + dir[2] * ahead];
     const h = Math.min(headLen, len);
     const side: Vec3 = Math.abs(dir[2]) < 0.9 ? [-dir[1], dir[0], 0] : [0, -dir[2], dir[1]];
     const sn = Math.hypot(...side) || 1;
@@ -2596,7 +2601,8 @@ export function buildSupports3D(s: State, blobs: BlobStore, opts?: BuildLoads3DO
   const arrows: GlyphBuffers = { arrows: [], combs: [] };
   const arcs: GlyphBuffers = { arrows: [], combs: [] };
   // One representative record per node for thinning, then every glyph of the node takes its level.
-  const perNode: number[] = [];
+  // One record per node, written as any record is, so it follows the record layout.
+  const perNode: GlyphBuffers = { arrows: [], combs: [] };
   const glyphNode: { arc: boolean; node: number }[] = [];
   let nodes = 0;
   for (const [id, dofs] of held) {
@@ -2616,10 +2622,10 @@ export function buildSupports3D(s: State, blobs: BlobStore, opts?: BuildLoads3DO
       drawn = true;
     }
     if (!drawn) continue;
-    perNode.push(tip[0], tip[1], tip[2], 0, 0, 1, len, rgb[0], rgb[1], rgb[2], 1, 0, 1, 0);
+    pushArrowToPoint(perNode, tip, [0, 0, 1], len, rgb, 1);
     nodes++;
   }
-  const levels = new Float32Array(perNode);
+  const levels = new Float32Array(perNode.arrows);
   thinningLevels(levels, radius);
   const a = new Float32Array(arrows.arrows);
   const c = new Float32Array(arcs.arrows);
