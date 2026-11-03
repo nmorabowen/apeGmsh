@@ -134,6 +134,49 @@ except AgentViewError as e:
   around 12!". The app does not rewrite captions; the voice is the
   agent's duty.
 
+### A study of variants — `<study>.variants.json` (ADR 0132 D8, D9)
+
+Runs of one model that differ in one parameter (stiffness, a cracked
+section, a mesh option) are a **study**. A manifest beside their sets lists
+them; the app reads it and never writes it. Write it as JSON, by hand or
+from a pipeline, to `architecture/schemas/variants.schema.json`:
+
+```json
+{ "format": "apegmsh-variants", "version": "1.0.0",
+  "variants": [
+    { "label": "Uncracked", "path": "plate_uncracked.h5", "params": { "Ie/Ig": 1.0 } },
+    { "label": "Cracked", "path": "cracked/plate_cracked.h5", "params": { "Ie/Ig": 0.35 } } ] }
+```
+
+- `path` names each variant's model file `<stem>.h5`, relative to the
+  manifest's folder, `/`-separated; subfolders are fine, leaving the folder
+  is not (`..`, an absolute path, a drive, a link out). Its results pair from
+  the stem as usual (`<stem>.ladruno`). `label` is unique; `params` values
+  are strings, finite numbers or booleans. A bad row is listed as refused
+  with its code (`bad-path`, `escapes`, `missing`, `duplicate`, ...), and the
+  other rows still open.
+- **In the viewer:** open the manifest (double-click, drop or argv). Its
+  first row opens as the window set, and the Variants panel lists every row.
+  **Switch** opens a row as the window set. **Compare** opens a row
+  read-only in a compare slot of its own: it never becomes the window set,
+  and nothing writes into it. **Show difference** then colours by the window
+  variant minus the compare variant, one nodal component, by node id, at the
+  stage and step shown. It is refused, with the reason in the banner, when
+  the two results do not state one mesh (`fem_hash`), when the compare set
+  lacks the stage, step time or component, and for a magnitude or an
+  element field. A node either side lacks is no data. A difference is never
+  a deformed shape.
+- **A combination across variants is refused.** A User Combination's terms
+  are states of the window set's own files; the difference is not a
+  combination, and on a User Combination it draws nothing and says so.
+- **Stills:** a spec names the manifest in `files.variants` (its rows must
+  include `files.model`, the window variant), and a shot names the compare
+  variant by label in `compare`, with a nodal `contour` and a `stage`:
+  `{"name": "diff", "stage": 0, "step": "last", "compare": "Cracked",
+  "contour": {"field": "DISPLACEMENT", "component": "y"}}`. The manifest
+  entry's contour reads `source: "difference"` with the two labels. To show
+  another window variant, render a spec whose `files.model` is that row.
+
 ## Finding catalog (v1 + Amendments 1, 4) → next action
 
 New codes are an ADR 0094 amendment. The library does not emit `fix=`

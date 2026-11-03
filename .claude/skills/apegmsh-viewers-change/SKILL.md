@@ -100,6 +100,16 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
 - [ ] Viewer test traps (`caplog`, `importorskip`, `timeout=`, GL exhaustion, offscreen at
       import) are in `internal_docs/viewer_lessons.md`.
 
+## apeGmshViewer doors (the Electron app, `apeGmshViewer/src/main/`)
+
+- [ ] A door the page calls never takes a path to open or read (owner ruling option A,
+      #2753): main chooses the file, from the window set, an offer row, or a manifest row
+      the page names by index and label (ADR 0132 D9; `reader/variants.ts` `rowOf`).
+- [ ] A door onto a second set (VU10's compare slot) never touches `windowSet`, the gesture
+      record (`dropped`) or `followModel`, and reads through its own `ResultsHost`. Prove each
+      refusal in a driver test (`test/main/*Driver.ts`), and break it once in a scratch copy
+      (`test/main/variantDoors.test.ts` is the pattern).
+
 ## Before the PR
 
 - [ ] Run the visual-check guide, and attach its reference and candidate stills to the PR.

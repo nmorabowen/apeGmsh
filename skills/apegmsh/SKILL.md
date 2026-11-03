@@ -80,7 +80,7 @@ What each file contains (do not read them all):
 - `api-cheatsheet.md` — public `g.*` / `apeSees` map (matching heading; signatures via MCP `lookup` / lookup CLI)
 - `fem-broker.md` — `FEMData`, `model.h5`
 - `opensees-bridge.md` — `apeSees`, stages, emit, ndf, remote
-- `assess.md` — verdict + stills after mesh/solve (not Qt); apeGmshViewer stills (`render_stills`)
+- `assess.md` — verdict + stills after mesh/solve (not Qt); apeGmshViewer stills (`render_stills`); a study of variants (`<study>.variants.json`: switch, compare, difference)
 - `results.md` — `Results.from_*`, plot, render, lineage
 - `compose.md` — Assembly, compose readers, `from_h5`
 - `rebar.md` — `g.rebar` cages
