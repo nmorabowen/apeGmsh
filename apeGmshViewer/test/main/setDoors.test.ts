@@ -39,9 +39,11 @@ const copies: [string, string[]][] = [
 for (const [from, tos] of copies) for (const to of tos) copyFileSync(join(FIX, from), join(root, to));
 const spec = join(root, "spec.json");
 writeFileSync(spec, JSON.stringify({ spec: SPEC_VERSION, files: { model: join(root, "set", "s.h5"), results: join(root, "set", "s.results.h5") }, shots: [{ name: "a" }] }));
+// what a second instance's `--present` offers the view window: the elsewhere set
+writeFileSync(join(root, "present.json"), JSON.stringify({ spec: SPEC_VERSION, files: { model: join(root, "elsewhere", "s.h5") }, shots: [{ name: "o" }] }));
 
 type Seen = { ok: boolean; error?: string; seq?: number; scanId?: number; stages?: number; geometry?: boolean };
-type Answers = Record<string, { resolved: Seen } | { rejected: string }>;
+type Answers = Record<string, { resolved: Seen } | { rejected: string } | { onScreen: string | null }>;
 
 function run(which: string, mainArgs: string[]): Answers {
   const stdout = execFileSync(process.execPath, [DRIVER, `--case=${which}`, `--dir=${root}`, ...mainArgs], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
@@ -112,7 +114,30 @@ test("VU12: a BigInt or circular request resolves with the shape it needed, neve
   assert.match(ro.error ?? "", /^requestOpen needs a path; got .*\[Circular \*1\]/);
   const oo = resolved(view, "viewer:offerOpen bigint");
   assert.equal(oo.ok, false);
-  assert.match(oo.error ?? "", /^offerOpen needs a path; got 5n$/);
+  assert.match(oo.error ?? "", /^offerOpen needs a path and the files it needs; got 5n, \[\]$/);
+});
+
+/** The model on screen after a step, as the driver recorded it. */
+const onScreen = (name: string) => {
+  const a = view[name];
+  assert.ok(a && "onScreen" in a, `no set recorded for ${name}`);
+  return a.onScreen;
+};
+
+test("VU12: offerOpen opens only a set main offered, or the set an offer left; anything else is refused and the set stays", () => {
+  const here = join(SET, "s.h5");
+  const there = join(root, "elsewhere", "s.h5");
+  const un = resolved(view, "offer:1 un-offered");
+  assert.equal(un.ok, false);
+  assert.match(un.error ?? "", /^offerOpen opens only the files of a set main offered or the set an offer left; refused .*outside/);
+  assert.equal(onScreen("offer:1 model"), here, "a refused offer leaves the set where it was");
+  assert.match(resolved(view, "offer:2 empty needs").error ?? "", /^offerOpen needs a path and the files it needs; got .*, \[\]$/);
+  assert.match(resolved(view, "offer:3 un-offered need").error ?? "", /refused .*outside/);
+  assert.equal(onScreen("offer:3 model"), here);
+  assert.equal(resolved(view, "offer:4 offered").ok, true, resolved(view, "offer:4 offered").error);
+  assert.equal(onScreen("offer:4 model"), there, "the offered set opened");
+  assert.equal(resolved(view, "offer:5 back").ok, true, resolved(view, "offer:5 back").error);
+  assert.equal(onScreen("offer:5 model"), here, "Back reopened the set the offer left");
 });
 
 test("VU12: a drop moves the set; the set it left is refused, though the host still indexes its results", () => {
@@ -147,6 +172,13 @@ test("VU12: --render reads the job's set: the spec's native results file, and no
   const out = join(root, "render-out");
   judgeBattery(run("render", ["--mode=render", `--spec=${spec}`, `--out=${out}`]), join(SET, "s.results.h5"), ["ladruno", "traversal", "elsewhere"], true);
 });
+
+for (const m of ["describe", "measure"]) {
+  test(`VU12: --mode=${m} reads the set of its --file`, () => {
+    const outArg = m === "describe" ? join(root, "describe-out") : join(root, "measure.json");
+    judgeBattery(run(m, [`--mode=${m}`, `--file=${join(SET, "s.h5")}`, `--out=${outArg}`]), join(SET, "s.ladruno"), ["native", "traversal", "elsewhere"], true);
+  });
+}
 
 test("VU12: a capture reads the set of its --file", () => {
   judgeBattery(run("capture", ["--mode=capture", `--file=${join(SET, "s.h5")}`, `--out=${join(root, "capture.png")}`]), join(SET, "s.ladruno"), ["native", "traversal", "elsewhere"], false);

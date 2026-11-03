@@ -4,7 +4,7 @@
 // It runs in a child process, because main.ts reads its mode from argv and
 // watches the set it opens; it prints one JSON line and exits.
 //
-//   node test/main/setDoorsDriver.ts --case=<view|none|render|capture> --dir=<root> [main's own --mode= --file= --spec= --out=]
+//   node test/main/setDoorsDriver.ts --case=<view|none|render|capture|describe|measure> --dir=<root> [main's own --mode= --file= --spec= --out=]
 //
 // `<root>` holds `set/` (the set the window opens), `outside/` and `elsewhere/`.
 
@@ -22,7 +22,7 @@ const root = opt("dir");
 const which = opt("case");
 if (!root || !which) throw new Error("setDoorsDriver needs --case= and --dir=");
 
-const { handlers } = (await import(STUB)) as typeof import("./electronStub.ts");
+const { appEvents, handlers } = (await import(STUB)) as typeof import("./electronStub.ts");
 await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "main.ts")).href);
 
 const set = join(root, "set");
@@ -43,7 +43,7 @@ const GEOMETRY = {
 
 /** The parts of an answer the test judges; the arrays stay in this process. */
 type Seen = { ok: boolean; error?: string; seq?: number; scanId?: number; stages?: number; geometry?: boolean };
-const out: Record<string, { resolved: Seen } | { rejected: string }> = {};
+const out: Record<string, { resolved: Seen } | { rejected: string } | { onScreen: string | null }> = {};
 const event = { sender: { isDestroyed: () => false, send: () => undefined } };
 
 async function call(name: string, channel: string, ...args: unknown[]): Promise<Seen | null> {
@@ -106,6 +106,20 @@ if (which === "view") {
   // the open doors' error lines are total too (they open nothing for a path that is not a string)
   await call("viewer:requestOpen circular", "viewer:requestOpen", circular);
   await call("viewer:offerOpen bigint", "viewer:offerOpen", 5n, []);
+  // offerOpen opens only what main offered, or the set an offer left (its Back).
+  const modelOf = async () => ((await handlers.get("viewer:currentSet")!(event)) as { model: string | null } | null)?.model ?? null;
+  const outside = join(root, "outside", "s.ladruno");
+  await call("offer:1 un-offered", "viewer:offerOpen", outside, [outside]);
+  out["offer:1 model"] = { onScreen: await modelOf() };
+  // a second instance's `--present` of a spec over the elsewhere set (main.ts `heardFromAgent`; its ack pipe has no listener)
+  for (const fn of appEvents.get("second-instance") ?? []) fn({}, [], root, { kind: "present", spec: join(root, "present.json"), ack: join(root, "no-such-pipe") });
+  await call("offer:2 empty needs", "viewer:offerOpen", RESULTS.elsewhere, []);
+  await call("offer:3 un-offered need", "viewer:offerOpen", RESULTS.elsewhere, [join(elsewhere, "s.h5"), outside]);
+  out["offer:3 model"] = { onScreen: await modelOf() };
+  await call("offer:4 offered", "viewer:offerOpen", RESULTS.elsewhere, [join(elsewhere, "s.h5"), RESULTS.elsewhere]);
+  out["offer:4 model"] = { onScreen: await modelOf() };
+  await call("offer:5 back", "viewer:offerOpen", ladruno, [join(set, "s.h5"), ladruno]);
+  out["offer:5 model"] = { onScreen: await modelOf() };
   // A drop moves the set: the old set's results, still indexed by the host, are refused; the new set's read.
   await call("drop:1 requestOpen", "viewer:requestOpen", join(elsewhere, "s.h5"));
   await call("drop:2 readStep old", "results:readStep", step(ladruno, 200));
@@ -130,6 +144,9 @@ if (which === "view") {
   // a capture paces its scan 2 s a step, so only the refusals are scanned here
   const { ladruno, ...refused } = RESULTS;
   await battery(ladruno, refused, GEOMETRY.paired, false);
+} else if (which === "describe" || which === "measure") {
+  const { ladruno, ...refused } = RESULTS;
+  await battery(ladruno, refused, GEOMETRY.paired);
 } else throw new Error(`setDoorsDriver: unknown --case=${which}`);
 
 process.stdout.write(`SET_DOORS ${JSON.stringify(out)}\n`);

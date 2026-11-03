@@ -79,7 +79,7 @@ import { openGeometry, openLineage, openProvenance, openStageElements } from "./
 import { resolveSpecFiles } from "../spec/files.ts";
 import { outRefusal, prepareRender, PROFILE_DIR, type JobFs, type RenderJobFiles } from "../spec/job.ts";
 import { MANIFEST_FILE, refusedManifest } from "../spec/manifest.ts";
-import { agentArgsOf, presentDocument, SNAPSHOT_PNG, SNAPSHOT_VIEW, type PresentedDocument } from "../spec/snapshot.ts";
+import { agentArgsOf, presentDocument, SNAPSHOT_PNG, SNAPSHOT_VIEW, type OfferPayload, type PresentedDocument } from "../spec/snapshot.ts";
 import type { OfferIn } from "../state/types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -482,6 +482,12 @@ if (mode === "view") {
 
 let offersReady = false;
 let offersWaiting: OfferIn[][] = [];
+/**
+ * VU12 (#2753): the files `viewer:offerOpen` may open, all chosen by main: the
+ * model and results of every offer main sent in `viewer:offers`, and of each
+ * set the window left when an offer opened (its Back reopens that set).
+ */
+const offerable: string[] = [];
 let snapshotSeq = 0;
 const snapshotReplies = new Map<number, (reply: SnapshotReply) => void>();
 type SnapshotReply = { ok: true; view: unknown; manifest: RunManifest } | { ok: false; reason: string };
@@ -496,6 +502,11 @@ function heardFromAgent(reach: Reach): void {
   try {
     if (reach.kind === "present") {
       const p = presentOffers(reach.spec);
+      for (const o of p.offers) {
+        if (o.refused !== undefined) continue; // a refused row is listed, never applied, and carries no files
+        const { model, results } = (o.payload as OfferPayload).files;
+        offerable.push(model, ...(results === null ? [] : [results]));
+      }
       if (win && offersReady) win.webContents.send("viewer:offers", p.offers);
       else offersWaiting.push(p.offers);
       // The sender checked this file a moment ago. Changed since, it is listed as refused, and the sender hears why.
@@ -851,12 +862,19 @@ ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
 });
 
 // ADR 0128 D5: the click on an offer opens its set. Nothing an agent named raises a modal: a file that has gone refuses the offer in the list.
+// VU12 (#2753): the path and every one of `needs` (at least one) must be `offerable`; any other is refused and the set stays.
 ipcMain.handle("viewer:offerOpen", (_e, path: unknown, needs: unknown) => {
-  if (typeof path !== "string" || !Array.isArray(needs)) return { ok: false, reason: `offerOpen needs a path; got ${shown(path)}` };
-  for (const f of needs as unknown[]) {
-    if (typeof f !== "string" || !existsSync(f)) return { ok: false, reason: `no such file: ${String(f)}` };
+  if (typeof path !== "string" || !Array.isArray(needs) || needs.length === 0) return { ok: false, reason: `offerOpen needs a path and the files it needs; got ${shown(path)}, ${shown(needs)}` };
+  for (const f of [path, ...(needs as unknown[])]) {
+    if (typeof f !== "string" || !offerable.some((o) => samePath(o, f))) return { ok: false, reason: `offerOpen opens only the files of a set main offered or the set an offer left; refused ${shown(f)}` };
+  }
+  for (const f of needs as string[]) {
+    if (!existsSync(f)) return { ok: false, reason: `no such file: ${f}` };
     if (!statSync(f).isFile()) return { ok: false, reason: `${f} is not a file` };
   }
+  // The set on screen becomes offerable: an offer's Back (or a refused offer's put-back) reopens it through this door.
+  const left = currentSet();
+  if (left) for (const f of [left.model, left.results]) if (f !== null) offerable.push(f);
   quietFails = [];
   try {
     return openPath(path, true) ? { ok: true } : { ok: false, reason: quietFails.join("; ") || `cannot open ${path}` };

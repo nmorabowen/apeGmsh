@@ -18,8 +18,13 @@ function strict<T extends object>(name: string, known: T): T {
   });
 }
 
+/** The `app.on` listeners, by event, so a test can deliver a second instance's call (VU12). */
+export const appEvents = new Map<string, Handler[]>();
+
 export const app = strict("app", {
-  on: () => undefined,
+  on: (event: string, fn: Handler) => {
+    appEvents.set(event, [...(appEvents.get(event) ?? []), fn]);
+  },
   exit: (code?: number) => {
     throw new Error(`electronStub: main.ts called app.exit(${code})`);
   },
