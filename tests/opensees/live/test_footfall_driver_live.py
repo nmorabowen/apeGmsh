@@ -211,76 +211,60 @@ def test_result_inspection_surfaces() -> None:
 
 
 @pytest.mark.live
-def test_to_results_writes_a_native_map_with_nan_off_the_response_set(
+def test_to_results_writes_a_user_h5_map_with_nan_off_the_response_set(
     tmp_path,
 ) -> None:
-    """ADR 0109 S3: ``to_results`` writes one static-kind stage, one
-    time station, with the three components ``NaN`` outside the
-    response nodes.
+    """ADR 0131 D6: ``to_results`` writes ``<stem>.user.h5``, one state-free
+    ``"footfall"`` entry on the nodes, ``NaN`` outside the response nodes.
 
-    ``Results.from_fem(fem, path, kind="native")`` is the documented
-    read path (ADR 0109 D5), but it needs ``fem.to_native_h5`` /
-    ``fem.snapshot_id`` to materialise a bound model — the lightweight
-    ``FEMStub`` this file's fixture returns implements neither, so it
-    cannot bind through ``from_fem``. Read back through
-    ``NativeReader`` instead, the same low-level path
-    ``tests/test_results_native_modes.py`` uses to verify a
-    ``NativeWriter`` round-trip.
+    The ``FEMStub`` the evaluation runs on has no ``snapshot_id`` to pair a
+    model archive with, so the map is placed on a ``_MockFem`` over the same
+    node ids, whose minimal archive holds its ``fem_hash``. Read back through
+    ``UserFile``: the reader is the oracle, and the values must equal the
+    in-memory result bit for bit.
     """
-    from apeGmsh.results.readers import NativeReader
+    import h5py
+
+    from apeGmsh.results.user import UserFile
+    from tests.conftest import _MockFem
 
     result = _high_frequency_floor().footfall_walking(
         num_modes=2, body_weight=_Q, g=_G, response_nodes=[2, 4],
         dof=1, damp=0.03, solver=_SOLVER,
     )
-    fem = make_two_column_frame()
-    path = result.to_results(fem, tmp_path / "footfall.h5")
-    assert path == tmp_path / "footfall.h5"
+    fem = _MockFem(make_two_column_frame().nodes.ids)
+    model = tmp_path / "footfall.h5"
+    with h5py.File(model, "w") as f:
+        f.create_group("meta/lineage").attrs["fem_hash"] = fem.snapshot_id
+    path = result.to_results(fem, tmp_path / "footfall.user.h5", model_h5=model)
+    assert path == tmp_path / "footfall.user.h5"
 
-    with NativeReader(path) as r:
-        stages = r.stages()
-        assert len(stages) == 1
-        stage = stages[0]
-        assert stage.kind == "static"
-        assert stage.n_steps == 1
+    user = UserFile(path)
+    [entry] = user.results().entries
+    assert (entry.name, entry.basis, entry.per_state) == ("footfall", "model", False)
+    back = user.read_result("footfall")
+    assert back.components == ("footfall_ap", "footfall_ratio", "footfall_fdom")
+    np.testing.assert_array_equal(np.asarray(back.ids).ravel(), [1, 2, 3, 4])
+    data = np.asarray(back.data)
+    assert data.shape == (1, 4, 3)
 
-        ap = r.read_nodes(stage.id, "footfall_ap")
-        ratio = r.read_nodes(stage.id, "footfall_ratio")
-        fdom = r.read_nodes(stage.id, "footfall_fdom")
-
-    np.testing.assert_array_equal(ap.node_ids, np.asarray(fem.nodes.ids))
-    for slab in (ap, ratio, fdom):
-        assert slab.values.shape == (1, 4)
-
-    # Response nodes are 2 and 4 (rows 1, 3 of fem.nodes.ids == [1,2,3,4]);
-    # the base nodes 1 and 3 were never evaluated -> NaN.
-    for slab in (ap, ratio, fdom):
-        assert np.isnan(slab.values[0, 0])
-        assert np.isnan(slab.values[0, 2])
-        assert np.all(np.isfinite(slab.values[0, [1, 3]]))
-
-    np.testing.assert_allclose(ap.values[0, [1, 3]], result.a_p, rtol=1e-12)
-    np.testing.assert_allclose(
-        ratio.values[0, [1, 3]], result.ratio, rtol=1e-12,
-    )
-    np.testing.assert_allclose(
-        fdom.values[0, [1, 3]], result.f_dom, rtol=1e-12,
-    )
+    # Response nodes are 2 and 4 (rows 1, 3 of [1, 2, 3, 4]); the base
+    # nodes 1 and 3 were never evaluated -> NaN.
+    assert np.isnan(data[0, [0, 2]]).all()
+    for col, values in enumerate((result.a_p, result.ratio, result.f_dom)):
+        assert data[0, [1, 3], col].tobytes() == np.asarray(values, "f8").tobytes()
 
 
 @pytest.mark.live
-def test_to_results_binds_through_from_fem_on_a_real_fem(
+def test_to_results_pairs_with_the_ops_h5_archive_of_a_real_fem(
     g, tmp_path,
 ) -> None:
-    """The how-to's documented read path, at a real (not stub) fem.
+    """The how-to's documented route, at a real (not stub) fem.
 
-    ``test_to_results_writes_a_native_map_with_nan_off_the_response_set``
-    above reads back through ``NativeReader`` because the lightweight
-    ``FEMStub`` fixture cannot materialise a bound model
-    (``fem.to_native_h5`` / ``fem.snapshot_id`` are missing). A fem from
-    ``g.mesh.queries.get_fem_data`` (the how-to's own recipe) has both, so
-    ``Results.from_fem`` should bind for real here and the ratio map
-    should render, NaN nodes and all.
+    ``ops.h5`` writes the model archive whose ``/meta/lineage`` the
+    ``.user.h5`` pairs with; its ``fem_hash`` is ``fem.snapshot_id``, so
+    ``to_results`` accepts it. The map reads back through ``UserFile`` and
+    the one response node carries the in-memory ratio bit for bit.
     """
     # Same 6 m distributed-mass floor bay as the how-to
     # (docs/how-to/footfall-vibration.md): mass=500 kg/m puts the first
@@ -316,26 +300,19 @@ def test_to_results_binds_through_from_fem_on_a_real_fem(
         dof=2, damp=0.03,
     )
 
-    from apeGmsh.results import Results
+    from apeGmsh.results.user import UserFile
 
-    path = result.to_results(fem, tmp_path / "footfall_from_fem.h5")
-    r = Results.from_fem(fem, path, kind="native", cache_root=tmp_path)
-    assert r.fem is not None
-    assert r.model is not None and r.model.fem is not None
+    model = tmp_path / "bay.h5"
+    ops.h5(str(model))
+    path = result.to_results(fem, tmp_path / "bay.user.h5", model_h5=model)
 
-    slab = r.nodes.get(component="footfall_ratio")
-    assert slab.values.shape == (1, fem.nodes.ids.size)
-    finite = np.isfinite(slab.values[0])
+    user = UserFile(path)
+    assert user.fem_hash == fem.snapshot_id
+    assert user.model_hash is not None
+    back = user.read_result("footfall")
+    np.testing.assert_array_equal(
+        np.asarray(back.ids).ravel(), np.asarray(fem.nodes.ids))
+    ratio = np.asarray(back.data)[0, :, 1]
+    finite = np.isfinite(ratio)
     assert int(finite.sum()) == 1  # exactly the one response node
-    np.testing.assert_allclose(
-        slab.values[0][finite], result.ratio, rtol=1e-12,
-    )
-
-    out = tmp_path / "footfall_ratio.png"
-    picture = r.render(out, view="contour", component="footfall_ratio")
-    if picture is None:
-        assert not out.exists()
-    else:
-        assert picture == out
-        assert out.exists()
-        assert out.stat().st_size > 0
+    assert ratio[finite].tobytes() == np.asarray(result.ratio, "f8").tobytes()
