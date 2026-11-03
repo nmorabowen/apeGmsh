@@ -31,20 +31,15 @@ async function atStep(step: number, withTensor: boolean) {
   return here()!;
 }
 
-test("setPrincipal: defaults, a change of one field, and refusals of a bad value", () => {
+test("setPrincipal: defaults, a change of one setting, and refusals of a bad value", () => {
   assert.deepEqual(initialState.principal, initialPrincipal);
-  assert.deepEqual(initialPrincipal, { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true, measured: null });
+  assert.deepEqual(initialPrincipal, { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true });
   const s = reduce(initialState, { type: "setPrincipal", on: true, show: [true, false, false], head: "arrow" });
   assert.deepEqual([s.principal.on, s.principal.show, s.principal.head], [true, [true, false, false], "arrow"]);
   assert.equal(reduce(s, { type: "setPrincipal", show: [true, false, false] }), s, "the same show: no change");
   for (const bad of [{ scale: 0 }, { headSize: -1 }, { show: [true, true] }, { head: "both" }, { cmap: "rainbow" }, { on: "yes" }, { field: 3 }]) {
     assert.throws(() => reduce(initialState, { type: "setPrincipal", ...(bad as object) } as never), RangeError, JSON.stringify(bad));
   }
-  const m = { type: "principalMeasured" as const, stage: "stage_0", field: "stress", points: 4, maxAbs: 2, refused: [] };
-  assert.equal(reduce(initialState, m), initialState, "off: nothing measured");
-  const measured = reduce(s, m);
-  assert.deepEqual(measured.principal.measured, { stage: "stage_0", field: "stress", points: 4, maxAbs: 2, refused: [] });
-  assert.equal(reduce(measured, { type: "setPrincipal", on: false }).principal.measured, null);
 });
 
 test("the stage's fields: stress and strain; the step carries their components only while the card is on", async () => {
@@ -72,8 +67,7 @@ test("the layer: tail-anchored arrows at the 24 Gauss points, two per in-plane p
     const g = layer.cones.geometry as THREE.InstancedBufferGeometry;
     // Plane stress: zz = 0 is one principal at every point, below the noise floor; the two in-plane ones draw.
     assert.equal(g.instanceCount, 24 * 2 * 2);
-    assert.equal(layer.measured?.points, 24);
-    assert.equal(layer.measured?.field, "stress");
+    assert.equal(layer.drawnPoints, 24);
     const anchor = g.getAttribute("aAnchor");
     assert.ok(anchor, "the shader reads the anchor");
     for (let i = 0; i < g.instanceCount; i++) assert.equal(anchor.getX(i), 1);
@@ -90,7 +84,7 @@ test("the layer: tail-anchored arrows at the 24 Gauss points, two per in-plane p
     h.store.dispatch({ type: "setPrincipal", on: false });
     layer.sync(h.store.get(), h.blobs, null, d);
     assert.equal(layer.root.visible, false);
-    assert.equal(layer.measured, null);
+    assert.equal(layer.drawnPoints, 0);
   } finally {
     layer.dispose();
     h.store.dispatch({ type: "setPrincipal", head: "axis", show: [true, true, true] });

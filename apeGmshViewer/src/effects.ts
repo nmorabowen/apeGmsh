@@ -1034,7 +1034,8 @@ export class Effects {
           ? (st.lineStations?.[0] ?? null)
           : null;
     // The Principal card reads the components of its tensor field (a verified file's only: `principalFieldOf`).
-    const tensor = s.principal.on ? (principalFieldOf(s)?.components ?? null) : null;
+    const components = s.principal.on ? principalFieldOf(s)?.components : undefined;
+    const tensor = components?.length ? components : null;
     const key = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
     if (key === this.stepKey) return;
     this.stepKey = key;

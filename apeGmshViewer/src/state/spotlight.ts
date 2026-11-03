@@ -153,7 +153,6 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
   setSupports: { kind: "expose", command: "toggle-supports", description: "Toggle the restraint glyphs at the supports (the Display card's BC)" },
   setPrincipal: { kind: "expose", command: "toggle-principal", description: "Toggle or configure the principal stress or strain arrows at the Gauss points" },
-  principalMeasured: { kind: "system", reason: "dispatched by the viewport after drawing the principal arrows of a step" },
   setReactions: { kind: "expose", command: "toggle-reactions", description: "Toggle or configure the reaction-force arrows of the results step" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
   toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },

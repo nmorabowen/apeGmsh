@@ -151,8 +151,6 @@ export class Viewport {
   readonly loads = new LoadsLayer();
   readonly reactions = new ReactionsLayer();
   readonly principal = new PrincipalLayer();
-  /** The principal arrows last reported to the card (`principalMeasured`). */
-  private principalReported: string | null = null;
   /** The Display card's BC toggle: restraint glyphs at the supports. */
   readonly supports = new SupportsLayer();
   /** VU8: the `/entities` of the set's `.user.h5` (renderer/entities.ts). */
@@ -729,11 +727,6 @@ export class Viewport {
     if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || principal) {
       this.requestRender();
     }
-    // The card states what was drawn: reported once per change, not from inside this listener.
-    const m = this.principal.measured;
-    const sig = m ? JSON.stringify(m) : null;
-    if (m && sig !== this.principalReported) queueMicrotask(() => this.store.dispatch({ type: "principalMeasured", ...m }));
-    this.principalReported = sig;
   }
 
   /**

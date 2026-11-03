@@ -53,7 +53,8 @@ export interface TensorGroup {
  * A stress or strain field of the stage: the groups of one `.ladruno` RESULT
  * (`stress`, `strain`; each element class its own group) whose components make
  * a tensor. A group needs xx, yy and xy (the in-plane tensor); the others are 0
- * when absent. `refused` names a group of the RESULT that cannot be drawn.
+ * when absent. `refused` names a group of the field that cannot be drawn; a
+ * field whose every group is refused is kept, so the card can say why.
  */
 export interface TensorField {
   name: string;
@@ -64,31 +65,37 @@ export interface TensorField {
   refused: string[];
 }
 
-/** The stage's tensor fields, in the order of their first group. */
+/**
+ * The stage's tensor fields, in the order of their first group. A group that
+ * records both tensors gives one group to each (a field per family); a slot
+ * named twice within one family refuses that family's group.
+ */
 export function tensorFields(groups: readonly GaussGroup[]): TensorField[] {
   const out = new Map<string, TensorField>();
   for (const g of groups) {
-    const slots: (string | null)[] = [null, null, null, null, null, null];
-    let family: TensorFamily | null = null;
-    let mixed = false;
+    const byFamily = new Map<TensorFamily, { slots: (string | null)[]; twice: boolean }>();
     for (const c of g.components) {
       const t = tensorSlotOf(c);
       if (!t) continue;
-      if (family && family !== t.family) mixed = true;
-      family ??= t.family;
-      if (slots[t.voigt] === null) slots[t.voigt] = c;
-      else mixed = true;
+      let f = byFamily.get(t.family);
+      if (!f) byFamily.set(t.family, (f = { slots: [null, null, null, null, null, null], twice: false }));
+      if (f.slots[t.voigt] === null) f.slots[t.voigt] = c;
+      else f.twice = true;
     }
-    if (!family) continue;
-    const name = g.id.includes("/") ? g.id.slice(0, g.id.indexOf("/")) : family;
-    let f = out.get(name);
-    if (!f) out.set(name, (f = { name, family, groups: [], components: [], refused: [] }));
-    const missing = [0, 1, 3].filter((v) => slots[v] === null).map((v) => ["xx", "yy", "zz", "xy", "yz", "xz"][v]);
-    if (mixed || family !== f.family) f.refused.push(`group ${g.id}: its components name one tensor slot twice, or two tensors`);
-    else if (missing.length) f.refused.push(`group ${g.id}: no ${missing.join(", ")} component, so its tensor is not known`);
-    else {
-      f.groups.push({ id: g.id, slots });
-      for (const c of slots) if (c !== null && !f.components.includes(c)) f.components.push(c);
+    const base = g.id.includes("/") ? g.id.slice(0, g.id.indexOf("/")) : null;
+    for (const [family, { slots, twice }] of byFamily) {
+      // A `.ladruno` group is one RESULT (its id's prefix); a group of both tensors is named by each family.
+      const name = base !== null && byFamily.size === 1 ? base : family;
+      let f = out.get(name);
+      if (!f) out.set(name, (f = { name, family, groups: [], components: [], refused: [] }));
+      const missing = [0, 1, 3].filter((v) => slots[v] === null).map((v) => ["xx", "yy", "zz", "xy", "yz", "xz"][v]);
+      if (twice) f.refused.push(`group ${g.id}: its components name one ${family} slot twice`);
+      else if (family !== f.family) f.refused.push(`group ${g.id}: a ${family} in the ${f.family} field ${JSON.stringify(name)}`);
+      else if (missing.length) f.refused.push(`group ${g.id}: no ${missing.join(", ")} ${family} component, so its tensor is not known`);
+      else {
+        f.groups.push({ id: g.id, slots });
+        for (const c of slots) if (c !== null && !f.components.includes(c)) f.components.push(c);
+      }
     }
   }
   return [...out.values()];

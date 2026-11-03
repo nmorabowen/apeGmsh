@@ -10,7 +10,7 @@
 // Follows ADR 0112 D6 (`panel-allow-list`): imports only `store`, `selectors`,
 // `types`, and `ui/dom`.
 
-import { CMAP_NAMES, fmtValue, principalFieldOf, principalFieldsOf, rampCss } from "../state/selectors.ts";
+import { CMAP_NAMES, principalFieldOf, principalFieldsOf, rampCss } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { ContourCmap, Event, PrincipalHead } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
@@ -138,24 +138,19 @@ export function renderPrincipal(s: State, dispatch: (e: Event) => void = () => {
   optsRow.append(cmapSelect, thinBtn);
   box.append(optsRow);
 
-  // The range drawn: -max (the map's low end) to +max, compression to tension.
-  const m = p.on && p.measured && p.measured.field === field.name ? p.measured : null;
+  // The map runs over -max..max of the step drawn: compression at its low end, tension at its high end.
   const ramp = el("div", "legend-row principal-ramp-row");
   const chip = el("span", "chip principal-ramp");
   chip.style.background = rampCss(p.cmap);
-  ramp.append(
-    el("span", "principal-range-min", m ? fmtValue(-m.maxAbs) : "−max"),
-    chip,
-    el("span", "principal-range-max", m ? fmtValue(m.maxAbs) : "+max"),
-    el("span", "legend-count", m ? `${m.points.toLocaleString()} ${m.points === 1 ? "point" : "points"}` : "compression · tension"),
-  );
+  chip.title = "the colour of the signed principal value, over -max..max of the step on screen";
+  ramp.append(el("span", "principal-range-min", "compression"), chip, el("span", "principal-range-max", "tension"));
   box.append(ramp);
 
   // A 2-D group records no zz: it is taken as 0 (plane stress for a stress, plane strain for a strain).
   if (field.groups.some((g) => g.slots[2] === null)) {
     box.append(el("div", "legend-note principal-note", `zz not recorded: taken as 0 (${field.family === "stress" ? "plane stress" : "plane strain"})`));
   }
+  if (field.family === "strain") box.append(el("div", "legend-note principal-note", "shear strains read as engineering (γ = 2ε), halved for the tensor"));
   for (const why of field.refused) box.append(el("div", "legend-note principal-note", `not drawn: ${why}`));
-  for (const r of m?.refused ?? []) box.append(el("div", "legend-note principal-note", `${r.elements.toLocaleString()} ${r.elements === 1 ? "element" : "elements"} not placed: ${r.reason}`));
   return box;
 }

@@ -16,7 +16,7 @@ import { deformedPositions } from "../state/deform.ts";
 import { gaussBasePositions, gaussDisplacements } from "../state/gaussPoints.ts";
 import { buildPrincipal3D, principalPointsOf, principalTensors, type PrincipalPoints } from "../state/principal.ts";
 import { principalFieldOf } from "../state/selectors.ts";
-import type { PrincipalMeasured, State } from "../state/types.ts";
+import type { State } from "../state/types.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
 import { toLinear, type StepValues } from "./contour.ts";
 import type { FullPositions } from "./deform.ts";
@@ -587,7 +587,7 @@ export class SupportsLayer extends ArrowLayer {
  * The Principal card's arrows (`s.principal`): from each Gauss point of the
  * field on screen, an arrow along each principal direction shown
  * (`buildPrincipal3D`), tail-anchored, following the deformed shape as the
- * Gauss markers do. `measured` is what the last build drew, for the card.
+ * Gauss markers do.
  */
 export class PrincipalLayer extends ArrowLayer {
   private appliedKey: string | null = null;
@@ -595,7 +595,8 @@ export class PrincipalLayer extends ArrowLayer {
   private drawnStage: number | null = null;
   /** The field's points, placed once per stage, field and visibility. */
   private points: { deps: unknown[]; gen: number; points: PrincipalPoints | null; base: Float32Array | null } | null = null;
-  measured: PrincipalMeasured | null = null;
+  /** the points the last build drew */
+  drawnPoints = 0;
 
   sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
     const at = s.phase.at;
@@ -604,7 +605,7 @@ export class PrincipalLayer extends ArrowLayer {
       this.appliedKey = null;
       this.drawnStep = null;
       this.drawnStage = null;
-      this.measured = null;
+      this.drawnPoints = 0;
       return this.hide();
     }
     const sized = this.size(s.principal);
@@ -637,12 +638,12 @@ export class PrincipalLayer extends ArrowLayer {
     this.drawnStage = at.stage;
     this.appliedKey = nextKey;
     if (!points || !base) {
-      this.measured = null;
+      this.drawnPoints = 0;
       return this.hide() || sized;
     }
     const at3 = disp ? deformedPositions(base, gaussDisplacements(points.layout, disp.nodal!.column, disp.nodal!.rows), s.deform.scale) : base;
     const r = buildPrincipal3D(at3, principalTensors(points, field, here.tensor!), { show: p.show, head: p.head, cmap: p.cmap, scale: p.scale, radius: s.mesh.radius });
-    this.measured = { stage: s.results!.stages[at.stage]!.id, field: field.name, points: r.points, maxAbs: r.maxAbs, refused: points.layout.refused };
+    this.drawnPoints = r.points;
     this.upload(r.arrows, NO_RECORDS, s.mesh.radius);
     return true;
   }

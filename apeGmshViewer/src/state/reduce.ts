@@ -81,7 +81,7 @@ export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
 
 export const initialSupports: SupportsState = { on: false, scale: 1 };
 
-export const initialPrincipal: PrincipalState = { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true, measured: null };
+export const initialPrincipal: PrincipalState = { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true };
 export const initialReactions: ReactionsState ={ on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
 
 export const initialLoads: LoadsState = {
@@ -1368,16 +1368,8 @@ export function reduce(s: State, e: Event): State {
         scale: e.scale ?? cur.scale,
         headSize: e.headSize ?? cur.headSize,
         thin: e.thin ?? cur.thin,
-        // What was drawn is measured again once it is drawn on the new settings; off, nothing is drawn.
-        measured: (e.on ?? cur.on) ? cur.measured : null,
       };
       return (Object.keys(next) as (keyof PrincipalState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, principal: next };
-    }
-    case "principalMeasured": {
-      if (!Number.isInteger(e.points) || e.points < 0 || !Number.isFinite(e.maxAbs) || e.maxAbs < 0) throw new RangeError(`principalMeasured: ${e.points} points, max ${e.maxAbs}`);
-      if (!s.principal.on) return s;
-      const { type: _t, ...measured } = e;
-      return { ...s, principal: { ...s.principal, measured } };
     }
     case "setReactions": {
       for (const k of ["on", "thin", "allNodes", "forces", "moments"] as const) {

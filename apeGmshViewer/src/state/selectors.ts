@@ -627,18 +627,18 @@ export function elementVerdictOf(info: ResultsInfo): { verified: true } | { veri
   return info.elementIndex ?? { verified: false, reason: "this results info carries no element-index verdict" };
 }
 
-/** The stress and strain fields of the results stage on screen that can draw principal arrows: a verified file's, with a group that makes a tensor. */
+/** The stress and strain fields of a verified file's results stage on screen; a field with no group that makes a tensor is kept, for its refusals. */
 export function principalFieldsOf(s: State): TensorField[] {
   const at = s.phase.at;
   if (at?.kind !== "results" || !s.results || !s.mesh || !elementVerdictOf(s.results).verified) return [];
   const st = s.results.stages[at.stage];
-  return st ? tensorFields(st.gauss).filter((f) => f.groups.length > 0) : [];
+  return st ? tensorFields(st.gauss) : [];
 }
 
-/** The field the Principal card draws: the one picked, else the stage's first; null when the stage has none. */
+/** The field the Principal card draws: the one picked, else the stage's first that can draw; null when the stage has none. */
 export function principalFieldOf(s: State): TensorField | null {
   const fields = principalFieldsOf(s);
-  return fields.find((f) => f.name === s.principal.field) ?? fields[0] ?? null;
+  return fields.find((f) => f.name === s.principal.field) ?? fields.find((f) => f.groups.length > 0) ?? fields[0] ?? null;
 }
 
 /**

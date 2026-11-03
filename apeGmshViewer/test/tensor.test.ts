@@ -2,7 +2,9 @@
 // make a tensor, and the eigen decomposition against closed forms.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { assembleTensor, eigenSym3, tensorFields, tensorSlotOf, type Vec3 } from "../src/state/tensor.ts";
 
 const close = (a: number, b: number, tol = 1e-12) => assert.ok(Math.abs(a - b) <= tol * Math.max(1, Math.abs(b)), `${a} vs ${b}`);
@@ -37,7 +39,34 @@ test("a RESULT's groups make one field; a group without the in-plane tensor is r
   ]);
   assert.deepEqual(fields[0]!.groups[0]!.slots, ["stress/sigma11", "stress/sigma22", null, "stress/sigma12", null, null]);
   assert.equal(fields[0]!.components.length, 6);
-  assert.match(fields[0]!.refused[0]!, /stress\/99-Odd.*no xy component/);
+  assert.match(fields[0]!.refused[0]!, /stress\/99-Odd.*no xy stress component/);
+});
+
+test("a group of both tensors gives one to each family's field; a field whose every group is refused is kept, for its notes", () => {
+  const g = (id: string, components: string[]) => ({ id, components, refused: [], nElements: 1, nGauss: 1, localAxes: false, naturalCoords: null });
+  const both = tensorFields([g("g0", ["stress_xx", "stress_yy", "stress_xy", "strain_xx", "strain_yy", "strain_xy"])]);
+  assert.deepEqual(both.map((f) => [f.name, f.family, f.groups.length, f.refused]), [
+    ["stress", "stress", 1, []],
+    ["strain", "strain", 1, []],
+  ]);
+  const refusedOnly = tensorFields([g("stress/1-X[1:0:0]", ["stress/sigma11", "stress/sigma11"])]);
+  assert.equal(refusedOnly.length, 1);
+  assert.deepEqual(refusedOnly[0]!.groups, []);
+  assert.match(refusedOnly[0]!.refused[0]!, /one stress slot twice/);
+});
+
+test("oracle: 300 random 3-D tensors give Python's principal_frame values and its signed (canonical) vectors", () => {
+  const O = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/principal_random.oracle.json", import.meta.url)), "utf8")) as {
+    cases: { voigt: number[]; values: number[]; vectors: number[][] }[];
+  };
+  assert.equal(O.cases.length, 300);
+  for (const c of O.cases) {
+    const e = eigenSym3(c.voigt);
+    const scale = Math.max(...c.values.map(Math.abs));
+    c.values.forEach((v, k) => close(e.values[k]!, v, 1e-12 * Math.max(1, scale) / Math.max(1, Math.abs(v))));
+    // Signed: the canonical sign is what the `arrow` head draws.
+    c.vectors.forEach((v, k) => closeVec(e.vectors[k]!, v, 1e-9));
+  }
 });
 
 test("a diagonal tensor: its values sorted and the axes as they are", () => {

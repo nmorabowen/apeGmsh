@@ -1004,22 +1004,10 @@ export interface PrincipalState {
   /** Arrowhead length on screen, in CSS pixels (default 10, > 0). */
   readonly headSize: number;
   readonly thin: boolean;
-  /** what the viewport drew on the stage `stage` (its id) at the step on screen, and what it could not place */
-  readonly measured: PrincipalMeasured | null;
 }
 
 /** `axis`: two heads, one each way from the point (a direction is an axis); `arrow`: one along the sign-canonical direction (Qt). */
 export type PrincipalHead = "axis" | "arrow";
-
-export interface PrincipalMeasured {
-  stage: string;
-  field: string;
-  /** the points that drew an arrow */
-  points: number;
-  /** the largest |p| drawn: the colour range is -maxAbs..maxAbs */
-  maxAbs: number;
-  refused: { reason: string; elements: number }[];
-}
 
 /** The Display card's BC toggle: restraint glyphs at the supports (state/loads.ts `buildSupports3D`). */
 export interface SupportsState {
@@ -1592,8 +1580,6 @@ export type Event =
   /** The Reactions card's controls */
   /** The Principal card's controls */
   | { type: "setPrincipal"; on?: boolean; field?: string | null; show?: readonly [boolean, boolean, boolean]; head?: PrincipalHead; cmap?: ContourCmap; scale?: number; headSize?: number; thin?: boolean }
-  /** dispatched by the viewport once it has drawn the principal arrows of a step */
-  | ({ type: "principalMeasured" } & PrincipalMeasured)
   | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean; forces?: boolean; moments?: boolean }
   /** 3-D structural loading and prescribed-SP visualization controls */
   | {
