@@ -6,8 +6,10 @@
 //                          an absolute path or null (./pairing.ts)
 //   onFileChanged(cb(path)) a file of the open set was rewritten and closed
 //   goToSource(file, line)  open the user's editor; Promise<{ok, reason?}>
-//   requestOpen(path)       open the set of `path` (a dropped file), as a
-//                          double-click would; Promise<{ok, reason?}>
+//   requestOpen(file)       open the set of a dropped File, as a double-click
+//                          would; Promise<{ok, reason?}>. It takes the File, not
+//                          a path: the page never names a path to open (VU12)
+//   pathForFile(file)       a dropped File's path, told to main as a drop
 //   openGeometry(path)      read a /geometry sibling (./zones.ts); openModel's
 //                          answer also carries the model's /provenance, its
 //                          /meta/lineage and its /sequence element tags (V4b)
@@ -37,6 +39,19 @@ interface OpenSet {
   user: string | null;
 }
 
+/**
+ * VU12 (#2753), owner ruling "option A": the path of a File the user dropped,
+ * as Electron names it, told to main (synchronously, so it is recorded before
+ * any open that names it) and then returned. A File the page made has no path
+ * on disk: "" and nothing is told. Main opens only such paths and the paths it
+ * sent the page itself (main.ts `ungestured`).
+ */
+function gestured(f: File): string {
+  const path = webUtils.getPathForFile(f);
+  if (path) ipcRenderer.sendSync("viewer:dropped", path);
+  return path;
+}
+
 const listeners = { open: 0, fileChanged: 0 };
 
 function listen<T>(channel: "open" | "fileChanged", cb: (value: T) => void, onLive: () => void): () => void {
@@ -58,7 +73,7 @@ function listen<T>(channel: "open" | "fileChanged", cb: (value: T) => void, onLi
 contextBridge.exposeInMainWorld("viewer", {
   config: () => ipcRenderer.invoke("app:config"),
   openModel: (path: string) => ipcRenderer.invoke("model:open", path),
-  pathForFile: (f: File) => webUtils.getPathForFile(f),
+  pathForFile: (f: File) => gestured(f),
   metrics: () => ipcRenderer.invoke("measure:metrics"),
   measureDone: (result: unknown) => ipcRenderer.invoke("measure:done", result),
   captureStill: (suffix: string) => ipcRenderer.invoke("capture:still", suffix),
@@ -86,7 +101,10 @@ contextBridge.exposeInMainWorld("viewer", {
   },
   onFileChanged: (cb: (path: string) => void) => listen<string>("fileChanged", cb, () => {}),
   goToSource: (file: string, line: number) => ipcRenderer.invoke("source:goto", file, line),
-  requestOpen: (path: string) => ipcRenderer.invoke("viewer:requestOpen", path),
+  requestOpen: (f: File) => {
+    const path = gestured(f);
+    return path ? ipcRenderer.invoke("viewer:requestOpen", path) : Promise.resolve({ ok: false, reason: "requestOpen opens a file dropped from disk; this one has no path" });
+  },
   openGeometry: (path: string) => ipcRenderer.invoke("geometry:open", path),
   // V4b (#1728): a results file's metadata, then one step at a time (./results.ts).
   openResults: (path: string) => ipcRenderer.invoke("results:open", path),

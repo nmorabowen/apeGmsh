@@ -20,7 +20,7 @@ registerHooks({
 const root = process.argv.find((a) => a.startsWith("--dir="))?.slice("--dir=".length);
 if (!root) throw new Error("userDoorsDriver needs --dir=<root>");
 
-const { handlers } = (await import(STUB)) as typeof import("./electronStub.ts");
+const { handlers, listeners } = (await import(STUB)) as typeof import("./electronStub.ts");
 await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "main.ts")).href);
 
 const set = join(root, "set");
@@ -81,15 +81,20 @@ const userOf = async () => {
 const elsewhere = PATHS.elsewhere!;
 const elsewhereModel = join(root, "elsewhere", "s.h5");
 if (process.argv.includes("--steer")) {
+  // VU12 (#2753, option A): main opens only what the user dropped, so each steer is a drop (preload.ts reports it on `viewer:dropped`).
+  const drop = (path: string) => listeners.get("viewer:dropped")!({ returnValue: undefined }, path);
   out["steer:1 readCase"] = await call("user:readCase", { path: elsewhere, ...CASE });
+  drop(elsewhere);
   out["steer:2 model:open user file"] = await call("model:open", elsewhere);
   out["steer:3 currentSet"] = await userOf();
   out["steer:4 readCase"] = await call("user:readCase", { path: elsewhere, ...CASE });
   out["steer:4 read"] = await call("user:read", { path: elsewhere, model, results: null });
+  drop(elsewhereModel);
   out["steer:5 model:open model"] = await call("model:open", elsewhereModel);
   out["steer:6 currentSet"] = await userOf();
   out["steer:7 readCase"] = await call("user:readCase", { path: elsewhere, ...CASE });
   // a model still being written (truncated): its open fails, and its set is the one watched
+  drop(join(root, "bad", "b.h5"));
   out["steer:8 model:open truncated"] = await call("model:open", join(root, "bad", "b.h5"));
   out["steer:9 currentSet"] = await userOf();
   out["steer:10 readCase"] = await call("user:readCase", { path: elsewhere, ...CASE });
