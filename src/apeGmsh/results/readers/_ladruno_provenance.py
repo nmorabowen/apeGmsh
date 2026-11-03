@@ -391,8 +391,8 @@ def _refuse_if_open_here(parts: list[Path]) -> None:
             raw, intent = fid.name, fid.get_intent()
         except ValueError:
             # Closed after it was listed (a reader the garbage collector
-            # finalised in between, #2778), so this process no longer
-            # holds it. A still-valid id that fails is not that case.
+            # finalised in between), so this process no longer holds it.
+            # A still-valid id that fails is not that case.
             if fid.valid:
                 raise
             continue
