@@ -15,6 +15,7 @@ The real-run oracles are in ``tests/opensees/live/test_results_route_live.py``.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, cast
@@ -601,6 +602,104 @@ def test_a_staged_mpco_converts_and_reads_the_ladruno(
         assert_reads_the_file(r, src)
     finally:
         r.close()
+
+
+def test_a_second_read_while_the_first_is_open_reuses_its_conversion(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Review of #2796 (finding 1): the first Results holds the converted
+    ``.ladruno`` open. A second read of the same run reuses that
+    conversion (it still pairs: same ``.mpco``, same file, same lineage)
+    instead of replacing a file Windows will not let it replace."""
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    r1 = ops.results("run/deck.py")
+    try:
+        target = run_dir / "run" / "r.ladruno"
+        stamp = target.stat().st_mtime_ns
+        r2 = ops.results("run/deck.py")
+        try:
+            assert_reads_the_file(r2, src)
+        finally:
+            r2.close()
+        assert target.stat().st_mtime_ns == stamp    # not converted again
+        assert_reads_the_file(r1, src)
+    finally:
+        r1.close()
+
+
+def test_a_rewritten_mpco_under_an_open_read_refuses_by_name(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """The run wrote the ``.mpco`` again, so the earlier conversion no
+    longer pairs and must be replaced. With the earlier Results still open
+    the replace fails; the read refuses by name, never with an OSError."""
+    import os
+
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    r1 = ops.results("run/deck.py")
+    try:
+        mpco = run_dir / "run" / "r.mpco"
+        st = mpco.stat()
+        os.utime(mpco, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+        try:
+            r2 = ops.results("run/deck.py")
+        except BridgeError as e:
+            assert "close it (results.close()) and read again" in str(e)
+            assert isinstance(e.__cause__, OSError)
+        else:
+            # Windows never lets an open file be replaced; a platform
+            # that does converts again.
+            assert sys.platform != "win32"
+            try:
+                assert_reads_the_file(r2, src)
+            finally:
+                r2.close()
+    finally:
+        r1.close()
+    # Closed, the next read converts again and reads the file.
+    r3 = ops.results("run/deck.py")
+    try:
+        assert_reads_the_file(r3, src)
+    finally:
+        r3.close()
+
+
+def test_an_unstaged_mpco_deck_that_wrote_nothing_names_the_remedies(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review of #2796 (finding 2): an unstaged deck emitted without
+    ``analyze_steps`` drives no analysis, so no ``.mpco`` is written; the
+    missing-file refusal names what makes an MPCO read."""
+    ops = springs_ops(staged=False)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    ran(ops, monkeypatch)
+    refuses(ops, "run/deck.py", run_dir,
+            r"does not exist or is empty; the run wrote no history there\. "
+            r"The deck run declares no ops\.stage block and left no run "
+            r"record .*r\.mpco\.run\.json'\. Declare the stages with "
+            r"ops\.stage\(\.\.\.\), or emit and run the deck with "
+            r"analyze_steps=")
+
+
+def test_a_staged_mpco_that_wrote_nothing_names_no_stage_remedy(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    ran(ops, monkeypatch)
+    before = listing(run_dir)
+    with pytest.raises(BridgeError) as info:
+        ops.results("run/deck.py")
+    assert str(info.value).endswith("the run wrote no history there.")
+    assert listing(run_dir) == before
 
 
 def test_an_unstaged_mpco_without_a_run_record_refuses_by_name(

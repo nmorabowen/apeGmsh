@@ -129,9 +129,17 @@ def test_mpco_tip_deflection_matches_the_closed_form(
     try:
         assert type(r._reader).__name__ == "LadrunoReader"
         uy = r.nodes.get(label="tip", component="displacement_y").item()
+        # A second read while the first is open reuses the conversion
+        # (#2796 review, finding 1: it raised PermissionError on Windows).
+        r2 = ops.results(str(deck))
+        try:
+            uy2 = r2.nodes.get(label="tip", component="displacement_y").item()
+        finally:
+            r2.close()
     finally:
         r.close()
     assert uy == pytest.approx(UY, rel=1e-9)
+    assert uy2 == uy
     assert (run_dir / "r.ladruno").is_file()
 
 
