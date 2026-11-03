@@ -4,10 +4,12 @@
 // It runs in a child process, because main.ts reads its mode from argv and
 // watches the set it opens; it prints one JSON line and exits.
 //
-//   node test/main/setDoorsDriver.ts --case=<view|none|render|capture|describe|measure> --dir=<root> [main's own --mode= --file= --spec= --out=]
+//   node test/main/setDoorsDriver.ts --case=<view|none|render|capture|describe|measure|source|source-none> --dir=<root> [main's own --mode= --file= --spec= --out=]
 //
-// `<root>` holds `set/` (the set the window opens), `outside/` and `elsewhere/`.
+// `<root>` holds `set/` (the set the window opens), `outside/` and `elsewhere/`;
+// the `source` cases (VU13 #2760) also `src-set/`, `lib/` and the editor's log.
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -150,6 +152,45 @@ if (which === "view") {
   drop(loose);
   await call("model:3 model:open dropped", "model:open", loose);
   out["model:3 model"] = { onScreen: await modelOf() };
+  // VU13 (#2760): only the latest drop is a gesture. elsewhere/s.h5 was dropped (drop:1), then outside/s.h5:
+  // a gesture-free model:open of the replaced drop is refused, and the latest drop still re-reads (not one-shot).
+  await call("drop:5 model:open replaced drop", "model:open", join(elsewhere, "s.h5"));
+  out["drop:5 model"] = { onScreen: await modelOf() };
+  await call("drop:6 model:open latest drop again", "model:open", loose);
+  // VU13: an offer that falls off the page's list (state/reduce.ts MAX_OFFERS) is gone, with the set it left.
+  const { MAX_OFFERS } = await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "state", "reduce.ts")).href);
+  const present = () => {
+    for (const fn of appEvents.get("second-instance") ?? []) fn({}, [], root, { kind: "present", spec: join(root, "flood.json"), ack: join(root, "no-such-pipe") });
+  };
+  for (let i = 1; i < MAX_OFFERS; i++) present();
+  const offered = [join(elsewhere, "s.h5"), RESULTS.elsewhere];
+  await call("prune:1 still listed", "viewer:offerOpen", RESULTS.elsewhere, offered);
+  present();
+  await call("prune:2 fallen off", "viewer:offerOpen", RESULTS.elsewhere, offered);
+  out["prune:2 model"] = { onScreen: await modelOf() };
+  await call("prune:3 back to the set it left", "viewer:offerOpen", ladruno, [join(set, "s.h5"), ladruno]);
+} else if (which === "source" || which === "source-none") {
+  // VU13 (#2760): go-to-source opens only a source file the set's model names in its /provenance.
+  // The editor is a recorder (APEGMSH_EDITOR, ./source.test.ts): each launch appends its argv to editor.log.
+  const log = join(root, "editor.log");
+  const rec = join(root, "rec.mjs");
+  writeFileSync(rec, `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + "\\n");\n`);
+  process.env["APEGMSH_EDITOR"] = `"${process.execPath}" "${rec}" {line} {file}`;
+  const posix = (p: string) => p.replaceAll("\\", "/");
+  const srcSet = join(root, "src-set");
+  await call("source:1 relative row", "source:goto", posix(join(srcSet, "build.py")), 3);
+  await call("source:2 absolute row outside the folder", "source:goto", posix(join(root, "lib", "helper.py")), 4);
+  await call("source:3 stranger in the folder", "source:goto", posix(join(srcSet, "stranger.py")), 1);
+  await call("source:4 stranger elsewhere", "source:goto", join(root, "stranger.py"), 1);
+  await call("source:5 bigint path", "source:goto", 5n, 1);
+  await call("source:6 circular path", "source:goto", circular, 1);
+  await call("source:7 bigint line", "source:goto", posix(join(srcSet, "build.py")), 5n);
+  // the launches are detached: wait for the ones that opened (none with no set)
+  const launches = which === "source" ? 2 : 0;
+  const end = Date.now() + 10000;
+  const lines = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).length : 0);
+  while (lines() < launches && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+  await new Promise((r) => setTimeout(r, 300)); // and any launch that should not have happened
 } else if (which === "none") {
   await call("results:open ladruno", "results:open", RESULTS.ladruno);
   await call("geometry:open paired", "geometry:open", GEOMETRY.paired);
