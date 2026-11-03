@@ -141,7 +141,6 @@ colour-range probe. All of them are under "Evidence".
 | R20 | `step=k ≥ 0`, `-1`, `-k` | `k`, `"last"`, or `n − k` with `n` from `--describe` | repoint (covered) | A:`refuse-step` refused; V:`step -2` refused |
 | R21 | returns the `Path`, or `None` on a skip | `agent_view.render_stills(spec, out)` returns the manifest and raises on a refusal (G9) | repoint, take v2's raise, ruled 2026-11-02 | `agent_view.py`; `main.ts` exit codes 0, 1, 2 |
 | R22 | the stage: the `results.stage(s)` scope, or the `results.modes[i]` scope (a mode stage), else the last stage, with a warning (`_results_stills._resolve_stage`) | `stage`, by name or index, is required for every results shot. A mode is its mode stage (`--describe` `kind: "mode"`), named by index | repoint (covered) | A:`refuse-stage` refused |
-
 | R22b | `results.render` on a `Results` held only in memory | none: no file the spec could name, and `main` has no `Results` writer (`save_definitions` is the only file writer; `Results.viewer` refuses the conversion as lossy, #1664) | **needs ruling**: keep v1, drop, or add a lossless writer (blocked by #1664) | `results/Results.py` (`save_definitions`; the #1664 refusal in `viewer`) |
 
 ### `results.render_pack(out_dir, *, camera=None, window_size=(1280, 720))`
