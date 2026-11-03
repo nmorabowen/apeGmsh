@@ -17,7 +17,7 @@ import { openModel } from "../src/reader/node.ts";
 import { ReactionsLayer } from "../src/renderer/loads.ts";
 import { BlobStore } from "../src/state/blobs.ts";
 import { loadModel } from "../src/state/load.ts";
-import { ARROW, ARROW_STRIDE, BAR, buildReactions3D, reactionMomentComponentsOf } from "../src/state/loads.ts";
+import { ARROW, ARROW_STRIDE, BAR, buildReactions3D, reactionComponentsOf, reactionMomentComponentsOf } from "../src/state/loads.ts";
 import { initialState, reduce, type State } from "../src/state/store.ts";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
@@ -176,6 +176,20 @@ test("Z on a 2-D-like stage (forces in x and y, the moment about z) draws the mo
   assert.deepEqual([0, 1, 2].map((c) => r.arcs[ARROW.dir + c]), [0, 0, 1]);
   const noZ = buildReactions3D(withStage(["reaction_force_x", "reaction_force_y"], { component: "z" }), blobs, data, ids);
   assert.equal(noZ.count, 1, "no kind records z: the force resultant, as before");
+});
+
+test("a .ladruno stage's REACTION_FORCE/RFx and REACTION_MOMENT/RMx are the reaction components; a lone RMz (ndm 2) is not", () => {
+  const LAD = ["REACTION_FORCE/RFx", "REACTION_FORCE/RFy", "REACTION_FORCE/RFz", "REACTION_MOMENT/RMx", "REACTION_MOMENT/RMy", "REACTION_MOMENT/RMz"];
+  const s = withStage(["DISPLACEMENT/Ux", ...LAD]);
+  assert.deepEqual(reactionComponentsOf(s), LAD.slice(0, 3));
+  assert.deepEqual(reactionMomentComponentsOf(s), LAD.slice(3));
+  const base = rows(2);
+  const data = Object.fromEntries(NAMES.map((n, i) => [LAD[i]!, base[n]!] as const));
+  const r = buildReactions3D(s, blobs, data, ids);
+  assert.deepEqual([r.count, r.arcCount], [2, 2], "the force arrows and the moment arcs draw from the .ladruno rows");
+  const twoD = withStage(["REACTION_FORCE/RFx", "REACTION_FORCE/RFy", "REACTION_MOMENT/RMz"]);
+  assert.deepEqual(reactionComponentsOf(twoD), ["REACTION_FORCE/RFx", "REACTION_FORCE/RFy", null]);
+  assert.equal(reactionMomentComponentsOf(twoD), null, "a lone z of a rotational group may be a pore pressure (ladruno_schema_v1 §7.1.1)");
 });
 
 test("setReactions refuses non-boolean forces and moments switches", () => {
