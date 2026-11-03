@@ -9,10 +9,11 @@ import {
   fmtValue,
   loadsColourPalette,
   loadsSummaryOf,
+  rampCss,
   scaleLabel,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { Event } from "../state/types.ts";
+import type { Event, LoadsColorBy } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 
 const cssRgb = (rgb: readonly number[]): string =>
@@ -123,7 +124,10 @@ export function renderLoads(
       dispatch({ type: "setLoads", includeSupportReactions: !ld.includeSupportReactions }),
     ),
   );
-  optsRow.append(seriesBtn, holdBtn);
+  const thinBtn = el("button", "loads-thin" + (ld.thin ? " on" : ""), "thin out");
+  thinBtn.title = "Draw one arrow where several would overlap on screen (the largest load); zoom in to see the rest";
+  unlisten.push(listen(thinBtn, "click", () => dispatch({ type: "setLoads", thin: !ld.thin })));
+  optsRow.append(seriesBtn, holdBtn, thinBtn);
   box.append(optsRow);
 
   const scaleRow = el("div", "deform-scale-row loads-scale-row");
@@ -146,6 +150,33 @@ export function renderLoads(
     el("span", "deform-scale-label loads-scale-label" + (ld.scale !== 1 ? " scaled" : ""), scaleLabel(ld.scale)),
   );
   box.append(scaleRow);
+
+  // Every head is 2:1 (length to width) and this many pixels long, at any zoom.
+  const headRow = el("div", "deform-scale-row loads-head-row");
+  const headInput = el("input", "deform-scale loads-head");
+  headInput.type = "number";
+  headInput.step = "1";
+  headInput.min = "0";
+  headInput.value = String(ld.headSize);
+  headInput.title = "arrowhead length on screen, in pixels (the head is twice as long as it is wide)";
+  const colorSelect = el("select", "loads-color");
+  colorSelect.title = "arrow colour";
+  for (const [value, label] of [["mono", "one colour"], ["type", "by load type"], ["magnitude", "by magnitude (jet)"]] as const) {
+    const o = el("option", undefined, label);
+    o.value = value;
+    o.selected = ld.colorBy === value;
+    colorSelect.append(o);
+  }
+  unlisten.push(
+    listen(headInput, "change", () => {
+      const v = Number(headInput.value);
+      if (Number.isFinite(v) && v > 0) dispatch({ type: "setLoads", headSize: v });
+      else headInput.setCustomValidity("the head size must be a number above 0");
+    }),
+    listen(colorSelect, "change", () => dispatch({ type: "setLoads", colorBy: colorSelect.value as LoadsColorBy })),
+  );
+  headRow.append(el("span", undefined, "head"), headInput, el("span", "deform-scale-label", "px"), colorSelect);
+  box.append(headRow);
 
   // Compact symbol key for load units (driven by global Units control in #header)
   const u = summary.units;
@@ -222,7 +253,9 @@ export function renderLoads(
     if (kr.count === 0) continue;
     const row = el("div", "legend-row loads-kind-row");
     const chip = el("span", "chip");
-    chip.style.backgroundColor = cssRgb(kr.rgb);
+    // The chip shows what the arrows are drawn in: one colour, the type's colour, or the jet ramp.
+    if (ld.colorBy === "magnitude") chip.style.background = rampCss("jet");
+    else chip.style.backgroundColor = cssRgb(ld.colorBy === "type" ? kr.rgb : palette.mono);
     const meta = kr.peakText ? `${kr.count.toLocaleString()} · ${kr.peakText}` : kr.count.toLocaleString();
     row.append(chip, el("span", undefined, kr.label), el("span", "legend-count loads-kind-meta", meta));
     box.append(row);

@@ -860,6 +860,9 @@ export interface LineDiagramState {
   hover: LineDiagramHoverReadout | null;
 }
 
+/** How the load arrows are coloured. */
+export type LoadsColorBy = "mono" | "type" | "magnitude";
+
 /** 3-D structural loading and prescribed-SP visualization state. */
 export interface LoadsState {
   readonly on: boolean;
@@ -873,6 +876,12 @@ export interface LoadsState {
   readonly includeSupportReactions: boolean;
   /** Scale load magnitudes by the pattern's timeSeries factor λ(t) on a results step (default false: nominal). */
   readonly scaleBySeries: boolean;
+  /** Arrowhead length on screen, in CSS pixels (default 12, > 0); every head is 2:1, length to width. */
+  readonly headSize: number;
+  /** Thin out arrows closer on screen than about a head length (default true). */
+  readonly thin: boolean;
+  /** Arrow colour: one colour for every load (default), the load type's, or jet over the magnitude. */
+  readonly colorBy: LoadsColorBy;
   /** null = all active patterns/cases for current phase/stage; string[] = explicit pattern h5 paths or `neutral:<case>` keys */
   readonly selectedPatterns: readonly string[] | null;
 }
@@ -1413,6 +1422,9 @@ export type Event =
       showSp?: boolean;
       includeSupportReactions?: boolean;
       scaleBySeries?: boolean;
+      headSize?: number;
+      thin?: boolean;
+      colorBy?: LoadsColorBy;
       selectedPatterns?: readonly string[] | null;
       togglePattern?: string;
     }

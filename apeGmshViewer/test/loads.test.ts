@@ -14,9 +14,11 @@ import { withNodes } from "../src/effects.ts";
 import { renderLoads } from "../src/panels/loads.ts";
 import { view as patternsView } from "../src/panels/windows/patterns.ts";
 import { openModel } from "../src/reader/node.ts";
-import { LoadsLayer } from "../src/renderer/loads.ts";
+import { LoadsLayer, screenArrow, SHAFT_MAX_PX, SHAFT_MIN_PX } from "../src/renderer/loads.ts";
 import { BlobStore } from "../src/state/blobs.ts";
+import { sampleCmap } from "../src/state/contour.ts";
 import { loadModel } from "../src/state/load.ts";
+import { ARROW, ARROW_STRIDE, COMB_STRIDE, expandArrows, loadsColourPalette, THIN_LEVELS, thinningLevels } from "../src/state/loads.ts";
 import {
   buildLoads3D,
   evaluatePatternSeriesFactor,
@@ -26,6 +28,12 @@ import {
 } from "../src/state/selectors.ts";
 import { initialState, reduce, type State } from "../src/state/store.ts";
 import type { DefObject, Event, NeutralLoads, Table } from "../src/state/types.ts";
+
+/** The geometry with its arrows drawn at their nominal size (`expandArrows`), a head 0.3 of the reference arrow long. */
+const nominal3D = (s: State, b: BlobStore) => {
+  const g = buildLoads3D(s, b);
+  return { ...g, ...expandArrows(g, g.refLen * 0.3) };
+};
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 
@@ -49,10 +57,10 @@ test("mesh.nodes (withNodes) feeds buildLoads3D, which builds 3-D force arrows o
   assert.ok(shoeSummary.counts.nodalForces > 0, "shoebuckle.h5 has nodal forces");
 
   const sOn = reduce(shoeState, { type: "setLoads", on: true });
-  const geom = buildLoads3D(sOn, shoeBlobs);
+  const geom = nominal3D(sOn, shoeBlobs);
   assert.ok(geom.nodalForceArrows > 0, "builds nodal force arrows on shoebuckle.h5");
   assert.ok(geom.linePositions.length > 0 && geom.linePositions.every(Number.isFinite));
-  assert.ok(geom.triPositions.length > 0 && geom.triPositions.every(Number.isFinite));
+  assert.ok(geom.conePositions.length > 0 && geom.conePositions.every(Number.isFinite));
   assert.ok(geom.maxForceMag > 0);
 });
 
@@ -229,7 +237,7 @@ test("nodal forces (F), nodal moments (M with double cones), non-zero SPs, suppo
 
   // On stage 0 (before stage 1 remove_sp): both non-zero SP vectors are active
   const sStage0 = reduce(s, { type: "selectStage", index: 0 });
-  const geomStage0 = buildLoads3D(sStage0, shoeBlobs);
+  const geomStage0 = nominal3D(sStage0, shoeBlobs);
   assert.equal(geomStage0.nodalForceArrows, 2, "2 nodal force vectors");
   assert.equal(geomStage0.nodalMomentArrows, 1, "1 nodal moment vector");
   assert.equal(geomStage0.spArrows, 2, "2 non-zero SP vectors on stage 0 (homogeneous 0 skipped, support_reaction excluded)");
@@ -239,12 +247,12 @@ test("nodal forces (F), nodal moments (M with double cones), non-zero SPs, suppo
 
   // On stage 1: remove_sp removes [n2, 3], leaving only 1 SP arrow
   const sStage1 = reduce(s, { type: "selectStage", index: 1 });
-  const geomStage1 = buildLoads3D(sStage1, shoeBlobs);
+  const geomStage1 = nominal3D(sStage1, shoeBlobs);
   assert.equal(geomStage1.spArrows, 1, "stage 1 remove_sp removes the [n2, 3] SP constraint");
 
   // Enabling includeSupportReactions adds the sp_holds arrow from holdPat
   const sWithHolds = reduce(sStage1, { type: "setLoads", includeSupportReactions: true });
-  const geomHolds = buildLoads3D(sWithHolds, shoeBlobs);
+  const geomHolds = nominal3D(sWithHolds, shoeBlobs);
   assert.equal(geomHolds.spArrows, 2, "includeSupportReactions=true adds the sp_holds entry");
 });
 
@@ -288,7 +296,7 @@ test("distributed element loads: beamUniform (2D and 3D with vecxz vs fail-close
     { type: "setLoads", on: true },
   );
 
-  const geom2d = buildLoads3D(s2d, shoeBlobs);
+  const geom2d = nominal3D(s2d, shoeBlobs);
   assert.ok(geom2d.elementLoadArrows >= 5, "beamUniform (5 station arrows) + beamPoint (1 arrow)");
   assert.equal(geom2d.notice, null);
   assert.equal(geom2d.maxElementLoadMag, 25);
@@ -298,7 +306,7 @@ test("distributed element loads: beamUniform (2D and 3D with vecxz vs fail-close
     ...s2d,
     ndm: { ndm: 3, source: "test" },
   };
-  const geom3dRefused = buildLoads3D(s3dNoVecxz, shoeBlobs);
+  const geom3dRefused = nominal3D(s3dNoVecxz, shoeBlobs);
   assert.equal(geom3dRefused.elementLoadArrows, 0, "3-D beam without vecxz is refused, never drawn with a guessed frame");
   assert.match(geom3dRefused.notice ?? "", /missing geomTransf vecxz/);
 
@@ -327,7 +335,7 @@ test("distributed element loads: beamUniform (2D and 3D with vecxz vs fail-close
       },
     },
   };
-  const geom3dValid = buildLoads3D(s3dWithVecxz, shoeBlobs);
+  const geom3dValid = nominal3D(s3dWithVecxz, shoeBlobs);
   assert.equal(geom3dValid.elementLoadArrows, 6, "3-D beam with valid vecxz draws 5 uniform comb arrows + 1 point load arrow");
   assert.equal(geom3dValid.notice, null);
 });
@@ -419,14 +427,14 @@ function segmentDirs(lp: Float32Array): Map<string, { n: number; xMin: number; x
 }
 
 test("neutral beamUniform wx/wy/wz are GLOBAL: gravity on the X girder points -Z, wind on the Z column points +X (#2385 F1)", () => {
-  const dead = buildLoads3D(reduce(onlyCase("dead"), { type: "setLoads", showElementLoads: true }), l3Blobs);
+  const dead = nominal3D(reduce(onlyCase("dead"), { type: "setLoads", showElementLoads: true }), l3Blobs);
   const deadDirs = segmentDirs(dead.linePositions);
   assert.ok((deadDirs.get("0,0,-1")?.n ?? 0) >= 5, "the girder's comb arrows point -Z");
   assert.equal(deadDirs.has("0,-1,0"), false, "nothing is drawn along -Y (the local [wy,wz,wx] decode drew wz=-10 there)");
   assert.deepEqual([...deadDirs.keys()].sort(), ["0,0,-1", "1,0,0"], "only -Z arrows and the +X profile bar along the girder");
   assert.equal(dead.notice, null, "a global neutral load needs no vecxz");
 
-  const wind = buildLoads3D(onlyCase("wind"), l3Blobs);
+  const wind = nominal3D(onlyCase("wind"), l3Blobs);
   const windDirs = segmentDirs(wind.linePositions);
   assert.ok((windDirs.get("1,0,0")?.n ?? 0) >= 5, "the column's comb arrows point +X, across the column");
   assert.deepEqual([...windDirs.keys()].sort(), ["0,0,1", "1,0,0"], "only +X arrows and the +Z profile bar along the column");
@@ -436,7 +444,7 @@ test("neutral beamUniform wx/wy/wz are GLOBAL: gravity on the X girder points -Z
 test("neutral beamUniform trapezoid: wx_end/aL/bL are drawn over [aL, bL] with the end magnitude (#2385 F1)", () => {
   const s = onlyCase("trap");
   assert.equal(loadsSummaryOf(s).peaks.beamUniform, 20, "the peak is the trapezoid's larger end, 20");
-  const arrows = segmentDirs(buildLoads3D(s, l3Blobs).linePositions).get("0,0,-1");
+  const arrows = segmentDirs(nominal3D(s, l3Blobs).linePositions).get("0,0,-1");
   assert.ok(arrows && arrows.n > 0, "the trapezoid points -Z");
   // The resolver gives every girder element the span x/L in [0.25, 0.75]: no tick sits on the girder's ends.
   assert.ok(arrows.xMin > 1e-6 && arrows.xMax < 4 - 1e-6, `ticks inside the span, got x in [${arrows.xMin}, ${arrows.xMax}]`);
@@ -452,20 +460,20 @@ test("neutral surfacePressure is typed by load_type (p=7 into the slab, not a be
   assert.equal(sum.peaks.surfacePressure, 7);
   assert.equal(sum.peaks.beamUniform, 10, "the pressure's direction key no longer turns it into a unit beamUniform");
   assert.equal(sum.counts.beamUniform + sum.counts.surfacePressure, sum.counts.elementLoads);
-  assert.equal(buildLoads3D(dead, l3Blobs).surfacePressureCount, nTri);
+  assert.equal(nominal3D(dead, l3Blobs).surfacePressureCount, nTri);
 
   const self = onlyCase("self");
   const selfSum = loadsSummaryOf(self);
   assert.equal(selfSum.patterns.find((p) => p.id === "neutral:self")!.counts.elementLoads, nTri, "the case is listed with its records");
   assert.match(selfSum.notice ?? "", new RegExp(`${nTri} bodyForce in self`));
-  const selfGeom = buildLoads3D(self, l3Blobs);
+  const selfGeom = nominal3D(self, l3Blobs);
   assert.equal(selfGeom.elementLoadArrows, 0);
   assert.match(selfGeom.notice ?? "", /bodyForce in self/, "the drawing says what it left out");
 
   // A traction (normal: false) is not a pressure: it is named, not drawn along the face normal.
   const traction = onlyCase("wind_slab");
   assert.match(loadsSummaryOf(traction).notice ?? "", new RegExp(`${nTri} surface traction/shear in wind_slab`));
-  const tractionGeom = buildLoads3D(traction, l3Blobs);
+  const tractionGeom = nominal3D(traction, l3Blobs);
   assert.equal(tractionGeom.elementLoadArrows, 0);
   assert.equal(tractionGeom.surfacePressureCount, 0);
 });
@@ -478,7 +486,7 @@ test("neutral nodal force and prescribed SP from the writer's node_id/force_xyz 
   assert.equal(sum.counts.sps, 1);
   assert.equal(sum.counts.spTranslations, 1);
   assert.equal(sum.peaks.spTranslation, 0.005);
-  const g = buildLoads3D(s, l3Blobs);
+  const g = nominal3D(s, l3Blobs);
   assert.equal(g.nodalForceArrows, 1);
   assert.equal(g.spArrows, 1);
 });
@@ -549,7 +557,7 @@ test("OpenSees-pattern beamUniform: the emitter's aL/bL and end values are decod
   assert.equal(sum2.counts.beamUniform, 1);
   assert.equal(sum2.peaks.beamUniform, 20, "the larger end, not |(-10, aL read as wx)|");
   assert.equal(sum2.notice, null);
-  const g2 = buildLoads3D(s2, shoeBlobs);
+  const g2 = nominal3D(s2, shoeBlobs);
   assert.equal(g2.maxElementLoadMag, 20);
 
   // The ticks sit on the element over x/L in [0.25, 0.75] only.
@@ -561,7 +569,7 @@ test("OpenSees-pattern beamUniform: the emitter's aL/bL and end values are decod
 
   // 3-D partial span (wy wz wx aL bL) on a beam with a vecxz: drawn over [0.2, 0.8] only.
   const s3span = withVecxz(opsElementLoadsState(shoeState, 3, [["-ele", tag, "-type", "-beamUniform", "-10.0", "0.0", "0.0", "0.2", "0.8"]]));
-  const g3 = buildLoads3D(s3span, shoeBlobs);
+  const g3 = nominal3D(s3span, shoeBlobs);
   assert.equal(g3.notice, null);
   assertTipsWithin(g3, decl, 0.2, 0.8);
 
@@ -579,7 +587,7 @@ test("OpenSees-pattern element loads the drawing cannot place are named: selfWei
   // The bridge's row for `p.self_weight(...)` on beams.
   const sw = opsElementLoadsState(shoeState, 2, [["-ele", tag, "-type", "-selfWeight", "0.0", "-1.0", "0.0"]]);
   assert.match(loadsSummaryOf(sw).notice ?? "", /1 bodyForce on a line element in Plain_1/);
-  assert.equal(buildLoads3D(sw, shoeBlobs).linePositions.length, 0);
+  assert.equal(nominal3D(sw, shoeBlobs).linePositions.length, 0);
 
   const missing = opsElementLoadsState(shoeState, 2, [["-ele", 987654321, "-type", "-beamUniform", "-10.0", "0.0"]]);
   assert.match(loadsSummaryOf(missing).notice ?? "", /1 element load on no element in the mesh in Plain_1/);
@@ -598,7 +606,7 @@ test("OpenSees-pattern bare -surfaceLoad (the bridge's form) is listed with a no
   assert.equal(pat.counts.elementLoads, 1);
   assert.equal(pat.active, true);
   assert.match(sum.notice ?? "", /1 surfaceLoad \(its pressure is on the SurfaceLoad element\) in Plain_1/);
-  assert.match(buildLoads3D(s, shoeBlobs).notice ?? "", /surfaceLoad/);
+  assert.match(nominal3D(s, shoeBlobs).notice ?? "", /surfaceLoad/);
 });
 
 test("timeSeries scaling λ(t): Constant, Linear, Path, Trig, and scaleBySeries on results steps", () => {
@@ -640,17 +648,17 @@ test("timeSeries scaling λ(t): Constant, Linear, Path, Trig, and scaleBySeries 
     scaleBySeries: false,
     selectedPatterns: ["/opensees/patterns/Plain_1"],
   });
-  const geomNominal = buildLoads3D(s, defBlobs);
+  const geomNominal = nominal3D(s, defBlobs);
 
   s = reduce(s, { type: "setLoads", scaleBySeries: true });
-  const geomAt025 = buildLoads3D(s, defBlobs);
+  const geomAt025 = nominal3D(s, defBlobs);
   assert.ok(
     Math.abs(geomAt025.maxForceMag - 0.25 * geomNominal.maxForceMag) < 1e-6,
     `at t=0.25, Linear(factor=1) scales maxForceMag by 0.25 (${geomAt025.maxForceMag} vs ${geomNominal.maxForceMag})`,
   );
 
   const sStep1 = reduce(s, { type: "setResultStep", step: 1 });
-  const geomAt075 = buildLoads3D(sStep1, defBlobs);
+  const geomAt075 = nominal3D(sStep1, defBlobs);
   assert.ok(
     Math.abs(geomAt075.maxForceMag - 0.75 * geomNominal.maxForceMag) < 1e-6,
     `at t=0.75, Linear(factor=1) scales maxForceMag by 0.75`,
@@ -664,7 +672,7 @@ test("timeSeries scaling λ(t): Constant, Linear, Path, Trig, and scaleBySeries 
 
 test("unit awareness: loadsUnitsOf and buildLoads3D convert load magnitudes via baseUnits, and Spotlight exposes cmd:contour-units & cmd:toggle-loads on mesh", () => {
   let s = reduce(shoeState, { type: "setLoads", on: true });
-  const geomRaw = buildLoads3D(s, shoeBlobs);
+  const geomRaw = nominal3D(s, shoeBlobs);
   assert.equal(geomRaw.units.force.unit, null);
 
   // Convert from N_m_s to kN_m_s -> force scales by 1e-3
@@ -677,7 +685,7 @@ test("unit awareness: loadsUnitsOf and buildLoads3D convert load magnitudes via 
   assert.equal(u.displacement.unit, "m");
   assert.ok(Math.abs(u.force.factor - 1e-3) < 1e-12);
 
-  const geomKn = buildLoads3D(s, shoeBlobs);
+  const geomKn = nominal3D(s, shoeBlobs);
   assert.ok(Math.abs(geomKn.maxForceMag - geomRaw.maxForceMag * 1e-3) < 1e-6);
 
   // Spotlight exposes both cmd:toggle-loads and cmd:contour-units on a mesh-only model (without results)
@@ -981,7 +989,7 @@ test("stage-ordered remove_sp: stage 1 remove_sp removes earlier stage SP but pr
   const sum1 = loadsSummaryOf(sStage1);
   assert.equal(sum1.counts.sps, 1, "stage 1 pattern SP remains active while global SP is removed");
   assert.ok(Math.abs(sum1.peaks.spTranslation - 0.035) < 1e-9, "active SP value is 0.035 (not 0.025 or 0)");
-  const geom1 = buildLoads3D(sStage1, shoeBlobs);
+  const geom1 = nominal3D(sStage1, shoeBlobs);
   assert.equal(geom1.spArrows, 1);
   assert.ok(Math.abs(geom1.maxSpTranslationMag - 0.035) < 1e-9);
 });
@@ -1050,9 +1058,110 @@ test("3-D beam with nearly-parallel vecxz (||vecxz - (vecxz · xLocal) xLocal|| 
     { type: "setLoads", on: true },
   );
 
-  const geom = buildLoads3D(sParallelVecxz, shoeBlobs);
+  const geom = nominal3D(sParallelVecxz, shoeBlobs);
   assert.equal(geom.elementLoadArrows, 0, "parallel vecxz is refused fail-closed");
   assert.equal(geom.skippedUnorientedBeams, 1);
   assert.match(geom.notice ?? "", /missing geomTransf vecxz/);
 });
 
+
+
+test("one record per arrow: tip, unit direction, nominal length, colour, one or two heads, an SP bar flag, and a thinning level", () => {
+  assert.equal(initialState.loads.headSize, 12, "the head is 12 px by default");
+  assert.equal(initialState.loads.thin, true);
+  const s = reduce(defState, { type: "setLoads", on: true });
+  const g = buildLoads3D(s, defBlobs);
+  const n = g.arrows.length / ARROW_STRIDE;
+  assert.ok(n > 0 && Number.isInteger(n));
+  for (let i = 0; i < n; i++) {
+    const r = Array.from(g.arrows.subarray(i * ARROW_STRIDE, (i + 1) * ARROW_STRIDE));
+    assert.ok(r.every(Number.isFinite), `record ${i} is finite`);
+    assert.ok(Math.abs(Math.hypot(r[ARROW.dir]!, r[ARROW.dir + 1]!, r[ARROW.dir + 2]!) - 1) < 1e-5, "unit direction");
+    assert.ok(r[ARROW.len]! > 0 && r[ARROW.len]! <= g.refLen * (1 + 1e-6), "nominal length within the reference arrow");
+    assert.ok([1, 2].includes(r[ARROW.heads]!) && [0, 1].includes(r[ARROW.bar]!));
+    assert.ok(Number.isInteger(r[ARROW.level]!) && r[ARROW.level]! >= 0 && r[ARROW.level]! <= THIN_LEVELS);
+  }
+  assert.equal(g.combs.length % COMB_STRIDE, 0);
+});
+
+test("the arrow colour: one colour for every load by default, the load type's colour, or jet over the magnitude", () => {
+  assert.equal(initialState.loads.colorBy, "mono");
+  const on = reduce(defState, { type: "setLoads", on: true });
+  const pal = loadsColourPalette("dark");
+  const key = (rgb: readonly number[]) => rgb.map((v) => v.toFixed(4)).join(",");
+  const colours = (g: ReturnType<typeof buildLoads3D>) => {
+    const out = new Set<string>();
+    for (let o = 0; o < g.arrows.length; o += ARROW_STRIDE) out.add(key(Array.from(g.arrows.subarray(o + ARROW.rgb, o + ARROW.rgb + 3))));
+    return out;
+  };
+  assert.deepEqual([...colours(buildLoads3D(on, defBlobs))], [key(pal.mono)], "monochrome: every arrow is the theme's text colour");
+  const byType = colours(buildLoads3D(reduce(on, { type: "setLoads", colorBy: "type" }), defBlobs));
+  assert.ok(byType.size >= 1 && !byType.has(key(pal.mono)));
+  for (const c of byType) assert.ok([pal.force, pal.moment, pal.elementLoad, pal.sp].some((p) => key(p) === c), `by type: ${c} is a load type's colour`);
+  assert.ok(colours(buildLoads3D(reduce(on, { type: "setLoads", colorBy: "magnitude" }), defBlobs)).has(key(sampleCmap("jet", 1))), "by magnitude: each kind's peak is jet's top colour");
+});
+
+test("thinning: level k keeps one arrow per cell of radius·2^(k−12), the cell's highest priority, and an arrow's level is the last level that kept it", () => {
+  // Three arrows on a model of radius 1: a close pair near x = 0.3 and one far away.
+  const rec = (x: number, priority: number) => [x, 0, 0, 0, -1, 0, 0.2, 1, 1, 1, 1, 0, priority, 0];
+  const a = new Float32Array([...rec(0, 0.4), ...rec(0.3, 0.5), ...rec(0.3001, 0.9)]);
+  thinningLevels(a, 1);
+  const level = (i: number) => a[i * ARROW_STRIDE + ARROW.level]!;
+  assert.ok(level(1) < level(2), `the weaker of the close pair drops first (${level(1)} < ${level(2)})`);
+  assert.equal(level(1), 0, "the close pair (1e-4 apart) shares even the finest cell (2^-11): the weaker one shows only fully zoomed in");
+  assert.equal(level(0), 10, "the far arrow (0.3 away) shares a cell from level 11 (cell 0.5) on");
+  assert.equal(level(2), THIN_LEVELS, "the strongest arrow survives every level");
+  // On a real model: at each level, no two surviving arrows share a cell.
+  const g = buildLoads3D(reduce(defState, { type: "setLoads", on: true }), defBlobs);
+  for (let k = 1; k <= THIN_LEVELS; k++) {
+    const cell = g.radius * 2 ** (k - THIN_LEVELS);
+    const seen = new Set<string>();
+    let min = [Infinity, Infinity, Infinity];
+    for (let o = 0; o < g.arrows.length; o += ARROW_STRIDE) min = min.map((m, c) => Math.min(m, g.arrows[o + c]!));
+    for (let o = 0; o < g.arrows.length; o += ARROW_STRIDE) {
+      if (g.arrows[o + ARROW.level]! < k) continue;
+      const id = [0, 1, 2].map((c) => Math.floor((g.arrows[o + c]! - min[c]!) / cell)).join(",");
+      assert.ok(!seen.has(id), `level ${k}: two arrows in cell ${id}`);
+      seen.add(id);
+    }
+  }
+});
+
+test("on screen: a head of headSize px, a shaft clamped to [15, 80] px, and the thinning level shown rises as the view zooms out", () => {
+  const u = { headPx: 12, minPx: SHAFT_MIN_PX, maxPx: SHAFT_MAX_PX, radius: 10, thin: true };
+  // 1 mm per pixel: a 1 m arrow is capped at 80 px, a 1 mm one raised to 15 px; the head is 12 px either way.
+  const wpp = 0.001;
+  assert.deepEqual([screenArrow(1, 0, wpp, u).L / wpp, screenArrow(1, 0, wpp, u).H / wpp].map((v) => Math.round(v)), [80, 12]);
+  assert.equal(Math.round(screenArrow(0.001, 0, wpp, u).L / wpp), 15);
+  assert.equal(Math.round(screenArrow(0.03, 0, wpp, u).L / wpp), 30, "inside the band the shaft keeps its nominal length");
+  // Zoomed in, every level shows; zoomed out to the whole model in a few pixels, only the top level.
+  assert.equal(screenArrow(1, 0, 1e-6, u).shown, true);
+  assert.equal(screenArrow(1, THIN_LEVELS - 1, 10, u).shown, false);
+  assert.equal(screenArrow(1, THIN_LEVELS, 10, u).shown, true);
+  assert.equal(screenArrow(1, 0, 10, { ...u, thin: false }).shown, true, "thinning off shows everything");
+  let last = -1;
+  for (const w of [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1]) {
+    const need = [...Array(THIN_LEVELS + 1).keys()].find((k) => screenArrow(1, k, w, u).shown)!;
+    assert.ok(need >= last, `the level needed never falls as the view zooms out (${w}: ${need})`);
+    last = need;
+  }
+});
+
+test("LoadsLayer: one instance per arrow and per comb bar; head size and thinning are uniforms, so changing them rebuilds nothing", () => {
+  const layer = new LoadsLayer();
+  const on = reduce(defState, { type: "setLoads", on: true });
+  assert.equal(layer.sync(on, defBlobs), true);
+  const g = buildLoads3D(on, defBlobs);
+  const heads = layer.cones.geometry as THREE.InstancedBufferGeometry;
+  assert.equal(heads.instanceCount, g.arrows.length / ARROW_STRIDE);
+  assert.equal((layer.lines.geometry as THREE.InstancedBufferGeometry).instanceCount, g.arrows.length / ARROW_STRIDE);
+  assert.equal(layer.uniforms.uHeadPx.value, 12);
+  const bigger = reduce(on, { type: "setLoads", headSize: 20, thin: false });
+  assert.equal(layer.sync(bigger, defBlobs), true, "a new head size redraws");
+  assert.equal(layer.cones.geometry, heads, "and keeps the instance buffers");
+  assert.deepEqual([layer.uniforms.uHeadPx.value, layer.uniforms.uThin.value], [20, 0]);
+  assert.equal(layer.sync(bigger, defBlobs), false);
+  layer.sync(reduce(bigger, { type: "setLoads", colorBy: "type" }), defBlobs);
+  assert.notEqual(layer.cones.geometry, heads, "a new colour mode rebuilds the records");
+  layer.dispose();
+});
