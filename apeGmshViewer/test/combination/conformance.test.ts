@@ -277,6 +277,87 @@ test("entity terms join on kind and row, text by code point", () => {
   assert.ok(Math.abs(got.values[1]! - (1.2 * 2 + 1.6 * 1)) < 1e-15);
 });
 
+// ---- review of #2742: hand literals, each value printed by the repo's Python evaluator ----
+// (apeGmsh.results.user._evaluate with PYTHONPATH=<worktree>/src, on the same inputs).
+
+/** A source over named stage fields and cases, with optional stored rows (linear). */
+class Literal extends FixtureSource {
+  readonly fields: Record<string, Field>;
+  readonly cases: Record<string, Case>;
+  readonly rows: Record<string, Field>;
+  constructor(fields: Record<string, Field>, cases: Record<string, Case> = {}, rows: Record<string, Field> = {}) {
+    super();
+    this.fields = fields;
+    this.cases = cases;
+    this.rows = rows;
+  }
+  override stored(name?: string): Field | null {
+    return (name !== undefined && this.rows[name]) || null;
+  }
+  override field(a: StateAddress): Field {
+    const f = this.fields[a.source];
+    if (f === undefined) throw new CombinationRefused("", "unresolved", a.source);
+    return f;
+  }
+  override case(name: string): Case {
+    const c = this.cases[name];
+    if (c === undefined) throw new CombinationRefused("", "unresolved", name);
+    return c;
+  }
+}
+const stage = (source: string, factor = 1) => ({ kind: "stage", source, step: -1, mode: 0, factor });
+const row = (name: string, rule: string, terms: Combination["terms"], extra: Partial<Combination> = {}): Combination => ({ name, rule, terms, envelope: "", fraction: null, damping: null, ...extra });
+const ULS = [row("ULS", "linear", [stage("D", 1.2), stage("L", 1.6)])];
+const close = (got: Float64Array, want: number[]) =>
+  want.forEach((w, i) => (Number.isNaN(w) ? assert.ok(Number.isNaN(got[i]!), `${i}: ${got[i]}`) : assert.ok(Math.abs(got[i]! - w) <= 1e-12 * Math.abs(w), `${i}: ${got[i]} want ${w}`)));
+
+test("text keys sort by code point, not UTF-16 unit: U+FB00 before U+1D538 (Python)", () => {
+  const D = makeField(["kind", "row"], [["\u{1D538}", 0]], ["V"], [2]);
+  const L = makeField(["kind", "row"], [["ﬀ", 0], ["\u{1D538}", 0]], ["V"], [1, 5]);
+  const got = evaluate(CombinationTable.resolve(ULS), "ULS", new Literal({ D, L })).field;
+  assert.deepEqual(got.keys, [["ﬀ", 0], ["\u{1D538}", 0]]);
+  close(got.values, [NaN, 10.4]);
+});
+
+test("terms with identical unsorted rows keep the first term's order; reordered rows give the sorted union (Python)", () => {
+  const ids = [[1], [3], [5], [2], [4]];
+  const D = makeField(["id"], ids, ["ux"], [1, 3, 5, 2, 4]);
+  const L = makeField(["id"], ids, ["ux"], [10, 30, 50, 20, 40]);
+  const same = evaluate(CombinationTable.resolve(ULS), "ULS", new Literal({ D, L })).field;
+  assert.deepEqual(same.keys, ids);
+  close(same.values, [17.2, 51.6, 86.0, 34.4, 68.8]);
+  const L2 = makeField(["id"], [[5], [4], [3], [2], [1]], ["ux"], [50, 40, 30, 20, 10]);
+  const sorted = evaluate(CombinationTable.resolve(ULS), "ULS", new Literal({ D, L: L2 })).field;
+  assert.deepEqual(sorted.keys, [[1], [2], [3], [4], [5]]);
+  close(sorted.values, [17.2, 34.4, 51.6, 68.8, 86.0]);
+});
+
+test("a whole case with no damping for a mode, or a damping of 1, refuses bad-param, never NaN (Python)", () => {
+  const increments = [1, 2].map((v) => makeField(["id"], [[1]], ["ux"], [v]));
+  const t = CombinationTable.resolve([row("E", "cqc", [{ kind: "spectrum", source: "X", step: -1, mode: 0, factor: 1 }])]);
+  for (const damping of [[0.05, NaN], [0.05, 1.0]]) {
+    const X = makeCase({ mode: [1, 2], lam: [10, 40], saPeriod: [0, 0], damping, increments });
+    assert.throws(() => evaluate(t, "E", new Literal({}, { X })), (err: unknown) => err instanceof CombinationRefused && err.reason === "bad-param", JSON.stringify(damping));
+  }
+});
+
+test("directional takes |E| of negative terms: 3.3 and 4.6 (Python)", () => {
+  const D = makeField(["id"], [[1], [2]], ["ux"], [-3, 2]);
+  const L = makeField(["id"], [[1], [2]], ["ux"], [1, -4]);
+  const t = CombinationTable.resolve([row("dir", "directional", [stage("D"), stage("L")], { fraction: 0.3 })]);
+  const got = evaluate(t, "dir", new Literal({ D, L }));
+  assert.equal(got.signed, false);
+  close(got.field.values, [3.3, 4.6]);
+});
+
+test("a stored linear row over another linear combination stays signed (Python)", () => {
+  const t = CombinationTable.resolve([...ULS, row("twice_ULS", "linear", [{ kind: "combination", source: "ULS", step: -1, mode: 0, factor: 2 }])]);
+  const got = evaluate(t, "twice_ULS", new Literal({}, {}, { twice_ULS: makeField(["id"], [[1]], ["ux"], [7]) }));
+  assert.equal(got.signed, true);
+  assert.deepEqual([...got.field.values], [7]);
+  assert.equal(deformedShape(got), got.field);
+});
+
 test("an unknown evaluation reason is a bug, not a refusal", () => {
   assert.throws(() => new CombinationRefused("x", "nope" as never, ""), RangeError);
 });
