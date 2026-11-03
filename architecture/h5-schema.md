@@ -2951,8 +2951,13 @@ Row `k` is one set. Its members are `[member_offsets[k], member_offsets[k+1])` o
 **The verdict.** On open, each set is checked against the paired `<stem>.h5`. Let
 `D` be the diagonal of the bounding box of every node in `/nodes`, and
 `tol = 1e-9 · D` (`0` when `D = 0`). A member **matches** when the model has its
-tag (in `/nodes`, or in `/opensees/element_meta`) and the distance from its stored
-`xyz` to the model's is at most `tol`.
+tag (in `/nodes`, or in `/opensees/element_meta`), the distance from its stored
+`xyz` to that tag's position in the model is at most `tol`, **and no other model
+item of the set's kind lies within `tol` of the stored `xyz`**. A member whose
+position fits more than one model item is ambiguous and counts as unmatched; a
+reader never picks one of the candidates. Two zero-length elements on one node
+pair share a centroid, and their two nodes share a position, so a swap of either
+pair would otherwise read `moved` and a plot would read the wrong spring.
 
 The **identity hashes** of a row are its `fem_hash` for a node set, and its
 `fem_hash` **and** `model_hash` for an element set. An element tag is an OpenSees
@@ -2972,9 +2977,10 @@ covers.
 A model with no `fem_hash` (or, for an element set, no `model_hash`) compares as
 different. An element set on a model with no `/opensees` zone refuses,
 `no-tag-map`, and an element-set row with an empty `model_hash` refuses,
-`bad-param`. The member check cannot tell apart two elements that share a centroid
-(two zero-length elements on one node pair, coincident shells): a renumbering that
-swaps only such elements reads `moved`. A nearest-coordinate match is only an
+`bad-param`. Because an ambiguous member is unmatched, a set holding a zero-length
+element or a coincident shell reads at best `partial` once an identity hash moves.
+Accepting the survivors drops the ambiguous members, and a human picks them again
+in the current model. A nearest-coordinate match is only an
 offer: the app shows the largest distance, and a human confirms. The verdict uses
 the model, not `results_hash`: a set is a fact about the mesh, and `rf1` moves on
 every re-run of an unchanged one.
@@ -2987,7 +2993,10 @@ Worked case: a frame whose roof nodes 31 to 33 sit at z = 9 and base nodes 1 to 
 at z = 0. Re-meshed with a new label, so `fem_hash` moves while no node moves,
 `roof` reads `moved`. If base node 3 has moved 0.5 along x, `base` reads
 `partial`, 2 of 3. If every node of a column line has moved 0.5 up, that set reads
-`lost`.
+`lost`. An element set `springs` holds zero-length elements 501 and 502, both on the
+node pair 3–103 at (12, 0, 0); after a declaration swap `model_hash` moves, each tag
+still sits at (12, 0, 0), but each position fits two elements, so both members are
+ambiguous and `springs` reads `lost`, 0 of 2, never `moved`.
 
 ### `/plots`
 
@@ -3158,12 +3167,14 @@ and label, and never sends a path; main refuses a request whose label does not m
 its row. When the watched manifest changes, main re-reads the same path.
 
 A compare set lives in a **compare slot** of its own, apart from the window set (the
-set on screen, which `windowSet` returns). Only the read doors (the `results:*` and
-`geometry:open` reads and the `.user.h5` reads) consult it, and only for a request
-that names the compare slot. The compare slot is never the window set: no door that
-adopts a set (the `ungestured` check, `followModel`) treats a compare path as a set
-the user opened, and nothing writes into a compare set, neither `/combinations` nor
-its workspace. At most one set fills the slot. Switching to a variant is a different
+set on screen, which `windowSet` returns). `model:open` runs the `ungestured` check
+and `followModel`, so it would adopt a compare model; VU10 therefore adds a
+compare-model door that reads a manifest row's model without adopting it (it never
+touches `windowSet`, the gesture records or `followModel`), and a results host of the
+compare set's own, so `results:open` and `results:close` for the window set never
+touch it. Compare reads (results, geometry, `.user.h5`) name the compare slot
+explicitly. Nothing writes into a compare set, neither `/combinations` nor its
+workspace. At most one set fills the slot. Switching to a variant is a different
 act: main opens that row's set as the window set, which the app may then write.
 
 ## Cross-references

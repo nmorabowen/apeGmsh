@@ -135,9 +135,12 @@ coordinates within `1e-9` of the model's bounding-box diagonal; the next save
 updates the hashes),
 `partial` ("k of n"; plots that read it refuse until a human accepts the
 survivors) or `lost` (none; listed, never dropped silently). A nearest-coordinate
-match is only an offer. The member check cannot tell apart two elements that
-share a centroid, such as two zero-length elements on one node pair: a
-renumbering that swaps only those reads `moved`.
+match is only an offer. A member matches only if its stored position fits its
+own tag **and no other** model item of the set's kind: a position that fits two
+items is ambiguous and counts as unmatched, and no reader picks one of the
+candidates. Two zero-length elements on one node pair share a centroid (and their
+nodes share a position), so after a declaration swap such a set reads `partial`
+or `lost`, never `moved`, and no plot reads the wrong spring (INV-3).
 
 The card offered `rf1` for this. It does not fit: a set is a fact about the mesh,
 and `results_hash` moves on every re-run of an unchanged mesh, so an `rf1` per set
@@ -248,13 +251,21 @@ manifest the user opened. So:
 4. Limits: only a row that passed D8, confined to the manifest's folder; only a
    model file, paired by the usual rules, so its `results`, `user` and
    `workspace` slots (D1) fill from its stem; at most one compare set.
-5. **The compare slot.** A compare set lives in a compare slot of its own, never
-   in the window set (the set on screen, `windowSet`). Only the read doors
-   consult it: the `results:*` and `geometry:open` reads and the `.user.h5`
-   reads, for a request that names the compare slot. No door that adopts a set
-   (the `ungestured` check, `followModel`) treats a compare path as a set the
-   user opened, so the compare model can never become the open set by that
-   route. Nothing writes into a compare set, neither `/combinations` nor its
+5. **The compare slot, a requirement on VU10.** A compare set lives in a compare
+   slot of its own, never in the window set (the set on screen, `windowSet`).
+   Today the only model door is `model:open`, which runs the `ungestured` check
+   and `followModel` and so would adopt a compare model as the open set; and main
+   has one results host. VU10 therefore adds:
+   - **a compare-model door of its own**, which takes a manifest row (index and
+     label, item 2), reads that set's model and never adopts it: it never
+     touches `windowSet`, the gesture records or `followModel`, and `model:open`
+     is not used for a compare;
+   - **a results host for the compare set**, apart from the window set's, so
+     `results:open` and `results:close` for the window set never open or close
+     the compare set's results, and the compare reads (results, geometry,
+     `.user.h5`) name the compare slot explicitly.
+
+   Nothing writes into a compare set, neither `/combinations` nor its
    workspace. Its workspace is read like the rest of it, and a comparison
    matches sets by name across the two workspaces, each with its own verdict
    against its own model (D1: a workspace belongs to one stem).
