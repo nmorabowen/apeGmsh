@@ -11,7 +11,7 @@ Slice card: VA6a ([#2741](https://github.com/nmorabowen/apeGmsh/issues/2741)).
 outcomes ([#2655 comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6591785652)).
 A gap row marked **ruled 2026-11-02** carries one of those outcomes. A
 row marked **repoint (covered)** needs no ruling, because v2 already draws
-that view. Two rows
+that view. Three rows
 are marked **needs ruling**: in each, the code check changed the
 recommended outcome, so the ruling does not cover it (see "Needs ruling").
 
@@ -29,7 +29,7 @@ until v2 can capture headless there.
 | G4 | Deform by velocity or acceleration | `deform=(field, scale)` with `field` in displacement, velocity, acceleration | `deform` has only `scale` and `ghost`. The app warps by displacement only (`apeGmshViewer/src/state/deform.ts`) | **drop**, ruled 2026-11-02 | R17 |
 | G5 | The canned pack | `render_pack` chooses the stage, the default component (uz, ux, uy, then the first nodal) and the file set | No pack. Each choice has to be made by a caller that reads `--describe` | **repoint** as one v2 pack spec built for `assess`, ruled 2026-11-02 | R23–R28 |
 | G6 | History plot | `history.png`, a labelled matplotlib history at the extrema node | No 2-D chart in v2. This still was never VTK | **keep** (matplotlib), ruled 2026-11-02 | R27 |
-| G7 | Stills of what is not on disk | `g.model.render` draws the BRep; `g.mesh.render` draws the live mesh, both from the open Gmsh kernel; `fem.render` and `results.render` draw a `FEMData` or `Results` held in memory | The app reads files only. A job does open `<stem>.geometry.h5` (`job.ts:95`), but `compileShot` never sets the geometry phase: it sets `mesh` or `results` only (`compile.ts:113-130`). A saved file therefore yields the mesh, never the BRep | **repoint** through a temporary `model.h5` (and its results file), ruled 2026-11-02, for `g.mesh.render` (R30) and in-memory objects (R1). For `g.model.render`, **needs ruling** (R29) | R1, R29, R30 |
+| G7 | Stills of what is not on disk | `g.model.render` draws the BRep; `g.mesh.render` draws the live mesh, both from the open Gmsh kernel; `fem.render` draws a `FEMData` held in memory, and `results.render` a `Results` held in memory | The app reads files only. A job does open `<stem>.geometry.h5` (`job.ts:95`), but `compileShot` never sets the geometry phase: it sets `mesh` or `results` only (`compile.ts:113-130`). A saved file therefore yields the mesh, never the BRep | **repoint** through a temporary `model.h5`, ruled 2026-11-02, for `g.mesh.render` (R30) and an in-memory `FEMData` (R1). For `g.model.render` (R29) and an in-memory `Results` (R22b): **needs ruling** | R1, R22b, R29, R30 |
 | G8 | Files the app cannot open | `Results.from_mpco` reads an `.mpco`, and a native results file opens under any name | `files` takes `<stem>.h5` with a `<stem>.results.h5`, `<stem>.ladruno` or part-set sibling, and nothing else. An `.mpco` is refused before the run starts (exit 2), and a results file the stem rule does not find is not paired. A conversion exists on `origin/main`: `apeGmsh.results.convert_mpco(src, dst, model_h5=...)` writes `.ladruno` (ADR 0122 D5). In-memory objects are G7, not G8 | **drop**, ruled 2026-11-02. The converter is the user's route for `.mpco` | R31 |
 | G9 | The skip contract | `None` or `()` with a `[skip viewer]` line, under `APEGMSH_SKIP_VIEWER=1` or without GL | No skip. `agent_view.render_stills` raises `FileNotFoundError` with no app, and `AgentViewError` on a refusal | **take v2's raise**, ruled 2026-11-02. Callers that test for `None` change with VA6 | R21 |
 | G10 | Derived-scalar contours | `component=` accepts a scalar computed from the recorded components, such as `von_mises_stress` (`session/_specs.resolve_contour_topology`, `available_derived`) | The app offers only recorded datasets. A derived name is refused as an unknown component or field (`compile.ts` `fieldOf`) | **add** derived scalars to v2, ruled 2026-11-02 | R16c |
@@ -45,6 +45,14 @@ ruling".
   "add" for the Gauss and derived-scalar gap. The probe shows v2 already
   draws stored components: `gauss-cell` and `gauss-node` were drawn on
   `elem_solid`. Only derived scalars (G10) need adding.
+- **R22b, a `Results` held only in memory.** It cannot reach a file. `main`
+  has no `Results` writer: the only method that writes a file is
+  `save_definitions`, and `Results.viewer` refuses the conversion as
+  lossy (#1664). There are three options:
+  - keep v1 for it, because the Qt session already draws it;
+  - drop it;
+  - add a lossless `Results` writer. That is a new feature, and it is
+    blocked by #1664.
 - **R29, `g.model.render` (the BRep).** "Repoint through a temporary
   `model.h5`" draws the mesh, not the BRep, because no spec reaches the
   geometry phase (G7). The two choices are to add a geometry phase to the
@@ -133,6 +141,8 @@ colour-range probe. All of them are under "Evidence".
 | R20 | `step=k ≥ 0`, `-1`, `-k` | `k`, `"last"`, or `n − k` with `n` from `--describe` | repoint (covered) | A:`refuse-step` refused; V:`step -2` refused |
 | R21 | returns the `Path`, or `None` on a skip | `agent_view.render_stills(spec, out)` returns the manifest and raises on a refusal (G9) | repoint, take v2's raise, ruled 2026-11-02 | `agent_view.py`; `main.ts` exit codes 0, 1, 2 |
 | R22 | the stage: the `results.stage(s)` scope, or the `results.modes[i]` scope (a mode stage), else the last stage, with a warning (`_results_stills._resolve_stage`) | `stage`, by name or index, is required for every results shot. A mode is its mode stage (`--describe` `kind: "mode"`), named by index | repoint (covered) | A:`refuse-stage` refused |
+
+| R22b | `results.render` on a `Results` held only in memory | none: no file the spec could name, and `main` has no `Results` writer (`save_definitions` is the only file writer; `Results.viewer` refuses the conversion as lossy, #1664) | **needs ruling**: keep v1, drop, or add a lossless writer (blocked by #1664) | `results/Results.py` (`save_definitions`; the #1664 refusal in `viewer`) |
 
 ### `results.render_pack(out_dir, *, camera=None, window_size=(1280, 720))`
 
@@ -274,7 +284,7 @@ with "render failed to start", and writes no manifest.
 
 ## Next
 
-The owner rules on the two "needs ruling" rows on #2655. VA6 then works
+The owner rules on the three "needs ruling" rows on #2655. VA6 then works
 within the deletion scope above: it repoints the Windows callers, deletes
 the director path in `render.py`, and leaves the VTK verbs and the Qt
 session path in place.
