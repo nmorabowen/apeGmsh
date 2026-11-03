@@ -27,7 +27,7 @@ Look at the pixels. For checking the code itself, see `.claude/skills/apegmsh-vi
   `python -m apeGmsh doctor` checks the interpreter, path drift and GL.
 - Scripts import the editable install (the main checkout): set `PYTHONPATH=<worktree>/src` for
   the candidate and `<clean origin/main worktree>/src` for the reference.
-- One fixture for both: `Results.demo(path="<dir>")` (writes `demo_results.h5` +
+- One fixture for both: `Results.demo(path="<dir>")` (writes `demo_results.ladruno` +
   `demo_model.h5`), or a bench case (`viewer_bench/README.md` › "Running it").
 - Stills inherit the theme saved in QSettings: pin the palette and window size, and restore any
   theme or density you change.
