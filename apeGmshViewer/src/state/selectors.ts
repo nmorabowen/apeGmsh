@@ -1579,9 +1579,30 @@ export function differencePlanOf(s: State): DifferencePlan | null {
   };
 }
 
+/**
+ * VU10: the study's row labelled `label`, as a spec's `compare` names it
+ * (spec/compile.ts `VariantOf`), and whether it is the compare set already;
+ * refused when no study is open, no passing row has the label, or it is the
+ * window set (INV-6).
+ */
+export function variantRowOf(s: State, label: string): { ok: true; row: { index: number; label: string }; open: boolean } | { ok: false; reason: string } {
+  const study = s.variants.study;
+  if (!study) return { ok: false, reason: `no variants manifest is open, so there is no variant ${quoted(label)}` };
+  const row = study.rows.find((r) => r.label === label);
+  if (!row) {
+    const refused = study.refused.find((r) => r.label === label);
+    return { ok: false, reason: refused ? `variant ${quoted(label)} is refused (${refused.code}: ${refused.reason})` : `the manifest has no variant ${quoted(label)}; its variants are ${study.rows.map((r) => quoted(r.label)).join(", ") || "none"}` };
+  }
+  if (study.active === row.index) return { ok: false, reason: `variant ${quoted(label)} is the window set; a compare set is another variant` };
+  const c = s.variants.compare;
+  return { ok: true, row: { index: row.index, label: row.label }, open: c !== null && c.status !== "failed" && c.index === row.index && c.label === row.label };
+}
+
 /** `contourView` with the difference on: what its read gave, or why it draws nothing. */
 function differenceContour(s: State): ContourView {
   if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
+  const cmp = s.variants.compare;
+  if (cmp?.status === "opening") return { state: "unavailable", reason: `the compare variant ${quoted(cmp.label)} is being opened` };
   const p = differencePlanOf(s)!;
   if (!p.ok) return { state: "refused", code: "difference", reason: `the difference is refused: ${p.reason}` };
   const r = s.variants.read;

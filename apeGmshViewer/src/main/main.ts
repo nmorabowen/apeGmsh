@@ -57,7 +57,7 @@
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainEvent, type WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import { connect, createServer } from "node:net";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unwatchFile, watchFile, writeFileSync } from "node:fs";
 import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,7 +72,8 @@ import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } 
 import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
 import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
-import { OpenSession } from "./session.ts";
+import { OpenSession, Study } from "./session.ts";
+import { isManifestPath, readVariants, type VariantsFs } from "../reader/variants.ts";
 import { goToSource, provenanceSources, type SourceScope } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
@@ -248,6 +249,48 @@ if ((mode === "measure" || mode === "capture" || mode === "measure-results") && 
 // A still is the spec's `size` in pixels, whatever the display's scale (ADR 0128 D9: a model still is exactly `size`).
 if (agentMode) app.commandLine.appendSwitch("force-device-scale-factor", "1");
 
+// ---------------------------------------------------------------------------
+// VU10 (ADR 0132 D8, D9; owner ruling option A, #2753): the study. A manifest
+// is read only from a path the user gave (a drop, argv, a double-click, the
+// render spec's `files.variants`), and its rows' paths stay here: the page
+// names a variant by row index and label. The compare set has a slot and a
+// results host of its own, apart from the window set and its `resultsHost`.
+// ---------------------------------------------------------------------------
+
+const variantsFs: VariantsFs = {
+  readFile: (path) => readFileSync(path, "utf8"),
+  isFile: (path) => {
+    try {
+      return statSync(path).isFile();
+    } catch {
+      return false;
+    }
+  },
+  realpath: (path) => realpathSync.native(path),
+  fold: FOLD_CASE,
+};
+
+const study = new Study({
+  read: (manifest) => readVariants(manifest, variantsFs),
+  // Only the human's window follows a rewrite (D9.3); an agent run reads the spec's manifest once.
+  watch: (manifest, changed) => {
+    if (mode !== "view") return { close: () => undefined };
+    const listener = (cur: { mtimeMs: number; size: number }, prev: { mtimeMs: number; size: number }) => {
+      if (cur.mtimeMs !== prev.mtimeMs || cur.size !== prev.size) changed();
+    };
+    watchFile(manifest, { interval: 500 }, listener);
+    return { close: () => unwatchFile(manifest, listener) };
+  },
+  note: (message) => process.stderr.write(`apeGmshViewer: ${message}\n`),
+});
+
+/**
+ * D9.5: the compare set's results host, apart from the window set's
+ * `resultsHost`: `results:open` and `results:close` never touch it, and only
+ * `variants:compare`, `compare:readStep` and `compare:close` read or close it.
+ */
+const compareHost = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);
+
 const jobFs: JobFs = {
   readFile: (path) => readFileSync(path, "utf8"),
   exists: existsSync,
@@ -283,7 +326,12 @@ function agentStartup(): { refused: boolean; job: RenderJobFiles | null } {
     app.setPath("crashDumps", join(profile, "crashdumps"));
     if (mode !== "render") return { refused: false, job: null };
     const specPath = resolve(arg("spec")!);
-    const p = prepareRender(specPath, outDir, jobFs);
+    // VU10: the spec's manifest is the study, and its rows must include the spec's model (the window variant).
+    const p = prepareRender(specPath, outDir, jobFs, (manifest, model) => {
+      const r = study.open(manifest);
+      if (!r.ok) return r.reason;
+      return study.rowOfModel(model) ? null : `${manifest} has no variant row whose model is ${model}; its rows are ${r.rows.map((x) => JSON.stringify(x.label)).join(", ") || "none"}`;
+    });
     // D2: the whole spec is refused before any shot: no window, no PNG, the key named.
     if (!p.ok) return refuse(`the spec ${specPath} is refused: ${p.key}: ${p.reason}`);
     return { refused: false, job: p.job };
@@ -448,7 +496,40 @@ const session = new OpenSession({
   fail,
   note: (message) => process.stderr.write(`apeGmshViewer: ${message}\n`),
 });
-const openPath = (path: string, notify: boolean) => session.open(path, notify);
+/**
+ * Open what the user gave. VU10: a `<study>.variants.json` opens as the study,
+ * and its first row that passes as the window set (D9.1); any other file
+ * opens its set as before, and a file that is no row of the study ends it.
+ */
+function openPath(path: string, notify: boolean): boolean {
+  const abs = resolve(path);
+  if (isManifestPath(abs)) return openStudy(abs, notify);
+  const ok = session.open(abs, notify);
+  if (ok && study.manifest !== null && study.rowOfModel(session.set?.model ?? null) === null) {
+    closeCompare();
+    study.close();
+  }
+  sendStudy();
+  return ok;
+}
+
+function openStudy(manifest: string, notify: boolean): boolean {
+  const r = study.open(manifest);
+  if (!r.ok) {
+    fail(r.reason);
+    return false;
+  }
+  compareHost.close();
+  const first = r.rows[0];
+  if (!first) {
+    sendStudy();
+    fail(`${manifest}: no variant can be opened: ${r.refused.map((x) => x.reason).join("; ")}`);
+    return false;
+  }
+  const ok = session.open(first.resolved, notify);
+  sendStudy();
+  return ok;
+}
 
 if (mode === "view") {
   if (file) openPath(file, false);
@@ -810,6 +891,119 @@ ipcMain.handle("results:scan", (e, req: unknown) => {
 });
 ipcMain.handle("results:scanCancel", (_e, scanId: unknown) => {
   if (typeof scanId === "number") resultsHost.cancelScan(scanId);
+});
+
+// ---------------------------------------------------------------------------
+// VU10 (ADR 0132 D9): the variant doors. Each names a manifest row by index and
+// label (`study.row`, which refuses a mismatch); none takes a path. A switch
+// opens the row's set as the window set (D9.6). The compare door reads the
+// row's set into the compare slot and `compareHost`, and never adopts it: no
+// `session.open`, no `followModel`, no gesture record, so `windowSet` and
+// every window door are as they were (INV-6).
+// ---------------------------------------------------------------------------
+
+/** The study as the page sees it: the row on screen is the window set's model. */
+function studyView() {
+  const set = windowSet();
+  return study.view("reason" in set ? null : set.model);
+}
+
+function sendStudy(): void {
+  if (win) win.webContents.send("viewer:variants", studyView());
+}
+
+function closeCompare(): void {
+  compareHost.close();
+  study.compare = null;
+}
+
+// D9.3: a rewritten manifest is read again; a compare row it no longer holds leaves the slot.
+study.onChange = () => {
+  if (study.compare === null) compareHost.close();
+  sendStudy();
+};
+
+ipcMain.handle("variants:current", () => studyView());
+
+ipcMain.handle("variants:switch", (_e, index: unknown, label: unknown) => {
+  const r = study.row(index, label);
+  if (!r.ok) return { ok: false, reason: `variants:switch: ${r.reason}` };
+  if (mode !== "view") return { ok: false, reason: `variants:switch: --mode=${mode} has no window set to switch` };
+  // The window set cannot also be the compare set.
+  if (study.compare?.row.index === r.row.index) closeCompare();
+  quietFails = [];
+  try {
+    const ok = session.open(r.row.resolved, true);
+    sendStudy();
+    return ok ? { ok: true } : { ok: false, reason: quietFails.join("; ") || `cannot open variant ${JSON.stringify(r.row.label)}` };
+  } finally {
+    quietFails = null;
+  }
+});
+
+/** The model file's lineage hashes, or why it has none (the compare set's results must pair with its own model). */
+async function modelHashes(path: string): Promise<{ femHash: string; modelHash: string } | string> {
+  const a = await openLineage(path);
+  if (!a.ok) return `its model ${path} cannot be read (${a.error})`;
+  if (!a.lineage?.femHash || !a.lineage.modelHash) return `its model ${path} stamps no fem_hash and model_hash in /meta/lineage`;
+  return { femHash: a.lineage.femHash, modelHash: a.lineage.modelHash };
+}
+
+ipcMain.handle("variants:compare", async (_e, index: unknown, label: unknown) => {
+  const r = study.row(index, label);
+  if (!r.ok) return { ok: false, reason: `variants:compare: ${r.reason}` };
+  const row = r.row;
+  const ws = windowSet();
+  if (!("reason" in ws) && samePath(ws.model, row.resolved)) return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)} is the window set; a compare set is another variant` };
+  // At most one compare set: a new one replaces it.
+  closeCompare();
+  let set: OpenSet;
+  try {
+    set = pairSet(row.resolved, existsSync);
+  } catch (err) {
+    return { ok: false, reason: `variants:compare: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (set.results === null) return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)} has no results file beside ${row.resolved}` };
+  const own = await modelHashes(row.resolved);
+  if (typeof own === "string") return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)}: ${own}` };
+  const a = await compareHost.open(set.results);
+  if (!a.ok) return { ok: false, reason: `variants:compare: ${a.error}` };
+  const lin = a.meta.lineage;
+  // The compare set's results must be of its own model, by the hashes the window's pairing uses.
+  if (!lin || lin.femHash !== own.femHash || lin.modelHash !== own.modelHash) {
+    compareHost.close();
+    return { ok: false, reason: `variants:compare: ${set.results} does not pair with ${row.resolved} (fem_hash and model_hash differ, or are not stamped${a.meta.lineageReason ? `: ${a.meta.lineageReason}` : ""})` };
+  }
+  study.compare = { row, set };
+  sendStudy();
+  return {
+    ok: true,
+    compare: {
+      index: row.index,
+      label: row.label,
+      results: set.results,
+      femHash: lin.femHash,
+      stages: a.meta.stages.map((s) => ({ id: s.id, name: s.name, nodal: [...s.nodal], time: [...s.time] })),
+    },
+    nodeIds: a.nodeIds,
+  };
+});
+
+// The compare set's step: the request names the stage, step and request number only; the file is the compare slot's.
+ipcMain.handle("compare:readStep", (_e, req: unknown) => {
+  const r = req as { stage?: unknown; step?: unknown; seq?: unknown } | null;
+  const keys = r !== null && typeof r === "object" ? Object.keys(r).sort().join(",") : "";
+  if (!r || keys !== "seq,stage,step" || typeof r.stage !== "string" || typeof r.step !== "number" || typeof r.seq !== "number") {
+    return { ok: false, seq: -1, error: `compare:readStep takes { stage, step, seq } and never a path; got ${shown(req)}` };
+  }
+  const c = study.compare;
+  if (c === null || c.set.results === null) return { ok: false, seq: r.seq, error: "compare:readStep: no compare set is open" };
+  return compareHost.readStep({ path: c.set.results, stage: r.stage, step: r.step, seq: r.seq });
+});
+
+ipcMain.handle("compare:close", () => {
+  closeCompare();
+  sendStudy();
 });
 
 // A /geometry sibling (./zones.ts): only the window's set's (`setFile`, VU12).

@@ -1622,7 +1622,9 @@ export function reduce(s: State, e: Event): State {
     }
     case "setDifference": {
       if (e.on === s.variants.difference) return s;
-      if (e.on && s.variants.compare?.status !== "open") throw new Error("setDifference: no compare set is open, so there is nothing to subtract");
+      // A spec turns it on as it asks for the compare set (spec/compile.ts); the difference then waits for the set.
+      const st = s.variants.compare?.status;
+      if (e.on && st !== "open" && st !== "opening") throw new Error("setDifference: no compare set is open, so there is nothing to subtract");
       return { ...s, variants: { ...s.variants, difference: e.on, read: null } };
     }
     case "differenceRead": {

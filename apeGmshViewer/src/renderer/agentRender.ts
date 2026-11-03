@@ -25,7 +25,7 @@ import type { SpecShot, ViewSpec } from "../spec/spec.ts";
 import { applyClip, shownView } from "../spec/snapshot.ts";
 import type { OnScreen } from "../spec/verdict.ts";
 import type { BlobStore } from "../state/blobs.ts";
-import { combinationFieldsOf, contourView, deformView } from "../state/selectors.ts";
+import { combinationFieldsOf, contourView, deformView, variantRowOf } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { State } from "../state/types.ts";
 import { combinationContourKey, contourKey, differenceContourKey, differenceHeld, elementContourKey, type CombinationColumnOf } from "./contour.ts";
@@ -130,7 +130,7 @@ async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
 async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: SetDescription): Promise<ShotResult> {
   const { store, viewport, bridge, layout, blobs, effects } = deps;
   const t0 = performance.now();
-  const compiled = compileShot(shot, d, (name) => combinationFieldsOf(store.get(), name));
+  const compiled = compileShot(shot, d, (name) => combinationFieldsOf(store.get(), name), (label) => variantRowOf(store.get(), label));
   // Nothing was applied: this shot has no view to report, only the reason.
   if (!compiled.ok) return { entry: refusedEntry(store.get(), shot, compiled.reason, null), ms: performance.now() - t0, shownMs: null };
   const plan = compiled.plan;
