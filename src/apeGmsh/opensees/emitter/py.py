@@ -156,8 +156,9 @@ def deck_run_lineage(
     if why:
         warnings.warn(
             f"The deck {deck or '(unnamed)'} writes no run record: {why}. "
-            "read_deck_mpco of its .mpco will read it with "
-            "Results.from_mpco.",
+            "read_deck_mpco of its .mpco refuses an unstaged program by "
+            "name (no run record); declare the stages with ops.stage(...) "
+            "so the deck converts by them.",
             RuntimeWarning, stacklevel=_stacklevel_outside_package(),
         )
         return None

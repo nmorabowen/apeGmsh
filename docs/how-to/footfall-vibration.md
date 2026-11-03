@@ -27,8 +27,9 @@ pass/fail with a modal basis that actually covers the Guide's 20 Hz band.
 ```
 
 ```python
-from apeGmsh import apeGmsh, Results
+from apeGmsh import apeGmsh
 from apeGmsh.opensees import apeSees
+from apeGmsh.results.user import UserFile
 
 L, E, Iz, A = 6.0, 200e9, 3.5e-4, 0.0083   # SI: m, Pa, m^4, m^2
 mass_per_len = 500.0                        # distributed floor mass, kg/m
@@ -79,8 +80,9 @@ result = ops.footfall_walking(
 print(result.f_dom, result.a_p, result.regime, result.limit, result.ratio)
 # -> [16.326] [0.012007] ['high'] [0.010204] [1.177]
 
-result.to_results(fem, "footfall_bay.h5")
-Results.from_fem(fem, "footfall_bay.h5", kind="native").viewer()
+ops.h5("footfall_bay.h5")                    # the model archive
+result.to_results(fem, "footfall_bay.user.h5", model_h5="footfall_bay.h5")
+UserFile("footfall_bay.user.h5").read_result("footfall")
 ```
 
 That prints a dominant frequency of **16.33 Hz**, a governing acceleration
@@ -170,27 +172,40 @@ curve by default (`limit="curve"`), which is why it comes out at 1.02 %g
 here rather than the flat 0.5 %g office value: the curve rises above 8 Hz,
 and this bay's dominant frequency (16.33 Hz) sits well into that rise.
 
-## Rendering the ratio map
+## Saving the ratio map
 
-`to_results` writes one native results file — one frame, three nodal
-components (`footfall_ap`, `footfall_ratio`, `footfall_fdom`), `NaN`
-outside the response nodes — that `Results.from_fem` binds like any other
-native run:
+`to_results` writes the evaluation into the model's user-results file,
+`<stem>.user.h5` (ADR 0131 D6). It is one **state-free** user result named
+`"footfall"` on the nodes: it belongs to no stage, mode or combination,
+like any design check (ADR 0130 D7). It holds three components, `footfall_ap` (fraction of g),
+`footfall_ratio` and `footfall_fdom` (Hz), over every node in `fem`, with
+`NaN` outside the response nodes:
 
 ```python
-result.to_results(fem, "footfall_bay.h5")
-r = Results.from_fem(fem, "footfall_bay.h5", kind="native")
-r.nodes.get(component="footfall_ratio").values   # (1, 13), 1.177 at Midspan, NaN elsewhere
-r.viewer()                                        # ordinary nodal-scalar map — no recorder involved
+ops.h5("footfall_bay.h5")
+result.to_results(fem, "footfall_bay.user.h5", model_h5="footfall_bay.h5")
+
+user = UserFile("footfall_bay.user.h5")
+footfall = user.read_result("footfall")
+footfall.components        # ('footfall_ap', 'footfall_ratio', 'footfall_fdom')
+footfall.data.shape        # (1, 13, 3): one row, every node, three components
+footfall.data[0, :, 1]     # the ratio: 1.177 at Midspan, NaN elsewhere
+footfall.ids               # the node tags, in fem.nodes.ids order
 ```
 
-On a real floor with many response nodes this is what turns a table of
-per-node ratios into a picture: red where the floor fails, green where it
-doesn't. Checked here headless with `r.render("ratio.png", view="contour",
-component="footfall_ratio")`: `from_fem` binds a real FEM broker off the
-same `fem` object with no extra wiring, and the nodal-scalar map draws
-correctly with the NaN nodes off the response set — VTK's default
-autoscaling ignores them rather than blowing up the color range.
+`model_h5` is required. It is the model archive of the same `fem`
+(`ops.h5(...)` or `fem.to_h5(...)`), and its `/meta/lineage` pairs the
+user file with that model; an archive of any other `fem` is refused. The
+file name must end in `.user.h5`. If the file already exists, the
+`"footfall"` entry is added or replaced and every other entry is kept,
+so footfall sits beside the set's combinations and design checks.
+`/meta@writer` records the driver and the OpenSees build the modal basis
+ran on.
+
+On a real floor with many response nodes, this file turns a table of
+per-node ratios into a map: red where the floor fails, green where it
+does not. [The worked two-bay slab](https://github.com/nmorabowen/apeGmsh/blob/main/examples/footfall_two_bay_shell.py)
+draws its map from this file.
 
 ## Why the 2nd edition, not Robot
 

@@ -7,14 +7,15 @@ compared to ``ops.nodeDisp`` and to that closed form at ``rtol=1e-12``.
 * **fork, in process** (``spec.emit_default``): the fork's own file, with
   ``PROVENANCE@model_hash`` equal to the archive's, read with no warning.
 * **stock with MPCO, in process**: the same module with its fork signal
-  hidden (``kind == "stock"``). The ``.mpco`` is kept, read with
-  ``from_mpco`` after exactly one warning, and never converted.
+  hidden (``kind == "stock"``). The program is unstaged, so its stage kind
+  is not a fact: ``emit_default`` refuses by name at ``__enter__``, with no
+  warning, leaving no ``.mpco`` and no ``.ladruno`` (ADR 0131 D5).
 * **a deck, out of process** (``read_deck_mpco``): the bridge's deck runs
   in a fresh process with a bridge MPCO recorder. In one ``ops.stage`` the
   ``.mpco`` converts and the converted read equals the ``.mpco`` read.
   Unstaged, the deck writes its run record (#2210): with one ``analysis``
   call it converts on that record; with two it fails the record's check 4
-  and is read with ``from_mpco`` after exactly one warning.
+  and refuses by name, never read with ``from_mpco``.
 
 Gated by the ``ladruno_fork`` marker (root conftest auto-skips off-fork).
 """
@@ -33,7 +34,8 @@ import pytest
 
 import apeGmsh
 from apeGmsh.results import Results
-from apeGmsh.results.live import DefaultRouteWarning, read_deck_mpco
+from apeGmsh.results.live import read_deck_mpco
+from apeGmsh.results.readers._ladruno_from_mpco import StageKindRefused
 from tests.test_results_live_default_format import (
     TRUSS_STEPS,
     TRUSS_TIP,
@@ -60,7 +62,8 @@ class StockView:
         return getattr(self._ops, name)
 
 
-def _in_process(tmp_path: Path, *, stock: bool) -> "tuple[Any, list, float, Path]":
+def _in_process(tmp_path: Path, *, stock: bool, staged_archive: bool = False,
+                ) -> "tuple[Any, list, float, Path]":
     from apeGmsh.opensees._target import backend_info_of
     from apeGmsh.opensees.emitter.live import get_ops
 
@@ -72,7 +75,9 @@ def _in_process(tmp_path: Path, *, stock: bool) -> "tuple[Any, list, float, Path
     fem = truss_fem()
     bridge = truss_bridge(fem)
     model = tmp_path / "model.h5"
-    bridge.h5(str(model))
+    # ops.run() refuses a staged program until #2181, so a staged archive
+    # is the staged twin's while the live domain is built unstaged.
+    (truss_bridge(fem, staged=True) if staged_archive else bridge).h5(str(model))
     bridge.run()
     try:
         with warnings.catch_warnings(record=True) as caught:
@@ -115,19 +120,42 @@ def test_fork_route_records_stamps_and_reads_its_own_file(tmp_path) -> None:
         assert str(prov["opensees_backend"]) == "ladruno"
 
 
-def test_stock_in_process_keeps_the_mpco_and_warns_once(tmp_path) -> None:
-    run, caught, tip, _ = _in_process(tmp_path, stock=True)
-    assert run.route == "mpco" and run.path == tmp_path / "run.mpco"
-    assert [w.category for w in caught] == [DefaultRouteWarning]
-    assert "not converted" in str(caught[0].message)
+def test_stock_in_process_unstaged_refuses_by_name(tmp_path) -> None:
+    """ADR 0131 D5: no default stage kind. The real MPCO recorder the probe
+    made is removed and its file deleted before the block can run."""
+    with pytest.raises(StageKindRefused,
+                       match="declares no ops.stage block") as e:
+        _in_process(tmp_path, stock=True)
+    assert "ops.stage(...)" in str(e.value)
+    assert "analyze_steps" in str(e.value)
+    assert sorted(p.name for p in tmp_path.iterdir()
+                  if p.suffix in (".mpco", ".ladruno")) == []
+
+
+def test_stock_in_process_over_a_staged_archive_converts(
+    tmp_path, monkeypatch,
+) -> None:
+    """ADR 0131 D5: the archive declares the one static ``ops.stage``, so
+    the kind is a fact and the real ``.mpco`` converts beside itself; the
+    read is the ``.ladruno`` (never ``from_mpco``), equal to the live tip
+    and to ``P L / E A``."""
+    run, caught, tip, _ = _in_process(tmp_path, stock=True,
+                                      staged_archive=True)
+    assert run.route == "mpco" and caught == []
+
+    def no_from_mpco(*a: Any, **k: Any) -> None:
+        raise AssertionError("the stock route read with Results.from_mpco")
+
+    monkeypatch.setattr(Results, "from_mpco", no_from_mpco)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         res = run.results()
     try:
+        assert [s.kind for s in res.stages] == ["static"]
         _assert_tip(res, tip)
     finally:
         res.close()
-    assert run.path.exists() and not (tmp_path / "run.ladruno").exists()
+    assert run.path.exists() and (tmp_path / "run.ladruno").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -209,20 +237,16 @@ def test_an_unstaged_one_call_deck_converts_on_its_run_record(tmp_path) -> None:
     assert (tmp_path / "deck.ladruno").exists()
 
 
-def test_an_unstaged_two_call_deck_warns_once_and_reads_the_mpco(
-    tmp_path,
-) -> None:
+def test_an_unstaged_two_call_deck_refuses_by_name(tmp_path) -> None:
     """Two ``analysis`` declarations: the record's check 4 fails, so the
-    kind is not a fact and the ``.mpco`` is read after one warning."""
+    kind is not a fact and the read refuses by name (ADR 0131 D5)."""
     mpco, model = _deck_run(tmp_path, analyses=2)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        res = read_deck_mpco(mpco, model_h5=model)
-    try:
-        assert [w.category for w in caught] == [DefaultRouteWarning]
-        assert "not archived as fact" in str(caught[0].message)
-        assert "check 4 (the analysis)" in str(caught[0].message)
-        np.testing.assert_allclose(tip_x(res)[-1], TRUSS_TIP, rtol=1e-12)
-    finally:
-        res.close()
-    assert not (tmp_path / "deck.ladruno").exists()
+        with pytest.raises(StageKindRefused,
+                           match=r"check 4 \(the analysis\)") as e:
+            read_deck_mpco(mpco, model_h5=model)
+    assert "not archived as fact" in str(e.value)
+    assert "ops.stage(...)" in str(e.value)
+    assert [w.category for w in caught] == []
+    assert mpco.exists() and not (tmp_path / "deck.ladruno").exists()

@@ -92,10 +92,29 @@ export const webUtils = strict("webUtils", { getPathForFile: (f: object) => file
 export const pageEvents = new Map<string, Handler[]>();
 export const pageSent: { channel: string; args: unknown[] }[] = [];
 
+/**
+ * VU15 (#2776): the window's main frame, as Electron names it (`WebFrameMain`'s
+ * `processId` and `routingId`; an IPC event carries the same two as `processId`
+ * and `frameId`). A driver puts the frame a load commits with `commitFrame`,
+ * then delivers `did-navigate`, and sends from a frame with `pageEvent`.
+ */
+export type StubFrame = { processId: number; routingId: number };
+let frame: StubFrame = { processId: 1, routingId: 1 };
+export const commitFrame = (f: StubFrame): void => {
+  frame = f;
+};
+/** The window's page (its `webContents`), once main.ts has made the window. */
+export const pages: object[] = [];
+/** An IPC event as the page's frame `f` sends it, from `sender` (by default the window's page). */
+export const pageEvent = (f: StubFrame, sender: object | undefined = pages[0]) => ({ sender, processId: f.processId, frameId: f.routingId });
+
 /** The window main.ts makes once `ready()` is called: it records, and opens nothing. */
 class StubWindow {
   constructor() {
     const webContents = strict("webContents", {
+      get mainFrame() {
+        return strict("mainFrame", { ...frame });
+      },
       on: (event: string, fn: Handler) => {
         pageEvents.set(event, [...(pageEvents.get(event) ?? []), fn]);
       },
@@ -107,6 +126,7 @@ class StubWindow {
         pageSent.push({ channel: "reload", args: [] });
       },
     });
+    pages.push(webContents);
     return strict("window", {
       webContents,
       setMenuBarVisibility: () => undefined,

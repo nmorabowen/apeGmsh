@@ -1190,3 +1190,13 @@ test("the sizing is written once: the arrow shader embeds each SIZING_EXPR verba
   const u = { headPx: 10, minPx: 15, maxPx: 80, radius: 1, thin: true };
   assert.deepEqual([0.005, 0.04, 2].map((len) => Math.round(screenArrow(len, 0, 0.001, u).L / 0.001)), [15, 40, 80]);
 });
+
+test("each glyph shader compiles to its own program: the comb bars and the arrows have distinct three.js cache keys", () => {
+  // three caches a program by customProgramCacheKey(), by default onBeforeCompile.toString(): the same text for
+  // every material instanced() patches, so the comb bars were drawn by the arrows' program (their tails never met).
+  const layer = new LoadsLayer();
+  const key = (o: { material: THREE.Material | THREE.Material[] }) => (o.material as THREE.Material).customProgramCacheKey();
+  assert.notEqual(key(layer.lines), key(layer.combs), "shafts and comb bars: two programs");
+  assert.equal(key(layer.lines), key(layer.cones), "shafts and heads share the custom key (one shader source); three still keys the double-sided heads apart");
+  layer.dispose();
+});

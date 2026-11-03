@@ -2869,9 +2869,317 @@ The app follows the same rules: it adds a generation to its own copy (this name,
 ADR 0130 A4's fixed one) and never rewrites a generation, because h5wasm cannot
 delete a link or rewrite a vlen dataset. Earlier generations are its backup.
 
-**Variants.** `<study>.variants.json` beside the sets holds `version` and a list
-of `{label, path, params}`. `path` is relative. A source address holds no path or
-hash, so a cross-variant term cannot be written.
+**Variants.** `<study>.variants.json` beside the sets holds `format`, `version`
+and the list `variants` of `{label, path, params}`. `path` names a variant's
+model file `<stem>.h5`, relative to the manifest's folder and confined to it. The
+definition is [`<study>.variants.json`](#studyvariantsjson-the-variants-manifest-adr-0132)
+below ([ADR 0132](decisions/0132-workspace-file-and-variants-manifest.md) D8 and
+D9). A source address holds no path or hash, so a cross-variant term
+cannot be written.
+
+## `<stem>.workspace.h5`: what the user makes (ADR 0132)
+
+Decided in [ADR 0132](decisions/0132-workspace-file-and-variants-manifest.md)
+(Accepted 2026-11-03); no code writes it yet, and VU9a is its first writer. It holds what a user makes in
+apeGmshViewer: named node and element sets, plot definitions and saved views. It
+holds **definitions only, never result values**: values stay in `.user.h5`
+`/results`, written by Python. It is a file of its own, separate from `.user.h5`,
+and it sits beside `<stem>.h5` with the same stem. It is read only as part of that
+set, and it never names a member of another set. The app and Python both read and
+write it.
+
+**Pairing.** `.workspace.h5` is a suffix of its own in the set's pairing rule,
+matched case-insensitively and before `.h5` (longest suffix first, as
+`.geometry.h5`, `.results.h5` and `.user.h5` already are), so `slab.workspace.h5`
+pairs with `slab.h5` and is never read as a model with the stem `slab.workspace`.
+The open set gains a `workspace` slot beside `model`, `geometry`, `results` and
+`user` (the app's `OpenSet`). Both are VU9a's code changes.
+
+Types are `i4`, `f8` and vlen UTF-8, as in `.user.h5`. Columns in one table share
+a length. Every table is written, empty ones included (`K = 0`, offsets `[0]`);
+a missing table refuses the file. Readers ignore unknown attributes and groups,
+as in `.user.h5`. A writer does not copy what it does not know, which is why it
+refuses to write over a newer file (Version).
+
+```text
+/meta
+  @workspace_schema_version   "1.0.0"; the file's one version key
+  @revision                   i4 >= 1; every save adds 1
+  @writer                     e.g. "apeGmshViewer 0.9.0", "apeGmsh 1.4.0"
+  @save_id                    random per save, 8 to 64 of A-Za-z0-9_-
+
+/sets
+  name, kind, id_space              str (K,)
+  fem_hash, model_hash              str (K,)
+  member_offsets                    i4 (K+1,)
+  ids                               i4 (M,)      in the user's order
+  xyz                               f8 (M,3)
+
+/plots
+  name, grammar, body               str (P,)     body: one plot, as JSON text
+
+/views
+  name, grammar, body               str (V,)     body: one shot, as JSON text
+```
+
+**Version.** One key versions the whole file, because every save rebuilds the
+whole file (Writing), and plots and views carry their own grammar tag per row. The
+floor rule is ADR 0113's, current and floor `1.0.0`. Python refuses a newer minor
+(D2 there). The app opens a same-major newer file **read-only** with one banner
+naming both versions (D7 there), ignoring tables and attributes it does not know.
+**No writer writes over a file newer than it knows**, minor included, because it
+would drop what it cannot read; that write refuses, `newer`. The zone joins the
+[registry](#zone-registry) when its writer constant exists (VU9a).
+
+**Names** follow the `.user.h5` rule (Names, above) and are unique within a table;
+two rows with one name both refuse, `duplicate`.
+
+### `/sets`
+
+Row `k` is one set. Its members are `[member_offsets[k], member_offsets[k+1])` of
+`ids` and `xyz`; offsets start at 0, never decrease, and end at `M`.
+
+| Column | Meaning |
+|---|---|
+| `kind` | `nodes` or `elements`; a set holds one kind |
+| `id_space` | `opensees` in 1.0.0: the tags the deck and the `.ladruno` use. A node's tag is its FEM id (the bridge emits every node under its FEM id). An element's tag is an `/opensees/element_meta/*/ids` entry, so a bridge-minted element (`fem_eid = -1`) can be saved |
+| `fem_hash` | `<stem>.h5` `/meta/lineage@fem_hash` when the set was saved or last confirmed |
+| `model_hash` | `<stem>.h5` `/meta/lineage@model_hash` at the same moment. Required (non-empty) for an element set; `""` for a node set, which never reads it |
+| `ids` | the members, in order, no tag twice in a set |
+| `xyz` | row `i` is node `ids[i]`'s coordinates, or element `ids[i]`'s centroid: the mean of its nodes' coordinates, its nodes taken from `/elements` through `fem_eids`, or from `inline_connectivity` for a minted row |
+
+**The verdict.** On open, each set is checked against the paired `<stem>.h5`. Let
+`D` be the diagonal of the bounding box of every node in `/nodes`, and
+`tol = 1e-9 · D` (`0` when `D = 0`). A member **matches** when the model has its
+tag (in `/nodes`, or in `/opensees/element_meta`), the distance from its stored
+`xyz` to that tag's position in the model is at most `tol`, **and no other model
+item of the set's kind lies within `tol` of the stored `xyz`**. A member whose
+position fits more than one model item is ambiguous and counts as unmatched; a
+reader never picks one of the candidates. Two zero-length elements on one node
+pair share a centroid, and their two nodes share a position, so a swap of either
+pair would otherwise read `moved` and a plot would read the wrong spring.
+
+The **identity hashes** of a row are its `fem_hash` for a node set, and its
+`fem_hash` **and** `model_hash` for an element set. An element tag is an OpenSees
+tag, and under `element_tags="sequential"` (the default, ADR 0111 D2) the bridge
+numbers elements in declaration order: swapping two element declarations shifts
+every tag while `fem_hash` stays equal, and only `model_hash`, which covers
+`/opensees/element_meta`, moves. A node's tag is its FEM id, which `fem_hash`
+covers.
+
+| Check | Verdict | What a reader does |
+|---|---|---|
+| every identity hash equals the model's | `current` | use the set |
+| an identity hash differs, every member matches | `moved` | use it; the next save writes the model's hashes into the row |
+| an identity hash differs, some members match | `partial`, "k of n" | list it; a plot that reads it refuses (`stale-set`) until a human accepts the survivors, which rewrites the row with the matching members, in order, and the model's hashes |
+| an identity hash differs, no member matches | `lost` | list it; never drop it silently; a human deletes it |
+
+A model with no `fem_hash` (or, for an element set, no `model_hash`) compares as
+different. An element set on a model with no `/opensees` zone refuses,
+`no-tag-map`, and an element-set row with an empty `model_hash` refuses,
+`bad-param`. Because an ambiguous member is unmatched, a set holding a zero-length
+element or a coincident shell reads at best `partial` once an identity hash moves.
+Accepting the survivors drops the ambiguous members, and a human picks them again
+in the current model. A nearest-coordinate match is only an
+offer: the app shows the largest distance, and a human confirms. The verdict uses
+the model, not `results_hash`: a set is a fact about the mesh, and `rf1` moves on
+every re-run of an unchanged one.
+
+A row refuses alone, `bad-members`, when it has no member or a tag twice, and
+`bad-param` for a `kind` or `id_space` other than those above. Malformed columns
+or offsets refuse the table.
+
+Worked case: a frame whose roof nodes 31 to 33 sit at z = 9 and base nodes 1 to 3
+at z = 0. Re-meshed with a new label, so `fem_hash` moves while no node moves,
+`roof` reads `moved`. If base node 3 has moved 0.5 along x, `base` reads
+`partial`, 2 of 3. If every node of a column line has moved 0.5 up, that set reads
+`lost`. An element set `springs` holds zero-length elements 501 and 502, both on the
+node pair 3–103 at (12, 0, 0); after a declaration swap `model_hash` moves, each tag
+still sits at (12, 0, 0), but each position fits two elements, so both members are
+ambiguous and `springs` reads `lost`, 0 of 2, never `moved`.
+
+### `/plots`
+
+`grammar` is `apegmsh-plot/1` in 1.0.0; another value refuses the row,
+`unknown-grammar`. `body` is one JSON object (UTF-8, no `NaN`, no duplicate key;
+`bad-json` otherwise), with closed keys (`bad-plot` names the key):
+
+| `kind` | Keys | Draws |
+|---|---|---|
+| `history` | `over`, `series` (non-empty list) | each series against the sweep axis |
+| `xy` | `over`, `x` (one series), `y` (non-empty list) | each `y` against `x`, one point per swept state; `x` and every `y` reduce to one value |
+| `profile` | `state`, `axis`, `series` (non-empty list) | each series over the target's members at one state; every series has `reduce: "each"` |
+
+A **series** is:
+
+| Key | Meaning |
+|---|---|
+| `label` | optional legend text, a name |
+| `quantity` | `{group, field, component}`: `group` is `results` (the `.ladruno`) or `user_results` (a `.user.h5` `/results` entry by `@name`); `field` and `component` as the legend shows them, e.g. `DISPLACEMENT` and `Ux`. 1.0.0 plots nodal quantities only |
+| `target` | `{kind, name}`: `kind` is `set` (a row of `/sets`), or `physical`, `label` or `mesh_selection` (read-only, from `<stem>.h5`, its nodes in ascending order) |
+| `reduce` | `each` (one curve per member, in order), `sum`, `mean`, `min`, `max` or `absmax` |
+| `minus` | optional `{target, reduce}`, the same quantity reduced to one value and subtracted (a drift) |
+| `scale` | optional finite number, default 1 |
+
+The value at a state is `scale · (reduce(target) − reduce(minus.target))`, or, for
+`each`, per member, `scale · (value − reduce(minus.target))`.
+
+The **sweep address** `over` (`history`, `xy`) is
+`{"kind": "stage", "source": <name>, "steps": [from, to], "axis": "time" | "step"}`.
+`source` is the stage's stamped name, else `stage_<i>`. `steps` is optional and
+inclusive: `-1` is the last step, a step below `-1` refuses, and no `steps` is every
+step. A sweep over modes, a spectrum case or a combination is not in 1.0.0.
+
+The **state** of a `profile` is the source address above, `{kind, source, step,
+mode}`, verbatim; a user result under a combination follows ADR 0130 A5. Its
+`axis` is `member` (the 0-based position), `x`, `y`, `z` (the member's coordinate in
+the current model) or `path` (the distance along the members, from the first).
+
+At evaluation a plot refuses, and draws nothing, for `unresolved` (a target, stage,
+field or component the set lacks), `stale-set`, `stale` (a stale source under ADR
+0130 A6, unless the human asks to draw it), `bad-target` (a nodal quantity on an
+element set) or `bad-address`. It never falls back to another source.
+
+### `/views`
+
+`grammar` is `apegmsh-view/1`, and `body` is one shot object of that spec, as
+JSON text ([ADR 0128](decisions/0128-agent-views-in-apegmshviewer.md) D1). The app
+validates it by wrapping it as `{"spec": "apegmsh-view/1", "files": {"model":
+"<stem>.h5"}, "shots": [shot]}` for the view-spec validator
+(`apeGmshViewer/src/spec/spec.ts`), and refuses the row with the validator's key and
+reason (`bad-shot`). Python checks only that `body` is a JSON object. A saved view
+is applied by the compile that applies an offer (ADR 0128 INV-2); one another writer
+added is listed and never applied by itself (D5 there).
+
+### Writing
+
+A save **rebuilds the whole file**: the writer creates a new HDF5 file and never
+opens the existing one for append. The file is small, so this costs little, and it
+needs no link delete and no vlen rewrite, which h5wasm 0.10.3 lacks. That is why
+this file has no generations, unlike `.user.h5` `/combinations`. Not yet probed:
+that h5wasm creates such a file, with zero-length vlen columns, which h5py then
+reads. VU9a probes it before building on it.
+
+1. Read the file on disk, if any, and keep its `/meta@revision`. A file that is not
+   HDF5, or has no `/meta@workspace_schema_version`, or one that is not a version
+   string, is **unreadable**. A file newer than the writer refuses the write,
+   `newer`.
+2. Build the new content: `revision` is the old one plus 1 (1 for a new or
+   unreadable file), a fresh `save_id`, and every row the writer did not change
+   copied verbatim, refused rows included.
+3. Write it to `<stem>.workspace.h5.<host>-<pid>-<random>.partial` in the same
+   folder, created exclusively; `<host>` as in `.user.h5`.
+4. Reopen the partial and verify it: every table, and `ids` and `xyz` bit-equal to
+   what was meant; otherwise delete the partial and refuse, `partial-mismatch`.
+5. Immediately before the replace, read `/meta@revision` on disk again. If it moved
+   (or a file appeared or vanished), delete the partial and refuse,
+   `revision-moved`. A small window remains, as in `.user.h5`.
+6. If the old file was unreadable, rename it aside to
+   `<stem>.workspace.h5.unreadable-<YYYYMMDDTHHMMSSZ>` (adding `-<n>` if that name
+   exists; never overwriting a file), and say so: the app with a banner naming the
+   aside file, Python with a warning. Then rename the partial onto the target.
+   Otherwise replace the target with the partial in one rename.
+7. Sweep leftover partials by the `.user.h5` rule. A failed sweep does not fail the
+   write.
+
+The app recognises its own save when the watcher reports a change: the file's
+`@save_id` is the one it wrote. Any other change reloads the definitions.
+
+A writer never writes a row that would refuse, and never writes a set member the
+model lacks (`bad-row`). Without `<stem>.h5` beside it, a write refuses,
+`unpaired`.
+
+**Who reads and writes what.** The app reads every table, gives the verdicts,
+evaluates plots, validates views, and writes every table. Python
+(`apeGmsh.results.user`, a thin reader and writer that VU9a names) reads every table
+and the verdicts, writes sets (taking coordinates and centroids from `<stem>.h5`),
+plots and views, and does not evaluate plots in 1.0.0. Python reads a set's members
+as tags, for example for `results.nodes.get(ids=...)`.
+
+**File-level refusals:** `not-hdf5`, `no-version`, `bad-version`, `too-old`, `newer`
+(Python; the app opens read-only), `major`, `missing-table`, `bad-meta` (`/meta@revision`
+is not an integer >= 1; such a file is unreadable, so a writer renames it aside;
+erratum, #2806). **Row refusals:**
+`empty-name`, `duplicate`, `bad-members`, `bad-param`, `no-tag-map`,
+`unknown-grammar`, `bad-json`, `bad-plot`, `bad-shot`.
+
+## `<study>.variants.json`: the variants manifest (ADR 0132)
+
+Decided in ADR 0132 (D8, D9; Accepted 2026-11-03), completing ADR 0130 A7. It lists the sets of one
+study that differ in stiffness or another parameter. `<study>` is any name that is
+also a file name. The app reads it and never writes it; Python, a pipeline or a
+human writes it, Python through a partial and a replace. The JSON Schema is
+[`schemas/variants.schema.json`](schemas/variants.schema.json), with examples in
+`schemas/examples/`.
+
+```json
+{ "format": "apegmsh-variants", "version": "1.0.0",
+  "variants": [
+    { "label": "Uncracked", "path": "slab_uncracked.h5",
+      "params": { "state": "uncracked", "Ie/Ig": 1.0 } },
+    { "label": "Bischoff D+SD+0.25L", "path": "bischoff/slab_pass2.h5",
+      "params": { "state": "cracked", "bischoff": "D+SD+0.25L", "pass": 2 } } ] }
+```
+
+| Key | Type | Meaning |
+|---|---|---|
+| `format` | `"apegmsh-variants"` | another value refuses the file, `not-a-manifest` |
+| `version` | string `MAJOR.MINOR.PATCH`, never a number | ADR 0113's floor rule, current and floor `1.0.0`; the app opens a same-major newer file with one banner |
+| `variants` | non-empty list | the rows, in display order |
+| `label` | name | unique in the file |
+| `path` | string | the variant's model file `<stem>.h5`; the set pairs from it by the app's pairing rules |
+| `params` | object, may be empty | name to a string, a number or a boolean; never null, a list or an object. Rows may have different keys; a key a row lacks shows blank |
+
+UTF-8; writers write no byte-order mark and readers strip one. A reader refuses
+`NaN` and `Infinity` tokens, a number that overflows to infinity (`1e400`; the
+schema bounds every number by the largest finite double), and, in Python, a
+duplicate key.
+
+**Unknown keys and a newer minor.** The JSON Schema is the 1.0 schema: its
+`version` accepts `1.0.x` only, and its keys are closed. At or below the reader's
+version an unknown key refuses the file at the top and the row inside `variants`.
+Python refuses a newer minor before it validates anything. The app, opening a
+same-major newer file read-only, drops every key the 1.0 schema does not name, at
+any depth, sets `version` aside, and validates the rest with the 1.0 schema; a row
+that then fails refuses alone, as at 1.0.
+
+**`path`.** Relative to the folder that holds the manifest, with `/` as the
+separator. It may enter subfolders. No segment is empty, `.` or `..`, and no
+folder segment ends in a dot or a space, which Windows strips, so two rows could
+otherwise name one folder. It has no backslash, colon, control character or
+leading `/`, so it cannot be absolute or name a drive. Its last segment is a
+non-empty stem followed by `.h5` (`.h5` alone and `x/.h5` refuse). It is a model
+file: it ends in none of the reserved suffixes `.geometry.h5`, `.results.h5`,
+`.user.h5`, `.workspace.h5` or `.ladruno` (nor a `.part-<N>.ladruno`). Every suffix
+is matched case-insensitively, as the app's `classify` matches them, so
+`slab.USER.h5` refuses too. The schema checks this form. A reader then joins it to the manifest's
+folder, resolves links and junctions, and requires the result to lie inside the
+manifest's folder, itself resolved (`escapes`), and the file to exist (`missing`).
+Rows are compared by the app's path rule, case-folded on Windows and macOS
+(`duplicate-path`, both rows).
+
+**Row refusals:** `empty-name` (a label or a `params` key), `duplicate` (a label,
+both rows), `bad-path`, `escapes`, `missing`, `duplicate-path`, `bad-param`. A bad
+row refuses alone, and the manifest still opens. **File refusals:** `not-a-manifest`,
+`bad-version`, `too-old`, `newer` (Python), `major`, and `bad-envelope` (a top-level key
+the schema does not name, or `variants` missing or empty; erratum, #2806).
+
+**Opening a variant** (ADR 0132 D9, under owner ruling option A, #2753). Main reads
+a manifest only from a path the user gave: a dialog, a drop or argv. It keeps the
+rows that pass, with their resolved paths. The page names a variant by its row index
+and label, and never sends a path; main refuses a request whose label does not match
+its row. When the watched manifest changes, main re-reads the same path.
+
+A compare set lives in a **compare slot** of its own, apart from the window set (the
+set on screen, which `windowSet` returns). `model:open` runs the `ungestured` check
+and `followModel`, so it would adopt a compare model; VU10 therefore adds a
+compare-model door that reads a manifest row's model without adopting it (it never
+touches `windowSet`, the gesture records or `followModel`), and a results host of the
+compare set's own, so `results:open` and `results:close` for the window set never
+touch it. Compare reads (results, geometry, `.user.h5`) name the compare slot
+explicitly. Nothing writes into a compare set, neither `/combinations` nor its
+workspace. At most one set fills the slot. Switching to a variant is a different
+act: main opens that row's set as the window set, which the app may then write.
 
 ## Cross-references
 
