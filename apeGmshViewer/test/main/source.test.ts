@@ -102,7 +102,7 @@ test("no code on PATH: the OS text editor, never the default opener", () => {
 // so on Linux it is handed only a regular file with a source extension. The
 // .desktop row is a regular file the set's /provenance names: without the check
 // go-to-source would launch xdg-open on it (the fake one on PATH here).
-test("Linux, no code on PATH: xdg-open gets a regular .py file, never a .desktop file, another type, or a link", async () => {
+test("Linux, no code on PATH: xdg-open gets a regular .py file, never a .desktop file or another type", async () => {
   const x = binDir("os-linux", "xdg-open");
   const linux = envOf({ path: x, platform: "linux" });
   assert.deepEqual(editorLaunch(script, 7, linux), { command: join(x, "xdg-open"), args: [script], verbatim: false });
@@ -119,14 +119,24 @@ test("Linux, no code on PATH: xdg-open gets a regular .py file, never a .desktop
   assert.match((r as { reason: string }).reason, refusal(desktop));
   // macOS's `open -t` opens text whatever the type: unchanged.
   assert.deepEqual(editorLaunch(desktop, 1, envOf({ path: binDir("os-mac2", "open"), platform: "darwin" })).args, ["-t", desktop]);
-  // A link named .py that points at a .desktop file: the link is not a regular file.
-  const link = join(dir, "link.py");
-  try {
-    symlinkSync(desktop, link);
-  } catch {
-    return; // no symlink right here (Windows without developer mode): the regular-file cases above stand
-  }
-  assert.throws(() => editorLaunch(link, 1, linux), { message: refusal(link) });
+});
+
+// A link named .py that points at a .desktop file: the link itself is not a regular file.
+// Windows without developer mode cannot make one, so there the case shows as skipped (it runs on the Linux CI).
+const linkDir = join(root, "xdg-link");
+mkdirSync(linkDir);
+const linkTarget = join(linkDir, "build.desktop");
+writeFileSync(linkTarget, "[Desktop Entry]\nType=Application\nExec=sh -c 'touch pwned'\n");
+const link = join(linkDir, "link.py");
+let noLink: string | false = false;
+try {
+  symlinkSync(linkTarget, link);
+} catch (err) {
+  noLink = `cannot make a symlink here: ${(err as Error).message}`;
+}
+test("Linux, no code on PATH: xdg-open is not handed a .py link to a .desktop file", { skip: noLink }, () => {
+  const linux = envOf({ path: binDir("os-linux-link", "xdg-open"), platform: "linux" });
+  assert.throws(() => editorLaunch(link, 1, linux), { message: /can run a \.desktop file.*; refused .*link\.py\. Set APEGMSH_EDITOR to open it$/ });
 });
 
 /** The scope main hands the door for a set whose /provenance names `files`. */
