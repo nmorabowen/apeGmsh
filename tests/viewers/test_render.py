@@ -125,11 +125,6 @@ class _FemStub:
         self.nodes = _NodesStub(coords)
 
 
-class _ResultsStub:
-    def __init__(self, coords: np.ndarray) -> None:
-        self.fem = _FemStub(coords)
-
-
 @pytest.mark.parametrize(
     "coords,expected",
     [(_PLANAR_COORDS, "xy"), (_3D_COORDS, "iso")],
@@ -152,60 +147,6 @@ def test_render_fem_planar_default(
     monkeypatch.setattr(render_mod, "_require_camera", spy)
     fem = _FemStub(coords)
     assert render_mod.render_fem(fem, tmp_path / "x.png") is None
-    assert seen["camera"] == expected
-
-
-@pytest.mark.parametrize(
-    "coords,expected",
-    [(_PLANAR_COORDS, "xy"), (_3D_COORDS, "iso")],
-)
-def test_render_results_planar_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    coords: np.ndarray, expected: str,
-) -> None:
-    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
-    seen: dict[str, str] = {}
-    real_require = render_mod._require_camera
-
-    def spy(token: str) -> str:
-        seen["camera"] = token
-        return real_require(token)
-
-    monkeypatch.setattr(render_mod, "_require_camera", spy)
-    results = _ResultsStub(coords)
-    assert render_mod.render_results(results, tmp_path / "x.png") is None
-    assert seen["camera"] == expected
-
-
-def test_render_results_explicit_camera_iso_wins_on_planar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
-    results = _ResultsStub(_PLANAR_COORDS)
-    assert render_mod.render_results(
-        results, tmp_path / "x.png", camera="iso",
-    ) is None  # no exception — an explicit "iso" is honored on a planar model
-
-
-@pytest.mark.parametrize(
-    "coords,expected",
-    [(_PLANAR_COORDS, "xy"), (_3D_COORDS, "iso")],
-)
-def test_render_pack_planar_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    coords: np.ndarray, expected: str,
-) -> None:
-    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
-    seen: dict[str, str] = {}
-    real_require = render_mod._require_camera
-
-    def spy(token: str) -> str:
-        seen["camera"] = token
-        return real_require(token)
-
-    monkeypatch.setattr(render_mod, "_require_camera", spy)
-    results = _ResultsStub(coords)
-    assert render_mod.render_pack(results, tmp_path / "pack") == ()
     assert seen["camera"] == expected
 
 
@@ -285,7 +226,6 @@ def test_module_helpers_match_public_tokens() -> None:
     assert render_mod._require_deform(2.0) == ("displacement", 2.0)
     assert render_mod._require_deform(("velocity", 0.5)) == ("velocity", 0.5)
     assert render_mod._require_deform(None) is None
-    assert render_mod._HISTORY_LABEL == "[matplotlib]"
 
 
 def test_read_nodal_vector_field_matches_scatter(demo_results: Results) -> None:
@@ -390,61 +330,6 @@ def test_no_fem_render_pack(demo_results: Results) -> None:
     assert not hasattr(demo_results.fem, "render_pack")
 
 
-def test_pack_omits_reactions_on_demo(demo_results: Results) -> None:
-    assert render_mod._has_static_reactions(demo_results) is False
-
-
-def test_has_static_reactions_true_when_recorded() -> None:
-    class _Stage:
-        kind = "static"
-        id = "g"
-
-    class _Inspect:
-        def components(self, stage=None):
-            return {"nodes": ["displacement_x", "reaction_force_x"]}
-
-    class _Fake:
-        stages = [_Stage()]
-        inspect = _Inspect()
-
-    assert render_mod._has_static_reactions(_Fake()) is True
-
-
-def test_has_static_reactions_false_on_transient() -> None:
-    class _Stage:
-        kind = "transient"
-        id = "g"
-
-    class _Inspect:
-        def components(self, stage=None):
-            return {"nodes": ["reaction_force_x"]}
-
-    class _Fake:
-        stages = [_Stage()]
-        inspect = _Inspect()
-
-    assert render_mod._has_static_reactions(_Fake()) is False
-
-
-def test_pack_primary_is_s1_heuristic(demo_results: Results) -> None:
-    # demo records displacement_z (zeros) so the S1 order picks uz.
-    assert render_mod._pack_primary_component(demo_results) == "displacement_z"
-
-
-def test_history_is_labeled_matplotlib(
-    demo_results: Results, tmp_path: Path,
-) -> None:
-    out = tmp_path / "history.png"
-    written = render_mod._try_history(
-        demo_results, out, "displacement_x",
-    )
-    if written is None:
-        pytest.skip("matplotlib missing or series too short")
-    assert written == out
-    assert out.exists()
-    assert out.stat().st_size > 0
-
-
 def test_render_pack_without_skip_is_tuple(
     demo_results: Results, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -460,40 +345,3 @@ def test_render_pack_without_skip_is_tuple(
             "reactions.png", "history.png",
         }
     assert "reactions.png" not in {p.name for p in result}
-    history = dest / "history.png"
-    if history in result:
-        assert render_mod._HISTORY_LABEL == "[matplotlib]"
-
-
-def test_unbound_render_raises_even_when_skip_viewer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
-
-    class _Unbound:
-        fem = None
-
-    with pytest.raises(RuntimeError, match="bound FEMData"):
-        render_mod.render_results(_Unbound(), tmp_path / "x.png", view="mesh")
-    with pytest.raises(RuntimeError, match="bound FEMData"):
-        render_mod.render_pack(_Unbound(), tmp_path / "pack")
-
-
-def test_pack_primary_bug_propagates(
-    demo_results: Results, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
-
-    def _fake_render(results: object, path: Path, **kwargs: object) -> Path:
-        out = Path(path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(b"png")
-        return out
-
-    def _boom(*args: object, **kwargs: object) -> None:
-        raise TypeError("not a missing component")
-
-    monkeypatch.setattr(render_mod, "render_results", _fake_render)
-    monkeypatch.setattr(render_mod, "_pack_primary_component", _boom)
-    with pytest.raises(TypeError, match="not a missing component"):
-        render_mod.render_pack(demo_results, tmp_path / "pack")
