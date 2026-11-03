@@ -345,7 +345,7 @@ def _place_stamped(
         # from here, so they name the caller's line, not this module.
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            stamp_provenance(staged, model_h5,
+            stamp_provenance(staged, Path(os.fspath(model_h5)),
                              unsupported=list(UNSUPPORTED),
                              writer=_writer(source),
                              opensees_backend=opensees_backend)
