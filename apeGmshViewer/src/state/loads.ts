@@ -2421,7 +2421,9 @@ export interface Reactions3D {
  * The reaction glyphs of one results step, at each node with a finite,
  * non-zero reaction: force arrows, and moment arcs (a half circle about the
  * moment axis, renderer/loads.ts `ARC_VERTEX`), along the resultant or along
- * the global axes as `s.reactions.component` asks (all three, or one). Each
+ * the global axes as `s.reactions.component` asks (all three, or one; one axis
+ * a kind does not record draws that kind's resultant only when no kind records
+ * it, else nothing of that kind). Each
  * arrow's tip is on the node, pointing along its force (so it points at the
  * support from outside); each glyph carries the 45° reaction tick. Each kind's
  * lengths follow its own largest glyph, as the load arrows follow their peak,
@@ -2452,7 +2454,13 @@ export function buildReactions3D(
   const want = s.reactions.component;
   const picked = want === "xyz" ? [0, 1, 2] : want === "x" ? [0] : want === "y" ? [1] : want === "z" ? [2] : null;
   // A single axis a kind does not record (z on a 2-D model) draws that kind's resultant, as the card then shows.
-  const axesFor = (comps: readonly (string | null)[] | null) => (picked && picked.length === 1 && comps?.[picked[0]!] == null ? null : picked);
+  const anyRecords = (a: number) => !!forceComps?.[a] || !!momentComps?.[a];
+  const axesFor = (comps: readonly (string | null)[] | null): number[] | null => {
+    if (!picked || picked.length !== 1 || comps?.[picked[0]!]) return picked;
+    // Not recorded by this kind: the resultant when no kind records the axis (the card does not offer it
+    // then), else nothing of this kind (Z on a 2-D frame draws Mz, not the in-plane force).
+    return anyRecords(picked[0]!) ? [] : null;
+  };
   type Item = { tip: Vec3; vec: Vec3; mag: number; node: number; arc: boolean };
   const items: Item[] = [];
   const max = { force: 0, moment: 0 };
@@ -2540,7 +2548,10 @@ export interface Supports3D {
  * circle about each restrained rotation, all one length and in the support
  * colour. DOFs are OpenSees's, by the model's ndm: in 2-D, 1 and 2 are x and y
  * and 3 is the rotation about z; otherwise 1 to 3 are x, y, z and 4 to 6 the
- * rotations about them (an unknown ndm reads a model flat in z as 2-D). A DOF
+ * rotations about them (an unknown ndm reads a model flat in z, restraining no
+ * DOF above 3, as 2-D). This is the structural numbering (ndf 3 in 2-D, 6 in
+ * 3-D): a u-p element's pressure DOF (ndf 3 in 2-D, 4 in 3-D) would be drawn
+ * as a rotation. A DOF
  * the mask did not name (0) draws nothing. Model
  * data: it needs no results, and draws on every phase but the geometry.
  */
@@ -2565,8 +2576,10 @@ export function buildSupports3D(s: State, blobs: BlobStore, opts?: BuildLoads3DO
   const radius = s.mesh.radius > 0 && Number.isFinite(s.mesh.radius) ? s.mesh.radius : 1;
   const len = Math.max(radius * 0.22, 1e-4) * 0.5 * s.supports.scale;
   const rgb = loadsColourPalette(opts?.theme ?? "dark").sp;
-  // ndm as read from the model; when it is unknown, a model whose nodes all share one z is taken as 2-D.
-  const planar = s.ndm.ndm === 2 || (s.ndm.ndm === null && flatInZ([...nodeCoords.values()]));
+  // ndm as read from the model; when it is unknown, a model whose undeformed nodes all share one z, and with
+  // no restrained DOF above 3 (a flat 3-D plate fixes rotations 4..6), is taken as 2-D.
+  const highDof = [...held.values()].some((d) => [...d].some((dof) => dof > 3));
+  const planar = s.ndm.ndm === 2 || (s.ndm.ndm === null && !highDof && flatInZ([...buildNodeCoordsMap(s, blobs).values()]));
   const AXES: readonly Vec3[] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
   const kind = (dof: number): { rotation: boolean; axis: Vec3 } | null => {
     if (planar) return dof === 1 || dof === 2 ? { rotation: false, axis: AXES[dof - 1]! } : dof === 3 ? { rotation: true, axis: AXES[2]! } : null;

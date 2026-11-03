@@ -1339,7 +1339,7 @@ export function reduce(s: State, e: Event): State {
       return on === s.supports.on && scale === s.supports.scale ? s : { ...s, supports: { on, scale } };
     }
     case "setReactions": {
-      for (const k of ["on", "thin", "allNodes"] as const) {
+      for (const k of ["on", "thin", "allNodes", "forces", "moments"] as const) {
         if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setReactions: ${k} ${JSON.stringify(e[k])}`);
       }
       for (const k of ["scale", "headSize"] as const) {

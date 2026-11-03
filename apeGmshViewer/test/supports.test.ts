@@ -87,3 +87,13 @@ test("setSupports refuses a non-boolean switch and a scale at or below 0, and an
   }
   assert.equal(reduce(def.s, { type: "setSupports", on: true }), def.s);
 });
+
+test("an unknown ndm reads a flat mesh as 2-D only when no DOF above 3 is restrained: a flat 3-D plate keeps its rotations", () => {
+  const node = String((def.blobs.get(def.s.mesh!.nodes!.ids) as Float64Array)[0]);
+  const plate = buildSupports3D(onlyFix(def.s, [["node", node, [0, 0, 1, 1, 1, 1]]]), def.blobs);
+  assert.deepEqual(
+    [Array.from({ length: plate.arrows.length / ARROW_STRIDE }, (_, i) => axisOf(plate.arrows, i)), Array.from({ length: plate.arcs.length / ARROW_STRIDE }, (_, i) => axisOf(plate.arcs, i))],
+    [["0,0,1"], ["1,0,0", "0,1,0", "0,0,1"]],
+    "uz is a translation, rx ry rz are rotations",
+  );
+});

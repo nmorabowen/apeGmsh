@@ -162,6 +162,24 @@ test("each glyph shader compiles to its own program: arrows, comb bars and arcs 
   const keys = [key(layer.lines), key(layer.combs), key(layer.arcs.lines)];
   assert.equal(new Set(keys).size, 3, "three line materials, three programs");
   assert.notEqual(key(layer.cones), key(layer.arcs.heads), "arrow heads and arc heads differ too");
-  assert.equal(key(layer.lines), key(layer.cones), "shafts and heads share the arrow program by design");
+  assert.equal(key(layer.lines), key(layer.cones), "shafts and heads share the custom key (one shader source); three still keys the double-sided heads apart");
   layer.dispose();
+});
+
+test("Z on a 2-D-like stage (forces in x and y, the moment about z) draws the moment arc only, not the in-plane force", () => {
+  const names = ["reaction_force_x", "reaction_force_y", "reaction_moment_z"];
+  const data: Record<string, Float64Array> = {};
+  for (const [c, name] of names.entries()) data[name] = new Float64Array(N).fill(Number.NaN).fill(c === 0 ? 3 : 4, 0, 1);
+  data["reaction_moment_z"]![0] = 7;
+  const r = buildReactions3D(withStage(names, { component: "z" }), blobs, data, ids);
+  assert.deepEqual([r.count, r.arcCount], [0, 1], "no force arrow: the forces do not record z");
+  assert.deepEqual([0, 1, 2].map((c) => r.arcs[ARROW.dir + c]), [0, 0, 1]);
+  const noZ = buildReactions3D(withStage(["reaction_force_x", "reaction_force_y"], { component: "z" }), blobs, data, ids);
+  assert.equal(noZ.count, 1, "no kind records z: the force resultant, as before");
+});
+
+test("setReactions refuses non-boolean forces and moments switches", () => {
+  for (const bad of [{ forces: "no" }, { moments: 0 }]) {
+    assert.throws(() => reduce(initialState, { type: "setReactions", ...(bad as object) } as never), RangeError, JSON.stringify(bad));
+  }
 });
