@@ -17,15 +17,10 @@ kernel. In-process ``results.render`` / ``fem.render`` stay the
 default. The first token must be exactly ``render``; a file named
 ``render.h5`` still opens the interactive viewer.
 
-On Windows the stills come from apeGmshViewer (ADR 0128 slice 6, VA6b):
-each flag maps to one ``apegmsh-view/1`` shot (the parity plan,
-``internal_docs/plan_viewer_agent_stills_parity.md``), drawn through
-``apeGmsh.agent_view``. A results file must be a ``.ladruno`` beside its
-``<stem>.h5`` model; any other results file is refused by name (R22b,
-R31). ``--view reactions`` and a velocity or acceleration ``--deform``
-are refused (G1, G4). ``--pack`` writes the one pack spec's PNGs, the
-app's ``manifest.json`` and the matplotlib ``history.png`` (G5, G6).
-No app is exit 2 (G9). Linux and macOS keep the VTK path (G2).
+On Windows each flag maps to one ``apegmsh-view/1`` shot drawn by
+apeGmshViewer (ADR 0128 slice 6; the parity plan). Results must be a
+``.ladruno`` beside its ``<stem>.h5``, else refused (R22b, R31); no app
+is exit 2 (G9). Linux keeps the VTK path (G2).
 
 Phase 8 (ADR 0020 INV-1) — for native ``.h5`` results the viewer reads
 the OpenSeesModel from ``Results.model`` (auto-resolved against the
@@ -389,23 +384,21 @@ def _render_fem(path: Path, args: argparse.Namespace) -> int:
 def _render_fem_app(path: Path, args: argparse.Namespace) -> int:
     """R1: the model file on disk is the spec's ``files.model``; no copy."""
     from apeGmsh.viewers._stills import _SKIP_ENV, _env_skips
-    from apeGmsh.viewers.render import _app_mesh_spec, _shoot_app
+    from apeGmsh.agent_view import mesh_spec, shoot
+    from apeGmsh.viewers.render import _app_camera, _app_size
 
-    spec = _app_mesh_spec(path, camera=args.camera, window_size=args.window)
+    spec = mesh_spec(path, camera=_app_camera(args.camera), size=_app_size(args.window))
     if _env_skips():
         print(_SKIP_ENV)
         return _exit_written(None, as_json=getattr(args, "as_json", False))
-    _, written = _shoot_app(spec, {"mesh": Path(args.output)})
+    _, written = shoot(spec, {"mesh": Path(args.output)})
     return _exit_written(written["mesh"], as_json=getattr(args, "as_json", False))
 
 
 def _render_results_app(path: Path, args: argparse.Namespace) -> int:
     """The Windows results door: a ``.ladruno`` and its ``<stem>.h5``."""
-    from apeGmsh.viewers.session._results_stills import (
-        app_pack,
-        app_still,
-        ladruno_files,
-    )
+    from apeGmsh.agent_view import ladruno_files
+    from apeGmsh.viewers.session._results_stills import app_pack, app_still
 
     files = ladruno_files(path, args.model_h5)
     results = _open_results(path, Path(files["model"]))

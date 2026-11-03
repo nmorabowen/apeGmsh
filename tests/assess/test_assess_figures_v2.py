@@ -210,7 +210,7 @@ def test_units_view_is_refused(app_backend, ladruno_set, tmp_path):
 
 
 def test_no_source_file_is_refused() -> None:
-    from apeGmsh.viewers.session._results_stills import results_files
+    from apeGmsh.agent_view import results_files
 
     class _InMemory:
         path = None
