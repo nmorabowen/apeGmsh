@@ -16,10 +16,13 @@ door now draw their PNGs with apeGmshViewer, through
   `<stem>.h5` model beside it. `Results.path` is the new read-only accessor
   for that file. Every other source is refused with a message naming
   `.ladruno`: an `.mpco`, a native `.h5`, recorders, a Results with no file,
-  and a `to_units` view (R22b).
+  a `to_units` view, and a `fem=` or `bind()` override that is not the
+  `<stem>.h5` mesh (R22b). The stills draw the render canvas only
+  (`chrome: "model"`), not the app's panels.
 - An in-memory `FEMData` is written to a temporary `model.h5` first (G7).
 - No app raises `FileNotFoundError`, and a refused shot raises
-  `AgentViewError` (G9). `APEGMSH_SKIP_VIEWER=1` still skips.
+  `AgentViewError` (G9). `APEGMSH_SKIP_VIEWER=1` still skips, for every
+  source: the skip comes before the `.ladruno` check.
 - A stored Gauss component (R16b) is still refused; follow-up slice #2794
   adds it.
 
