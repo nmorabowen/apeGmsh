@@ -818,8 +818,10 @@ export interface LoadsState {
   readonly includeSupportReactions: boolean;
   /** Scale load magnitudes by the pattern's timeSeries factor λ(t) on a results step (default false: nominal). */
   readonly scaleBySeries: boolean;
-  /** Arrowhead length as a fraction of the reference arrow length (default 0.3, > 0); every head is 2:1, length to width. */
+  /** Arrowhead length on screen, in CSS pixels (default 12, > 0); every head is 2:1, length to width. */
   readonly headSize: number;
+  /** Thin out arrows closer on screen than about a head length (default true). */
+  readonly thin: boolean;
   /** Arrow colour: one colour for every load (default), the load type's, or jet over the magnitude. */
   readonly colorBy: LoadsColorBy;
   /** null = all active patterns/cases for current phase/stage; string[] = explicit pattern h5 paths or `neutral:<case>` keys */
@@ -1363,6 +1365,7 @@ export type Event =
       includeSupportReactions?: boolean;
       scaleBySeries?: boolean;
       headSize?: number;
+      thin?: boolean;
       colorBy?: LoadsColorBy;
       selectedPatterns?: readonly string[] | null;
       togglePattern?: string;

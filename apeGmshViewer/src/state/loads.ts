@@ -138,26 +138,14 @@ export interface LoadsSummary {
 }
 
 export interface Loads3DGeometry {
-  /** 6 floats per line segment (arrow shafts, moment double-heads, distributed load comb bars, SP cross-bars). */
-  readonly linePositions: Float32Array;
-  /** 6 floats per line segment (sRGB vertex colours). */
-  readonly lineColors: Float32Array;
-  /** 9 floats per arrowhead triangle. */
-  readonly conePositions: Float32Array;
-  /** 9 floats per arrowhead triangle (sRGB vertex colours). */
-  readonly coneColors: Float32Array;
-  /** Alias for `conePositions` (9 floats per arrowhead triangle). */
-  readonly triPositions: Float32Array;
-  /** Alias for `coneColors` (9 floats per arrowhead triangle). */
-  readonly triColors: Float32Array;
-  /** 3 floats per line vertex: the arrow direction a flat bar lies across (zero on a plain segment). */
-  readonly lineDirs: Float32Array;
-  /** 1 float per line vertex: its offset across the arrow, toward the camera-facing side (world units). */
-  readonly lineSides: Float32Array;
-  /** 3 floats per head vertex: the arrow direction. */
-  readonly coneDirs: Float32Array;
-  /** 1 float per head vertex: its offset across the arrow (the tip 0, the base corners ± a quarter of the head length). */
-  readonly coneSides: Float32Array;
+  /** One record per arrow, `ARROW_STRIDE` floats (see `ARROW`): drawn as instances by renderer/loads.ts. */
+  readonly arrows: Float32Array;
+  /** One record per comb bar, `COMB_STRIDE` floats: the two arrows whose tails it joins, and its colour. */
+  readonly combs: Float32Array;
+  /** The reference arrow length (world units): the model's bounding radius × 0.22 × the user scale. */
+  readonly refLen: number;
+  /** The model's bounding radius, which sets the thinning cells. */
+  readonly radius: number;
   readonly nodalForcesCount: number;
   readonly nodalMomentsCount: number;
   readonly beamUniformCount: number;
@@ -1455,107 +1443,121 @@ export function loadsSummaryOf(s: State): LoadsSummary {
 // ---- 3-D Arrow & Comb Primitive Geometry Builder ----------------------------
 
 /**
- * The glyph buffers. Every vertex carries the arrow's direction and a signed
- * side offset: the renderer moves it that far across the arrow, in the plane
- * that holds the arrow and faces the camera (renderer/loads.ts), so a head is
- * a flat triangle at any view while its tip and base stay where they are in 3-D.
+ * One arrow per record, `ARROW_STRIDE` floats: tip (3), unit direction (3),
+ * nominal length in world units (1), sRGB colour (3), head count (1: 1 or 2),
+ * SP bar (1: 0 or 1), priority (1: magnitude over its kind's peak), and
+ * thinning level (1, `thinningLevels`). The renderer draws each record as an
+ * instance (renderer/loads.ts): a line shaft and flat 2:1 heads sized in
+ * pixels, with the shaft's length capped to a pixel band.
  */
-interface GlyphBuffers {
-  readonly linePos: number[];
-  readonly lineCol: number[];
-  readonly lineDir: number[];
-  readonly lineSide: number[];
-  readonly conePos: number[];
-  readonly coneCol: number[];
-  readonly coneDir: number[];
-  readonly coneSide: number[];
-  /** Head length (world units), the same for every arrow; its width is half of it (2:1). */
-  readonly headLen: number;
-}
-
-const NO_DIR = [0, 0, 0] as const;
-
-function pushVertex(
-  pos: number[],
-  col: number[],
-  dirs: number[],
-  sides: number[],
-  p: readonly [number, number, number],
-  rgb: readonly [number, number, number],
-  dir: readonly [number, number, number],
-  side: number,
-): void {
-  pos.push(p[0], p[1], p[2]);
-  col.push(rgb[0], rgb[1], rgb[2]);
-  dirs.push(dir[0], dir[1], dir[2]);
-  sides.push(side);
-}
-
-function pushSegment(
-  g: GlyphBuffers,
-  p0: readonly [number, number, number],
-  p1: readonly [number, number, number],
-  rgb: readonly [number, number, number],
-): void {
-  pushVertex(g.linePos, g.lineCol, g.lineDir, g.lineSide, p0, rgb, NO_DIR, 0);
-  pushVertex(g.linePos, g.lineCol, g.lineDir, g.lineSide, p1, rgb, NO_DIR, 0);
-}
-
-/** One flat 2:1 head: the tip, and the base's two corners a quarter of the head length to each side. */
-function pushFlatHead(
-  g: GlyphBuffers,
-  tip: readonly [number, number, number],
-  dir: readonly [number, number, number],
-  headLen: number,
-  rgb: readonly [number, number, number],
-): void {
-  const base: [number, number, number] = [tip[0] - dir[0] * headLen, tip[1] - dir[1] * headLen, tip[2] - dir[2] * headLen];
-  pushVertex(g.conePos, g.coneCol, g.coneDir, g.coneSide, tip, rgb, dir, 0);
-  pushVertex(g.conePos, g.coneCol, g.coneDir, g.coneSide, base, rgb, dir, -headLen / 4);
-  pushVertex(g.conePos, g.coneCol, g.coneDir, g.coneSide, base, rgb, dir, headLen / 4);
-}
+export const ARROW_STRIDE = 14;
+export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, priority: 12, level: 13 } as const;
 
 /**
- * Push an arrow whose tip touches `targetPoint` (pointing along `dir`) and
- * whose overall length is `arrowLen`: a line shaft and a flat head of
- * `g.headLen`, shortened to the arrow when the arrow is shorter.
+ * One comb bar per record, `COMB_STRIDE` floats: the two arrows whose tails
+ * it joins, each as tip (3), direction (3), nominal length (1), then sRGB
+ * colour (3). The renderer places each end at its arrow's drawn tail, so the
+ * bar follows the arrows' pixel caps. A zero direction pins the end to its tip.
  */
+export const COMB_STRIDE = 17;
+
+/** Thinning levels; level k keeps one arrow per cell of `radius * 2^(k - THIN_LEVELS)` (level 0 keeps every arrow). */
+export const THIN_LEVELS = 12;
+
+interface GlyphBuffers {
+  readonly arrows: number[];
+  readonly combs: number[];
+}
+
+type Vec3 = readonly [number, number, number];
+
+/** Push an arrow whose tip touches `tip`, pointing along `dir` (unit), `len` long at its nominal size. */
 function pushArrowToPoint(
   g: GlyphBuffers,
-  targetPoint: readonly [number, number, number],
-  dir: readonly [number, number, number],
-  arrowLen: number,
-  rgb: readonly [number, number, number],
+  tip: Vec3,
+  dir: Vec3,
+  len: number,
+  rgb: Vec3,
+  priority: number,
   doubleHead = false,
   spCrossbar = false,
 ): void {
-  const headLen = Math.min(g.headLen, arrowLen);
-  const tail: [number, number, number] = [
-    targetPoint[0] - dir[0] * arrowLen,
-    targetPoint[1] - dir[1] * arrowLen,
-    targetPoint[2] - dir[2] * arrowLen,
-  ];
-  // The shaft stops at the head's base, so the line never pokes through the tip.
-  const shaftEnd: [number, number, number] = [
-    targetPoint[0] - dir[0] * headLen,
-    targetPoint[1] - dir[1] * headLen,
-    targetPoint[2] - dir[2] * headLen,
-  ];
-  if (arrowLen > headLen) pushSegment(g, tail, shaftEnd, rgb);
-  pushFlatHead(g, targetPoint, dir, headLen, rgb);
-  if (doubleHead) {
-    const secondTip: [number, number, number] = [
-      targetPoint[0] - dir[0] * (headLen * 0.72),
-      targetPoint[1] - dir[1] * (headLen * 0.72),
-      targetPoint[2] - dir[2] * (headLen * 0.72),
-    ];
-    pushFlatHead(g, secondTip, dir, headLen, rgb);
+  g.arrows.push(tip[0], tip[1], tip[2], dir[0], dir[1], dir[2], len, rgb[0], rgb[1], rgb[2], doubleHead ? 2 : 1, spCrossbar ? 1 : 0, priority, 0);
+}
+
+/** Push a comb bar joining the tails of two arrows (tip, unit or zero direction, nominal length). */
+function pushComb(g: GlyphBuffers, a: { tip: Vec3; dir: Vec3; len: number }, b: { tip: Vec3; dir: Vec3; len: number }, rgb: Vec3): void {
+  g.combs.push(a.tip[0], a.tip[1], a.tip[2], a.dir[0], a.dir[1], a.dir[2], a.len, b.tip[0], b.tip[1], b.tip[2], b.dir[0], b.dir[1], b.dir[2], b.len, rgb[0], rgb[1], rgb[2]);
+}
+
+/**
+ * Write each arrow's thinning level into its record. Level k (1..THIN_LEVELS)
+ * keeps, of the arrows kept at level k - 1, the highest-priority one in each
+ * cell of side `radius * 2^(k - THIN_LEVELS)`; an arrow's level is the last
+ * level that kept it. The renderer shows the arrows whose level reaches the
+ * one its zoom needs, so a dense load thins to one arrow per few pixels with
+ * no work on the CPU per frame. O(n) per level, done once per rebuild.
+ */
+export function thinningLevels(arrows: Float32Array, radius: number): void {
+  const n = arrows.length / ARROW_STRIDE;
+  if (n === 0) return;
+  let min = [Infinity, Infinity, Infinity];
+  for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) min[c] = Math.min(min[c]!, arrows[i * ARROW_STRIDE + c]!);
+  min = min.map((v) => (Number.isFinite(v) ? v : 0));
+  // Highest priority first, so each cell keeps its largest load.
+  let alive = Array.from({ length: n }, (_, i) => i).sort((a, b) => arrows[b * ARROW_STRIDE + ARROW.priority]! - arrows[a * ARROW_STRIDE + ARROW.priority]!);
+  for (let k = 1; k <= THIN_LEVELS && alive.length > 0; k++) {
+    const cell = radius * 2 ** (k - THIN_LEVELS);
+    const span = 2 ** (THIN_LEVELS - k + 2) + 1; // cells across the model's bounding box, with margin
+    const taken = new Set<number>();
+    const kept: number[] = [];
+    for (const i of alive) {
+      const o = i * ARROW_STRIDE;
+      const ix = Math.floor((arrows[o]! - min[0]!) / cell);
+      const iy = Math.floor((arrows[o + 1]! - min[1]!) / cell);
+      const iz = Math.floor((arrows[o + 2]! - min[2]!) / cell);
+      const key = (ix * span + iy) * span + iz;
+      if (taken.has(key)) continue;
+      taken.add(key);
+      kept.push(i);
+      arrows[o + ARROW.level] = k;
+    }
+    alive = kept;
   }
-  if (spCrossbar) {
-    // A flat bar across the tip, as wide as the head is long.
-    pushVertex(g.linePos, g.lineCol, g.lineDir, g.lineSide, targetPoint, rgb, dir, -headLen / 2);
-    pushVertex(g.linePos, g.lineCol, g.lineDir, g.lineSide, targetPoint, rgb, dir, headLen / 2);
+}
+
+/**
+ * The arrows at their nominal size as plain segments and head triangles, a
+ * head `headLen` long and lying in a fixed plane: the CPU twin of the
+ * renderer's instance shader without its pixel sizing, for tests and probes.
+ */
+export function expandArrows(geom: Pick<Loads3DGeometry, "arrows" | "combs">, headLen: number): { linePositions: Float32Array; conePositions: Float32Array } {
+  const lines: number[] = [];
+  const cones: number[] = [];
+  const at = (tip: Vec3, dir: Vec3, back: number): [number, number, number] => [tip[0] - dir[0] * back, tip[1] - dir[1] * back, tip[2] - dir[2] * back];
+  for (let o = 0; o < geom.arrows.length; o += ARROW_STRIDE) {
+    const a = geom.arrows;
+    const tip: Vec3 = [a[o]!, a[o + 1]!, a[o + 2]!];
+    const dir: Vec3 = [a[o + 3]!, a[o + 4]!, a[o + 5]!];
+    const len = a[o + ARROW.len]!;
+    const h = Math.min(headLen, len);
+    const side: Vec3 = Math.abs(dir[2]) < 0.9 ? [-dir[1], dir[0], 0] : [0, -dir[2], dir[1]];
+    const sn = Math.hypot(...side) || 1;
+    const across = (p: Vec3, w: number): number[] => [p[0] + (side[0] / sn) * w, p[1] + (side[1] / sn) * w, p[2] + (side[2] / sn) * w];
+    if (len > h) lines.push(...at(tip, dir, len), ...at(tip, dir, h));
+    for (let k = 0; k < a[o + ARROW.heads]!; k++) {
+      const t = at(tip, dir, k * 0.72 * h);
+      const b = at(tip, dir, (1 + k * 0.72) * h);
+      cones.push(...t, ...across(b, -h / 4), ...across(b, h / 4));
+    }
+    if (a[o + ARROW.bar]) lines.push(...across(tip, -h / 2), ...across(tip, h / 2));
   }
+  for (let o = 0; o < geom.combs.length; o += COMB_STRIDE) {
+    const c = geom.combs;
+    lines.push(...at([c[o]!, c[o + 1]!, c[o + 2]!], [c[o + 3]!, c[o + 4]!, c[o + 5]!], c[o + 6]!));
+    lines.push(...at([c[o + 7]!, c[o + 8]!, c[o + 9]!], [c[o + 10]!, c[o + 11]!, c[o + 12]!], c[o + 13]!));
+  }
+  return { linePositions: new Float32Array(lines), conePositions: new Float32Array(cones) };
 }
 
 function buildNodeCoordsMap(
@@ -1635,16 +1637,10 @@ export function buildLoads3D(
   const empty = (): Loads3DGeometry => {
     const z = new Float32Array(0);
     return {
-      linePositions: z,
-      lineColors: z,
-      conePositions: z,
-      coneColors: z,
-      triPositions: z,
-      triColors: z,
-      lineDirs: z,
-      lineSides: z,
-      coneDirs: z,
-      coneSides: z,
+      arrows: z,
+      combs: z,
+      refLen: 0,
+      radius: 0,
       nodalForcesCount: 0,
       nodalMomentsCount: 0,
       beamUniformCount: 0,
@@ -1830,17 +1826,7 @@ export function buildLoads3D(
   }
   const maxSpMag = Math.max(maxSpTranslationMag, maxSpRotationMag, maxBaseExcitationMag);
 
-  const g: GlyphBuffers = {
-    linePos: [],
-    lineCol: [],
-    lineDir: [],
-    lineSide: [],
-    conePos: [],
-    coneCol: [],
-    coneDir: [],
-    coneSide: [],
-    headLen: baseLen * s.loads.headSize,
-  };
+  const g: GlyphBuffers = { arrows: [], combs: [] };
   // The arrow's colour: one colour for every load (the default), its load type's, or jet over
   // its magnitude relative to its own kind's peak (forces, moments and pressures have different units).
   const mono = palette.mono;
@@ -1864,7 +1850,7 @@ export function buildLoads3D(
       if (mag <= 1e-30) continue;
       const dir: [number, number, number] = [f[0] / mag, f[1] / mag, f[2] / mag];
       const len = baseLen * (0.35 + 0.65 * (mag / maxForceMag));
-      pushArrowToPoint(g, pt, dir, len, colourOf(palette.force, mag / maxForceMag), false, false);
+      pushArrowToPoint(g, pt, dir, len, colourOf(palette.force, mag / maxForceMag), mag / maxForceMag, false, false);
       nodalForcesCount++;
     }
   }
@@ -1878,7 +1864,7 @@ export function buildLoads3D(
       if (mag <= 1e-30) continue;
       const dir: [number, number, number] = [mVec[0] / mag, mVec[1] / mag, mVec[2] / mag];
       const len = baseLen * (0.35 + 0.65 * (mag / maxMomentMag));
-      pushArrowToPoint(g, pt, dir, len, colourOf(palette.moment, mag / maxMomentMag), true, false);
+      pushArrowToPoint(g, pt, dir, len, colourOf(palette.moment, mag / maxMomentMag), mag / maxMomentMag, true, false);
       nodalMomentsCount++;
     }
   }
@@ -1892,14 +1878,14 @@ export function buildLoads3D(
       if (tMag > 1e-30 && maxSpTranslationMag > 0) {
         const dir: [number, number, number] = [sp.trans[0] / tMag, sp.trans[1] / tMag, sp.trans[2] / tMag];
         const len = baseLen * 0.85 * (0.35 + 0.65 * (tMag / maxSpTranslationMag));
-        pushArrowToPoint(g, pt, dir, len, colourOf(palette.sp, tMag / maxSpTranslationMag), false, true);
+        pushArrowToPoint(g, pt, dir, len, colourOf(palette.sp, tMag / maxSpTranslationMag), tMag / maxSpTranslationMag, false, true);
         spCount++;
       }
       const rMag = Math.hypot(sp.rot[0], sp.rot[1], sp.rot[2]);
       if (rMag > 1e-30 && maxSpRotationMag > 0) {
         const dir: [number, number, number] = [sp.rot[0] / rMag, sp.rot[1] / rMag, sp.rot[2] / rMag];
         const len = baseLen * 0.85 * (0.35 + 0.65 * (rMag / maxSpRotationMag));
-        pushArrowToPoint(g, pt, dir, len, colourOf(palette.sp, rMag / maxSpRotationMag), true, true);
+        pushArrowToPoint(g, pt, dir, len, colourOf(palette.sp, rMag / maxSpRotationMag), rMag / maxSpRotationMag, true, true);
         spCount++;
       }
     }
@@ -1915,6 +1901,7 @@ export function buildLoads3D(
           dir,
           baseLen * 1.1,
           colourOf(palette.sp, 1),
+          1,
           false,
           true,
         );
@@ -2179,14 +2166,14 @@ export function buildLoads3D(
           item.pStart[1] + item.xL * (item.pEnd[1] - item.pStart[1]),
           item.pStart[2] + item.xL * (item.pEnd[2] - item.pStart[2]),
         ];
-        pushArrowToPoint(g, pt, dir, len, colourOf(palette.elementLoad, item.mag / (kindMax || 1)), false, false);
+        pushArrowToPoint(g, pt, dir, len, colourOf(palette.elementLoad, item.mag / (kindMax || 1)), item.mag / (kindMax || 1), false, false);
         beamPointCount++;
       } else {
         // Five ticks over the loaded span [aL, bL], each the load interpolated
         // linearly between its ends (a trapezoid; constant when uniform).
         const nTicks = 5;
         const [aL, bL] = item.span;
-        const tails: [number, number, number][] = [];
+        const tails: { tip: [number, number, number]; dir: [number, number, number]; len: number }[] = [];
         for (let i = 0; i < nTicks; i++) {
           const w = i / (nTicks - 1);
           const u = aL + w * (bL - aL);
@@ -2202,22 +2189,17 @@ export function buildLoads3D(
             item.pStart[2] + u * (item.pEnd[2] - item.pStart[2]),
           ];
           if (qMag <= 1e-30) {
-            tails.push(pt);
+            tails.push({ tip: pt, dir: [0, 0, 0], len: 0 });
             continue;
           }
           const dir: [number, number, number] = [q[0] / qMag, q[1] / qMag, q[2] / qMag];
           const len = baseLen * 0.75 * (0.35 + 0.65 * (qMag / (kindMax || 1)));
-          const tail: [number, number, number] = [
-            pt[0] - dir[0] * len,
-            pt[1] - dir[1] * len,
-            pt[2] - dir[2] * len,
-          ];
-          tails.push(tail);
-          pushArrowToPoint(g, pt, dir, len, colourOf(palette.elementLoad, qMag / (kindMax || 1)), false, false);
+          tails.push({ tip: pt, dir, len });
+          pushArrowToPoint(g, pt, dir, len, colourOf(palette.elementLoad, qMag / (kindMax || 1)), qMag / (kindMax || 1), false, false);
         }
-        // Top profile bar connecting the comb arrow tails
+        // Top profile bar connecting the comb arrow tails, wherever the renderer draws them
         for (let i = 0; i + 1 < tails.length; i++) {
-          pushSegment(g, tails[i]!, tails[i + 1]!, colourOf(palette.elementLoad, item.mag / (kindMax || 1)));
+          pushComb(g, tails[i]!, tails[i + 1]!, colourOf(palette.elementLoad, item.mag / (kindMax || 1)));
         }
         beamUniformCount++;
       }
@@ -2227,7 +2209,7 @@ export function buildLoads3D(
     for (const item of surfaceItems) {
       const len = baseLen * 0.65 * (0.35 + 0.65 * (item.mag / (maxSurfacePressureMag || 1)));
       for (const pt of item.points) {
-        pushArrowToPoint(g, pt, item.normal, len, colourOf(palette.elementLoad, item.mag / (maxSurfacePressureMag || 1)), false, false);
+        pushArrowToPoint(g, pt, item.normal, len, colourOf(palette.elementLoad, item.mag / (maxSurfacePressureMag || 1)), item.mag / (maxSurfacePressureMag || 1), false, false);
       }
       surfacePressureCount++;
     }
@@ -2238,23 +2220,15 @@ export function buildLoads3D(
   const skippedCount = skippedBeamDecls.length;
   const notice = joinNotices(skippedBeamNotice(skippedCount), s.loads.showElementLoads ? undrawnNotice(activePatterns) : null);
 
-  const linePositions = new Float32Array(g.linePos);
-  const lineColors = new Float32Array(g.lineCol);
-  const conePositions = new Float32Array(g.conePos);
-  const coneColors = new Float32Array(g.coneCol);
+  const arrows = new Float32Array(g.arrows);
+  thinningLevels(arrows, radius);
   const elementLoadArrows = beamUniformCount * 5 + beamPointCount + surfacePressureCount;
 
   return {
-    linePositions,
-    lineColors,
-    conePositions,
-    coneColors,
-    triPositions: conePositions,
-    triColors: coneColors,
-    lineDirs: new Float32Array(g.lineDir),
-    lineSides: new Float32Array(g.lineSide),
-    coneDirs: new Float32Array(g.coneDir),
-    coneSides: new Float32Array(g.coneSide),
+    arrows,
+    combs: new Float32Array(g.combs),
+    refLen: baseLen,
+    radius,
     nodalForcesCount,
     nodalMomentsCount,
     beamUniformCount,

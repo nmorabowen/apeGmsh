@@ -84,7 +84,8 @@ export const initialLoads: LoadsState = {
   showSp: true,
   includeSupportReactions: false,
   scaleBySeries: false,
-  headSize: 0.3,
+  headSize: 12,
+  thin: true,
   colorBy: "mono",
   selectedPatterns: null,
 };
@@ -1205,6 +1206,7 @@ export function reduce(s: State, e: Event): State {
       const includeSupportReactions = e.includeSupportReactions ?? cur.includeSupportReactions;
       const scaleBySeries = e.scaleBySeries ?? cur.scaleBySeries;
       const headSize = e.headSize ?? cur.headSize;
+      const thin = e.thin ?? cur.thin;
       const colorBy = e.colorBy ?? cur.colorBy;
       let selectedPatterns = cur.selectedPatterns;
       if (e.selectedPatterns !== undefined) {
@@ -1242,6 +1244,7 @@ export function reduce(s: State, e: Event): State {
         includeSupportReactions === cur.includeSupportReactions &&
         scaleBySeries === cur.scaleBySeries &&
         headSize === cur.headSize &&
+        thin === cur.thin &&
         colorBy === cur.colorBy &&
         samePatterns
       ) {
@@ -1259,6 +1262,7 @@ export function reduce(s: State, e: Event): State {
           includeSupportReactions,
           scaleBySeries,
           headSize,
+          thin,
           colorBy,
           selectedPatterns,
         },
