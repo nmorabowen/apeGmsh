@@ -1181,7 +1181,11 @@ test("LoadsLayer: one instance per arrow and per comb bar; head size and thinnin
 
 test("the sizing is written once: the arrow shader embeds each SIZING_EXPR verbatim, and screenArrow evaluates the same strings", () => {
   const glsl = arrowShaderSource();
-  for (const [name, expr] of Object.entries(SIZING_EXPR)) assert.ok(glsl.includes(expr), `the shader embeds the ${name} expression`);
+  for (const [name, expr] of Object.entries(SIZING_EXPR)) {
+    assert.ok(glsl.includes(expr), `the shader embeds the ${name} expression`);
+    // GLSL has no int-to-float promotion: a bare integer literal is valid JavaScript but a shader compile error.
+    assert.doesNotMatch(expr, /(?<![\w.])\d+(?![\d.])/, `${name}: every number literal is a float (12.0, not 12)`);
+  }
   // The twin is the expressions: a shaft at 1 px per mm, under, inside and over the [15, 80] px band.
   const u = { headPx: 10, minPx: 15, maxPx: 80, radius: 1, thin: true };
   assert.deepEqual([0.005, 0.04, 2].map((len) => Math.round(screenArrow(len, 0, 0.001, u).L / 0.001)), [15, 40, 80]);

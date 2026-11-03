@@ -144,7 +144,7 @@ export interface Loads3DGeometry {
   readonly combs: Float32Array;
   /** The reference arrow length (world units): the model's bounding radius × 0.22 × the user scale. */
   readonly refLen: number;
-  /** The model's bounding radius, which sets the thinning cells. */
+  /** The model's bounding radius, which sets the thinning distances. */
   readonly radius: number;
   readonly nodalForcesCount: number;
   readonly nodalMomentsCount: number;
@@ -1461,7 +1461,7 @@ export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, prior
  */
 export const COMB_STRIDE = 17;
 
-/** Thinning levels; level k keeps one arrow per cell of `radius * 2^(k - THIN_LEVELS)` (level 0 keeps every arrow). */
+/** Thinning levels; level k keeps arrows at least `radius * 2^(k - THIN_LEVELS)` apart, the stronger first (level 0 keeps every arrow). */
 export const THIN_LEVELS = 12;
 
 interface GlyphBuffers {
