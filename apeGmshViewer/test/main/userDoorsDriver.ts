@@ -74,7 +74,10 @@ const call = async (channel: string, ...args: unknown[]) => {
     return { rejected: err instanceof Error ? err.message : String(err) };
   }
 };
-const userOf = async () => ((await handlers.get("viewer:currentSet")!({})) as { user: string | null; model: string | null } | null) ?? null;
+const userOf = async () => {
+  const s = (await handlers.get("viewer:currentSet")!({})) as { user: string | null; model: string | null } | null;
+  return s === null ? null : { user: s.user, model: s.model };
+};
 const elsewhere = PATHS.elsewhere!;
 const elsewhereModel = join(root, "elsewhere", "s.h5");
 if (process.argv.includes("--steer")) {
@@ -86,6 +89,10 @@ if (process.argv.includes("--steer")) {
   out["steer:5 model:open model"] = await call("model:open", elsewhereModel);
   out["steer:6 currentSet"] = await userOf();
   out["steer:7 readCase"] = await call("user:readCase", { path: elsewhere, ...CASE });
+  // a model still being written (truncated): its open fails, and its set is the one watched
+  out["steer:8 model:open truncated"] = await call("model:open", join(root, "bad", "b.h5"));
+  out["steer:9 currentSet"] = await userOf();
+  out["steer:10 readCase"] = await call("user:readCase", { path: elsewhere, ...CASE });
 }
 process.stdout.write(`USER_DOORS ${JSON.stringify(out)}\n`);
 process.exit(0);

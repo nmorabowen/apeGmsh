@@ -598,22 +598,28 @@ function kindOf(path: string): Kind | null {
   }
 }
 
+/** The open set after the renderer opened `path` as a model: the set of a `<stem>.h5`, else none. */
+function followModel(path: string): void {
+  if (kindOf(path) === "model") session.rendererOpened(path);
+  else session.close();
+}
+
 ipcMain.handle("model:open", async (_e, path: string) => {
   let model;
   try {
     model = await openModel(path);
   } catch (err) {
-    // Nothing new is on screen, so the open set stays: a path that failed to
-    // open never moves it, and so never moves what the user doors read (#2752 review F1).
+    // The renderer takes the old model off screen (state/reduce.ts `fileFailed`),
+    // so the old set ends either way (./session.ts). A `<stem>.h5` that failed
+    // (a model still being written) becomes the open set, watched, so its
+    // rewrite retries the read. Any other path (a `.user.h5`, a results file)
+    // never becomes the set: the user doors would then read beside it (#2752 review F1).
+    if (mode === "view" && typeof path === "string") followModel(path);
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-  // A model the renderer opened on its own (a drop on the P0 page): once it
-  // has read, the open set follows what is on screen (./session.ts). A file
-  // read as a model that is no `<stem>.h5` is outside any set, so the old set ends.
-  if (mode === "view" && typeof path === "string") {
-    if (kindOf(path) === "model") session.rendererOpened(path);
-    else session.close();
-  }
+  // A model the renderer opened on its own (a drop on the P0 page): the open
+  // set follows what is on screen (./session.ts), by the same rule.
+  if (mode === "view" && typeof path === "string") followModel(path);
   // /provenance rides with the model; a refused or broken zone does not stop
   // the model from loading (the renderer shows why go-to-source is off).
   return {
