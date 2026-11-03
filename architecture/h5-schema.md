@@ -2874,13 +2874,13 @@ and the list `variants` of `{label, path, params}`. `path` names a variant's
 model file `<stem>.h5`, relative to the manifest's folder and confined to it. The
 definition is [`<study>.variants.json`](#studyvariantsjson-the-variants-manifest-adr-0132)
 below ([ADR 0132](decisions/0132-workspace-file-and-variants-manifest.md) D8 and
-D9, Proposed). A source address holds no path or hash, so a cross-variant term
+D9). A source address holds no path or hash, so a cross-variant term
 cannot be written.
 
 ## `<stem>.workspace.h5`: what the user makes (ADR 0132)
 
-Proposed in [ADR 0132](decisions/0132-workspace-file-and-variants-manifest.md);
-nothing writes this file until the owner ratifies it. It holds what a user makes in
+Decided in [ADR 0132](decisions/0132-workspace-file-and-variants-manifest.md)
+(Accepted 2026-11-03); no code writes it yet, and VU9a is its first writer. It holds what a user makes in
 apeGmshViewer: named node and element sets, plot definitions and saved views. It
 holds **definitions only, never result values**: values stay in `.user.h5`
 `/results`, written by Python. It is a file of its own, separate from `.user.h5`,
@@ -3103,7 +3103,7 @@ as tags, for example for `results.nodes.get(ids=...)`.
 
 ## `<study>.variants.json`: the variants manifest (ADR 0132)
 
-Proposed in ADR 0132 (D8, D9), completing ADR 0130 A7. It lists the sets of one
+Decided in ADR 0132 (D8, D9; Accepted 2026-11-03), completing ADR 0130 A7. It lists the sets of one
 study that differ in stiffness or another parameter. `<study>` is any name that is
 also a file name. The app reads it and never writes it; Python, a pipeline or a
 human writes it, Python through a partial and a replace. The JSON Schema is

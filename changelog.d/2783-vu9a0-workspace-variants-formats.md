@@ -1,7 +1,7 @@
-### ADR 0132 (Proposed): the workspace file and the variants manifest
+### ADR 0132 (Accepted): the workspace file and the variants manifest
 
-ADR 0132 proposes two files beside a set, for the owner to ratify before any code
-writes them. `<stem>.workspace.h5` holds what a user makes in apeGmshViewer:
+ADR 0132, ratified by the owner on 2026-11-03, defines two files beside a set. No
+code writes them yet. `<stem>.workspace.h5` holds what a user makes in apeGmshViewer:
 named node and element sets, plot definitions and saved views. It holds
 definitions only, never values, and it is separate from `.user.h5`. Sets are
 columnar tables of OpenSees tags with their coordinates, and on a re-meshed model

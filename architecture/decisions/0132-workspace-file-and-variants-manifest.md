@@ -1,8 +1,10 @@
 # ADR 0132 — The workspace file and the variants manifest: `<stem>.workspace.h5` and `<study>.variants.json`
 
-**Status:** Proposed (2026-11-03). Carries `human-gate`: the owner ratifies both
-formats on #2783 before any slice writes either file. The pointers in ADRs 0112,
-0128 and 0130 land in the PR that accepts this one (ADR 0121 D5).
+**Status:** Accepted (2026-11-03; proposed and ratified by the owner the same
+day, "Ratify as recommended", on #2793 and #2783). Merging that PR (`human-gate`)
+is the acceptance. The pointer in ADR 0130 lands with it (ADR 0121 D5). The
+pointers in ADRs 0112 and 0128 are owed to a follow-up, because those files are
+outside this slice's card.
 
 **Owner:** nmora
 
@@ -19,8 +21,11 @@ formats on #2783 before any slice writes either file. The pointers in ADRs 0112,
   picked.
 - The slice card #2783 and its amendments: the variants manifest is completed
   here, and both formats go in a new ADR rather than an amendment of ADR 0130.
+- "Ratify as recommended", the owner directly in the VU orchestrator session,
+  recorded on #2793 and #2783 (2026-11-03). It ratifies both formats, and its five
+  answers are recorded under "Decided at ratification" below.
 
-**Supersedes in part, on acceptance:**
+**Supersedes in part:**
 
 - [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md) D1: a set's files
   are no longer only what a run leaves behind. The set gains
@@ -146,7 +151,7 @@ The card offered `rf1` for this. It does not fit: a set is a fact about the mesh
 and `results_hash` moves on every re-run of an unchanged mesh, so an `rf1` per set
 would stale every set after a re-run and say nothing after a re-mesh. The
 fingerprint per set is the model's identity hashes, with the per-member check
-above (Open question 2).
+above (Decided at ratification, 2).
 
 ### D4 — A plot is a JSON definition with a sweep address
 
@@ -219,7 +224,7 @@ of `{label, path, params}`.
   leaves the folder: no `..`, `.` or empty segment, no folder segment ending in a
   dot or a space (Windows strips them, so two rows could name one folder), no
   absolute path, drive or backslash, and after links and junctions resolve it
-  must still lie inside the manifest's folder (Open question 4).
+  must still lie inside the manifest's folder (Decided at ratification, 4).
 - `params` maps names to a string, a finite number or a boolean. Rows may have
   different keys.
 
@@ -240,8 +245,8 @@ Under option A, a variant path is main-chosen because main read it from a
 manifest the user opened. So:
 
 1. Main reads a manifest only from a path the user gave: a dialog, a drop (the
-   path Electron derives) or argv. Main does not search a folder for one (Open
-   question 3).
+   path Electron derives) or argv. Main does not search a folder for one (Decided at
+   ratification, 3).
 2. Main parses and validates the manifest itself and keeps the rows that pass,
    each with its resolved path. The page names a variant by its row index and
    label; main refuses a request whose label does not match its current row.
@@ -320,27 +325,30 @@ manifest the user opened. So:
 
 | Slice | Work | Gate |
 |---|---|---|
-| VU9a-0 | This ADR, the two `h5-schema.md` sections, the manifest's JSON Schema and examples | owner ratifies on #2783 |
+| VU9a-0 | This ADR, the two `h5-schema.md` sections, the manifest's JSON Schema and examples | ratified 2026-11-03 (#2793, #2783) |
 | VU9a | The h5wasm create probe; node pick and naming; the workspace reader and writer in the app and in Python; the set verdict | this ADR accepted |
 | VU9b and later | Plot window (`history`, then `xy`, `profile`); saved views | VU9a |
 | VU10 | Variant manifest, switch and compare, under D8 and D9 | this ADR accepted |
 
+## Decided at ratification
+
+The owner ratified this ADR on 2026-11-03 ("Ratify as recommended", on #2793 and
+#2783). The five questions it had left open each took the recommended reading:
+
+1. **Sets are ordered and hold one kind.**
+2. **The set fingerprint** is the model's identity hashes (`fem_hash`, plus
+   `model_hash` for element sets) with the per-member check, not `rf1` (D3). This
+   departs from ADR 0130 A6 for this file only.
+3. **Finding a manifest.** Main reads one only when the user opens it, and never
+   searches a folder for one (D9).
+4. **Variant paths** may enter subfolders, confined to the manifest's folder (D8).
+5. **The rename-aside banner.** An unreadable workspace is renamed aside, as the
+   card decided, and the app shows one banner naming the aside file, once per
+   rename (D6).
+
 ## Open questions
 
-Each takes the recommended reading unless the owner rules otherwise on #2783.
-
-1. **Sets are ordered and hold one kind.** Rec: yes.
-2. **The set fingerprint.** The card named `rf1`; D3 uses the model's identity
-   hashes (`fem_hash`, plus `model_hash` for element sets) with the per-member
-   check, a departure from ADR 0130 A6 for this file. Rec: accept D3.
-3. **Finding a manifest.** Rec: main reads one only when the user opens it. The
-   alternative, main listing the folder of an opened set for a manifest that
-   names it, is also main-chosen but opens a file the user did not pick.
-4. **Variant paths in subfolders.** Rec: allowed, confined to the manifest's
-   folder. The narrower rule is the manifest's folder only.
-5. **The rename-aside banner.** The card decides that an unreadable workspace is
-   renamed aside. Open is only how the app says so. Rec: one banner naming the
-   aside file, shown once per rename.
+None.
 
 ## References
 

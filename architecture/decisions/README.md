@@ -145,5 +145,5 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0129](0129-crack-band-snapback-fork-reports-apegmsh-predicts.md) | Crack-band snap-back: the fork reports it, apeGmsh predicts it, a live test reconciles them | Proposed |
 | [0130](0130-states-quantities-and-the-user-results-file.md) | States and quantities: modes, spectra, user combinations and user results in a `<stem>.user.h5` | Accepted |
 | [0131](0131-all-in-ladruno.md) | All in `.ladruno`: apeGmsh reads one results format | Accepted |
-| [0132](0132-workspace-file-and-variants-manifest.md) | The workspace file and the variants manifest: `<stem>.workspace.h5` and `<study>.variants.json` | Proposed |
+| [0132](0132-workspace-file-and-variants-manifest.md) | The workspace file and the variants manifest: `<stem>.workspace.h5` and `<study>.variants.json` | Accepted |
 | [0133](0133-fem-hash-pairing-for-femdata-archives.md) | A `.ladruno` pairs to a bare FEMData archive by `fem_hash` | Accepted |
