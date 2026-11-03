@@ -31,6 +31,7 @@ from ...opensees._recorder_translate import LiveDomainFacts
 from ...opensees.analysis.eigen import _live_slots, _spatial, _warn_unresolved
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
+from ..readers._ladruno_live import FORK_SUFFIX
 from ..readers._ladruno_writer import write_modes
 
 if TYPE_CHECKING:
@@ -156,9 +157,9 @@ def capture_live_modes(
         if out_path.suffix.lower() == ".h5":
             raise ValueError(
                 f"{_WHERE}: path {out_path} has an .h5 suffix, a model "
-                "archive's; the modes are written to a .ladruno (ADR 0131 "
-                "D10). Pass a .ladruno path, and read it with "
-                "Results.from_ladruno. Nothing was written.")
+                f"archive's; the modes are written to a {FORK_SUFFIX} file "
+                f"(ADR 0131 D10). Pass a {FORK_SUFFIX} path. Nothing was "
+                "written.")
         return _capture(src, n_modes, out_path, ops, solver)
 
 
