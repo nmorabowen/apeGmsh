@@ -75,6 +75,13 @@ _REGEN = bool(os.environ.get("APEGMSH_REGEN_GOLDENS"))
 # =====================================================================
 
 
+@pytest.fixture(autouse=True)
+def _vtk_backend(monkeypatch):
+    from apeGmsh.viewers import render as render_mod
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+
+
 def _write_plate_results(dest: Path) -> Path:
     """8x2 quad plate (4 x 1, z=0) + a 5-step static stage.
 

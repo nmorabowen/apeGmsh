@@ -37,6 +37,13 @@ pytest.importorskip("pyvista")
 # ---------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _vtk_backend(monkeypatch):
+    from apeGmsh.viewers import render as render_mod
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+
+
 def _drawn(plotter: Any) -> list[dict[str, Any]]:
     out = []
     for renderer in plotter.renderers:

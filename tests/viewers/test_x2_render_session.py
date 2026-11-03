@@ -37,6 +37,13 @@ _SRC = str(Path(apeGmsh.__file__).resolve().parents[1])
 _WINDOW = (320, 180)
 
 
+@pytest.fixture(autouse=True)
+def _vtk_backend(monkeypatch):
+    from apeGmsh.viewers import render as render_mod
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+
+
 @pytest.fixture(scope="module")
 def plate_h5(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return G._write_plate_results(tmp_path_factory.mktemp("x2_render_session"))
