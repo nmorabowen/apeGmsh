@@ -68,7 +68,7 @@ writeTree(h5wasm, join(SRC_SET, "s.h5"), tree({
 }));
 
 type Seen = { ok: boolean; error?: string; seq?: number; scanId?: number; stages?: number; geometry?: boolean };
-type Answers = Record<string, { resolved: Seen } | { rejected: string } | { onScreen: string | null }>;
+type Answers = Record<string, { resolved: Seen } | { rejected: string } | { onScreen: string | null } | { sent: number }>;
 
 function run(which: string, mainArgs: string[]): Answers {
   const stdout = execFileSync(process.execPath, [DRIVER, `--case=${which}`, `--dir=${root}`, ...mainArgs], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
@@ -247,6 +247,35 @@ test("VU13: an offer that falls off the page's list (MAX_OFFERS) is gone, and so
   const back = resolved(view, "prune:3 back to the set it left");
   assert.equal(back.ok, false, "the set offer:4 left went with its offer");
   assert.match(back.error ?? "", /^offerOpen opens only the files of a set main offered or the set an offer left; refused /);
+});
+
+// VU14 (#2771): main.ts makes its (stub) window here, and the driver delivers the page's loads.
+test("VU14: a page load leaves no offer openable that the new page is not sent; an offer still waiting stays", () => {
+  const r = run("reload", [`--file=${join(SET, "s.h5")}`]);
+  const shown = (name: string) => {
+    const a = r[name];
+    assert.ok(a && "onScreen" in a, `no set recorded for ${name}`);
+    return a.onScreen;
+  };
+  const sent = (name: string) => {
+    const a = r[name];
+    assert.ok(a && "sent" in a, `no send count for ${name}`);
+    return a.sent;
+  };
+  assert.equal(sent("reload:0 sent"), 1, "the page listened, so the offer was sent at once");
+  assert.equal(resolved(r, "reload:1 listed offer").ok, true, resolved(r, "reload:1 listed offer").error);
+  assert.equal(shown("reload:1 model"), join(root, "elsewhere", "s.h5"));
+  const stale = resolved(r, "reload:2 offer the old page listed");
+  assert.equal(stale.ok, false, "the reloaded page lists no offers, so none opens");
+  assert.match(stale.error ?? "", /^offerOpen opens only the files of a set main offered or the set an offer left; refused '.*elsewhere.{1,2}s\.ladruno'$/);
+  const back = resolved(r, "reload:3 the set that offer left");
+  assert.equal(back.ok, false, "the set the offer left went with it");
+  assert.match(back.error ?? "", /^offerOpen opens only the files of a set main offered or the set an offer left; refused /);
+  assert.equal(shown("reload:3 model"), join(root, "elsewhere", "s.h5"), "a refused offer leaves the set where it was");
+  assert.equal(sent("reload:4 sent"), 1, "an offer that arrives while the page loads waits");
+  assert.equal(sent("reload:5 sent"), 2, "and is sent once the reloaded page listens");
+  assert.equal(resolved(r, "reload:5 waiting offer").ok, true, `a waiting offer survives a page load: ${resolved(r, "reload:5 waiting offer").error}`);
+  assert.equal(shown("reload:5 model"), join(root, "outside", "s.h5"));
 });
 
 const source = run("source", [`--file=${join(SRC_SET, "s.h5")}`]);

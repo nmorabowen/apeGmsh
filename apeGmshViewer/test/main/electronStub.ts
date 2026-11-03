@@ -22,6 +22,13 @@ function strict<T extends object>(name: string, known: T): T {
 /** The `app.on` listeners, by event, so a test can deliver a second instance's call (VU12). */
 export const appEvents = new Map<string, Handler[]>();
 
+// VU14 (#2771): `whenReady` resolves only when a test calls `ready()`, so a
+// driver can let main.ts make its window (a recording stand-in, below) and
+// deliver that window's page events. A test that never calls it gets no window.
+let markReady: () => void = () => undefined;
+const readyOnce = new Promise<void>((r) => (markReady = r));
+export const ready = (): void => markReady();
+
 export const app = strict("app", {
   on: (event: string, fn: Handler) => {
     appEvents.set(event, [...(appEvents.get(event) ?? []), fn]);
@@ -30,7 +37,7 @@ export const app = strict("app", {
     throw new Error(`electronStub: main.ts called app.exit(${code})`);
   },
   quit: () => undefined,
-  whenReady: () => new Promise<void>(() => undefined),
+  whenReady: () => readyOnce,
   requestSingleInstanceLock: () => true,
   commandLine: { appendSwitch: () => undefined },
   getVersion: () => "0.0.0-stub",
@@ -81,6 +88,39 @@ export const ipcRenderer = strict("ipcRenderer", {
 /** Electron's rule: a File from the disk (a drop) has its path; one the page made has "". */
 export const webUtils = strict("webUtils", { getPathForFile: (f: object) => filePaths.get(f) ?? "" });
 
-export const BrowserWindow = strict("BrowserWindow", { getAllWindows: () => [] as unknown[] });
+/** The page events main.ts listens for on its window (`webContents.on`), and what it sent the page, in order (VU14). */
+export const pageEvents = new Map<string, Handler[]>();
+export const pageSent: { channel: string; args: unknown[] }[] = [];
+
+/** The window main.ts makes once `ready()` is called: it records, and opens nothing. */
+class StubWindow {
+  constructor() {
+    const webContents = strict("webContents", {
+      on: (event: string, fn: Handler) => {
+        pageEvents.set(event, [...(pageEvents.get(event) ?? []), fn]);
+      },
+      send: (channel: string, ...args: unknown[]) => {
+        pageSent.push({ channel, args });
+      },
+      // a reload is a page load: the driver delivers `did-start-loading` itself
+      reload: () => {
+        pageSent.push({ channel: "reload", args: [] });
+      },
+    });
+    return strict("window", {
+      webContents,
+      setMenuBarVisibility: () => undefined,
+      setContentSize: () => undefined,
+      on: () => undefined,
+      loadFile: () => Promise.resolve(),
+      isMinimized: () => false,
+      restore: () => undefined,
+      focus: () => undefined,
+    }) as unknown as StubWindow;
+  }
+  static getAllWindows = () => [] as unknown[];
+}
+
+export const BrowserWindow = strict("BrowserWindow", StubWindow);
 
 export const dialog = strict("dialog", { showErrorBox: () => undefined });

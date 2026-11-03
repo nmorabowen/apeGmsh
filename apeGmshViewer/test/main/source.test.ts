@@ -3,7 +3,7 @@
 // proved end to end by a fake editor that records the argv it received.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -96,6 +96,47 @@ test("no code on PATH: the OS text editor, never the default opener", () => {
   const m = binDir("os-mac", "open");
   assert.deepEqual(editorLaunch(script, 7, envOf({ path: m, platform: "darwin" })).args, ["-t", script]);
   assert.throws(() => editorLaunch(script, 7, envOf({ path: "", platform: "linux" })), /no editor found/);
+});
+
+// VU14 (#2771): xdg-open picks a program by file type and runs a .desktop file,
+// so on Linux it is handed only a regular file with a source extension. The
+// .desktop row is a regular file the set's /provenance names: without the check
+// go-to-source would launch xdg-open on it (the fake one on PATH here).
+test("Linux, no code on PATH: xdg-open gets a regular .py file, never a .desktop file or another type", async () => {
+  const x = binDir("os-linux", "xdg-open");
+  const linux = envOf({ path: x, platform: "linux" });
+  assert.deepEqual(editorLaunch(script, 7, linux), { command: join(x, "xdg-open"), args: [script], verbatim: false });
+  const dir = join(root, "xdg");
+  mkdirSync(dir);
+  const desktop = join(dir, "build.desktop");
+  writeFileSync(desktop, "[Desktop Entry]\nType=Application\nExec=sh -c 'touch pwned'\n");
+  const shell = join(dir, "build.sh");
+  writeFileSync(shell, "touch pwned\n");
+  const refusal = (f: string) => new RegExp(`^xdg-open picks a program by file type and can run a \\.desktop file, so it opens only a regular \\.py/.* file; refused ${f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\. Set APEGMSH_EDITOR to open it$`);
+  for (const f of [desktop, shell, scriptDir]) assert.throws(() => editorLaunch(f, 1, linux), { message: refusal(f) });
+  const r = await goToSource(desktop, 1, { files: [desktop] }, linux);
+  assert.equal(r.ok, false, "go-to-source refuses the .desktop row the set names");
+  assert.match((r as { reason: string }).reason, refusal(desktop));
+  // macOS's `open -t` opens text whatever the type: unchanged.
+  assert.deepEqual(editorLaunch(desktop, 1, envOf({ path: binDir("os-mac2", "open"), platform: "darwin" })).args, ["-t", desktop]);
+});
+
+// A link named .py that points at a .desktop file: the link itself is not a regular file.
+// Windows without developer mode cannot make one, so there the case shows as skipped (it runs on the Linux CI).
+const linkDir = join(root, "xdg-link");
+mkdirSync(linkDir);
+const linkTarget = join(linkDir, "build.desktop");
+writeFileSync(linkTarget, "[Desktop Entry]\nType=Application\nExec=sh -c 'touch pwned'\n");
+const link = join(linkDir, "link.py");
+let noLink: string | false = false;
+try {
+  symlinkSync(linkTarget, link);
+} catch (err) {
+  noLink = `cannot make a symlink here: ${(err as Error).message}`;
+}
+test("Linux, no code on PATH: xdg-open is not handed a .py link to a .desktop file", { skip: noLink }, () => {
+  const linux = envOf({ path: binDir("os-linux-link", "xdg-open"), platform: "linux" });
+  assert.throws(() => editorLaunch(link, 1, linux), { message: /can run a \.desktop file.*; refused .*link\.py\. Set APEGMSH_EDITOR to open it$/ });
 });
 
 /** The scope main hands the door for a set whose /provenance names `files`. */

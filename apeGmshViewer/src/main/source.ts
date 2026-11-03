@@ -15,10 +15,17 @@
 // /provenance, as main read it (`provenanceSources`, main.ts `setSources`);
 // any other path is refused before the editor is chosen.
 //
+// VU14 (#2771): a provenance row is the model's to name, so a hostile model can
+// name another machine. A row that names one (`isRemotePath`) is never looked up
+// on disk, here or in zones.ts, and never handed to an editor: on Windows the
+// lookup alone connects to the host and can send it the user's NTLM credentials.
+// On Linux `xdg-open` picks a handler by file type and runs a `.desktop` file, so
+// it gets only a regular file with a source extension (`XDG_SOURCE`).
+//
 // No Electron import: the tests run in Node.
 
 import { spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, lstatSync, statSync } from "node:fs";
 import { delimiter, extname, isAbsolute, join } from "node:path";
 import { inspect } from "node:util";
 import { filePath, isPseudoFile, type ProvenanceZone } from "../reader/provenance.ts";
@@ -39,6 +46,32 @@ export type SourceScope = { files: readonly string[] } | { reason: string };
  */
 export function provenanceSources(zone: Pick<ProvenanceZone, "baseDir" | "files">): string[] {
   return zone.files.path.flatMap((p, i) => (isPseudoFile(p) ? [] : [filePath(zone, i)]));
+}
+
+/**
+ * VU14: whether looking `p` up could reach another machine. A path that starts
+ * with two separators, in either direction, names a host on Windows
+ * (`\\host\share`, `//host/share`, `\\?\UNC\host\…`) and is
+ * implementation-defined in POSIX, so it is remote on every platform; so is a
+ * Windows device path (`\\?\`, `\\.\`), which this cannot tell from one.
+ * Syntax only, so it never touches the disk. A drive letter mapped to a share,
+ * or a network mount on POSIX, looks local and is not seen.
+ */
+export function isRemotePath(p: string): boolean {
+  return /^[\\/]{2}/.test(p);
+}
+
+/** The extensions `xdg-open` may be handed (Linux): source text, which no desktop runs. */
+export const XDG_SOURCE: ReadonlySet<string> = new Set([".py", ".pyw", ".pyi", ".pyx", ".tcl"]);
+
+/** A regular file itself (not a link to one) whose extension is in XDG_SOURCE. */
+function xdgSafe(file: string): boolean {
+  if (!XDG_SOURCE.has(extname(file).toLowerCase())) return false;
+  try {
+    return lstatSync(file).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /** A request as a log line, whatever the IPC carried (a BigInt, a cycle): never throws, unlike `JSON.stringify` (main.ts `shown`, VU11). */
@@ -154,6 +187,11 @@ export function editorLaunch(file: string, line: number, env: SourceEnv): Launch
     env.platform === "win32" ? "notepad" : env.platform === "darwin" ? "open" : "xdg-open";
   const exe = which(fallback, env);
   if (!exe) throw new Error(`no editor found: set APEGMSH_EDITOR, or put VS Code's \`code\` on PATH`);
+  if (fallback === "xdg-open" && !xdgSafe(file)) {
+    throw new Error(
+      `xdg-open picks a program by file type and can run a .desktop file, so it opens only a regular ${[...XDG_SOURCE].join("/")} file; refused ${file}. Set APEGMSH_EDITOR to open it`,
+    );
+  }
   return launchOf(exe, env.platform === "darwin" ? ["-t", file] : [file], env);
 }
 
@@ -172,6 +210,7 @@ export async function goToSource(file: unknown, line: unknown, scope: SourceScop
   if ("reason" in scope) return { ok: false, reason: `goToSource opens only a source file the open set's /provenance names, and ${scope.reason}; refused ${file}` };
   const own = scope.files.find((f) => samePath(f, file));
   if (own === undefined) return { ok: false, reason: `goToSource opens only a source file the open set's /provenance names; refused ${file}` };
+  if (isRemotePath(own)) return { ok: false, reason: `unavailable: ${own} names another machine, and goToSource opens only a local file` };
   if (!isFile(own)) return { ok: false, reason: `missing: ${own}` };
   let launch: Launch;
   try {

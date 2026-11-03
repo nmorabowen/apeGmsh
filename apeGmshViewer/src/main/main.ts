@@ -481,7 +481,9 @@ if (mode === "view") {
 // ---------------------------------------------------------------------------
 
 let offersReady = false;
-let offersWaiting: OfferIn[][] = [];
+type OfferRow = { files: string[]; left: string[][] };
+/** The batches the page has not heard yet, each with its rows of `offerRows` (VU14: a page load keeps only these). */
+let offersWaiting: { offers: OfferIn[]; rows: OfferRow[] }[] = [];
 /**
  * VU12 (#2753): the files `viewer:offerOpen` may open, all chosen by main, one
  * row per offer row main sent in `viewer:offers`: the offer's model and results
@@ -489,9 +491,11 @@ let offersWaiting: OfferIn[][] = [];
  * opened (its Back reopens that set). VU13 (#2760): the rows mirror the page's
  * list (state/reduce.ts `offerReceived`: newest first, at most `MAX_OFFERS`),
  * so an offer that falls off the page's list is gone here too, and its files
- * and the sets it left are no longer offerable.
+ * and the sets it left are no longer offerable. VU14 (#2771): a page load
+ * starts an empty list, so it keeps only the rows of batches still waiting to
+ * be sent (`pageLoading`).
  */
-let offerRows: { files: string[]; left: string[][] }[] = [];
+let offerRows: OfferRow[] = [];
 /** state/reduce.ts `MAX_OFFERS`, the page's longest offer list (test/main/setDoors.test.ts holds the two equal). */
 const PAGE_OFFERS = 8;
 let snapshotSeq = 0;
@@ -508,14 +512,14 @@ function heardFromAgent(reach: Reach): void {
   try {
     if (reach.kind === "present") {
       const p = presentOffers(reach.spec);
-      const rows = p.offers.map((o) => {
+      const rows = p.offers.map((o): OfferRow => {
         if (o.refused !== undefined) return { files: [], left: [] }; // a refused row is listed, never applied, and carries no files
         const { model, results } = (o.payload as OfferPayload).files;
         return { files: [model, ...(results === null ? [] : [results])], left: [] };
       });
       offerRows = [...rows, ...offerRows].slice(0, PAGE_OFFERS);
       if (win && offersReady) win.webContents.send("viewer:offers", p.offers);
-      else offersWaiting.push(p.offers);
+      else offersWaiting.push({ offers: p.offers, rows });
       // The sender checked this file a moment ago. Changed since, it is listed as refused, and the sender hears why.
       sendAck(reach.ack, p.refused ? { ok: false, code: 2, reason: `the spec ${reach.spec} is refused: ${p.refused.key}: ${p.refused.reason}` } : { ok: true });
       return;
@@ -542,9 +546,17 @@ function heardFromAgent(reach: Reach): void {
 
 ipcMain.on("viewer:offersReady", () => {
   offersReady = true;
-  for (const offers of offersWaiting) win?.webContents.send("viewer:offers", offers);
+  for (const { offers } of offersWaiting) win?.webContents.send("viewer:offers", offers);
   offersWaiting = [];
 });
+
+/** A page load: the old page's subscriptions go, and so does every offer row the new page will not be sent (VU14). */
+function pageLoading(): void {
+  subscribed.clear();
+  offersReady = false;
+  const waiting = new Set(offersWaiting.flatMap((b) => b.rows));
+  offerRows = offerRows.filter((r) => waiting.has(r));
+}
 
 /** ADR 0128 D3: the app's version is main's to know; `written_at` lies inside `timing`, the one part that varies between runs (src/spec/manifest.ts). */
 function stamped(m: RunManifest) {
@@ -1373,11 +1385,8 @@ app.whenReady().then(() => {
   w.setMenuBarVisibility(false);
   // Hiding the menu bar grows the page: a render page is put back at the spec's size.
   if (renderJob) w.setContentSize(renderJob.spec.size[0], renderJob.spec.size[1]);
-  // A page load drops the old page's subscriptions.
-  w.webContents.on("did-start-loading", () => {
-    subscribed.clear();
-    offersReady = false;
-  });
+  // A page load drops the old page's subscriptions and the offers it listed.
+  w.webContents.on("did-start-loading", pageLoading);
   w.on("closed", () => {
     win = null;
   });
