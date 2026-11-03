@@ -113,7 +113,7 @@ test("the tail anchor puts the tip ahead of the node, in the CPU twin and in the
   assert.match(src, /vec4 mvTip = vec4\( mvAt\.xyz \+ dV \* \( aAnchor \* L \), 1\.0 \);/, "the shader moves the tip by the drawn shaft L, the SIZING_EXPR length");
 });
 
-test("components: xyz draws one arrow per recorded non-zero axis; one axis draws that axis; z of a 2-D field draws none", () => {
+test("components: xyz draws one arrow per recorded non-zero axis; one axis draws that axis; z of a 2-D field falls back to the resultant", () => {
   const xyzR = buildVectors3D(withStage(U, { component: "xyz" }), blobs, rows(U, 2), ids);
   assert.equal(xyzR.count, 6);
   const dirs = new Set(Array.from({ length: 6 }, (_, i) => rec(xyzR.arrows, i, ARROW.dir, 3).join(",")));
@@ -122,8 +122,21 @@ test("components: xyz draws one arrow per recorded non-zero axis; one axis draws
   assert.equal(y.count, 2);
   assert.equal(y.maxMag, 4);
   const U2 = U.slice(0, 2);
-  assert.equal(buildVectors3D(withStage(U2, { component: "z" }), blobs, rows(U2, 2), ids).count, 0);
+  const z2 = buildVectors3D(withStage(U2, { component: "z" }), blobs, rows(U2, 2), ids);
+  assert.equal(z2.count, 2, "Z after a 3-D file, on a 2-D one: the resultant, as the card shows");
+  assert.ok(near(rec(z2.arrows, 0, ARROW.dir, 3), [1 / Math.sqrt(5), 2 / Math.sqrt(5), 0]));
   assert.equal(buildVectors3D(withStage(U2, { component: "xyz" }), blobs, rows(U2, 2), ids).count, 4);
+});
+
+test("a step missing an axis the field records draws nothing (no partial vector)", () => {
+  const data = rows(U, 2);
+  delete data["DISPLACEMENT/Uz"];
+  assert.equal(buildVectors3D(withStage(U), blobs, data, ids).count, 0);
+});
+
+test("a canonical moment field is rotational: half circles", () => {
+  const M = ["moment_x", "moment_y", "moment_z"];
+  assert.deepEqual(vectorFieldsOf(withStage(M)).map((f) => [f.name, f.rotational]), [["moment", true]]);
 });
 
 test("noise: a vector under 1e-6 of the step's largest, a zero one, and a NaN row draw nothing", () => {
@@ -246,6 +259,8 @@ test("the card: the field picker, the components the field records, and its even
     assert.deepEqual(options("vectors-component"), ["resultant", "xyz", "x", "y", "z"]);
     const two = renderVectors(withStage(["DISPLACEMENT/Ux", "DISPLACEMENT/Uy"])) as unknown as El;
     assert.deepEqual(two.all((e) => e.className === "vectors-component")[0]!.children.map((c) => (c as El).value), ["resultant", "xyz", "x", "y"], "no z on a 2-D field");
+    const stale = renderVectors(withStage(["DISPLACEMENT/Ux", "DISPLACEMENT/Uy"], { component: "z" })) as unknown as El;
+    assert.deepEqual(stale.all((e) => e.className === "vectors-component")[0]!.children.filter((c) => (c as El).selected).map((c) => (c as El).value), ["resultant"], "a stale Z shows the resultant it draws");
     const events: unknown[] = [];
     const live = renderVectors(withStage([...U, ...R]), (e) => events.push(e)) as unknown as El;
     const field = live.all((e) => e.className === "vectors-field")[0]!;

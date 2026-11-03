@@ -26,7 +26,7 @@ import type { State } from "./types.ts";
 const AXES = ["x", "y", "z"] as const;
 
 /** The canonical rotational fields; with the `.ladruno` rotational groups, a field drawn as half circles. */
-const ROTATIONAL = new Set(["rotation", "angular_velocity", "angular_acceleration", "reaction_moment"]);
+const ROTATIONAL = new Set(["rotation", "angular_velocity", "angular_acceleration", "reaction_moment", "moment"]);
 
 /** A nodal vector field a results stage records: its axis components (`x`, `y`, `z`, null where not recorded). */
 export interface VectorField {
@@ -68,6 +68,16 @@ export function vectorFieldOf(s: State): VectorField | null {
   return fields.find((f) => f.name === s.vectors.field) ?? fields[0] ?? null;
 }
 
+/**
+ * What the card draws for `field`: its `component`, except one axis the field
+ * does not record (Z after a 3-D file, on a 2-D one), which falls back to the
+ * resultant, as the card's picker then shows.
+ */
+export function vectorComponentOf(s: State, field: VectorField): State["vectors"]["component"] {
+  const c = s.vectors.component;
+  return c.length === 1 && !field.axes["xyz".indexOf(c)] ? "resultant" : c;
+}
+
 /** A vector below this fraction of the step's largest is solver noise (a fixed node's 1e-18), not drawn. */
 export const VECTOR_FLOOR = 1e-6;
 
@@ -90,8 +100,8 @@ export interface Vectors3D {
  * and pointing along the vector (a load or a reaction points at its node; a
  * displacement leaves it), or for a rotational field a half circle about the
  * vector's axis. Along the resultant or along the global axes as
- * `s.vectors.component` asks (all three, or one; an axis the field does not
- * record draws nothing). Lengths follow the step's largest glyph, as the
+ * `vectorComponentOf` resolves (all three, or one). A step missing an axis the
+ * field records draws nothing (a partial vector is not the vector). Lengths follow the step's largest glyph, as the
  * reaction arrows do, and thinning is decided per node. `nodal` and `nodeIds`
  * are the step's rows and the stage's node ids; the node positions are the
  * drawn (deformed) ones when `opts` carries them.
@@ -108,8 +118,8 @@ export function buildVectors3D(
   const none: Vectors3D = { arrows: empty, arcs: empty, count: 0, maxMag: 0, field };
   if (!s.mesh || !field) return none;
   const rows = field.axes.map((k) => (k ? nodal[k] : undefined));
-  if (!rows.some((r) => r)) return none;
-  const want = s.vectors.component;
+  if (field.axes.some((k, a) => k && !rows[a])) return none;
+  const want = vectorComponentOf(s, field);
   const picked = want === "xyz" ? [0, 1, 2] : want === "x" ? [0] : want === "y" ? [1] : want === "z" ? [2] : null;
   const nodeCoords = buildNodeCoordsMap(s, blobs, opts);
   type Item = { at: Vec3; vec: Vec3; mag: number; node: number };

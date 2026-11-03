@@ -8,7 +8,7 @@
 // Follows ADR 0112 D6 (`panel-allow-list`): imports only `store`, `selectors`,
 // `types`, and `ui/dom`.
 
-import { loadsColourPalette, rampCss, vectorFieldOf, vectorFieldsOf } from "../state/selectors.ts";
+import { loadsColourPalette, rampCss, vectorComponentOf, vectorFieldOf, vectorFieldsOf } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { Event, LoadsColorBy, ReactionComponent } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
@@ -55,6 +55,7 @@ export function renderVectors(s: State, dispatch: (e: Event) => void = () => {},
   const field = vectorFieldOf(s);
   if (!s.mesh || !field) return null;
   const v = s.vectors;
+  const component = vectorComponentOf(s, field);
   const palette = loadsColourPalette(currentTheme());
   const box = el("div", "vectors");
   box.append(el("h3", "vectors-header", "Vectors"));
@@ -77,7 +78,7 @@ export function renderVectors(s: State, dispatch: (e: Event) => void = () => {},
     if (value.length === 1 && !field.axes["xyz".indexOf(value)]) continue;
     const o = el("option", undefined, label);
     o.value = value;
-    o.selected = v.component === value;
+    o.selected = component === value;
     which.append(o);
   }
   unlisten.push(
