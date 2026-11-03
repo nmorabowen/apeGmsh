@@ -97,3 +97,14 @@ test("an unknown ndm reads a flat mesh as 2-D only when no DOF above 3 is restra
     "uz is a translation, rx ry rz are rotations",
   );
 });
+
+test("an unknown ndm reads a pinned flat slab (mask [1,1,1,0,0,0]) as 3-D from the mask's length: uz is a translation", () => {
+  const node = String((def.blobs.get(def.s.mesh!.nodes!.ids) as Float64Array)[0]);
+  const pinned = buildSupports3D(onlyFix(def.s, [["node", node, [1, 1, 1, 0, 0, 0]]]), def.blobs);
+  assert.deepEqual(
+    [Array.from({ length: pinned.arrows.length / ARROW_STRIDE }, (_, i) => axisOf(pinned.arrows, i)), pinned.arcs.length],
+    [["1,0,0", "0,1,0", "0,0,1"], 0],
+  );
+  const frame2d = buildSupports3D(onlyFix(def.s, [["node", node, [1, 1, 1]]]), def.blobs);
+  assert.deepEqual([frame2d.arrows.length / ARROW_STRIDE, frame2d.arcs.length / ARROW_STRIDE], [2, 1], "a 3-long mask on a flat mesh stays 2-D: x, y and rz");
+});

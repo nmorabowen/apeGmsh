@@ -37,7 +37,7 @@ has no hit **and** you are changing apeGmsh itself.
 | FEMData / `model.h5` | `references/fem-broker.md` |
 | `apeSees` / stages / emit | `references/opensees-bridge.md` |
 | After mesh or solve check | `references/assess.md` |
-| Results / plot / stills | `references/results.md` |
+| Results / combinations / `.user.h5` / stills | `references/results.md` |
 | Assembly / compose readers / `from_h5` | `references/compose.md` |
 | Rebar cages | `references/rebar.md` |
 | ETABS / analytical import | `references/interop.md` |
@@ -53,7 +53,7 @@ What each file contains (do not read them all):
 - `fem-broker.md` — `FEMData`, `model.h5`
 - `opensees-bridge.md` — `apeSees`, stages, emit, ndf, remote
 - `assess.md` — verdict + stills after mesh/solve (not Qt); apeGmshViewer stills (`render_stills`)
-- `results.md` — `Results.from_*`, plot, render, lineage
+- `results.md` — `from_ladruno`, `convert_mpco`, `.user.h5`, plot, render
 - `compose.md` — Assembly, compose readers, `from_h5`
 - `rebar.md` — `g.rebar` cages
 - `interop.md` — ETABS / analytical import
@@ -209,10 +209,10 @@ the host is replaying. Before a spatial edit, read the
 envelope, `names.json`, and `--status` — identity is
 `labels` / `physical_groups` / `phase`, not dimtags.
 An unnamed pick's first script edit is `.to_label()` / `.to_physical()`.
-After solve, still `assess()` + `render()`, not `viewer()`.
-When the agent must look, write visors under `.apegmsh/visors/`
-(`results.render` / labeled matplotlib) and read those PNGs — never
-capture the OS desktop or the human Qt window.
+After solve, still `assess()` + stills, not `viewer()`.
+When the agent must look, write visors under `.apegmsh/visors/` and
+read those PNGs (`render_stills` on Windows: `references/results.md`
+§5). Never capture the OS desktop or the human's window.
 `python -m apeGmsh.studio init --name <habitat> --model <model_id>`
 stamps a fresh APE Studio habitat from the packaged template (ADR 0095
 Amendment 6) — playbook, lifecycle scripts, checker, model lineage —
@@ -324,21 +324,17 @@ session — do not assume the server is bound correctly.
 5. **Labels without physical groups** — labels on the main session don't
    auto-promote to PGs (only `Part` sessions do). Call
    `g.labels.promote_to_physical("name")` or add `g.physical.add(...)`.
-6. **`Results.from_native(...)` raises `TypeError`** — the constructor now
-   *requires* `model=` (`from_mpco` requires `model_h5=`). See
-   `references/results.md`.
+6. **Reaching for `from_native` / `from_mpco`** — they are retiring;
+   read `.ladruno` (`references/results.md` §1).
 7. **Don't open Qt to check a solve — and don't capture the human's
    screen.** After `get_fem_data` / `Results.from_*`,
    `report = fem.assess()` / `results.assess(figures=True)`; print
    `report.text`; `read_file` each PNG in `report.figures`; act on
    `severity="error"`. Inspect is inventory, not the verdict. Extra
-   stills go under `.apegmsh/visors/` via `results.render` / labeled
-   `results.plot.*` — never OS-screenshot the desktop or the live
-   viewer. Qt / web viewers are for humans who asked to look.
-   `results.viewer()` default is `blocking=None` (auto: scripts block,
-   a Jupyter kernel spawns a subprocess; an in-memory Results there
-   raises `RuntimeError`: open it with a `from_*` constructor). An explicit `blocking=True` still kills a
-   Jupyter kernel. See `references/assess.md`.
+   stills go under `.apegmsh/visors/` (`references/results.md` §5) —
+   never OS-screenshot the desktop or the live viewer. Qt / web viewers are for humans who asked to look.
+   `results.viewer()` blocking rules (an explicit `blocking=True` kills
+   a Jupyter kernel): `references/results.md` §5. See `references/assess.md`.
 
 Which reference covers a given failure: `BridgeError` / staged / ndf →
 `opensees-bridge.md`; `MalformedH5Error` / `SchemaVersionError` →
@@ -374,7 +370,9 @@ signatures) lives in the references.
   (the desktop app is separate; `assess.md`). The legacy Qt `ResultsViewer`
   is **deleted** (X3-d, #1734) — no import path reaches it; the post-solve
   document is a `ResultsSession` (`results.viewer()` or
-  `python -m apeGmsh.viewers <results.h5>`).
+  `python -m apeGmsh.viewers <file>`, until the Qt sunset).
+- **One results format, `.ladruno`** (ADR 0131), and a set's files
+  (`.h5`, `.ladruno`, `.user.h5`, `.workspace.h5`): `references/results.md` §1.
 - **Removed (ADR 0116):** the plotly preview (`apeGmsh.preview`,
   `g.model.preview`, `g.mesh.preview`), `GeomTransfViewer`,
   `apeGmsh.sensitivity` and the import banner. Inline pictures are
