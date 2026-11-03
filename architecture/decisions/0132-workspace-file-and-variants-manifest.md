@@ -22,6 +22,10 @@ formats on #2783 before any slice writes either file. The pointers in ADRs 0112,
 
 **Supersedes in part, on acceptance:**
 
+- [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md) D1: a set's files
+  are no longer only what a run leaves behind. The set gains
+  `<stem>.workspace.h5`, which the user makes, which no run writes, and which a
+  run's unconditional rewrite of its artifacts never touches.
 - [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md) D3, as ADR 0130 D2
   amended it: the app writes one zone of `.user.h5` **and** one whole file,
   `<stem>.workspace.h5` (D1, D6 here).
@@ -33,9 +37,9 @@ formats on #2783 before any slice writes either file. The pointers in ADRs 0112,
   writes the workspace file when the human saves.
 
 **Completes** ADR 0130 A7 item 1, the variants manifest: its list key, `path`,
-`version`, `params`, and how main opens a second set (D8, D9). In this ADR's
-reading D8 fills in what A7 left open, and D9 is a rule A7 did not need before
-option A; the reviewer of the PR rules on whether either is a new decision.
+`version`, `params`, and how main opens a second set (D8, D9). The PR review
+ruled that D8 adds rules A7 did not have and that D9 is a decision of its own, so
+a new ADR is the right form (ADR 0121 D5).
 
 The layouts are in [`h5-schema.md`](../h5-schema.md), in the sections
 "`<stem>.workspace.h5`: what the user makes (ADR 0132)" and
@@ -85,6 +89,12 @@ notebook writing `/results` cannot make a user's save refuse. A preference
 (theme, layout) belongs to the app's profile. A workspace belongs to one stem
 and never names a member of another set.
 
+`.workspace.h5` joins the set's pairing rule as a suffix of its own, matched
+case-insensitively and before `.h5`, so `slab.workspace.h5` pairs with `slab.h5`
+and is never opened as a model with the stem `slab.workspace`. The open set
+gains a `workspace` slot beside `model`, `geometry`, `results` and `user`. Both
+are VU9a's code changes.
+
 ### D2 — One version key per file, and the floor rule
 
 `<stem>.workspace.h5` carries `/meta@workspace_schema_version`, and
@@ -102,7 +112,7 @@ the file. Names follow ADR 0130 A2.
 ### D3 — A set stores tags with their coordinates, and is judged per member
 
 `/sets` is columnar, one row per set: `name`, `kind` (`nodes` or `elements`,
-never both), `id_space`, `fem_hash`, and `member_offsets` into two member
+never both), `id_space`, `fem_hash`, `model_hash`, and `member_offsets` into two member
 columns, `ids` in the user's order and `xyz`, each node's coordinates or each
 element's centroid. Order is kept so that a profile plot needs no new format.
 
@@ -111,18 +121,29 @@ node's tag is its FEM id, because the bridge emits every node under its FEM id.
 An element's tag is an `/opensees/element_meta` entry, so a bridge-minted element
 can be saved, and a `.ladruno` element row needs no translation to be plotted.
 
-On open, each set gets a verdict against the paired model: `current` (same
-`fem_hash`), `moved` (another hash, every member found at its coordinates within
-`1e-9` of the model's bounding-box diagonal; the next save updates the hash),
+A set's **identity hashes** are `fem_hash` for a node set, and `fem_hash` and
+`model_hash` for an element set. An element tag moves without `fem_hash`: under
+`element_tags="sequential"`, the default (ADR 0111 D2), the bridge numbers
+elements in declaration order, so swapping two element declarations shifts every
+tag while the mesh, and `fem_hash`, stay equal. `model_hash` covers
+`/opensees/element_meta`, so it moves. A node's tag is its FEM id, which
+`fem_hash` covers, so a node set needs no `model_hash` and stores `""`.
+
+On open, each set gets a verdict against the paired model: `current` (every
+identity hash equal), `moved` (an identity hash differs, every member found at its
+coordinates within `1e-9` of the model's bounding-box diagonal; the next save
+updates the hashes),
 `partial` ("k of n"; plots that read it refuse until a human accepts the
 survivors) or `lost` (none; listed, never dropped silently). A nearest-coordinate
-match is only an offer.
+match is only an offer. The member check cannot tell apart two elements that
+share a centroid, such as two zero-length elements on one node pair: a
+renumbering that swaps only those reads `moved`.
 
 The card offered `rf1` for this. It does not fit: a set is a fact about the mesh,
 and `results_hash` moves on every re-run of an unchanged mesh, so an `rf1` per set
 would stale every set after a re-run and say nothing after a re-mesh. The
-fingerprint per set is the model's `fem_hash`, with the per-member check above
-(Open question 3).
+fingerprint per set is the model's identity hashes, with the per-member check
+above (Open question 2).
 
 ### D4 — A plot is a JSON definition with a sweep address
 
@@ -187,13 +208,22 @@ reader and writer are a thin module under `apeGmsh.results.user`, named by VU9a.
 of `{label, path, params}`.
 
 - `label` is a name, unique in the file.
-- `path` names the variant's model file `<stem>.h5`; the set pairs from it by the
-  app's pairing rules. It is relative to the manifest's folder, uses `/`, may
-  enter subfolders, and never leaves the folder: no `..`, `.` or empty segment,
-  no absolute path, drive or backslash, and after links and junctions resolve it
-  must still lie inside the manifest's folder (Open question 5).
-- `params` maps names to a string, a number or a boolean. Rows may have
+- `path` names the variant's model file `<stem>.h5`, with a non-empty stem; the
+  set pairs from it by the app's pairing rules. It ends in none of the reserved
+  sibling suffixes (`.geometry.h5`, `.results.h5`, `.user.h5`, `.workspace.h5`,
+  `.ladruno`), matched case-insensitively as `classify` matches them. It is
+  relative to the manifest's folder, uses `/`, may enter subfolders, and never
+  leaves the folder: no `..`, `.` or empty segment, no folder segment ending in a
+  dot or a space (Windows strips them, so two rows could name one folder), no
+  absolute path, drive or backslash, and after links and junctions resolve it
+  must still lie inside the manifest's folder (Open question 4).
+- `params` maps names to a string, a finite number or a boolean. Rows may have
   different keys.
+
+The JSON Schema is the 1.0 schema, with closed keys. Python refuses a newer minor
+before it validates; the app reads a same-major newer manifest by dropping the
+keys 1.0 does not name and validating the rest with the 1.0 schema, so the closed
+schema and D2's banner rule agree.
 
 A bad row refuses alone (`bad-path`, `escapes`, `missing`, `duplicate`,
 `duplicate-path`, `bad-param`). A7 stands otherwise: a combination term holds no
@@ -208,7 +238,7 @@ manifest the user opened. So:
 
 1. Main reads a manifest only from a path the user gave: a dialog, a drop (the
    path Electron derives) or argv. Main does not search a folder for one (Open
-   question 4).
+   question 3).
 2. Main parses and validates the manifest itself and keeps the rows that pass,
    each with its resolved path. The page names a variant by its row index and
    label; main refuses a request whose label does not match its current row.
@@ -216,11 +246,20 @@ manifest the user opened. So:
 3. When the watched manifest changes, main re-reads the same path; the rows come
    from that read.
 4. Limits: only a row that passed D8, confined to the manifest's folder; only a
-   model file, paired by the usual rules (its `.ladruno`, `.user.h5` and
-   workspace come with it); at most one compare set beside the open set. A
-   compare set is read-only: the app writes nothing into it, neither
-   `/combinations` nor its workspace. Switching to a variant makes it the open
-   set, which the app may then write.
+   model file, paired by the usual rules, so its `results`, `user` and
+   `workspace` slots (D1) fill from its stem; at most one compare set.
+5. **The compare slot.** A compare set lives in a compare slot of its own, never
+   in the window set (the set on screen, `windowSet`). Only the read doors
+   consult it: the `results:*` and `geometry:open` reads and the `.user.h5`
+   reads, for a request that names the compare slot. No door that adopts a set
+   (the `ungestured` check, `followModel`) treats a compare path as a set the
+   user opened, so the compare model can never become the open set by that
+   route. Nothing writes into a compare set, neither `/combinations` nor its
+   workspace. Its workspace is read like the rest of it, and a comparison
+   matches sets by name across the two workspaces, each with its own verdict
+   against its own model (D1: a workspace belongs to one stem).
+6. Switching to a variant is a different act: main opens that row's set as the
+   window set, which the app may then write.
 
 ## Invariants
 
@@ -233,6 +272,8 @@ manifest the user opened. So:
   offer and takes a still.
 - **INV-5 (main-chosen paths).** Every variant path main opens came from a row of
   a manifest the user opened, and lies inside that manifest's folder.
+- **INV-6 (compare is read-only).** A compare set is never the window set and is
+  never written.
 
 ## Alternatives rejected
 
@@ -277,21 +318,18 @@ manifest the user opened. So:
 
 Each takes the recommended reading unless the owner rules otherwise on #2783.
 
-1. **Variant compare and workspaces.** Rec: a workspace belongs to one stem; a
-   comparison matches sets of the same name in each variant's workspace, each
-   with its own verdict. The alternative is a study-level workspace beside the
-   manifest.
-2. **Sets are ordered and hold one kind.** Rec: yes.
-3. **The set fingerprint.** The card named `rf1`; D3 uses the model's `fem_hash`
-   with the per-member check, a departure from ADR 0130 A6 for this file. Rec:
-   accept D3.
-4. **Finding a manifest.** Rec: main reads one only when the user opens it. The
+1. **Sets are ordered and hold one kind.** Rec: yes.
+2. **The set fingerprint.** The card named `rf1`; D3 uses the model's identity
+   hashes (`fem_hash`, plus `model_hash` for element sets) with the per-member
+   check, a departure from ADR 0130 A6 for this file. Rec: accept D3.
+3. **Finding a manifest.** Rec: main reads one only when the user opens it. The
    alternative, main listing the folder of an opened set for a manifest that
    names it, is also main-chosen but opens a file the user did not pick.
-5. **Variant paths in subfolders.** Rec: allowed, confined to the manifest's
+4. **Variant paths in subfolders.** Rec: allowed, confined to the manifest's
    folder. The narrower rule is the manifest's folder only.
-6. **Renaming an unreadable workspace aside without asking.** Rec: rename and
-   show a banner; the alternative is to refuse the save until the user moves it.
+5. **The rename-aside banner.** The card decides that an unreadable workspace is
+   renamed aside. Open is only how the app says so. Rec: one banner naming the
+   aside file, shown once per rename.
 
 ## References
 

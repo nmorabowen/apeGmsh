@@ -1,17 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/nmorabowen/apeGmsh/architecture/schemas/variants.schema.json",
-  "title": "<study>.variants.json, version 1.0.0 (ADR 0132, Proposed; completes ADR 0130 A7)",
-  "description": "The sets of one study that differ in stiffness or another parameter. This schema checks the shape of a 1.0.x file and the lexical form of each path. Rules it cannot express (unique labels and paths, the name rule's NFC test, confinement after symlinks are resolved, that the path names an existing model file) are in architecture/h5-schema.md, section '<study>.variants.json', and a reader applies them per row.",
+  "title": "<study>.variants.json, version 1.0 (ADR 0132, Proposed; completes ADR 0130 A7)",
+  "description": "The sets of one study that differ in stiffness or another parameter. This is the 1.0 schema: its keys are closed and its version accepts 1.0.x only. Python refuses a newer minor before validating; the app opens a same-major newer file read-only by dropping the keys this schema does not name, at any depth, and validating the rest with this schema (architecture/h5-schema.md, section '<study>.variants.json'). Rules a schema cannot express (unique labels and paths, the name rule's NFC test, confinement after links resolve, that the path names an existing file) are in that section, and a reader applies them per row.",
   "type": "object",
   "additionalProperties": false,
   "required": ["format", "version", "variants"],
   "properties": {
     "format": { "const": "apegmsh-variants" },
     "version": {
-      "description": "MAJOR.MINOR.PATCH as a string, read by the floor rule of ADR 0113 (floor 1.0.0).",
+      "description": "MAJOR.MINOR.PATCH as a string, read by the floor rule of ADR 0113 (floor 1.0.0). This schema is 1.0's.",
       "type": "string",
-      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+      "pattern": "^1\\.0\\.(0|[1-9][0-9]*)$"
     },
     "variants": {
       "type": "array",
@@ -27,20 +27,25 @@
       "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f](?:[^\\u0000-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u001f\\u007f-\\u009f])?$"
     },
     "path": {
-      "description": "The variant's model file <stem>.h5, relative to the folder that holds the manifest, with / as the separator. Subfolders are allowed; no segment is empty, '.' or '..'; no backslash, colon, control character or leading slash. It ends in .h5 and is not a .geometry.h5, .results.h5 or .user.h5 sibling.",
+      "description": "The variant's model file <stem>.h5, relative to the folder that holds the manifest, with / as the separator. Subfolders are allowed. No segment is empty, '.' or '..'; no folder segment ends in a dot or a space (Windows strips them); no backslash, colon, control character or leading slash. The last segment is a non-empty stem and .h5, and the path ends in none of the reserved sibling suffixes .geometry.h5, .results.h5, .user.h5 or .workspace.h5. Suffixes match case-insensitively, as the app's classify does.",
       "type": "string",
       "allOf": [
         { "pattern": "^[^/]" },
-        { "pattern": "\\.h5$" },
-        { "not": { "pattern": "\\.(geometry|results|user)\\.h5$" } },
+        { "pattern": "(^|/)[^/]+\\.[hH]5$" },
+        { "not": { "pattern": "\\.([gG][eE][oO][mM][eE][tT][rR][yY]|[rR][eE][sS][uU][lL][tT][sS]|[uU][sS][eE][rR]|[wW][oO][rR][kK][sS][pP][aA][cC][eE])\\.[hH]5$" } },
         { "not": { "pattern": "[\\\\:\\u0000-\\u001f\\u007f]" } },
         { "not": { "pattern": "(^|/)\\.{1,2}(/|$)" } },
-        { "not": { "pattern": "//" } }
+        { "not": { "pattern": "//" } },
+        { "not": { "pattern": "[. ]/" } }
       ]
     },
     "param": {
-      "description": "A parameter value: a string, a finite number or a boolean. No null, array or object.",
-      "type": ["string", "number", "boolean"]
+      "description": "A parameter value: a string, a finite number or a boolean. No null, array or object. The bounds refuse a number that overflows to infinity, such as 1e400.",
+      "anyOf": [
+        { "type": "string" },
+        { "type": "boolean" },
+        { "type": "number", "minimum": -1.7976931348623157e308, "maximum": 1.7976931348623157e308 }
+      ]
     },
     "variant": {
       "type": "object",

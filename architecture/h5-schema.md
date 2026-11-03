@@ -2888,6 +2888,13 @@ and it sits beside `<stem>.h5` with the same stem. It is read only as part of th
 set, and it never names a member of another set. The app and Python both read and
 write it.
 
+**Pairing.** `.workspace.h5` is a suffix of its own in the set's pairing rule,
+matched case-insensitively and before `.h5` (longest suffix first, as
+`.geometry.h5`, `.results.h5` and `.user.h5` already are), so `slab.workspace.h5`
+pairs with `slab.h5` and is never read as a model with the stem `slab.workspace`.
+The open set gains a `workspace` slot beside `model`, `geometry`, `results` and
+`user` (the app's `OpenSet`). Both are VU9a's code changes.
+
 Types are `i4`, `f8` and vlen UTF-8, as in `.user.h5`. Columns in one table share
 a length. Every table is written, empty ones included (`K = 0`, offsets `[0]`);
 a missing table refuses the file. Readers ignore unknown attributes and groups,
@@ -2902,7 +2909,8 @@ refuses to write over a newer file (Version).
   @save_id                    random per save, 8 to 64 of A-Za-z0-9_-
 
 /sets
-  name, kind, id_space, fem_hash    str (K,)
+  name, kind, id_space              str (K,)
+  fem_hash, model_hash              str (K,)
   member_offsets                    i4 (K+1,)
   ids                               i4 (M,)      in the user's order
   xyz                               f8 (M,3)
@@ -2936,6 +2944,7 @@ Row `k` is one set. Its members are `[member_offsets[k], member_offsets[k+1])` o
 | `kind` | `nodes` or `elements`; a set holds one kind |
 | `id_space` | `opensees` in 1.0.0: the tags the deck and the `.ladruno` use. A node's tag is its FEM id (the bridge emits every node under its FEM id). An element's tag is an `/opensees/element_meta/*/ids` entry, so a bridge-minted element (`fem_eid = -1`) can be saved |
 | `fem_hash` | `<stem>.h5` `/meta/lineage@fem_hash` when the set was saved or last confirmed |
+| `model_hash` | `<stem>.h5` `/meta/lineage@model_hash` at the same moment. Required (non-empty) for an element set; `""` for a node set, which never reads it |
 | `ids` | the members, in order, no tag twice in a set |
 | `xyz` | row `i` is node `ids[i]`'s coordinates, or element `ids[i]`'s centroid: the mean of its nodes' coordinates, its nodes taken from `/elements` through `fem_eids`, or from `inline_connectivity` for a minted row |
 
@@ -2945,15 +2954,27 @@ Row `k` is one set. Its members are `[member_offsets[k], member_offsets[k+1])` o
 tag (in `/nodes`, or in `/opensees/element_meta`) and the distance from its stored
 `xyz` to the model's is at most `tol`.
 
+The **identity hashes** of a row are its `fem_hash` for a node set, and its
+`fem_hash` **and** `model_hash` for an element set. An element tag is an OpenSees
+tag, and under `element_tags="sequential"` (the default, ADR 0111 D2) the bridge
+numbers elements in declaration order: swapping two element declarations shifts
+every tag while `fem_hash` stays equal, and only `model_hash`, which covers
+`/opensees/element_meta`, moves. A node's tag is its FEM id, which `fem_hash`
+covers.
+
 | Check | Verdict | What a reader does |
 |---|---|---|
-| the row's `fem_hash` equals the model's | `current` | use the set |
-| the hashes differ, every member matches | `moved` | use it; the next save writes the model's `fem_hash` into the row |
-| the hashes differ, some members match | `partial`, "k of n" | list it; a plot that reads it refuses (`stale-set`) until a human accepts the survivors, which rewrites the row with the matching members, in order, and the model's `fem_hash` |
-| the hashes differ, no member matches | `lost` | list it; never drop it silently; a human deletes it |
+| every identity hash equals the model's | `current` | use the set |
+| an identity hash differs, every member matches | `moved` | use it; the next save writes the model's hashes into the row |
+| an identity hash differs, some members match | `partial`, "k of n" | list it; a plot that reads it refuses (`stale-set`) until a human accepts the survivors, which rewrites the row with the matching members, in order, and the model's hashes |
+| an identity hash differs, no member matches | `lost` | list it; never drop it silently; a human deletes it |
 
-A model with no `fem_hash` compares as different. An element set on a model with no
-`/opensees` zone refuses, `no-tag-map`. A nearest-coordinate match is only an
+A model with no `fem_hash` (or, for an element set, no `model_hash`) compares as
+different. An element set on a model with no `/opensees` zone refuses,
+`no-tag-map`, and an element-set row with an empty `model_hash` refuses,
+`bad-param`. The member check cannot tell apart two elements that share a centroid
+(two zero-length elements on one node pair, coincident shells): a renumbering that
+swaps only such elements reads `moved`. A nearest-coordinate match is only an
 offer: the app shows the largest distance, and a human confirms. The verdict uses
 the model, not `results_hash`: a set is a fact about the mesh, and `rf1` moves on
 every re-run of an unchanged one.
@@ -3099,15 +3120,28 @@ human writes it, Python through a partial and a replace. The JSON Schema is
 | `params` | object, may be empty | name to a string, a number or a boolean; never null, a list or an object. Rows may have different keys; a key a row lacks shows blank |
 
 UTF-8; writers write no byte-order mark and readers strip one. A reader refuses
-`NaN` and `Infinity` tokens, and Python a duplicate key. The keys are closed at or
-below the reader's version: an unknown key refuses the file at the top and the row
-inside `variants`.
+`NaN` and `Infinity` tokens, a number that overflows to infinity (`1e400`; the
+schema bounds every number by the largest finite double), and, in Python, a
+duplicate key.
+
+**Unknown keys and a newer minor.** The JSON Schema is the 1.0 schema: its
+`version` accepts `1.0.x` only, and its keys are closed. At or below the reader's
+version an unknown key refuses the file at the top and the row inside `variants`.
+Python refuses a newer minor before it validates anything. The app, opening a
+same-major newer file read-only, drops every key the 1.0 schema does not name, at
+any depth, sets `version` aside, and validates the rest with the 1.0 schema; a row
+that then fails refuses alone, as at 1.0.
 
 **`path`.** Relative to the folder that holds the manifest, with `/` as the
-separator. It may enter subfolders. No segment is empty, `.` or `..`; it has no
-backslash, colon, control character or leading `/`, so it cannot be absolute or name
-a drive. It ends in `.h5` and is not a `.geometry.h5`, `.results.h5` or `.user.h5`
-sibling. The schema checks this form. A reader then joins it to the manifest's
+separator. It may enter subfolders. No segment is empty, `.` or `..`, and no
+folder segment ends in a dot or a space, which Windows strips, so two rows could
+otherwise name one folder. It has no backslash, colon, control character or
+leading `/`, so it cannot be absolute or name a drive. Its last segment is a
+non-empty stem followed by `.h5` (`.h5` alone and `x/.h5` refuse). It is a model
+file: it ends in none of the reserved suffixes `.geometry.h5`, `.results.h5`,
+`.user.h5`, `.workspace.h5` or `.ladruno` (nor a `.part-<N>.ladruno`). Every suffix
+is matched case-insensitively, as the app's `classify` matches them, so
+`slab.USER.h5` refuses too. The schema checks this form. A reader then joins it to the manifest's
 folder, resolves links and junctions, and requires the result to lie inside the
 manifest's folder, itself resolved (`escapes`), and the file to exist (`missing`).
 Rows are compared by the app's path rule, case-folded on Windows and macOS
@@ -3121,9 +3155,16 @@ row refuses alone, and the manifest still opens.
 a manifest only from a path the user gave: a dialog, a drop or argv. It keeps the
 rows that pass, with their resolved paths. The page names a variant by its row index
 and label, and never sends a path; main refuses a request whose label does not match
-its row. When the watched manifest changes, main re-reads the same path. At most one
-compare set is open beside the open set, and the app writes nothing into a compare
-set.
+its row. When the watched manifest changes, main re-reads the same path.
+
+A compare set lives in a **compare slot** of its own, apart from the window set (the
+set on screen, which `windowSet` returns). Only the read doors (the `results:*` and
+`geometry:open` reads and the `.user.h5` reads) consult it, and only for a request
+that names the compare slot. The compare slot is never the window set: no door that
+adopts a set (the `ungestured` check, `followModel`) treats a compare path as a set
+the user opened, and nothing writes into a compare set, neither `/combinations` nor
+its workspace. At most one set fills the slot. Switching to a variant is a different
+act: main opens that row's set as the window set, which the app may then write.
 
 ## Cross-references
 
