@@ -632,12 +632,51 @@ ipcMain.handle("model:open", async (_e, path: string) => {
   };
 });
 
+/**
+ * VU12 (#2753): the set whose geometry and results files the `results:*` and
+ * `geometry:open` doors read, as main chose it and never as the request names
+ * it. View mode: the set on screen (`currentSet`), which a double-click, a
+ * second instance, a drop (`viewer:requestOpen`) or a model the renderer read
+ * (`followModel`) opened. Render mode: the job's set, from the spec. Describe,
+ * capture and measure: the set of `--file`, the one `render:job` and
+ * `app:config` hand the page. No other mode's page reads these doors. The
+ * reason when there is no set.
+ */
+function windowSet(): { geometry: string | null; results: string | null } | { reason: string } {
+  if (mode === "view") return currentSet() ?? { reason: "no set is open" };
+  if (mode === "render") return renderJob ?? { reason: "the render job was refused" };
+  if ((mode === "describe" || mode === "capture" || mode === "measure") && file) {
+    try {
+      return pairSet(resolve(file), existsSync);
+    } catch (err) {
+      return { reason: `the set of ${file} cannot be paired (${err instanceof Error ? err.message : String(err)})` };
+    }
+  }
+  return { reason: `--mode=${mode} opens no set` };
+}
+
+/**
+ * The window's set's `slot` file when `asked` names it (`samePath`: case-folded
+ * where the file system folds), else why not. Only the path this returns is read.
+ */
+function setFile(door: string, slot: "geometry" | "results", asked: string): { ok: true; path: string } | { ok: false; error: string } {
+  const set = windowSet();
+  if ("reason" in set) return { ok: false, error: `${door} reads only the open set's ${slot} file, and ${set.reason}; refused ${asked}` };
+  const own = set[slot];
+  if (own === null || !samePath(asked, own)) return { ok: false, error: `${door} reads only the open set's ${slot} file ${own ?? "(the set has none)"}; refused ${asked}` };
+  return { ok: true, path: own };
+}
+
 // V4b (#1728): the results file, read lazily here; the renderer holds its
-// metadata and asks for one step at a time (./results.ts).
+// metadata and asks for one step at a time (./results.ts). Each door reads
+// only the window's set's results file (`setFile`, VU12); a step or a scan of
+// a file the set has left is refused too, though the host still indexes it.
 const resultsHost = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);
 ipcMain.handle("results:open", (_e, path: unknown) => {
-  if (typeof path !== "string") return { ok: false, error: `results:open needs a path; got ${JSON.stringify(path)}` };
-  return resultsHost.open(path);
+  if (typeof path !== "string") return { ok: false, error: `results:open needs a path; got ${shown(path)}` };
+  const f = setFile("results:open", "results", path);
+  if (!f.ok) return f;
+  return resultsHost.open(f.path);
 });
 ipcMain.handle("results:readStep", (_e, req: unknown) => {
   const r = req as StepRequest | null;
@@ -650,9 +689,11 @@ ipcMain.handle("results:readStep", (_e, req: unknown) => {
     (r.element !== undefined && typeof r.element !== "string") ||
     (r.lineDiagram !== undefined && typeof r.lineDiagram !== "string")
   ) {
-    return { ok: false, seq: -1, error: `results:readStep: malformed request ${JSON.stringify(req)}` };
+    return { ok: false, seq: -1, error: `results:readStep: malformed request ${shown(req)}` };
   }
-  return resultsHost.readStep(r);
+  const f = setFile("results:readStep", "results", r.path);
+  if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
+  return resultsHost.readStep({ ...r, path: f.path });
 });
 ipcMain.handle("results:close", () => resultsHost.close());
 // V4c1 (#1756): the history-range scan of a contour's field; progress goes to
@@ -672,21 +713,26 @@ ipcMain.handle("results:scan", (e, req: unknown) => {
     // V4c2b: a plan only with an element scan, and only one that checks (state/extrapolation.ts `checkPlan`).
     (r.plan !== undefined && (r.source !== "element" || !checkPlan(r.plan)))
   ) {
-    return { ok: false, scanId: -1, error: `results:scan: malformed request ${JSON.stringify(req)}` };
+    return { ok: false, scanId: -1, error: `results:scan: malformed request ${shown(req)}` };
   }
+  const f = setFile("results:scan", "results", r.path);
+  if (!f.ok) return { ok: false, scanId: r.scanId, error: f.error };
   const sender = e.sender;
   const progress = (p: { scanId: number; done: number; total: number }) => {
     if (!sender.isDestroyed()) sender.send("results:scanProgress", p);
   };
-  return resultsHost.scan(r, progress, mode === "capture" ? { chunkSteps: 1, paceMs: 2000 } : {});
+  return resultsHost.scan({ ...r, path: f.path }, progress, mode === "capture" ? { chunkSteps: 1, paceMs: 2000 } : {});
 });
 ipcMain.handle("results:scanCancel", (_e, scanId: unknown) => {
   if (typeof scanId === "number") resultsHost.cancelScan(scanId);
 });
 
+// A /geometry sibling (./zones.ts): only the window's set's (`setFile`, VU12).
 ipcMain.handle("geometry:open", (_e, path: unknown) => {
-  if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${JSON.stringify(path)}` };
-  return openGeometry(path);
+  if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${shown(path)}` };
+  const f = setFile("geometry:open", "geometry", path);
+  if (!f.ok) return f;
+  return openGeometry(f.path);
 });
 
 /** A request as a log line, whatever the IPC carried (a BigInt, a cycle): never throws, unlike `JSON.stringify` (VU11, #2750). */

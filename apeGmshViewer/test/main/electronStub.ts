@@ -28,6 +28,8 @@ export const app = strict("app", {
   requestSingleInstanceLock: () => true,
   commandLine: { appendSwitch: () => undefined },
   getVersion: () => "0.0.0-stub",
+  // an agent mode's profile under --out (main.ts `agentStartup`); nothing is written
+  setPath: () => undefined,
 });
 
 export const ipcMain = strict("ipcMain", {
