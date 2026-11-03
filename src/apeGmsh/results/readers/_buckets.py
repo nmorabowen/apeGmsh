@@ -12,7 +12,7 @@ from __future__ import annotations
 import warnings
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Iterator, Optional, Sequence
 
@@ -1324,6 +1324,7 @@ class RotationMask:
         self, slab: "NodeSlab", model_elements: "h5py.Group | None",
     ) -> "NodeSlab":
         """``slab`` with NaN at the nodes :meth:`absent` names."""
+        from dataclasses import replace
 
         absent = self.absent(slab.component, slab.node_ids, model_elements)
         if absent is None or not absent.any():
