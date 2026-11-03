@@ -116,8 +116,9 @@ def render_results_still(
     the ``.ladruno`` :attr:`Results.path` names; R22b).
     """
     if _app_backend():
+        files = None if _env_skips() else results_files(results, "render")
         return app_still(
-            results, path, files=results_files(results, "render"),
+            results, path, files=files,
             view=view, component=component, step=step, deform=deform,
             camera=camera, window_size=window_size,
         )
@@ -164,8 +165,9 @@ def render_results_pack(
     :attr:`Results.path` names (R22b).
     """
     if _app_backend():
+        files = None if _env_skips() else results_files(results, "render_pack")
         return app_pack(
-            results, out_dir, files=results_files(results, "render_pack"),
+            results, out_dir, files=files,
             camera=camera, window_size=window_size,
         )
     _warn_if_unscoped(results, "render_pack")
@@ -587,7 +589,8 @@ def results_files(results: Any, verb: str) -> dict[str, str]:
     ``.ladruno``. A units view (:meth:`Results.to_units`) is held only
     in memory, so it is refused too: the app would label the file's
     units. The model is the ``<stem>.h5`` beside the file
-    (:func:`ladruno_files`).
+    (:func:`ladruno_files`), and the bound ``FEMData`` must be its mesh:
+    a ``fem=`` or ``bind()`` override is refused (``_require_pair_fem``).
     """
     source = results.path
     if source is None:
@@ -604,7 +607,32 @@ def results_files(results: Any, verb: str) -> dict[str, str]:
             f"held only in memory, so it is refused (R22b). Render the "
             f"Results the .ladruno opened, without to_units."
         )
-    return ladruno_files(source)
+    files = ladruno_files(source)
+    _require_pair_fem(results, files["model"], verb)
+    return files
+
+
+def _require_pair_fem(results: Any, model_h5: str, verb: str) -> None:
+    """R22b: the bound FEMData must be ``model_h5``'s (the app draws that mesh):
+    the same lineage ``fem_hash``, or the same nodes and, when it has any, the
+    same elements (a ``.ladruno``'s own MODEL group may record nodes only)."""
+    import numpy as np
+
+    from apeGmsh.opensees import OpenSeesModel
+
+    pair, fem = OpenSeesModel.from_h5(model_h5), results.fem
+
+    def key(f: Any, part: str) -> list:
+        if part == "nodes":
+            return sorted(zip(np.asarray(f.nodes.ids).tolist(), np.asarray(f.nodes.coords, dtype=float).tolist()))
+        return sorted((g.element_type.name, sorted(zip(np.asarray(g.ids).tolist(), np.asarray(g.connectivity).tolist()))) for g in f.elements)
+    if fem.snapshot_id == pair.lineage.fem_hash or (key(fem, "nodes") == key(pair.fem, "nodes") and (
+            not key(fem, "elements") or key(fem, "elements") == key(pair.fem, "elements"))):
+        return
+    raise ValueError(
+        f"results.{verb} on Windows draws {Path(model_h5).name}'s mesh, but these Results are bound "
+        f"to another FEMData (a fem= or bind() override, R22b). Render them without it."
+    )
 
 
 def fem_still(fem: Any, path: Path, *, camera: str, size: list[int]) -> Path:
@@ -739,7 +767,7 @@ def app_still(
     results: Any,
     path: "str | Path",
     *,
-    files: dict[str, str],
+    files: Optional[dict[str, str]],
     view: str = "contour",
     component: Optional[str] = None,
     step: int = -1,
@@ -761,10 +789,10 @@ def app_still(
         results, name="still", view=view, component=component, step=step,
         deform=deform, camera=camera,
     )
-    if _env_skips():
+    if files is None or _env_skips():
         print(_SKIP_ENV)
         return None
-    spec = {"spec": SPEC_VERSION, "files": dict(files), "size": _app_size(window_size), "shots": [shot]}
+    spec = {"spec": SPEC_VERSION, "chrome": "model", "files": dict(files), "size": _app_size(window_size), "shots": [shot]}
     _, written = shoot(spec, {"still": Path(path)})
     return written["still"]
 
@@ -799,7 +827,7 @@ def app_pack_spec(
                 results, name="deformed", view="deformed", component=component,
                 step=-1, deform=None, camera=camera,
             ))
-    return {"spec": SPEC_VERSION, "files": dict(files), "size": _app_size(window_size), "shots": shots}
+    return {"spec": SPEC_VERSION, "chrome": "model", "files": dict(files), "size": _app_size(window_size), "shots": shots}
 
 
 def _pack_component(results: Any) -> Optional[str]:
@@ -819,7 +847,7 @@ def app_pack(
     results: Any,
     out_dir: "str | Path",
     *,
-    files: dict[str, str],
+    files: Optional[dict[str, str]],
     camera: Optional[str] = None,
     window_size: tuple[int, int] = _DEFAULT_WINDOW,
 ) -> tuple[Path, ...]:
@@ -832,11 +860,11 @@ def app_pack(
     """
     _warn_if_unscoped(results, "render_pack")
     _require_fem(results, "render_pack")
-    camera = _resolve_camera(camera, results.fem.nodes.coords)
-    spec = app_pack_spec(results, files=files, camera=camera, window_size=window_size)
-    if _env_skips():
+    if files is None or _env_skips():
         print(_SKIP_ENV)
         return ()
+    camera = _resolve_camera(camera, results.fem.nodes.coords)
+    spec = app_pack_spec(results, files=files, camera=camera, window_size=window_size)
     dest = Path(out_dir)
     targets = {shot["name"]: dest / f"{shot['name']}.png" for shot in spec["shots"]}
     manifest, written = shoot(spec, targets)

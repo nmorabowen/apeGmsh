@@ -422,6 +422,7 @@ def mesh_spec(model_path: str | os.PathLike[str], *, camera: str, size: list[int
         raise ValueError(f"camera {camera!r} is not one of {sorted(CAMERAS.values())}")
     return {
         "spec": SPEC_VERSION,
+        "chrome": "model",
         "files": {"model": str(Path(model_path).resolve())},
         "size": list(size),
         "shots": [{"name": "mesh", "camera": camera}],

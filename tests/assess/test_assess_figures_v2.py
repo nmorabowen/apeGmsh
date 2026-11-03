@@ -122,6 +122,7 @@ def test_assess_figures_is_one_v2_pack_spec(app_backend, ladruno_set, tmp_path):
     assert len(app_backend.specs) == 1
     spec = app_backend.specs[0]
     assert spec["spec"] == "apegmsh-view/1"
+    assert spec["chrome"] == "model"  # the canvas only, not the app's panels
     assert spec["files"] == {
         "model": str(ladruno_set.with_suffix(".h5").resolve()),
         "results": str(ladruno_set.resolve()),
@@ -234,18 +235,50 @@ def test_stored_gauss_component_is_a_named_carve_out(app_backend, tmp_path):
     """R16b stays refused until follow-up slice #2794; the refusal says so.
 
     The fork's quad2d fixture records ``stress_xx`` at the Gauss points.
-    Its ``<stem>.h5`` is a placeholder: the refusal comes before any run.
+    Its ``<stem>.h5`` is written from the file's own mesh, so the pair holds.
     """
     fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ladruno" / "quad2d.ladruno"
     src = tmp_path / "quad2d.ladruno"
     shutil.copy(fixture, src)
-    (tmp_path / "quad2d.h5").write_bytes(b"")
     with Results.from_ladruno(src) as r:
+        r.fem.to_h5(str(tmp_path / "quad2d.h5"))
         stage_id = r.stages[0].id
         assert "stress_xx" in r.inspect.components(stage=stage_id)["gauss"]
         with pytest.raises(ValueError, match="#2794"):
             r.render(tmp_path / "x.png", view="contour", component="stress_xx")
     assert app_backend.specs == []
+
+
+def _fem_of_length(tmp_path: Path, length: float):
+    from apeGmsh.opensees import OpenSeesModel
+
+    Results.demo(n_steps=3, n_elements=4, length=length, path=tmp_path / "other").close()
+    return OpenSeesModel.from_h5(tmp_path / "other" / "demo_model.h5").fem
+
+
+def test_fem_override_is_refused(app_backend, ladruno_set, tmp_path):
+    """R22b: the app draws run.h5 (length 10); a fem= of length 40 is not it."""
+    with Results.from_ladruno(ladruno_set, fem=_fem_of_length(tmp_path, 40.0)) as r:
+        with pytest.raises(ValueError, match="override"):
+            r.render(tmp_path / "x.png", view="deformed", component="displacement_x")
+    assert app_backend.specs == []
+
+
+def test_bind_override_is_refused(app_backend, ladruno_set, tmp_path):
+    with Results.from_ladruno(ladruno_set) as r:
+        bound = r.bind(_fem_of_length(tmp_path, 40.0))
+        with pytest.raises(ValueError, match="override"):
+            bound.render_pack(tmp_path / "p")
+    assert app_backend.specs == []
+
+
+def test_the_pair_fem_passes_with_or_without_model_h5(app_backend, ladruno_set, tmp_path):
+    """The file's own MODEL group (nodes only here) and run.h5's FEMData both draw."""
+    with Results.from_ladruno(ladruno_set) as r:
+        r.render(tmp_path / "a.png", view="mesh")
+    with Results.from_ladruno(ladruno_set, model_h5=ladruno_set.with_suffix(".h5")) as r:
+        r.render(tmp_path / "b.png", view="mesh")
+    assert len(app_backend.specs) == 2
 
 
 # ---------------------------------------------------------------------
@@ -275,6 +308,21 @@ def test_skip_env_still_skips_on_the_app_path(app_backend, ladruno_set, tmp_path
         report = r.assess(figures=True, out_dir=tmp_path / "a")
     assert report.figures == ()
     assert NO_STILLS in report.text
+    assert "[skip viewer]" in capsys.readouterr().out
+    assert app_backend.specs == []
+
+
+@pytest.mark.parametrize("verb", ["assess", "render"])
+def test_skip_env_never_loses_a_report_on_another_source(app_backend, tmp_path, monkeypatch, capsys, verb):
+    """The skip is checked before the .ladruno refusal: a native .h5 under
+    APEGMSH_SKIP_VIEWER=1 keeps its assess report and skips its still."""
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    with _native_results(tmp_path) as r:
+        if verb == "assess":
+            report = r.assess(figures=True, out_dir=tmp_path / "a")
+            assert report.findings and report.figures == () and NO_STILLS in report.text
+        else:
+            assert r.render(tmp_path / "x.png", view="mesh") is None
     assert "[skip viewer]" in capsys.readouterr().out
     assert app_backend.specs == []
 
