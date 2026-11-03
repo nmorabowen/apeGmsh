@@ -4,17 +4,24 @@
 //
 // reader/userFile.ts reads a case's attributes, its spectrum table, its modes
 // columns and the index of its results (label, family, columns, ids and the
-// shape of DATA); this module judges them. DATA itself is never read here: a
-// case is listed, and no CQC or other rule is evaluated over it (VU7b, after
-// the evaluator of VU4).
+// shape of DATA); this module judges them. The index never reads DATA.
+//
+// VU7b-1 (#2740): one result of one case is read with its values on request
+// (`readCaseValues`, main's `user:readCase`), and `spectrumSource` hands the
+// cases read to VU4's evaluator (combination/evaluate.ts) as its `Source`, the
+// app's twin of Python's `UserSpectra` (results/user/_spectra_source.py). A
+// rule over a case is evaluated there and nowhere else.
 //
 // A refusal's detail is Python's text, character for character: the printing
 // helpers of reader/userModes.ts print a string, a list, a shape and a dtype as
 // Python and numpy do.
 
-import { pyFloat } from "./rf1.ts";
+import { CombinationRefused, makeCase, type Case, type EvalReason, type Source } from "../combination/evaluate.ts";
+import { makeField, type Field } from "../combination/field.ts";
+import { openH5 } from "./h5open.ts";
+import { pyFloat, type FpDataset, type FpGroup, type FpH5 } from "./rf1.ts";
 import { MODE_KINDS, pyList, pyShape, pyStr } from "./userModes.ts";
-import { nameProblem } from "./userRules.ts";
+import { nameProblem, type Refusal, type StateAddress } from "./userRules.ts";
 
 export { npDtype, pyList, pyShape, pyStr } from "./userModes.ts";
 
@@ -172,4 +179,183 @@ export function caseProblem(c: CaseDraft): string | null {
   }
   if (layoutOf(c.results) !== layoutOf(c.reference)) return "reference/RESULTS must hold the results of RESULTS, with their ids and columns";
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// One result of a case, with its values (VU7b-1)
+// ---------------------------------------------------------------------------
+
+/** One result of one case and its values, as `user:readCase` answers. */
+export interface CaseValues {
+  case: SpectrumCase;
+  /** the `RESULTS` entry read */
+  quantity: SpectrumQuantity;
+  /** `RESULTS/<family>/<label>/DATA`, row-major `(S, n, c)`: row `i` is `case.modes[i]` */
+  data: Float64Array;
+  /** `reference/RESULTS/<family>/<label>/DATA`, row-major `(1, n, c)` */
+  reference: Float64Array;
+}
+
+/** What `user:readCase` answers. A refusal carries the evaluator's reason, so a term over it refuses with it. */
+export type CaseRead = { ok: true; value: CaseValues } | { ok: false; reason: Extract<EvalReason, "refused" | "unresolved">; detail: string };
+
+/** `/spectra` as reader/userFile.ts `UserIndex.spectra` holds it (structural: that module imports this one). */
+export type SpectraZone = { ok: true; value: { cases: readonly SpectrumCase[]; refused: readonly Refusal[] } } | { ok: false; reason: string } | null;
+
+const H5T_FLOAT = 1;
+
+/** The node at `path` under `g`, h5py's `in` link by link, or null where a link is missing. */
+function walk(g: FpGroup, path: string): unknown {
+  let at: unknown = g;
+  for (const part of path.split("/")) {
+    const grp = at as Partial<FpGroup> | null;
+    if (grp === null || typeof grp !== "object" || typeof grp.keys !== "function" || !grp.keys().includes(part)) return null;
+    at = grp.get!(part);
+  }
+  return at;
+}
+
+/** `g`'s dataset at `path`, f8 and of the shape the index judged, as values; anything else is why not (the file moved under the index). */
+function dataOf(g: FpGroup, path: string, shape: readonly number[]): Float64Array | string {
+  const d = walk(g, path) as Partial<FpDataset> | null;
+  if (d === null) return `${g.path}/${path} is missing`;
+  if (typeof d !== "object" || d.metadata === undefined || !Array.isArray(d.shape)) return `${g.path}/${path} is not a dataset`;
+  if (d.metadata.type !== H5T_FLOAT || d.metadata.size !== 8) return `${d.path} is not f8`;
+  if (d.shape.length !== shape.length || d.shape.some((x, i) => x !== shape[i])) return `${d.path} has shape ${pyShape(d.shape)}, the index read ${pyShape(shape)}`;
+  const v = d.value;
+  if (!(v instanceof Float64Array)) return `${d.path} did not read as f8 values`;
+  return v;
+}
+
+/**
+ * Case `name`'s result `label` on `target`, with its values. `spectra` is the
+ * `/spectra` reader/userFile.ts read from `path`, which judged the case; its
+ * DATA is then read from `path`. A refused zone or case answers `refused`; a
+ * case or a result the zone does not hold answers `unresolved`, and so does a
+ * file with no `/spectra`. It raises only for a file h5wasm cannot open.
+ */
+export function readCaseValues(h5: FpH5, path: string, spectra: SpectraZone, name: string, target: SpectrumTarget, label: string): CaseRead {
+  if (spectra === null) return { ok: false, reason: "unresolved", detail: `${path} holds no /spectra, so no case ${pyStr(name)}` };
+  if (!spectra.ok) return { ok: false, reason: "refused", detail: `/spectra cannot be read: ${spectra.reason}` };
+  const found = spectra.value.cases.find((c) => c.name === name);
+  if (found === undefined) {
+    const ref = spectra.value.refused.find((r) => r.name === name);
+    if (ref !== undefined) return { ok: false, reason: "refused", detail: `case ${pyStr(name)} is refused: ${ref.reason} (${ref.detail})` };
+    return { ok: false, reason: "unresolved", detail: `/spectra holds no case ${pyStr(name)}` };
+  }
+  const quantity = found.results.find((q) => q.target === target && q.label === label);
+  if (quantity === undefined) {
+    const held = found.results.map((q) => `${q.target}/${q.label}`);
+    return { ok: false, reason: "unresolved", detail: `case ${pyStr(name)} holds no ${target} result ${pyStr(label)}; it holds ${pyList(held)}` };
+  }
+  // caseProblem holds reference/RESULTS to RESULTS's layout, so the entry is there.
+  const reference = found.reference.find((q) => q.target === target && q.label === label)!;
+  const family = SPECTRA_FAMILIES[target];
+  const f = openH5(h5, path);
+  try {
+    const where = `spectra/${found.link}`;
+    const g = walk(f, where) as FpGroup | null;
+    if (g === null || typeof g.keys !== "function") return { ok: false, reason: "refused", detail: `/${where} is not a group` };
+    const data = dataOf(g, `RESULTS/${family}/${label}/DATA`, quantity.shape);
+    if (typeof data === "string") return { ok: false, reason: "refused", detail: data };
+    const ref = dataOf(g, `reference/RESULTS/${family}/${label}/DATA`, reference.shape);
+    if (typeof ref === "string") return { ok: false, reason: "refused", detail: ref };
+    return { ok: true, value: { case: found, quantity, data, reference: ref } };
+  } finally {
+    f.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The cases as the evaluator's spectrum source (Python's `UserSpectra`)
+// ---------------------------------------------------------------------------
+
+/**
+ * One quantity of a case: the `ON_NODES` result `label` and its column
+ * `component`, both as the file spells them (`DISPLACEMENT`, `Ux`). ADR 0122
+ * D7: the app keeps no token table, so the field is labelled
+ * `<label>/<component>`, the app's name for the same `.ladruno` column, and
+ * joins a stage term's under that name.
+ */
+export interface CaseQuantityName {
+  label: string;
+  component: string;
+}
+
+/** Whether `/spectra` is stale (A6: the model hashes differ), as `user:read`'s staleness says. */
+export interface SpectraStaleness {
+  stale: boolean;
+  reason: string;
+}
+
+const termName = (a: StateAddress) => `<${a.kind} ${a.source}>`;
+
+/**
+ * The cases in `reads` (by case name, each as `user:readCase` answered it) as
+ * the evaluator's `Source` for quantity `q`. A whole case gives one signed
+ * increment per mode, `spectrum` mode `k` one of them, and `reference` the
+ * reference state. A stale `/spectra` refuses `stale` unless `allowStale` (A6).
+ * A `stage` or `mode` term and an eigenvalue refuse `unresolved`: this source
+ * reads `/spectra` alone.
+ */
+export function spectrumSource(reads: ReadonlyMap<string, CaseRead>, q: CaseQuantityName, staleness: SpectraStaleness, allowStale: boolean): Source {
+  const fieldLabel = `${q.label}/${q.component}`;
+  const located = (name: string, who: string): { values: CaseValues; column: number } => {
+    if (staleness.stale && !allowStale) {
+      throw new CombinationRefused(who, "stale", `/spectra is stale (${staleness.reason || "no reason given"}); pass allowStale to read it (ADR 0130 A6)`);
+    }
+    const read = reads.get(name);
+    if (read === undefined) throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} was not read`);
+    if (!read.ok) throw new CombinationRefused(who, read.reason, read.detail);
+    const v = read.value;
+    if (v.quantity.target !== "nodes" || v.quantity.label !== q.label) {
+      throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} was read for ${v.quantity.target}/${v.quantity.label}, not nodes/${q.label}`);
+    }
+    const hits = v.quantity.components.flatMap((c, i) => (c === q.component ? [i] : []));
+    if (hits.length !== 1) {
+      const what = hits.length === 0 ? "no" : `${hits.length} columns for`;
+      const held = v.case.results.map((r) => `${r.target}/${r.label}(${r.components.join(",")})`);
+      throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} holds ${what} nodes quantity ${pyStr(fieldLabel)}; it holds ${pyList(held)}`);
+    }
+    return { values: v, column: hits[0]! };
+  };
+  const field = (v: CaseValues, data: Float64Array, row: number, column: number): Field => {
+    const [, n, c] = v.quantity.shape;
+    const ids = v.quantity.ids!;
+    const out = new Float64Array(n);
+    for (let i = 0; i < n; i++) out[i] = data[(row * n + i) * c + column]!;
+    return makeField(["id"], ids.map((id) => [id]), [fieldLabel], out);
+  };
+  return {
+    linear: true,
+    stored: () => null,
+    field(address: StateAddress): Field {
+      const who = termName(address);
+      if (address.kind !== "spectrum" && address.kind !== "reference") {
+        throw new CombinationRefused(who, "unresolved", `a ${address.kind} term is read from the results file; this evaluation reads the /spectra cases only`);
+      }
+      if (address.kind === "spectrum" && address.mode === 0) throw new CombinationRefused(who, "bad-term", "a whole case is not one state; combine it with a rule");
+      const { values, column } = located(address.source, who);
+      if (address.kind === "reference") return field(values, values.reference, 0, column);
+      const rows = values.case.modes.flatMap((m, i) => (m.mode === address.mode ? [i] : []));
+      if (rows.length !== 1) {
+        throw new CombinationRefused(who, "unresolved", `case ${pyStr(values.case.name)} has no mode ${address.mode}: its modes are [${values.case.modes.map((m) => m.mode).join(", ")}]`);
+      }
+      return field(values, values.data, rows[0]!, column);
+    },
+    eigenvalue(address: StateAddress): number {
+      throw new CombinationRefused(termName(address), "unresolved", "an eigenvalue is read from the results file; this evaluation reads the /spectra cases only");
+    },
+    case(name: string): Case {
+      const { values, column } = located(name, `<spectrum ${name}>`);
+      const m = values.case.modes;
+      return makeCase({
+        mode: m.map((x) => x.mode),
+        lam: m.map((x) => x.lambda),
+        saPeriod: m.map((x) => x.saPeriod),
+        damping: m.map((x) => x.damping),
+        increments: m.map((_, i) => field(values, values.data, i, column)),
+      });
+    },
+  };
 }

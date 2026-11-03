@@ -66,7 +66,8 @@ import { openModel } from "../reader/node.ts";
 import { openH5, type H5Openable } from "../reader/h5open.ts";
 import { LadrunoFile, openLadruno } from "../reader/ladruno.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
-import { readUserSet, type UserH5 } from "../reader/userFile.ts";
+import { readUserFile, readUserSet, type UserH5 } from "../reader/userFile.ts";
+import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } from "../reader/userSpectra.ts";
 import { FOLD_CASE, fileFromArgv, listDir, pairSet } from "./pairing.ts";
 import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
@@ -680,6 +681,26 @@ ipcMain.handle("user:read", async (_e, req: unknown) => {
   }
   await h5wasm.ready;
   return readUserSet(h5wasm as unknown as UserH5, r.path, r.model as string | null, r.results as string | null, listDir);
+});
+
+// ADR 0130 slice VU7b-1 (#2740): one result of one `/spectra` case of the
+// `.user.h5`, with its per-mode DATA and its reference state, on request
+// (reader/userSpectra.ts `CaseRead`). The case is judged by the same read as
+// `user:read`'s index, then its values are read; the renderer combines them
+// with VU4's evaluator. A refused or missing case, and a file that cannot be
+// read, answer `ok: false` with the evaluator's reason; nothing raises.
+ipcMain.handle("user:readCase", async (_e, req: unknown): Promise<CaseRead> => {
+  const r = req as { path?: unknown; case?: unknown; target?: unknown; label?: unknown } | null;
+  if (!r || typeof r.path !== "string" || typeof r.case !== "string" || typeof r.label !== "string" || typeof r.target !== "string" || !Object.hasOwn(SPECTRA_FAMILIES, r.target)) {
+    return { ok: false, reason: "refused", detail: `user:readCase needs { path, case, target: ${Object.keys(SPECTRA_FAMILIES).join(" | ")}, label }; got ${JSON.stringify(req)}` };
+  }
+  await h5wasm.ready;
+  const h5 = h5wasm as unknown as UserH5;
+  try {
+    return readCaseValues(h5, r.path, readUserFile(h5, r.path, null).spectra, r.case, r.target as SpectrumTarget, r.label);
+  } catch (err) {
+    return { ok: false, reason: "refused", detail: `${r.path}: ${err instanceof Error ? err.message : String(err)}` };
+  }
 });
 
 for (const verb of ["subscribe", "unsubscribe"] as const) {

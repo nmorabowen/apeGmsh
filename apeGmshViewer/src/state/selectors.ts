@@ -2,6 +2,7 @@
 // from. A panel imports this module and store.ts, nothing else of the app.
 
 import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
+import type { CombinationTable } from "../combination/evaluate.ts";
 import type { OpsFamily, Param } from "../model/types.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
@@ -1243,4 +1244,29 @@ export const NO_SOLID_CELLS = "No cap: this mesh has no volumetric cells (shells
 /** V4e3: what the planes panel says under "Contour on cut face": why no cap can be drawn, or null when one can (or no mesh is loaded). */
 export function cutFaceNote(s: State): string | null {
   return s.mesh && s.mesh.counts.solidCells === 0 ? NO_SOLID_CELLS : null;
+}
+
+// -- VU7b-1: a User Combination over the /spectra cases (ADR 0130 D4, D5) --------
+
+/**
+ * The `/spectra` cases combination `name` reads, directly or through the
+ * combinations it names, in the order first met: the cases to fetch
+ * (`user:readCase`) before the evaluator runs, since its `Source` is
+ * synchronous. A name the table does not hold, or refused, throws the
+ * evaluator's `CombinationRefused` (`unresolved`, `refused`).
+ */
+export function spectrumCasesOf(table: CombinationTable, name: string): string[] {
+  const cases: string[] = [];
+  const seen = new Set<string>();
+  const stack = [name];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    for (const t of table.row(current, name).terms) {
+      if (t.kind === "combination") stack.push(t.source);
+      else if ((t.kind === "spectrum" || t.kind === "reference") && !cases.includes(t.source)) cases.push(t.source);
+    }
+  }
+  return cases;
 }
