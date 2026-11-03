@@ -57,9 +57,10 @@ in `$APEGMSH_EDITOR` (a template with `{file}` and `{line}`, such as
 `code -g {file}:{line}`), else VS Code's `code`, else the OS text editor.
 It opens only a source file the model's `/provenance` names. A row that
 names another machine (a path starting `\\` or `//`) is never looked up and
-never handed to an editor; go-to-source on it answers with the reason. On Linux,
-without `$APEGMSH_EDITOR`, only a regular `.py`, `.pyw`, `.pyi`, `.pyx` or
-`.tcl` file opens.
+never handed to an editor; go-to-source on it answers with the reason. On
+Linux, when neither `$APEGMSH_EDITOR` nor `code` is found and the app falls
+back to `xdg-open`, only a regular `.py`, `.pyw`, `.pyi`, `.pyx` or `.tcl`
+file opens; with either one, any local file `/provenance` names opens.
 
 ## 2. The `.user.h5`
 
@@ -162,8 +163,8 @@ The `/entities` of the `.user.h5` draw where they are, with no switch:
 
 They draw only while the zone reads and is current and the model is on
 screen (not on the geometry phase). Refused rows never draw. A storey
-naming a node the model does not hold is not drawn; the reason goes to the
-app's log.
+naming a node the model does not hold is not drawn; the reason is a warning
+in the developer console (DevTools), not in the window.
 
 ## 8. Loads & SPs, Reactions and supports
 

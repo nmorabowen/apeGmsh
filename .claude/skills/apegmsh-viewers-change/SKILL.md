@@ -108,24 +108,32 @@ The page is not trusted to name a path (owner ruling "option A", #2753). Read th
 `main.ts` comments at `ungestured`, `windowSet`, `confined` and `fromCurrentPage` first.
 
 - [ ] **A new IPC door that reads or opens a file is confined.** Compare the asked path with
-      what main chose, by `samePath` (case-folded where the file system folds), and read only
-      the path main holds, never the asked string. The confinements: `setFile` (the window
-      set's geometry and results, from `windowSet()`), `confined` (the set's `.user.h5`, and
-      the model and results its staleness is judged against), `ungestured` (an open: the
-      latest drop or a path main sent the page), `offerRows` (an offer click) and `setSources`
-      (go-to-source: the model's `/provenance` as main reads it now). Refuse before any read,
-      so the set stays as it is. A path the model names is tested with `isRemotePath` before
-      any `fs` call (`test/main/remoteRows.test.ts` wraps `node:fs` to prove it).
+      what main chose, by `samePath` (case-folded where the file system folds), and refuse
+      before any read, so the set stays as it is. The doors today come in two kinds:
+      - **read the path main holds**, never the asked string: `setFile` (the `results:*` and
+        `geometry:open` doors; the window set's file, from `windowSet()`), `confined`
+        (`user:read`, `user:readCase`; the set's `.user.h5`, and the model and results its
+        staleness is judged against) and `setSources` (`source:goto`; the model's
+        `/provenance` as main reads it now);
+      - **approve the page's string, then read that string**: `model:open` and
+        `viewer:requestOpen` through `ungestured` (the latest drop or a path main sent the
+        page), `viewer:offerOpen` through `offerRows` (an offered set's files).
+
+      Prefer the first kind for a new door. A path the model names is tested with
+      `isRemotePath` before any `fs` call (`test/main/remoteRows.test.ts` wraps `node:fs` to
+      prove it).
 - [ ] **Gesture records live in main.** `dropped` is the latest path the preload's `gestured()`
       reported over the synchronous `viewer:dropped` (a File the page made has no path and
       reports nothing); the next drop replaces it, and an open does not spend it. `offerRows`
       mirrors the page's offer list (`PAGE_OFFERS` equals `state/reduce.ts` `MAX_OFFERS`, held
       by `setDoors.test.ts`), and a page load keeps only the rows of batches still waiting
       (`pageLoading`). Record a new gesture in main; never take it from the page.
-- [ ] **Check the sender of a page message that arms main state.** `viewer:offersReady` counts
-      only when `fromCurrentPage(e)`: `e.sender` is the window's `webContents`, and
-      `e.processId` and `e.frameId` are the main frame `did-navigate` committed (`pageFrame`).
-      A late message from a page being replaced re-arms nothing (VU15, #2776).
+- [ ] **Check the sender of a page message that arms main state.** Today `viewer:offersReady`
+      is the one door that does: it counts only when `fromCurrentPage(e)`, that is, `e.sender`
+      is the window's `webContents` and `e.processId` and `e.frameId` are the main frame
+      `did-navigate` committed (`pageFrame`). A late message from a page being replaced
+      re-arms nothing (VU15, #2776). `viewer:dropped` and `viewer:subscribe` take no such
+      check; a new door that arms state uses `fromCurrentPage`.
 - [ ] **A reload is a `did-start-navigation` too.** `did-start-loading` fires only when the page
       goes from idle to loading, so a reload while it still loads starts none. Per-page state
       in main is cleared in `pageLoading`, which runs on `did-start-loading` and on a
