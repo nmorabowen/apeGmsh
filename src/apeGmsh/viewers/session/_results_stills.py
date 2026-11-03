@@ -602,8 +602,8 @@ def results_files(results: Any, verb: str) -> dict[str, str]:
 
 def _require_pair_fem(results: Any, files: dict[str, str], verb: str) -> None:
     """R22b: a stamped ``fem_hash`` must be ``<stem>.h5``'s, and the bound FEMData its
-    mesh: the same node ids and coordinates, and the same connectivity as a sorted
-    multiset of node-id tuples (element ids and type names differ by writer)."""
+    mesh: the same node ids and coordinates, and the same cells as a multiset of node-id
+    sets (element ids, type names and node order differ by writer)."""
     import h5py
     import numpy as np
 
@@ -623,7 +623,7 @@ def _require_pair_fem(results: Any, files: dict[str, str], verb: str) -> None:
         return sorted(zip(np.asarray(f.nodes.ids).tolist(), np.asarray(f.nodes.coords, dtype=float).tolist()))
 
     def cells(f: Any) -> list:
-        return sorted(tuple(row) for g in f.elements for row in np.asarray(g.connectivity).tolist())
+        return sorted(tuple(sorted(row)) for g in f.elements for row in np.asarray(g.connectivity).tolist())
     mine, theirs = cells(results.fem), cells(pair.fem)
     # Either side without elements (a .ladruno MODEL group may record nodes only): nodes decide alone.
     if nodes(results.fem) == nodes(pair.fem) and (not mine or not theirs or mine == theirs):

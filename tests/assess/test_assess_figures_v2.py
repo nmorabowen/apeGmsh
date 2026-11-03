@@ -317,6 +317,17 @@ def test_a_matching_pair_is_never_refused_by_element_type_name(app_backend, trus
 
 
 @pytest.mark.parametrize("how", ["fem=", "bind()"])
+def test_reordered_nodes_within_a_cell_still_pair(app_backend, truss_pair, tmp_path, how):
+    """[[2, 1], [3, 2]] is [[1, 2], [2, 3]]: a writer may reorder a cell (hex20)."""
+    src, ids, xyz, cells = truss_pair
+    flipped = _line2_fem(ids, xyz, [row[::-1] for row in cells])
+    opened = Results.from_ladruno(src, fem=flipped) if how == "fem=" else Results.from_ladruno(src)
+    with opened as r:
+        (r if how == "fem=" else r.bind(flipped)).render(tmp_path / "x.png", view="mesh")
+    assert len(app_backend.specs) == 1
+
+
+@pytest.mark.parametrize("how", ["fem=", "bind()"])
 def test_same_nodes_other_connectivity_is_an_override(app_backend, truss_pair, tmp_path, how):
     """[[1, 3]] is not [[1, 2], [2, 3]]: the nodes match, the mesh does not."""
     src, ids, xyz, cells = truss_pair
