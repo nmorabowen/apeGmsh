@@ -2290,13 +2290,13 @@ export function buildLoads3D(
 
 // ---- Reactions -----------------------------------------------------------------
 /** The supported nodes, memoised on the definitions, the neutral loads and the stage they are read at. */
-const supportMemo = new WeakMap<object, { neutral: unknown; stage: number | null; held: ReadonlyMap<number, ReadonlySet<number>>; nodes: ReadonlySet<number> }>();
+const supportMemo = new WeakMap<object, { neutral: unknown; stage: number | null; held: ReadonlyMap<number, ReadonlySet<number>>; nodes: ReadonlySet<number>; maskNdf: number }>();
 
-/** A DOF mask as stored (a JSON array, a typed array, or a space- or comma-separated string): its 1-based restrained DOFs. */
-function maskDofs(mask: unknown): number[] | null {
+/** A DOF mask as stored (a JSON array, a typed array, or a space- or comma-separated string): its 1-based restrained DOFs, and its length (the node's ndf). */
+function maskDofs(mask: unknown): { dofs: number[]; ndf: number } | null {
   const values = Array.isArray(mask) ? mask : ArrayBuffer.isView(mask) ? Array.from(mask as unknown as ArrayLike<number>) : typeof mask === "string" ? mask.split(/[\s,]+/).filter(Boolean) : null;
   if (!values) return null;
-  return values.flatMap((v, i) => (Number(v) !== 0 ? [i + 1] : []));
+  return { dofs: values.flatMap((v, i) => (Number(v) !== 0 ? [i + 1] : [])), ndf: values.length };
 }
 
 /**
@@ -2316,15 +2316,21 @@ export function supportedNodesOf(s: State): ReadonlySet<number> {
 
 /**
  * The supports at the stage on screen, by node: each supported node's restrained DOFs (1-based OpenSees DOFs; 0 for a
- * fix row whose mask could not be read), by the rules of `supportedNodesOf`, and the set of nodes that keep one.
+ * fix row whose mask could not be read), by the rules of `supportedNodesOf`, the set of nodes that keep one, and the
+ * longest fix mask read (its ndf; 0 for none), which tells a 3-D model from a 2-D one when ndm is unknown.
  */
-export function supportsOf(s: State): { readonly held: ReadonlyMap<number, ReadonlySet<number>>; readonly nodes: ReadonlySet<number> } {
+export function supportsOf(s: State): {
+  readonly held: ReadonlyMap<number, ReadonlySet<number>>;
+  readonly nodes: ReadonlySet<number>;
+  readonly maskNdf: number;
+} {
   const defs = s.definitions;
   const stage = resolveActiveStage(s).index;
   const key = (defs ?? s) as object;
   const hit = supportMemo.get(key);
   if (hit && hit.neutral === s.neutralLoads && hit.stage === stage) return hit;
   const held = new Map<number, Set<number>>();
+  let maskNdf = 0;
   const hold = (node: number, dof: number) => {
     let d = held.get(node);
     if (!d) held.set(node, (d = new Set()));
@@ -2344,9 +2350,10 @@ export function supportsOf(s: State): { readonly held: ReadonlyMap<number, Reado
     const dofsIdx = t.columns.indexOf("dofs");
     for (const row of t.rows) {
       // A row with no readable mask is a fixity of unknown DOFs: counted as restraining DOF 0.
-      const dofs = dofsIdx >= 0 ? maskDofs(row[dofsIdx]) : null;
-      if (dofs && dofs.length === 0) continue;
-      for (const n of nodesOf(s, t, row)) for (const d of dofs ?? [0]) hold(n, d);
+      const mask = dofsIdx >= 0 ? maskDofs(row[dofsIdx]) : null;
+      if (mask) maskNdf = Math.max(maskNdf, mask.ndf);
+      if (mask && mask.dofs.length === 0) continue;
+      for (const n of nodesOf(s, t, row)) for (const d of mask?.dofs ?? [0]) hold(n, d);
     }
   };
   const readSp = (t: Table | null | undefined) => {
@@ -2383,7 +2390,7 @@ export function supportsOf(s: State): { readonly held: ReadonlyMap<number, Reado
   }
   for (const t of Object.values(s.neutralLoads?.sp ?? {})) readSp(t);
   const kept = new Map([...held].filter(([, d]) => d.size > 0));
-  const out = { neutral: s.neutralLoads, stage, held: kept as ReadonlyMap<number, ReadonlySet<number>>, nodes: new Set(kept.keys()) as ReadonlySet<number> };
+  const out = { neutral: s.neutralLoads, stage, held: kept as ReadonlyMap<number, ReadonlySet<number>>, nodes: new Set(kept.keys()) as ReadonlySet<number>, maskNdf };
   supportMemo.set(key, out);
   return out;
 }
@@ -2575,15 +2582,16 @@ function flatInZ(points: readonly Vec3[]): boolean {
 export function buildSupports3D(s: State, blobs: BlobStore, opts?: BuildLoads3DOptions): Supports3D {
   const empty: Supports3D = { arrows: new Float32Array(0), arcs: new Float32Array(0), nodes: 0 };
   if (!s.mesh) return empty;
-  const { held } = supportsOf(s);
+  const { held, maskNdf } = supportsOf(s);
   if (held.size === 0) return empty;
   const nodeCoords = buildNodeCoordsMap(s, blobs, opts);
   const radius = s.mesh.radius > 0 && Number.isFinite(s.mesh.radius) ? s.mesh.radius : 1;
   const len = Math.max(radius * 0.22, 1e-4) * 0.5 * s.supports.scale;
   const rgb = loadsColourPalette(opts?.theme ?? "dark").sp;
-  // ndm as read from the model; when it is unknown, a model whose undeformed nodes all share one z, and with
-  // no restrained DOF above 3 (a flat 3-D plate fixes rotations 4..6), is taken as 2-D.
-  const highDof = [...held.values()].some((d) => [...d].some((dof) => dof > 3));
+  // ndm as read from the model; when it is unknown, a model whose undeformed nodes all share one z is taken as
+  // 2-D unless it shows 3-D DOFs: a restrained DOF above 3, or a fix mask longer than 3 (a flat slab pinned in
+  // x, y and z writes [1,1,1,0,0,0]).
+  const highDof = maskNdf > 3 || [...held.values()].some((d) => [...d].some((dof) => dof > 3));
   const planar = s.ndm.ndm === 2 || (s.ndm.ndm === null && !highDof && flatInZ([...buildNodeCoordsMap(s, blobs).values()]));
   const AXES: readonly Vec3[] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
   const kind = (dof: number): { rotation: boolean; axis: Vec3 } | null => {
