@@ -1,6 +1,28 @@
+# VU7b-1 fixture: a synthetic nodal spectrum case on San Ramón
+
+`sanramon_case.user.h5` holds one `/spectra` case, `NEC-15 Ex (synthetic nodal)`, on
+every 337th node of the San Ramón model (40 nodes, 12 modes, `DISPLACEMENT` `Ux,Uy,Uz`),
+and four `/combinations` rows over it. `sanramon_case.golden.json` holds what Python's
+`Results.combinations().evaluate(name, component, level="nodes")` answers for each row and
+component. `test/reader/userSpectraCase.test.ts` reads both (slice VU7b-1, #2740).
+
+**The case is synthetic.** Its mode shapes and eigenvalues are the San Ramón `.ladruno`'s
+own (`MODES_OF_VIBRATION(U)`, `LAMBDA`). Its participation factors come from a seeded
+generator, because `modalProperties` needs a live solve of the model. Each increment is
+`gamma_k * sa_k / lambda_k * phi_k`. Only the layout and the combined values are under
+test, never the engineering.
+
+The script below is the whole generator. It writes with apeGmsh's own writer
+(`write_user_file`), so it imports apeGmsh, and it is kept here as text and never as a
+`.py` file of the app (ADR 0112 D4, `scripts/check_app_wall.py` W1). Save it as
+`make_sanramon_case.py` outside the app, then run it with the opensees venv interpreter,
+`PYTHONPATH=<checkout>/src`, the reference set's directory, a scratch directory for the
+full 13459-node case, and this directory.
+
+```python
 """Write the VU7b-1 fixture: a SYNTHETIC nodal spectrum case on San Ramon (ADR 0130 D5).
 
-    PYTHONPATH=<worktree>/src python make_sanramon_case.py <sanramon set dir> <full out dir>
+    PYTHONPATH=<worktree>/src python make_sanramon_case.py <sanramon set dir> <full out dir> <fixture dir>
 
 <sanramon set dir> holds ``sanramon_3A.h5`` and ``sanramon_3A.ladruno`` (the reference
 set; not in the repository). Two cases are written with apeGmsh's own writer
@@ -9,7 +31,7 @@ set; not in the repository). Two cases are written with apeGmsh's own writer
 
 - ``<full out dir>/sanramon_3A.user.h5`` and ``golden.json``: all 13459 nodes (a probe
   outside the repository; copies of the set go beside it, the reference is never written);
-- ``sanramon_case.user.h5`` and ``sanramon_case.golden.json`` beside this script: every
+- ``<fixture dir>/sanramon_case.user.h5`` and ``sanramon_case.golden.json``: every
   ``STRIDE``-th node only, which test/reader/userSpectraCase.test.ts reads.
 
 The case is synthetic. Its shapes and eigenvalues are the .ladruno's own
@@ -34,7 +56,6 @@ from apeGmsh.results.user._descriptor import Combination, Term
 STRIDE = 337
 CASE = "NEC-15 Ex (synthetic nodal)"
 COMPONENTS = ("displacement_x", "displacement_y", "displacement_z")
-HERE = Path(__file__).resolve().parent
 
 
 def rows() -> list[Combination]:
@@ -95,7 +116,7 @@ def write(model: Path, run: Path, user_h5: Path, golden: Path, keep: np.ndarray)
 
 def main() -> None:
     print("apeGmsh from", apeGmsh.__file__, file=sys.stderr)
-    ref, full = Path(sys.argv[1]), Path(sys.argv[2])
+    ref, full, here = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
     full.mkdir(parents=True, exist_ok=True)
     for name in ("sanramon_3A.h5", "sanramon_3A.ladruno"):
         if not (full / name).exists():
@@ -104,9 +125,10 @@ def main() -> None:
     with h5py.File(run, "r") as f:
         n = f["MODEL_STAGE[1]/RESULTS/ON_NODES/MODES_OF_VIBRATION(U)/ID"].shape[0]
     write(model, run, full / "sanramon_3A.user.h5", full / "golden.json", np.arange(n))
-    write(model, run, HERE / "sanramon_case.user.h5", HERE / "sanramon_case.golden.json",
+    write(model, run, here / "sanramon_case.user.h5", here / "sanramon_case.golden.json",
           np.arange(0, n, STRIDE))
 
 
 if __name__ == "__main__":
     main()
+```
