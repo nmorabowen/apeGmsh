@@ -22,6 +22,15 @@ from tests.conftest import _open_model_from_h5
 STAGE = "grav"
 
 
+@pytest.fixture(autouse=True)
+def _vtk_backend(monkeypatch):
+    """The parity stills compare against ``results.render``'s VTK path,
+    which Linux keeps (G2); on Windows it is apeGmshViewer's (VA6b)."""
+    from apeGmsh.viewers import render as render_mod
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+
+
 @pytest.fixture
 def still_results(g, tmp_path: Path):
     """One static stage with smooth nodal data (``displacement_z``)."""
