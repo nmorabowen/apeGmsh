@@ -308,6 +308,8 @@ what you derive from them:
 <stem>.h5        model archive (ops.h5), + /opensees/combinations
 <stem>.ladruno   the recorded run
 <stem>.user.h5   /combinations, /results, /modes, /spectra, /entities
+<stem>.workspace.h5   named sets, plots, saved views (below; ADR 0132)
+<study>.variants.json lists several sets of one study (below)
 ```
 
 You write `<stem>.user.h5` from Python with one call. apeGmshViewer reads
@@ -473,8 +475,9 @@ m.refused                                       # rows that refuse alone, with r
 
 `path` is relative to the manifest's folder, uses `/`, and never leaves
 it (`..` and absolute paths refuse). It names a `<stem>.h5`, never a
-sibling such as `.ladruno` or `.user.h5`. A row whose file does not
-exist yet is written, and refused on read as `missing`. A combination
+sibling such as `.ladruno` or `.user.h5`. A row may name a file that a
+later run will write: the write accepts it, and each read refuses that
+row with reason `missing` until the file is there. A combination
 never crosses variants (a term holds no path).
 (`tests/results/user/test_workspace_file.py`, `test_variants_manifest.py`)
 
@@ -512,6 +515,13 @@ every slab node) when the map is the point. The driver, its rules and the figure
 <https://nmorabowen.github.io/apeGmsh/how-to/footfall-vibration/>.
 
 ## 5. Plots and the desktop viewer
+
+**Stills for an agent.** Write them under `.apegmsh/visors/` and read
+the PNGs. On Windows take them with `render_stills`
+(`apeGmsh.agent_view`; apeGmshViewer's batch stills, ADR 0128;
+`assess.md`). The VTK stills (`results.render` / `fem.render`,
+ADR 0094) are for Linux, where the app has no batch stills yet.
+Labeled `results.plot.*` works anywhere.
 
 ### Static matplotlib (`[plot]` extra)
 

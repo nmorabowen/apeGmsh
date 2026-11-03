@@ -16,10 +16,8 @@ description: >
   ``g.constraints`` — labelled ``g.decouple_node`` as RBE2/RBE3 master),
   per-node ndf (inferred + ``ops.ndf``), the ``apeSees(fem)``
   OpenSees bridge with typed primitives, post-processing OpenSees output
-  via ``Results`` (``from_ladruno``, ``convert_mpco`` for stock ``.mpco``,
-  ``from_recorders``), combinations and user results in ``<stem>.user.h5``
-  (``write_user_file`` / ``results.combinations()``)
-  and the web/Qt viewers, native ``model.h5`` persistence
+  via ``Results`` (``from_ladruno`` / ``convert_mpco``), ``.user.h5``
+  combinations, the web/Qt viewers, native ``model.h5`` persistence
   (``FEMData.to_h5`` / ``from_h5``, ``save_to=`` / ``g.save()``),
   assembling saved models (``from apeGmsh.assembly import Assembly``:
   ``instance`` / ``tie`` / ``node`` / ``rigid_link`` / ``couple`` /
@@ -67,9 +65,7 @@ has no hit **and** you are changing apeGmsh itself.
 | FEMData / `model.h5` | `references/fem-broker.md` |
 | `apeSees` / stages / emit | `references/opensees-bridge.md` |
 | After mesh or solve check | `references/assess.md` |
-| Results / plot / stills | `references/results.md` |
-| Combinations / user results / `.user.h5` | `references/results.md` §4 "Combinations and the user file" |
-| Named sets / saved views / variants (`.workspace.h5`, `.variants.json`) | `references/results.md` §4 "What the user makes" |
+| Results / combinations / `.user.h5` / stills | `references/results.md` |
 | Assembly / compose readers / `from_h5` | `references/compose.md` |
 | Rebar cages | `references/rebar.md` |
 | ETABS / analytical import | `references/interop.md` |
@@ -85,7 +81,7 @@ What each file contains (do not read them all):
 - `fem-broker.md` — `FEMData`, `model.h5`
 - `opensees-bridge.md` — `apeSees`, stages, emit, ndf, remote
 - `assess.md` — verdict + stills after mesh/solve (not Qt); apeGmshViewer stills (`render_stills`)
-- `results.md` — `Results.from_ladruno`, `convert_mpco`, pairing, `.user.h5` combinations, plot, render, lineage
+- `results.md` — `from_ladruno`, `convert_mpco`, `.user.h5`, plot, render
 - `compose.md` — Assembly, compose readers, `from_h5`
 - `rebar.md` — `g.rebar` cages
 - `interop.md` — ETABS / analytical import
@@ -243,11 +239,8 @@ envelope, `names.json`, and `--status` — identity is
 An unnamed pick's first script edit is `.to_label()` / `.to_physical()`.
 After solve, still `assess()` + stills, not `viewer()`.
 When the agent must look, write visors under `.apegmsh/visors/` and
-read those PNGs: on Windows with `render_stills` (`apeGmsh.agent_view`,
-apeGmshViewer's batch stills, `references/assess.md`); the VTK
-`results.render` / `fem.render` stills only on Linux, where the app has
-no batch stills yet (ADR 0128); labeled matplotlib anywhere. Never
-capture the OS desktop or the human's window.
+read those PNGs (`render_stills` on Windows: `references/results.md`
+§5). Never capture the OS desktop or the human's window.
 `python -m apeGmsh.studio init --name <habitat> --model <model_id>`
 stamps a fresh APE Studio habitat from the packaged template (ADR 0095
 Amendment 6) — playbook, lifecycle scripts, checker, model lineage —
@@ -359,24 +352,17 @@ session — do not assume the server is bound correctly.
 5. **Labels without physical groups** — labels on the main session don't
    auto-promote to PGs (only `Part` sessions do). Call
    `g.labels.promote_to_physical("name")` or add `g.physical.add(...)`.
-6. **Reaching for `from_native` / `from_mpco`** — apeGmsh is moving to
-   one results format, `.ladruno` (ADR 0131). Open a run with
-   `Results.from_ladruno(path, model_h5=...)`; turn a stock `.mpco` into
-   one with `convert_mpco(src, dst, model_h5=...)`. Both old readers
-   still work but are being retired, and they *require* `model=` /
-   `model_h5=` (`TypeError` otherwise). See `references/results.md` §1.
+6. **Reaching for `from_native` / `from_mpco`** — they are retiring;
+   read `.ladruno` (`references/results.md` §1).
 7. **Don't open Qt to check a solve — and don't capture the human's
    screen.** After `get_fem_data` / `Results.from_*`,
    `report = fem.assess()` / `results.assess(figures=True)`; print
    `report.text`; `read_file` each PNG in `report.figures`; act on
    `severity="error"`. Inspect is inventory, not the verdict. Extra
-   stills go under `.apegmsh/visors/`: `render_stills` on Windows, the
-   VTK `results.render` on Linux only, or labeled `results.plot.*` —
+   stills go under `.apegmsh/visors/` (`references/results.md` §5) —
    never OS-screenshot the desktop or the live viewer. Qt / web viewers are for humans who asked to look.
-   `results.viewer()` default is `blocking=None` (auto: scripts block,
-   a Jupyter kernel spawns a subprocess; an in-memory Results there
-   raises `RuntimeError`: open it with a `from_*` constructor). An explicit `blocking=True` still kills a
-   Jupyter kernel. See `references/assess.md`.
+   `results.viewer()` blocking rules (an explicit `blocking=True` kills
+   a Jupyter kernel): `references/results.md` §5. See `references/assess.md`.
 
 Which reference covers a given failure: `BridgeError` / staged / ndf →
 `opensees-bridge.md`; `MalformedH5Error` / `SchemaVersionError` →
@@ -413,18 +399,8 @@ signatures) lives in the references.
   is **deleted** (X3-d, #1734) — no import path reaches it; the post-solve
   document is a `ResultsSession` (`results.viewer()` or
   `python -m apeGmsh.viewers <file>`, until the Qt sunset).
-  apeGmshViewer, the desktop app, is `.ladruno`-only by decision
-  (ADR 0131 D1): hand it a `.ladruno`, never a new native file (its
-  `<stem>.results.h5` slot goes at slice V1d, D2).
-- **One results format: `.ladruno`** (ADR 0131). A set is
-  `<stem>.h5` (model archive) + `<stem>.ladruno` (the run) +
-  `<stem>.user.h5` (combinations, modes table, spectra, user results,
-  entities; ADR 0130) + `<stem>.workspace.h5` (named sets, plots, saved
-  views; ADR 0132), and a study of variants is listed in
-  `<study>.variants.json`. `EigenResult.results()` and `Results.demo()`
-  write `.ladruno`; a stock `.mpco` converts with `convert_mpco`.
-  `from_native` / `to_native` / `from_mpco` still exist but are being
-  retired: do not start new code on them.
+- **One results format, `.ladruno`** (ADR 0131), and a set's files
+  (`.h5`, `.ladruno`, `.user.h5`, `.workspace.h5`): `references/results.md` §1.
 - **Removed (ADR 0116):** the plotly preview (`apeGmsh.preview`,
   `g.model.preview`, `g.mesh.preview`), `GeomTransfViewer`,
   `apeGmsh.sensitivity` and the import banner. Inline pictures are
