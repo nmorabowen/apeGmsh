@@ -170,7 +170,7 @@ def _envelope(doc: Any, where: Path) -> tuple[str, list]:
     rows = doc.get("variants")
     if not isinstance(rows, list) or not rows:
         raise VariantsRefused("bad-envelope", f"{where}: variants is not a non-empty list")
-    return version, rows
+    return str(version), rows
 
 
 def _row_problem(raw: Any) -> Optional[tuple[str, str]]:
@@ -288,7 +288,7 @@ def write_variants(path: "str | Path", variants: Sequence[VariantDef]) -> Path:
     target = Path(path)
     if not target.name.lower().endswith(SUFFIX) or len(target.name) == len(SUFFIX):
         raise VariantsWriteRefused("bad-name", f"{target}: a manifest is named <study>{SUFFIX}")
-    doc = {"format": VARIANTS_FORMAT, "version": VARIANTS_SCHEMA_VERSION,
+    doc: dict[str, Any] = {"format": VARIANTS_FORMAT, "version": VARIANTS_SCHEMA_VERSION,
            "variants": [{"label": v.label, "path": v.path, "params": dict(v.params)}
                         for v in variants]}
     if not doc["variants"]:

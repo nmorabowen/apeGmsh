@@ -299,7 +299,7 @@ def _read_sets(group: h5py.Group) -> list[dict[str, Any]]:
     rows = []
     for row in range(k):
         a, b = int(offsets[row]), int(offsets[row + 1])
-        cell = {c: cols[c][row] for c in _SET_TEXT}
+        cell: dict[str, Any] = {c: cols[c][row] for c in _SET_TEXT}
         cell["ids"] = ids[a:b].astype("i4")
         cell["xyz"] = xyz[a:b].astype("f8")
         rows.append(cell)
