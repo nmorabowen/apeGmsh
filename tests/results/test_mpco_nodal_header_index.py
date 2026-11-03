@@ -24,9 +24,7 @@ import pytest
 from apeGmsh.opensees._response_catalog import NODAL_FORCE_CATALOG
 from apeGmsh.results import Results
 from apeGmsh.results.readers import _mpco_nodal_io as _mn
-from apeGmsh.results.readers._mpco_nodal_io import (
-    NodalForceBucketSkippedWarning,
-)
+from apeGmsh.results.readers._buckets import NodalForceBucketSkippedWarning
 from tests.conftest import _stub_model_h5_path
 from tests.test_results_mpco_nodal_mock import _create_skeleton
 

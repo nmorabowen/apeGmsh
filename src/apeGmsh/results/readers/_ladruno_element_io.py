@@ -54,13 +54,11 @@ from ...opensees._response_catalog import (
     lookup_nodal_force,
 )
 from .._shell_geometry import shell_quaternion
+from ._buckets import LayerBucketUnreadWarning
 from ._gauss_refusals import GaussDimensionMixed, refuse_mixed_gauss_dims
 from ._ladruno_provenance import _CONVERTED_MARK
 from ._ladruno_hyperslab import read_hyperslab
-from ._mpco_layer_io import (
-    LayerBucketUnreadWarning,
-    ShellFrameUnavailableWarning,
-)
+from ._mpco_layer_io import ShellFrameUnavailableWarning
 from ._mpco_local_force_io import is_non_beam_class
 from ._mpco_refusals import MPCOElementInTwoBuckets
 

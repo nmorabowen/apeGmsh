@@ -28,7 +28,7 @@ from apeGmsh.results.readers._mpco_spring_io import (
     resolve_n_springs,
     spring_canonicals_in_bucket,
 )
-from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning
+from apeGmsh.results.readers._buckets import MPCOBucketSkippedWarning
 from apeGmsh.results.readers._protocol import ResultLevel
 from apeGmsh.results import Results
 

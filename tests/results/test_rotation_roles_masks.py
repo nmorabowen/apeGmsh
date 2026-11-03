@@ -43,7 +43,7 @@ from apeGmsh.results.readers._mpco import (
     attach_model_nodes_ndf as attach_mpco,
 )
 from apeGmsh.results.readers._mpco_multi import MPCOMultiPartitionReader
-from apeGmsh.results.readers._mpco_nodal_io import AbsentDofWarning
+from apeGmsh.results.readers._buckets import AbsentDofWarning
 from apeGmsh.results.spec._resolved import (
     ResolvedRecorderRecord,
     ResolvedRecorderSpec,

@@ -17,7 +17,7 @@ from apeGmsh.results._shell_geometry import shell_quaternion
 from apeGmsh.results.readers._ladruno import LadrunoReader
 from apeGmsh.results.readers._mpco import MPCOReader
 from apeGmsh.results.readers._mpco_layer_io import ShellFrameUnavailableWarning
-from apeGmsh.results.readers._mpco_nodal_io import AbsentDofWarning
+from apeGmsh.results.readers._buckets import AbsentDofWarning
 from apeGmsh.results.readers._ladruno_element_io import (
     ElementWidthMismatchWarning,
     GaussColumnDroppedWarning,

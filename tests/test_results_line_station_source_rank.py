@@ -43,7 +43,8 @@ from apeGmsh.results.readers._ladruno import LadrunoReader
 from apeGmsh.results.readers._ladruno_element_io import (
     LineStationBucketSkippedWarning,
 )
-from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning, MPCOReader
+from apeGmsh.results.readers._buckets import MPCOBucketSkippedWarning
+from apeGmsh.results.readers._mpco import MPCOReader
 from apeGmsh.results.readers._protocol import ResultLevel
 from tests.test_results_mpco_line_mock import (
     _add_line_station_bucket,

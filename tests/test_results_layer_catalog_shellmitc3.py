@@ -36,10 +36,8 @@ from apeGmsh.results.readers._ladruno import LadrunoReader
 from apeGmsh.results.readers._ladruno_element_io import (
     LayerBucketUnreadWarning as LadrunoLayerBucketUnreadWarning,
 )
-from apeGmsh.results.readers._mpco_layer_io import (
-    LayerBucketUnreadWarning,
-    ShellFrameUnavailableWarning,
-)
+from apeGmsh.results.readers._buckets import LayerBucketUnreadWarning
+from apeGmsh.results.readers._mpco_layer_io import ShellFrameUnavailableWarning
 from apeGmsh.results.readers._protocol import ResultLevel
 from tests.conftest import _stub_model_h5_path
 from tests.results.readers.test_ladruno_reader import (

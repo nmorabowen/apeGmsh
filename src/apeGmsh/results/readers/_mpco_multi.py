@@ -35,7 +35,6 @@ internal.
 from __future__ import annotations
 
 import re
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
@@ -51,19 +50,25 @@ from .._slabs import (
     NodeSlab,
     SpringSlab,
 )
-from . import _mpco_nodal_io as _mnodal
-from ._gauss_refusals import refuse_mixed_gauss_dims
-from ._mpco import MPCOGaussDimensionMixed, MPCOReader
-from ._mpco_refusals import MPCOElementInTwoBuckets
-from ._mpco_translation import (
-    PARTITION_REDUCTION_NONE,
-    PARTITION_REDUCTION_SUM,
-    PARTITION_REDUCTION_UNSUPPORTED,
+from ._buckets import (
+    RotationMask,
+    _concat_element_slabs,
+    _concat_fiber_slabs,
+    _concat_gauss_slabs,
+    _concat_layer_slabs,
+    _concat_line_station_slabs,
+    _concat_spring_slabs,
+    _merge_node_slabs,
+    _merge_partition_fems,
+    _node_reduction,
+    _validate_warning_once_per_mode,
 )
+from ._mpco import MPCOGaussDimensionMixed, MPCOReader
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
+    from ._buckets import RolesSource
 
 
 # ``Recorder.part-0.mpco`` style; the partition number is captured.
@@ -161,7 +166,7 @@ class MPCOMultiPartitionReader:
 
     def attach_nodes_ndf(
         self, nodes_ndf: "dict[int, int] | None", ndm: int, *,
-        roles: "_mnodal.RolesSource",
+        roles: "RolesSource",
     ) -> None:
         """Forward the model's per-node ndf and DOF roles to every part
         (#2028), so a partitioned rotation read masks as a one-file one
@@ -312,7 +317,7 @@ class MPCOMultiPartitionReader:
         node_ids: Optional[ndarray] = None,
         time_slice: TimeSlice = None,
     ) -> NodeSlab:
-        with _mnodal.RotationMask.one_warning(self._absent_dof_warned):
+        with RotationMask.one_warning(self._absent_dof_warned):
             slabs = [
                 r.read_nodes(
                     stage_id, component,
@@ -444,500 +449,10 @@ class MPCOMultiPartitionReader:
 # Stitching helpers — node merge, element concat
 # =====================================================================
 
-def _validate_warning_once_per_mode(validate, paths) -> None:
-    """Run ``validate()``, which reads every part's stages, and re-emit
-    the warnings it raised.
-
-    Each part file sees the same eigen solution, so a non-positive
-    eigenvalue would warn once per part. It is re-emitted once per mode
-    (the first part's message); every other warning passes through as is.
-    """
-    from ._mpco_nodal_io import NON_POSITIVE_EIGENVALUE
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        validate()
-    seen: set[str] = set()
-    for w in caught:
-        text = str(w.message)
-        if NON_POSITIVE_EIGENVALUE in text:
-            key = text
-            for p in paths:
-                key = key.replace(Path(p).name, "<part>")
-            if key in seen:
-                continue
-            seen.add(key)
-        warnings.warn(w.message, stacklevel=3)
-
-
-def _first_nonempty_time(slabs) -> ndarray:
-    for s in slabs:
-        if s.time.size:
-            return s.time
-    return np.array([], dtype=np.float64)
-
-
-def _node_reduction(readers, paths, stage_id: str, component: str) -> str:
-    """The one reduction kind every partition reports for ``component``.
-
-    Partitions that do not record the component (``None``) have no say.
-    Partitions that disagree are refused: the stitch would have to guess.
-    """
-    per_part = [
-        (p.name, r.node_partition_reduction(stage_id, component))
-        for r, p in zip(readers, paths)
-    ]
-    kinds = {k for _, k in per_part if k is not None}
-    if len(kinds) > 1:
-        raise ValueError(
-            f"Partitions disagree on PARTITION_REDUCTION for {component!r}: "
-            f"{[(n, k) for n, k in per_part if k is not None]}. The part "
-            "files are not from one run."
-        )
-    return kinds.pop() if kinds else PARTITION_REDUCTION_NONE
-
-
-def _merge_node_slabs(
-    slabs: list[NodeSlab], component: str,
-    reduction: str = PARTITION_REDUCTION_NONE,
-) -> NodeSlab:
-    """Union node IDs across partitions, one column per unique ID.
-
-    A node on a partition interface is in several partitions.
-    ``reduction`` says how its copies combine (Ladruno schema §7.1):
-
-    - ``"NONE"``: the copies are the same (kinematics); the first
-      partition that has the node wins.
-    - ``"SUM"``: each rank stored only its own elements' share
-      (reactions, unbalanced loads); the copies are added. A node held
-      by one partition keeps its value.
-    - ``"UNSUPPORTED"``: each copy is a partial that no sum recovers;
-      refused.
-    """
-    if reduction == PARTITION_REDUCTION_UNSUPPORTED:
-        raise ValueError(
-            f"{component!r} is PARTITION_REDUCTION=UNSUPPORTED: each "
-            "partition file holds only its own rank's partial, and no "
-            "sum of the partials gives the model value. Read the part "
-            "files one at a time, or rerun serially."
-        )
-    if not slabs:
-        return _empty_node(component)
-    time = _first_nonempty_time(slabs)
-    T = int(time.size)
-    pieces = [sl for sl in slabs if sl.node_ids.size]
-    if not pieces:
-        return NodeSlab(
-            component=component,
-            values=np.zeros((T, 0), dtype=np.float64),
-            node_ids=np.array([], dtype=np.int64),
-            time=time,
-        )
-    all_ids = np.concatenate([sl.node_ids for sl in pieces])
-    all_vals = np.concatenate([sl.values for sl in pieces], axis=1)
-    # ``return_index`` uses a stable sort: ``first`` is the column of
-    # each node's first copy in partition order.
-    master_ids, first, inverse = np.unique(
-        all_ids, return_index=True, return_inverse=True,
-    )
-    if reduction == PARTITION_REDUCTION_SUM:
-        # Group the copies of each node next to each other, then add
-        # each group. Every master ID has at least one copy, so the
-        # group starts are strictly increasing.
-        order = np.argsort(inverse, kind="stable")
-        starts = np.searchsorted(inverse[order], np.arange(master_ids.size))
-        values = np.add.reduceat(all_vals[:, order], starts, axis=1)
-    else:
-        values = all_vals[:, first]
-    return NodeSlab(
-        component=component, values=np.asarray(values, dtype=np.float64),
-        node_ids=master_ids, time=time,
-    )
-
-
-def _refuse_element_in_two_partitions(
-    ids_per_part: Sequence[ndarray], sources: Sequence[str], *, what: str,
-) -> None:
-    """Raise :class:`MPCOElementInTwoBuckets` when an element id comes
-    back from two partitions.
-
-    Each element lives on exactly one rank, so the stitch concatenates
-    without dedupe; an id in two parts would read twice (#2221). Within
-    one part an id repeats legitimately (one row per Gauss point, station
-    or fiber), and the part's own reader refuses a repeat inside one
-    file. Nodes are not checked here: boundary nodes are shared by
-    design, and :func:`_merge_node_slabs` merges them.
-    """
-    if len(ids_per_part) != len(sources):
-        raise ValueError(
-            f"{len(ids_per_part)} partition slabs but {len(sources)} "
-            f"partition names; the stitch cannot name a part."
-        )
-    uniq = [np.unique(np.asarray(i, dtype=np.int64)) for i in ids_per_part]
-    if sum(1 for u in uniq if u.size) < 2:
-        return
-    all_ids = np.concatenate(uniq)
-    owners = np.repeat(np.arange(len(uniq)), [u.size for u in uniq])
-    order = np.argsort(all_ids, kind="stable")
-    sorted_ids = all_ids[order]
-    repeat = np.flatnonzero(sorted_ids[1:] == sorted_ids[:-1])
-    if repeat.size == 0:
-        return
-    j = int(repeat[0])
-    eid = int(sorted_ids[j])
-    first = sources[int(owners[order[j]])]
-    second = sources[int(owners[order[j + 1]])]
-    n_ids = np.unique(sorted_ids[repeat]).size
-    more = (
-        f" {n_ids - 1} more element id(s) the read returns repeat too."
-        if n_ids > 1 else ""
-    )
-    raise MPCOElementInTwoBuckets(
-        f"Partitioned {what}: element {eid} comes back from two partition "
-        f"files, {first} and {second}. Each element lives on exactly one "
-        f"rank, so the part files are corrupt or not from one run; the "
-        f"read refuses rather than return element {eid} twice.{more}"
-    )
-
-
-def _concat_element_slabs(
-    slabs: list[ElementSlab], component: str, sources: Sequence[str],
-) -> ElementSlab:
-    """Concatenate element slabs along the element axis (disjoint by
-    partition: an element in two parts refuses, see
-    :func:`_refuse_element_in_two_partitions`)."""
-    time = _first_nonempty_time(slabs)
-    _refuse_element_in_two_partitions(
-        [s.element_ids for s in slabs], sources,
-        what=f"element read of {component!r}",
-    )
-    nonempty = [s for s in slabs if s.element_ids.size]
-    if not nonempty:
-        return ElementSlab(
-            component=component,
-            values=np.zeros((time.size, 0, 0), dtype=np.float64),
-            element_ids=np.array([], dtype=np.int64),
-            time=time,
-        )
-    return ElementSlab(
-        component=component,
-        values=np.concatenate([s.values for s in nonempty], axis=1),
-        element_ids=np.concatenate([s.element_ids for s in nonempty]),
-        time=time,
-    )
-
-
-def _concat_line_station_slabs(
-    slabs: list[LineStationSlab], component: str, sources: Sequence[str],
-) -> LineStationSlab:
-    time = _first_nonempty_time(slabs)
-    _refuse_element_in_two_partitions(
-        [s.element_index for s in slabs], sources,
-        what=f"line-station read of {component!r}",
-    )
-    nonempty = [s for s in slabs if s.element_index.size]
-    if not nonempty:
-        return LineStationSlab(
-            component=component,
-            values=np.zeros((time.size, 0), dtype=np.float64),
-            element_index=np.array([], dtype=np.int64),
-            station_natural_coord=np.array([], dtype=np.float64),
-            time=time,
-        )
-    # Stitch the per-row beam quaternion when any partition carries one
-    # (Ladruno MODEL/LOCAL_AXES); parts without a frame array contribute
-    # NaN rows so the result stays row-aligned. None when no part has one
-    # (MPCO/native carry no LOCAL_AXES → all None → None).
-    quats = None
-    if any(s.local_axes_quaternion is not None for s in nonempty):
-        parts = []
-        for s in nonempty:
-            if s.local_axes_quaternion is not None:
-                parts.append(np.asarray(s.local_axes_quaternion))
-            else:
-                parts.append(np.full((s.element_index.size, 4), np.nan))
-        quats = np.concatenate(parts, axis=0)
-    return LineStationSlab(
-        component=component,
-        values=np.concatenate([s.values for s in nonempty], axis=1),
-        element_index=np.concatenate([s.element_index for s in nonempty]),
-        station_natural_coord=np.concatenate(
-            [s.station_natural_coord for s in nonempty],
-        ),
-        time=time,
-        local_axes_quaternion=quats,
-    )
-
-
-def _concat_gauss_slabs(
-    slabs: list[GaussSlab],
-    component: str,
-    sources: Sequence[str],
-    *,
-    reader: str,
-    mixed_error: type[ValueError],
-) -> GaussSlab:
-    """Concatenate Gauss slabs along the GP axis.
-
-    An element in two parts refuses
-    (:func:`_refuse_element_in_two_partitions`). So do parts whose
-    natural coordinates differ in width (a 2-D-parent shell part beside a
-    3-D-parent solid part): ``mixed_error`` names a part of each width,
-    as the single-file read does (#2221). A part whose points have no
-    natural coordinates at all (width 0) is padded with NaN to the others'
-    width, as before.
-    """
-    time = _first_nonempty_time(slabs)
-    _refuse_element_in_two_partitions(
-        [s.element_index for s in slabs], sources,
-        what=f"gauss read of {component!r}",
-    )
-    pairs = [(s, src) for s, src in zip(slabs, sources, strict=True)
-             if s.element_index.size]
-    nonempty = [s for s, _ in pairs]
-    if not nonempty:
-        return GaussSlab(
-            component=component,
-            values=np.zeros((time.size, 0), dtype=np.float64),
-            element_index=np.array([], dtype=np.int64),
-            natural_coords=np.zeros((0, 3), dtype=np.float64),
-            local_axes_quaternion=None,
-            time=time,
-        )
-    refuse_mixed_gauss_dims(
-        [(f"{src} (element {int(s.element_index[0])})",
-          int(s.natural_coords.shape[1])) for s, src in pairs],
-        component=component, reader=reader,
-        source=f"the {len(sources)} partition files", error=mixed_error,
-    )
-    max_dim = max(s.natural_coords.shape[1] for s in nonempty)
-    coords = [
-        s.natural_coords if s.natural_coords.shape[1] == max_dim
-        else np.full((s.natural_coords.shape[0], max_dim), np.nan)
-        for s in nonempty
-    ]
-    return GaussSlab(
-        component=component,
-        values=np.concatenate([s.values for s in nonempty], axis=1),
-        element_index=np.concatenate([s.element_index for s in nonempty]),
-        natural_coords=np.concatenate(coords, axis=0),
-        local_axes_quaternion=None,
-        time=time,
-    )
-
-
-def _concat_fiber_slabs(
-    slabs: list[FiberSlab], component: str, sources: Sequence[str],
-) -> FiberSlab:
-    time = _first_nonempty_time(slabs)
-    _refuse_element_in_two_partitions(
-        [s.element_index for s in slabs], sources,
-        what=f"fiber read of {component!r}",
-    )
-    nonempty = [s for s in slabs if s.element_index.size]
-    if not nonempty:
-        return FiberSlab(
-            component=component,
-            values=np.zeros((time.size, 0), dtype=np.float64),
-            element_index=np.array([], dtype=np.int64),
-            gp_index=np.array([], dtype=np.int64),
-            y=np.array([], dtype=np.float64),
-            z=np.array([], dtype=np.float64),
-            area=np.array([], dtype=np.float64),
-            material_tag=np.array([], dtype=np.int64),
-            time=time,
-        )
-    # Station ξ: NaN-fill partitions that carry no stations iff at
-    # least one does; all-None stays None (matches the slab contract).
-    if any(s.station_natural_coord is not None for s in nonempty):
-        station = np.concatenate([
-            s.station_natural_coord
-            if s.station_natural_coord is not None
-            else np.full(s.element_index.size, np.nan, dtype=np.float64)
-            for s in nonempty
-        ])
-    else:
-        station = None
-    return FiberSlab(
-        component=component,
-        values=np.concatenate([s.values for s in nonempty], axis=1),
-        element_index=np.concatenate([s.element_index for s in nonempty]),
-        gp_index=np.concatenate([s.gp_index for s in nonempty]),
-        y=np.concatenate([s.y for s in nonempty]),
-        z=np.concatenate([s.z for s in nonempty]),
-        area=np.concatenate([s.area for s in nonempty]),
-        material_tag=np.concatenate([s.material_tag for s in nonempty]),
-        time=time,
-        station_natural_coord=station,
-    )
-
-
-def _concat_layer_slabs(
-    slabs: list[LayerSlab], component: str, sources: Sequence[str],
-) -> LayerSlab:
-    time = _first_nonempty_time(slabs)
-    _refuse_element_in_two_partitions(
-        [s.element_index for s in slabs], sources,
-        what=f"layer read of {component!r}",
-    )
-    nonempty = [s for s in slabs if s.element_index.size]
-    if not nonempty:
-        return LayerSlab(
-            component=component,
-            values=np.zeros((time.size, 0), dtype=np.float64),
-            element_index=np.array([], dtype=np.int64),
-            gp_index=np.array([], dtype=np.int64),
-            layer_index=np.array([], dtype=np.int64),
-            sub_gp_index=np.array([], dtype=np.int64),
-            thickness=np.array([], dtype=np.float64),
-            local_axes_quaternion=np.zeros((0, 4), dtype=np.float64),
-            time=time,
-        )
-    return LayerSlab(
-        component=component,
-        values=np.concatenate([s.values for s in nonempty], axis=1),
-        element_index=np.concatenate([s.element_index for s in nonempty]),
-        gp_index=np.concatenate([s.gp_index for s in nonempty]),
-        layer_index=np.concatenate([s.layer_index for s in nonempty]),
-        sub_gp_index=np.concatenate([s.sub_gp_index for s in nonempty]),
-        thickness=np.concatenate([s.thickness for s in nonempty]),
-        local_axes_quaternion=np.concatenate(
-            [s.local_axes_quaternion for s in nonempty], axis=0,
-        ),
-        time=time,
-    )
-
-
-def _concat_spring_slabs(
-    slabs: list[SpringSlab], component: str, sources: Sequence[str],
-) -> SpringSlab:
-    time = _first_nonempty_time(slabs)
-    _refuse_element_in_two_partitions(
-        [s.element_index for s in slabs], sources,
-        what=f"spring read of {component!r}",
-    )
-    nonempty = [s for s in slabs if s.element_index.size]
-    if not nonempty:
-        return SpringSlab(
-            component=component,
-            values=np.zeros((time.size, 0), dtype=np.float64),
-            element_index=np.array([], dtype=np.int64),
-            time=time,
-        )
-    return SpringSlab(
-        component=component,
-        values=np.concatenate([s.values for s in nonempty], axis=1),
-        element_index=np.concatenate([s.element_index for s in nonempty]),
-        time=time,
-    )
-
 
 # =====================================================================
 # FEM merge
 # =====================================================================
-
-def _merge_partition_fems(
-    fems: list["Optional[FEMData]"],
-) -> "Optional[FEMData]":
-    """Merge per-partition FEMData snapshots into one model-wide snapshot.
-
-    Strategy:
-
-    - **Nodes**: union by ID. First partition that owns a node ID
-      keeps its coordinates; later duplicates (boundary copies) are
-      dropped.
-    - **Elements**: per-class concatenation. Different partitions may
-      hold disjoint elements of the same class — merge their groups.
-    - **Physical groups / labels**: dropped from the merged FEMData.
-      Per-partition MPCO regions describe rank-local node sets that
-      don't correspond to anything meaningful at the merged level.
-    """
-    from ...mesh._element_types import ElementGroup
-    from ...mesh._group_set import LabelSet, PhysicalGroupSet
-    from ...mesh.FEMData import (
-        ElementComposite, FEMData, MeshInfo, NodeComposite,
-    )
-
-    real = [f for f in fems if f is not None]
-    if not real:
-        return None
-    if len(real) == 1:
-        return real[0]
-
-    # Node merge — union by ID, first-occurrence wins on coords.
-    seen_ids: dict[int, int] = {}     # node_id → row in merged array
-    merged_ids: list[int] = []
-    merged_coords: list[ndarray] = []
-    for f in real:
-        ids = np.asarray(f.nodes.ids, dtype=np.int64)
-        coords = np.asarray(f.nodes.coords, dtype=np.float64)
-        for i, nid in enumerate(ids):
-            int_nid = int(nid)
-            if int_nid in seen_ids:
-                continue
-            seen_ids[int_nid] = len(merged_ids)
-            merged_ids.append(int_nid)
-            merged_coords.append(coords[i])
-    node_ids_arr = np.array(merged_ids, dtype=np.int64)
-    coords_arr = (
-        np.stack(merged_coords, axis=0)
-        if merged_coords
-        else np.zeros((0, 3), dtype=np.float64)
-    )
-
-    # Element merge — per-class concatenation. ``code`` is the
-    # negated class_tag (synthetic) and matches across partitions for
-    # the same OpenSees class. ``ElementComposite`` exposes its
-    # underlying type-keyed dict via ``_groups`` (no public accessor).
-    merged_groups: dict[int, ElementGroup] = {}
-    for f in real:
-        for code, grp in f.elements._groups.items():
-            if code in merged_groups:
-                existing = merged_groups[code]
-                merged_ids_e = np.concatenate(
-                    [existing.ids, grp.ids],
-                ).astype(np.int64)
-                merged_conn = np.concatenate(
-                    [existing.connectivity, grp.connectivity], axis=0,
-                ).astype(np.int64)
-                # Element type info — npe and dim are immutable; bump
-                # the count on a fresh ElementTypeInfo.
-                from ...mesh._element_types import make_type_info
-                info = make_type_info(
-                    code=existing.element_type.code,
-                    gmsh_name=existing.element_type.gmsh_name,
-                    dim=existing.element_type.dim,
-                    order=existing.element_type.order,
-                    npe=existing.element_type.npe,
-                    count=int(merged_ids_e.size),
-                )
-                merged_groups[code] = ElementGroup(
-                    element_type=info,
-                    ids=merged_ids_e,
-                    connectivity=merged_conn,
-                )
-            else:
-                merged_groups[code] = grp
-
-    nodes = NodeComposite(
-        node_ids=node_ids_arr,
-        node_coords=coords_arr,
-        physical=PhysicalGroupSet({}),
-        labels=LabelSet({}),
-    )
-    elements = ElementComposite(
-        groups=merged_groups,
-        physical=PhysicalGroupSet({}),
-        labels=LabelSet({}),
-    )
-    n_elems = sum(int(g.ids.size) for g in merged_groups.values())
-    info = MeshInfo(
-        n_nodes=int(node_ids_arr.size),
-        n_elems=n_elems,
-        bandwidth=0,
-        types=[g.element_type for g in merged_groups.values()],
-    )
-    return FEMData(nodes=nodes, elements=elements, info=info)
 
 
 # =====================================================================
@@ -949,15 +464,6 @@ class _Sentinel:
 
 
 _SENTINEL = _Sentinel()
-
-
-def _empty_node(component: str) -> NodeSlab:
-    return NodeSlab(
-        component=component,
-        values=np.zeros((0, 0), dtype=np.float64),
-        node_ids=np.array([], dtype=np.int64),
-        time=np.array([], dtype=np.float64),
-    )
 
 
 __all__ = [
