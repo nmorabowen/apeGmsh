@@ -4,7 +4,7 @@
 // It runs in a child process, because main.ts reads its mode from argv and
 // watches the set it opens; it prints one JSON line and exits.
 //
-//   node test/main/setDoorsDriver.ts --case=<view|reload|none|render|capture|describe|measure|source|source-none> --dir=<root> [main's own --mode= --file= --spec= --out=]
+//   node test/main/setDoorsDriver.ts --case=<view|reload|stale|none|render|capture|describe|measure|source|source-none> --dir=<root> [main's own --mode= --file= --spec= --out=]
 //
 // `<root>` holds `set/` (the set the window opens), `outside/` and `elsewhere/`;
 // the `source` cases (VU13 #2760) also `src-set/`, `lib/` and the editor's log.
@@ -24,7 +24,8 @@ const root = opt("dir");
 const which = opt("case");
 if (!root || !which) throw new Error("setDoorsDriver needs --case= and --dir=");
 
-const { appEvents, handlers, listeners, pageEvents, pageSent, ready } = (await import(STUB)) as typeof import("./electronStub.ts");
+const { appEvents, commitFrame, handlers, listeners, pageEvent, pageEvents, pageSent, ready } = (await import(STUB)) as typeof import("./electronStub.ts");
+type StubFrame = import("./electronStub.ts").StubFrame;
 await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "main.ts")).href);
 
 const set = join(root, "set");
@@ -175,24 +176,87 @@ if (which === "view") {
   await call("prune:2 fallen off", "viewer:offerOpen", RESULTS.elsewhere, offered);
   out["prune:2 model"] = { onScreen: await modelOf() };
   await call("prune:3 back to the set it left", "viewer:offerOpen", ladruno, [join(set, "s.h5"), ladruno]);
-} else if (which === "reload") {
+} else if (which === "reload" || which === "stale") {
   // VU14 (#2771): a page load starts an empty offer list, so an offer the old page listed is no longer openable;
   // an offer still waiting to be sent (the new page will list it) is. main.ts makes its window once the app is ready.
   ready();
   await new Promise((r) => setImmediate(r));
-  const load = () => {
-    const fns = pageEvents.get("did-start-loading") ?? [];
-    if (fns.length === 0) throw new Error("main.ts listens for no did-start-loading");
-    for (const fn of fns) fn({});
+  const deliver = (name: string, details: object = {}) => {
+    const fns = pageEvents.get(name) ?? [];
+    if (fns.length === 0) throw new Error(`main.ts listens for no ${name}`);
+    for (const fn of fns) fn(details);
   };
-  const listening = () => listeners.get("viewer:offersReady")!({});
+  /** A navigation starts (Electron's `did-start-navigation` details); a reload while loading starts no `did-start-loading`. */
+  const navigate = (isMainFrame: boolean, isSameDocument: boolean) => deliver("did-start-navigation", { isMainFrame, isSameDocument });
+  // VU15 (#2776): a load starts (`did-start-loading`) and commits its page in a frame (`did-navigate`);
+  // only that frame's offersReady counts. Each load here commits a new frame, as Chromium may.
+  let frames = 0;
+  let current: StubFrame = { processId: 1, routingId: 0 };
+  const load = () => deliver("did-start-loading");
+  const commit = (f: StubFrame = { processId: 1, routingId: ++frames }) => {
+    current = f;
+    commitFrame(f);
+    deliver("did-navigate");
+    return f;
+  };
+  const listening = (e: object = pageEvent(current)) => listeners.get("viewer:offersReady")!(e);
   const present = (spec: string) => {
     for (const fn of appEvents.get("second-instance") ?? []) fn({}, [], root, { kind: "present", spec: join(root, spec), ack: join(root, "no-such-pipe") });
   };
   const offersSent = () => pageSent.filter((s) => s.channel === "viewer:offers").length;
   const modelOf = async () => ((await handlers.get("viewer:currentSet")!(event)) as { model: string | null } | null)?.model ?? null;
   const there = [join(elsewhere, "s.h5"), RESULTS.elsewhere];
+  if (which === "stale") {
+    // Each late or foreign offersReady is refused, and the offer it would have released stays waiting:
+    // nothing is sent until the current load's own page listens.
+    const old = (load(), commit());
+    present("present.json"); // the page has not listened yet: the offer waits
+    load(); // the page reloads ...
+    listening(pageEvent(old)); // ... and the page being replaced says it listens, before the new one commits
+    out["stale:1 replaced page, mid-load"] = { sent: offersSent() };
+    commit({ processId: 2, routingId: 7 }); // the new page commits in another process
+    listening(pageEvent(old)); // and the old page's message arrives after the commit
+    out["stale:2 replaced page, after commit"] = { sent: offersSent() };
+    listening(pageEvent({ processId: 2, routingId: 8 })); // another frame of the new process (not the window's page)
+    out["stale:3 another frame"] = { sent: offersSent() };
+    listening(pageEvent(current, { send: () => undefined })); // another webContents with the frame's ids
+    out["stale:4 another webContents"] = { sent: offersSent() };
+    listening({}); // no sender at all
+    out["stale:5 no sender"] = { sent: offersSent() };
+    present("present.json"); // nothing above re-armed the page: a new offer waits too
+    out["stale:6 a later offer"] = { sent: offersSent() };
+    listening(); // the current load's page listens: both waiting batches go
+    out["stale:7 current page"] = { sent: offersSent() };
+    // A load whose page commits in the same frame (Chromium may keep it): until the commit, its offersReady is the old page's.
+    load();
+    present("flood.json");
+    listening(pageEvent(current));
+    out["stale:9 same frame, mid-load"] = { sent: offersSent() };
+    commit(current);
+    listening();
+    out["stale:10 same frame, committed"] = { sent: offersSent() };
+    // VU15 review: navigations that replace no page leave it armed: an in-page one, and one in a subframe.
+    navigate(true, true);
+    present("present.json");
+    out["stale:11 in-page navigation"] = { sent: offersSent() };
+    navigate(false, false);
+    present("present.json");
+    out["stale:12 subframe navigation"] = { sent: offersSent() };
+    // A reload while the page is still loading: no did-start-loading, only the main frame's new navigation.
+    const loading = current;
+    navigate(true, false);
+    present("present.json");
+    out["stale:13 reload during load"] = { sent: offersSent() };
+    listening(pageEvent(loading)); // the page being replaced, still named by its frame until the new one commits
+    out["stale:14 reload during load, old page"] = { sent: offersSent() };
+    commit();
+    listening();
+    out["stale:15 reload during load, new page"] = { sent: offersSent() };
+    process.stdout.write(`SET_DOORS ${JSON.stringify(out)}\n`);
+    process.exit(0);
+  }
   load();
+  commit();
   listening();
   present("present.json"); // the page listens: sent at once, and listed
   out["reload:0 sent"] = { sent: offersSent() };
@@ -207,6 +271,7 @@ if (which === "view") {
   present("flood.json");
   load();
   out["reload:4 sent"] = { sent: offersSent() };
+  commit();
   listening();
   out["reload:5 sent"] = { sent: offersSent() };
   await call("reload:5 waiting offer", "viewer:offerOpen", join(outside, "s.ladruno"), [join(outside, "s.h5"), join(outside, "s.ladruno")]);
