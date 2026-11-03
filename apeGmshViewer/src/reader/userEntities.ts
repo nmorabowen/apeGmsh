@@ -73,7 +73,23 @@ export function table(e: Entities, kind: EntityKind): readonly { name: string }[
   return kind === "cut" ? e.cuts : kind === "storey" ? e.storeys : e.pointSets;
 }
 
-const finite = (...xs: readonly number[]) => xs.every((x) => Number.isFinite(x));
+/**
+ * Every coordinate of every point is finite. A loop, never a spread into a
+ * call: a legal zone can hold a point set or a polygon of 10^5 points, past
+ * the engine's argument limit (#2749 review).
+ */
+function finite(...groups: readonly (readonly (readonly number[] | number)[])[]): boolean {
+  for (const g of groups) {
+    for (const p of g) {
+      if (typeof p === "number") {
+        if (!Number.isFinite(p)) return false;
+      } else {
+        for (const x of p) if (!Number.isFinite(x)) return false;
+      }
+    }
+  }
+  return true;
+}
 const list = (v: readonly number[]) => `[${v.map(pyFloat).join(", ")}]`;
 /** numpy's `norm` of a 3-vector: `sqrt(dot(v, v))`. */
 const norm = (v: Vec3) => Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
@@ -81,7 +97,7 @@ const norm = (v: Vec3) => Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 function cutProblem(c: CutEntity): string | null {
   const name = pyStr(c.name);
   if (!(CUT_SIDES as readonly string[]).includes(c.side)) return `cut ${name}: side ${pyStr(c.side)} is not one of ('positive', 'negative')`;
-  if (!finite(...c.point, ...c.normal, ...c.reference, ...c.polygon.flat())) return `cut ${name}: a coordinate is not finite`;
+  if (!finite(c.point, c.normal, c.reference, c.polygon)) return `cut ${name}: a coordinate is not finite`;
   if (Math.abs(norm(c.normal) - 1) > UNIT_TOL) return `cut ${name}: normal ${list(c.normal)} is not of unit length`;
   if (c.elementIds.length === 0) return `cut ${name} filters to no element`;
   if (c.polygon.length > 0 && c.polygon.length < 3) return `cut ${name}: a bounding polygon has at least three vertices`;
@@ -89,17 +105,17 @@ function cutProblem(c: CutEntity): string | null {
 }
 
 function storeyProblem(s: Storey): string | null {
-  if (!finite(s.level, ...s.reference)) return `storey ${pyStr(s.name)}: the level or reference is not finite`;
+  if (!finite([s.level], s.reference)) return `storey ${pyStr(s.name)}: the level or reference is not finite`;
   if (s.nodeIds.length === 0) return `storey ${pyStr(s.name)} has no node`;
   return null;
 }
 
 function pointSetProblem(p: PointSet): string | null {
   const name = pyStr(p.name);
-  if (!finite(...p.xyz.flat())) return `point set ${name}: a coordinate is not finite`;
+  if (!finite(p.xyz)) return `point set ${name}: a coordinate is not finite`;
   if (p.xyz.length === 0) return `point set ${name} has no point`;
   if (p.hostElement.length !== p.xyz.length) return `point set ${name}: one host_element per point`;
-  if (Math.min(...p.hostElement) < -1) return `point set ${name}: a host_element is below -1 (-1 = none)`;
+  if (p.hostElement.some((h) => h < -1)) return `point set ${name}: a host_element is below -1 (-1 = none)`;
   return null;
 }
 

@@ -268,6 +268,36 @@ test("a missing table, a malformed column or bad offsets refuse the zone, as Pyt
   refusedWith(writeZone({ override: { "cuts/name": (g, n) => i4(g, n, [1]) } }), /name is int32 \(1,\), expected str/);
 });
 
+/** A point set of `n` points and a cut polygon of `m` vertices, each coordinate distinct; `lastHost` is the last point's host. */
+function largeZone(n: number, m: number, lastHost = -1): { path: string; xyz: number[]; poly: number[] } {
+  const xyz = Array.from({ length: 3 * n }, (_, k) => k * 0.5 + 0.125);
+  const poly = Array.from({ length: 3 * m }, (_, k) => k % 3 === 2 ? 1 : Math.sin(k) * 10);
+  const host = Array.from({ length: n }, (_, k) => (k === n - 1 ? lastHost : k % 7 === 0 ? -1 : k + 1));
+  const path = writeZone({
+    override: {
+      "point_sets/point_offsets": (g, nm) => i4(g, nm, [0, n]),
+      "point_sets/xyz": (g, nm) => f8(g, nm, xyz, [n, 3]),
+      "point_sets/host_element": (g, nm) => i4(g, nm, host),
+      "cuts/polygon_offsets": (g, nm) => i4(g, nm, [0, m]),
+      "cuts/polygon": (g, nm) => f8(g, nm, poly, [m, 3]),
+    },
+  });
+  return { path, xyz, poly };
+}
+
+test("a large legal zone reads, as Python reads it: a 50,000-point set and a 200,000-vertex polygon (no spread into a call, #2749 review)", () => {
+  const { path, xyz, poly } = largeZone(50_000, 200_000);
+  const e = ok(readUserFile(H5, path, null).entities);
+  assert.deepEqual(e.refused, []);
+  assert.equal(e.pointSets[0]!.xyz.length, 50_000);
+  assert.equal(bits(e.pointSets[0]!.xyz.flat()), bits(xyz));
+  assert.equal(e.cuts[0]!.polygon.length, 200_000);
+  assert.equal(bits(e.cuts[0]!.polygon.flat()), bits(poly));
+  // The row rules still run over every point: the last host below -1 refuses the row, as Python's `_point_set_problem`.
+  const bad = ok(readUserFile(H5, largeZone(50_000, 3, -2).path, null).entities);
+  assert.deepEqual(bad.refused.map((r) => [r.kind, r.row, r.reason, r.detail]), [["point_set", 0, "bad-param", "point set 'pts': a host_element is below -1 (-1 = none)"]]);
+});
+
 test("an element index space other than OpenSees tags refuses the zone, and so does none", () => {
   refusedWith(writeZone({ space: "fem" }), /@element_index_space is 'fem'; this reader knows 'opensees' only/);
   refusedWith(writeZone({ space: null }), /@element_index_space is None/);

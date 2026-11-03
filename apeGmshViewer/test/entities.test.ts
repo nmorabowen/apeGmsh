@@ -8,7 +8,9 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { boxOf, drawnEntities, entityDrawing, planeInBox, planHull, type Box, type EntitiesIn } from "../src/renderer/entities.ts";
+import * as THREE from "three";
+import { boxOf, drawnEntities, EntitiesLayer, entityDrawing, planeInBox, planHull, type Box, type EntitiesIn } from "../src/renderer/entities.ts";
+import { BlobStore } from "../src/state/blobs.ts";
 import { initialState } from "../src/state/reduce.ts";
 import type { MeshInfo, State, UserCut, Vec3 } from "../src/state/types.ts";
 
@@ -116,6 +118,47 @@ test("planHull and boxOf: the closed forms the layer stands on", () => {
   assert.deepEqual(planHull([[1, 1], [1, 1]]), [[1, 1]]);
   const b = boxOf([0, 0, 0, 3, 4, 0], 0.2)!;
   assert.deepEqual(b, [[-1, -1, -1], [4, 5, 1]]);
+});
+
+test("EntitiesLayer: a stale zone hides the layer, and a rebuild disposes and removes what it drew before (#2749 review)", () => {
+  const mesh = { center: [3000, 2000, 5500], radius: 7000 } as unknown as MeshInfo;
+  const at = (entities: unknown): State =>
+    ({
+      ...initialState,
+      mesh,
+      user: { status: "ready", path: "C:/w/run.user.h5", info: { warnings: [], combinations: null, results: null, spectra: null, modes: null, entities } },
+    }) as State;
+  const e = zone({
+    cuts: [cut({})],
+    pointSets: [{ row: 0, name: "roof", xyz: [[0, 0, 11000]], hostElement: [-1] }],
+  });
+  const layer = new EntitiesLayer();
+  assert.equal(layer.root.visible, false);
+  assert.equal(layer.sync(at(e), new BlobStore()), true);
+  assert.equal(layer.root.visible, true);
+  assert.ok(layer.root.children.length >= 3, "the cut's face, its outline and the points");
+  assert.equal(layer.sync(at(e), new BlobStore()), false, "an unchanged state draws nothing new");
+
+  // A rebuild (a theme change) disposes every geometry and material it drew, and leaves none of it in the scene.
+  const before = [...layer.root.children] as THREE.Mesh[];
+  const disposed = new Set<unknown>();
+  for (const o of before) {
+    o.geometry.addEventListener("dispose", () => disposed.add(o.geometry));
+    (o.material as THREE.Material).addEventListener("dispose", () => disposed.add(o.material));
+  }
+  layer.setTheme("light");
+  assert.equal(layer.sync(at(e), new BlobStore()), true);
+  for (const o of before) {
+    assert.ok(!layer.root.children.includes(o), "the old object left the layer");
+    assert.ok(disposed.has(o.geometry) && disposed.has(o.material), "the old geometry and material are disposed");
+  }
+  assert.equal(layer.root.children.length, before.length);
+
+  // A zone that goes stale hides the layer (A6), and says the scene changed.
+  assert.equal(layer.sync(at({ ...e, stale: { stale: true, reason: "fem_hash differs" } }), new BlobStore()), true);
+  assert.equal(layer.root.visible, false);
+  assert.equal(layer.sync(at({ ...e, stale: { stale: true, reason: "fem_hash differs" } }), new BlobStore()), false);
+  layer.dispose();
 });
 
 test("drawnEntities: only a zone that reads and is current, with the model drawn and not on the geometry phase", () => {
