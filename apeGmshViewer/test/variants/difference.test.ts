@@ -1,6 +1,6 @@
 // VU10 (#2694; ADR 0132 D9.5): the difference of two variants, end to end on
 // the renderer side, over the committed synthetic pair (test/fixtures/vu10,
-// make_vu10_fixture.py). The window set (Uncracked) is opened through the real
+// scripts/make_viewer_variants_fixture.py). The window set (Uncracked) is opened through the real
 // Effects; the compare set (Cracked) is read by a second ResultsHost behind a
 // VariantDoor, as main's compare host serves it. The oracle is the fixture's
 // closed form, restated here: at step k, s = 0.01 (k + 1) and

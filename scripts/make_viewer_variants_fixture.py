@@ -1,12 +1,13 @@
 """Write the VU10 variant pair (ADR 0132 D8, D9; #2694). Synthetic values.
 
     $env:PYTHONPATH = "src"
-    & C:\\Users\\nmb\\venv\\opensees_venv\\Scripts\\python.exe apeGmshViewer/test/fixtures/vu10/make_vu10_fixture.py
+    & C:\\Users\\nmb\\venv\\opensees_venv\\Scripts\\python.exe scripts/make_viewer_variants_fixture.py
 
 run from the repository root, with ``PYTHONPATH`` naming this checkout's ``src``
-(the editable install may point at another checkout). It writes, beside this
-file, one study of two variants of one model that differ in one parameter, the
-plate's Young's modulus:
+(the editable install may point at another checkout). It lives here, not in the
+app tree, because it imports apeGmsh (ADR 0112 D4, the App wall). It writes, into
+``apeGmshViewer/test/fixtures/vu10/``, one study of two variants of one model
+that differ in one parameter, the plate's Young's modulus:
 
 * ``plate_uncracked.h5`` and ``plate_uncracked.ladruno``: E = 30e9 (Ie/Ig 1.0);
 * ``cracked/plate_cracked.h5`` and ``cracked/plate_cracked.ladruno``:
@@ -29,7 +30,7 @@ with ``s = 0.01 (k + 1)`` at step ``k`` of 3 and ``r`` the variant's Ie/Ig::
 
 so the difference Uncracked minus Cracked at a node is
 ``u(r=1) - u(r=0.35) = u(r=1) (1 - 1 / 0.35)``, the oracle of
-``test/variants/difference.test.ts``.
+``apeGmshViewer/test/variants/difference.test.ts``.
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ import numpy as np
 
 from apeGmsh import apeGmsh
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parents[1] / "apeGmshViewer" / "test" / "fixtures" / "vu10"
 STEPS = 3
 VARIANTS = (
     # label, path relative to the manifest, Ie/Ig, E

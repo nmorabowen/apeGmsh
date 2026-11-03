@@ -13,7 +13,7 @@
 // - a switch opens the row as the window set, and empties a compare slot holding it;
 // - at most one compare set, and `compare:close` empties the slot.
 //
-// The values are the fixture's closed form (make_vu10_fixture.py): at the last
+// The values are the fixture's closed form (scripts/make_viewer_variants_fixture.py): at the last
 // step, Uy = 0.5 * 0.03 * x^2 / r with r = 0.35 for Cracked.
 
 import assert from "node:assert/strict";
