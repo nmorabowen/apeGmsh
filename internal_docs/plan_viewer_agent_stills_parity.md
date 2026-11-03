@@ -16,10 +16,14 @@ cover. R29 keeps the v1 verb
 ([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6594818989)).
 R16b repoints
 ([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595411335)).
-R22b repoints only when the source is a `.ladruno`, because `.mpco`
-support is dropped: "We will drop mpco support. Only ladruno going forward"
-([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595544718)).
-No row is left to rule on. INV-6 stays open (see "Open").
+R22b repoints only when the source is a `.ladruno`: "Only ladruno going
+forward"
+([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595544718)),
+confirmed as "our viewer is ladruno only"
+([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595709683)).
+A deck may still emit MPCO recorders. The viewer and v2 stills read
+`.ladruno` only. No row is left to rule on, and INV-6 stays open (see
+"Open").
 
 **Platform rule.** G2 keeps the VTK path on Linux. Every "repoint" below is
 a repoint on Windows. On Linux the same call keeps drawing through VTK
@@ -36,7 +40,7 @@ until v2 can capture headless there.
 | G5 | The canned pack | `render_pack` chooses the stage, the default component (uz, ux, uy, then the first nodal) and the file set | No pack. Each choice has to be made by a caller that reads `--describe` | **repoint** as one v2 pack spec built for `assess`, ruled 2026-11-02 | R23–R28 |
 | G6 | History plot | `history.png`, a labelled matplotlib history at the extrema node | No 2-D chart in v2. This still was never VTK | **keep** (matplotlib), ruled 2026-11-02 | R27 |
 | G7 | Stills of what is not on disk | `g.model.render` draws the BRep; `g.mesh.render` draws the live mesh, both from the open Gmsh kernel; `fem.render` draws a `FEMData` held in memory, and `results.render` a `Results` held in memory | The app reads files only. A job does open `<stem>.geometry.h5` (`job.ts:95`), but `compileShot` never sets the geometry phase: it sets `mesh` or `results` only (`compile.ts:113-130`). A saved file therefore yields the mesh, never the BRep | **repoint** through a temporary `model.h5`, ruled 2026-11-02, for `g.mesh.render` (R30) and an in-memory `FEMData` (R1). **keep** the v1 verb for `g.model.render` (R29), ruled 2026-11-02 (no geometry phase for v2, and no slice for one). An in-memory `Results` (R22b): **repoint** through its source file only when that file is a `.ladruno`, and **refuse** every other source, ruled 2026-11-02 | R1, R22b, R29, R30 |
-| G8 | Files the app cannot open | `Results.from_mpco` reads an `.mpco`, and a native results file opens under any name | `files` takes `<stem>.h5` with a `<stem>.results.h5`, `<stem>.ladruno` or part-set sibling, and nothing else. An `.mpco` is refused before the run starts (exit 2), and a results file the stem rule does not find is not paired. In-memory objects are G7, not G8 | **drop**, ruled 2026-11-02: `.mpco` is dropped outright, with no conversion offered ([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595544718)) | R31 |
+| G8 | Files the app cannot open | `Results.from_mpco` reads an `.mpco`, and a native results file opens under any name | `files` takes `<stem>.h5` with a `<stem>.results.h5`, `<stem>.ladruno` or part-set sibling, and nothing else. An `.mpco` is refused before the run starts (exit 2), and a results file the stem rule does not find is not paired. In-memory objects are G7, not G8 | **drop** `.mpco` as an input to the viewer and v2 stills, ruled 2026-11-02 ([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595544718), [clarified](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595709683)). A deck may still emit MPCO recorders, but the viewer and v2 stills read `.ladruno` only. D5's fate (the `convert_mpco` route of ADR 0122) is pending an architect design | R31 |
 | G9 | The skip contract | `None` or `()` with a `[skip viewer]` line, under `APEGMSH_SKIP_VIEWER=1` or without GL | No skip. `agent_view.render_stills` raises `FileNotFoundError` with no app, and `AgentViewError` on a refusal | **take v2's raise**, ruled 2026-11-02. Callers that test for `None` change with VA6 | R21 |
 | G10 | Derived-scalar contours | `component=` accepts a scalar computed from the recorded components, such as `von_mises_stress` (`session/_specs.resolve_contour_topology`, `available_derived`) | The app offers only recorded datasets. A derived name is refused as an unknown component or field (`compile.ts` `fieldOf`) | **add** derived scalars to v2, ruled 2026-11-02 | R16c |
 
@@ -46,14 +50,17 @@ repoint, ruled 2026-11-02.
 
 ### R22b, a `Results` held only in memory
 
-**Ruled 2026-11-02**
-([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595544718)):
-"We will drop mpco support. Only ladruno going forward." A `Results` held
-only in memory repoints through its source file only when that file is a
-`.ladruno`. Every other source is refused with a message naming
-`.ladruno`. That covers `.mpco`, native `.h5` results, recorders, and a
-`fem=` or units override held only in memory. No `.mpco` conversion is
-offered.
+**Ruled 2026-11-02** as "Ladruno only"
+([ruling](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595544718),
+[clarification](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595709683)).
+A `Results` held only in memory repoints through its source file only when
+that file is a `.ladruno`. Every other source is refused with a message
+naming `.ladruno`: an `.mpco`, a native `.h5`, recorders, or a `fem=` or
+units override held only in memory. The reason is
+[ADR 0122](../architecture/decisions/0122-ladruno-canonical-results-format.md):
+`.ladruno` is the canonical results format (D1), and native `results.h5` is
+frozen, then deleted at its slice 10 (D2). A deck may still emit MPCO
+recorders. The viewer and v2 stills read `.ladruno` only.
 
 The code check behind the ruling, on `origin/main` (`Results.py` has no
 diff from this branch), starts with the fact that every source keeps a path
@@ -70,20 +77,20 @@ to its file:
 A stage scope (`stage`, `modes[i]`) passes the path on. The other sources
 are refused:
 
-- a native `.h5`, including the recorder cache. This refusal follows the
-  owner's literal "Only ladruno" ruling, not a limit of v2. A native
-  `<stem>.results.h5` beside its `<stem>.h5` reaches v2 unchanged
-  (`main/pairing.ts`; probe A renders `contour_staged.results.h5`), so a
-  paired native file could repoint. Only a file under another name could
-  not. Refusing paired native files is **pending owner confirmation**;
-- an `.mpco`: the app does not open it, and its conversion is lossy;
+- a native `.h5`, including the recorder cache. The refusal follows the
+  ruling and ADR 0122 D2, not a limit of v2. A paired native
+  `<stem>.results.h5` does reach v2 unchanged (`main/pairing.ts`; probe A
+  renders `contour_staged.results.h5`);
+- an `.mpco`: the app does not open it. D5's fate (the `convert_mpco`
+  route) is pending an architect design, and this table does not decide it;
 - some state lives only in memory and is in no file. That is a `fem=` or
   `bind(fem)` that replaces the file's model, and the units overrides
   (`_units_override` and `_source_units_override`, attributes of the
   object).
 
 **Note.** Dropping `.mpco` support program-wide is a separate change
-outside VA6. VA6's deletion scope is unchanged.
+outside VA6. A deck's emission of MPCO recorders stays, and VA6's deletion
+scope is unchanged.
 
 ### Open
 
@@ -168,7 +175,7 @@ colour-range probe. All of them are under "Evidence".
 | R20 | `step=k ≥ 0`, `-1`, `-k` | `k`, `"last"`, or `n − k` with `n` from `--describe` | repoint (covered) | A:`refuse-step` refused; V:`step -2` refused |
 | R21 | returns the `Path`, or `None` on a skip | `agent_view.render_stills(spec, out)` returns the manifest and raises on a refusal (G9) | repoint, take v2's raise, ruled 2026-11-02 | `agent_view.py`; `main.ts` exit codes 0, 1, 2 |
 | R22 | the stage: the `results.stage(s)` scope, or the `results.modes[i]` scope (a mode stage), else the last stage, with a warning (`_results_stills._resolve_stage`) | `stage`, by name or index, is required for every results shot. A mode is its mode stage (`--describe` `kind: "mode"`), named by index | repoint (covered) | A:`refuse-stage` refused |
-| R22b | `results.render` on a `Results` held only in memory | the `.ladruno` the `Results` was read from, named in `files`. `main` has no `Results` writer: `save_definitions` is the only file writer, and `Results.viewer` refuses the conversion as lossy (#1664) | **repoint** when the source is a `.ladruno`. Otherwise **refuse** with a message naming `.ladruno`: `.mpco`, native `.h5`, recorders, and a `fem=` or units override held only in memory. Refusing native `.h5` follows the literal ruling, not a limit of v2: a paired `<stem>.results.h5` does reach v2 (probe A), so that refusal is **pending owner confirmation**. Ruled 2026-11-02 ([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595544718)) | `Results.py` constructors (`from_native`, `from_recorders`, `from_mpco`, `from_ladruno`, `from_fem`); `readers/_ladruno_from_mpco.py` docstring |
+| R22b | `results.render` on a `Results` held only in memory | the `.ladruno` the `Results` was read from, named in `files`. `main` has no `Results` writer: `save_definitions` is the only file writer, and `Results.viewer` refuses the conversion as lossy (#1664) | **repoint** when the source is a `.ladruno`. Otherwise **refuse** with a message naming `.ladruno`: `.mpco`, native `.h5`, recorders, and a `fem=` or units override held only in memory. The reason is ADR 0122: `.ladruno` is canonical (D1), and native `results.h5` is frozen, then deleted at slice 10 (D2). A paired `<stem>.results.h5` would reach v2 (probe A), so this refusal is the ruling's, not a limit of v2. A deck may still emit MPCO recorders. Ruled 2026-11-02 ("Ladruno only") ([comment](https://github.com/nmorabowen/apeGmsh/issues/2655#issuecomment-6595544718)) | `Results.py` constructors (`from_native`, `from_recorders`, `from_mpco`, `from_ladruno`, `from_fem`); `readers/_ladruno_from_mpco.py` docstring |
 
 ### `results.render_pack(out_dir, *, camera=None, window_size=(1280, 720))`
 
@@ -199,7 +206,7 @@ colour-range probe. All of them are under "Evidence".
 
 | # | v1 call | v2 spec | Outcome | Evidence |
 |---|---|---|---|---|
-| R31 | `python -m apeGmsh.viewers render PATH [OUT] --view --component --step --deform --camera --window --pack --model-h5 --json` | `apeGmshViewer --render spec.json --out DIR`. The flags map as R9–R22, `--pack` as G5, `--json` as `manifest.json`; `.mpco` is dropped (G8). `--camera` defaults to `iso` here, with no planar rule | repoint (covered) | `.mpco` probe: exit 2, "apeGmshViewer opens <stem>.h5, <stem>.geometry.h5, <stem>.ladruno, <stem>.results.h5 or <stem>.user.h5" |
+| R31 | `python -m apeGmsh.viewers render PATH [OUT] --view --component --step --deform --camera --window --pack --model-h5 --json` | `apeGmshViewer --render spec.json --out DIR`. The flags map as R9–R22, `--pack` as G5, `--json` as `manifest.json`. An `.mpco` input is dropped (G8): a deck may still emit MPCO, but the viewer reads `.ladruno` only. `--camera` defaults to `iso` here, with no planar rule | repoint (covered) | `.mpco` probe: exit 2, "apeGmshViewer opens <stem>.h5, <stem>.geometry.h5, <stem>.ladruno, <stem>.results.h5 or <stem>.user.h5" |
 | R34 | studio `render(path=...)`: runs R31 out of process (`studio/_mcp.py:689`) | as R31 | repoint (covered) | as R31 |
 
 ### Platforms
