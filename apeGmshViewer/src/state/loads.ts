@@ -144,7 +144,7 @@ export interface Loads3DGeometry {
   readonly combs: Float32Array;
   /** The reference arrow length (world units): the model's bounding radius × 0.22 × the user scale. */
   readonly refLen: number;
-  /** The model's bounding radius, which sets the thinning cells. */
+  /** The model's bounding radius, which sets the thinning distances. */
   readonly radius: number;
   readonly nodalForcesCount: number;
   readonly nodalMomentsCount: number;
@@ -1465,7 +1465,7 @@ export const BAR = { none: 0, sp: 1, tick: 2 } as const;
  */
 export const COMB_STRIDE = 17;
 
-/** Thinning levels; level k keeps one arrow per cell of `radius * 2^(k - THIN_LEVELS)` (level 0 keeps every arrow). */
+/** Thinning levels; level k keeps arrows at least `radius * 2^(k - THIN_LEVELS)` apart, the stronger first (level 0 keeps every arrow). */
 export const THIN_LEVELS = 12;
 
 interface GlyphBuffers {
@@ -1496,11 +1496,14 @@ function pushComb(g: GlyphBuffers, a: { tip: Vec3; dir: Vec3; len: number }, b: 
 
 /**
  * Write each arrow's thinning level into its record. Level k (1..THIN_LEVELS)
- * keeps, of the arrows kept at level k - 1, the highest-priority one in each
- * cell of side `radius * 2^(k - THIN_LEVELS)`; an arrow's level is the last
- * level that kept it. The renderer shows the arrows whose level reaches the
- * one its zoom needs, so a dense load thins to one arrow per few pixels with
- * no work on the CPU per frame. O(n) per level, done once per rebuild.
+ * keeps, of the arrows kept at level k - 1 and in priority order, each arrow
+ * with no stronger kept arrow closer than `radius * 2^(k - THIN_LEVELS)`; an
+ * arrow's level is the last level that kept it. A distance, not a grid cell:
+ * kept arrows are at least that far apart, and every dropped one has a
+ * stronger arrow within it, so a curve thins evenly instead of in the grid's
+ * pattern. The renderer shows the arrows whose level reaches the one its zoom
+ * needs, so a dense load thins to one arrow per few pixels with no work on the
+ * CPU per frame. Done once per rebuild.
  */
 export function thinningLevels(arrows: Float32Array, radius: number): void {
   const n = arrows.length / ARROW_STRIDE;
@@ -1508,21 +1511,41 @@ export function thinningLevels(arrows: Float32Array, radius: number): void {
   let min = [Infinity, Infinity, Infinity];
   for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) min[c] = Math.min(min[c]!, arrows[i * ARROW_STRIDE + c]!);
   min = min.map((v) => (Number.isFinite(v) ? v : 0));
-  // Highest priority first, so each cell keeps its largest load.
+  // Highest priority first, so a cluster keeps its largest load.
   let alive = Array.from({ length: n }, (_, i) => i).sort((a, b) => arrows[b * ARROW_STRIDE + ARROW.priority]! - arrows[a * ARROW_STRIDE + ARROW.priority]!);
+  // Cells twice the distance wide: the ball of radius d around a point lies in the 2×2×2 block of cells on
+  // the point's side of its own cell's centre, so 8 cells are searched, not 27.
+  // Each cell holds the first kept arrow in it; `next` chains the others (no array per cell).
+  const cells = new Map<number, number>();
+  const next = new Int32Array(n);
   for (let k = 1; k <= THIN_LEVELS && alive.length > 0; k++) {
-    const cell = radius * 2 ** (k - THIN_LEVELS);
-    const span = 2 ** (THIN_LEVELS - k + 2) + 1; // cells across the model's bounding box, with margin
-    const taken = new Set<number>();
+    const d = radius * 2 ** (k - THIN_LEVELS);
+    const d2 = d * d;
+    const w = 2 * d;
+    const span = 2 ** (THIN_LEVELS - k + 1) + 4; // cells across the model's bounding box, with margin
+    cells.clear();
     const kept: number[] = [];
     for (const i of alive) {
       const o = i * ARROW_STRIDE;
-      const ix = Math.floor((arrows[o]! - min[0]!) / cell);
-      const iy = Math.floor((arrows[o + 1]! - min[1]!) / cell);
-      const iz = Math.floor((arrows[o + 2]! - min[2]!) / cell);
-      const key = (ix * span + iy) * span + iz;
-      if (taken.has(key)) continue;
-      taken.add(key);
+      const x = arrows[o]!, y = arrows[o + 1]!, z = arrows[o + 2]!;
+      const fx = (x - min[0]!) / w + 1, fy = (y - min[1]!) / w + 1, fz = (z - min[2]!) / w + 1;
+      const ix = Math.floor(fx), iy = Math.floor(fy), iz = Math.floor(fz);
+      const sx = fx - ix < 0.5 ? -1 : 1, sy = fy - iy < 0.5 ? -1 : 1, sz = fz - iz < 0.5 ? -1 : 1;
+      let near = false;
+      for (let m = 0; m < 8 && !near; m++) {
+        for (let j = cells.get(((ix + (m & 1 ? sx : 0)) * span + (iy + (m & 2 ? sy : 0))) * span + (iz + (m & 4 ? sz : 0))) ?? -1; j >= 0; j = next[j]!) {
+          const p = j * ARROW_STRIDE;
+          const dx = arrows[p]! - x, dy = arrows[p + 1]! - y, dz = arrows[p + 2]! - z;
+          if (dx * dx + dy * dy + dz * dz < d2) {
+            near = true;
+            break;
+          }
+        }
+      }
+      if (near) continue;
+      const own = (ix * span + iy) * span + iz;
+      next[i] = cells.get(own) ?? -1;
+      cells.set(own, i);
       kept.push(i);
       arrows[o + ARROW.level] = k;
     }

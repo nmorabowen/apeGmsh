@@ -14,7 +14,7 @@ import { withNodes } from "../src/effects.ts";
 import { renderLoads } from "../src/panels/loads.ts";
 import { view as patternsView } from "../src/panels/windows/patterns.ts";
 import { openModel } from "../src/reader/node.ts";
-import { LoadsLayer, screenArrow, SHAFT_MAX_PX, SHAFT_MIN_PX } from "../src/renderer/loads.ts";
+import { arrowShaderSource, LoadsLayer, screenArrow, SHAFT_MAX_PX, SHAFT_MIN_PX, SIZING_EXPR } from "../src/renderer/loads.ts";
 import { BlobStore } from "../src/state/blobs.ts";
 import { sampleCmap } from "../src/state/contour.ts";
 import { loadModel } from "../src/state/load.ts";
@@ -1101,7 +1101,7 @@ test("the arrow colour: one colour for every load by default, the load type's co
   assert.ok(colours(buildLoads3D(reduce(on, { type: "setLoads", colorBy: "magnitude" }), defBlobs)).has(key(sampleCmap("jet", 1))), "by magnitude: each kind's peak is jet's top colour");
 });
 
-test("thinning: level k keeps one arrow per cell of radius·2^(k−12), the cell's highest priority, and an arrow's level is the last level that kept it", () => {
+test("thinning: level k keeps, by priority, the arrows with no stronger kept arrow within radius·2^(k−12); an arrow's level is the last level that kept it", () => {
   // Three arrows on a model of radius 1: a close pair near x = 0.3 and one far away.
   const rec = (x: number, priority: number) => [x, 0, 0, 0, -1, 0, 0.2, 1, 1, 1, 1, 0, priority, 0];
   const a = new Float32Array([...rec(0, 0.4), ...rec(0.3, 0.5), ...rec(0.3001, 0.9)]);
@@ -1111,19 +1111,32 @@ test("thinning: level k keeps one arrow per cell of radius·2^(k−12), the cell
   assert.equal(level(1), 0, "the close pair (1e-4 apart) shares even the finest cell (2^-11): the weaker one shows only fully zoomed in");
   assert.equal(level(0), 10, "the far arrow (0.3 away) shares a cell from level 11 (cell 0.5) on");
   assert.equal(level(2), THIN_LEVELS, "the strongest arrow survives every level");
-  // On a real model: at each level, no two surviving arrows share a cell.
+  // On a real model, at each level k with d = radius·2^(k−12): the arrows kept are at least d apart, and
+  // every arrow dropped at k has a kept arrow of at least its priority within d (a distance, not a grid).
   const g = buildLoads3D(reduce(defState, { type: "setLoads", on: true }), defBlobs);
+  const n = g.arrows.length / ARROW_STRIDE;
+  const at = (i: number, f: number) => g.arrows[i * ARROW_STRIDE + f]!;
+  const dist = (i: number, j: number) => Math.hypot(at(i, 0) - at(j, 0), at(i, 1) - at(j, 1), at(i, 2) - at(j, 2));
   for (let k = 1; k <= THIN_LEVELS; k++) {
-    const cell = g.radius * 2 ** (k - THIN_LEVELS);
-    const seen = new Set<string>();
-    let min = [Infinity, Infinity, Infinity];
-    for (let o = 0; o < g.arrows.length; o += ARROW_STRIDE) min = min.map((m, c) => Math.min(m, g.arrows[o + c]!));
-    for (let o = 0; o < g.arrows.length; o += ARROW_STRIDE) {
-      if (g.arrows[o + ARROW.level]! < k) continue;
-      const id = [0, 1, 2].map((c) => Math.floor((g.arrows[o + c]! - min[c]!) / cell)).join(",");
-      assert.ok(!seen.has(id), `level ${k}: two arrows in cell ${id}`);
-      seen.add(id);
+    const d = g.radius * 2 ** (k - THIN_LEVELS);
+    const kept = [...Array(n).keys()].filter((i) => at(i, ARROW.level) >= k);
+    for (let x = 0; x < kept.length; x++) for (let y = x + 1; y < kept.length; y++) assert.ok(dist(kept[x]!, kept[y]!) >= d * (1 - 1e-6), `level ${k}: two kept arrows ${dist(kept[x]!, kept[y]!)} apart, under ${d}`);
+    for (let i = 0; i < n; i++) {
+      if (at(i, ARROW.level) !== k - 1) continue;
+      assert.ok(kept.some((j) => dist(i, j) < d && at(j, ARROW.priority) >= at(i, ARROW.priority)), `level ${k}: arrow ${i} dropped with no stronger arrow within ${d}`);
     }
+  }
+  // Evenness along a curve: on a quarter circle of 2000 equal arrows, the gaps kept at a level differ by at most 2:1
+  // (a grid keeps runs and holes where the curve crosses cell corners).
+  const N = 2000;
+  const ring = new Float32Array(N * ARROW_STRIDE);
+  for (let i = 0; i < N; i++) ring.set([Math.cos((Math.PI / 2) * (i / (N - 1))), Math.sin((Math.PI / 2) * (i / (N - 1))), 0, 0, -1, 0, 0.2, 1, 1, 1, 1, 0, 1, 0], i * ARROW_STRIDE);
+  thinningLevels(ring, 1);
+  for (const k of [6, 7, 8]) {
+    const angles = [...Array(N).keys()].filter((i) => ring[i * ARROW_STRIDE + ARROW.level]! >= k).map((i) => i / (N - 1));
+    const gaps = angles.slice(1).map((v, j) => v - angles[j]!);
+    assert.ok(gaps.length >= 3, `level ${k}: ${gaps.length} gaps`);
+    assert.ok(Math.max(...gaps) <= 2 * Math.min(...gaps) + 1e-9, `level ${k}: gaps from ${Math.min(...gaps)} to ${Math.max(...gaps)}`);
   }
 });
 
@@ -1164,4 +1177,16 @@ test("LoadsLayer: one instance per arrow and per comb bar; head size and thinnin
   layer.sync(reduce(bigger, { type: "setLoads", colorBy: "type" }), defBlobs);
   assert.notEqual(layer.cones.geometry, heads, "a new colour mode rebuilds the records");
   layer.dispose();
+});
+
+test("the sizing is written once: the arrow shader embeds each SIZING_EXPR verbatim, and screenArrow evaluates the same strings", () => {
+  const glsl = arrowShaderSource();
+  for (const [name, expr] of Object.entries(SIZING_EXPR)) {
+    assert.ok(glsl.includes(expr), `the shader embeds the ${name} expression`);
+    // GLSL has no int-to-float promotion: a bare integer literal is valid JavaScript but a shader compile error.
+    assert.doesNotMatch(expr, /(?<![\w.])\d+(?![\d.])/, `${name}: every number literal is a float (12.0, not 12)`);
+  }
+  // The twin is the expressions: a shaft at 1 px per mm, under, inside and over the [15, 80] px band.
+  const u = { headPx: 10, minPx: 15, maxPx: 80, radius: 1, thin: true };
+  assert.deepEqual([0.005, 0.04, 2].map((len) => Math.round(screenArrow(len, 0, 0.001, u).L / 0.001)), [15, 40, 80]);
 });
