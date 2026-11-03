@@ -314,7 +314,7 @@ def test_a_stock_run_whose_kind_is_not_a_fact_refuses_by_name(
                 raise AssertionError("the block ran")  # pragma: no cover
     msg = str(e.value)
     assert "ops.stage(...)" in msg and "analyze_steps" in msg
-    assert "convert_mpco" not in msg and "from_mpco" not in msg
+    assert "convert_mpco(" not in msg and "Results.from_mpco" not in msg
     assert caught == []
     assert [c[0] for c in ops.recorder_calls] == ["mpco"]
     assert ops.live == {} and ops.removed == [1]
@@ -581,7 +581,7 @@ def test_a_deck_stage_of_unknown_kind_refuses_by_name(
             read_deck_mpco(src, model_h5=model)
     msg = str(e.value)
     assert msg.startswith("read_deck_mpco: ") and "ops.stage(...)" in msg
-    assert "analyze_steps" in msg and "convert_mpco" not in msg
+    assert "analyze_steps" in msg and "convert_mpco(" not in msg
     assert caught == []
     assert not (tmp_path / "deck.ladruno").exists() and Path(src).exists()
 
@@ -602,7 +602,7 @@ def test_an_unstaged_deck_with_no_run_record_refuses_by_name(
             read_deck_mpco(src, model_h5=model)
     msg = str(e.value)
     assert "not archived as fact" in msg and "ops.stage(...)" in msg
-    assert "analyze_steps" in msg and "convert_mpco" not in msg
+    assert "analyze_steps" in msg and "convert_mpco(" not in msg
     assert isinstance(e.value.__cause__, StageKindRefused)
     assert caught == []
     assert not (tmp_path / "deck.ladruno").exists() and src.exists()

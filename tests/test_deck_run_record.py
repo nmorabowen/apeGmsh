@@ -777,15 +777,18 @@ def test_a_partitioned_bridge_deck_skips_its_record_without_composing(
     assert unlink in text
 
 
-def test_a_skipped_partitioned_record_reads_with_from_mpco(
+def test_a_skipped_partitioned_record_refuses_by_name(
     tmp_path, monkeypatch,
 ) -> None:
     """The run of such a deck leaves its parts and no record: read_deck_mpco
-    finds none (check 1), warns once and reads with ``from_mpco``."""
+    finds none (check 1) and refuses by name, with no warning, converting
+    nothing and never reading the parts with ``from_mpco`` (ADR 0131 D5)."""
     import shutil
     import warnings
 
-    from apeGmsh.results.live import DefaultRouteWarning, read_deck_mpco
+    from apeGmsh.results import Results
+    from apeGmsh.results.live import read_deck_mpco
+    from apeGmsh.results.readers._ladruno_from_mpco import StageKindRefused
     from tests.test_results_mpco_to_ladruno import (
         SPRINGS,
         _bridge_copy,
@@ -798,12 +801,17 @@ def test_a_skipped_partitioned_record_reads_with_from_mpco(
     for k in (0, 1):  # the parts the deck's MPCO recorder writes
         shutil.copy(one, tmp_path / f"run.part-{k}.mpco")
     assert not (tmp_path / ("run.mpco" + DECK_RUN_SUFFIX)).exists()
+    def no_from_mpco(*a: Any, **k: Any) -> None:
+        raise AssertionError("read_deck_mpco fell back to Results.from_mpco")
+
+    monkeypatch.setattr(Results, "from_mpco", no_from_mpco)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        res = read_deck_mpco(tmp_path / "run.part-0.mpco", model_h5=model)
-    res.close()
-    msgs = [str(w.message) for w in caught if w.category is DefaultRouteWarning]
-    assert len(msgs) == 1 and "check 1 (the record)" in msgs[0]
+        with pytest.raises(StageKindRefused,
+                           match=r"check 1 \(the record\)") as e:
+            read_deck_mpco(tmp_path / "run.part-0.mpco", model_h5=model)
+    assert "ops.stage(...)" in str(e.value) and "analyze_steps" in str(e.value)
+    assert [str(w.message) for w in caught] == []
     assert sorted(p.name for p in tmp_path.glob("*.ladruno")) == []
 
 
