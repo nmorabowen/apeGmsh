@@ -68,6 +68,23 @@ displacement / velocity / acceleration. No `setup=`. In-process
 is the default; `python -m apeGmsh.viewers render …` is the
 out-of-kernel door so a GL crash does not kill the notebook.
 
+**On Windows** (ADR 0128 slice 6) `fem.render`, the
+`python -m apeGmsh.viewers render …` door and studio `render(path=)` draw
+through apeGmshViewer (`apegmsh-view/1`, via `agent_view.render_stills`,
+below), not VTK. `fem.render` writes the snapshot to a temporary
+`model.h5` first. The door reads a model `.h5` or a **`.ladruno` beside
+its `<stem>.h5`**; any other results file (`.mpco`, native `.h5`) is
+refused naming `.ladruno`, and so is a `--model-h5` that is not that
+`<stem>.h5`. `--pack` is one spec: `mesh.png`, `contour.png`,
+`deformed.png` (auto-scaled: 0.12 of the model diagonal over the largest
+|u|), the app's `manifest.json`, and the matplotlib `history.png`; no
+`reactions.png`. `--view reactions` and a velocity or acceleration
+`--deform` are refused. No installed app is an error (exit 2 /
+`FileNotFoundError`), never a skip; only `APEGMSH_SKIP_VIEWER=1` skips.
+`--camera xy|xz|yz` become the app's `top|-y|+x`. Linux and macOS keep
+the VTK path. In-process `results.render` / `render_pack` /
+`results.assess(figures=True)` are still VTK on every platform.
+
 Live session (needs an open Gmsh kernel; `from_h5` / closed →
 `RuntimeError`): `g.model.render("geom.png")` (BRep, coarse tessellation
 if no mesh), `g.mesh.render("mesh.png")` (live Gmsh, not `fem.render`).
