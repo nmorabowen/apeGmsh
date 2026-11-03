@@ -383,8 +383,8 @@ class _RecordedSource:
             self._recorded(address)
         if address.kind == "stage":
             host = self._host(address.source)
-            # A stage with no steps (San Ramón's: an eigen stage, whose modes are
-            # mode stages) has no last step either, so step -1 refuses too (#2750).
+            # A stage with no steps (an eigen stage, whose modes are mode stages)
+            # has no last step either, so step -1 refuses too.
             if host.n_steps == 0:
                 raise self._refuse(
                     "unresolved", f"stage {address.source!r} records no steps, so a "
