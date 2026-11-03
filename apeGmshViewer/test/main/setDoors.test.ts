@@ -30,7 +30,8 @@ const root = mkdtempSync(join(tmpdir(), "vu12-doors-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 for (const d of ["set", "outside", "elsewhere"]) mkdirSync(join(root, d));
 const copies: [string, string[]][] = [
-  ["ladruno_frame3d.h5", ["set/s.h5", "elsewhere/s.h5"]],
+  // outside/s.h5: a readable model the user never dropped (VU12's free string)
+  ["ladruno_frame3d.h5", ["set/s.h5", "elsewhere/s.h5", "outside/s.h5"]],
   ["ladruno_frame3d.ladruno", ["set/s.ladruno", "outside/s.ladruno", "elsewhere/s.ladruno"]],
   // the native results file beside the `.ladruno`: the set's results slot only when a spec names it
   ["contour_staged.results.h5", ["set/s.results.h5"]],
@@ -138,6 +139,28 @@ test("VU12: offerOpen opens only a set main offered, or the set an offer left; a
   assert.equal(onScreen("offer:4 model"), there, "the offered set opened");
   assert.equal(resolved(view, "offer:5 back").ok, true, resolved(view, "offer:5 back").error);
   assert.equal(onScreen("offer:5 model"), here, "Back reopened the set the offer left");
+});
+
+test("VU12 (option A): requestOpen and model:open refuse a path the page named with no gesture, and the set stays", () => {
+  const here = join(SET, "s.h5");
+  for (const [name, door] of [["gesture:1 requestOpen free", "requestOpen"], ["gesture:2 model:open free", "model:open"]] as const) {
+    const r = resolved(view, name);
+    assert.equal(r.ok, false, `${name} is refused`);
+    assert.match(r.error ?? "", new RegExp(`^${door} opens only a file the user dropped or a path main sent the page; refused .*outside`));
+  }
+  assert.equal(onScreen("gesture:1 model"), here, "a refused requestOpen leaves the set where it was");
+  assert.equal(onScreen("gesture:2 model"), here, "a refused model:open leaves the set where it was (no re-pair, no close)");
+});
+
+test("VU12 (option A): the argv set's paths, which main sent the page, still open through both doors", () => {
+  assert.equal(resolved(view, "gesture:3 requestOpen argv").ok, true, resolved(view, "gesture:3 requestOpen argv").error);
+  assert.equal(resolved(view, "gesture:3 model:open argv").ok, true, resolved(view, "gesture:3 model:open argv").error);
+  assert.equal(onScreen("gesture:3 model"), join(SET, "s.h5"));
+});
+
+test("VU12 (option A): a model the user dropped opens through model:open, and the set follows it", () => {
+  assert.equal(resolved(view, "model:3 model:open dropped").ok, true, resolved(view, "model:3 model:open dropped").error);
+  assert.equal(onScreen("model:3 model"), join(root, "outside", "s.h5"));
 });
 
 test("VU12: a drop moves the set; the set it left is refused, though the host still indexes its results", () => {

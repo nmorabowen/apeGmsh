@@ -615,7 +615,33 @@ function followModel(path: string): void {
   else session.close();
 }
 
-ipcMain.handle("model:open", async (_e, path: string) => {
+/**
+ * VU12 (#2753), owner ruling "option A": the page is no longer trusted to name
+ * a path to open. These are the paths a user gesture or main itself produced:
+ * a file the user dropped, as Electron names it (preload.ts `gestured`, over
+ * `viewer:dropped`), and the paths main sent the page, which are the window's
+ * set (`windowSet`: argv / `--file`, `onOpen`, the render job) and `config().file`.
+ */
+const dropped: string[] = [];
+ipcMain.on("viewer:dropped", (e, path: unknown) => {
+  if (typeof path === "string" && path !== "") dropped.push(path);
+  e.returnValue = null;
+});
+
+/** Why the page may not ask to open `path`, or null when a gesture or main produced it. */
+function ungestured(door: string, path: string): string | null {
+  if (dropped.some((d) => samePath(d, path))) return null;
+  const set = windowSet();
+  if (!("reason" in set) && [set.model, set.geometry, set.results].some((p) => samePath(p, path))) return null;
+  if (mode !== "view" && file && samePath(resolve(file), path)) return null;
+  return `${door} opens only a file the user dropped or a path main sent the page; refused ${path}`;
+}
+
+ipcMain.handle("model:open", async (_e, path: unknown) => {
+  if (typeof path !== "string") return { ok: false, error: `model:open needs a path; got ${shown(path)}` };
+  // A free string is refused before any read, so the set stays as it is (VU12).
+  const refused = ungestured("model:open", path);
+  if (refused !== null) return { ok: false, error: refused };
   let model;
   try {
     model = await openModel(path);
@@ -653,7 +679,7 @@ ipcMain.handle("model:open", async (_e, path: string) => {
  * `app:config` hand the page. No other mode's page reads these doors. The
  * reason when there is no set.
  */
-function windowSet(): { geometry: string | null; results: string | null } | { reason: string } {
+function windowSet(): { model: string | null; geometry: string | null; results: string | null } | { reason: string } {
   if (mode === "view") return currentSet() ?? { reason: "no set is open" };
   if (mode === "render") return renderJob ?? { reason: "the render job was refused" };
   if ((mode === "describe" || mode === "capture" || mode === "measure") && file) {
@@ -858,6 +884,8 @@ ipcMain.handle("viewer:currentSet", () => currentSet());
 
 ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${shown(path)}` };
+  const refused = ungestured("requestOpen", path);
+  if (refused !== null) return { ok: false, reason: refused };
   return openPath(path, true) ? { ok: true } : { ok: false, reason: `cannot open ${path}` };
 });
 

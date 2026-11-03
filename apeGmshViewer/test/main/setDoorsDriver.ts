@@ -22,7 +22,7 @@ const root = opt("dir");
 const which = opt("case");
 if (!root || !which) throw new Error("setDoorsDriver needs --case= and --dir=");
 
-const { appEvents, handlers } = (await import(STUB)) as typeof import("./electronStub.ts");
+const { appEvents, handlers, listeners } = (await import(STUB)) as typeof import("./electronStub.ts");
 await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "main.ts")).href);
 
 const set = join(root, "set");
@@ -120,7 +120,20 @@ if (which === "view") {
   out["offer:4 model"] = { onScreen: await modelOf() };
   await call("offer:5 back", "viewer:offerOpen", ladruno, [join(set, "s.h5"), ladruno]);
   out["offer:5 model"] = { onScreen: await modelOf() };
+  // VU12, owner ruling "option A": the page names no path to open. A free string is refused and the set stays;
+  // the argv set's own paths (main sent them) still open.
+  const loose = join(root, "outside", "s.h5");
+  await call("gesture:1 requestOpen free", "viewer:requestOpen", loose);
+  out["gesture:1 model"] = { onScreen: await modelOf() };
+  await call("gesture:2 model:open free", "model:open", loose);
+  out["gesture:2 model"] = { onScreen: await modelOf() };
+  await call("gesture:3 requestOpen argv", "viewer:requestOpen", join(set, "s.h5"));
+  await call("gesture:3 model:open argv", "model:open", join(set, "s.h5"));
+  out["gesture:3 model"] = { onScreen: await modelOf() };
+  /** A drop as preload.ts reports it: Electron's path for the File, sent synchronously on `viewer:dropped`. */
+  const drop = (path: string) => listeners.get("viewer:dropped")!({ returnValue: undefined }, path);
   // A drop moves the set: the old set's results, still indexed by the host, are refused; the new set's read.
+  drop(join(elsewhere, "s.h5"));
   await call("drop:1 requestOpen", "viewer:requestOpen", join(elsewhere, "s.h5"));
   await call("drop:2 readStep old", "results:readStep", step(ladruno, 200));
   await call("drop:2 scan old", "results:scan", scan(ladruno, 200));
@@ -133,6 +146,10 @@ if (which === "view") {
   await call("model:1 open a results file", "model:open", RESULTS.elsewhere);
   await call("model:2 open new", "results:open", RESULTS.elsewhere);
   await call("model:2 geometry new", "geometry:open", GEOMETRY.elsewhere);
+  // a model the user dropped onto a page without requestOpen (effects.ts `openDropped`'s fallback) opens, and the set follows it
+  drop(loose);
+  await call("model:3 model:open dropped", "model:open", loose);
+  out["model:3 model"] = { onScreen: await modelOf() };
 } else if (which === "none") {
   await call("results:open ladruno", "results:open", RESULTS.ladruno);
   await call("geometry:open paired", "geometry:open", GEOMETRY.paired);
