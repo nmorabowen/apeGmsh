@@ -61,6 +61,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 import * as h5wasm from "h5wasm/node";
 import { openModel } from "../reader/node.ts";
 import { openH5, type H5Openable } from "../reader/h5open.ts";
@@ -68,7 +69,7 @@ import { LadrunoFile, openLadruno } from "../reader/ladruno.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
 import { readUserFile, readUserSet, type UserH5 } from "../reader/userFile.ts";
 import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } from "../reader/userSpectra.ts";
-import { FOLD_CASE, fileFromArgv, listDir, pairSet } from "./pairing.ts";
+import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
 import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
 import { OpenSession } from "./session.ts";
@@ -588,16 +589,37 @@ ipcMain.handle("app:config", () => ({
   results: (mode === "capture" || mode === "measure") && file ? pairSet(resolve(file), existsSync).results : null,
 }));
 
+/** The kind of `path` as the pairing names it, or null for a file the app does not pair. */
+function kindOf(path: string): Kind | null {
+  try {
+    return classify(path).kind;
+  } catch {
+    return null;
+  }
+}
+
+/** The open set after the renderer opened `path` as a model: the set of a `<stem>.h5`, else none. */
+function followModel(path: string): void {
+  if (kindOf(path) === "model") session.rendererOpened(path);
+  else session.close();
+}
+
 ipcMain.handle("model:open", async (_e, path: string) => {
-  // A model the renderer opened on its own (a drop on the P0 page): the open
-  // set follows what is on screen (./session.ts).
-  if (mode === "view" && typeof path === "string") session.rendererOpened(path);
   let model;
   try {
     model = await openModel(path);
   } catch (err) {
+    // The renderer takes the old model off screen (state/reduce.ts `fileFailed`),
+    // so the old set ends either way (./session.ts). A `<stem>.h5` that failed
+    // (a model still being written) becomes the open set, watched, so its
+    // rewrite retries the read. Any other path (a `.user.h5`, a results file)
+    // never becomes the set: the user doors would then read beside it (#2752 review F1).
+    if (mode === "view" && typeof path === "string") followModel(path);
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+  // A model the renderer opened on its own (a drop on the P0 page): the open
+  // set follows what is on screen (./session.ts), by the same rule.
+  if (mode === "view" && typeof path === "string") followModel(path);
   // /provenance rides with the model; a refused or broken zone does not stop
   // the model from loading (the renderer shows why go-to-source is off).
   return {
@@ -667,39 +689,99 @@ ipcMain.handle("geometry:open", (_e, path: unknown) => {
   return openGeometry(path);
 });
 
+/** A request as a log line, whatever the IPC carried (a BigInt, a cycle): never throws, unlike `JSON.stringify` (VU11, #2750). */
+function shown(req: unknown): string {
+  try {
+    return inspect(req, { depth: 3, breakLength: Infinity, maxArrayLength: 10, maxStringLength: 300 });
+  } catch {
+    return Object.prototype.toString.call(req);
+  }
+}
+
+/** The set on screen in view mode: the open set, with the user slot only the watcher knows (a user file that appears is a `changed`, not a reopen). */
+function currentSet(): OpenSet | null {
+  if (mode !== "view" || session.set === null) return null;
+  return liveWatcher === null ? session.set : { ...session.set, user: liveWatcher.set.user };
+}
+
+/**
+ * VU11 (#2750): the one `.user.h5` the user doors read, and the model and
+ * results its staleness is judged against, all from the window's set and
+ * never from the request: in view mode the set on screen (`currentSet`), in
+ * render mode the job's set. The user file is the set's user slot, else
+ * `<stem>.user.h5` where one would be, as the renderer names it
+ * (state/reduce.ts `userPathOf`). The reason when there is none.
+ */
+function pairedUser(): { ok: true; user: string; model: string | null; results: string | null } | { ok: false; reason: string } {
+  const set = mode === "view" ? currentSet() : mode === "render" && renderJob ? { model: renderJob.model, results: renderJob.results, user: null } : null;
+  if (set === null) return { ok: false, reason: mode === "view" || mode === "render" ? "no set is open" : `--mode=${mode} reads no user file` };
+  const from = set.model ?? set.results;
+  let user = set.user;
+  try {
+    if (user === null && from !== null) user = candidates(from).user;
+  } catch (err) {
+    return { ok: false, reason: `the open set's ${from} names no user file (${err instanceof Error ? err.message : String(err)})` };
+  }
+  if (user === null) return { ok: false, reason: "the open set has neither a model nor results" };
+  return { ok: true, user, model: set.model, results: set.results };
+}
+
+/**
+ * The window's set's files when `asked` names them (`samePath`: case-folded
+ * where the file system folds), else why not. Only what this returns is read.
+ */
+function confined(door: string, asked: { path: string; model?: string | null; results?: string | null }): ReturnType<typeof pairedUser> {
+  const p = pairedUser();
+  if (!p.ok) return { ok: false, reason: `${door} reads only the open set's user file, and ${p.reason}; refused ${asked.path}` };
+  if (!samePath(asked.path, p.user)) return { ok: false, reason: `${door} reads only the open set's user file ${p.user}; refused ${asked.path}` };
+  for (const k of ["model", "results"] as const) {
+    const a = asked[k];
+    if (a !== undefined && !samePath(a, p[k])) return { ok: false, reason: `${door} judges staleness only against the open set's ${k} ${p[k] ?? "(none)"}; refused ${a ?? "(none)"}` };
+  }
+  return p;
+}
+
 // ADR 0130 slice VU3a: the set's `<stem>.user.h5`, read only when the renderer
 // asks, so the first frame reads none of it. The answer is the file's index
 // (reader/userFile.ts `UserIndex`, never a `/results` DATA value) and A6's
-// staleness against the model and results files the request names (the set's,
-// `OpenSet.model` and `OpenSet.results`; null when absent). A file that
-// cannot be read answers `ok: false` with the reason, and raises nothing.
+// staleness against the set's model and results files (`OpenSet.model` and
+// `OpenSet.results`; null when absent). The request names the three files,
+// and each must be the window's set's (`pairedUser`); any other path is
+// refused (VU11, #2750). A file that cannot be read answers `ok: false` with
+// the reason, and raises nothing.
 ipcMain.handle("user:read", async (_e, req: unknown) => {
   const r = req as { path?: unknown; model?: unknown; results?: unknown } | null;
   const pathOrNull = (x: unknown) => x === null || typeof x === "string";
   if (!r || typeof r.path !== "string" || !pathOrNull(r.model) || !pathOrNull(r.results)) {
-    return { ok: false, error: `user:read needs { path, model, results }; got ${JSON.stringify(req)}` };
+    return { ok: false, error: `user:read needs { path, model, results }; got ${shown(req)}` };
   }
+  const p = confined("user:read", { path: r.path, model: r.model as string | null, results: r.results as string | null });
+  if (!p.ok) return { ok: false, error: p.reason };
   await h5wasm.ready;
-  return readUserSet(h5wasm as unknown as UserH5, r.path, r.model as string | null, r.results as string | null, listDir);
+  return readUserSet(h5wasm as unknown as UserH5, p.user, p.model, p.results, listDir);
 });
 
 // ADR 0130 slice VU7b-1 (#2740): one result of one `/spectra` case of the
 // `.user.h5`, with its per-mode DATA and its reference state, on request
 // (reader/userSpectra.ts `CaseRead`). The case is judged by the same read as
 // `user:read`'s index, then its values are read; the renderer combines them
-// with VU4's evaluator. A refused or missing case, and a file that cannot be
-// read, answer `ok: false` with the evaluator's reason; nothing raises.
+// with VU4's evaluator. The path must be the window's set's user file
+// (`confined`, VU11). A refused or missing case, a path outside the set, and a
+// file that cannot be read answer `ok: false` with the evaluator's reason;
+// nothing raises.
 ipcMain.handle("user:readCase", async (_e, req: unknown): Promise<CaseRead> => {
   const r = req as { path?: unknown; case?: unknown; target?: unknown; label?: unknown } | null;
   if (!r || typeof r.path !== "string" || typeof r.case !== "string" || typeof r.label !== "string" || typeof r.target !== "string" || !Object.hasOwn(SPECTRA_FAMILIES, r.target)) {
-    return { ok: false, reason: "refused", detail: `user:readCase needs { path, case, target: ${Object.keys(SPECTRA_FAMILIES).join(" | ")}, label }; got ${JSON.stringify(req)}` };
+    return { ok: false, reason: "refused", detail: `user:readCase needs { path, case, target: ${Object.keys(SPECTRA_FAMILIES).join(" | ")}, label }; got ${shown(req)}` };
   }
+  const p = confined("user:readCase", { path: r.path });
+  if (!p.ok) return { ok: false, reason: "refused", detail: p.reason };
   await h5wasm.ready;
   const h5 = h5wasm as unknown as UserH5;
   try {
-    return readCaseValues(h5, r.path, readUserFile(h5, r.path, null).spectra, r.case, r.target as SpectrumTarget, r.label);
+    return readCaseValues(h5, p.user, readUserFile(h5, p.user, null).spectra, r.case, r.target as SpectrumTarget, r.label);
   } catch (err) {
-    return { ok: false, reason: "refused", detail: `${r.path}: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, reason: "refused", detail: `${p.user}: ${err instanceof Error ? err.message : String(err)}` };
   }
 });
 
@@ -715,10 +797,7 @@ for (const verb of ["subscribe", "unsubscribe"] as const) {
 }
 
 // The set already open, for a new onOpen listener (the preload replays it).
-ipcMain.handle("viewer:currentSet", () => {
-  if (mode !== "view" || session.set === null) return null;
-  return liveWatcher === null ? session.set : { ...session.set, user: liveWatcher.set.user };
-});
+ipcMain.handle("viewer:currentSet", () => currentSet());
 
 ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${JSON.stringify(path)}` };

@@ -12,6 +12,7 @@
 //    `indexOfModel`), so Spotlight and the Search window never drift.
 
 import { gaussUnavailable } from "./gaussNotes.ts";
+import { reactionComponentsOf } from "./loads.ts";
 import { CMAP_NAMES, fieldsOf, gaussFields, RANGE_MODES } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
 import {
@@ -148,6 +149,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramFill: { kind: "expose", command: "toggle-line-diagram-fill", description: "Toggle 3-D line diagram ribbon fill" },
   setLineDiagramFlipSign: { kind: "expose", command: "toggle-line-diagram-flip-sign", description: "Toggle 3-D line diagram tension-side / sign convention" },
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
+  setReactions: { kind: "expose", command: "toggle-reactions", description: "Toggle or configure the reaction-force arrows of the results step" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
   toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },
   toggleShowOffsets: { kind: "expose", command: "toggle-show-offsets", description: "Toggle rigid joint-offset links and markers on or off" },
@@ -678,6 +680,21 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
         [{ type: "setLoads", on: !s.loads.on }],
       ),
       keywords: "set loads forces moments pressure distributed beam sp prescribed toggle",
+    });
+  }
+
+  if (reactionComponentsOf(s)) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-reactions",
+        "loads",
+        s.reactions.on ? "Turn Off Reaction Arrows" : "Turn On Reaction Arrows",
+        `Reaction forces of the step on screen, pointing at the supports, are currently ${s.reactions.on ? "ON" : "OFF"}`,
+        [{ type: "setReactions", on: !s.reactions.on }],
+        s.reactions.on,
+        [{ type: "setReactions", on: !s.reactions.on }],
+      ),
+      keywords: "reactions reaction forces supports arrows toggle results",
     });
   }
 

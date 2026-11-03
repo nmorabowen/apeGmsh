@@ -11,10 +11,10 @@
 
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
-import { ARROW, ARROW_STRIDE, buildLoads3D, COMB_STRIDE, THIN_LEVELS } from "../state/loads.ts";
+import { ARROW, ARROW_STRIDE, buildLoads3D, buildReactions3D, COMB_STRIDE, THIN_LEVELS } from "../state/loads.ts";
 import type { State } from "../state/types.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
-import { toLinear } from "./contour.ts";
+import { toLinear, type StepValues } from "./contour.ts";
 import type { FullPositions } from "./deform.ts";
 
 /** A shaft is never drawn shorter or longer than this on screen (CSS px, times the user scale). */
@@ -80,7 +80,11 @@ float shaftLength(float len, float wpp) {
 }
 `;
 
-/** Arrow instances: `aShape` = (×shaft length, ×head length, ×head length across), `aPart` 0 shaft or first head, 1 SP bar, 2 second head. */
+/**
+ * Arrow instances: `aShape` = (×shaft length, ×head length, ×head length across), `aPart` 0 shaft or
+ * first head, 1 SP bar, 2 second head, 3 reaction tick (2/3 of a head long, at 45° to the shaft's
+ * perpendicular, a fifth of the shaft in from its tail).
+ */
 const ARROW_VERTEX = `
 vec4 mvTip = modelViewMatrix * vec4( aTip, 1.0 );
 float wpp = worldPerPixel( mvTip );
@@ -94,7 +98,7 @@ if ( length( across ) < 1e-3 ) across = vec3( 1.0, 0.0, 0.0 );
 across = normalize( across );
 vec4 mvPosition = vec4( mvTip.xyz - dV * ( aShape.x * L + aShape.y * H ) + across * ( aShape.z * H ), 1.0 );
 float need = ${SIZING_EXPR.need};
-bool hidden = ( aPart == 1.0 && aBar < 0.5 ) || ( aPart == 2.0 && aHeads < 1.5 ) || ( uThin > 0.5 && aLevel < need );
+bool hidden = ( aPart == 1.0 && aBar != 1.0 ) || ( aPart == 3.0 && aBar != 2.0 ) || ( aPart == 2.0 && aHeads < 1.5 ) || ( uThin > 0.5 && aLevel < need );
 gl_Position = hidden ? vec4( 2.0, 2.0, 2.0, 1.0 ) : projectionMatrix * mvPosition;
 `;
 
@@ -133,15 +137,28 @@ function template(shape: readonly number[][], extra: Record<string, readonly num
   return g;
 }
 
-const SHAFT_SHAPE = [[1, 0, 0], [0, 1, 0], [0, 0, -0.5], [0, 0, 0.5]];
+const TICK = Math.SQRT1_2 / 3;
+const SHAFT_SHAPE = [[1, 0, 0], [0, 1, 0], [0, 0, -0.5], [0, 0, 0.5], [0.8, -TICK, -TICK], [0.8, TICK, TICK]];
 const HEAD_SHAPE = [[0, 0, 0], [0, 1, -0.25], [0, 1, 0.25], [0, 0.72, 0], [0, 1.72, -0.25], [0, 1.72, 0.25]];
-const shaftTemplate = () => template(SHAFT_SHAPE, { aShape: SHAFT_SHAPE.flat(), aPart: [0, 0, 1, 1] });
+const shaftTemplate = () => template(SHAFT_SHAPE, { aShape: SHAFT_SHAPE.flat(), aPart: [0, 0, 1, 1, 3, 3] });
 const headTemplate = () => template(HEAD_SHAPE, { aShape: HEAD_SHAPE.flat(), aPart: [0, 0, 0, 2, 2, 2] });
 const combTemplate = () => template([[0], [0]], { aEnd: [0, 1] });
 
-export class LoadsLayer {
+/** How a card sizes its arrows: the head in pixels, the shaft band's multiplier, and thinning. */
+export interface ArrowSizing {
+  readonly headSize: number;
+  readonly scale: number;
+  readonly thin: boolean;
+}
+
+/**
+ * The instanced arrows of one card: shafts and marks, heads, and comb bars,
+ * drawn from `ARROW_STRIDE` records with their own pixel sizing. The loads and
+ * the reactions each own one, so each card sizes, colours and thins its own.
+ */
+export class ArrowLayer {
   readonly root = new THREE.Group();
-  /** The shafts and SP bars. */
+  /** The shafts, SP bars and reaction ticks. */
   readonly lines: THREE.LineSegments;
   /** The flat heads. */
   readonly cones: THREE.Mesh;
@@ -166,8 +183,7 @@ export class LoadsLayer {
     polygonOffsetUnits: -1,
   });
   private readonly combMaterial = new THREE.LineBasicMaterial({ vertexColors: true });
-  private theme: ThemeMode = "dark";
-  private appliedKey: string | null = null;
+  protected theme: ThemeMode = "dark";
 
   constructor() {
     const arrowAttrs = "attribute vec3 aTip;\nattribute vec3 aDir;\nattribute float aLen;\nattribute float aHeads;\nattribute float aBar;\nattribute float aLevel;\nattribute vec3 aShape;\nattribute float aPart;";
@@ -198,80 +214,34 @@ export class LoadsLayer {
     this.theme = mode;
   }
 
-  sync(s: State, blobs: BlobStore, full: FullPositions | null = null): boolean {
-    if (!s.loads.on || !s.mesh || s.phase.at?.kind === "geometry") {
-      const wasVisible = this.root.visible;
-      this.root.visible = false;
-      this.appliedKey = null;
-      return wasVisible;
-    }
+  /** Set the pixel sizing (uniforms: no rebuild); true when it changed. */
+  protected size(z: ArrowSizing): boolean {
+    const changed = this.uniforms.uHeadPx.value !== z.headSize || this.uniforms.uThin.value !== (z.thin ? 1 : 0) || this.uniforms.uMinPx.value !== SHAFT_MIN_PX * z.scale;
+    this.uniforms.uHeadPx.value = z.headSize;
+    this.uniforms.uSpacingPx.value = z.headSize * SPACING_PER_HEAD;
+    this.uniforms.uMinPx.value = SHAFT_MIN_PX * z.scale;
+    this.uniforms.uMaxPx.value = SHAFT_MAX_PX * z.scale;
+    this.uniforms.uThin.value = z.thin ? 1 : 0;
+    return changed;
+  }
 
-    // The pixel sizes are uniforms: a new head size or thinning switch redraws without a rebuild.
-    const headPx = s.loads.headSize;
-    const uniformsChanged = this.uniforms.uHeadPx.value !== headPx || this.uniforms.uThin.value !== (s.loads.thin ? 1 : 0) || this.uniforms.uMinPx.value !== SHAFT_MIN_PX * s.loads.scale;
-    this.uniforms.uHeadPx.value = headPx;
-    this.uniforms.uSpacingPx.value = headPx * SPACING_PER_HEAD;
-    this.uniforms.uMinPx.value = SHAFT_MIN_PX * s.loads.scale;
-    this.uniforms.uMaxPx.value = SHAFT_MAX_PX * s.loads.scale;
-    this.uniforms.uThin.value = s.loads.thin ? 1 : 0;
+  /** Hide the layer; true when it was showing. */
+  protected hide(): boolean {
+    const was = this.root.visible;
+    this.root.visible = false;
+    return was;
+  }
 
-    const phaseKey = s.phase.at
-      ? s.phase.at.kind === "results"
-        ? `results:${s.phase.at.stage}:${s.phase.at.step}`
-        : s.phase.at.kind === "stage"
-          ? `stage:${s.phase.at.index}`
-          : s.phase.at.kind
-      : "none";
-    const deformKey = full ? full.key : "base";
-    const nextKey = [
-      s.mesh.linePositions.id,
-      s.mesh.triPositions.id,
-      phaseKey,
-      s.stage ?? "",
-      deformKey,
-      s.visibility.hidden.join(","),
-      s.loads.scale,
-      s.loads.showNodalForces ? "F" : "",
-      s.loads.showNodalMoments ? "M" : "",
-      s.loads.showElementLoads ? "E" : "",
-      s.loads.showSp ? "SP" : "",
-      s.loads.includeSupportReactions ? "SR" : "",
-      s.loads.scaleBySeries ? "TS" : "",
-      s.loads.colorBy,
-      s.loads.selectedPatterns === null ? "*" : s.loads.selectedPatterns.join(","),
-      s.contour.sourceUnits ?? "",
-      s.contour.targetUnits ?? "",
-      this.theme,
-    ].join("|");
-
-    if (this.root.visible && this.appliedKey === nextKey) {
-      return uniformsChanged;
-    }
-
-    const geom = buildLoads3D(s, blobs, {
-      theme: this.theme,
-      ...(full
-        ? {
-            drawnLinePositions: full.line,
-            drawnTriPositions: full.tri,
-          }
-        : {}),
-    });
-
-    const nArrows = geom.arrows.length / ARROW_STRIDE;
-    const nCombs = geom.combs.length / COMB_STRIDE;
-    if (nArrows === 0 && nCombs === 0) {
-      const wasVisible = this.root.visible;
-      this.root.visible = false;
-      this.appliedKey = null;
-      return wasVisible;
-    }
-
-    this.uniforms.uRadius.value = geom.radius > 0 ? geom.radius : 1;
+  /** Draw these records (hidden when there are none); true when anything was or is now drawn. */
+  protected upload(arrows: Float32Array, combs: Float32Array, radius: number): boolean {
+    const nArrows = arrows.length / ARROW_STRIDE;
+    const nCombs = combs.length / COMB_STRIDE;
+    if (nArrows === 0 && nCombs === 0) return this.hide();
+    this.uniforms.uRadius.value = radius > 0 ? radius : 1;
     // The records are read in place: one interleaved buffer, one attribute view per field.
-    const arrowBuf = new THREE.InstancedInterleavedBuffer(geom.arrows, ARROW_STRIDE, 1);
+    const arrowBuf = new THREE.InstancedInterleavedBuffer(arrows, ARROW_STRIDE, 1);
     const arrowColours = new Float32Array(nArrows * 3);
-    for (let i = 0; i < nArrows; i++) for (let c = 0; c < 3; c++) arrowColours[i * 3 + c] = toLinear(geom.arrows[i * ARROW_STRIDE + ARROW.rgb + c]!);
+    for (let i = 0; i < nArrows; i++) for (let c = 0; c < 3; c++) arrowColours[i * 3 + c] = toLinear(arrows[i * ARROW_STRIDE + ARROW.rgb + c]!);
     // Fresh templates per rebuild: disposing the old geometry frees its GPU buffers, which replacing attributes would not.
     this.lines.geometry.dispose();
     this.cones.geometry.dispose();
@@ -290,9 +260,9 @@ export class LoadsLayer {
       g.setAttribute("color", new THREE.InstancedBufferAttribute(arrowColours, 3));
       g.instanceCount = nArrows;
     }
-    const combBuf = new THREE.InstancedInterleavedBuffer(geom.combs, COMB_STRIDE, 1);
+    const combBuf = new THREE.InstancedInterleavedBuffer(combs, COMB_STRIDE, 1);
     const combColours = new Float32Array(nCombs * 3);
-    for (let i = 0; i < nCombs; i++) for (let c = 0; c < 3; c++) combColours[i * 3 + c] = toLinear(geom.combs[i * COMB_STRIDE + 14 + c]!);
+    for (let i = 0; i < nCombs; i++) for (let c = 0; c < 3; c++) combColours[i * 3 + c] = toLinear(combs[i * COMB_STRIDE + 14 + c]!);
     const cg = this.combs.geometry as THREE.InstancedBufferGeometry;
     cg.setAttribute("aTipA", new THREE.InterleavedBufferAttribute(combBuf, 3, 0));
     cg.setAttribute("aDirA", new THREE.InterleavedBufferAttribute(combBuf, 3, 3));
@@ -302,12 +272,10 @@ export class LoadsLayer {
     cg.setAttribute("aLenB", new THREE.InterleavedBufferAttribute(combBuf, 1, 13));
     cg.setAttribute("color", new THREE.InstancedBufferAttribute(combColours, 3));
     cg.instanceCount = nCombs;
-
     this.lines.visible = nArrows > 0;
     this.cones.visible = nArrows > 0;
     this.combs.visible = nCombs > 0;
     this.root.visible = true;
-    this.appliedKey = nextKey;
     return true;
   }
 
@@ -325,5 +293,95 @@ export class LoadsLayer {
     this.lineMaterial.dispose();
     this.coneMaterial.dispose();
     this.combMaterial.dispose();
+  }
+}
+
+const NO_RECORDS = new Float32Array(0);
+
+const drawnOpts = (theme: ThemeMode, full: FullPositions | null) => ({ theme, ...(full ? { drawnLinePositions: full.line, drawnTriPositions: full.tri } : {}) });
+
+/** The Loads & SPs card's arrows (`s.loads`). */
+export class LoadsLayer extends ArrowLayer {
+  private appliedKey: string | null = null;
+
+  sync(s: State, blobs: BlobStore, full: FullPositions | null = null): boolean {
+    if (!s.loads.on || !s.mesh || s.phase.at?.kind === "geometry") {
+      this.appliedKey = null;
+      return this.hide();
+    }
+    const sized = this.size(s.loads);
+    const phaseKey = s.phase.at
+      ? s.phase.at.kind === "results"
+        ? `results:${s.phase.at.stage}:${s.phase.at.step}`
+        : s.phase.at.kind === "stage"
+          ? `stage:${s.phase.at.index}`
+          : s.phase.at.kind
+      : "none";
+    const nextKey = [
+      s.mesh.linePositions.id,
+      s.mesh.triPositions.id,
+      phaseKey,
+      s.stage ?? "",
+      full ? full.key : "base",
+      s.visibility.hidden.join(","),
+      s.loads.scale,
+      s.loads.showNodalForces ? "F" : "",
+      s.loads.showNodalMoments ? "M" : "",
+      s.loads.showElementLoads ? "E" : "",
+      s.loads.showSp ? "SP" : "",
+      s.loads.includeSupportReactions ? "SR" : "",
+      s.loads.scaleBySeries ? "TS" : "",
+      s.loads.colorBy,
+      s.loads.selectedPatterns === null ? "*" : s.loads.selectedPatterns.join(","),
+      s.contour.sourceUnits ?? "",
+      s.contour.targetUnits ?? "",
+      this.theme,
+    ].join("|");
+    if (this.root.visible && this.appliedKey === nextKey) return sized;
+    const geom = buildLoads3D(s, blobs, drawnOpts(this.theme, full));
+    this.appliedKey = geom.arrows.length || geom.combs.length ? nextKey : null;
+    return this.upload(geom.arrows, geom.combs, geom.radius);
+  }
+}
+
+/** The Reactions card's arrows (`s.reactions`): the reaction forces of the results step on screen. */
+export class ReactionsLayer extends ArrowLayer {
+  private appliedKey: string | null = null;
+  /** The step data drawn: a re-read of the same step rebuilds the arrows. */
+  private drawnStep: StepValues | null = null;
+  /** The results stage the arrows on screen were built for. */
+  private drawnStage: number | null = null;
+
+  sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
+    const at = s.phase.at;
+    if (!s.reactions.on || !s.mesh || at?.kind !== "results") {
+      this.appliedKey = null;
+      this.drawnStep = null;
+      this.drawnStage = null;
+      return this.hide();
+    }
+    const sized = this.size(s.reactions);
+    const ids = s.results?.stages[at.stage]?.nodeIds;
+    // Until the step's data is here (a scrub), the last step's arrows stay.
+    const here = step && step.stage === at.stage && step.step === at.step && ids && blobs.has(ids) ? step : null;
+    const nextKey = [s.mesh.linePositions.id, full ? full.key : "base", s.reactions.scale, s.reactions.colorBy, s.reactions.component, s.reactions.allNodes, s.contour.sourceUnits ?? "", s.contour.targetUnits ?? "", this.theme].join("|");
+    if (!here) {
+      // A scrub within the stage keeps the last arrows until the step arrives; another stage's, or a
+      // step whose read failed, are not this step's reactions.
+      const failed = s.resultStep?.stage === at.stage && s.resultStep.step === at.step && s.resultStep.status === "failed";
+      if (this.drawnStage !== at.stage || failed) {
+        this.appliedKey = null;
+        this.drawnStep = null;
+        this.drawnStage = null;
+        return this.hide() || sized;
+      }
+      return sized;
+    }
+    if (this.appliedKey === nextKey && here === this.drawnStep) return sized;
+    const arrows = buildReactions3D(s, blobs, here.nodal, blobs.get(ids!) as Float64Array, drawnOpts(this.theme, full)).arrows;
+    this.drawnStep = here;
+    this.drawnStage = at.stage;
+    this.appliedKey = nextKey;
+    return this.upload(arrows, NO_RECORDS, s.mesh.radius);
   }
 }

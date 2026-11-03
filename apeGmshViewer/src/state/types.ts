@@ -428,6 +428,15 @@ export interface UserIndexIn {
   results: UserZoneIn<{ entries: UserResultEntryIn[]; refused: UserRefusalIn[] }>;
   modes: UserZoneIn<UserModeTableIn> | null;
   spectra: UserZoneIn<{ cases: UserSpectrumCaseIn[]; refused: UserRefusalIn[] }> | null;
+  /** VU8: `/entities`, or null when the file holds none (absent: an index built before VU8, read as none) */
+  entities?: UserZoneIn<UserEntitiesIn> | null;
+}
+/** reader/userEntities.ts `Entities`: every row in table order (a row's position is its `ENTITY_ROW`), and the refused ones. */
+export interface UserEntitiesIn {
+  cuts: { name: string; side: string; point: Vec3; normal: Vec3; reference: Vec3; elementIds: number[]; polygon: Vec3[] }[];
+  storeys: { name: string; level: number; reference: Vec3; nodeIds: number[] }[];
+  pointSets: { name: string; xyz: Vec3[]; hostElement: number[] }[];
+  refused: { kind: string; row: number; name: string; reason: string; detail: string }[];
 }
 /** reader/userModes.ts `ModeTable`. */
 export interface UserModeTableIn {
@@ -529,6 +538,42 @@ export interface UserRefusal {
 /** A zone's rows as listed, or why the zone was refused. */
 export type UserGroup<T> = { ok: true; items: T[]; refused: UserRefusal[] } | { ok: false; reason: string };
 
+/** The `ENTITY_KIND`s of `/entities` (h5-schema.md), one per table. */
+export const USER_ENTITY_KINDS = ["cut", "storey", "point_set"] as const;
+/** One standing `/entities/cuts` row (D8): the plane, the kept side, its polygon (`[]` for none), the point its moments are about. */
+export interface UserCut {
+  /** its `ENTITY_ROW` */
+  row: number;
+  name: string;
+  side: "positive" | "negative";
+  point: Vec3;
+  normal: Vec3;
+  reference: Vec3;
+  /** OpenSees tags */
+  elementIds: number[];
+  polygon: Vec3[];
+}
+/** One standing `/entities/storeys` row (D8): a level, its nodes, its reference point (the centre of mass). */
+export interface UserStorey {
+  row: number;
+  name: string;
+  level: number;
+  reference: Vec3;
+  nodeIds: number[];
+}
+/** One standing `/entities/point_sets` row (D8): points, each with a host element (an OpenSees tag) or -1. */
+export interface UserPointSet {
+  row: number;
+  name: string;
+  xyz: Vec3[];
+  hostElement: number[];
+}
+/** A refused `/entities` row, which keeps its position. */
+export interface UserEntityRefusal extends UserRefusal {
+  kind: (typeof USER_ENTITY_KINDS)[number];
+  row: number;
+}
+
 /** The renderer's view of one `.user.h5`, derived from `UserReadIn` by the reducer. */
 export interface UserInfo {
   /** the file's banners (a newer zone), and each root member this app does not know */
@@ -541,6 +586,15 @@ export interface UserInfo {
   spectra: { ok: true; items: UserSpectrumCase[]; refused: UserRefusal[]; stale: StaleMark } | { ok: false; reason: string; stale: StaleMark } | null;
   /** `/modes`, the modal table, each row with its verdict; null when the file has none */
   modes: { ok: true; components: string[]; rows: UserModeRow[]; stale: StaleMark } | { ok: false; reason: string; stale: StaleMark } | null;
+  /**
+   * VU8: `/entities`, its standing rows by table and each refused one, or why the
+   * zone is refused; null (or absent: an info built without it) when the file has
+   * none. A stale zone is drawn only on request (A6).
+   */
+  entities?:
+    | { ok: true; cuts: UserCut[]; storeys: UserStorey[]; pointSets: UserPointSet[]; refused: UserEntityRefusal[]; stale: StaleMark }
+    | { ok: false; reason: string; stale: StaleMark }
+    | null;
 }
 
 /** ADR 0130: the set's `.user.h5`. Read on request, after the model's first frame (renderer/app.ts). */
@@ -860,6 +914,28 @@ export interface LineDiagramState {
   hover: LineDiagramHoverReadout | null;
 }
 
+/**
+ * The Reactions card: the results step's reaction forces as arrows pointing at
+ * the support, a 45° tick across the tail; sized, coloured and thinned like the
+ * load arrows but on their own settings.
+ */
+export interface ReactionsState {
+  readonly on: boolean;
+  /** Shaft multiplier (default 1, > 0). */
+  readonly scale: number;
+  /** Arrowhead length on screen, in CSS pixels (default 12, > 0). */
+  readonly headSize: number;
+  readonly colorBy: LoadsColorBy;
+  readonly thin: boolean;
+  /** What each node draws: the resultant, its three global-axis components as separate arrows, or one of them (default resultant). */
+  readonly component: ReactionComponent;
+  /** Draw every node the results record a reaction at, not only the supports (default false): free nodes then show their residual, constrained nodes their constraint force. */
+  readonly allNodes: boolean;
+}
+
+/** A reaction arrow per node along the resultant, per global axis (`xyz`), or along one global axis. */
+export type ReactionComponent = "resultant" | "xyz" | "x" | "y" | "z";
+
 /** How the load arrows are coloured. */
 export type LoadsColorBy = "mono" | "type" | "magnitude";
 
@@ -1094,6 +1170,7 @@ export interface State {
   lineDiagram: LineDiagramState;
   /** 3-D structural loading and prescribed-SP visualization state */
   loads: LoadsState;
+  reactions: ReactionsState;
   /** Spotlight (`Ctrl+K`) command and search palette */
   spotlight: SpotlightState;
   /** Search window query builder and text filter */
@@ -1411,6 +1488,8 @@ export type Event =
       drawnBeams?: readonly LineDiagramBeamSummary[];
     }
   | { type: "lineDiagramScan"; scan: ContourScan }
+  /** The Reactions card's controls */
+  | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean }
   /** 3-D structural loading and prescribed-SP visualization controls */
   | {
       type: "setLoads";

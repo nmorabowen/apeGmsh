@@ -20,6 +20,7 @@ import { THEME_MODES } from "../theme/tokens.ts";
 import {
   LINE_STATION_COMPONENTS,
   NAMED_VIEWS,
+  USER_ENTITY_KINDS,
   USER_RESULT_BASES,
   USER_RESULT_TARGETS,
   USER_ZONES,
@@ -44,6 +45,7 @@ import {
   type Event,
   type LineDiagramState,
   type LoadsState,
+  type ReactionsState,
   type MeshInfo,
   type Offer,
   type OffersState,
@@ -74,6 +76,8 @@ function markerSize<M extends Markers>(m: M, size: number | null, auto: boolean 
 export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
 
 export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
+
+export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false };
 
 export const initialLoads: LoadsState = {
   on: false,
@@ -253,6 +257,7 @@ export const initialState: State = {
   clip: initialClip,
   lineDiagram: initialLineDiagram,
   loads: initialLoads,
+  reactions: initialReactions,
   spotlight: initialSpotlight,
   search: initialSearch,
   camera: initialCamera,
@@ -534,7 +539,34 @@ export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): User
     });
     spectra = { ok: true, items, refused: refusalsOf(sp.value.refused), stale: zoneMark("spectra") };
   }
-  return { warnings, combinations, results, spectra, modes };
+  return { warnings, combinations, results, spectra, modes, entities: entitiesOf(index.entities ?? null, zoneMark("entities")) };
+}
+
+/** VU8: `/entities` as the renderer draws it: the standing rows, each with its `ENTITY_ROW`, and the refused ones. */
+function entitiesOf(e: NonNullable<UserIndexIn["entities"]> | null, stale: StaleMark): UserInfo["entities"] {
+  if (e === null) return null;
+  if (!e.ok) return { ok: false, reason: e.reason, stale };
+  const refused = e.value.refused.map((r) => ({ kind: oneOf(r.kind, USER_ENTITY_KINDS, `the kind of the refused entity ${r.name}`), row: r.row, name: r.name, reason: r.reason, detail: r.detail }));
+  /** The rows of `kind` that stand, each with its position. */
+  const standing = <T>(kind: (typeof USER_ENTITY_KINDS)[number], rows: readonly T[]) =>
+    rows.map((x, row) => ({ x, row })).filter(({ row }) => !refused.some((r) => r.kind === kind && r.row === row));
+  return {
+    ok: true,
+    cuts: standing("cut", e.value.cuts).map(({ x: c, row }) => ({
+      row,
+      name: c.name,
+      side: oneOf(c.side, ["positive", "negative"] as const, `the side of the cut ${c.name}`),
+      point: c.point,
+      normal: c.normal,
+      reference: c.reference,
+      elementIds: [...c.elementIds],
+      polygon: [...c.polygon],
+    })),
+    storeys: standing("storey", e.value.storeys).map(({ x: s, row }) => ({ row, name: s.name, level: s.level, reference: s.reference, nodeIds: [...s.nodeIds] })),
+    pointSets: standing("point_set", e.value.pointSets).map(({ x: p, row }) => ({ row, name: p.name, xyz: [...p.xyz], hostElement: [...p.hostElement] })),
+    refused,
+    stale,
+  };
 }
 
 /** The suffixes main/pairing.ts `classify` knows, longest first; a part file `<stem>.part-<N>.ladruno` is its stem's results. */
@@ -1216,6 +1248,33 @@ export function reduce(s: State, e: Event): State {
     case "lineDiagramScan":
       if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
       return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
+    case "setReactions": {
+      for (const k of ["on", "thin", "allNodes"] as const) {
+        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setReactions: ${k} ${JSON.stringify(e[k])}`);
+      }
+      for (const k of ["scale", "headSize"] as const) {
+        const v = e[k];
+        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
+          throw new RangeError(`setReactions: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
+        }
+      }
+      if (e.colorBy !== undefined && !["mono", "type", "magnitude"].includes(e.colorBy)) throw new RangeError(`setReactions: colorBy ${JSON.stringify(e.colorBy)}`);
+      if (e.component !== undefined && !["resultant", "xyz", "x", "y", "z"].includes(e.component)) {
+        throw new RangeError(`setReactions: component ${JSON.stringify(e.component)}`);
+      }
+      const cur = s.reactions;
+      const pos = (v: number | undefined, was: number) => (v !== undefined && Number.isFinite(v) && v > 0 ? v : was);
+      const next: ReactionsState = {
+        on: e.on ?? cur.on,
+        scale: pos(e.scale, cur.scale),
+        headSize: pos(e.headSize, cur.headSize),
+        colorBy: e.colorBy ?? cur.colorBy,
+        thin: e.thin ?? cur.thin,
+        component: e.component ?? cur.component,
+        allNodes: e.allNodes ?? cur.allNodes,
+      };
+      return (Object.keys(next) as (keyof ReactionsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, reactions: next };
+    }
     case "setLoads": {
       if (e.on !== undefined && typeof e.on !== "boolean") {
         throw new RangeError(`setLoads: on ${JSON.stringify(e.on)}`);

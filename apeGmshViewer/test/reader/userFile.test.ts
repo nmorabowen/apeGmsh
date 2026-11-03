@@ -329,8 +329,8 @@ test("a set's user file reads: /meta, the generation in force, the /results inde
     { kind: "stage", source: "gravity", step: -1, mode: 0 },
     { kind: "combination", source: "1.2D+1.6L", step: -1, mode: 0 },
   ]);
-  // Fail closed until VU8 reads /entities: an ON_ENTITIES entry cannot be shown to stand.
-  assert.deepEqual(r.refused.map((x) => [x.name, x.reason, x.row]), [["pier P1 base", "unresolved", 2]]);
+  // The file holds no /entities, so an ON_ENTITIES entry names a row it does not hold (Python's `_bound_entries`).
+  assert.deepEqual(r.refused.map((x) => [x.name, x.reason, x.row, x.detail]), [["pier P1 base", "unresolved", 2, "user result 'pier P1 base' names cut row 0, and /entities/cuts holds 0"]]);
 });
 
 test("the index reads no /results or /spectra DATA value (the first-frame criterion: only shapes)", (t: TestContext) => {

@@ -190,6 +190,7 @@ export function loadsColourPalette(mode: ThemeMode = "dark"): {
   readonly elementLoad: [number, number, number];
   readonly sp: [number, number, number];
   readonly mono: [number, number, number];
+  readonly reaction: [number, number, number];
 } {
   const t = themeTokens(mode);
   const ring = mode === "light" ? LIGHT_MAIN : DARK_MAIN;
@@ -203,6 +204,7 @@ export function loadsColourPalette(mode: ThemeMode = "dark"): {
     elementLoad: hexToRgb(t.ok),
     sp: hexToRgb(ring[4]!),
     mono: hexToRgb(t.text),
+    reaction: hexToRgb(ring[7]!),
   };
 }
 
@@ -1445,13 +1447,15 @@ export function loadsSummaryOf(s: State): LoadsSummary {
 /**
  * One arrow per record, `ARROW_STRIDE` floats: tip (3), unit direction (3),
  * nominal length in world units (1), sRGB colour (3), head count (1: 1 or 2),
- * SP bar (1: 0 or 1), priority (1: magnitude over its kind's peak), and
+ * mark (1: `BAR`), priority (1: magnitude over its kind's peak), and
  * thinning level (1, `thinningLevels`). The renderer draws each record as an
  * instance (renderer/loads.ts): a line shaft and flat 2:1 heads sized in
  * pixels, with the shaft's length capped to a pixel band.
  */
 export const ARROW_STRIDE = 14;
 export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, priority: 12, level: 13 } as const;
+/** The `bar` field: no mark, an SP bar across the tip, or a reaction's 45° tick across the tail. */
+export const BAR = { none: 0, sp: 1, tick: 2 } as const;
 
 /**
  * One comb bar per record, `COMB_STRIDE` floats: the two arrows whose tails
@@ -2277,4 +2281,201 @@ export function buildLoads3D(
     maxBaseExcitationMag,
     units,
   };
+}
+
+// ---- Reactions -----------------------------------------------------------------
+/** The supported nodes, memoised on the definitions, the neutral loads and the stage they are read at. */
+const supportMemo = new WeakMap<object, { neutral: unknown; stage: number | null; nodes: ReadonlySet<number> }>();
+
+/** A DOF mask as stored (a JSON array, a typed array, or a space- or comma-separated string): its 1-based restrained DOFs. */
+function maskDofs(mask: unknown): number[] | null {
+  const values = Array.isArray(mask) ? mask : ArrayBuffer.isView(mask) ? Array.from(mask as unknown as ArrayLike<number>) : typeof mask === "string" ? mask.split(/[\s,]+/).filter(Boolean) : null;
+  if (!values) return null;
+  return values.flatMap((v, i) => (Number(v) !== 0 ? [i + 1] : []));
+}
+
+/**
+ * The nodes the model supports at the stage on screen: a node is supported
+ * while it keeps a restrained DOF. Restraints come from `fix` rows (their DOF
+ * masks), pattern SP rows (homogeneous ones included: they are fixities),
+ * support holds (`sp_holds`) and neutral `/loads/sp` cases. The global rows
+ * apply first; then each stage up to the one on screen removes its `remove_sp`
+ * DOFs and adds its own rows, the order the loads path uses
+ * (`removedSpStageMapUpTo`). With no stage resolved, every stage's rows count
+ * and none is removed. A reaction recorded anywhere else is a free node's
+ * residual or a constraint's force, not a support reaction.
+ */
+export function supportedNodesOf(s: State): ReadonlySet<number> {
+  const defs = s.definitions;
+  const stage = resolveActiveStage(s).index;
+  const key = (defs ?? s) as object;
+  const hit = supportMemo.get(key);
+  if (hit && hit.neutral === s.neutralLoads && hit.stage === stage) return hit.nodes;
+  const held = new Map<number, Set<number>>();
+  const hold = (node: number, dof: number) => {
+    let d = held.get(node);
+    if (!d) held.set(node, (d = new Set()));
+    d.add(dof);
+  };
+  const nodesOf = (s0: State, t: Table, row: readonly unknown[]): number[] => {
+    const c = t.columns;
+    const nodeIdx = ["node_id", "node_tag", "col_0", "[0]", "node"].map((n) => c.indexOf(n)).find((i) => i >= 0) ?? -1;
+    const id = nodeIdx >= 0 ? Number(row[nodeIdx]) : Number.NaN;
+    if (Number.isInteger(id)) return [id];
+    const targetIdx = c.indexOf("target");
+    const kindIdx = c.indexOf("target_kind");
+    return targetIdx >= 0 ? resolveTargetNodes(s0, kindIdx >= 0 ? String(row[kindIdx] ?? "node") : "node", row[targetIdx]) : [];
+  };
+  const readFix = (t: Table | null | undefined) => {
+    if (!t) return;
+    const dofsIdx = t.columns.indexOf("dofs");
+    for (const row of t.rows) {
+      // A row with no readable mask is a fixity of unknown DOFs: counted as restraining DOF 0.
+      const dofs = dofsIdx >= 0 ? maskDofs(row[dofsIdx]) : null;
+      if (dofs && dofs.length === 0) continue;
+      for (const n of nodesOf(s, t, row)) for (const d of dofs ?? [0]) hold(n, d);
+    }
+  };
+  const readSp = (t: Table | null | undefined) => {
+    if (!t) return;
+    const c = t.columns;
+    const dofIdx = ["dof", "col_1", "[1]"].map((n) => c.indexOf(n)).find((i) => i >= 0) ?? -1;
+    for (const row of t.rows) {
+      const dof = dofIdx >= 0 ? Number(row[dofIdx]) : 0;
+      for (const n of nodesOf(s, t, row)) hold(n, Number.isInteger(dof) ? dof : 0);
+    }
+  };
+  const readRemoved = (t: Table | null | undefined) => {
+    if (!t) return;
+    const c = t.columns;
+    const nCol = c.indexOf("node_tag") >= 0 ? c.indexOf("node_tag") : c.indexOf("target") >= 0 ? c.indexOf("target") : 0;
+    const dCol = c.indexOf("dof") >= 0 ? c.indexOf("dof") : 1;
+    for (const row of t.rows) held.get(Number(row[nCol]))?.delete(Number(row[dCol]));
+  };
+  if (defs) {
+    readFix(defs.bcs?.fix);
+    for (const p of defs.patterns ?? []) {
+      readSp(p.tables["sps"]);
+      readSp(p.tables["sp_holds"]);
+    }
+    for (const st of [...(defs.stages ?? [])].sort((a, b) => a.index - b.index)) {
+      if (stage !== null && st.index > stage) continue;
+      if (stage !== null) readRemoved(st.removeSp);
+      readFix(st.bcs?.fix);
+      for (const p of st.patterns) {
+        readSp(p.tables["sps"]);
+        readSp(p.tables["sp_holds"]);
+      }
+    }
+  }
+  for (const t of Object.values(s.neutralLoads?.sp ?? {})) readSp(t);
+  const nodes = new Set([...held].filter(([, d]) => d.size > 0).map(([n]) => n));
+  supportMemo.set(key, { neutral: s.neutralLoads, stage, nodes });
+  return nodes;
+}
+
+
+/** The reaction-force components a results stage records (`reaction_force_x`, `_y`, `_z`), in that order; null for none. */
+export function reactionComponentsOf(s: State): readonly (string | null)[] | null {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results) return null;
+  const nodal = s.results.stages[at.stage]?.nodal ?? [];
+  const comps = ["x", "y", "z"].map((c) => (nodal.includes(`reaction_force_${c}`) ? `reaction_force_${c}` : null));
+  return comps.some((c) => c !== null) ? comps : null;
+}
+
+/** A reaction arrow below this fraction of the step's largest is solver noise, not drawn. */
+export const REACTION_FLOOR = 1e-6;
+
+export interface Reactions3D {
+  /** One record per reaction arrow, `ARROW_STRIDE` floats, its mark `BAR.tick`. */
+  readonly arrows: Float32Array;
+  /** Arrows drawn: one per node for the resultant or one axis, up to three for `xyz`. */
+  readonly count: number;
+  /** The step's largest arrow (resultant or component, in the display units), which sets the longest arrow. */
+  readonly maxMag: number;
+}
+
+/**
+ * The reaction-force arrows of one results step, at each node with a finite,
+ * non-zero reaction: along the resultant, or along the global axes as
+ * `s.reactions.component` asks (all three, or one), each tip on the node and
+ * pointing along its force (so it points at the support from outside), a 45°
+ * tick across its tail. Lengths follow the step's largest arrow, as the load
+ * arrows follow their peak, so components compare with one another.
+ * `nodal` and `nodeIds` are the step's rows and the stage's node ids.
+ */
+export function buildReactions3D(
+  s: State,
+  blobs: BlobStore,
+  nodal: Readonly<Record<string, Float64Array>>,
+  nodeIds: Float64Array,
+  opts?: BuildLoads3DOptions,
+): Reactions3D {
+  const comps = reactionComponentsOf(s);
+  const none: Reactions3D = { arrows: new Float32Array(0), count: 0, maxMag: 0 };
+  if (!comps || !s.mesh) return none;
+  const rows = comps.map((c) => (c ? nodal[c] : undefined));
+  if (rows.every((r) => !r)) return none;
+  const factor = loadsUnitsOf(s).force.factor;
+  const nodeCoords = buildNodeCoordsMap(s, blobs, opts);
+  // By default only the supports: a free node's residual or a constraint's force is not a reaction to draw.
+  const supported = s.reactions.allNodes ? null : supportedNodesOf(s);
+  const want = s.reactions.component;
+  const picked = want === "xyz" ? [0, 1, 2] : want === "x" ? [0] : want === "y" ? [1] : want === "z" ? [2] : null;
+  // A single axis the stage does not record (z on a 2-D model) draws the resultant, as the card then shows.
+  const axes = picked && picked.length === 1 && comps[picked[0]!] === null ? null : picked;
+  const items: { tip: Vec3; vec: Vec3; mag: number; node: number }[] = [];
+  let maxMag = 0;
+  let node = -1;
+  const add = (tip: Vec3, vec: Vec3) => {
+    const mag = Math.hypot(...vec);
+    if (mag <= 1e-30) return;
+    items.push({ tip, vec, mag, node });
+    if (mag > maxMag) maxMag = mag;
+  };
+  for (let i = 0; i < nodeIds.length; i++) {
+    const v = rows.map((r) => (r ? r[i]! : 0)) as [number, number, number];
+    if (!v.every(Number.isFinite)) continue;
+    if (supported && !supported.has(nodeIds[i]!)) continue;
+    const tip = nodeCoords.get(nodeIds[i]!);
+    if (!tip) continue;
+    const vec: Vec3 = [v[0] * factor, v[1] * factor, v[2] * factor];
+    node++;
+    if (!axes) add(tip, vec);
+    else for (const a of axes) add(tip, [a === 0 ? vec[0] : 0, a === 1 ? vec[1] : 0, a === 2 ? vec[2] : 0]);
+  }
+  // Solver noise is not a reaction: a component near 1e-12 where the true value is 0 would otherwise get
+  // the shortest arrow, 35 % of the longest. Anything under 1e-6 of the step's largest arrow is left out.
+  const kept = items.filter((it) => it.mag >= REACTION_FLOOR * maxMag);
+  items.length = 0;
+  items.push(...kept);
+  if (items.length === 0) return none;
+  const radius = s.mesh.radius > 0 && Number.isFinite(s.mesh.radius) ? s.mesh.radius : 1;
+  const baseLen = Math.max(radius * 0.22, 1e-4) * s.reactions.scale;
+  const palette = loadsColourPalette(opts?.theme ?? "dark");
+  const g: GlyphBuffers = { arrows: [], combs: [] };
+  for (const it of items) {
+    const ratio = it.mag / maxMag;
+    const rgb = s.reactions.colorBy === "type" ? palette.reaction : s.reactions.colorBy === "magnitude" ? sampleCmap("jet", ratio) : palette.mono;
+    const dir: Vec3 = [it.vec[0] / it.mag, it.vec[1] / it.mag, it.vec[2] / it.mag];
+    pushArrowToPoint(g, it.tip, dir, baseLen * (0.35 + 0.65 * ratio), rgb, ratio);
+    g.arrows[g.arrows.length - ARROW_STRIDE + ARROW.bar] = BAR.tick;
+  }
+  const arrows = new Float32Array(g.arrows);
+  // Thinning is decided per node: one record per node (its largest arrow), then each
+  // arrow takes its node's level, so a node's components show or hide together.
+  const firstOf = new Map<number, number>();
+  items.forEach((it, i) => {
+    const k = firstOf.get(it.node);
+    if (k === undefined || it.mag > items[k]!.mag) firstOf.set(it.node, i);
+  });
+  const reps = [...firstOf.values()];
+  const perNode = new Float32Array(reps.length * ARROW_STRIDE);
+  reps.forEach((i, j) => perNode.set(arrows.subarray(i * ARROW_STRIDE, (i + 1) * ARROW_STRIDE), j * ARROW_STRIDE));
+  thinningLevels(perNode, radius);
+  const levelOf = new Map<number, number>();
+  reps.forEach((i, j) => levelOf.set(items[i]!.node, perNode[j * ARROW_STRIDE + ARROW.level]!));
+  items.forEach((it, i) => (arrows[i * ARROW_STRIDE + ARROW.level] = levelOf.get(it.node)!));
+  return { arrows, count: items.length, maxMag };
 }

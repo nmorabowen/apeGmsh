@@ -41,8 +41,11 @@ export function heldNodes(model: string): Set<number> {
   }
 }
 
-/** Write the set into `dir`; returns the model and results paths and the held nodes. */
-export async function makeReactionSet(dir: string): Promise<{ model: string; results: string; held: Set<number> }> {
+/**
+ * Write the set into `dir`; returns the model and results paths and the held nodes. `free`, when given, is
+ * the value written at every other node (a free node's residual or a constraint's force) instead of NaN.
+ */
+export async function makeReactionSet(dir: string, free?: (node: number) => number): Promise<{ model: string; results: string; held: Set<number> }> {
   await h5wasm.ready;
   mkdirSync(dir, { recursive: true });
   const model = join(dir, "reactions.h5");
@@ -61,7 +64,7 @@ export async function makeReactionSet(dir: string): Promise<{ model: string; res
       const N = ids.length;
       for (const [c, name] of REACTION_COMPONENTS.entries()) {
         const data = new Float64Array(T * N);
-        for (let k = 0; k < T; k++) for (let j = 0; j < N; j++) data[k * N + j] = held.has(ids[j]!) ? reactionAt(s, k, ids[j]!, c) : NaN;
+        for (let k = 0; k < T; k++) for (let j = 0; j < N; j++) data[k * N + j] = held.has(ids[j]!) ? reactionAt(s, k, ids[j]!, c) : free ? free(ids[j]!) : NaN;
         nodes.create_dataset({ name, data, shape: [T, N], dtype: "<d" });
       }
     }

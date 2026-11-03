@@ -156,6 +156,7 @@ export {
   loadsColourPalette,
   loadsSummaryOf,
   loadsUnitsOf,
+  reactionComponentsOf,
   type BuildLoads3DOptions,
   type LoadPatternCounts,
   type LoadPatternEntry,

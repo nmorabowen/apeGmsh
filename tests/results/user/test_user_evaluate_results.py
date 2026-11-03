@@ -128,6 +128,19 @@ def test_a_stage_step_is_a_time_index(run, tmp_path: Path) -> None:
     assert err.value.reason == "unresolved"
 
 
+@pytest.mark.parametrize("step", [-1, 0])
+def test_a_stage_with_no_steps_refuses_with_a_reason(run, tmp_path: Path, step: int) -> None:
+    """#2750: the eigen stage records no steps (San Ramón's static stage is one), so
+    even its last step is no state: the term refuses, never an ``IndexError``."""
+    assert run.stage("stage_2").n_steps == 0
+    _user(tmp_path, [Combination("over_eigen", "linear", (_stage("stage_2", 1.0, step=step),
+                                                           _stage("stage_0", 1.0)))])
+    with pytest.raises(CombinationRefused) as err:
+        run.combinations().evaluate("over_eigen", "displacement_x")
+    assert err.value.reason == "unresolved"
+    assert "stage 'stage_2' records no steps" in err.value.detail
+
+
 def test_an_unstamped_stage_is_named_stage_i_only(run, tmp_path: Path) -> None:
     """A3: with no stamp the source is ``stage_<i>``; the recorder's group name is not one."""
     _user(tmp_path, [Combination("by_group", "linear", (_stage("MODEL_STAGE[2]", 2.0),)),
