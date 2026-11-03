@@ -307,10 +307,10 @@ def test_the_message_names_the_floor() -> None:
         msg = fork_floor_message(floor)
         assert floor.probe in msg and "100eb9ae" in msg
         assert all(cls in msg for cls in MATERIAL_STATE_FORK_FLOOR)
-    # The floor stays 100eb9ae: FORK_PIN ladruno-v20261030b (23d937bc4)
-    # descends from it (GitHub compare: ahead 122, behind 0, via c9004f48d)
+    # The floor stays 100eb9ae: FORK_PIN ladruno-v20261103 (6050d78e1)
+    # descends from it (GitHub compare: ahead 245, behind 0, via 23d937bc4)
     # and registers ladrunoSchema (#2514).
-    assert _pin_sha().startswith("23d937bc4"), (
+    assert _pin_sha().startswith("6050d78e1"), (
         "FORK_PIN moved: re-read the floor (a later pin still forwards)")
 
 
