@@ -45,7 +45,7 @@ import numpy as np
 
 from ... import __version__
 from ...opensees._internal.lineage import read_stored_lineage
-from ._descriptor import address_problem
+from ._descriptor import StateAddress, address_problem
 from ._errors import UserFileRefused, UserWriteRefused, ZoneRefused
 from ._names import name_problem, text_or_empty
 from ._writer import _create_partial, _fsync, _replace, _sweep_dead_partials
@@ -685,7 +685,8 @@ def plot_problem(plot: Mapping[str, Any]) -> Optional[str]:
                           {"kind", "source", "step", "mode"}, "state")
         if problem is not None:
             return problem
-        problem = address_problem(state["kind"], state["source"], state["step"], state["mode"])
+        problem = address_problem(
+            StateAddress(state["kind"], state["source"], state["step"], state["mode"]))
         if problem is not None:
             return f"state: {problem}"
         if plot["axis"] not in _PROFILE_AXES:
