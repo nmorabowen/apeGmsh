@@ -1,5 +1,5 @@
 # Results — post-processing OpenSees output
-<!-- skill-freshness: verified against apeGmsh main@970331aa (2026-09-12) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
+<!-- skill-freshness: verified against apeGmsh main@fe910e8d (2026-11-03) · signatures: python -m apeGmsh.studio.lookup SYMBOL (ADR 0096); src/ is not the authoring lookup -->
 
 `Results` reads an OpenSees run back into apeGmsh's label/query world.
 All signatures below are read from `src/apeGmsh/results/Results.py`
@@ -8,45 +8,71 @@ All signatures below are read from `src/apeGmsh/results/Results.py`
 Top-level import: `from apeGmsh import Results` (also
 `from apeGmsh.results import Results, make_demo_results`).
 
-## 1. Constructors — `model=` / `model_h5=` is REQUIRED
+## 1. Constructors — read a `.ladruno`
 
-Every constructor needs the model broker. Omitting it raises
-`TypeError` — this is the single biggest drift in older docs/snippets.
+apeGmsh is converging on one results format, the `.ladruno` (ADR 0131).
+Open a run with `Results.from_ladruno`. A stock OpenSees `.mpco` gets
+there through `convert_mpco`. The native `results.h5` path
+(`from_native`, `to_native`) and `from_mpco` still work today, but
+both are being retired: new code should not write or read them.
+apeGmshViewer is `.ladruno`-only by decision (ADR 0131 D1); its
+native `<stem>.results.h5` slot goes at slice V1d (D2).
 
 | Constructor | Required kwarg | Source |
 |---|---|---|
-| `Results.from_native(path, *, fem=None, model=...)` | `model=OpenSeesModel` | apeGmsh native HDF5 (Composed-file: results + `/opensees/` zone in one file) |
-| `Results.from_mpco(path, *, fem=None, merge_partitions=True, model_h5=...)` | `model_h5=<path>` | STKO `.mpco` HDF5 (single or `part-N` partitions) |
-| `Results.from_ladruno(path, *, fem=None, merge_partitions=True, model_h5=None)` | *(none — self-sufficient)* | OpenSees **Ladruno fork** `.ladruno` HDF5 (single or `part-N`); `model_h5=` optional, only for richer lineage |
+| `Results.from_ladruno(path, *, fem=None, merge_partitions=True, model_h5=None)` | *(none — self-sufficient)* | a `.ladruno` (fork recorder, `convert_mpco`, `EigenResult.results()`, `Results.demo()`), single or `part-N`; pass `model_h5=` for stage names, PGs and labels |
 | `Results.from_recorders(spec, output_dir, *, fem, model=...)` | `fem=` **and** `model=` | `.out`/`.xml` from a Tcl/Py recorder run; transcodes → native + caches |
+| `Results.from_mpco(path, *, fem=None, merge_partitions=True, model_h5=...)` | `model_h5=<path>` | STKO `.mpco` (single or `part-N`). **Being retired** (ADR 0131 D5): convert instead |
+| `Results.from_native(path, *, fem=None, model=...)` | `model=OpenSeesModel` | apeGmsh native `results.h5`. **Being retired** with `to_native` (ADR 0131 D10) |
 
 ```python
 from apeGmsh import Results
-from apeGmsh.opensees import OpenSeesModel        # verified: tests/test_results_bind.py::test_lineage_propagates_from_model
+from apeGmsh.results import convert_mpco
 
-# Native apeGmsh HDF5 — model= is REQUIRED (Phase 8 / ADR 0020 INV-1).
-# EigenResult.to_native writes one (modes); often the SAME path carries
-# the model too (Composed-file pattern). A recorded run is read with
-# run.results() / from_ladruno / from_mpco / from_recorders instead.
-model = OpenSeesModel.from_h5("modes.h5")
-results = Results.from_native("modes.h5", model=model)
+# A .ladruno is SELF-SUFFICIENT (geometry, regions, local axes are in the
+# file), so model_h5= is optional. Pass it anyway when you have it: the
+# ops.stage names, physical groups and labels come from the archive.
+results = Results.from_ladruno("run.ladruno", model_h5="model.h5")
+results = Results.from_ladruno("run.part-0.ladruno")          # parts merged
 
-# STKO .mpco — model_h5= (sibling model archive) is REQUIRED.
-results = Results.from_mpco("run.mpco", model_h5="model.h5")
-
-# A multi-partition run: pass any one part; siblings auto-discovered.
-results = Results.from_mpco("run.part-0.mpco", model_h5="model.h5")
-
-# Ladruno fork .ladruno — SELF-SUFFICIENT: no model_h5 needed (the file
-# carries its own geometry/regions/local axes). Partitions auto-discovered.
-results = Results.from_ladruno("run.ladruno")
-results = Results.from_ladruno("run.part-0.ladruno")          # merged
+# Stock OpenSees: the deck records an .mpco; convert it once, then read
+# the .ladruno. model_h5= (the ops.h5 archive) is required: the stage
+# kinds come from its program. The .mpco is never modified.
+convert_mpco("run.mpco", "run.ladruno", model_h5="model.h5")   # -> [Path]
+results = Results.from_ladruno("run.ladruno", model_h5="model.h5")
 
 # Recorder .out/.xml run — needs BOTH fem= and model=.
 results = Results.from_recorders(spec, "out/", fem=fem, model=model)
 ```
 
-Omitting the required kwarg:
+`convert_mpco(src, dst, *, model_h5, overwrite=False)` converts a
+partitioned set too (`run.part-0.mpco` writes `run.part-0.ladruno` …),
+returns the written paths, and is atomic: either the whole new set is
+in place, or nothing changed. It refuses with `MPCOConversionRefused`
+when the stages cannot be paired with the program's `ops.stage` blocks
+(an unstaged program refuses), when the archive is another model's, or
+when a target exists without `overwrite=True`. What it cannot carry is
+listed in the file's `INFO/PROVENANCE@unsupported`: `local_axes`,
+`springs` (copied, but not read by `from_ladruno`), and
+`quadrature:<group>` for an element group with no known rule.
+(`tests/test_results_mpco_to_ladruno.py`)
+
+Modes come back the same way: `EigenResult.results()` writes the modes
+to a stamped `.ladruno` and opens it (`results.modes` lists one
+mode-scoped `Results` per eigenvalue); `EigenResult.to_ladruno(path)`
+keeps the file. `to_native` remains only as an explicit native export.
+
+**Pairing.** A `.ladruno` written by apeGmsh is stamped in
+`INFO/PROVENANCE` with the hashes of the model archive it came from. A
+bridge archive (`ops.h5`) stamps both `model_hash` and `fem_hash`, and
+pairs only with an archive that matches both. A bare FEMData archive
+(`fem.to_h5`) has no `model_hash`; ADR 0133 lets it pair by `fem_hash`
+alone, which reaches the stamp with W1b (#2807). Until then the stamp
+refuses a FEMData archive. `from_ladruno(model_h5=<another model>)`
+warns `ModelFemMismatchWarning` and binds the file's own mesh instead.
+
+The retiring constructors still require their model broker; omitting
+it raises `TypeError`:
 
 ```python
 Results.from_native("run.h5")        # TypeError: model= is required
@@ -268,10 +294,192 @@ warns and is skipped). The same sidecar carries definitions to the
 ```python
 results.save_definitions()          # -> <results>.defs.json (also persists on viewer spawn)
 # ... later session ...
-r = Results.from_native("run.h5", model=model)   # auto-loads the sidecar
+r = Results.from_ladruno("run.ladruno", model_h5="model.h5")   # auto-loads the sidecar
 r.stage("dynamic").nodes.definitions             # carried across derivation
 # verified: tests/test_custom_scalar_expressions.py
 ```
+
+### Combinations and the user file — `<stem>.user.h5` (ADR 0130)
+
+A results set is the model archive, the recorded run, and one file of
+what you derive from them:
+
+```text
+<stem>.h5        model archive (ops.h5), + /opensees/combinations
+<stem>.ladruno   the recorded run
+<stem>.user.h5   /combinations, /results, /modes, /spectra, /entities
+<stem>.workspace.h5   named sets, plots, saved views (below; ADR 0132)
+<study>.variants.json lists several sets of one study (below)
+```
+
+You write `<stem>.user.h5` from Python with one call. apeGmshViewer reads
+it and does not write it today. ADR 0130 plans for the app to write the
+`/combinations` zone and nothing else.
+
+```python
+import numpy as np
+from apeGmsh import Results
+from apeGmsh.results.user import (
+    Combination, StateAddress, Term, UserFile, UserResult, write_user_file,
+)
+
+results = Results.from_ladruno("run.ladruno", model_h5="run.h5")
+ids = np.asarray(results.model.fem.nodes.ids, dtype=np.int64)
+ux = np.stack([results.stage(s).nodes.get(component="displacement_x", time=-1).values[-1]
+               for s in ("gravity", "live")])                     # (states, nodes)
+
+write_user_file(
+    "run.user.h5", "run.h5",              # name must end .user.h5; hashes come from run.h5
+    results_file="run.ladruno",           # its fingerprint stamps the derived zones
+    combinations=[
+        Combination("ULS", "linear", (Term("stage", "gravity", factor=1.2),
+                                      Term("stage", "live", factor=1.6))),
+        Combination("ENV", "envelope", (Term("combination", "ULS"),
+                                        Term("stage", "wind")), envelope="absmax"),
+    ],
+    results=[UserResult(
+        name="drift_ratio", target="nodes", basis="results", components=("drift_ratio",),
+        states=(StateAddress("stage", "gravity"), StateAddress("stage", "live")),
+        linear=True, data=(ux / 3.0)[:, :, None], ids=ids)],     # DATA (states, nodes, comps)
+)
+
+combos = results.combinations()           # finds run.user.h5 beside the set
+combos.names                              # .user.h5 rows, then model.h5 rows
+uls = combos.evaluate("ULS", "displacement_z")             # a recorded quantity
+uls.field.values, uls.field.keys["id"], uls.signed, uls.badges
+combos.evaluate("ULS", "axial_force", level="line_stations")
+combos.evaluate("ULS", user_result="drift_ratio")           # a user result
+UserFile("run.user.h5").results().entries                   # what the file holds
+# verified: tests/results/user/test_user_evaluate_results.py
+```
+
+- **A combination is a descriptor, evaluated on read, per quantity.**
+  Rules: `linear` (factored sum, signed), `srss`, `cqc` (`damping=`),
+  `abs_sum`, `directional` (`fraction=`, e.g. 0.3), `envelope`
+  (`envelope="max"|"min"|"absmax"`). Only `linear` is signed, so only
+  it draws as a deformed shape; `linear` over a stage carries the badge
+  `"superposition assumes linearity"`.
+- **A term** is `Term(kind, source, step=-1, mode=0, factor=1.0)`, with
+  `kind` one of `stage`, `mode`, `spectrum`, `reference`, `combination`.
+  A stage is named by its `ops.stage` name, else `stage_<i>`, never
+  `MODEL_STAGE[k]`; open the results with `model_h5=` so the names are
+  bound. `step=-1` is the last step.
+- **Refusals.** `write_user_file` refuses the whole write
+  (`UserWriteRefused`, nothing written) when a row is bad: a duplicate
+  name, a cycle, an unknown rule, a bad term. Reading a file someone else
+  wrote is gentler: a bad row refuses alone and the file still opens.
+  `evaluate` raises `CombinationRefused` with a `.reason`: `unresolved`
+  for a term naming a stage that is not there, or a stage with no
+  recorded steps (an `eigen` stage); `not-linear` when a summing rule
+  meets a user result without `linear=True` (A5; a `linear=True` result
+  must also store a row for every state the combination names, or that
+  term is `unresolved`), a derived scalar such
+  as von Mises, or a design field stored in a native `results.h5`
+  (`wood_armer_*`); `state-free` for a user result with `states=None`;
+  `stale` for a stale input; `foreign-handle` for another run's state.
+- **Declared in the bridge.** `ops.combination(name, terms, rule=...)`
+  archives the row in `model.h5` `/opensees/combinations`; a term is
+  `(stage_name, factor)`, `(combination, factor)`, or a `CombinationTerm`
+  (`from apeGmsh.opensees.apesees import CombinationTerm`) for a step or
+  a mode. A `spectrum` or `reference` term is refused there: its case
+  lives in `.user.h5`, so declare that combination after the run. A
+  `.user.h5` row may name a `model.h5` row, never the reverse; names are
+  unique across both.
+- **Atomic and checked.** Each write builds a private `.partial`, reads it
+  back, and replaces the file only if nobody else changed it meanwhile
+  (the second writer gets `UserWriteRefused`). `combinations=` adds a
+  generation and keeps the earlier ones as the backup; `results=` adds or
+  replaces entries by name; `None` leaves a zone untouched.
+- **Staleness.** `staleness("run.user.h5", model_h5=..., results_file=...)`
+  reports each zone. `/modes`, `/spectra` and `/entities` go stale when
+  the model hashes change; a `/results` entry follows its `basis`
+  (`"results"`: the `.ladruno` fingerprint; `"model"`: the model hashes).
+  Combinations never go stale; a stale input is refused unless
+  `evaluate(..., allow_stale=True)`.
+
+The other zones are filled from what the analysis already returns:
+
+```python
+from apeGmsh.results.user import Entities, mode_table, spectrum_cases, write_user_file
+
+modal = ops.modal_properties(6)                        # ModalPropertiesResult
+sp = ops.spectrum_after_gravity(...)                   # SpectrumModalResult (opensees-bridge.md)
+write_user_file(
+    "frame.user.h5", "frame.h5",
+    modes=mode_table(modal, host="stage_0"),           # period, participation, mass ratios
+    spectra=spectrum_cases(sp, ["E_x"], damping=0.05, nodal=["disp"]),
+    entities=Entities(cuts=(cut.to_entity(name="pier A"),)),   # cut: apeGmsh.cuts.SectionCutDef
+)
+# verified: tests/results/user/test_user_modes_spectra_live.py, test_user_entities.py
+```
+
+A spectrum term is `Term("spectrum", "E_x")` for the whole case (under
+`srss` / `cqc`) or `Term("spectrum", "E_x", mode=k)` for one mode's
+increment; `Term("reference", "E_x")` is the case's preloaded state. So
+`1.0 D + E` is a `linear` row over a stage and a `cqc` row. Spectrum
+terms read `/spectra` through `UserSpectra`, the default of
+`results.combinations()`.
+
+### What the user makes — `<stem>.workspace.h5`, and variants (ADR 0132)
+
+Named sets, plot definitions and saved views live in a fourth file of the
+set, `<stem>.workspace.h5`, never in `.user.h5`. It holds definitions
+only, never a result value. Today you write and read it from Python;
+ADR 0132 plans for the app to write it when the human saves:
+
+```python
+from apeGmsh.results.user import (
+    SetDef, VariantDef, ViewDef, WorkspaceFile,
+    read_variants, write_variants, write_workspace,
+)
+
+write_workspace(
+    "frame.workspace.h5",                       # pairs with frame.h5 beside it
+    sets=[SetDef("roof", "nodes", roof_node_ids),
+          SetDef("piers", "elements", pier_ops_tags)],     # OpenSees element tags
+    views=[ViewDef("roof iso", {"name": "roof iso", "camera": "iso"})],  # one apegmsh-view/1 shot
+)
+ws = WorkspaceFile("frame.workspace.h5")
+ws.set("roof").ids                              # the members, in your order
+[(v.name, v.verdict) for v in ws.verdicts().verdicts]   # current | moved | partial | lost
+write_workspace("frame.workspace.h5", remove={"views": ["roof iso"]})
+```
+
+- A given row replaces the row of the same name; every other row is
+  copied verbatim. Like `.user.h5`, the write is atomic and refuses when
+  another writer got there first. A tag the model lacks refuses the
+  write (`WorkspaceWriteRefused`). An unreadable old file is renamed
+  aside with a `WorkspaceRenamedAside` warning, never overwritten.
+- **Verdicts.** Each member's coordinates are stored with the set (a
+  node's position, an element's centroid). When the model is re-meshed
+  or re-declared, `verdicts()` looks for each member where it was:
+  `current` (the hashes still match), `moved` (every member found under
+  a new tag), `partial`, or `lost`. A position that two items fit counts
+  as not found.
+
+A study of stiffness states (uncracked, cracked, Bischoff) is several
+sets listed in one `<study>.variants.json`. Each row points at a
+variant's model file. ADR 0132 plans for the app to open a variant,
+only from a manifest the user opened; today the manifest is written and
+read from Python:
+
+```python
+write_variants("slab.variants.json", [
+    VariantDef("Uncracked", "slab_uncracked.h5", {"state": "uncracked", "Ie/Ig": 1.0}),
+    VariantDef("Bischoff", "bischoff/slab_pass2.h5", {"pass": 2}),
+])
+m = read_variants("slab.variants.json")
+m.by_label("Bischoff").resolved                 # absolute Path inside the study folder
+m.refused                                       # rows that refuse alone, with reasons
+```
+
+`path` is relative to the manifest's folder, uses `/`, and never leaves
+it (`..` and absolute paths refuse). It names a `<stem>.h5`, never a
+sibling such as `.ladruno` or `.user.h5`. A row may name a file that a
+later run will write: the write accepts it, and each read refuses that
+row with reason `missing` until the file is there. A combination
+never crosses variants (a term holds no path).
+(`tests/results/user/test_workspace_file.py`, `test_variants_manifest.py`)
 
 ### Footfall vibration map — `FootfallResult.to_results` (ADR 0109, ADR 0131 D6)
 
@@ -307,6 +515,13 @@ every slab node) when the map is the point. The driver, its rules and the figure
 <https://nmorabowen.github.io/apeGmsh/how-to/footfall-vibration/>.
 
 ## 5. Plots and the desktop viewer
+
+**Stills for an agent.** Write them under `.apegmsh/visors/` and read
+the PNGs. On Windows take them with `render_stills`
+(`apeGmsh.agent_view`; apeGmshViewer's batch stills, ADR 0128;
+`assess.md`). The VTK stills (`results.render` / `fem.render`,
+ADR 0094) are for Linux, where the app has no batch stills yet.
+Labeled `results.plot.*` works anywhere.
 
 ### Static matplotlib (`[plot]` extra)
 
@@ -375,6 +590,27 @@ def viewer(self, *, blocking=None, title=None,
   the threshold UI, and the outline's eye-cascade. Scales are per-pane
   and caused by slots — `INV-LEGEND-1..5` — but the legend interactor
   is not installed; `view.set_legend_hidden(field)` is the gesture.
+
+### apeGmshViewer from the command line (ADR 0128)
+
+apeGmshViewer is the installed desktop app (`apeGmsh.agent_view.find_viewer()`
+returns its path: `$APEGMSH_VIEWER`, else the per-user Windows install).
+Besides opening a set for the human, it takes four agent commands. None
+of them touches the human's window except `--present`, which only adds
+an offer:
+
+| Command | What you get | Exit |
+|---|---|---|
+| `apeGmshViewer run.h5` | the human's window on the set (any file of the set opens it) | — |
+| `--render spec.json --out <dir>` | one PNG per shot of an `apegmsh-view/1` spec, drawn hidden, plus `manifest.json` (written last) | 0 all drawn, 1 a shot refused or the run failed, 2 spec or `--out` refused |
+| `--describe run.h5 --out <dir>` | `describe.json`: the stages, steps, fields and groups a spec may name | |
+| `--present spec.json` | an offer listed in the running window; the view changes only when the human clicks it | 0 acknowledged, 1 no window answered, 2 spec refused |
+| `--snapshot --out <dir>` | the running window's current view: `view.json`, `view.png`, `manifest.json` | 0 written, 1 no window or no read-back, 2 `--out` refused |
+
+`--out` must be absent or empty. From Python, `render_stills(spec, out)`
+runs `--render` and returns the manifest, raising `AgentViewError` with
+every refusal (`assess.md`). Quote numbers from the manifest, not from
+the pixels.
 
 ### Headless animation export — `results.export_animation(...)` (#755)
 
@@ -502,10 +738,13 @@ Any other value raises `ValueError("Unknown render_mode ...")`
 
 `Results.demo(**kwargs)` delegates to `make_demo_results(*, length=10.0,
 n_elements=8, n_steps=6, tip_drift=2.0, path=None)`
-(`from apeGmsh.results import make_demo_results`). It emits a **real**
-apeSees OpenSees model (satisfying the `model=` contract) but the
+(`from apeGmsh.results import make_demo_results`). It writes two files
+into `path` (default: a fresh temp folder): `demo_model.h5`, a **real**
+apeSees model archive, and `demo_results.ladruno`, stamped against it,
+then returns `Results.from_ladruno(..., model_h5=...)` of the pair. The
 displacements are a **synthetic analytic cantilever shape** — no
-OpenSees solve runs. `n_steps<1` / `n_elements<1` raise `ValueError`.
+OpenSees solve runs, so the stamp names the backend `unknown`.
+`n_steps<1` / `n_elements<1` raise `ValueError`.
 (`tests/test_results_demo.py::test_make_demo_results_shape`,
 `::test_demo_rejects_bad_args`)
 
@@ -541,11 +780,17 @@ OpenSees solve runs. `n_steps<1` / `n_elements<1` raise `ValueError`.
 
 ```python
 # Construct (model= / model_h5= REQUIRED — except from_ladruno)
-Results.from_native(path, *, fem=None, model=OpenSeesModel.from_h5(path))
-Results.from_mpco(path, *, fem=None, merge_partitions=True, model_h5="model.h5")
-Results.from_ladruno(path, *, fem=None, merge_partitions=True, model_h5=None)  # self-sufficient
+Results.from_ladruno(path, *, fem=None, merge_partitions=True, model_h5=None)  # the route
+convert_mpco("run.mpco", "run.ladruno", model_h5="model.h5")   # stock on-ramp
 Results.from_recorders(spec, out_dir, *, fem=fem, model=model)
-Results.demo(n_steps=6, tip_drift=2.0)              # zero-setup sample
+Results.demo(n_steps=6, tip_drift=2.0)              # demo_model.h5 + demo_results.ladruno
+# retiring (ADR 0131): from_native(path, *, model=...), from_mpco(path, *, model_h5=...)
+
+# User file <stem>.user.h5 (ADR 0130)
+write_user_file("run.user.h5", "model.h5", results_file="run.ladruno",
+                combinations=[...], results=[...])          # atomic; returns Path
+combos = results.combinations() ; combos.names
+combos.evaluate("ULS", "displacement_z") ; combos.evaluate("ULS", user_result="drift")
 
 # Broker chain
 results.model            # OpenSeesModel — never None
