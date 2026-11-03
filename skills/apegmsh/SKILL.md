@@ -69,6 +69,7 @@ has no hit **and** you are changing apeGmsh itself.
 | After mesh or solve check | `references/assess.md` |
 | Results / plot / stills | `references/results.md` |
 | Combinations / user results / `.user.h5` | `references/results.md` §4 "Combinations and the user file" |
+| Named sets / saved views / variants (`.workspace.h5`, `.variants.json`) | `references/results.md` §4 "What the user makes" |
 | Assembly / compose readers / `from_h5` | `references/compose.md` |
 | Rebar cages | `references/rebar.md` |
 | ETABS / analytical import | `references/interop.md` |
@@ -418,7 +419,9 @@ signatures) lives in the references.
 - **One results format: `.ladruno`** (ADR 0131). A set is
   `<stem>.h5` (model archive) + `<stem>.ladruno` (the run) +
   `<stem>.user.h5` (combinations, modes table, spectra, user results,
-  entities; ADR 0130). `EigenResult.results()` and `Results.demo()`
+  entities; ADR 0130) + `<stem>.workspace.h5` (named sets, plots, saved
+  views; ADR 0132), and a study of variants is listed in
+  `<study>.variants.json`. `EigenResult.results()` and `Results.demo()`
   write `.ladruno`; a stock `.mpco` converts with `convert_mpco`.
   `from_native` / `to_native` / `from_mpco` still exist but are being
   retired: do not start new code on them.

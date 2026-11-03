@@ -414,6 +414,65 @@ increment; `Term("reference", "E_x")` is the case's preloaded state. So
 terms read `/spectra` through `UserSpectra`, the default of
 `results.combinations()`.
 
+### What the user makes — `<stem>.workspace.h5`, and variants (ADR 0132)
+
+Named sets, plot definitions and saved views live in a fourth file of the
+set, `<stem>.workspace.h5`, never in `.user.h5`. It holds definitions
+only, never a result value. The app writes it when the human saves; you
+can write and read it from Python too:
+
+```python
+from apeGmsh.results.user import (
+    SetDef, VariantDef, ViewDef, WorkspaceFile,
+    read_variants, write_variants, write_workspace,
+)
+
+write_workspace(
+    "frame.workspace.h5",                       # pairs with frame.h5 beside it
+    sets=[SetDef("roof", "nodes", roof_node_ids),
+          SetDef("piers", "elements", pier_ops_tags)],     # OpenSees element tags
+    views=[ViewDef("roof iso", {"name": "roof iso", "camera": "iso"})],  # one apegmsh-view/1 shot
+)
+ws = WorkspaceFile("frame.workspace.h5")
+ws.set("roof").ids                              # the members, in your order
+[(v.name, v.verdict) for v in ws.verdicts().verdicts]   # current | moved | partial | lost
+write_workspace("frame.workspace.h5", remove={"views": ["roof iso"]})
+```
+
+- A given row replaces the row of the same name; every other row is
+  copied verbatim. Like `.user.h5`, the write is atomic and refuses when
+  another writer got there first. A tag the model lacks refuses the
+  write (`WorkspaceWriteRefused`). An unreadable old file is renamed
+  aside with a `WorkspaceRenamedAside` warning, never overwritten.
+- **Verdicts.** Each member's coordinates are stored with the set (a
+  node's position, an element's centroid). When the model is re-meshed
+  or re-declared, `verdicts()` looks for each member where it was:
+  `current` (the hashes still match), `moved` (every member found under
+  a new tag), `partial`, or `lost`. A position that two items fit counts
+  as not found.
+
+A study of stiffness states (uncracked, cracked, Bischoff) is several
+sets listed in one `<study>.variants.json`. Each row points at a
+variant's model file; the app opens a variant only from a manifest the
+user opened:
+
+```python
+write_variants("slab.variants.json", [
+    VariantDef("Uncracked", "slab_uncracked.h5", {"state": "uncracked", "Ie/Ig": 1.0}),
+    VariantDef("Bischoff", "bischoff/slab_pass2.h5", {"pass": 2}),
+])
+m = read_variants("slab.variants.json")
+m.by_label("Bischoff").resolved                 # absolute Path inside the study folder
+m.refused                                       # rows that refuse alone, with reasons
+```
+
+`path` is relative to the manifest's folder, uses `/`, and never leaves
+it (`..` and absolute paths refuse). It names a `<stem>.h5`, never a
+sibling such as `.ladruno` or `.user.h5`. A row whose file does not
+exist yet is written, and refused on read as `missing`. A combination
+never crosses variants (a term holds no path).
+(`tests/results/user/test_workspace_file.py`, `test_variants_manifest.py`)
+
 ### Footfall vibration map — `FootfallResult.to_results` (ADR 0109, ADR 0131 D6)
 
 `apeSees.footfall_walking(num_modes=..., body_weight=..., g=..., response_nodes=...)`
