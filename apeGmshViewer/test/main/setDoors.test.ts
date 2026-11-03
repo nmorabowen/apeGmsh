@@ -16,12 +16,14 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import * as h5wasm from "h5wasm/node";
 import { SPEC_VERSION } from "../../src/spec/spec.ts";
+import { tree, writeTree } from "../zones/tree.ts";
 
 const FIX = fileURLToPath(new URL("../../fixtures/", import.meta.url));
 const DRIVER = fileURLToPath(new URL("./setDoorsDriver.ts", import.meta.url));
@@ -31,7 +33,8 @@ after(() => rmSync(root, { recursive: true, force: true }));
 for (const d of ["set", "outside", "elsewhere"]) mkdirSync(join(root, d));
 const copies: [string, string[]][] = [
   // outside/s.h5: a readable model the user never dropped (VU12's free string)
-  ["ladruno_frame3d.h5", ["set/s.h5", "elsewhere/s.h5", "outside/s.h5"]],
+  // outside/loose.user.h5: a model read from a file that is no set's model (VU13's unpaired drop)
+  ["ladruno_frame3d.h5", ["set/s.h5", "elsewhere/s.h5", "outside/s.h5", "outside/loose.user.h5"]],
   ["ladruno_frame3d.ladruno", ["set/s.ladruno", "outside/s.ladruno", "elsewhere/s.ladruno"]],
   // the native results file beside the `.ladruno`: the set's results slot only when a spec names it
   ["contour_staged.results.h5", ["set/s.results.h5"]],
@@ -42,6 +45,27 @@ const spec = join(root, "spec.json");
 writeFileSync(spec, JSON.stringify({ spec: SPEC_VERSION, files: { model: join(root, "set", "s.h5"), results: join(root, "set", "s.results.h5") }, shots: [{ name: "a" }] }));
 // what a second instance's `--present` offers the view window: the elsewhere set
 writeFileSync(join(root, "present.json"), JSON.stringify({ spec: SPEC_VERSION, files: { model: join(root, "elsewhere", "s.h5") }, shots: [{ name: "o" }] }));
+// VU13: newer offers (the outside set), sent until the elsewhere offer falls off the page's list
+writeFileSync(join(root, "flood.json"), JSON.stringify({ spec: SPEC_VERSION, files: { model: join(root, "outside", "s.h5") }, shots: [{ name: "f" }] }));
+
+// VU13 (#2760): a set whose model's /provenance names a script inside the set's
+// folder (a row relative to @base_dir, as the writer stores it) and a helper
+// outside it (an absolute row, h5-schema.md "Files", Q8), plus a pseudo-file.
+// Readable strangers sit in the set's folder and beside it.
+await h5wasm.ready;
+for (const d of ["src-set", "lib"]) mkdirSync(join(root, d));
+const posix = (p: string) => p.replaceAll("\\", "/");
+const SRC_SET = join(root, "src-set");
+for (const f of [join(SRC_SET, "build.py"), join(root, "lib", "helper.py"), join(SRC_SET, "stranger.py"), join(root, "stranger.py")]) writeFileSync(f, "print('hi')\n");
+writeTree(h5wasm, join(SRC_SET, "s.h5"), tree({
+  meta: { attrs: { provenance_schema_version: "1.0.0" } },
+  provenance: {
+    attrs: { base_dir: posix(SRC_SET) },
+    files: { path: ["build.py", posix(join(root, "lib", "helper.py")), "<string>"], sha256: ["a".repeat(64), "", ""], kind: ["script", "module", "module"] },
+    sites: { file: new Int32Array([0, 1]), line: new Int32Array([3, 4]), function: ["<module>", "helper"] },
+    records: { path: ["opensees/section/A", "opensees/section/B"], site: new Int32Array([0, 1]), script: new Int32Array([0, 0]), seq: new Int32Array([0, 1]) },
+  },
+}));
 
 type Seen = { ok: boolean; error?: string; seq?: number; scanId?: number; stages?: number; geometry?: boolean };
 type Answers = Record<string, { resolved: Seen } | { rejected: string } | { onScreen: string | null }>;
@@ -202,6 +226,60 @@ for (const m of ["describe", "measure"]) {
     judgeBattery(run(m, [`--mode=${m}`, `--file=${join(SET, "s.h5")}`, `--out=${outArg}`]), join(SET, "s.ladruno"), ["native", "traversal", "elsewhere"], true);
   });
 }
+
+test("VU13 (#2759 review): only the latest drop is a gesture; a replaced drop's model:open is refused, the latest re-reads", () => {
+  const r = resolved(view, "drop:5 model:open replaced drop");
+  assert.equal(r.ok, false, "a drop the user has since replaced opens nothing");
+  assert.match(r.error ?? "", new RegExp(`^model:open opens only a file the user dropped or a path main sent the page; refused ${re(join(root, "elsewhere", "s.h5"))}$`));
+  assert.equal(onScreen("drop:5 model"), join(root, "outside", "s.h5"), "the set stays");
+  assert.equal(resolved(view, "drop:6 model:open unpaired drop").ok, true, resolved(view, "drop:6 model:open unpaired drop").error);
+  assert.equal(onScreen("drop:6 model"), null, "a model read from a .user.h5 is no set (#2752 review F1), so only the drop lets it re-read");
+  assert.equal(resolved(view, "drop:7 model:open unpaired drop again").ok, true, `the latest drop is not spent by its open: ${resolved(view, "drop:7 model:open unpaired drop again").error}`);
+});
+
+test("VU13: an offer that falls off the page's list (MAX_OFFERS) is gone, and so is the set it left", async () => {
+  const { MAX_OFFERS } = await import("../../src/state/reduce.ts");
+  assert.equal(resolved(view, "prune:1 still listed").ok, true, `${MAX_OFFERS - 1} newer offers leave it listed: ${resolved(view, "prune:1 still listed").error}`);
+  const gone = resolved(view, "prune:2 fallen off");
+  assert.equal(gone.ok, false, `the ${MAX_OFFERS}th newer offer drops it`);
+  assert.match(gone.error ?? "", /^offerOpen opens only the files of a set main offered or the set an offer left; refused '.*elsewhere.{1,2}s\.ladruno'$/);
+  assert.equal(onScreen("prune:2 model"), join(root, "elsewhere", "s.h5"), "a refused offer leaves the set where it was");
+  const back = resolved(view, "prune:3 back to the set it left");
+  assert.equal(back.ok, false, "the set offer:4 left went with its offer");
+  assert.match(back.error ?? "", /^offerOpen opens only the files of a set main offered or the set an offer left; refused /);
+});
+
+const source = run("source", [`--file=${join(SRC_SET, "s.h5")}`]);
+const editorLog = () => (existsSync(join(root, "editor.log")) ? readFileSync(join(root, "editor.log"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as string[]) : []);
+
+test("VU13 (#2760): source:goto opens a source file the set's /provenance names: a row relative to @base_dir, and one outside the set's folder", () => {
+  for (const name of ["source:1 relative row", "source:2 absolute row outside the folder"]) assert.equal(resolved(source, name).ok, true, resolved(source, name).error);
+  // the editor (a recorder) received each file as /provenance names it, and nothing else launched
+  assert.deepEqual(editorLog().sort(), [["3", posix(join(SRC_SET, "build.py"))], ["4", posix(join(root, "lib", "helper.py"))]].sort());
+});
+
+test("VU13 (#2760): source:goto refuses a readable file the set's /provenance does not name, in the set's folder or beside it", () => {
+  for (const [name, file] of [["source:3 stranger in the folder", posix(join(SRC_SET, "stranger.py"))], ["source:4 stranger elsewhere", join(root, "stranger.py")]] as const) {
+    const r = resolved(source, name);
+    assert.equal(r.ok, false, `${name} is refused`);
+    assert.equal(r.error, `goToSource opens only a source file the open set's /provenance names; refused ${file}`);
+  }
+});
+
+test("VU13 (#2760): a BigInt or circular source:goto resolves with the reason, never rejects", () => {
+  assert.equal(resolved(source, "source:5 bigint path").error, "goToSource needs an absolute file path; got 5n");
+  assert.match(resolved(source, "source:6 circular path").error ?? "", /^goToSource needs an absolute file path; got .*\[Circular \*1\]/);
+  assert.equal(resolved(source, "source:7 bigint line").error, "goToSource needs a line number >= 1; got 5n");
+});
+
+test("VU13 (#2760): with no set open, source:goto opens nothing, even a file a set's /provenance names", () => {
+  rmSync(join(root, "editor.log"), { force: true });
+  const none = run("source-none", []);
+  const r = resolved(none, "source:1 relative row");
+  assert.equal(r.ok, false);
+  assert.match(r.error ?? "", /^goToSource opens only a source file the open set's \/provenance names, and no set is open; refused /);
+  assert.deepEqual(editorLog(), [], "no editor launched");
+});
 
 test("VU12: a capture reads the set of its --file", () => {
   judgeBattery(run("capture", ["--mode=capture", `--file=${join(SET, "s.h5")}`, `--out=${join(root, "capture.png")}`]), join(SET, "s.ladruno"), ["native", "traversal", "elsewhere"], false);

@@ -73,7 +73,7 @@ import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePa
 import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
 import { OpenSession } from "./session.ts";
-import { goToSource } from "./source.ts";
+import { goToSource, provenanceSources, type SourceScope } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
 import { resolveSpecFiles } from "../spec/files.ts";
@@ -483,11 +483,17 @@ if (mode === "view") {
 let offersReady = false;
 let offersWaiting: OfferIn[][] = [];
 /**
- * VU12 (#2753): the files `viewer:offerOpen` may open, all chosen by main: the
- * model and results of every offer main sent in `viewer:offers`, and of each
- * set the window left when an offer opened (its Back reopens that set).
+ * VU12 (#2753): the files `viewer:offerOpen` may open, all chosen by main, one
+ * row per offer row main sent in `viewer:offers`: the offer's model and results
+ * (none for a refused row), and each set the window left when that offer
+ * opened (its Back reopens that set). VU13 (#2760): the rows mirror the page's
+ * list (state/reduce.ts `offerReceived`: newest first, at most `MAX_OFFERS`),
+ * so an offer that falls off the page's list is gone here too, and its files
+ * and the sets it left are no longer offerable.
  */
-const offerable: string[] = [];
+let offerRows: { files: string[]; left: string[][] }[] = [];
+/** state/reduce.ts `MAX_OFFERS`, the page's longest offer list (test/main/setDoors.test.ts holds the two equal). */
+const PAGE_OFFERS = 8;
 let snapshotSeq = 0;
 const snapshotReplies = new Map<number, (reply: SnapshotReply) => void>();
 type SnapshotReply = { ok: true; view: unknown; manifest: RunManifest } | { ok: false; reason: string };
@@ -502,11 +508,12 @@ function heardFromAgent(reach: Reach): void {
   try {
     if (reach.kind === "present") {
       const p = presentOffers(reach.spec);
-      for (const o of p.offers) {
-        if (o.refused !== undefined) continue; // a refused row is listed, never applied, and carries no files
+      const rows = p.offers.map((o) => {
+        if (o.refused !== undefined) return { files: [], left: [] }; // a refused row is listed, never applied, and carries no files
         const { model, results } = (o.payload as OfferPayload).files;
-        offerable.push(model, ...(results === null ? [] : [results]));
-      }
+        return { files: [model, ...(results === null ? [] : [results])], left: [] };
+      });
+      offerRows = [...rows, ...offerRows].slice(0, PAGE_OFFERS);
       if (win && offersReady) win.webContents.send("viewer:offers", p.offers);
       else offersWaiting.push(p.offers);
       // The sender checked this file a moment ago. Changed since, it is listed as refused, and the sender hears why.
@@ -621,16 +628,19 @@ function followModel(path: string): void {
  * a file the user dropped, as Electron names it (preload.ts `gestured`, over
  * `viewer:dropped`), and the paths main sent the page, which are the window's
  * set (`windowSet`: argv / `--file`, `onOpen`, the render job) and `config().file`.
+ * VU13 (#2760): only the latest drop counts, and it is not spent by an open (a
+ * model the page reads on its own re-reads it on a rewrite); a drop the user
+ * has since replaced is no gesture.
  */
-const dropped: string[] = [];
+let dropped: string | null = null;
 ipcMain.on("viewer:dropped", (e, path: unknown) => {
-  if (typeof path === "string" && path !== "") dropped.push(path);
+  if (typeof path === "string" && path !== "") dropped = path;
   e.returnValue = null;
 });
 
 /** Why the page may not ask to open `path`, or null when a gesture or main produced it. */
 function ungestured(door: string, path: string): string | null {
-  if (dropped.some((d) => samePath(d, path))) return null;
+  if (dropped !== null && samePath(dropped, path)) return null;
   const set = windowSet();
   if (!("reason" in set) && [set.model, set.geometry, set.results].some((p) => samePath(p, path))) return null;
   if (mode !== "view" && file && samePath(resolve(file), path)) return null;
@@ -890,19 +900,27 @@ ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
 });
 
 // ADR 0128 D5: the click on an offer opens its set. Nothing an agent named raises a modal: a file that has gone refuses the offer in the list.
-// VU12 (#2753): the path and every one of `needs` (at least one) must be `offerable`; any other is refused and the set stays.
+// VU12 (#2753): the path and every one of `needs` (at least one) must be offerable (`offerRows`); any other is refused and the set stays.
+// VU13 (#2760): all of them one listed offer's files, or one set a listed offer left, so the set this open leaves goes with its offer.
 ipcMain.handle("viewer:offerOpen", (_e, path: unknown, needs: unknown) => {
   if (typeof path !== "string" || !Array.isArray(needs) || needs.length === 0) return { ok: false, reason: `offerOpen needs a path and the files it needs; got ${shown(path)}, ${shown(needs)}` };
-  for (const f of [path, ...(needs as unknown[])]) {
-    if (typeof f !== "string" || !offerable.some((o) => samePath(o, f))) return { ok: false, reason: `offerOpen opens only the files of a set main offered or the set an offer left; refused ${shown(f)}` };
+  const asked: unknown[] = [path, ...needs];
+  const holds = (files: readonly string[]) => asked.every((f) => typeof f === "string" && files.some((o) => samePath(o, f)));
+  const offer = offerRows.find((r) => holds(r.files));
+  if (!offer && !offerRows.some((r) => r.left.some(holds))) {
+    const known = (f: string) => offerRows.some((r) => [r.files, ...r.left].some((s) => s.some((o) => samePath(o, f))));
+    const stray = asked.find((f) => typeof f !== "string" || !known(f));
+    return { ok: false, reason: `offerOpen opens only the files of a set main offered or the set an offer left; refused ${shown(stray ?? asked)}` };
   }
   for (const f of needs as string[]) {
     if (!existsSync(f)) return { ok: false, reason: `no such file: ${f}` };
     if (!statSync(f).isFile()) return { ok: false, reason: `${f} is not a file` };
   }
-  // The set on screen becomes offerable: an offer's Back (or a refused offer's put-back) reopens it through this door.
+  // The set on screen joins the offer's row: its Back (or a refused offer's put-back) reopens it through this door. A Back itself leaves nothing to come back to.
   const left = currentSet();
-  if (left) for (const f of [left.model, left.results]) if (f !== null) offerable.push(f);
+  const leftFiles = left === null ? [] : [left.model, left.results].filter((f): f is string => f !== null);
+  const sameSet = (s: string[]) => s.length === leftFiles.length && s.every((f, i) => samePath(f, leftFiles[i]!));
+  if (offer && leftFiles.length > 0 && !offer.left.some(sameSet)) offer.left.push(leftFiles);
   quietFails = [];
   try {
     return openPath(path, true) ? { ok: true } : { ok: false, reason: quietFails.join("; ") || `cannot open ${path}` };
@@ -913,7 +931,19 @@ ipcMain.handle("viewer:offerOpen", (_e, path: unknown, needs: unknown) => {
   }
 });
 
-ipcMain.handle("source:goto", (_e, path: unknown, line: unknown) => goToSource(path, line));
+// VU13 (#2760): the editor opens only a source file the window's set's model names in its /provenance (./source.ts).
+ipcMain.handle("source:goto", async (_e, path: unknown, line: unknown) => goToSource(path, line, await setSources()));
+
+/** The source files the window's set's model names in its /provenance, read now (never the page's copy), or why there are none. */
+async function setSources(): Promise<SourceScope> {
+  const set = windowSet();
+  if ("reason" in set) return { reason: set.reason };
+  if (set.model === null) return { reason: "the open set has no model" };
+  const p = await openProvenance(set.model);
+  if (!p.ok) return { reason: `the /provenance of ${set.model} cannot be read (${p.error})` };
+  if (p.zone === null) return { reason: `${set.model} has no /provenance zone` };
+  return { files: provenanceSources(p.zone) };
+}
 
 ipcMain.handle("measure:metrics", async () => {
   const metrics = app.getAppMetrics();

@@ -39,11 +39,10 @@ from apeGmsh.opensees._response_catalog import (
     lookup,
 )
 from apeGmsh.results import Results
-from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning, MPCOReader
-from apeGmsh.results.readers._mpco_layer_io import LayerBucketUnreadWarning
-from apeGmsh.results.readers._mpco_nodal_io import (
-    NodalForceBucketSkippedWarning,
-)
+from apeGmsh.results.readers._buckets import MPCOBucketSkippedWarning
+from apeGmsh.results.readers._mpco import MPCOReader
+from apeGmsh.results.readers._buckets import LayerBucketUnreadWarning
+from apeGmsh.results.readers._buckets import NodalForceBucketSkippedWarning
 from apeGmsh.results.readers._protocol import ResultLevel
 from tests.conftest import _stub_model_h5_path
 

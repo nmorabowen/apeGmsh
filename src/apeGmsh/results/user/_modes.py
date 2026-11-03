@@ -28,8 +28,8 @@ import h5py
 import numpy as np
 
 from ...opensees.analysis.modal import ModalPropertiesResult
+from ..readers._buckets import discover_modes
 from ..readers._ladruno_multi import discover_partition_files
-from ..readers._mpco_nodal_io import discover_modes
 from ._descriptor import decode_cell
 from ._errors import ZoneRefused
 from ._names import name_problem, text_or_empty

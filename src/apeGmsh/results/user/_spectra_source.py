@@ -43,7 +43,7 @@ from typing import Optional
 import numpy as np
 
 from ...opensees._internal.schema_version import SchemaVersionError
-from ..readers._mpco_translation import canonical_node_component
+from ..readers._buckets import canonical_node_component
 from ._descriptor import StateAddress
 from ._errors import UserFileError
 from ._evaluate import Case, CombinationRefused, Field

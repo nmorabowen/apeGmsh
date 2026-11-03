@@ -48,11 +48,12 @@ from .._slabs import (
 from .._time import resolve_time_slice
 from ..schema._versions import LADRUNO_SUPPORTED_FORMAT_VERSIONS
 from . import _ladruno_element_io as _eio
-from . import _mpco_nodal_io as _mnodal
-from ._ladruno_element_io import SpatialDimUnknown
-from ._ladruno_hyperslab import read_hyperslab
-from ._mpco import (
+from ._buckets import (
     _PROGRAM_STAGE_KINDS,
+    PARTITION_REDUCTION_NONE,
+    PARTITION_REDUCTIONS,
+    ModeEntry,
+    RotationMask,
     _empty_element_slab,
     _empty_fiber_slab,
     _empty_gauss_slab,
@@ -60,14 +61,18 @@ from ._mpco import (
     _empty_line_station_slab,
     _empty_node_slab,
     _empty_spring_slab,
-)
-from ._mpco_translation import (
-    PARTITION_REDUCTION_NONE,
-    PARTITION_REDUCTIONS,
+    attach_nodes_ndf,
     canonical_node_component,
+    discover_modes,
     locate_node_component,
+    modal_components,
+    mode_stage_layout,
+    model_node_ids,
     partition_reduction_from_name,
+    read_mode_shape,
 )
+from ._ladruno_element_io import SpatialDimUnknown
+from ._ladruno_hyperslab import read_hyperslab
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
 if TYPE_CHECKING:
@@ -76,6 +81,7 @@ if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
     from ...opensees.opensees_model import OpenSeesModel
     from .._slabs import LocalAxes
+    from ._buckets import RolesSource
     from ._tag_translation import ElementTagTranslator
 
 
@@ -339,10 +345,10 @@ class LadrunoReader:
             # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
             # Mode stages are not MODEL_STAGE groups, so they stay out of
             # ``_stage_to_grp`` (which lists the host stages, ``stage_<i>``).
-            self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
+            self._mode_refs: dict[str, tuple[str, ModeEntry]] = {}
             self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
             self._tag_map: "Optional[ElementTagTranslator]" = None
-            self._rotation_mask = _mnodal.RotationMask(self._path.name)
+            self._rotation_mask = RotationMask(self._path.name)
         except BaseException:
             self.close()
             raise
@@ -535,7 +541,7 @@ class LadrunoReader:
 
     def attach_nodes_ndf(
         self, nodes_ndf: "dict[int, int] | None", ndm: int, *,
-        roles: "_mnodal.RolesSource",
+        roles: "RolesSource",
     ) -> None:
         """Store the model's per-node ndf and DOF roles: rotation reads
         (time series and envelopes) then give NaN at a node whose DOF
@@ -544,7 +550,7 @@ class LadrunoReader:
         archive older than nodes_ndf."""
         if self._stage_cache is None:
             self.stages()
-        self._rotation_mask.attach(nodes_ndf, ndm, _mnodal.model_node_ids(
+        self._rotation_mask.attach(nodes_ndf, ndm, model_node_ids(
             [self._h5[name] for name in self._stage_to_grp.values()],
         ), roles=roles)
 
@@ -667,7 +673,7 @@ class LadrunoReader:
             )
             on_nodes = _child(grp, "RESULTS/ON_NODES")
             host_sets.append(
-                [] if on_nodes is None else _mnodal.discover_modes(
+                [] if on_nodes is None else discover_modes(
                     on_nodes, source=f"{self._path.name} {name}",
                 )
             )
@@ -675,7 +681,7 @@ class LadrunoReader:
         # right after the MODEL_STAGE that holds it (the layout of a
         # native results file).
         modes_after: dict[int, list[StageInfo]] = {}
-        for h, sid, mname, entry in _mnodal.mode_stage_layout(
+        for h, sid, mname, entry in mode_stage_layout(
             [s.id for s in hosts], names, host_sets,
         ):
             self._mode_refs[sid] = (names[h], entry)
@@ -906,7 +912,7 @@ class LadrunoReader:
             on_nodes = _child(grp, "RESULTS/ON_NODES")
             if level is not ResultLevel.NODES or on_nodes is None:
                 return []
-            return _mnodal.modal_components(on_nodes)
+            return modal_components(on_nodes)
         if level is ResultLevel.NODES:
             on_nodes = _child(grp, "RESULTS/ON_NODES")
             if on_nodes is None:
@@ -988,7 +994,7 @@ class LadrunoReader:
             return None
         if stage_id in self._mode_refs:
             # A mode shape is the same at every copy of a node.
-            if component in _mnodal.modal_components(on_nodes):
+            if component in modal_components(on_nodes):
                 return PARTITION_REDUCTION_NONE
             return None
         loc = self._locate_node_component(on_nodes, component)
@@ -1036,7 +1042,7 @@ class LadrunoReader:
         if on_nodes is None:
             return _empty_node_slab(component, time, t_idx)
         if stage_id in self._mode_refs:
-            got = _mnodal.read_mode_shape(
+            got = read_mode_shape(
                 on_nodes, self._mode_refs[stage_id][1], component,
                 node_ids=node_ids,
             )
@@ -1531,6 +1537,6 @@ def attach_model_nodes_ndf(
     see :func:`_mpco_nodal_io.attach_nodes_ndf`."""
     from ._ladruno_multi import LadrunoMultiPartitionReader
 
-    _mnodal.attach_nodes_ndf(
+    attach_nodes_ndf(
         reader, (LadrunoReader, LadrunoMultiPartitionReader), model_h5, ndm,
     )

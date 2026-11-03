@@ -17,11 +17,13 @@ import pytest
 from apeGmsh.results._bind import StageCountMismatchWarning, _bind_stage_names
 from apeGmsh.results.readers._ladruno import LadrunoReader
 from apeGmsh.results.readers._mpco import MPCOReader
+from apeGmsh.results.readers._buckets import (
+    canonical_node_component,
+    component_axis,
+)
 from apeGmsh.results.readers._mpco_translation import (
     all_known_mpco_result_names,
-    canonical_node_component,
     canonical_to_mpco_lookup,
-    component_axis,
     has_canonical_mapping,
 )
 from apeGmsh.results.readers._protocol import ResultLevel
