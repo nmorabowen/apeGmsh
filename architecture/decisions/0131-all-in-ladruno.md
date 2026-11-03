@@ -1,7 +1,8 @@
 # ADR 0131 — All in `.ladruno`: apeGmsh reads one results format
 
-**Status:** Proposed (2026-11-03). The owner accepts it by merging its PR
-(`human-gate`).
+**Status:** Accepted (2026-11-03; accepted by the maintainer on #2756).
+Merging that PR (`human-gate`) is the acceptance, so the pointers in ADRs
+0122 and 0115 land with it, as ADR 0121 D5 says.
 
 **Owner:** nmora
 
@@ -122,11 +123,19 @@ reader" is replaced by the points below.
   reconciliation's point 5, Fable's D-C). Two calls read the `.mpco` with
   `from_mpco` today: `LiveDefault`'s stock MPCO route
   (`results/live/_default.py`, `LiveDefault.results`), and
-  `read_deck_mpco` when conversion refuses an unstaged program. Both now
-  convert when the program declares its stages, and otherwise refuse by
-  name, with no default stage kind. In process, a stage's kind is not yet
-  a fact (`_default.py`, its module docstring and the `mpco` route's
-  warning), so the converting branch there waits on #2181.
+  `read_deck_mpco` when conversion refuses. Both now convert when the
+  stage kinds are facts, and otherwise refuse by name, with no default
+  stage kind. A stage kind is a fact in either of two cases:
+  - the program declares it in an `ops.stage` block;
+  - for an unstaged deck, the deck-run record `<recorder file>.run.json`
+    (#2210) passes the checks in the module docstring of
+    `_ladruno_from_mpco.py`. `read_deck_mpco` already converts such a
+    deck through those checks, and that route stays.
+
+  An in-process run never writes a record, and its stage kind is not yet a
+  fact (`_default.py`: its module docstring and the warning on the `mpco`
+  route). So an unstaged in-process run refuses, and the converting branch
+  for in-process runs waits on #2181.
 - **The converter's offline oracle** is a golden `.ladruno` corpus
   converted from the committed `.mpco` fixtures, beside the live-fork
   oracle of ADR 0122 D8. The converter's tests stop reading through
@@ -198,10 +207,18 @@ ADR 0115 D3's first route, "an `MPCO` recorder → `Results.from_mpco`", is
 replaced. For an `MPCO` recorder, `ops.results(path)` follows Q1's D-C
 (6596355058; the reconciliation's point 5):
 
-- when the deck run's stages are declared as facts, it converts with
-  `convert_mpco` and reads the `.ladruno`;
-- otherwise it refuses with a message that names `convert_mpco` and
-  `.ladruno`.
+- **It converts and reads the `.ladruno`** when the stage kinds are facts
+  in the sense of D5: either declared in `ops.stage` blocks, or, for an
+  unstaged deck, proven by a deck-run record that passes the checks in
+  `_ladruno_from_mpco.py`'s module docstring, as `read_deck_mpco` does.
+- **Otherwise it refuses.** That covers an unstaged run with no record
+  that passes those checks: an in-process run, which never writes a
+  record, or a deck emitted without `analyze_steps`. The refusal names a
+  remedy that works: declare the stages with `ops.stage(...)`, or run the
+  program as a deck emitted with `analyze_steps`, which writes the record.
+  It does not point at the public `convert_mpco`, which refuses an unstaged
+  program. Only `read_deck_mpco` passes the private `_implicit_stage`
+  flag.
 
 A `Ladruno` recorder reads through `Results.from_ladruno`. Today
 `opensees/_results_route.py::_unreadable` refuses it, as "not a history
