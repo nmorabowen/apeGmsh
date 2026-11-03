@@ -14,8 +14,9 @@ apeGmsh is converging on one results format, the `.ladruno` (ADR 0131).
 Open a run with `Results.from_ladruno`. A stock OpenSees `.mpco` gets
 there through `convert_mpco`. The native `results.h5` path
 (`from_native`, `to_native`) and `from_mpco` still work today, but
-both are being retired: new code should not write or read them, and
-apeGmshViewer already reads `.ladruno` only (ADR 0131 D1).
+both are being retired: new code should not write or read them.
+apeGmshViewer is `.ladruno`-only by decision (ADR 0131 D1); its
+native `<stem>.results.h5` slot goes at slice V1d (D2).
 
 | Constructor | Required kwarg | Source |
 |---|---|---|
@@ -515,6 +516,27 @@ def viewer(self, *, blocking=None, title=None,
   the threshold UI, and the outline's eye-cascade. Scales are per-pane
   and caused by slots — `INV-LEGEND-1..5` — but the legend interactor
   is not installed; `view.set_legend_hidden(field)` is the gesture.
+
+### apeGmshViewer from the command line (ADR 0128)
+
+apeGmshViewer is the installed desktop app (`apeGmsh.agent_view.find_viewer()`
+returns its path: `$APEGMSH_VIEWER`, else the per-user Windows install).
+Besides opening a set for the human, it takes four agent commands. None
+of them touches the human's window except `--present`, which only adds
+an offer:
+
+| Command | What you get | Exit |
+|---|---|---|
+| `apeGmshViewer run.h5` | the human's window on the set (any file of the set opens it) | — |
+| `--render spec.json --out <dir>` | one PNG per shot of an `apegmsh-view/1` spec, drawn hidden, plus `manifest.json` (written last) | 0 all drawn, 1 a shot refused or the run failed, 2 spec or `--out` refused |
+| `--describe run.h5 --out <dir>` | `describe.json`: the stages, steps, fields and groups a spec may name | |
+| `--present spec.json` | an offer listed in the running window; the view changes only when the human clicks it | 0 acknowledged, 1 no window answered, 2 spec refused |
+| `--snapshot --out <dir>` | the running window's current view: `view.json`, `view.png`, `manifest.json` | 0 written, 1 no window or no read-back, 2 `--out` refused |
+
+`--out` must be absent or empty. From Python, `render_stills(spec, out)`
+runs `--render` and returns the manifest, raising `AgentViewError` with
+every refusal (`assess.md`). Quote numbers from the manifest, not from
+the pixels.
 
 ### Headless animation export — `results.export_animation(...)` (#755)
 
