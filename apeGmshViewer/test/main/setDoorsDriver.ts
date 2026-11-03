@@ -153,10 +153,16 @@ if (which === "view") {
   await call("model:3 model:open dropped", "model:open", loose);
   out["model:3 model"] = { onScreen: await modelOf() };
   // VU13 (#2760): only the latest drop is a gesture. elsewhere/s.h5 was dropped (drop:1), then outside/s.h5:
-  // a gesture-free model:open of the replaced drop is refused, and the latest drop still re-reads (not one-shot).
+  // a gesture-free model:open of the replaced drop is refused.
   await call("drop:5 model:open replaced drop", "model:open", join(elsewhere, "s.h5"));
   out["drop:5 model"] = { onScreen: await modelOf() };
-  await call("drop:6 model:open latest drop again", "model:open", loose);
+  // An unpaired drop (a model read from a file that is no set's model) ends the set, and its re-read rests on the
+  // drop alone: the drop is not spent by its first open.
+  const unpaired = join(root, "outside", "loose.user.h5");
+  drop(unpaired);
+  await call("drop:6 model:open unpaired drop", "model:open", unpaired);
+  out["drop:6 model"] = { onScreen: await modelOf() };
+  await call("drop:7 model:open unpaired drop again", "model:open", unpaired);
   // VU13: an offer that falls off the page's list (state/reduce.ts MAX_OFFERS) is gone, with the set it left.
   const { MAX_OFFERS } = await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "state", "reduce.ts")).href);
   const present = () => {

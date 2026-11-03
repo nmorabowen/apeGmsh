@@ -33,7 +33,8 @@ after(() => rmSync(root, { recursive: true, force: true }));
 for (const d of ["set", "outside", "elsewhere"]) mkdirSync(join(root, d));
 const copies: [string, string[]][] = [
   // outside/s.h5: a readable model the user never dropped (VU12's free string)
-  ["ladruno_frame3d.h5", ["set/s.h5", "elsewhere/s.h5", "outside/s.h5"]],
+  // outside/loose.user.h5: a model read from a file that is no set's model (VU13's unpaired drop)
+  ["ladruno_frame3d.h5", ["set/s.h5", "elsewhere/s.h5", "outside/s.h5", "outside/loose.user.h5"]],
   ["ladruno_frame3d.ladruno", ["set/s.ladruno", "outside/s.ladruno", "elsewhere/s.ladruno"]],
   // the native results file beside the `.ladruno`: the set's results slot only when a spec names it
   ["contour_staged.results.h5", ["set/s.results.h5"]],
@@ -231,7 +232,9 @@ test("VU13 (#2759 review): only the latest drop is a gesture; a replaced drop's 
   assert.equal(r.ok, false, "a drop the user has since replaced opens nothing");
   assert.match(r.error ?? "", new RegExp(`^model:open opens only a file the user dropped or a path main sent the page; refused ${re(join(root, "elsewhere", "s.h5"))}$`));
   assert.equal(onScreen("drop:5 model"), join(root, "outside", "s.h5"), "the set stays");
-  assert.equal(resolved(view, "drop:6 model:open latest drop again").ok, true, "the latest drop is not spent by its open");
+  assert.equal(resolved(view, "drop:6 model:open unpaired drop").ok, true, resolved(view, "drop:6 model:open unpaired drop").error);
+  assert.equal(onScreen("drop:6 model"), null, "a model read from a .user.h5 is no set (#2752 review F1), so only the drop lets it re-read");
+  assert.equal(resolved(view, "drop:7 model:open unpaired drop again").ok, true, `the latest drop is not spent by its open: ${resolved(view, "drop:7 model:open unpaired drop again").error}`);
 });
 
 test("VU13: an offer that falls off the page's list (MAX_OFFERS) is gone, and so is the set it left", async () => {
