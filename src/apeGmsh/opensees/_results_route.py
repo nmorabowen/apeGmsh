@@ -60,12 +60,12 @@ What a successful read writes sits beside the deck, under
 archive ``model.h5`` the readers bind, the text records transcribed to
 the layout :meth:`Results.from_recorders` reads (``out/``), and that
 reader's cache. A converted ``.mpco`` is the exception: its ``.ladruno``
-is the converter's target, beside the ``.mpco``. ``<deck>.results/
-conversion.json`` records what that conversion pairs on, so a later read
-of the same run reuses it, even while an earlier ``Results`` holds it
-open. A conversion that no longer pairs (the run wrote the ``.mpco``
-again) is replaced, and an open earlier ``Results`` then refuses the
-replace by name.
+is the converter's target, beside the ``.mpco``. A later read of the
+same deck run (the same :class:`DeckRun` object, held in memory) reuses
+that conversion while the ``.mpco``, its run record and the ``.ladruno``
+are unchanged, even while an earlier ``Results`` holds it open. Any other
+read converts afresh, replacing the file; an open ``Results`` on it then
+refuses the replace by name.
 
 This route imports the build package's names from their defining
 submodules (``_internal/build/<module>.py``) here only.
@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import os
 import warnings
+import weakref
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence
@@ -822,17 +823,17 @@ def _write_and_read_mpco(
     run-record path). A conversion refusal raises here, by name: the
     read never falls back to ``Results.from_mpco``.
 
-    A conversion an earlier read made is reused when it still pairs
-    (:func:`_reusable_conversion`), so a second read never replaces a
-    file an open :class:`Results` holds."""
+    A conversion an earlier read of this same deck run made is reused
+    while its files are unchanged (:func:`_reusable_conversion`), so a
+    second read never replaces a file an open :class:`Results` holds."""
     from ..results import MPCOConversionRefused
     from ..results.Results import Results
     from ..results.live import DefaultRouteWarning, read_deck_mpco
     from ..results.readers._ladruno_from_mpco import StageKindRefused
 
-    root, archive = _results_dir(bridge, run)
+    _root, archive = _results_dir(bridge, run)
     origin = _history_origin(rec)
-    reuse = _reusable_conversion(root, archive, files)
+    reuse, why_not = _reusable_conversion(run, rec, files)
     if reuse is not None:
         target: "str | list[str | Path]" = (
             str(reuse[0]) if len(reuse) == 1 else list[str | Path](reuse))
@@ -858,123 +859,86 @@ def _write_and_read_mpco(
     except OSError as e:
         raise BridgeError(
             f"{_WHERE}: {origin}: converting its .mpco to a .ladruno failed "
-            f"({type(e).__name__}: {e}). When an earlier read's conversion "
-            "no longer pairs (the run wrote the .mpco again), it is "
-            "replaced, and an earlier Results of this run that is still "
-            "open holds that .ladruno: close it (results.close()) and read "
-            "again."
+            f"({type(e).__name__}: {e}). This read converts afresh, "
+            f"replacing the .ladruno already there, because {why_not}; a "
+            "Results still open on that file (an earlier ops.results or "
+            "Results.from_ladruno) blocks the replace. Close it "
+            "(results.close()) and read again."
         ) from e
-    _remember_conversion(root, archive, files)
+    _remember_conversion(run, rec, files)
     return results
 
 
-#: In ``<deck>.results/``: the facts of the last conversion this route
-#: made (the ``.mpco`` files, the ``.ladruno`` files it wrote, the model
-#: lineage), so a later read can tell whether that conversion still pairs.
-_CONVERSION_RECORD = "conversion.json"
+#: The last conversion this route made for a deck run, keyed by the
+#: :class:`DeckRun` object's id (its weak reference proves it is the same
+#: object): the facts of the files it read and wrote. In memory only, so
+#: nothing on disk can claim a conversion pairs; a new deck run on the
+#: bridge is a new object and converts again.
+_CONVERSIONS: "dict[int, tuple[weakref.ref[DeckRun], tuple[Any, ...]]]" = {}
 
 
-def _file_facts(paths: Sequence[Path]) -> list[list[object]]:
-    out: list[list[object]] = []
+def _file_facts(paths: Sequence[Path]) -> tuple[tuple[str, int, int], ...]:
+    out = []
     for p in paths:
         st = p.stat()
-        out.append([os.path.normcase(str(p)), st.st_size, st.st_mtime_ns])
-    return out
+        out.append((os.path.normcase(str(p)), st.st_size, st.st_mtime_ns))
+    return tuple(out)
 
 
 def _conversion_facts(
-    archive: Path, files: Sequence[Path],
-) -> "dict[str, Any] | None":
-    """What a conversion of ``files`` against ``archive`` pairs on, or
-    ``None`` when any part cannot be read (nothing is then reused)."""
-    import h5py
-
+    run: DeckRun, rec: MPCO, files: Sequence[Path],
+) -> "tuple[Any, ...] | None":
+    """The size and mtime of the ``.mpco`` files, the run record and the
+    ``.ladruno`` files of ``rec``, or ``None`` when one cannot be read."""
     from ..results.readers._ladruno_live import (
         existing_fork_files,
         fork_target_of,
     )
-    from ._internal.lineage import read_stored_lineage
 
+    record = _run_record(run, rec)
     try:
-        with h5py.File(archive, "r") as f:
-            fem_hash, model_hash, _ = read_stored_lineage(f["meta"])
         targets = existing_fork_files(fork_target_of(files[0]))
-        return {
-            "model_hash": model_hash, "fem_hash": fem_hash,
-            "mpco": _file_facts(files), "ladruno": _file_facts(targets),
-        }
-    except (OSError, KeyError):
+        return (
+            _file_facts(files),
+            _file_facts([record]) if record.is_file() else (),
+            _file_facts(targets),
+        )
+    except OSError:
         return None
-
-
-def _stamped_lineage(path: Path) -> "tuple[Any, Any]":
-    """``(model_hash, fem_hash)`` of ``path``'s provenance stamp."""
-    import h5py
-
-    def text(v: Any) -> Any:
-        return v.decode("utf-8") if isinstance(v, bytes) else v
-
-    with h5py.File(path, "r") as f:
-        attrs = f["INFO/PROVENANCE"].attrs
-        return text(attrs.get("model_hash")), text(attrs.get("fem_hash"))
 
 
 def _reusable_conversion(
-    root: Path, archive: Path, files: Sequence[Path],
-) -> "list[Path] | None":
-    """The ``.ladruno`` file(s) an earlier read converted from these very
-    ``.mpco`` files, or ``None``.
+    run: DeckRun, rec: MPCO, files: Sequence[Path],
+) -> "tuple[list[Path] | None, str]":
+    """The ``.ladruno`` file(s) an earlier read of this same deck run
+    converted, or ``None`` and why not.
 
-    Reused only when all of it holds: this route's conversion record
-    names the same ``.mpco`` files at the same size and mtime (the run did
-    not write them again), the same ``.ladruno`` files at the size and
-    mtime the conversion left, and the model lineage of this read's
-    archive; and each ``.ladruno`` still carries the converter's mark and
-    a provenance stamp of that lineage. Anything else converts again.
+    Reused only when this :class:`DeckRun` object made the conversion and
+    the ``.mpco`` files, the run record and the ``.ladruno`` files are as
+    that conversion left them (size and mtime): the record's checks then
+    passed on exactly these files.
     """
-    import json
-
-    record = root / _CONVERSION_RECORD
-    if not record.is_file():
-        return None
-    try:
-        before = json.loads(record.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    now = _conversion_facts(archive, files)
-    if now is None or before != now or not now["ladruno"]:
-        return None
-    targets = [Path(str(row[0])) for row in now["ladruno"]]
-    lineage = (now["model_hash"], now["fem_hash"])
-    try:
-        if not all(_converted(t) and _stamped_lineage(t) == lineage
-                   for t in targets):
-            return None
-    except (OSError, KeyError):
-        return None
-    return targets
+    for key in [k for k, (ref, _) in _CONVERSIONS.items() if ref() is None]:
+        del _CONVERSIONS[key]
+    entry = _CONVERSIONS.get(id(run))
+    if entry is None or entry[0]() is not run:
+        return None, "no earlier read of this deck run converted it"
+    now = _conversion_facts(run, rec, files)
+    if now is None or now != entry[1] or not now[2]:
+        return None, (
+            "its .mpco, its run record or the .ladruno changed on disk "
+            "since this deck run's earlier read converted it")
+    return [Path(row[0]) for row in now[2]], ""
 
 
 def _remember_conversion(
-    root: Path, archive: Path, files: Sequence[Path],
+    run: DeckRun, rec: MPCO, files: Sequence[Path],
 ) -> None:
-    """Write the conversion record. It only spares a later read the
-    conversion, so a failure to write it removes any older one and the
-    read stands (the next read converts again)."""
-    import json
-
-    record = root / _CONVERSION_RECORD
-    facts = _conversion_facts(archive, files)
-    try:
-        if facts is None:
-            record.unlink(missing_ok=True)
-            return
-        record.write_text(json.dumps(facts), encoding="utf-8")
-    except OSError:
-        try:
-            record.unlink(missing_ok=True)
-        except OSError:
-            pass
+    facts = _conversion_facts(run, rec, files)
+    if facts is None:
+        _CONVERSIONS.pop(id(run), None)
+    else:
+        _CONVERSIONS[id(run)] = (weakref.ref(run), facts)
 
 
 def _write_and_read_text(

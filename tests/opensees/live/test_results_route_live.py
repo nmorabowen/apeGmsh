@@ -141,6 +141,14 @@ def test_mpco_tip_deflection_matches_the_closed_form(
     assert uy == pytest.approx(UY, rel=1e-9)
     assert uy2 == uy
     assert (run_dir / "r.ladruno").is_file()
+    # A run record replaced after the read is never reused past the
+    # record's checks (#2796 review 2, finding 2): the read converts
+    # afresh and refuses on check 1.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    (run_dir / "r.mpco.run.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(BridgeError, match=r"check 1 \(the record\)"):
+        ops.results(str(deck))
 
 
 def staged_cantilever(fem: Any) -> apeSees:

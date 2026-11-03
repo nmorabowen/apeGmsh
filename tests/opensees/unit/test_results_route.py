@@ -652,7 +652,10 @@ def test_a_rewritten_mpco_under_an_open_read_refuses_by_name(
         try:
             r2 = ops.results("run/deck.py")
         except BridgeError as e:
-            assert "close it (results.close()) and read again" in str(e)
+            assert "close it (results.close()) and read again" in str(e).lower()
+            # The reason is the true one (#2796 review 2, finding 3).
+            assert "changed on disk since this deck run's earlier read" in (
+                str(e))
             assert isinstance(e.__cause__, OSError)
         else:
             # Windows never lets an open file be replaced; a platform
@@ -670,6 +673,78 @@ def test_a_rewritten_mpco_under_an_open_read_refuses_by_name(
         assert_reads_the_file(r3, src)
     finally:
         r3.close()
+
+
+def doubled(src: Path, where: Path) -> Path:
+    """``src`` with every displacement doubled: the same bytes count."""
+    import shutil
+
+    import h5py
+
+    dst = where / "doubled.mpco"
+    shutil.copy(src, dst)
+    with h5py.File(dst, "r+") as f:
+        data = f["MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA"]
+        for k in data:
+            data[k][...] = 2.0 * data[k][...]
+    assert dst.stat().st_size == src.stat().st_size
+    return dst
+
+
+@pytest.mark.parametrize("keep_open", [False, True])
+def test_a_same_size_rerun_with_a_reset_mtime_never_serves_the_old_read(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory, keep_open: bool,
+) -> None:
+    """#2796 review 2, finding 1: a second deck run rewrites ``r.mpco``
+    with other values at the same size, and its mtime is reset to the
+    first run's (a 1-second-mtime filesystem does the same). The read of
+    the new run is the new values: an earlier read's conversion is reused
+    only by the deck run that made it. With the first Results still open,
+    the replace refuses by name, giving the true reason."""
+    import os
+
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    where = tmp_path_factory.mktemp("springs")
+    src = run_output(ops, where)
+    twice = doubled(src, where)
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    mpco = run_dir / "run" / "r.mpco"
+    first = mpco.stat()
+    r1 = ops.results("run/deck.py")
+    try:
+        assert_reads_the_file(r1, src)
+
+        def rewrite() -> None:
+            copy_to(twice, "run/r.mpco")()
+            os.utime(mpco, ns=(first.st_atime_ns, first.st_mtime_ns))
+
+        ran(ops, monkeypatch, rewrite)
+        assert (mpco.stat().st_size, mpco.stat().st_mtime_ns) == (
+            first.st_size, first.st_mtime_ns)
+        if keep_open:
+            try:
+                r2 = ops.results("run/deck.py")
+            except BridgeError as e:
+                msg = str(e)
+                assert "no earlier read of this deck run converted it" in msg
+                assert "close it (results.close()) and read again" in msg.lower()
+                assert isinstance(e.__cause__, OSError)
+            else:
+                assert sys.platform != "win32"
+                try:
+                    assert_reads_the_file(r2, twice)
+                finally:
+                    r2.close()
+            return
+    finally:
+        r1.close()
+    r2 = ops.results("run/deck.py")
+    try:
+        assert_reads_the_file(r2, twice)
+    finally:
+        r2.close()
 
 
 def test_an_unstaged_mpco_deck_that_wrote_nothing_names_the_remedies(
