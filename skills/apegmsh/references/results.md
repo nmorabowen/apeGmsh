@@ -51,8 +51,10 @@ returns the written paths, and is atomic: either the whole new set is
 in place, or nothing changed. It refuses with `MPCOConversionRefused`
 when the stages cannot be paired with the program's `ops.stage` blocks
 (an unstaged program refuses), when the archive is another model's, or
-when a target exists without `overwrite=True`. What it cannot carry
-(today `local_axes`) is listed in the file's `INFO/PROVENANCE@unsupported`.
+when a target exists without `overwrite=True`. What it cannot carry is
+listed in the file's `INFO/PROVENANCE@unsupported`: `local_axes`,
+`springs` (copied, but not read by `from_ladruno`), and
+`quadrature:<group>` for an element group with no known rule.
 (`tests/test_results_mpco_to_ladruno.py`)
 
 Modes come back the same way: `EigenResult.results()` writes the modes
@@ -309,8 +311,8 @@ what you derive from them:
 ```
 
 You write `<stem>.user.h5` from Python with one call. apeGmshViewer reads
-every zone and writes only `/combinations` (plus its own
-`<stem>.workspace.h5`, ADR 0132).
+it and does not write it today. ADR 0130 plans for the app to write the
+`/combinations` zone and nothing else.
 
 ```python
 import numpy as np
@@ -360,8 +362,10 @@ UserFile("run.user.h5").results().entries                   # what the file hold
   A stage is named by its `ops.stage` name, else `stage_<i>`, never
   `MODEL_STAGE[k]`; open the results with `model_h5=` so the names are
   bound. `step=-1` is the last step.
-- **Refusals are per row and per read.** A bad row (duplicate name, cycle,
-  unknown rule, unresolved term) refuses alone and the file still opens.
+- **Refusals.** `write_user_file` refuses the whole write
+  (`UserWriteRefused`, nothing written) when a row is bad: a duplicate
+  name, a cycle, an unknown rule, a bad term. Reading a file someone else
+  wrote is gentler: a bad row refuses alone and the file still opens.
   `evaluate` raises `CombinationRefused` with a `.reason`: `unresolved`
   for a term naming a stage that is not there, or a stage with no
   recorded steps (an `eigen` stage); `not-linear` when a summing rule
@@ -418,8 +422,8 @@ terms read `/spectra` through `UserSpectra`, the default of
 
 Named sets, plot definitions and saved views live in a fourth file of the
 set, `<stem>.workspace.h5`, never in `.user.h5`. It holds definitions
-only, never a result value. The app writes it when the human saves; you
-can write and read it from Python too:
+only, never a result value. Today you write and read it from Python;
+ADR 0132 plans for the app to write it when the human saves:
 
 ```python
 from apeGmsh.results.user import (
@@ -453,8 +457,9 @@ write_workspace("frame.workspace.h5", remove={"views": ["roof iso"]})
 
 A study of stiffness states (uncracked, cracked, Bischoff) is several
 sets listed in one `<study>.variants.json`. Each row points at a
-variant's model file; the app opens a variant only from a manifest the
-user opened:
+variant's model file. ADR 0132 plans for the app to open a variant,
+only from a manifest the user opened; today the manifest is written and
+read from Python:
 
 ```python
 write_variants("slab.variants.json", [
