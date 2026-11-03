@@ -73,7 +73,7 @@ import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePa
 import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
 import { OpenSession, Study } from "./session.ts";
-import { isManifestPath, readVariants, type VariantsFs } from "../reader/variants.ts";
+import { confinedToStudy, isManifestPath, readVariants, resolveRow, type VariantsFs } from "../reader/variants.ts";
 import { goToSource, provenanceSources, type SourceScope } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
@@ -282,7 +282,28 @@ const study = new Study({
     return { close: () => unwatchFile(manifest, listener) };
   },
   note: (message) => process.stderr.write(`apeGmshViewer: ${message}\n`),
+  recheck: (manifest, row) => resolveRow(manifest, row.path, variantsFs),
+  confined: (manifest, path) => confinedToStudy(manifest, path, variantsFs),
 });
+
+/**
+ * D9.4: a row's set as main opens it: paired from the row's resolved model,
+ * each sibling (results, geometry, user) confined to the manifest's folder
+ * again, or why not.
+ */
+function rowSet(open: string): { ok: true; set: OpenSet } | { ok: false; reason: string } {
+  let set: OpenSet;
+  try {
+    set = pairSet(open, existsSync);
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  for (const p of [set.results, set.geometry, set.user]) {
+    const why = study.confine(p);
+    if (why !== null) return { ok: false, reason: `a file of the variant's set leaves the study: ${why}` };
+  }
+  return { ok: true, set };
+}
 
 /**
  * D9.5: the compare set's results host, apart from the window set's
@@ -526,7 +547,14 @@ function openStudy(manifest: string, notify: boolean): boolean {
     fail(`${manifest}: no variant can be opened: ${r.refused.map((x) => x.reason).join("; ")}`);
     return false;
   }
-  const ok = session.open(first.resolved, notify);
+  const now = study.row(first.index, first.label);
+  const set = now.ok ? rowSet(now.open) : now;
+  if (!now.ok || !set.ok) {
+    sendStudy();
+    fail(`${manifest}: ${"reason" in set ? set.reason : ""}`);
+    return false;
+  }
+  const ok = session.open(now.open, notify);
   sendStudy();
   return ok;
 }
@@ -656,8 +684,14 @@ ipcMain.on("viewer:offersReady", (e: IpcMainEvent) => {
   offersWaiting = [];
 });
 
-/** A page load: the old page's subscriptions go, and so does every offer row the new page will not be sent (VU14). */
+/**
+ * A page load: the old page's subscriptions go, and so does every offer row the
+ * new page will not be sent (VU14). VU10: the compare slot goes too, because the
+ * new page starts with no compare set, and a slot it never opened is not one it
+ * may read (#2817 review 4).
+ */
 function pageLoading(): void {
+  closeCompare();
   subscribed.clear();
   offersReady = false;
   pageFrame = null;
@@ -929,11 +963,13 @@ ipcMain.handle("variants:switch", (_e, index: unknown, label: unknown) => {
   const r = study.row(index, label);
   if (!r.ok) return { ok: false, reason: `variants:switch: ${r.reason}` };
   if (mode !== "view") return { ok: false, reason: `variants:switch: --mode=${mode} has no window set to switch` };
+  const s = rowSet(r.open);
+  if (!s.ok) return { ok: false, reason: `variants:switch: ${s.reason}` };
   // The window set cannot also be the compare set.
   if (study.compare?.row.index === r.row.index) closeCompare();
   quietFails = [];
   try {
-    const ok = session.open(r.row.resolved, true);
+    const ok = session.open(r.open, true);
     sendStudy();
     return ok ? { ok: true } : { ok: false, reason: quietFails.join("; ") || `cannot open variant ${JSON.stringify(r.row.label)}` };
   } finally {
@@ -954,17 +990,16 @@ ipcMain.handle("variants:compare", async (_e, index: unknown, label: unknown) =>
   if (!r.ok) return { ok: false, reason: `variants:compare: ${r.reason}` };
   const row = r.row;
   const ws = windowSet();
-  if (!("reason" in ws) && samePath(ws.model, row.resolved)) return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)} is the window set; a compare set is another variant` };
+  if (!("reason" in ws) && (samePath(ws.model, r.open) || study.rowOfModel(ws.model)?.index === row.index)) {
+    return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)} is the window set; a compare set is another variant` };
+  }
   // At most one compare set: a new one replaces it.
   closeCompare();
-  let set: OpenSet;
-  try {
-    set = pairSet(row.resolved, existsSync);
-  } catch (err) {
-    return { ok: false, reason: `variants:compare: ${err instanceof Error ? err.message : String(err)}` };
-  }
-  if (set.results === null) return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)} has no results file beside ${row.resolved}` };
-  const own = await modelHashes(row.resolved);
+  const rs = rowSet(r.open);
+  if (!rs.ok) return { ok: false, reason: `variants:compare: ${rs.reason}` };
+  const set = rs.set;
+  if (set.results === null) return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)} has no results file beside ${r.open}` };
+  const own = await modelHashes(r.open);
   if (typeof own === "string") return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)}: ${own}` };
   const a = await compareHost.open(set.results);
   if (!a.ok) return { ok: false, reason: `variants:compare: ${a.error}` };
@@ -972,7 +1007,7 @@ ipcMain.handle("variants:compare", async (_e, index: unknown, label: unknown) =>
   // The compare set's results must be of its own model, by the hashes the window's pairing uses.
   if (!lin || lin.femHash !== own.femHash || lin.modelHash !== own.modelHash) {
     compareHost.close();
-    return { ok: false, reason: `variants:compare: ${set.results} does not pair with ${row.resolved} (fem_hash and model_hash differ, or are not stamped${a.meta.lineageReason ? `: ${a.meta.lineageReason}` : ""})` };
+    return { ok: false, reason: `variants:compare: ${set.results} does not pair with ${r.open} (fem_hash and model_hash differ, or are not stamped${a.meta.lineageReason ? `: ${a.meta.lineageReason}` : ""})` };
   }
   study.compare = { row, set };
   sendStudy();

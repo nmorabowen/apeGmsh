@@ -100,6 +100,14 @@ test("a switch opens the row as the window set, and empties a compare slot that 
   assert.match(s("switch:compare step").reason!, /no compare set is open/);
 });
 
+test("a page load empties the compare slot: the new page never reads a compare set it did not open (#2817 review 4)", () => {
+  assert.equal(s("reload:compare").ok, true, s("reload:compare").reason ?? "");
+  assert.equal(s("reload:step before").ok, true, s("reload:step before").reason ?? "");
+  assert.equal(s("reload:step after").ok, false);
+  assert.match(s("reload:step after").reason!, /no compare set is open/);
+  assert.equal(st("reload:study").compare, null);
+});
+
 test("at most one compare set, and compare:close empties the slot", () => {
   assert.equal(s("compare2:ok").ok, true, s("compare2:ok").reason ?? "");
   // Uncracked at the last step: its largest Uy is 0.06.

@@ -3159,8 +3159,7 @@ Rows are compared by the app's path rule, case-folded on Windows and macOS
 (`duplicate-path`, both rows).
 
 **Row refusals:** `empty-name` (a label or a `params` key), `duplicate` (a label,
-both rows), `bad-path`, `escapes`, `missing`, `duplicate-path`, `bad-param`, `bad-row`
-(not an object of `label`, `path` and `params`, or at 1.0 a key the schema does not name; VU10, #2694). A bad
+both rows), `bad-path`, `escapes`, `missing`, `duplicate-path`, `bad-param`. A bad
 row refuses alone, and the manifest still opens. **File refusals:** `not-a-manifest`,
 `bad-version`, `too-old`, `newer` (Python), `major`, and `bad-envelope` (a top-level key
 the schema does not name, or `variants` missing or empty; erratum, #2806).

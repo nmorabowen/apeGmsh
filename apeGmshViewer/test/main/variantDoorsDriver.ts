@@ -23,7 +23,7 @@ const opt = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`
 const root = opt("dir");
 if (!root) throw new Error("variantDoorsDriver needs --dir=");
 
-const { handlers } = (await import(STUB)) as typeof import("./electronStub.ts");
+const { handlers, pageEvents, ready } = (await import(STUB)) as typeof import("./electronStub.ts");
 await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "main.ts")).href);
 
 const study = join(root, "study");
@@ -86,6 +86,16 @@ out["compare2:step"] = seen(await call("compare:readStep", { stage: "stage_0", s
 await call("compare:close");
 out["close:step"] = seen(await call("compare:readStep", { stage: "stage_0", step: 2, seq: 12 }));
 out["close:study"] = await view();
+// 5. A page load empties the compare slot: the new page starts with no compare set (#2817 review 4).
+out["reload:compare"] = seen(await call("variants:compare", 0, "Uncracked"));
+out["reload:step before"] = seen(await call("compare:readStep", { stage: "stage_0", step: 2, seq: 13 }));
+ready(); // main.ts makes its window once the app is ready
+await new Promise((r) => setImmediate(r));
+const loads = pageEvents.get("did-start-loading") ?? [];
+if (loads.length === 0) throw new Error("main.ts listens for no did-start-loading");
+for (const fn of loads) fn({});
+out["reload:step after"] = seen(await call("compare:readStep", { stage: "stage_0", step: 2, seq: 14 }));
+out["reload:study"] = await view();
 
 process.stdout.write(`VARIANT_DOORS ${JSON.stringify(out)}\n`);
 process.exit(0);

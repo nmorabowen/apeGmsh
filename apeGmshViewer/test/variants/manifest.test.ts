@@ -57,7 +57,7 @@ const EXPECT: Record<string, { file: string } | { row: number; code: string }> =
   "variants.path-user-sibling-uppercase.json": { row: 1, code: "bad-path" },
   "variants.path-workspace-sibling.json": { row: 1, code: "bad-path" },
   "variants.version-number.json": { file: "bad-version" },
-  "variants.wrong-list-key.json": { file: "malformed" },
+  "variants.wrong-list-key.json": { file: "bad-envelope" },
 };
 
 test("every invalid example of the schema corpus is listed here, so a new one cannot pass unjudged", () => {
@@ -90,11 +90,11 @@ test("a same-major newer minor opens with one banner, its unknown keys dropped a
 test("at 1.0 an unknown key refuses the file at the top and the row in a row", () => {
   const valid = JSON.parse(readFileSync(join(EXAMPLES, "variants.valid.json"), "utf8"));
   const top = readVariants(M, disk(JSON.stringify({ ...valid, shared_params: {} })));
-  assert.equal(!top.ok && top.code, "malformed");
+  assert.equal(!top.ok && top.code, "bad-envelope");
   valid.variants[1].colour = "#fff";
   const row = readVariants(M, disk(JSON.stringify(valid)));
   assert.ok(row.ok);
-  assert.deepEqual(row.refused.map((x) => [x.index, x.code]), [[1, "bad-row"]]);
+  assert.deepEqual(row.refused.map((x) => [x.index, x.code]), [[1, "bad-param"]]);
 });
 
 test("another major, a version below the floor, another format and an empty list refuse the file", () => {
@@ -103,11 +103,11 @@ test("another major, a version below the floor, another format and an empty list
     const r = readVariants(M, disk(JSON.stringify(doc)));
     return r.ok ? "opened" : r.code;
   };
-  assert.equal(code({ ...valid, version: "2.0.0" }), "other-major");
-  assert.equal(code({ ...valid, version: "0.9.0" }), "other-major");
+  assert.equal(code({ ...valid, version: "2.0.0" }), "major");
+  assert.equal(code({ ...valid, version: "0.9.0" }), "major");
   assert.equal(code({ ...valid, version: "1.0" }), "bad-version");
   assert.equal(code({ ...valid, format: "apegmsh-variant" }), "not-a-manifest");
-  assert.equal(code({ ...valid, variants: [] }), "malformed");
+  assert.equal(code({ ...valid, variants: [] }), "bad-envelope");
   assert.equal(code([valid]), "not-a-manifest");
   assert.equal(readVariants(M, disk("{ not json")).ok, false);
 });
@@ -116,7 +116,7 @@ test("a byte-order mark is stripped; NaN is not JSON", () => {
   const text = readFileSync(join(EXAMPLES, "variants.valid.json"), "utf8");
   assert.ok(readVariants(M, disk(`﻿${text}`)).ok);
   const nan = readVariants(M, disk(text.replace("1.0 }", "NaN }")));
-  assert.equal(!nan.ok && nan.code, "not-json");
+  assert.equal(!nan.ok && nan.code, "bad-json");
 });
 
 test("missing, escapes (a link out of the folder), duplicate labels and duplicate paths refuse their rows", () => {

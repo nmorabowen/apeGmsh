@@ -14,7 +14,12 @@ that differ in one parameter, the plate's Young's modulus:
   E = 10.5e9 (Ie/Ig 0.35), in a subfolder (D8 allows one);
 * ``study.variants.json``: the manifest, written by VU9a-py's
   ``apeGmsh.results.user.write_variants`` (#2806) to
-  ``architecture/schemas/variants.schema.json``.
+  ``architecture/schemas/variants.schema.json``;
+* ``codes.golden.json``: Python's ``read_variants`` verdict (the rows that
+  stand, each refused row's code, or the file's code) on the schema's example
+  corpus and on one case per code it does not reach. Python's codes are the
+  canonical ones (#2806); ``apeGmshViewer/test/variants/manifest.test.ts``
+  holds the app's reader to them. ``--codes-only`` writes this file alone.
 
 Each model is composed by the bridge (``apeSees(fem)``, ``ops.h5``) from one
 gmsh mesh: a 2 x 1 rectangle of 4 x 2 ``FourNodeQuad`` (``Panel``) at z = 0,
@@ -35,6 +40,7 @@ so the difference Uncracked minus Cracked at a node is
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import gmsh
@@ -106,5 +112,81 @@ def main() -> None:
     print(f"wrote {manifest.name}: {[r.label for r in read_variants(manifest).variants]}")
 
 
+# -- The refusal codes, by Python (#2806, the canonical reader) -----------------------
+
+#: The files every code case lays out beside its manifest (empty files suffice: a
+#: reader judges the manifest and the disk, never a model's content).
+CODE_FILES = ("slab_uncracked.h5", "slab_cracked.h5", "bischoff/slab_pass2.h5", "slab_cracked.user.h5")
+EXAMPLES = Path(__file__).resolve().parents[1] / "architecture" / "schemas" / "examples"
+
+
+def _row(label: object, path: object = "slab_uncracked.h5", params: object = None) -> dict:
+    return {"label": label, "path": path, "params": {} if params is None else params}
+
+
+def _doc(rows: list, **top: object) -> str:
+    return json.dumps({"format": "apegmsh-variants", "version": "1.0.0", "variants": rows, **top})
+
+
+def code_cases() -> list[tuple[str, str]]:
+    """``(name, manifest text)``: the schema corpus, then one case per code the corpus does not reach."""
+    cases = [(p.name, p.read_text(encoding="utf-8")) for p in sorted(EXAMPLES.glob("*.json"))]
+    cases += [(f"invalid/{p.name}", p.read_text(encoding="utf-8")) for p in sorted((EXAMPLES / "invalid").glob("*.json"))]
+    ok = _row("Uncracked")
+    cases += [
+        ("row-not-object", _doc([1, ok])),
+        ("row-unknown-key", _doc([{**_row("A"), "colour": "#fff"}, _row("B", "slab_cracked.h5")])),
+        ("row-no-label", _doc([{"path": "slab_uncracked.h5", "params": {}}, _row("B", "slab_cracked.h5")])),
+        ("row-params-list", _doc([_row("A", params=[1]), _row("B", "slab_cracked.h5")])),
+        ("row-params-key-empty", _doc([_row("A", params={"": 1}), _row("B", "slab_cracked.h5")])),
+        ("row-label-not-nfc", _doc([_row("Cafe\u0301"), _row("B", "slab_cracked.h5")])),
+        ("duplicate-label-one-bad", _doc([_row("A"), _row("A", "C:/x.h5")])),
+        ("duplicate-label", _doc([_row("A"), _row("A", "slab_cracked.h5"), _row("B", "bischoff/slab_pass2.h5")])),
+        ("duplicate-path", _doc([_row("A"), _row("B"), _row("C", "slab_cracked.h5")])),
+        ("missing", _doc([_row("A"), _row("B", "nope.h5")])),
+        ("top-unknown-key", _doc([ok], extra=1)),
+        ("variants-empty", _doc([])),
+        ("variants-not-list", json.dumps({"format": "apegmsh-variants", "version": "1.0.0", "variants": {}})),
+        ("version-major", _doc([ok]).replace('"1.0.0"', '"2.0.0"')),
+        ("version-old-major", _doc([ok]).replace('"1.0.0"', '"0.9.0"')),
+        ("version-two-parts", _doc([ok]).replace('"1.0.0"', '"1.0"')),
+        ("format-wrong", _doc([ok]).replace("apegmsh-variants", "apegmsh-variant")),
+        ("root-list", "[" + _doc([ok]) + "]"),
+        ("not-json", "{ not json"),
+        ("nan-token", _doc([_row("A", params={"x": 1})]).replace('"x": 1', '"x": NaN')),
+    ]
+    return cases
+
+
+def codes() -> None:
+    """Write ``codes.golden.json``: Python's verdict on each case, which the app's reader must match."""
+    import tempfile
+
+    from apeGmsh.results.user import VariantsRefused, read_variants
+
+    out = []
+    for name, text in code_cases():
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for f in CODE_FILES:
+                (root / f).parent.mkdir(parents=True, exist_ok=True)
+                (root / f).write_bytes(b"")
+            m = root / "s.variants.json"
+            m.write_text(text, encoding="utf-8")
+            try:
+                r = read_variants(m)
+                verdict: dict = {"rows": [v.row for v in r.variants], "refused": [[x.row, x.reason] for x in r.refused]}
+            except VariantsRefused as exc:
+                verdict = {"file": exc.reason}
+        out.append({"name": name, "text": text, "python": verdict})
+    target = HERE / "codes.golden.json"
+    target.write_text(json.dumps({"files": list(CODE_FILES), "cases": out}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"wrote {target.name}: {len(out)} cases")
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+
+    if "--codes-only" not in sys.argv:
+        main()
+    codes()

@@ -17,7 +17,7 @@
 //   1.0, an unknown key refuses the file at the top and the row in a row.
 // - A bad row refuses alone, with its code (`RowCode`), and the file opens.
 
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 
 export const VARIANTS_FORMAT = "apegmsh-variants";
 /** The app's version of the manifest, and its floor (ADR 0132 D2, ADR 0113). */
@@ -40,18 +40,19 @@ export interface VariantRow {
   label: string;
   /** as the manifest writes it, relative to the manifest's folder */
   path: string;
-  /** the model file, joined to the manifest's folder and confined to it (after links resolve) */
+  /** the model file, joined to the manifest's folder (the path as written) */
   resolved: string;
+  /** the same file with links, junctions and 8.3 names resolved, when the manifest was read; main opens a fresh `resolveRow` */
+  real: string;
   params: Record<string, VariantParam>;
 }
 
 /**
- * The row refusals of h5-schema.md, plus `bad-row` for a row that is not an
- * object of `{label, path, params}` (a missing key, or at 1.0 a key the schema
- * does not name): the section lists no code for that shape, and the schema
- * refuses such a row.
+ * The row refusals of h5-schema.md and Python's `read_variants` (#2806, the
+ * canonical codes): a row that is not an object, or at 1.0 holds a key the
+ * schema does not name, is `bad-param`, as Python's `_row_problem` says.
  */
-export type RowCode = "empty-name" | "duplicate" | "bad-path" | "escapes" | "missing" | "duplicate-path" | "bad-param" | "bad-row";
+export type RowCode = "empty-name" | "duplicate" | "bad-path" | "escapes" | "missing" | "duplicate-path" | "bad-param";
 
 export interface RowRefusal {
   index: number;
@@ -61,7 +62,8 @@ export interface RowRefusal {
   reason: string;
 }
 
-export type FileCode = "unreadable" | "not-json" | "not-a-manifest" | "bad-version" | "below-floor" | "other-major" | "malformed";
+/** Python's file refusals (`read_variants`), but `newer`: a same-major newer minor opens here, read-only, with a banner (ADR 0132 D2). */
+export type FileCode = "no-file" | "bad-json" | "not-a-manifest" | "bad-version" | "too-old" | "major" | "bad-envelope";
 
 export type VariantsRead =
   | {
@@ -136,15 +138,82 @@ function inside(outer: string, inner: string): boolean {
   return r !== "" && !r.startsWith("..") && !isAbsolute(r);
 }
 
+/**
+ * `p` with every link, junction and 8.3 short name resolved, as Python's
+ * `Path.resolve()` (non-strict): the deepest part that exists is resolved, and
+ * the rest is joined to it. So a row that leaves the folder through a link is
+ * `escapes` whether or not its file exists.
+ */
+function resolveLoose(p: string, fs: VariantsFs): string {
+  try {
+    return fs.realpath(p);
+  } catch {
+    const up = dirname(p);
+    return up === p ? p : join(resolveLoose(up, fs), basename(p));
+  }
+}
+
+/**
+ * The first schema-level problem of one row, in Python's order (`_row_problem`):
+ * the row's shape and keys, its label, its params, then its path form. Null
+ * when it passes. At a newer minor, a key 1.0 does not name is dropped, not refused.
+ */
+function rowProblem(row: unknown, newer: boolean): { code: RowCode; reason: string } | null {
+  if (!isObject(row)) return { code: "bad-param", reason: `the row is not an object {label, path, params}; got ${show(row)}` };
+  if (!newer) {
+    const extra = Object.keys(row).filter((k) => !(ROW_KEYS as readonly string[]).includes(k));
+    if (extra.length) return { code: "bad-param", reason: `${extra.map((k) => JSON.stringify(k)).join(", ")} is not a key of a ${MANIFEST_VERSION} row; its keys are ${ROW_KEYS.join(", ")}` };
+  }
+  const lp = nameProblem(row["label"]);
+  if (lp !== null) return { code: "empty-name", reason: `label ${lp}` };
+  const params = row["params"];
+  if (!isObject(params)) return { code: "bad-param", reason: `params must be an object of names to values; got ${show(params)}` };
+  for (const [k, x] of Object.entries(params)) {
+    const kp = nameProblem(k);
+    if (kp !== null) return { code: "empty-name", reason: `a params key ${kp}` };
+    const xp = paramProblem(x);
+    if (xp !== null) return { code: "bad-param", reason: `params ${JSON.stringify(k)} ${xp}` };
+  }
+  const pp = pathProblem(row["path"]);
+  if (pp !== null) return { code: "bad-path", reason: `path ${pp}` };
+  return null;
+}
+
+/**
+ * A row's `path` (already of the D8 form) against the disk now, in Python's
+ * order (`_resolve`): resolved through links, junctions and 8.3 names, it must
+ * lie inside the manifest's folder (itself resolved), name a file, and its
+ * resolved name must still be a model file (`SLABUS~1.H5` is `slab.user.h5`).
+ * Main runs it when the manifest is read and again when a row is opened, so a
+ * folder swapped for a junction since the read is refused (#2817 review 3).
+ */
+export function resolveRow(manifest: string, rel: string, fs: VariantsFs): { ok: true; joined: string; real: string } | { ok: false; code: "escapes" | "missing" | "bad-path"; reason: string } {
+  const folder = dirname(manifest);
+  const realFolder = resolveLoose(folder, fs);
+  const joined = join(folder, ...rel.split("/"));
+  const real = resolveLoose(joined, fs);
+  if (!inside(realFolder, real)) return { ok: false, code: "escapes", reason: `path ${JSON.stringify(rel)} resolves to ${real}, outside the manifest's folder ${realFolder}` };
+  if (!fs.isFile(real)) return { ok: false, code: "missing", reason: `path ${JSON.stringify(rel)} names no file (${real})` };
+  if (pathProblem(basename(real)) !== null) return { ok: false, code: "bad-path", reason: `path ${JSON.stringify(rel)} resolves to ${basename(real)}, not a model file` };
+  return { ok: true, joined, real };
+}
+
+/** Whether `path` (a file of a row's set) still lies inside the manifest's folder once resolved; the reason when not. */
+export function confinedToStudy(manifest: string, path: string, fs: VariantsFs): string | null {
+  const realFolder = resolveLoose(dirname(manifest), fs);
+  const real = resolveLoose(path, fs);
+  return inside(realFolder, real) ? null : `${path} resolves to ${real}, outside the manifest's folder ${realFolder}`;
+}
+
 /** Read and check the manifest at `manifest` (an absolute path the user gave). Never throws. */
 export function readVariants(manifest: string, fs: VariantsFs): VariantsRead {
   const refuse = (code: FileCode, reason: string): VariantsRead => ({ ok: false, manifest, code, reason: `${manifest}: ${reason}` });
-  if (!isAbsolute(manifest)) return refuse("unreadable", "a manifest is read from an absolute path");
+  if (!isAbsolute(manifest)) return refuse("no-file", "a manifest is read from an absolute path");
   let text: string;
   try {
     text = fs.readFile(manifest);
   } catch (err) {
-    return refuse("unreadable", `cannot be read (${err instanceof Error ? err.message : String(err)})`);
+    return refuse("no-file", `cannot be read (${err instanceof Error ? err.message : String(err)})`);
   }
   // UTF-8; a reader strips a byte-order mark.
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
@@ -153,7 +222,7 @@ export function readVariants(manifest: string, fs: VariantsFs): VariantsRead {
     // JSON.parse refuses NaN and Infinity tokens; an overflowing number is caught per param.
     raw = JSON.parse(text);
   } catch (err) {
-    return refuse("not-json", `is not a JSON document (${err instanceof Error ? err.message : String(err)})`);
+    return refuse("bad-json", `is not a JSON document (${err instanceof Error ? err.message : String(err)})`);
   }
   if (!isObject(raw)) return refuse("not-a-manifest", `must be a JSON object; got ${show(raw)}`);
   if (raw["format"] !== VARIANTS_FORMAT) return refuse("not-a-manifest", `format must be "${VARIANTS_FORMAT}"; got ${show(raw["format"])}`);
@@ -162,98 +231,50 @@ export function readVariants(manifest: string, fs: VariantsFs): VariantsRead {
   const [major, minor] = v.split(".").map(Number) as [number, number, number];
   const [tMajor, tMinor] = MANIFEST_VERSION.split(".").map(Number) as [number, number, number];
   const [fMajor, fMinor] = MANIFEST_FLOOR.split(".").map(Number) as [number, number, number];
-  if (major !== tMajor) return refuse("other-major", `version ${v} is of another major than the app's ${MANIFEST_VERSION}; it is not read`);
-  if (major === fMajor && minor < fMinor) return refuse("below-floor", `version ${v} is below the floor ${MANIFEST_FLOOR}`);
+  if (major !== tMajor) return refuse("major", `version ${v} is of another major than the app's ${MANIFEST_VERSION}; it is not read`);
+  if (major === fMajor && minor < fMinor) return refuse("too-old", `version ${v} is below the floor ${MANIFEST_FLOOR}`);
   const newer = minor > tMinor;
   if (!newer) {
     const extra = Object.keys(raw).filter((k) => !(TOP_KEYS as readonly string[]).includes(k));
-    if (extra.length) return refuse("malformed", `${extra.map((k) => JSON.stringify(k)).join(", ")} is not a key of a ${MANIFEST_VERSION} manifest; its keys are ${TOP_KEYS.join(", ")}`);
+    if (extra.length) return refuse("bad-envelope", `${extra.map((k) => JSON.stringify(k)).join(", ")} is not a key of a ${MANIFEST_VERSION} manifest; its keys are ${TOP_KEYS.join(", ")}`);
   }
   const list = raw["variants"];
-  if (!Array.isArray(list) || list.length === 0) return refuse("malformed", `variants must be a non-empty list of rows; got ${show(list)}`);
-  const folder = dirname(manifest);
-  let realFolder: string;
-  try {
-    realFolder = fs.realpath(folder);
-  } catch (err) {
-    return refuse("unreadable", `its folder cannot be resolved (${err instanceof Error ? err.message : String(err)})`);
+  if (!Array.isArray(list) || list.length === 0) return refuse("bad-envelope", `variants must be a non-empty list of rows; got ${show(list)}`);
+  // A label two rows give refuses each row that passes otherwise (Python's `_judge`: counted over every row whose label is a name).
+  const labels = new Map<string, number>();
+  for (const row of list) {
+    if (isObject(row) && nameProblem(row["label"]) === null) labels.set(row["label"] as string, (labels.get(row["label"] as string) ?? 0) + 1);
   }
-
   const refused: RowRefusal[] = [];
-  type Pending = Omit<VariantRow, "resolved"> & { resolved: string; key: string };
+  type Pending = VariantRow & { key: string };
   const pending: Pending[] = [];
   for (const [index, row] of list.entries()) {
-    const no = (code: RowCode, reason: string, label: string | null = null) => refused.push({ index, label, code, reason: `variants[${index}]: ${reason}` });
-    if (!isObject(row)) {
-      no("bad-row", `must be an object {label, path, params}; got ${show(row)}`);
+    const label = isObject(row) && nameProblem(row["label"]) === null ? (row["label"] as string) : null;
+    const no = (code: RowCode, reason: string) => refused.push({ index, label, code, reason: `variants[${index}]: ${reason}` });
+    const problem = rowProblem(row, newer);
+    if (problem !== null) {
+      no(problem.code, problem.reason);
       continue;
     }
-    const label = nameProblem(row["label"]) === null ? (row["label"] as string) : null;
-    if (!newer) {
-      const extra = Object.keys(row).filter((k) => !(ROW_KEYS as readonly string[]).includes(k));
-      if (extra.length) {
-        no("bad-row", `${extra.map((k) => JSON.stringify(k)).join(", ")} is not a key of a ${MANIFEST_VERSION} row; its keys are ${ROW_KEYS.join(", ")}`, label);
-        continue;
-      }
-    }
-    const lp = nameProblem(row["label"]);
-    if (lp !== null) {
-      no("empty-name", `label ${lp}`);
+    if ((labels.get(label!) ?? 0) > 1) {
+      no("duplicate", `${labels.get(label!)} rows are labelled ${JSON.stringify(label)}`);
       continue;
     }
-    const pp = pathProblem(row["path"]);
-    if (pp !== null) {
-      no("bad-path", `path ${pp}`, label);
+    const r = resolveRow(manifest, (row as Record<string, unknown>)["path"] as string, fs);
+    if (!r.ok) {
+      no(r.code, r.reason);
       continue;
     }
-    const params = row["params"];
-    if (!isObject(params)) {
-      no("bad-param", `params must be an object of names to values; got ${show(params)}`, label);
-      continue;
-    }
-    let bad: { code: RowCode; reason: string } | null = null;
-    for (const [k, x] of Object.entries(params)) {
-      const kp = nameProblem(k);
-      if (kp !== null) bad ??= { code: "empty-name", reason: `a params key ${kp}` };
-      const xp = paramProblem(x);
-      if (xp !== null) bad ??= { code: "bad-param", reason: `params ${JSON.stringify(k)} ${xp}` };
-    }
-    if (bad) {
-      no(bad.code, bad.reason, label);
-      continue;
-    }
-    const rel = row["path"] as string;
-    const joined = join(folder, ...rel.split("/"));
-    if (!fs.isFile(joined)) {
-      no("missing", `path ${JSON.stringify(rel)} names no file (${joined})`, label);
-      continue;
-    }
-    let real: string;
-    try {
-      real = fs.realpath(joined);
-    } catch (err) {
-      no("missing", `path ${JSON.stringify(rel)} cannot be resolved (${err instanceof Error ? err.message : String(err)})`, label);
-      continue;
-    }
-    if (!inside(realFolder, real)) {
-      no("escapes", `path ${JSON.stringify(rel)} resolves to ${real}, outside the manifest's folder ${realFolder}`, label);
-      continue;
-    }
-    pending.push({ index, label: label!, path: rel, resolved: joined, params: { ...(params as Record<string, VariantParam>) }, key: fs.fold ? real.toLowerCase() : real });
+    const params = (row as Record<string, unknown>)["params"] as Record<string, VariantParam>;
+    pending.push({ index, label: label!, path: (row as Record<string, unknown>)["path"] as string, resolved: r.joined, real: r.real, params: { ...params }, key: fs.fold ? r.real.toLowerCase() : r.real });
   }
-  // A label or a path two rows share refuses both rows.
-  const twice = (key: (p: Pending) => string) => {
-    const n = new Map<string, number>();
-    for (const p of pending) n.set(key(p), (n.get(key(p)) ?? 0) + 1);
-    return (p: Pending) => (n.get(key(p)) ?? 0) > 1;
-  };
-  const dupLabel = twice((p) => p.label);
-  const dupPath = twice((p) => p.key);
+  // A file two rows name refuses both rows.
+  const paths = new Map<string, number>();
+  for (const p of pending) paths.set(p.key, (paths.get(p.key) ?? 0) + 1);
   const rows: VariantRow[] = [];
-  for (const p of pending) {
-    if (dupLabel(p)) refused.push({ index: p.index, label: p.label, code: "duplicate", reason: `variants[${p.index}]: label ${JSON.stringify(p.label)} names another row too` });
-    else if (dupPath(p)) refused.push({ index: p.index, label: p.label, code: "duplicate-path", reason: `variants[${p.index}]: path ${JSON.stringify(p.path)} names the same file as another row` });
-    else rows.push({ index: p.index, label: p.label, path: p.path, resolved: p.resolved, params: p.params });
+  for (const { key, ...p } of pending) {
+    if ((paths.get(key) ?? 0) > 1) refused.push({ index: p.index, label: p.label, code: "duplicate-path", reason: `variants[${p.index}]: ${paths.get(key)} rows name ${p.real}` });
+    else rows.push(p);
   }
   refused.sort((a, b) => a.index - b.index);
   return {

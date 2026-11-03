@@ -87,11 +87,11 @@ test("variantRowOf: the window's own row, a refused row and an unknown label are
 
 test("Study: a re-read of the same path drops a compare row whose label or file moved, and keeps one that stayed", () => {
   const m = resolve("/study/s.variants.json");
-  const row = (index: number, label: string, path: string) => ({ index, label, path, resolved: join(resolve("/study"), path), params: {} });
+  const row = (index: number, label: string, path: string) => ({ index, label, path, resolved: join(resolve("/study"), path), real: join(resolve("/study"), path), params: {} });
   let next: VariantsRead = { ok: true, manifest: m, version: "1.0.0", newer: null, rows: [row(0, "U", "u.h5"), row(1, "C", "c.h5")], refused: [] };
   const changes: string[] = [];
   let watched: (() => void) | null = null;
-  const study = new Study({ read: () => next, watch: (_m, cb) => ((watched = cb), { close: () => changes.push("closed") }), note: (x) => changes.push(x) });
+  const study = new Study({ read: () => next, watch: (_m, cb) => ((watched = cb), { close: () => changes.push("closed") }), note: (x) => changes.push(x), recheck: (_m, r) => ({ ok: true, real: r.real }), confined: () => null });
   study.onChange = () => changes.push("changed");
   assert.ok(study.open(m).ok);
   study.compare = { row: row(1, "C", "c.h5"), set: { model: row(1, "C", "c.h5").resolved, geometry: null, results: null, user: null } };
@@ -102,11 +102,11 @@ test("Study: a re-read of the same path drops a compare row whose label or file 
   assert.equal(study.compare, null, "a relabelled row leaves the slot");
   assert.deepEqual(study.view(row(0, "U", "u.h5").resolved)?.rows.map((r) => r.label), ["U", "C2"]);
   assert.equal(study.view(row(0, "U", "u.h5").resolved)?.active, 0);
-  next = { ok: false, manifest: m, code: "not-json", reason: "torn write" };
+  next = { ok: false, manifest: m, code: "bad-json", reason: "torn write" };
   watched!();
   const v = study.view(null)!;
   assert.deepEqual(v.rows, []);
-  assert.equal(v.refused[0]!.code, "not-json");
+  assert.equal(v.refused[0]!.code, "bad-json");
   assert.ok(changes.includes("changed"));
 });
 
