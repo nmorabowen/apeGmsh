@@ -601,31 +601,35 @@ def results_files(results: Any, verb: str) -> dict[str, str]:
 
 
 def _require_pair_fem(results: Any, files: dict[str, str], verb: str) -> None:
-    """R22b: the bound FEMData is the ``<stem>.h5`` mesh: the same ``fem_hash``, or the same
-    nodes, any ``.ladruno`` ``fem_hash`` stamp equal to it, and, where the stamp's
-    ``element_index_space`` is ``"fem"``, the same element ids and connectivity (not types)."""
+    """R22b: a stamped ``fem_hash`` must be ``<stem>.h5``'s, and the bound FEMData its
+    mesh: the same node ids and coordinates, and the same connectivity as a sorted
+    multiset of node-id tuples (element ids and type names differ by writer)."""
     import h5py
     import numpy as np
 
     from apeGmsh.opensees import OpenSeesModel
 
-    pair, fem = OpenSeesModel.from_h5(files["model"]), results.fem
+    pair, model = OpenSeesModel.from_h5(files["model"]), Path(files["model"]).name
     with h5py.File(files["results"], "r") as h5:
-        attrs = h5["INFO/PROVENANCE"].attrs if "INFO/PROVENANCE" in h5 else {}
-        stamp = {k: v.decode() if isinstance(v, bytes) else str(v) for k, v in attrs.items()}
+        stamp = h5["INFO/PROVENANCE"].attrs.get("fem_hash") if "INFO/PROVENANCE" in h5 else None
+    stamp = stamp.decode() if isinstance(stamp, bytes) else stamp
+    if stamp is not None and pair.lineage.fem_hash and str(stamp) != pair.lineage.fem_hash:
+        raise ValueError(
+            f"the .ladruno and {model} do not pair: its stamped fem_hash {stamp} is not "
+            f"{model}'s {pair.lineage.fem_hash} (R22b). Write the model the run used as {model}."
+        )
 
     def nodes(f: Any) -> list:
         return sorted(zip(np.asarray(f.nodes.ids).tolist(), np.asarray(f.nodes.coords, dtype=float).tolist()))
 
-    def elements(f: Any) -> list:
-        return sorted(e for g in f.elements for e in zip(np.asarray(g.ids).tolist(), np.asarray(g.connectivity).tolist()))
-    want = pair.lineage.fem_hash
-    same_space = stamp.get("element_index_space") == "fem" and bool(elements(fem))
-    if fem.snapshot_id == want or (nodes(fem) == nodes(pair.fem) and stamp.get("fem_hash", want) == want and (
-            not same_space or elements(fem) == elements(pair.fem))):
+    def cells(f: Any) -> list:
+        return sorted(tuple(row) for g in f.elements for row in np.asarray(g.connectivity).tolist())
+    mine, theirs = cells(results.fem), cells(pair.fem)
+    # Either side without elements (a .ladruno MODEL group may record nodes only): nodes decide alone.
+    if nodes(results.fem) == nodes(pair.fem) and (not mine or not theirs or mine == theirs):
         return
     raise ValueError(
-        f"results.{verb} on Windows draws {Path(files['model']).name}'s mesh, but these Results are bound "
+        f"results.{verb} on Windows draws {model}'s mesh, but these Results are bound "
         f"to another FEMData (a fem= or bind() override, R22b). Render them without it."
     )
 

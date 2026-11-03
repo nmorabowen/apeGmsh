@@ -281,30 +281,69 @@ def test_the_pair_fem_passes_with_or_without_model_h5(app_backend, ladruno_set, 
     assert len(app_backend.specs) == 2
 
 
-def test_a_matching_pair_is_never_refused_by_element_type_name(app_backend, tmp_path):
-    """The .ladruno types its elements by OpenSees class (``truss``); the
-    ``<stem>.h5`` FEMData by gmsh type (``line2``). Same node ids,
-    coordinates, element ids and connectivity: the pair draws."""
+def _line2_fem(node_ids, coords, conn):
     from apeGmsh.mesh._element_types import make_type_info
 
+    line2 = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=len(conn))
+    return _make_fem(
+        node_ids=list(node_ids), coords=[tuple(c) for c in coords],
+        groups=[(line2, list(range(1, len(conn) + 1)), [list(c) for c in conn])],
+    )
+
+
+@pytest.fixture
+def truss_pair(tmp_path: Path):
+    """``truss2d.ladruno`` (elements typed by OpenSees class, ``truss``) beside a
+    ``truss2d.h5`` of the same nodes and connectivity, typed gmsh ``Line 2`` and
+    numbered 1..n. Returns the .ladruno, its node ids, coordinates and cells."""
     fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ladruno" / "truss2d.ladruno"
     src = tmp_path / "truss2d.ladruno"
     shutil.copy(fixture, src)
     with Results.from_ladruno(src) as r:
-        own = r.fem
-        ids, conn = [], []
-        for g in own.elements:
-            ids.extend(np.asarray(g.ids).tolist())
-            conn.extend(np.asarray(g.connectivity).tolist())
-        assert {g.element_type.name for g in own.elements} != {"line2"}
-        line2 = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=len(ids))
-        _make_fem(
-            node_ids=np.asarray(own.nodes.ids).tolist(),
-            coords=[tuple(c) for c in np.asarray(own.nodes.coords, dtype=float).tolist()],
-            groups=[(line2, ids, conn)],
-        ).to_h5(str(tmp_path / "truss2d.h5"))
+        ids = np.asarray(r.fem.nodes.ids).tolist()
+        xyz = np.asarray(r.fem.nodes.coords, dtype=float).tolist()
+        cells = [row for g in r.fem.elements for row in np.asarray(g.connectivity).tolist()]
+        assert {g.element_type.name for g in r.fem.elements} != {"line2"}
+    _line2_fem(ids, xyz, cells).to_h5(str(tmp_path / "truss2d.h5"))
+    return src, ids, xyz, cells
+
+
+def test_a_matching_pair_is_never_refused_by_element_type_name(app_backend, truss_pair, tmp_path):
+    """Same nodes and connectivity, other type names and element ids: the pair draws."""
+    src = truss_pair[0]
+    with Results.from_ladruno(src) as r:
         r.render(tmp_path / "x.png", view="mesh")
     assert len(app_backend.specs) == 1
+
+
+@pytest.mark.parametrize("how", ["fem=", "bind()"])
+def test_same_nodes_other_connectivity_is_an_override(app_backend, truss_pair, tmp_path, how):
+    """[[1, 3]] is not [[1, 2], [2, 3]]: the nodes match, the mesh does not."""
+    src, ids, xyz, cells = truss_pair
+    other = _line2_fem(ids, xyz, [cells[0][:1] + cells[1][1:]])
+    assert sorted(map(tuple, [cells[0][:1] + cells[1][1:]])) != sorted(map(tuple, cells))
+    opened = Results.from_ladruno(src, fem=other) if how == "fem=" else Results.from_ladruno(src)
+    with opened as r:
+        bound = r if how == "fem=" else r.bind(other)
+        with pytest.raises(ValueError, match="override"):
+            bound.render(tmp_path / "x.png", view="mesh")
+    assert app_backend.specs == []
+
+
+def test_a_stamped_fem_hash_of_another_model_does_not_pair(app_backend, truss_pair, tmp_path):
+    import h5py
+
+    from apeGmsh.opensees import OpenSeesModel
+
+    src = truss_pair[0]
+    assert OpenSeesModel.from_h5(tmp_path / "truss2d.h5").lineage.fem_hash
+    with h5py.File(src, "r+") as f:
+        f.require_group("INFO/PROVENANCE").attrs["fem_hash"] = "0" * 32
+    with Results.from_ladruno(src) as r:
+        with pytest.raises(ValueError, match="do not pair") as info:
+            r.render(tmp_path / "x.png", view="mesh")
+    assert "override" not in str(info.value)
+    assert app_backend.specs == []
 
 
 # ---------------------------------------------------------------------
