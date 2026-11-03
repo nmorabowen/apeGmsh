@@ -121,6 +121,9 @@ type Uniforms = Record<"uHeadPx" | "uMinPx" | "uMaxPx" | "uSpacingPx" | "uRadius
 
 /** Replace the material's projection with `body` (which sets `mvPosition` for the clip planes, and `gl_Position`). */
 function instanced(material: THREE.Material, attributes: string, body: string, uniforms: Uniforms): void {
+  // three caches programs by `customProgramCacheKey()`, by default `onBeforeCompile.toString()`: the same
+  // text for every material patched here, so the comb bars got the arrows' program. Key by the source.
+  material.customProgramCacheKey = () => `${attributes}\n${body}`;
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
