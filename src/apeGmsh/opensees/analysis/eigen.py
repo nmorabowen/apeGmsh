@@ -29,6 +29,7 @@ import numpy as np
 
 from ..._atomic_io import replace_with_retry
 from ...results.readers._ladruno_writer import check_target, write_modes
+from .._internal.lineage import LineageError, read_stored_lineage
 
 if TYPE_CHECKING:
     from ...results.Results import Results
@@ -40,7 +41,9 @@ if TYPE_CHECKING:
     from .modal import ModalPropertiesResult
 
 
-__all__ = ["EigenResult", "RotationSlotUnresolvedWarning"]
+__all__ = [
+    "EigenResult", "ModesArchiveMismatchError", "RotationSlotUnresolvedWarning",
+]
 
 
 class RotationSlotUnresolvedWarning(UserWarning):
@@ -49,6 +52,14 @@ class RotationSlotUnresolvedWarning(UserWarning):
     hold a rotation or a pore pressure (an element-less node beside a u-p
     element, a node no beam or shell touches). The message names the
     nodes and the reason."""
+
+
+class ModesArchiveMismatchError(LineageError):
+    """:meth:`EigenResult.results` was given a ``model_h5`` whose
+    ``/meta/lineage@model_hash`` differs from the archive the modes were
+    stamped against: another model's archive, so its nodes are not the
+    ones the mode shapes were read from. The message names both hashes.
+    Nothing is kept."""
 
 
 def _deck_node_ids(bridge: "apeSees") -> np.ndarray:
@@ -330,6 +341,11 @@ class EigenResult:
         RuntimeError
             As :meth:`to_native`.
         """
+        return self._write_ladruno(path)
+
+    def _write_ladruno(self, path: "str | os.PathLike[str] | None") -> Path:
+        """:meth:`to_ladruno`'s body, called straight from each public
+        method so a mode warning's stack level names their caller."""
         import tempfile
 
         bridge, ndm, _ = self._checked_solve("to_ladruno")
@@ -366,7 +382,7 @@ class EigenResult:
             layouts, rotations, unresolved = _ladruno_slots(
                 staged, node_ids, ndf_of, ndm, where="EigenResult.to_ladruno")
             shapes = np.stack([_spatial(rows, layouts) for rows in vectors])
-            _warn_unresolved("EigenResult.to_ladruno", unresolved, 2)
+            _warn_unresolved("EigenResult.to_ladruno", unresolved, 3)
             # The modes go first, stamped against the staged copy (the
             # same lineage), so a refused or failed write leaves no
             # archive behind; the archive follows them into place.
@@ -377,7 +393,7 @@ class EigenResult:
                 fields=lambda k: shapes[k - 1], rotations=rotations,
                 record_ids=(None if len(node_ids) == len(all_ids)
                             else node_ids),
-                source="eigen", stacklevel=3,
+                source="eigen", stacklevel=4,
             )
             if place:
                 try:
@@ -495,24 +511,33 @@ class EigenResult:
     def results(
         self, model_h5: "str | os.PathLike[str] | None" = None,
     ) -> "Results":
-        """Write the modes with :meth:`to_native` (to a temp file) and
-        open them as a :class:`~apeGmsh.results.Results`; ``.modes``
-        lists one mode-scoped ``Results`` per eigenvalue.
+        """Write the modes with :meth:`to_ladruno` (to a temp file) and
+        open them with :meth:`~apeGmsh.results.Results.from_ladruno`;
+        ``.modes`` lists one mode-scoped ``Results`` per eigenvalue.
 
+        The ``.ladruno`` is the default modes format (ADR 0131 D10);
+        :meth:`to_native` stays the explicit export to a native file.
         ``model_h5`` names the ``model.h5`` archive to bind; ``None``
-        binds the ``/opensees`` zone the file itself embeds. Raises what
-        :meth:`to_native` raises.
+        binds the bridge archive :meth:`to_ladruno` writes beside the
+        file (``<stem>.h5``). Raises what :meth:`to_ladruno` raises, and
+        :class:`ModesArchiveMismatchError` when ``model_h5`` carries a
+        ``model_hash`` other than the one the modes were stamped against
+        (the temp files are removed).
         """
-        from ...results.Results import Results as _Results
-        from ..opensees_model import OpenSeesModel
+        import shutil
 
-        p = self._write_native(None)
-        src = p if model_h5 is None else Path(os.fspath(model_h5))
-        return _Results.from_native(
-            p,
-            model=OpenSeesModel.from_h5(str(src)),
-            model_path=None if model_h5 is None else src,
-        )
+        from ...results.Results import Results as _Results
+
+        p = self._write_ladruno(None)
+        if model_h5 is None:
+            return _Results.from_ladruno(p, model_h5=p.with_suffix(".h5"))
+        src = Path(os.fspath(model_h5))
+        try:
+            _refuse_foreign_archive(src, p.with_suffix(".h5"))
+        except BaseException:
+            shutil.rmtree(p.parent, ignore_errors=True)
+            raise
+        return _Results.from_ladruno(p, model_h5=src)
 
 
 def _ladruno_slots(
@@ -620,6 +645,43 @@ def _lineage(path: Path) -> "tuple[str, str] | None":
             return str(attrs["model_hash"]), str(attrs["fem_hash"])
     except OSError:
         return None
+
+
+def _model_hash(path: Path) -> "str | None":
+    """``/meta/lineage@model_hash`` of an HDF5 archive; ``None`` when it
+    carries none. A missing or non-HDF5 file raises (``OSError``)."""
+    import h5py
+
+    with h5py.File(path, "r") as f:
+        if "meta" not in f:
+            return None
+        return read_stored_lineage(f["meta"])[1]
+
+
+def _refuse_foreign_archive(given: Path, stamped: Path) -> None:
+    """Raise :class:`ModesArchiveMismatchError` when ``given`` (the
+    caller's ``model_h5``) and ``stamped`` (the bridge archive the modes
+    were stamped against) both carry a ``model_hash`` and they differ.
+
+    An archive with no ``model_hash`` (a ``fem.to_h5`` file, which
+    carries ``fem_hash`` only) passes unchecked and binds as it did
+    before: whether a ``fem_hash``-only archive may pair with modes is
+    the owner ruling W1b waits on (ADR 0122 D3), so this check does not
+    decide it.
+    """
+    theirs = _model_hash(given)
+    ours = _model_hash(stamped)
+    if theirs is None or ours is None or theirs == ours:
+        return
+    raise ModesArchiveMismatchError(
+        f"EigenResult.results: model_h5={str(given)!r} has model_hash "
+        f"{theirs!r}, but the modes were read from this bridge and "
+        f"stamped against its archive, model_hash {ours!r}. It is another "
+        "model's archive, so its nodes are not the ones the mode shapes "
+        "belong to. Pass the archive of the model that ran eigen "
+        "(ops.h5(path) on this bridge), or model_h5=None to bind the "
+        "archive written beside the modes. Nothing was kept."
+    )
 
 
 def _archive_is_free(staged: Path, archive: Path) -> bool:

@@ -14,14 +14,23 @@ staleness through ``domain_epoch()``. Invariant 4, a dataset-by-dataset
 parity walk against the deleted in-process capture, held until #2191
 removed that route; invariants 1-3 still pin every value written.
 The live solve is ``tests/opensees/live/test_eigen_to_native_live.py``.
+
+``results()`` (#2762, ADR 0131 D10 stage 0) no longer goes through
+``to_native``: ``EigenResult.results()`` writes a ``.ladruno`` through
+``to_ladruno`` and opens it with ``Results.from_ladruno``. Its oracles:
+no native file is written, the file passes the fork's own
+``ladruno_format.validate()`` at ``FORK_PIN``, and the modes read back
+equal the fake's table (atol 0).
 """
 from __future__ import annotations
 
 import math
 import tempfile
+import urllib.error
 import warnings
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import Any, Iterator
 
 import gmsh
 import h5py
@@ -34,6 +43,8 @@ from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees.emitter import live
 from apeGmsh.opensees.opensees_model import OpenSeesModel
 from apeGmsh.results import Results
+
+from tests.opensees.integration_ladruno import _fork_spec
 
 _SHA = "0123456789abcdef0123456789abcdef01234567"
 _N_NODES = 4
@@ -519,3 +530,145 @@ def test_results_opens_the_modes(fem3: Any, bind: Any) -> None:
     with _frame(fem3).eigen(2).results() as r:
         modes = sorted(r.modes, key=lambda m: m.mode_index)
         assert [m.eigenvalue for m in modes] == [1.0, 4.0]
+
+
+# ---------------------------------------------------------------------------
+# results() writes .ladruno by default (#2762, ADR 0131 D10 stage 0)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def spec(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ModuleType]:
+    """The fork's ``ladruno_format`` at ``FORK_PIN``."""
+    try:
+        where = _fork_spec.fetch(tmp_path_factory.mktemp("ladruno_spec"))
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        pytest.skip(f"cannot fetch the fork's ladruno_format at FORK_PIN: {e}")
+    with _fork_spec.ladruno_format(where) as module:
+        yield module
+
+
+@pytest.fixture
+def opened(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Path, Any]]:
+    """Record every ``Results.from_ladruno(path, model_h5=)`` call, and
+    refuse any native write or read: ``results()`` must not take that
+    route."""
+    calls: list[tuple[Path, Any]] = []
+    real = Results.from_ladruno.__func__  # type: ignore[attr-defined]
+
+    def _spy(cls: Any, path: Any, **kw: Any) -> Any:
+        calls.append((Path(path), kw.get("model_h5")))
+        return real(cls, path, **kw)
+
+    def _no_native(*a: Any, **k: Any) -> Any:
+        raise AssertionError("results() took the native route")
+
+    from apeGmsh.results.writers._native import NativeWriter
+
+    monkeypatch.setattr(Results, "from_ladruno", classmethod(_spy))
+    monkeypatch.setattr(Results, "from_native", _no_native)
+    monkeypatch.setattr(NativeWriter, "open", _no_native)
+    return calls
+
+
+def _slab(mode: Any, comp: str) -> dict[int, float]:
+    s = mode.nodes.get(component=comp)
+    assert s.values.shape[0] == 1
+    return {int(n): float(v) for n, v in zip(s.node_ids, s.values[0])}
+
+
+_COMPS = {
+    2: ("displacement_x", "displacement_y", "rotation_z"),
+    3: ("displacement_x", "displacement_y", "displacement_z",
+        "rotation_x", "rotation_y", "rotation_z"),
+}
+
+
+@pytest.mark.parametrize("ndm", [2, 3])
+def test_results_writes_a_valid_ladruno_by_default(
+    ndm: int, fem2: Any, fem3: Any, bind: Any, spec: ModuleType,
+    opened: list[tuple[Path, Any]],
+) -> None:
+    """``EigenResult.results()`` writes through ``to_ladruno``: one
+    ``.ladruno`` beside its ``<stem>.h5`` archive, valid to the fork's
+    spec, bound to that archive, holding the fake's vectors (atol 0)."""
+    fem = fem2 if ndm == 2 else fem3
+    ndf = 3 if ndm == 2 else 6
+    lams = [4.0, 37.5, 1234.5678]
+    ids = _node_ids(fem)
+    vecs = _vectors(ids, 3, {int(n): ndf for n in ids})
+    bind(_FakeOps(lams, vecs))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = _frame(fem, ndm=ndm).eigen(3).results()
+    with res:
+        modes = sorted(res.modes, key=lambda m: m.mode_index)
+        assert [m.mode_index for m in modes] == [1, 2, 3]
+        assert [m.eigenvalue for m in modes] == lams           # bit for bit
+        for m in modes:
+            for d, comp in enumerate(_COMPS[ndm]):
+                assert _slab(m, comp) == {
+                    int(n): vecs[(int(n), m.mode_index)][d] for n in ids}
+
+    (path, model_h5), = opened
+    assert path.suffix == ".ladruno"
+    assert Path(tempfile.gettempdir()).resolve() in path.resolve().parents
+    assert Path(model_h5) == path.with_suffix(".h5")
+    assert spec.validate(str(path)) == []
+
+
+def test_results_binds_the_archive_it_is_given(
+    fem3: Any, bind: Any, opened: list[tuple[Path, Any]], tmp_path: Path,
+) -> None:
+    bind(_fake_for(fem3, 2))
+    ops = _frame(fem3)
+    archive = tmp_path / "model.h5"
+    ops.h5(str(archive))
+    with ops.eigen(2).results(archive) as r:
+        assert len(r.modes) == 2
+    (path, model_h5), = opened
+    assert path.suffix == ".ladruno"
+    assert Path(model_h5) == archive
+
+
+def test_results_refuses_another_models_archive(
+    fem2: Any, fem3: Any, bind: Any, opened: list[tuple[Path, Any]],
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``model_h5`` with another ``model_hash`` (an ndm=2 archive given
+    to an ndm=3 eigen run) raises, naming both hashes, and leaves no temp
+    file. Before this check (PR #2774 at 5091660) it bound silently, with
+    ``lineage.warnings == ()``; on main (ec45e2c98), through
+    ``to_native``, it bound too and only recorded "[lineage] model hash
+    mismatch" in ``lineage.warnings``."""
+    from apeGmsh.opensees.analysis import eigen as _eigen
+
+    other = tmp_path / "other.h5"
+    _frame(fem2, ndm=2).h5(str(other))
+    with h5py.File(other, "r") as f:
+        theirs = str(f["meta/lineage"].attrs["model_hash"])
+
+    written: list[Path] = []
+    real = _eigen.EigenResult._write_ladruno
+
+    def _spy(self: Any, path: Any) -> Path:
+        out = real(self, path)
+        written.append(out)
+        return out
+
+    monkeypatch.setattr(_eigen.EigenResult, "_write_ladruno", _spy)
+    bind(_fake_for(fem3, 2))
+    ops = _frame(fem3)
+    mine = tmp_path / "mine.h5"
+    ops.h5(str(mine))
+    with h5py.File(mine, "r") as f:
+        ours = str(f["meta/lineage"].attrs["model_hash"])
+    assert theirs != ours
+
+    with pytest.raises(_eigen.ModesArchiveMismatchError) as e:
+        ops.eigen(2).results(other)
+    msg = str(e.value)
+    assert theirs in msg and ours in msg and "model_h5=None" in msg
+    assert opened == []                     # nothing was bound
+    (p,) = written
+    assert not p.parent.exists()            # the temp modes are gone
