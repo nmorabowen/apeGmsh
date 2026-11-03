@@ -164,7 +164,7 @@ export function mountModalTable(store: Store): () => void {
     th("T (s)", "period");
     for (const c of v.components) th(`${c} %`, `effective mass ratio along ${c}`);
     for (const c of v.components) th(`Σ${c} %`, `cumulative effective mass ratio along ${c}`);
-    th("A6", "the row's lambda against the results file's LAMBDA (1e-9 relative)");
+    th("status", "current: the row's lambda equals the results file's LAMBDA of that mode (1e-9 relative); stale otherwise, or when it cannot be compared (ADR 0130 A6)");
     t.append(hr);
     for (const l of v.lines) {
       const tr = el("tr", l.shown ? "modal-row shown" : "modal-row");
