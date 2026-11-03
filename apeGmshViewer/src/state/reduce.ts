@@ -45,6 +45,7 @@ import {
   type Event,
   type LineDiagramState,
   type LoadsState,
+  type PrincipalState,
   type ReactionsState,
   type SupportsState,
   type MeshInfo,
@@ -80,7 +81,8 @@ export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
 
 export const initialSupports: SupportsState = { on: false, scale: 1 };
 
-export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
+export const initialPrincipal: PrincipalState = { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true, measured: null };
+export const initialReactions: ReactionsState ={ on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
 
 export const initialLoads: LoadsState = {
   on: false,
@@ -262,6 +264,7 @@ export const initialState: State = {
   lineDiagram: initialLineDiagram,
   loads: initialLoads,
   reactions: initialReactions,
+  principal: initialPrincipal,
   supports: initialSupports,
   spotlight: initialSpotlight,
   search: initialSearch,
@@ -1337,6 +1340,44 @@ export function reduce(s: State, e: Event): State {
       const on = e.on ?? s.supports.on;
       const scale = e.scale ?? s.supports.scale;
       return on === s.supports.on && scale === s.supports.scale ? s : { ...s, supports: { on, scale } };
+    }
+    case "setPrincipal": {
+      for (const k of ["on", "thin"] as const) {
+        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setPrincipal: ${k} ${JSON.stringify(e[k])}`);
+      }
+      for (const k of ["scale", "headSize"] as const) {
+        const v = e[k];
+        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
+          throw new RangeError(`setPrincipal: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
+        }
+      }
+      if (e.field !== undefined && e.field !== null && typeof e.field !== "string") throw new RangeError(`setPrincipal: field ${JSON.stringify(e.field)}`);
+      if (e.show !== undefined && !(Array.isArray(e.show) && e.show.length === 3 && e.show.every((b) => typeof b === "boolean"))) {
+        throw new RangeError(`setPrincipal: show must be three booleans (p1, p2, p3); got ${JSON.stringify(e.show)}`);
+      }
+      if (e.head !== undefined && e.head !== "axis" && e.head !== "arrow") throw new RangeError(`setPrincipal: head ${JSON.stringify(e.head)}`);
+      if (e.cmap !== undefined && !(CMAP_NAMES as readonly string[]).includes(e.cmap)) throw new RangeError(`setPrincipal: cmap ${JSON.stringify(e.cmap)}`);
+      const cur = s.principal;
+      const show = e.show && e.show.some((b, i) => b !== cur.show[i]) ? ([e.show[0], e.show[1], e.show[2]] as const) : cur.show;
+      const next: PrincipalState = {
+        on: e.on ?? cur.on,
+        field: e.field !== undefined ? e.field : cur.field,
+        show,
+        head: e.head ?? cur.head,
+        cmap: e.cmap ?? cur.cmap,
+        scale: e.scale ?? cur.scale,
+        headSize: e.headSize ?? cur.headSize,
+        thin: e.thin ?? cur.thin,
+        // What was drawn is measured again once it is drawn on the new settings; off, nothing is drawn.
+        measured: (e.on ?? cur.on) ? cur.measured : null,
+      };
+      return (Object.keys(next) as (keyof PrincipalState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, principal: next };
+    }
+    case "principalMeasured": {
+      if (!Number.isInteger(e.points) || e.points < 0 || !Number.isFinite(e.maxAbs) || e.maxAbs < 0) throw new RangeError(`principalMeasured: ${e.points} points, max ${e.maxAbs}`);
+      if (!s.principal.on) return s;
+      const { type: _t, ...measured } = e;
+      return { ...s, principal: { ...s.principal, measured } };
     }
     case "setReactions": {
       for (const k of ["on", "thin", "allNodes", "forces", "moments"] as const) {

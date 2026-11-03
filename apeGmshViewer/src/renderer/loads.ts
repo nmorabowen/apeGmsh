@@ -12,7 +12,11 @@
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
 import { ARROW, ARROW_STRIDE, buildLoads3D, buildReactions3D, buildSupports3D, COMB_STRIDE, THIN_LEVELS } from "../state/loads.ts";
-import type { State } from "../state/types.ts";
+import { deformedPositions } from "../state/deform.ts";
+import { gaussBasePositions, gaussDisplacements } from "../state/gaussPoints.ts";
+import { buildPrincipal3D, principalPointsOf, principalTensors, type PrincipalPoints } from "../state/principal.ts";
+import { principalFieldOf } from "../state/selectors.ts";
+import type { PrincipalMeasured, State } from "../state/types.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
 import { toLinear, type StepValues } from "./contour.ts";
 import type { FullPositions } from "./deform.ts";
@@ -96,7 +100,8 @@ vec3 across = cross( dV, toEye );
 if ( length( across ) < 1e-3 ) across = cross( dV, vec3( 0.0, 1.0, 0.0 ) );
 if ( length( across ) < 1e-3 ) across = vec3( 1.0, 0.0, 0.0 );
 across = normalize( across );
-vec4 mvPosition = vec4( mvTip.xyz - dV * ( aShape.x * L + aShape.y * H ) + across * ( aShape.z * H ), 1.0 );
+vec3 tipV = mvTip.xyz + dV * ( aAnchor * L );
+vec4 mvPosition = vec4( tipV - dV * ( aShape.x * L + aShape.y * H ) + across * ( aShape.z * H ), 1.0 );
 float need = ${SIZING_EXPR.need};
 bool hidden = ( aPart == 1.0 && aBar != 1.0 ) || ( aPart == 3.0 && aBar != 2.0 ) || ( aPart == 2.0 && aHeads < 1.5 ) || ( uThin > 0.5 && aLevel < need );
 gl_Position = hidden ? vec4( 2.0, 2.0, 2.0, 1.0 ) : projectionMatrix * mvPosition;
@@ -189,7 +194,7 @@ export class ArrowLayer {
   protected theme: ThemeMode = "dark";
 
   constructor() {
-    const arrowAttrs = "attribute vec3 aTip;\nattribute vec3 aDir;\nattribute float aLen;\nattribute float aHeads;\nattribute float aBar;\nattribute float aLevel;\nattribute vec3 aShape;\nattribute float aPart;";
+    const arrowAttrs = "attribute vec3 aTip;\nattribute vec3 aDir;\nattribute float aLen;\nattribute float aHeads;\nattribute float aBar;\nattribute float aLevel;\nattribute float aAnchor;\nattribute vec3 aShape;\nattribute float aPart;";
     instanced(this.lineMaterial, arrowAttrs, ARROW_VERTEX, this.uniforms);
     instanced(this.coneMaterial, arrowAttrs, ARROW_VERTEX, this.uniforms);
     instanced(
@@ -264,6 +269,7 @@ export class ArrowLayer {
       g.setAttribute("aHeads", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.heads));
       g.setAttribute("aBar", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.bar));
       g.setAttribute("aLevel", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.level));
+      g.setAttribute("aAnchor", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.anchor));
       g.setAttribute("color", new THREE.InstancedBufferAttribute(arrowColours, 3));
       g.instanceCount = nArrows;
     }
@@ -574,5 +580,70 @@ export class SupportsLayer extends ArrowLayer {
   override dispose(): void {
     super.dispose();
     this.arcs.dispose();
+  }
+}
+
+/**
+ * The Principal card's arrows (`s.principal`): from each Gauss point of the
+ * field on screen, an arrow along each principal direction shown
+ * (`buildPrincipal3D`), tail-anchored, following the deformed shape as the
+ * Gauss markers do. `measured` is what the last build drew, for the card.
+ */
+export class PrincipalLayer extends ArrowLayer {
+  private appliedKey: string | null = null;
+  private drawnStep: StepValues | null = null;
+  private drawnStage: number | null = null;
+  /** The field's points, placed once per stage, field and visibility. */
+  private points: { deps: unknown[]; gen: number; points: PrincipalPoints | null; base: Float32Array | null } | null = null;
+  measured: PrincipalMeasured | null = null;
+
+  sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
+    const at = s.phase.at;
+    const field = s.principal.on ? principalFieldOf(s) : null;
+    if (!field || !s.mesh?.nodes || at?.kind !== "results") {
+      this.appliedKey = null;
+      this.drawnStep = null;
+      this.drawnStage = null;
+      this.measured = null;
+      return this.hide();
+    }
+    const sized = this.size(s.principal);
+    const tensor = step?.tensor;
+    const here = step && step.stage === at.stage && step.step === at.step && tensor && field.components.every((c) => tensor[c]) ? step : null;
+    if (!here) {
+      // A scrub within the stage keeps the last arrows until the step arrives; another stage's, or a failed read, do not.
+      const failed = s.resultStep?.stage === at.stage && s.resultStep.step === at.step && s.resultStep.status === "failed";
+      if (this.drawnStage !== at.stage || failed) {
+        this.appliedKey = null;
+        this.drawnStep = null;
+        this.drawnStage = null;
+        return this.hide() || sized;
+      }
+      return sized;
+    }
+    const deps = [s.results, at.stage, s.visibility.hidden, s.mesh, s.decls, s.stageElements, s.sequence, field.name];
+    if (!this.points || this.points.deps.some((d, i) => d !== deps[i])) {
+      const points = principalPointsOf(s, blobs, field);
+      const nodes = s.mesh.nodes;
+      const base = points ? gaussBasePositions(points.layout, blobs.get(nodes.ids) as Float64Array, blobs.get(nodes.xyz) as Float64Array) : null;
+      this.points = { deps, gen: (this.points?.gen ?? 0) + 1, points, base };
+    }
+    const { points, base } = this.points;
+    const disp = full && full.key !== "base" && full.disp?.nodal ? full.disp : null;
+    const p = s.principal;
+    const nextKey = [this.points.gen, disp ? full!.key : "base", p.show.join(","), p.head, p.cmap, p.scale, field.name].join("|");
+    if (this.appliedKey === nextKey && here === this.drawnStep) return sized;
+    this.drawnStep = here;
+    this.drawnStage = at.stage;
+    this.appliedKey = nextKey;
+    if (!points || !base) {
+      this.measured = null;
+      return this.hide() || sized;
+    }
+    const at3 = disp ? deformedPositions(base, gaussDisplacements(points.layout, disp.nodal!.column, disp.nodal!.rows), s.deform.scale) : base;
+    const r = buildPrincipal3D(at3, principalTensors(points, field, here.tensor!), { show: p.show, head: p.head, cmap: p.cmap, scale: p.scale, radius: s.mesh.radius });
+    this.measured = { stage: s.results!.stages[at.stage]!.id, field: field.name, points: r.points, maxAbs: r.maxAbs, refused: points.layout.refused };
+    this.upload(r.arrows, NO_RECORDS, s.mesh.radius);
+    return true;
   }
 }

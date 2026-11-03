@@ -31,6 +31,7 @@ import {
   type NodalField,
 } from "./contour.ts";
 import { usesMatrix } from "./extrapolation.ts";
+import { tensorFields, type TensorField } from "./tensor.ts";
 import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 import {
@@ -624,6 +625,20 @@ export type ContourView =
 /** A results file's element-id verdict; a results info without one is unverified (fail closed). */
 export function elementVerdictOf(info: ResultsInfo): { verified: true } | { verified: false; reason: string } {
   return info.elementIndex ?? { verified: false, reason: "this results info carries no element-index verdict" };
+}
+
+/** The stress and strain fields of the results stage on screen that can draw principal arrows: a verified file's, with a group that makes a tensor. */
+export function principalFieldsOf(s: State): TensorField[] {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results || !s.mesh || !elementVerdictOf(s.results).verified) return [];
+  const st = s.results.stages[at.stage];
+  return st ? tensorFields(st.gauss).filter((f) => f.groups.length > 0) : [];
+}
+
+/** The field the Principal card draws: the one picked, else the stage's first; null when the stage has none. */
+export function principalFieldOf(s: State): TensorField | null {
+  const fields = principalFieldsOf(s);
+  return fields.find((f) => f.name === s.principal.field) ?? fields[0] ?? null;
 }
 
 /**

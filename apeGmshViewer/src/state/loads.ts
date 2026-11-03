@@ -1448,12 +1448,16 @@ export function loadsSummaryOf(s: State): LoadsSummary {
  * One arrow per record, `ARROW_STRIDE` floats: tip (3), unit direction (3),
  * nominal length in world units (1), sRGB colour (3), head count (1: 1 or 2),
  * mark (1: `BAR`), priority (1: magnitude over its kind's peak), and
- * thinning level (1, `thinningLevels`). The renderer draws each record as an
+ * thinning level (1, `thinningLevels`), and anchor (1: 0 when the point is
+ * the arrow's tip, 1 when it is its tail). The renderer draws each record as an
  * instance (renderer/loads.ts): a line shaft and flat 2:1 heads sized in
- * pixels, with the shaft's length capped to a pixel band.
+ * pixels, with the shaft's length capped to a pixel band, so only the shader
+ * knows where a tail-anchored arrow's tip lands.
  */
-export const ARROW_STRIDE = 14;
-export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, priority: 12, level: 13 } as const;
+export const ARROW_STRIDE = 15;
+export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, priority: 12, level: 13, anchor: 14 } as const;
+/** The `anchor` field: the record's point is the tip (a load or reaction, pointing at the node) or the tail (a principal direction, starting at its Gauss point). */
+export const ANCHOR = { tip: 0, tail: 1 } as const;
 /** The `bar` field: no mark, an SP bar across the tip, or a reaction's 45° tick across the tail. */
 export const BAR = { none: 0, sp: 1, tick: 2 } as const;
 
@@ -1486,7 +1490,7 @@ function pushArrowToPoint(
   doubleHead = false,
   spCrossbar = false,
 ): void {
-  g.arrows.push(tip[0], tip[1], tip[2], dir[0], dir[1], dir[2], len, rgb[0], rgb[1], rgb[2], doubleHead ? 2 : 1, spCrossbar ? 1 : 0, priority, 0);
+  g.arrows.push(tip[0], tip[1], tip[2], dir[0], dir[1], dir[2], len, rgb[0], rgb[1], rgb[2], doubleHead ? 2 : 1, spCrossbar ? 1 : 0, priority, 0, ANCHOR.tip);
 }
 
 /** Push a comb bar joining the tails of two arrows (tip, unit or zero direction, nominal length). */

@@ -13,6 +13,7 @@
 
 import { gaussUnavailable } from "./gaussNotes.ts";
 import { reactionComponentsOf } from "./loads.ts";
+import { tensorFields } from "./tensor.ts";
 import { CMAP_NAMES, fieldsOf, gaussFields, RANGE_MODES } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
 import {
@@ -151,6 +152,8 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramFlipSign: { kind: "expose", command: "toggle-line-diagram-flip-sign", description: "Toggle 3-D line diagram tension-side / sign convention" },
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
   setSupports: { kind: "expose", command: "toggle-supports", description: "Toggle the restraint glyphs at the supports (the Display card's BC)" },
+  setPrincipal: { kind: "expose", command: "toggle-principal", description: "Toggle or configure the principal stress or strain arrows at the Gauss points" },
+  principalMeasured: { kind: "system", reason: "dispatched by the viewport after drawing the principal arrows of a step" },
   setReactions: { kind: "expose", command: "toggle-reactions", description: "Toggle or configure the reaction-force arrows of the results step" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
   toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },
@@ -697,6 +700,23 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
         [{ type: "setReactions", on: !s.reactions.on }],
       ),
       keywords: "reactions reaction forces supports arrows toggle results",
+    });
+  }
+
+  // selectors.principalFieldsOf, restated: the selectors import this module.
+  const shownStage = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage] : undefined;
+  if (s.mesh && shownStage && s.results?.elementIndex?.verified && tensorFields(shownStage.gauss).some((f) => f.groups.length > 0)) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-principal",
+        "loads",
+        s.principal.on ? "Turn Off Principal Arrows" : "Turn On Principal Arrows",
+        `Principal stress or strain directions at the Gauss points are currently ${s.principal.on ? "ON" : "OFF"}`,
+        [{ type: "setPrincipal", on: !s.principal.on }],
+        s.principal.on,
+        [{ type: "setPrincipal", on: !s.principal.on }],
+      ),
+      keywords: "principal stress strain directions gauss tension compression arrows toggle results",
     });
   }
 

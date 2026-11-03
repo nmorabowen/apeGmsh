@@ -194,6 +194,8 @@ const EVERY: Record<EventType, Event> = {
   removeSearchClause: { type: "removeSearchClause", id: "q-1" },
   clearSearch: { type: "clearSearch" },
   setReactions: { type: "setReactions", on: true, component: "xyz" },
+  setPrincipal: { type: "setPrincipal", on: true, show: [true, false, true], head: "arrow" },
+  principalMeasured: { type: "principalMeasured", stage: "s", field: "stress", points: 4, maxAbs: 2, refused: [] },
   setSupports: { type: "setSupports", on: true },
   setLoads: { type: "setLoads", on: true, scale: 1.5 },
   toggleExtrudeFrames: { type: "toggleExtrudeFrames" },
@@ -234,8 +236,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    98,
-    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, the 12 Spotlight/Search/selectDecls events, setLoads, setReactions (the Reactions card), setSupports (the Display card's BC), toggleExtrudeFrames, toggleShowOffsets, setCamera, cameraMoved and setTheme (VA1), and the seven offer events (VA5), setNodes and setNodeSize (node markers), and setGaussPoints, setGaussSize and gaussMeasured (Gauss markers), and userOpened, userRead and userClosed (ADR 0130, the .user.h5), and combinationRead (VU7b-2, the User Combination shown)",
+    100,
+    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, the 12 Spotlight/Search/selectDecls events, setLoads, setReactions (the Reactions card), setSupports (the Display card's BC), toggleExtrudeFrames, toggleShowOffsets, setCamera, cameraMoved and setTheme (VA1), and the seven offer events (VA5), setNodes and setNodeSize (node markers), and setGaussPoints, setGaussSize and gaussMeasured (Gauss markers), and userOpened, userRead and userClosed (ADR 0130, the .user.h5), and combinationRead (VU7b-2, the User Combination shown), and setPrincipal and principalMeasured (the Principal card)",
   );
 });
 
