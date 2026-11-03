@@ -257,7 +257,7 @@ def test_a_written_manifest_reads_back_and_carries_no_bom(tmp_path: Path) -> Non
     _study(tmp_path, EXAMPLES / "variants.valid.json")
     rows = [VariantDef("Uncracked", FILES[0], {"state": "uncracked", "Ie/Ig": 1.0}),
             VariantDef("Bischoff", FILES[2], {"pass": 2, "converged": False})]
-    target = write_variants(tmp_path / "study.variants.json", rows)
+    target = write_variants(tmp_path / "fresh.variants.json", rows)
     raw = target.read_bytes()
     assert not raw.startswith(b"\xef\xbb\xbf")
     doc = json.loads(raw)
@@ -273,7 +273,6 @@ def test_a_written_manifest_reads_back_and_carries_no_bom(tmp_path: Path) -> Non
 @pytest.mark.parametrize("row, reason", [
     (VariantDef("A", "../slab.h5"), "bad-path"),
     (VariantDef("A", "slab.User.h5"), "bad-path"),
-    (VariantDef("A", "never_run.h5"), "missing"),
     (VariantDef(" A", FILES[0]), "empty-name"),
     (VariantDef("A", FILES[0], {"x": None}), "bad-param"),
     (VariantDef("A", FILES[0], {"x": float("nan")}), "bad-param"),
@@ -308,24 +307,130 @@ def test_the_writer_never_overwrites_a_manifest_it_cannot_read(tmp_path: Path) -
     assert err.value.reason == "unreadable"
 
 
-def test_the_writer_refuses_when_the_manifest_changes_under_it(tmp_path: Path, monkeypatch) -> None:
+def test_a_newer_manifest_landing_during_the_write_is_never_overwritten(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The bytes are read once: a 1.1.0 file that lands after that read refuses the write."""
     target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    newer = (EXAMPLES / "variants.newer-minor.json").read_bytes()
     real = _variants._fsync
 
-    def edited_meanwhile(path: Path) -> None:
+    def lands_meanwhile(path: Path) -> None:
         real(path)
-        target.write_text(target.read_text(encoding="utf-8").replace("Uncracked", "Edited"),
-                          encoding="utf-8")
+        target.write_bytes(newer)
 
-    monkeypatch.setattr(_variants, "_fsync", edited_meanwhile)
+    monkeypatch.setattr(_variants, "_fsync", lands_meanwhile)
     with pytest.raises(VariantsWriteRefused) as err:
-        write_variants(target, [VariantDef("A", FILES[0])])
+        write_variants(target, [VariantDef("A", "slab_new.h5")])
     assert err.value.reason == "revision-moved"
-    assert read_variants(target).variants[0].label == "Edited"
+    assert target.read_bytes() == newer
     assert not list(tmp_path.glob("*.partial"))
+
+
+def test_a_read_and_write_back_is_identical_missing_row_included(tmp_path: Path) -> None:
+    """Existence is the reader's rule: the writer lists a variant not yet run, and
+    writing the standing rows back carries the ``missing`` one through unchanged."""
+    _study(tmp_path, EXAMPLES / "variants.valid.json")
+    target = write_variants(tmp_path / "fresh.variants.json", [
+        VariantDef("Uncracked", FILES[0], {"state": "uncracked", "Ie/Ig": 1.0}),
+        VariantDef("Pass 3", "bischoff/slab_pass3.h5", {"pass": 3}),
+        VariantDef("Bischoff", FILES[2], {"pass": 2, "converged": False})])
+    before = target.read_bytes()
+    manifest = read_variants(target)
+    assert [(r.row, r.name, r.reason) for r in manifest.refused] == [(1, "Pass 3", "missing")]
+    write_variants(target, [VariantDef(v.label, v.path, v.params) for v in manifest.variants])
+    assert target.read_bytes() == before
+
+
+def test_refused_rows_are_carried_verbatim(tmp_path: Path) -> None:
+    target = _study(tmp_path, _doc())
+    target.write_text(
+        '{"format": "apegmsh-variants", "version": "1.0.0", "variants": [\n'
+        ' {"label": "Huge", "path": "slab_cracked.h5", "params": {"Ie/Ig": 1e400, "n": 7}},\n'
+        ' {"label": "Twin", "path": "slab_uncracked.h5", "params": {}},\n'
+        ' {"label": "Twin", "path": "bischoff/slab_pass2.h5", "params": {}},\n'
+        ' {"label": "Colour", "path": "slab_cracked.h5", "params": {}, "colour": "red"}]}\n',
+        encoding="utf-8")
+    old = json.loads(target.read_text(encoding="utf-8").replace("1e400", '"1e400"'))
+    write_variants(target, [VariantDef("New", "slab_new.h5")])
+    text = target.read_text(encoding="utf-8")
+    assert '"Ie/Ig": 1e400' in text, "the overflow token was not carried as written"
+    rows = json.loads(text.replace("1e400", '"1e400"'))["variants"]
+    assert rows[:4] == old["variants"] and rows[4]["label"] == "New"
+    assert [(r.row, r.reason) for r in read_variants(target).refused] == [
+        (0, "bad-param"), (1, "duplicate"), (2, "duplicate"), (3, "bad-param"),
+        (4, "missing")]
+    for label in ("Twin",):
+        with pytest.raises(VariantsWriteRefused) as err:
+            write_variants(target, [VariantDef(label, "slab_new.h5")])
+        assert err.value.reason == "duplicate"
+        with pytest.raises(VariantsWriteRefused) as err:
+            write_variants(target, remove=[label])
+        assert err.value.reason == "duplicate"
+
+
+def test_the_writer_never_breaks_a_standing_row(tmp_path: Path) -> None:
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    with pytest.raises(VariantsWriteRefused) as err:
+        write_variants(target, [VariantDef("Again", FILES[0])])
+    assert err.value.reason == "duplicate-path"
+    write_variants(target, [VariantDef("Cracked", "slab_cracked_v2.h5")], remove=["Uncracked"])
+    assert [v.label for v in read_variants(target).variants] == ["Bischoff D+SD+0.25L"]
+    assert [r.reason for r in read_variants(target).refused] == ["missing"]
+
+
+def _short_name(path: Path) -> str:
+    import ctypes
+    from ctypes import wintypes
+
+    get = ctypes.windll.kernel32.GetShortPathNameW
+    get.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+    buf = ctypes.create_unicode_buffer(1024)
+    if not get(str(path), buf, 1024):
+        return ""
+    return Path(buf.value).name
+
+
+@pytest.mark.skipif(os.name != "nt", reason="8.3 short names exist on Windows only")
+def test_an_8_3_short_name_of_a_sibling_file_refuses(tmp_path: Path) -> None:
+    """``SLABUS~1.H5`` passes the path form but names ``slab.user.h5``: the resolved
+    name is judged again, so the row refuses ``bad-path``."""
+    sibling = tmp_path / "slab.user.h5"
+    sibling.write_bytes(b"user")
+    short = _short_name(sibling)
+    if not short or short.lower() == sibling.name.lower():
+        pytest.skip("this volume does not generate 8.3 short names")
+    assert _variants.path_problem(short) is None, "the short name must pass the form"
+    target = _study(tmp_path, _doc(a={"label": "A", "path": short, "params": {}},
+                                   b={"label": "B", "path": FILES[0], "params": {}}))
+    assert [(r.row, r.reason) for r in read_variants(target).refused] == [(0, "bad-path")]
 
 
 def test_a_manifest_is_named_study_variants_json(tmp_path: Path) -> None:
     with pytest.raises(VariantsWriteRefused) as err:
         write_variants(tmp_path / "study.json", [VariantDef("A", "a.h5")])
     assert err.value.reason == "bad-name"
+
+
+def test_a_newer_manifest_landing_between_parse_and_signature_is_never_overwritten(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Parsed and signed from one read: the signature is of the bytes parsed, so a
+    file that lands right after the parse still refuses the write."""
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    newer = (EXAMPLES / "variants.newer-minor.json").read_bytes()
+    real = _variants._envelope
+    landed: list[bool] = []
+
+    def lands_after_parse(doc, where):
+        out = real(doc, where)
+        if not landed and where == target:
+            landed.append(True)
+            target.write_bytes(newer)
+        return out
+
+    monkeypatch.setattr(_variants, "_envelope", lands_after_parse)
+    with pytest.raises(VariantsWriteRefused) as err:
+        write_variants(target, [VariantDef("A", "slab_new.h5")])
+    assert err.value.reason == "revision-moved"
+    assert target.read_bytes() == newer

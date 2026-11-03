@@ -196,20 +196,36 @@ def _row_problem(raw: Any) -> Optional[tuple[str, str]]:
     return None
 
 
-def _resolve(folder: Path, path: str) -> tuple[Optional[Path], str, str]:
-    """``(resolved, "", "")``, or ``(None, reason, detail)``: confinement, then existence."""
+def _resolve(folder: Path, path: str, exists: bool = True) -> tuple[Optional[Path], str, str]:
+    """``(resolved, "", "")``, or ``(None, reason, detail)``: confinement, then existence.
+
+    The resolved name is judged again: links, junctions and 8.3 short names
+    (``SLABUS~1.H5`` for ``slab.user.h5``) resolve to the file's real name.
+    ``exists=False`` is the writer's judgement: a reader checks existence per row.
+    """
     base = folder.resolve()
     full = (base / path).resolve()
     if full != base and base not in full.parents:
         return None, "escapes", f"path {path!r} resolves to {full}, outside {base}"
-    if not full.is_file():
+    if exists and not full.is_file():
         return None, "missing", f"path {path!r}: no file {full}"
     if path_problem(full.name) is not None:
         return None, "bad-path", f"path {path!r} resolves to {full.name}, not a model file"
     return full, "", ""
 
 
-def _judge(rows: list, folder: Path) -> tuple[tuple[Variant, ...], tuple[RowRefusal, ...]]:
+def _plain(value: Any) -> Any:
+    """A kept number token as the plain number it reads as."""
+    if isinstance(value, _Float):
+        return float(value)
+    if isinstance(value, _Int):
+        return int(value)
+    return value
+
+
+def _judge(
+    rows: list, folder: Path, exists: bool = True,
+) -> tuple[tuple[Variant, ...], tuple[RowRefusal, ...]]:
     labels = Counter(r["label"] for r in rows
                      if isinstance(r, dict) and name_problem(r.get("label")) is None)
     found: dict[int, tuple[str, Any]] = {}
@@ -221,7 +237,7 @@ def _judge(rows: list, folder: Path) -> tuple[tuple[Variant, ...], tuple[RowRefu
         if problem is None and labels[label] > 1:
             problem = ("duplicate", f"{labels[label]} rows are labelled {label!r}")
         if problem is None:
-            resolved, reason, detail = _resolve(folder, raw["path"])
+            resolved, reason, detail = _resolve(folder, raw["path"], exists)
             if resolved is None:
                 problem = (reason, detail)
             else:
@@ -236,7 +252,7 @@ def _judge(rows: list, folder: Path) -> tuple[tuple[Variant, ...], tuple[RowRefu
                                        f"{counts[key]} rows name {found[row][1]}")
     variants = tuple(
         Variant(row=row, label=rows[row]["label"], path=rows[row]["path"], resolved=resolved,
-                params=dict(rows[row]["params"]))
+                params={k: _plain(v) for k, v in rows[row]["params"].items()})
         for row, (_, resolved) in found.items() if row not in refusals)
     return variants, tuple(refusals[r] for r in sorted(refusals))
 
@@ -244,6 +260,28 @@ def _judge(rows: list, folder: Path) -> tuple[tuple[Variant, ...], tuple[RowRefu
 def _path_key(path: Path) -> str:
     text = str(path)
     return text.casefold() if _FOLD_CASE else text
+
+
+class _Float(float):
+    """A JSON number with a fraction or exponent, keeping its token (``1e400`` stays)."""
+
+    token: str
+
+    def __new__(cls, token: str) -> "_Float":
+        obj = super().__new__(cls, token)
+        obj.token = token
+        return obj
+
+
+class _Int(int):
+    """A JSON integer, keeping its token."""
+
+    token: str
+
+    def __new__(cls, token: str) -> "_Int":
+        obj = super().__new__(cls, token)
+        obj.token = token
+        return obj
 
 
 def _load(raw: bytes, where: Path) -> Any:
@@ -254,9 +292,41 @@ def _load(raw: bytes, where: Path) -> Any:
     except UnicodeDecodeError as exc:
         raise VariantsRefused("bad-json", f"{where} is not UTF-8: {exc}") from exc
     try:
-        return strict_json(text, finite=False)
+        return strict_json(text, finite=False, parse_float=_Float, parse_int=_Int)
     except ValueError as exc:
         raise VariantsRefused("bad-json", f"{where}: {exc}") from exc
+
+
+def _text(value: str) -> str:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:  # a lone surrogate read from a \\ud800 escape
+        return json.dumps(value)
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _dump(value: Any, level: int = 0) -> str:
+    """JSON text as ``json.dumps(indent=2)`` writes it, but a kept number token is
+    written as it was read, so a carried row comes back verbatim."""
+    pad, end = "  " * (level + 1), "  " * level
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        items = [f"{pad}{_text(k)}: {_dump(v, level + 1)}" for k, v in value.items()]
+        return "{\n" + ",\n".join(items) + "\n" + end + "}"
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        return "[\n" + ",\n".join(pad + _dump(v, level + 1) for v in value) + "\n" + end + "]"
+    if isinstance(value, (_Float, _Int)):
+        return value.token
+    if isinstance(value, str):
+        return _text(value)
+    if value is None or isinstance(value, (bool, int)):
+        return json.dumps(value)
+    if isinstance(value, float):
+        return json.dumps(value, allow_nan=False)
+    raise TypeError(f"{value!r} is not JSON")
 
 
 def read_variants(path: "str | Path") -> VariantsManifest:
@@ -271,43 +341,98 @@ def read_variants(path: "str | Path") -> VariantsManifest:
     return VariantsManifest(path=where, version=version, variants=variants, refused=refused)
 
 
-def _signature(path: Path) -> Optional[tuple[int, int, str]]:
+def _digest(path: Path) -> Optional[str]:
     if not path.exists():
         return None
-    st = path.stat()
-    return st.st_size, st.st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def write_variants(path: "str | Path", variants: Sequence[VariantDef]) -> Path:
-    """Write ``<study>.variants.json`` through a partial and a replace, and return it.
+def _old_rows(target: Path) -> tuple[list, Optional[str]]:
+    """The rows on disk and the digest of the one read they came from."""
+    if not target.exists():
+        return [], None
+    if not target.is_file():
+        raise VariantsWriteRefused("not-a-file", f"{target} is not a file")
+    raw = target.read_bytes()
+    try:
+        _, rows = _envelope(_load(raw, target), target)
+    except VariantsRefused as exc:
+        raise VariantsWriteRefused(
+            exc.reason if exc.reason in ("newer", "major") else "unreadable",
+            f"{target}: {exc.detail}; it was not overwritten") from exc
+    return rows, hashlib.sha256(raw).hexdigest()
 
-    Every row must stand (its file must exist inside the manifest's folder). An
-    existing manifest that is newer than this writer, or that does not read, is
-    never overwritten.
+
+def _label(raw: Any) -> Optional[str]:
+    label = raw.get("label") if isinstance(raw, dict) else None
+    return label if isinstance(label, str) else None
+
+
+def write_variants(
+    path: "str | Path", variants: Sequence[VariantDef] = (), *, remove: Sequence[str] = (),
+) -> Path:
+    """Create or update ``<study>.variants.json`` through a partial and a replace.
+
+    A given row replaces the row of the same label, in place; a new label goes
+    after the rows already there; ``remove`` drops rows by label. Every other row
+    is carried verbatim, refused ones included (INV-2). A given row must pass
+    every rule but existence, which a reader checks per row: a pipeline may list
+    its variants before it runs them. An existing manifest that is newer than this
+    writer, or that does not read, is never overwritten.
     """
     target = Path(path)
     if not target.name.lower().endswith(SUFFIX) or len(target.name) == len(SUFFIX):
         raise VariantsWriteRefused("bad-name", f"{target}: a manifest is named <study>{SUFFIX}")
-    doc: dict[str, Any] = {"format": VARIANTS_FORMAT, "version": VARIANTS_SCHEMA_VERSION,
-           "variants": [{"label": v.label, "path": v.path, "params": dict(v.params)}
-                        for v in variants]}
-    if not doc["variants"]:
+    given: dict[str, dict[str, Any]] = {}
+    for v in variants:
+        if name_problem(v.label) is not None:
+            raise VariantsWriteRefused("empty-name", f"label {v.label!r}: {name_problem(v.label)}")
+        if v.label in given:
+            raise VariantsWriteRefused("duplicate", f"label {v.label!r} is given twice")
+        given[v.label] = {"label": v.label, "path": v.path, "params": dict(v.params)}
+    removing = set(remove)
+    if removing & set(given):
+        raise VariantsWriteRefused("bad-param", f"{sorted(removing & set(given))} written and removed")
+
+    old, digest = _old_rows(target)
+    held = Counter(label for label in map(_label, old) if label is not None)
+    if removing - set(held):
+        raise VariantsWriteRefused("bad-param", f"no variant labelled {sorted(removing - set(held))}")
+    twice = sorted(label for label in set(given) | removing if held[label] > 1)
+    if twice:  # replacing or removing one would drop the other, a refused row
+        raise VariantsWriteRefused("duplicate", f"{twice} label more than one row of {target.name}")
+
+    rows: list[Any] = []
+    origin: list[Optional[int]] = []  # the old row index, None for a given row
+    placed: set[str] = set()
+    for i, raw in enumerate(old):
+        label = _label(raw)
+        if label in removing:
+            continue
+        if label is not None and label in given:
+            rows.append(given[label])
+            origin.append(None)
+            placed.add(label)
+            continue
+        rows.append(raw)
+        origin.append(i)
+    for label, row in given.items():
+        if label not in placed:
+            rows.append(row)
+            origin.append(None)
+    if not rows:
         raise VariantsWriteRefused("bad-envelope", "a manifest holds at least one variant")
-    _, refused = _judge(doc["variants"], target.parent)
-    if refused:
-        first = refused[0]
-        raise VariantsWriteRefused(first.reason, f"row {first.row} ({first.name!r}): {first.detail}")
-    if target.exists():
-        try:
-            read_variants(target)
-        except VariantsRefused as exc:
-            raise VariantsWriteRefused(
-                exc.reason if exc.reason in ("newer", "major") else "unreadable",
-                f"{target}: {exc.detail}; it was not overwritten") from exc
-    before = _signature(target)
+
+    _, was_refused = _judge(old, target.parent, exists=False)
+    stood = set(range(len(old))) - {r.row for r in was_refused}
+    _, refused = _judge(rows, target.parent, exists=False)
+    for r in refused:  # a given row, or a row this write would break
+        if origin[r.row] is None or origin[r.row] in stood:
+            raise VariantsWriteRefused(r.reason, f"row {r.row} ({r.name!r}): {r.detail}")
+    doc = {"format": VARIANTS_FORMAT, "version": VARIANTS_SCHEMA_VERSION, "variants": rows}
     try:
-        payload = (json.dumps(doc, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode()
-    except ValueError as exc:
+        payload = (_dump(doc) + "\n").encode("utf-8")
+    except (TypeError, ValueError) as exc:
         raise VariantsWriteRefused("bad-param", str(exc)) from exc
 
     partial = target.with_name(
@@ -316,9 +441,10 @@ def write_variants(path: "str | Path", variants: Sequence[VariantDef]) -> Path:
         with open(partial, "xb") as out:
             out.write(payload)
         _fsync(partial)
-        if partial.read_bytes() != payload or strict_json(payload.decode()) != doc:
+        back = partial.read_bytes()
+        if back != payload or _dump(_load(back, partial)) + "\n" != payload.decode("utf-8"):
             raise VariantsWriteRefused("partial-mismatch", f"{partial} did not read back")
-        if _signature(target) != before:
+        if _digest(target) != digest:
             raise VariantsWriteRefused(
                 "revision-moved", f"{target} changed while this write ran; nothing was replaced")
         _replace(partial, target)

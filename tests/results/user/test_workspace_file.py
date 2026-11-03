@@ -487,3 +487,101 @@ def test_strict_json_refuses_nan_infinity_overflow_and_a_repeated_key() -> None:
         with pytest.raises(ValueError):
             _workspace.strict_json(text)
     assert _workspace.strict_json('{"a": 1e400}', finite=False)["a"] == float("inf")
+
+# ---------------------------------------------------------------------------
+# Review of #2806: one bad row, shared names, one read
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("body", ['{"kind": []}', '{"kind": {}}', "{}", '{"kind": 3}'])
+def test_a_plot_kind_of_any_type_refuses_its_row_only(model: Path, body: str) -> None:
+    target = _hand_file(model.with_name("frame.workspace.h5"),
+                        plots=[("odd", "apegmsh-plot/1", body),
+                               ("fine", "apegmsh-plot/1", json.dumps(HISTORY))])
+    ws = WorkspaceFile(target)
+    assert [(r.name, r.reason) for r in ws.refused] == [("odd", "bad-plot")]
+    assert [p.name for p in ws.plots] == ["fine"]
+
+
+def test_a_name_two_old_rows_share_is_never_replaced_or_removed(model: Path) -> None:
+    """Replacing or removing one of two refused duplicates would drop the other with
+    its members (INV-2): the write refuses, and both rows stay as they were."""
+    target = _hand_file(
+        model.with_name("frame.workspace.h5"),
+        sets=[("twin", "nodes", "opensees", "f" * 32, ""), ("twin", "nodes", "opensees", "f" * 32, "")],
+        members=[([1, 2], [[0, 0, 0], [6, 0, 0]]), ([31], [[0, 0, 9]])],
+        plots=[("p", "apegmsh-plot/1", "{}"), ("p", "apegmsh-plot/1", "[]")])
+    before = _digest(target)
+    for kwargs in (dict(sets=[SetDef("twin", "nodes", [3])]), dict(remove={"sets": ["twin"]}),
+                   dict(plots=[PlotDef("p", HISTORY)]), dict(remove={"plots": ["p"]})):
+        with pytest.raises(WorkspaceWriteRefused) as err:
+            write_workspace(target, **kwargs)
+        assert err.value.reason == "duplicate"
+        assert _digest(target) == before
+    write_workspace(target, sets=[SetDef("other", "nodes", [3])])
+    with h5py.File(target, "r") as f:
+        assert f["sets/name"][...].tolist() == [b"twin", b"twin", b"other"]
+        assert f["sets/ids"][...].tolist() == [1, 2, 31, 3]
+
+
+def test_a_bad_meta_file_is_renamed_aside_not_stuck(model: Path) -> None:
+    target = _hand_file(model.with_name("frame.workspace.h5"), revision=0)
+    with pytest.raises(WorkspaceRefused) as err:
+        WorkspaceFile(target)
+    assert err.value.reason == "bad-meta"
+    before = target.read_bytes()
+    with pytest.warns(WorkspaceRenamedAside):
+        write_workspace(target, views=[ViewDef("v", SHOT)])
+    (aside,) = model.parent.glob("frame.workspace.h5.unreadable-*")
+    assert aside.read_bytes() == before
+    assert WorkspaceFile(target).revision == 1
+
+
+def test_another_writers_save_over_an_unreadable_file_is_never_renamed_aside(
+    model: Path, monkeypatch,
+) -> None:
+    """The old file was junk; another writer replaced it with a real workspace while
+    this write ran. Renaming that save aside would hide it: the write refuses."""
+    target = model.with_name("frame.workspace.h5")
+    target.write_bytes(b"junk")
+    real = _workspace._fsync
+
+    def other_writer_saves(partial: Path) -> None:
+        real(partial)
+        _hand_file(target)
+
+    monkeypatch.setattr(_workspace, "_fsync", other_writer_saves)
+    with pytest.raises(WorkspaceWriteRefused) as err:
+        write_workspace(target, views=[ViewDef("v", SHOT)])
+    assert err.value.reason == "revision-moved"
+    assert WorkspaceFile(target).writer == "apeGmshViewer 0.9.0"
+    assert not list(model.parent.glob("frame.workspace.h5.unreadable-*"))
+    assert not list(model.parent.glob("*.partial"))
+
+
+def test_the_old_file_is_parsed_and_signed_from_one_read(model: Path, monkeypatch) -> None:
+    """A newer file that lands after the one read is caught by the signature of that
+    read, so it is neither overwritten nor renamed aside."""
+    target = _hand_file(model.with_name("frame.workspace.h5"))
+    reads: list[Path] = []
+    real = Path.read_bytes
+
+    def counted(self: Path) -> bytes:
+        if self == target:
+            reads.append(self)
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counted)
+    real_fsync = _workspace._fsync
+
+    def newer_lands(partial: Path) -> None:
+        real_fsync(partial)
+        _hand_file(target, version="1.1.0")
+
+    monkeypatch.setattr(_workspace, "_fsync", newer_lands)
+    with pytest.raises(WorkspaceWriteRefused) as err:
+        write_workspace(target, views=[ViewDef("v", SHOT)])
+    assert err.value.reason == "revision-moved"
+    assert len(reads) == 2, "one read to parse and sign, one to compare before the replace"
+    with h5py.File(target, "r") as f:
+        assert f["meta"].attrs["workspace_schema_version"] == "1.1.0"

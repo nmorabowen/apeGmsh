@@ -60,7 +60,7 @@ SCRIPT = textwrap.dedent(
         raise SystemExit(f"unknown point {point}")
 
     if point == "manifest_before_replace":
-        write_variants(target, [VariantDef("B", "frame.h5", {"pass": 2})])
+        write_variants(target, [VariantDef("B", "frame_b.h5", {"pass": 2})])
     else:
         write_workspace(target, sets=[SetDef("base", "nodes", [1, 2, 3])],
                         views=[ViewDef("later", {"camera": "top"})])

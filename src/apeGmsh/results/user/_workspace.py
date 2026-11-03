@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import io
 import json
 import math
 import os
@@ -38,7 +39,7 @@ import warnings
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 import h5py
 import numpy as np
@@ -89,7 +90,7 @@ _VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 _SET_TEXT = ("name", "kind", "id_space", "fem_hash", "model_hash")
 _ROW_TEXT = ("name", "grammar", "body")
 #: The refusals that make an old file *unreadable*: renamed aside, never overwritten.
-_UNREADABLE = frozenset({"not-hdf5", "no-version", "bad-version"})
+_UNREADABLE = frozenset({"not-hdf5", "no-version", "bad-version", "bad-meta"})
 _I4 = np.iinfo(np.int32)
 #: The direction the coordinate search sorts along; irrational, so mesh planes
 #: and lines rarely collapse onto one projected value.
@@ -322,12 +323,14 @@ class WorkspaceFile:
     :class:`~apeGmsh.results.user.ZoneRefused` when it is read.
     """
 
-    def __init__(self, path: "str | Path") -> None:
+    def __init__(self, path: "str | Path", *, data: Optional[bytes] = None) -> None:
+        """``data`` is the file's bytes, already read: the writer parses and signs one
+        read, so a file replaced in between cannot be judged by the other copy."""
         self.path = Path(path)
-        if not self.path.is_file():
+        if data is None and not self.path.is_file():
             raise WorkspaceRefused("no-file", f"no such file: {self.path}")
         try:
-            f = h5py.File(self.path, "r")
+            f = h5py.File(self.path if data is None else io.BytesIO(data), "r")
         except OSError as exc:
             raise WorkspaceRefused("not-hdf5", f"{self.path} is not HDF5: {exc}") from exc
         with f:
@@ -518,11 +521,17 @@ def _body(table: str, body: str) -> "tuple[Optional[dict], str, str]":
     return data, "", ""
 
 
-def strict_json(text: str, *, finite: bool = True) -> Any:
+def strict_json(
+    text: str, *, finite: bool = True,
+    parse_float: Optional[Callable[[str], float]] = None,
+    parse_int: Optional[Callable[[str], int]] = None,
+) -> Any:
     """``json.loads`` that refuses ``NaN``/``Infinity`` tokens and a repeated key.
 
     ``finite`` also refuses a number that overflows to infinity (``1e400``); the
     variants manifest passes ``False`` and refuses such a number in its row.
+    ``parse_float`` and ``parse_int`` build the numbers (the manifest keeps their
+    tokens, so a row it carries is written back as it was read).
     """
     def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -536,14 +545,14 @@ def strict_json(text: str, *, finite: bool = True) -> Any:
         raise ValueError(f"{token} is not a JSON number")
 
     def number(token: str) -> float:
-        value = float(token)
+        value = parse_float(token) if parse_float is not None else float(token)
         if finite and not math.isfinite(value):
             raise ValueError(f"{token} overflows to infinity")
         return value
 
     try:
         return json.loads(text, object_pairs_hook=pairs, parse_constant=constant,
-                          parse_float=number)
+                          parse_float=number, parse_int=parse_int)
     except json.JSONDecodeError as exc:
         raise ValueError(f"not JSON: {exc}") from exc
 
@@ -674,7 +683,7 @@ def _series_list_problem(value: Any, where: str, reduce_rule: str) -> Optional[s
 def plot_problem(plot: Mapping[str, Any]) -> Optional[str]:
     """Why ``plot`` breaks the ``apegmsh-plot/1`` grammar (naming the key), or ``None``."""
     kind = plot.get("kind")
-    if kind not in _PLOT_KEYS:
+    if not isinstance(kind, str) or kind not in _PLOT_KEYS:  # a list or object is unhashable
         return f"kind {kind!r} is not one of {tuple(_PLOT_KEYS)}"
     problem = _closed(plot, *_PLOT_KEYS[kind], f"a {kind} plot")
     if problem is not None:
@@ -1016,22 +1025,32 @@ def _merge(
     return out
 
 
-def _signature(path: Path) -> tuple[int, int, str]:
-    st = path.stat()
-    return st.st_size, st.st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest()
+def _digest(target: Path) -> Optional[str]:
+    """The file's bytes as one sha256, or ``None`` when no file is there."""
+    if not target.exists():
+        return None
+    if not target.is_file():
+        raise WorkspaceWriteRefused("not-a-file", f"{target} is not a file")
+    return hashlib.sha256(target.read_bytes()).hexdigest()
 
 
-def _read_previous(target: Path) -> "tuple[Optional[WorkspaceFile], Optional[tuple]]":
-    """``(file, None)``, ``(None, signature)`` for an unreadable one, or ``(None, None)``."""
+def _read_previous(target: Path) -> "tuple[Optional[WorkspaceFile], Optional[str]]":
+    """``(file, digest)``, ``(None, digest)`` for an unreadable file, ``(None, None)`` for none.
+
+    The bytes are read once: the same read is parsed and signed, so a file that
+    lands between two reads can be neither overwritten nor renamed aside.
+    """
     if not target.exists():
         return None, None
     if not target.is_file():
         raise WorkspaceWriteRefused("not-a-file", f"{target} is not a file")
+    raw = target.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
     try:
-        previous = WorkspaceFile(target)
+        previous = WorkspaceFile(target, data=raw)
     except WorkspaceRefused as exc:
         if exc.reason in _UNREADABLE:
-            return None, _signature(target)
+            return None, digest
         raise WorkspaceWriteRefused(
             exc.reason, f"{target}: {exc.detail}; nothing was replaced") from exc
     if previous.broken_tables:
@@ -1039,7 +1058,7 @@ def _read_previous(target: Path) -> "tuple[Optional[WorkspaceFile], Optional[tup
         raise WorkspaceWriteRefused(
             "bad-table", f"{target}: /{table} cannot be copied verbatim ({why}); "
                          "nothing was replaced")
-    return previous, None
+    return previous, digest
 
 
 def write_workspace(
@@ -1079,7 +1098,8 @@ def write_workspace(
         if clash:
             raise WorkspaceWriteRefused("bad-param", f"{table} {sorted(clash)} written and removed")
 
-    previous, unreadable = _read_previous(target)
+    previous, digest = _read_previous(target)
+    unreadable = digest is not None and previous is None
     model = _Model(model_path)
     new: dict[str, dict[str, dict[str, Any]]] = {
         "sets": {d.name: _set_row(d, model) for d in sets},
@@ -1089,11 +1109,18 @@ def write_workspace(
                            "body": _encode(_body_text("views", d.name, d.body))} for d in views},
     }
     old = previous._raw if previous is not None else {t: [] for t in TABLES}
-    for table, names in removing.items():
-        held = {text_or_empty(r["name"]) for r in old[table]}
-        absent = names - held
+    for table in TABLES:
+        held = Counter(text_or_empty(r["name"]) for r in old[table])
+        absent = removing.get(table, set()) - set(held)
         if absent:
             raise WorkspaceWriteRefused("bad-param", f"no {table} named {sorted(absent)} to remove")
+        # A name two old rows share names neither: replacing or removing one would
+        # drop the other, a refused row, with its members (INV-2).
+        twice = sorted(n for n in set(given[table]) | removing.get(table, set()) if held[n] > 1)
+        if twice:
+            raise WorkspaceWriteRefused(
+                "duplicate", f"{table} {twice} name more than one row of {target.name}; "
+                             "nothing was replaced")
     old_sets = _restamp_moved(previous, model) if previous is not None else []
     final = {
         "sets": _merge(old_sets, new["sets"], removing.get("sets", set())),
@@ -1110,8 +1137,8 @@ def write_workspace(
             _write_file(out, meta, final)
         _verify(partial, meta, final)
         _fsync(partial)
-        _refuse_if_moved(target, previous, unreadable)
-        if unreadable is not None:
+        _refuse_if_moved(target, digest)
+        if unreadable:
             aside = _rename_aside(target)
             warnings.warn(
                 f"{target} was not a readable workspace; it was renamed aside to {aside.name}",
@@ -1183,26 +1210,23 @@ def _verify(partial: Path, meta: Mapping[str, Any], tables: Mapping[str, list]) 
                         "partial-mismatch", f"{partial}: /{table}/{key} did not read back")
 
 
-def _refuse_if_moved(
-    target: Path, previous: Optional[WorkspaceFile], unreadable: Optional[tuple],
-) -> None:
-    """The second of two writers refuses here, rather than overwriting."""
-    if previous is not None:
-        try:
-            now: Optional[int] = WorkspaceFile(target).revision
-        except (WorkspaceRefused, OSError):
-            now = None
-        if now != previous.revision:
-            raise WorkspaceWriteRefused(
-                "revision-moved", f"{target} changed while this write ran (revision "
-                                  f"{previous.revision}); nothing was replaced. Write again.")
-    elif unreadable is not None:
-        if not target.is_file() or _signature(target) != unreadable:
-            raise WorkspaceWriteRefused(
-                "revision-moved", f"{target} changed while this write ran; nothing was replaced.")
-    elif target.exists():
+def _refuse_if_moved(target: Path, digest: Optional[str]) -> None:
+    """The second of two writers refuses here, rather than overwriting.
+
+    The file on disk must still be the bytes this write read, or still be absent.
+    That is stricter than ``/meta@revision`` (every save changes ``@revision`` and
+    ``@save_id``), and it also holds for an unreadable file about to be renamed
+    aside: another writer's save that replaced it is never moved out of the way.
+    """
+    try:
+        now = _digest(target)
+    except (OSError, WorkspaceWriteRefused):
+        now = "unreadable now"
+    if now != digest:
         raise WorkspaceWriteRefused(
-            "revision-moved", f"{target} was created while this write ran; nothing was replaced.")
+            "revision-moved",
+            f"{target} {'was created' if digest is None else 'changed'} while this write "
+            "ran; nothing was replaced. Write again.")
 
 
 def _rename_aside(target: Path) -> Path:
