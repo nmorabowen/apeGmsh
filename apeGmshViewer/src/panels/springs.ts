@@ -60,7 +60,7 @@ export function renderSprings(s: State, dispatch: (e: Event) => void = () => {},
 
   const modes = el("div", "legend-mode springs-modes");
   const toggle = el("button", "springs-toggle" + (r.on ? " on" : ""), "3D spring forces");
-  toggle.title = "Show the step's zero-length spring forces: one arrow per spring along its force, pointing at the spring";
+  toggle.title = "Show the step's zero-length spring forces: one arrow per spring, pointing at it, along the force node j applies to the spring (tension-positive: a spring stretched along +x draws +x)";
   const which = el("select", "springs-component");
   which.title = "the resultant at each spring, or its components along the global axes";
   for (const [value, label] of COMPONENTS) {
@@ -129,5 +129,6 @@ export function renderSprings(s: State, dispatch: (e: Event) => void = () => {},
   else chip.style.backgroundColor = cssRgb(palette.mono);
   row.append(chip, el("span", undefined, unit ? `Spring force [${unit}]` : "Spring force"), el("span", "legend-count", `${count} spring${count === 1 ? "" : "s"} · node j, global`));
   box.append(row);
+  if (r.on && r.notice) box.append(el("div", "legend-note springs-notice", r.notice));
   return box;
 }

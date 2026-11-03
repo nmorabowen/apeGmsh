@@ -1047,8 +1047,10 @@ export class Effects {
           ? (st.lineStations?.[0] ?? null)
           : null;
     const springs = s.springs.on && (st.springs ?? 0) > 0;
-    const key = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}|${springs ? "springs" : ""}`;
-    if (key === this.stepKey) return;
+    const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}`;
+    const key = `${base}|${springs ? "springs" : ""}`;
+    // The card turned off keeps the step fetched with its springs: they are only not drawn, and nothing is re-read.
+    if (key === this.stepKey || (!springs && this.stepKey === `${base}|springs`)) return;
     this.stepKey = key;
     const seq = ++this.stepSeq;
     this.step = null;
@@ -1102,6 +1104,11 @@ export class Effects {
       ...(springs ? { springs: res.springs ?? null, springsError: res.springsError ?? null } : {}),
     };
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "ready", error: null } });
+    // A failed springs read says why on the card; the next good one clears it.
+    if (springs) {
+      const notice = res.springs ? null : (res.springsError ?? "the step's spring forces were not read");
+      if (this.store.get().springs.notice !== notice) this.store.dispatch({ type: "setSprings", notice });
+    }
   }
 
   /** A loaded model with a loaded geometry sibling: their rewrites reload as one set. */

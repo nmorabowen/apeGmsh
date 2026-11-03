@@ -1003,6 +1003,8 @@ export interface SpringsState {
   readonly thin: boolean;
   /** What each spring draws: the resultant, its global-axis components, or one of them (default resultant). */
   readonly component: ReactionComponent;
+  /** Why the step on screen draws no spring arrows (its springs' read failed), or null */
+  readonly notice: string | null;
 }
 
 /** The Display card's BC toggle: restraint glyphs at the supports (state/loads.ts `buildSupports3D`). */
@@ -1576,7 +1578,7 @@ export type Event =
   /** The Reactions card's controls */
   | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean; forces?: boolean; moments?: boolean }
   /** The Springs card's controls */
-  | { type: "setSprings"; on?: boolean; scale?: number; headSize?: number; colorBy?: SpringsState["colorBy"]; thin?: boolean; component?: ReactionComponent }
+  | { type: "setSprings"; on?: boolean; scale?: number; headSize?: number; colorBy?: SpringsState["colorBy"]; thin?: boolean; component?: ReactionComponent; notice?: string | null }
   /** 3-D structural loading and prescribed-SP visualization controls */
   | {
       type: "setLoads";

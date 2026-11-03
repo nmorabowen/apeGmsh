@@ -3,9 +3,12 @@
 // src/apeGmsh/viewers/diagrams/_spring_force.py).
 //
 // The force is node j's global resisting force from the `.ladruno` `force`
-// token (reader/ladruno.ts `readSpringStep`), so a skewed (`-orient`) or an
-// interface spring needs no frame: the vector already points the way the
-// spring pushes node j (along +x for a spring stretched along +x). The Qt
+// token (reader/ladruno.ts `readSpringStep`): the force node j applies to the
+// spring, tension-positive like the Qt diagram's `basicForce x direction` (a
+// spring stretched along +x draws +x). It is the sum of the spring's basic
+// forces along its directions, so a skewed (`-orient`) or an interface spring
+// needs no frame. The spring acts on node j with the opposite force, so at a
+// spring's ground node the Reactions card draws the opposite arrow. The Qt
 // diagram draws one spring direction at a time along a global axis or the
 // interface frame; per-direction arrows from `basicForce` are a follow-up.
 //

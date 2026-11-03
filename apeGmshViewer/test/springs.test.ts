@@ -16,6 +16,7 @@ import { ResultsHost } from "../src/main/results.ts";
 import { renderSprings } from "../src/panels/springs.ts";
 import { nodeJTranslations, openLadruno } from "../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../src/reader/results.ts";
+import { basePositions } from "../src/renderer/deform.ts";
 import { SpringsLayer } from "../src/renderer/springs.ts";
 import { ARROW, ARROW_STRIDE, BAR } from "../src/state/loads.ts";
 import { spotlightViewOf } from "../src/state/spotlight.ts";
@@ -274,8 +275,68 @@ test("the Springs card shows on a stage with springs; its switch and component m
 
 test("setSprings refuses a non-boolean switch, a scale or head at or below 0, an unknown menu value; an unchanged value changes nothing", () => {
   const s = h.store.get();
-  for (const bad of [{ on: "yes" }, { scale: -1 }, { headSize: 0 }, { scale: Number.NaN }, { component: "w" }, { colorBy: "type" }, { thin: 1 }]) {
+  for (const bad of [{ on: "yes" }, { scale: -1 }, { headSize: 0 }, { scale: Number.NaN }, { component: "w" }, { colorBy: "type" }, { thin: 1 }, { notice: 5 }]) {
     assert.throws(() => reduce(s, { type: "setSprings", ...(bad as object) } as never), RangeError, JSON.stringify(bad));
   }
   assert.equal(reduce(s, { type: "setSprings", component: s.springs.component }), s);
+});
+
+test("on the deformed shape the arrows sit at the drawn nodes, and the layer rebuilds when the drawn shape changes", async () => {
+  h.store.dispatch({ type: "setSprings", on: true });
+  const data = await atStep(1);
+  const s = h.store.get();
+  const moved = buildSprings3D(s, h.blobs, data.springs!, { deformedNodeCoords: new Map([[2, [0, 0, 1] as const], [4, [2, 0, 3] as const]]) });
+  assert.deepEqual([0, 1].map((k) => moved.arrows[k * ARROW_STRIDE + 2]), [1, 3], "each tip at its node j's drawn place");
+  const layer = new SpringsLayer();
+  try {
+    const base = basePositions(s.mesh!, h.blobs);
+    assert.equal(layer.sync(s, h.blobs, base, data), true);
+    const lifted = { ...base, line: base.line.map((v, i) => (i % 3 === 2 ? v + 5 : v)), key: "probe|scale 1" };
+    assert.equal(layer.sync(s, h.blobs, lifted, data), true, "another drawn shape rebuilds the arrows");
+    assert.equal(layer.sync(s, h.blobs, lifted, data), false, "the same one does not");
+    const tipZ = (layer.lines.geometry as THREE.InstancedBufferGeometry).getAttribute("aTip")!.getZ(0);
+    assert.equal(tipZ, 5, "the tip follows the drawn line vertices");
+  } finally {
+    layer.dispose();
+    h.store.dispatch({ type: "setSprings", on: false });
+  }
+});
+
+test("a failed springs read says why on the card, and the next good read clears it; turning the card off re-reads nothing", async () => {
+  h.store.dispatch({ type: "setSprings", on: true });
+  await atStep(0);
+  const real = h.host.readStep.bind(h.host);
+  h.host.readStep = (req) => {
+    const r = real(req);
+    return r.ok && req.springs ? { ...r, springs: null, springsError: "probe: DATA is short" } : r;
+  };
+  try {
+    await atStep(1);
+    await until(() => h.store.get().springs.notice === "probe: DATA is short", "the notice");
+  } finally {
+    h.host.readStep = real;
+  }
+  const prevDoc = (globalThis as { document?: unknown }).document;
+  const texts: string[] = [];
+  (globalThis as { document?: unknown }).document = {
+    documentElement: { dataset: { theme: "dark" } },
+    createElement: () => {
+      const e = { className: "", style: {}, dataset: {}, title: "", value: "", children: [] as unknown[], append: (...xs: unknown[]) => e.children.push(...xs), addEventListener() {}, removeEventListener() {}, setAttribute() {} };
+      Object.defineProperty(e, "textContent", { set: (v: string) => texts.push(v) });
+      return e;
+    },
+  };
+  try {
+    renderSprings(h.store.get());
+    assert.ok(texts.includes("probe: DATA is short"), "the card shows the notice");
+  } finally {
+    (globalThis as { document?: unknown }).document = prevDoc;
+  }
+  await atStep(0);
+  await until(() => h.store.get().springs.notice === null, "a good read clears it");
+  const fetched = h.effects.currentStep();
+  assert.ok(fetched?.springs);
+  h.store.dispatch({ type: "setSprings", on: false });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(h.effects.currentStep(), fetched, "off: the step held is kept, not fetched again");
 });

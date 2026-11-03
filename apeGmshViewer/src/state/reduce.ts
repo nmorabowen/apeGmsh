@@ -82,7 +82,7 @@ export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
 export const initialSupports: SupportsState = { on: false, scale: 1 };
 
 export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
-export const initialSprings: SpringsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant" };
+export const initialSprings: SpringsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", notice: null };
 
 export const initialLoads: LoadsState = {
   on: false,
@@ -1384,6 +1384,7 @@ export function reduce(s: State, e: Event): State {
       if (e.component !== undefined && !["resultant", "xyz", "x", "y", "z"].includes(e.component)) {
         throw new RangeError(`setSprings: component ${JSON.stringify(e.component)}`);
       }
+      if (e.notice !== undefined && e.notice !== null && typeof e.notice !== "string") throw new RangeError(`setSprings: notice ${JSON.stringify(e.notice)}`);
       const cur = s.springs;
       const next: SpringsState = {
         on: e.on ?? cur.on,
@@ -1392,6 +1393,7 @@ export function reduce(s: State, e: Event): State {
         colorBy: e.colorBy ?? cur.colorBy,
         thin: e.thin ?? cur.thin,
         component: e.component ?? cur.component,
+        notice: e.notice !== undefined ? e.notice : cur.notice,
       };
       return (Object.keys(next) as (keyof SpringsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, springs: next };
     }
