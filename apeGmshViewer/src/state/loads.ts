@@ -2593,7 +2593,8 @@ export function buildSupports3D(s: State, blobs: BlobStore, opts?: BuildLoads3DO
   const arrows: GlyphBuffers = { arrows: [], combs: [] };
   const arcs: GlyphBuffers = { arrows: [], combs: [] };
   // One representative record per node for thinning, then every glyph of the node takes its level.
-  const perNode: number[] = [];
+  // One record per node, written as any record is, so it follows the record layout.
+  const perNode: GlyphBuffers = { arrows: [], combs: [] };
   const glyphNode: { arc: boolean; node: number }[] = [];
   let nodes = 0;
   for (const [id, dofs] of held) {
@@ -2613,10 +2614,10 @@ export function buildSupports3D(s: State, blobs: BlobStore, opts?: BuildLoads3DO
       drawn = true;
     }
     if (!drawn) continue;
-    perNode.push(tip[0], tip[1], tip[2], 0, 0, 1, len, rgb[0], rgb[1], rgb[2], 1, 0, 1, 0, ANCHOR.tip);
+    pushArrowToPoint(perNode, tip, [0, 0, 1], len, rgb, 1);
     nodes++;
   }
-  const levels = new Float32Array(perNode);
+  const levels = new Float32Array(perNode.arrows);
   thinningLevels(levels, radius);
   const a = new Float32Array(arrows.arrows);
   const c = new Float32Array(arcs.arrows);

@@ -15,7 +15,7 @@ import { openModel } from "../src/reader/node.ts";
 import { ArrowLayer, arrowShaderSource, ReactionsLayer, SIZING_EXPR } from "../src/renderer/loads.ts";
 import { BlobStore } from "../src/state/blobs.ts";
 import { loadModel } from "../src/state/load.ts";
-import { ANCHOR, ARROW, ARROW_STRIDE, buildLoads3D, buildReactions3D, expandArrows } from "../src/state/loads.ts";
+import { ANCHOR, ARROW, ARROW_STRIDE, buildLoads3D, buildReactions3D, buildSupports3D, expandArrows, THIN_LEVELS } from "../src/state/loads.ts";
 import { initialState, reduce, type State } from "../src/state/store.ts";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
@@ -70,6 +70,20 @@ test("every builder writes tip-anchored records: the loads and the reactions poi
   layer.dispose();
 });
 
+test("the support glyphs' per-node thinning records follow the record layout", () => {
+  // buildSupports3D thins one record per supported node; a literal one stride short would shift every
+  // record after the first. Each glyph takes its node's level, so a level outside 0..THIN_LEVELS means a shifted read.
+  const s = reduce(loaded, { type: "setSupports", on: true });
+  const g = buildSupports3D(s, blobs);
+  assert.ok(g.arrows.length + g.arcs.length > 0, "the fixture has supports");
+  for (const a of [g.arrows, g.arcs]) {
+    for (let o = 0; o < a.length; o += ARROW_STRIDE) {
+      assert.ok(a[o + ARROW.level]! >= 1 && a[o + ARROW.level]! <= THIN_LEVELS, `level ${a[o + ARROW.level]}`);
+      assert.equal(a[o + ARROW.anchor], ANCHOR.tip);
+    }
+  }
+});
+
 test("the CPU twin: a tip-anchored arrow ends at its point, a tail-anchored one starts there", () => {
   const none = new Float32Array(0);
   const tip = expandArrows({ arrows: record([5, 0, 0], 2, ANCHOR.tip), combs: none }, 0.5);
@@ -88,6 +102,11 @@ test("the shader moves a tail-anchored tip by the drawn shaft L, so SIZING_EXPR 
   assert.ok(src.includes(SIZING_EXPR.shaft), "shaftLength is SIZING_EXPR.shaft");
   // The pixel scale is measured at the record's point, not at the moved tip.
   assert.match(src, /float wpp = worldPerPixel\( mvAt \);/);
+  // And the moved tip is what every vertex is placed from: assigned once, never reset to the point,
+  // and the only base of the drawn position (a mutation to `mvTip = mvAt` or to `mvAt.xyz - ...` fails here).
+  assert.equal(src.match(/\bmvTip\s*=/g)?.length, 1, "mvTip is assigned once");
+  assert.match(src, /vec4 mvPosition = vec4\( mvTip\.xyz - dV \* \( aShape\.x \* L \+ aShape\.y \* H \) \+ across \* \( aShape\.z \* H \), 1\.0 \);/);
+  assert.equal(src.match(/mvAt\.xyz/g)?.length, 1, "the point is used only to place the tip");
 });
 
 test("the layer uploads a tail-anchored record's anchor to the shader", () => {
