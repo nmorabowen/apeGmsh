@@ -19,9 +19,9 @@ from ``npm run dist``; see ``apeGmshViewer/README.md``). A
 ``$APEGMSH_VIEWER`` that names no file is refused, never passed over for
 the install.
 
-The spec helpers at the end (``ladruno_files``, ``results_files``,
-``shoot``, ``mesh_spec``, ``fem_still``) are what apeGmsh's own still verbs build their specs with on
-Windows (ADR 0128 slice 6). They refuse apeGmsh inputs the app cannot
+The spec helpers at the end (``ladruno_files``, ``shoot``,
+``mesh_spec``) are what apeGmsh's own still verbs build their specs with on
+Windows (ADR 0128 slice 6). ``ladruno_files`` refuses apeGmsh inputs the app cannot
 open, by the #2655 ruling; they still do not check the spec.
 """
 from __future__ import annotations
@@ -44,12 +44,10 @@ __all__ = [
     "NODAL_FIELDS",
     "SPEC_VERSION",
     "AgentViewError",
-    "fem_still",
     "find_viewer",
     "ladruno_files",
     "mesh_spec",
     "render_stills",
-    "results_files",
     "shoot",
 ]
 
@@ -303,9 +301,10 @@ def render_stills(
 #
 # The parity plan (internal_docs/plan_viewer_agent_stills_parity.md)
 # maps apeGmsh's still verbs onto apegmsh-view/1. These helpers are the
-# part that needs no viewer code: the files a spec names, the v1 camera
-# and field names, and a run whose PNGs land where the verb was asked.
-# They check apeGmsh's inputs (the #2655 ruling), never the spec.
+# app's contract: the spec version, the v1 camera and field names, the
+# stem rule for the files a spec names, and a run whose PNGs land where
+# the verb was asked. ladruno_files refuses a results file the app cannot
+# open; nothing here checks the spec.
 
 #: The v1 camera tokens as ``apegmsh-view/1`` cameras (parity plan
 #: R4-R7): ``xy`` looks along -z, ``xz`` along +y, ``yz`` along -x.
@@ -380,35 +379,6 @@ def ladruno_files(
     return {"model": str(model.resolve()), "results": str(path.resolve())}
 
 
-def results_files(results: Any, verb: str) -> dict[str, str]:
-    """The spec's ``files`` for a ``Results`` (R22b, ruled 2026-11-02).
-
-    The app draws the file a ``Results`` was read from, so only a
-    ``Results`` read from a ``.ladruno`` (:attr:`Results.path`) is
-    drawn; every other source is refused with a message naming
-    ``.ladruno``. A units view (:meth:`Results.to_units`) is held only
-    in memory, so it is refused too: the app would label the file's
-    units. The model is the ``<stem>.h5`` beside the file
-    (:func:`ladruno_files`).
-    """
-    source = results.path
-    if source is None:
-        raise ValueError(
-            f"results.{verb} on Windows draws through apeGmshViewer, which "
-            f"reads a .ladruno file; these Results have no source file "
-            f"(ADR 0122 D1; R22b). Open the run's .ladruno with "
-            f"Results.from_ladruno."
-        )
-    if results.units != results.source_units:
-        raise ValueError(
-            f"results.{verb} on Windows draws {Path(source).name} as recorded, "
-            f"in {results.source_units}; a to_units({results.units!r}) view is "
-            f"held only in memory, so it is refused (R22b). Render the "
-            f"Results the .ladruno opened, without to_units."
-        )
-    return ladruno_files(source)
-
-
 def shoot(
     spec: Mapping[str, Any], targets: Mapping[str, Path],
 ) -> tuple[dict[str, Any], dict[str, Path]]:
@@ -456,12 +426,3 @@ def mesh_spec(model_path: str | os.PathLike[str], *, camera: str, size: list[int
         "size": list(size),
         "shots": [{"name": "mesh", "camera": camera}],
     }
-
-
-def fem_still(fem: Any, path: Path, *, camera: str, size: list[int]) -> Path:
-    """G7: an in-memory ``FEMData`` drawn through a temporary ``model.h5``."""
-    with tempfile.TemporaryDirectory(prefix="apegmsh-fem-") as tmp:
-        model = Path(tmp) / "model.h5"
-        fem.to_h5(str(model))
-        _, written = shoot(mesh_spec(model, camera=camera, size=size), {"mesh": path})
-    return written["mesh"]

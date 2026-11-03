@@ -32,7 +32,7 @@ MeshViewer. A ``from_h5`` or closed session raises
 ``RuntimeError`` — they do not fake a BRep still from FEMData.
 
 On Windows ``fem.render`` is apeGmshViewer's (ADR 0128 slice 6):
-``agent_view.fem_still`` (G7, R1; no app raises, G9). Linux keeps VTK
+``_results_stills.fem_still`` (G7, R1; no app raises, G9). Linux keeps VTK
 (G2). ``_stills_backend`` is the one switch.
 """
 from __future__ import annotations
@@ -99,7 +99,7 @@ def render_fem(
         print(_SKIP_ENV)
         return None
     if _stills_backend() == "app":
-        from apeGmsh.agent_view import fem_still
+        from apeGmsh.viewers.session._results_stills import fem_still
 
         return fem_still(fem, Path(path), camera=_app_camera(camera), size=_app_size(window_size))
     from apeGmsh.viewers.scene.fem_scene import build_fem_scene

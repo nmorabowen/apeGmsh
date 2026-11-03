@@ -42,12 +42,13 @@ path.
 ``app_still`` / ``app_pack`` (VA6b) are the Windows path: each ``view=``
 token is one ``apegmsh-view/1`` shot drawn by apeGmshViewer (the parity
 plan), from the ``.ladruno`` ``Results.path`` names and its ``<stem>.h5``
-(``agent_view.results_files``; any other source is refused, R22b).
+(``results_files``; any other source is refused, R22b).
 Linux keeps the session path (G2). R16b waits on slice #2794.
 """
 from __future__ import annotations
 
 import json
+import tempfile
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -56,7 +57,8 @@ from apeGmsh.agent_view import (
     MODE_FIELDS,
     NODAL_FIELDS,
     SPEC_VERSION,
-    results_files,
+    ladruno_files,
+    mesh_spec,
     shoot,
 )
 
@@ -576,6 +578,44 @@ def _app_backend() -> bool:
     return render_mod._stills_backend() == "app"
 
 
+def results_files(results: Any, verb: str) -> dict[str, str]:
+    """The spec's ``files`` for a ``Results`` (R22b, ruled 2026-11-02).
+
+    The app draws the file a ``Results`` was read from, so only a
+    ``Results`` read from a ``.ladruno`` (:attr:`Results.path`) is
+    drawn; every other source is refused with a message naming
+    ``.ladruno``. A units view (:meth:`Results.to_units`) is held only
+    in memory, so it is refused too: the app would label the file's
+    units. The model is the ``<stem>.h5`` beside the file
+    (:func:`ladruno_files`).
+    """
+    source = results.path
+    if source is None:
+        raise ValueError(
+            f"results.{verb} on Windows draws through apeGmshViewer, which "
+            f"reads a .ladruno file; these Results have no source file "
+            f"(ADR 0122 D1; R22b). Open the run's .ladruno with "
+            f"Results.from_ladruno."
+        )
+    if results.units != results.source_units:
+        raise ValueError(
+            f"results.{verb} on Windows draws {Path(source).name} as recorded, "
+            f"in {results.source_units}; a to_units({results.units!r}) view is "
+            f"held only in memory, so it is refused (R22b). Render the "
+            f"Results the .ladruno opened, without to_units."
+        )
+    return ladruno_files(source)
+
+
+def fem_still(fem: Any, path: Path, *, camera: str, size: list[int]) -> Path:
+    """G7: an in-memory ``FEMData`` drawn through a temporary ``model.h5``."""
+    with tempfile.TemporaryDirectory(prefix="apegmsh-fem-") as tmp:
+        model = Path(tmp) / "model.h5"
+        fem.to_h5(str(model))
+        _, written = shoot(mesh_spec(model, camera=camera, size=size), {"mesh": path})
+    return written["mesh"]
+
+
 def _stage_index(results: Any, stage_id: str) -> int:
     for i, stage in enumerate(results.stages):
         if str(stage.id) == str(stage_id):
@@ -815,7 +855,9 @@ __all__ = [
     "app_shot_for_view",
     "app_still",
     "default_contour_component",
+    "fem_still",
     "render_results_pack",
     "render_results_still",
+    "results_files",
     "session_for_view",
 ]
