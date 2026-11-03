@@ -29,7 +29,7 @@ domain, so the recipes never import it.
 
 |  | **Read: `.ladruno`** → `from_ladruno` | **Read: classic recorders** → `from_recorders` | **Read: MPCO** → `from_mpco` |
 |---|---|---|---|
-| **Run: in-process** | `recorder_spec.emit_default("run", model_h5=...)`. The default: on the fork it records the fork's own file; on a stock build it falls back to the MPCO cell, and on pip openseespy to the classic cell, so one script runs on every build. | `recorder_spec.emit_recorders("out", model=model)`. Nodes, element forces, gauss points, line stations and fibres; layer and modal records raise by name. | `ops.recorder.MPCO(...)` before `ops.run()`, or `recorder_spec.emit_mpco(...)`. Fibres, layers and modes, on a build that has the MPCO recorder. |
+| **Run: in-process** | `recorder_spec.emit_default("run", model_h5=...)`. The default: on the fork it records the fork's own file; on a stock build with MPCO it converts the `.mpco` of a staged program to `.ladruno` and refuses an unstaged one by name; on pip openseespy it falls back to the classic cell. | `recorder_spec.emit_recorders("out", model=model)`. Nodes, element forces, gauss points, line stations and fibres; layer and modal records raise by name. | `ops.recorder.MPCO(...)` before `ops.run()`, or `recorder_spec.emit_mpco(...)`. Fibres, layers and modes, on a build that has the MPCO recorder. |
 | **Run: export** | `read_deck_mpco("run.mpco", model_h5=...)` converts the `.mpco` of the bridge's own deck to `.ladruno` beside it. | `recorder_spec.to_tcl_commands(...)` in a driver around `ops.tcl(...)`. Reproducible, check-in-able, cluster-friendly. | `ops.recorder.MPCO(...)` before `ops.tcl(...)`. One `recorder mpco` line in the deck; run it under an OpenSees that has the recorder. |
 
 `recorder_spec` is a `ResolvedRecorderSpec`, which holds concrete node and
@@ -131,21 +131,30 @@ results = run.results()
 | Build | Writes | `run.results()` |
 |---|---|---|
 | the Ladruno fork | `run.ladruno` | stamps the file with `model.h5`'s pairing, then `Results.from_ladruno` |
-| stock, with MPCO | `run.mpco` | `Results.from_mpco`, after one `DefaultRouteWarning` |
+| stock, with MPCO | `run.mpco` | converts it to `run.ladruno` beside it, then `Results.from_ladruno`; an unstaged program refuses at the `with` line |
 | pip, no MPCO | classic `.out` files in `run_out/` | `Results.from_recorders`, after one `DefaultRouteWarning` |
 
 Don't step with the bridge's own `ops.analyze(steps=1)` here: it rebuilds
 the domain from scratch, and the recorder the block opened goes with it.
 Read with `run.results()` after the block has closed.
 
-The stock MPCO file is not converted to `.ladruno`, and it stays on
-`from_mpco`. An unstaged run maps to one stage, and that stage's kind
-(static or transient) has to be a fact. Your loop drives OpenSees
-directly, so a `loadConst` or a second `opspy.analysis(...)` inside the
-block never reaches `model.h5`. `read_deck_mpco` below does not apply to
-an in-process run.
-`emit_default` refuses a rerun onto an existing `run.ladruno` unless you
-pass `overwrite=True`. It has no route for modal records; modes come from
+On a stock build with MPCO the route converts only when each stage's kind
+(static or transient) is a fact: the program declares it in an
+`ops.stage(...)` block. An unstaged program has no kind as fact. Your loop
+drives OpenSees directly, so a `loadConst` or a second
+`opspy.analysis(...)` inside the block never reaches `model.h5`, and an
+in-process run writes no run record. So `emit_default` refuses it by name
+as the block opens, before your loop runs, with a `StageKindRefused` that
+names the two remedies: declare the stages with `ops.stage(...)`, or run
+the program as a deck emitted with `analyze_steps` and read it with
+`read_deck_mpco` (below). It never guesses a kind and never reads the
+`.mpco` with `from_mpco` instead. `ops.run()` refuses a staged program
+today, so a staged script runs as a deck (`ops.py` or `ops.tcl`) until
+the in-process route can emit stages. A converted file whose stages do not pair
+with the declared ones refuses on `run.results()` and writes nothing; the
+`.mpco` is kept either way.
+`emit_default` refuses a rerun onto an existing `run.ladruno` (on the fork,
+or the converted file on stock) unless you pass `overwrite=True`. It has no route for modal records; modes come from
 `ops.eigen(n)`, as the grid says.
 
 ### In-process, classic recorders
@@ -261,10 +270,12 @@ An unstaged deck converts on its own run record: a deck emitted with
 `analyze_steps=`, like the one above, writes `run.mpco.run.json` beside the
 `.mpco` once its analyze loop has returned, and the conversion checks that
 record against the `.mpco`, `model.h5` and the program (one `analysis`
-declaration, and the steps it ran). When a check fails, the deck is read
-with `from_mpco` after one warning that names the check. Other refusals
-raise, such as an archive of another model or an incomplete partition set. An in-process run is not a deck, so read its
-`.mpco` with `from_mpco`.
+declaration, and the steps it ran). When a check fails, `read_deck_mpco`
+refuses with a `StageKindRefused` that names the check and the remedies,
+and writes nothing; it never falls back to `from_mpco`. Other refusals
+raise as they are, such as an archive of another model or an incomplete
+partition set. An in-process run is not a deck: it writes no run record,
+so `read_deck_mpco` refuses its `.mpco` on check 1.
 
 ## The read side is identical
 
