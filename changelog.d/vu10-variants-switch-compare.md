@@ -11,4 +11,4 @@ the two results do not state one mesh (`fem_hash`), on a magnitude, an element f
 step time or component, and on a User Combination: a combination across variants is refused. It is
 never a deformed shape. The page names a variant by row index and label, never a path; main resolves
 the row (owner ruling option A, #2753). A view spec's shot takes `compare: "<label>"` for a difference
-still. The skill's `SKILL.md` documents the manifest and the viewer's study.
+still. The skill's `references/variants.md` documents the manifest and the viewer's study.
