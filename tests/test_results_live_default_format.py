@@ -9,9 +9,12 @@ the file that build's recorder would have written:
 * **pip** (``recorder('mpco', ...)`` raises): nothing for MPCO; the classic
   recorders it accepts are counted, and removed.
 
-``read_deck_mpco`` (a deck's ``.mpco``) is tested on the same capture: a
-staged program converts it; an unstaged one, with one ``analysis`` call or
-two, reads it with ``from_mpco`` after one warning (ruling (iii)).
+The stock MPCO route converts when the stage kinds are facts (a staged
+program) and otherwise refuses by name at ``__enter__``, leaving no
+recorder and no file (ADR 0131 D5). ``read_deck_mpco`` (a deck's ``.mpco``)
+is tested on the same capture: a staged program converts it; an unstaged
+one with no run record, with one ``analysis`` call or two, refuses by name
+and is never read with ``from_mpco``.
 
 The oracle for the reads is the committed capture: every node value the
 route returns equals ``Results.from_mpco`` of the same file. Warning counts
@@ -220,25 +223,126 @@ def test_a_real_stamp_refusal_is_skipped_too(files, tmp_path) -> None:
     assert len(ours) == 1 and "already stamped" in str(ours[0].message)
 
 
-def test_stock_with_mpco_reads_the_mpco_after_one_warning(files, tmp_path) -> None:
+def test_a_staged_stock_run_converts_and_reads_the_ladruno(
+    files, tmp_path, monkeypatch,
+) -> None:
+    """ADR 0131 D5: the kind is a fact (one static ``ops.stage``), so the
+    ``.mpco`` converts beside itself, is kept, and the read is the
+    ``.ladruno``, with no warning and never ``from_mpco``."""
+    def no_from_mpco(*a: Any, **k: Any) -> None:
+        raise AssertionError("the stock route read with Results.from_mpco")
+
     ops = FakeOps(files["mpco"])
     run, caught = _run(ops, tmp_path / "run", files["model"])
     target = tmp_path / "run.mpco"
     assert run.route == "mpco" and run.path == target
-    assert _cats(caught) == [DefaultRouteWarning]
-    assert "not converted" in str(caught[0].message)
+    assert caught == []
     (args,) = ops.recorder_calls
     assert args == mpco_ops_args(_spec().records, output_dir=str(tmp_path),
                                  filename="run.mpco")
     assert ops.live == {} and target.exists()
-    assert not (tmp_path / "run.ladruno").exists()
-    with warnings.catch_warnings():
+    assert not (tmp_path / "run.ladruno").exists()   # converted on read
+    with monkeypatch.context() as m, warnings.catch_warnings():
+        m.setattr(Results, "from_mpco", no_from_mpco)
         warnings.simplefilter("error")
         res = run.results()
     try:
+        assert [s.kind for s in res.stages] == ["static"]
         _assert_nodes_equal(res, files["mpco"], files["model"])
     finally:
         res.close()
+    assert (tmp_path / "run.ladruno").exists() and target.exists()
+    assert not (tmp_path / "run.partial").exists()
+
+
+def test_a_staged_stock_rerun_refuses_unless_overwrite(files, tmp_path) -> None:
+    run, _ = _run(FakeOps(files["mpco"]), tmp_path / "run", files["model"])
+    run.results().close()
+    ops = FakeOps(files["mpco"])
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        _run(ops, tmp_path / "run", files["model"])
+    assert ops.live == {} and ops.removed == [1]      # the probe is removed
+    run2, caught = _run(FakeOps(files["mpco"]), tmp_path / "run",
+                        files["model"], overwrite=True)
+    assert caught == []
+    run2.results().close()
+
+
+def _bogus_model(files: "dict[str, Path]", tmp: Path) -> Path:
+    """The staged springs archive with its one stage's analysis unknown."""
+    import h5py
+
+    model = Path(shutil.copy(files["model"], tmp / "bogus.h5"))
+    with h5py.File(model, "r+") as f:
+        f["opensees/stages/stage_000/analysis"].attrs["analysis"] = "Bogus"
+    return model
+
+
+def _femdata_archive(tmp: Path) -> Path:
+    path = tmp / "fem.h5"
+    truss_fem().to_h5(str(path))
+    return path
+
+
+@pytest.mark.parametrize("case, match", [
+    ("flat", "declares no ops.stage block"),
+    ("other", "declares no ops.stage block"),
+    ("femdata", "declares no ops.stage block"),
+    ("bogus", r"no kind as fact: .*'Bogus', which has no stage kind"),
+], ids=["unstaged-one-call", "unstaged-two-calls", "femdata-archive",
+        "stage-of-unknown-kind"])
+def test_a_stock_run_whose_kind_is_not_a_fact_refuses_by_name(
+    files, tmp_path, case, match,
+) -> None:
+    """ADR 0131 D5: no default stage kind. The refusal comes at
+    ``__enter__``, after the probe registered the recorder: the recorder
+    is removed, the probe's new file deleted, nothing converted, and no
+    warning stands in for the refusal. It names the remedies that work and
+    not ``convert_mpco``, which refuses an unstaged program too."""
+    if case == "femdata":
+        model = _femdata_archive(tmp_path)
+    elif case == "bogus":
+        model = _bogus_model(files, tmp_path)
+    else:
+        model = files[case]
+    ops = FakeOps(files["mpco"])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(StageKindRefused, match=match) as e:
+            with _spec().emit_default(tmp_path / "run", model_h5=model,
+                                      ops=ops):
+                raise AssertionError("the block ran")  # pragma: no cover
+    msg = str(e.value)
+    assert "ops.stage(...)" in msg and "analyze_steps" in msg
+    assert "convert_mpco(" not in msg and "Results.from_mpco" not in msg
+    assert caught == []
+    assert [c[0] for c in ops.recorder_calls] == ["mpco"]
+    assert ops.live == {} and ops.removed == [1]
+    assert sorted(p.name for p in tmp_path.iterdir()
+                  if p.suffix in (".mpco", ".ladruno")) == []
+
+
+def test_a_staged_stock_run_whose_stages_do_not_pair_refuses_on_read(
+    files, tmp_path,
+) -> None:
+    """The run recorded two ``MODEL_STAGE`` groups against one declared
+    stage: the kinds cannot be paired, so the read refuses by name and
+    writes nothing; the ``.mpco`` is kept and never read in its place."""
+    import h5py
+
+    two = Path(shutil.copy(files["mpco"], tmp_path / "two.mpco"))
+    with h5py.File(two, "r+") as f:
+        f.copy(f["MODEL_STAGE[1]"], "MODEL_STAGE[2]")
+    run, caught = _run(FakeOps(two), tmp_path / "run", files["model"])
+    assert caught == []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(StageKindRefused, match="cannot be paired") as e:
+            run.results()
+    assert "ops.stage(...)" in str(e.value) and caught == []
+    assert (tmp_path / "run.mpco").exists()
+    assert not (tmp_path / "run.ladruno").exists()
+    assert not (tmp_path / "run.partial").exists()
 
 
 @pytest.mark.parametrize("leaves", [False, True], ids=["clean", "partial-file"])
@@ -455,46 +559,54 @@ def test_a_refusal_that_is_not_about_kinds_raises(files, case, tmp_path) -> None
     assert DefaultRouteWarning not in _cats(caught)
 
 
-def test_a_stage_of_unknown_kind_warns_once_and_reads_the_mpco(
-    files, tmp_path,
+def _never_from_mpco(monkeypatch: Any) -> None:
+    def no_from_mpco(*a: Any, **k: Any) -> None:
+        raise AssertionError("read_deck_mpco fell back to Results.from_mpco")
+
+    monkeypatch.setattr(Results, "from_mpco", no_from_mpco)
+
+
+def test_a_deck_stage_of_unknown_kind_refuses_by_name(
+    files, tmp_path, monkeypatch,
 ) -> None:
     """A staged archive whose stage names no known kind is a kind refusal:
-    it falls back with one warning, and ``from_mpco`` then refuses the
-    archive on its own terms (its stage binding names the same token)."""
-    import h5py
-
-    model = Path(shutil.copy(files["model"], tmp_path / "bogus.h5"))
-    with h5py.File(model, "r+") as f:
-        f["opensees/stages/stage_000/analysis"].attrs["analysis"] = "Bogus"
+    it refuses by name, with no warning, and is never read with
+    ``from_mpco`` (ADR 0131 D5)."""
+    model = _bogus_model(files, tmp_path)
     src = shutil.copy(files["mpco"], tmp_path / "deck.mpco")
+    _never_from_mpco(monkeypatch)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        with pytest.raises(ValueError, match="no stage kind") as e:
+        with pytest.raises(StageKindRefused, match="Bogus") as e:
             read_deck_mpco(src, model_h5=model)
-    assert not isinstance(e.value, MPCOConversionRefused)  # from_mpco's own
-    ours = [w for w in caught if w.category is DefaultRouteWarning]
-    assert len(ours) == 1 and "Bogus" in str(ours[0].message)
-    assert not (tmp_path / "deck.ladruno").exists()
+    msg = str(e.value)
+    assert msg.startswith("read_deck_mpco: ") and "ops.stage(...)" in msg
+    assert "analyze_steps" in msg and "convert_mpco(" not in msg
+    assert caught == []
+    assert not (tmp_path / "deck.ladruno").exists() and Path(src).exists()
 
 
 @pytest.mark.parametrize("name", ["flat", "other"], ids=["one-call", "two-calls"])
-def test_an_unstaged_deck_warns_once_and_reads_the_mpco(
-    files, name, tmp_path,
+def test_an_unstaged_deck_with_no_run_record_refuses_by_name(
+    files, name, tmp_path, monkeypatch,
 ) -> None:
-    """Ruling (iii): no unstaged deck converts, one ``analysis`` call or two;
-    the one-call case is the one a rule-(i) acceptance would convert."""
+    """Ruling (iii): no unstaged deck converts without its run record, one
+    ``analysis`` call or two; it refuses by name (check 1) and names the
+    remedies, never falling back to ``from_mpco`` (ADR 0131 D5)."""
     model = files[name]
     src = _bridge_copy(SPRINGS, model, tmp_path / "deck.mpco")
+    _never_from_mpco(monkeypatch)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        res = read_deck_mpco(src, model_h5=model)
-    try:
-        assert _cats(caught) == [DefaultRouteWarning]
-        assert "not archived as fact" in str(caught[0].message)
-        assert not (tmp_path / "deck.ladruno").exists()
-        _assert_nodes_equal(res, src, model)
-    finally:
-        res.close()
+        with pytest.raises(StageKindRefused, match="check 1 \\(the record\\)") as e:
+            read_deck_mpco(src, model_h5=model)
+    msg = str(e.value)
+    assert "not archived as fact" in msg and "ops.stage(...)" in msg
+    assert "analyze_steps" in msg and "convert_mpco(" not in msg
+    assert isinstance(e.value.__cause__, StageKindRefused)
+    assert caught == []
+    assert not (tmp_path / "deck.ladruno").exists() and src.exists()
+    assert not (tmp_path / "deck.partial").exists()
 
 
 # ---------------------------------------------------------------------------

@@ -110,24 +110,44 @@ with `ops.fix(pg=..., dofs=...)` or `ops.fix_from_model()`. Emit warns
 `results.lineage.warnings` (warn-not-raise per ADR 0021 INV-2) or opt into
 loud-fail via `results.lineage.assert_clean()`. See `results.md`.
 
-### ❌ `Results.from_native(path)` without `model=`
-`model=` is **required** (TypeError otherwise). Canonical Composed-file
-pattern: `Results.from_native(path, model=OpenSeesModel.from_h5(path, fem_root="/model"))`.
-Same for `Results.from_mpco(model_h5=)` and `Results.from_recorders(model=)`.
-See `results.md`.
+### ❌ New code on `from_native` / `to_native` / `from_mpco` → ✅ `.ladruno`
+apeGmsh is moving to one results format, `.ladruno` (ADR 0131): the
+native `results.h5` path and `from_mpco` are being retired, and
+apeGmshViewer is `.ladruno`-only by decision. ✅ `Results.from_ladruno(path,
+model_h5="model.h5")`; a stock `.mpco` goes through
+`convert_mpco("run.mpco", "run.ladruno", model_h5="model.h5")` first;
+modes through `EigenResult.results()`. The old readers still open files
+and still *require* their broker (`from_native(model=)`,
+`from_mpco(model_h5=)`, also `from_recorders(model=)`: `TypeError`
+otherwise). See `results.md` §1.
+
+### ❌ A combination term named `MODEL_STAGE[1]` → ✅ the `ops.stage` name
+A `Term("stage", source)` names a stage by its `ops.stage` name, else
+`stage_<i>`; the file's `MODEL_STAGE[k]` group name is refused as
+`unresolved`. Open the results with `model_h5=` so the names are bound.
+A summing rule over a user result needs `linear=True` on it (else
+`not-linear`), and never sums a von Mises or a stored design field.
+See `results.md` §4 "Combinations and the user file".
 
 ### ❌ OS-capturing the human's desktop to "look" → ✅ visors
 Agents do not screenshot monitors or the live Qt window (that is the
 human's desk: other apps, secrets, the wrong display). ✅ Write
-`.apegmsh/visors/*.png` with `results.render` / `fem.render` (ADR 0094
-offscreen stills) and labeled `results.plot.*`, then read those files.
-`viewer()` stays the human surface.
+`.apegmsh/visors/*.png` and read those files. On Windows take them with
+`render_stills` (`apeGmsh.agent_view`, apeGmshViewer `--render`, ADR
+0128; `assess.md`). The VTK stills (`results.render` / `fem.render`,
+ADR 0094) are for Linux, where the app has no batch stills yet.
+Labeled `results.plot.*` works anywhere. `viewer()` stays the human
+surface.
 
 ### ❌ `Results.viewer(model_h5=...)`
 `Results.viewer` takes no `model_h5=`: the viewer reads `results.model`
-directly. CLI:
-`python -m apeGmsh.viewers run.h5` auto-resolves native Composed files;
-`--model-h5 PATH` is required ONLY for `.mpco` files (sibling pointer).
+directly. The Qt CLI `python -m apeGmsh.viewers <file>` still opens the
+retiring native and `.mpco` files (`--model-h5 PATH` is required for an
+`.mpco`). apeGmshViewer, the desktop app, is `.ladruno`-only by decision
+(ADR 0131 D1): hand it a `.ladruno`. It still reads a `<stem>.results.h5`
+until slice V1d deletes that path (D2), so do not write new native
+files for it. A set pairs by stem (`<stem>.h5`, `<stem>.ladruno`,
+`<stem>.user.h5`): opening any one opens the set.
 
 ### ❌ `h5_reader.materials()` returning a dict
 The dict-style accessors were removed. Today's `model.materials()` returns

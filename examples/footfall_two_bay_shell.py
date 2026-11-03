@@ -20,8 +20,9 @@ sys.path.insert(0, str(HERE.parent / "src"))
 
 import gmsh  # noqa: E402
 
-from apeGmsh import Results, apeGmsh  # noqa: E402
+from apeGmsh import apeGmsh  # noqa: E402
 from apeGmsh.opensees import apeSees  # noqa: E402
+from apeGmsh.results.user import UserFile  # noqa: E402
 
 # --- floor -----------------------------------------------------------------
 LX, LY = 6.0, 6.0          # one bay, m
@@ -122,16 +123,34 @@ worst = int(np.nanargmax(res_all.ratio))
 print(f"\nwhole-slab self excitation: worst node {res_all.nodes[worst]} "
       f"ratio {res_all.ratio[worst]:.3f} (a_p {100 * res_all.a_p[worst]:.3f} %g, "
       f"f_dom {res_all.f_dom[worst]:.2f} Hz, regime {res_all.regime[worst]})")
-h5 = res_all.to_results(fem, OUT / "footfall_two_bay.h5")
-r = Results.from_fem(fem, h5, kind="native")
-png = r.render(OUT / "footfall_ratio.png", view="contour", component="footfall_ratio")
-print(f"\nmap: {png}")
+# The map goes to the model's user-results file (ADR 0131 D6): one state-free
+# "footfall" entry, (1, N, 3) over every node, NaN off the response set.
+model_h5 = OUT / "footfall_two_bay.h5"
+ops.h5(str(model_h5))
+user_h5 = res_all.to_results(fem, OUT / "footfall_two_bay.user.h5", model_h5=model_h5)
+footfall = UserFile(user_h5).read_result("footfall")
+ratio_map = np.asarray(footfall.data)[0, :, footfall.components.index("footfall_ratio")]
+on_slab = np.isfinite(ratio_map)
+print(f"\nuser results: {user_h5} ({int(on_slab.sum())} slab nodes carry a ratio)")
 
-# --- plots: FRF, impulse waveform, per-mode contributions -------------------
+# --- plots: ratio map, FRF, impulse waveform, per-mode contributions -------
 import matplotlib  # noqa: E402
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+
+xyz = np.asarray(fem.nodes.coords)[on_slab]   # footfall.ids follow fem.nodes.ids
+fig0, ax0 = plt.subplots(figsize=(9, 4.6))
+cf = ax0.tricontourf(xyz[:, 0], xyz[:, 1], ratio_map[on_slab], levels=20, cmap="jet")
+fig0.colorbar(cf, ax=ax0, label="a_p / limit")
+ax0.set_aspect("equal")
+ax0.set_xlabel("x [m]")
+ax0.set_ylabel("y [m]")
+ax0.set_title("Footfall ratio, self excitation at every slab node (fails above 1)")
+fig0.tight_layout()
+png = OUT / "footfall_ratio.png"
+fig0.savefig(png, dpi=130)
+print(f"map: {png}")
 
 from apeGmsh.opensees.analysis.footfall import (  # noqa: E402
     dynamic_coefficient, resonant_buildup_factor, tolerance_limit, walking_high_frequency,
