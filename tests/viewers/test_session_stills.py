@@ -4,7 +4,7 @@ Secondary oracle (pixels; skip ≠ pass, ADR 0094): the layer laws are
 pinned by ``test_session_realize.py`` on a RecordingBackend; here the
 still client itself is exercised — the GL-skip discipline verbatim
 from the relocated ``render.py`` path, the file contract, and the
-decision-5 parity still against ``render_results(view='contour')``.
+decision-5 parity still against ``results.render(view='contour')``.
 """
 from __future__ import annotations
 
@@ -120,9 +120,9 @@ def test_empty_view_still_parity_with_render_results_mesh(
     still_results, tmp_path: Path, frames_match_or_skip,
 ) -> None:
     """The scene-IR substrate emission reproduces the shipped grey
-    still (``render_results(view='mesh')``, raw ``add_mesh``).
+    still (``results.render(view='mesh')``, raw ``add_mesh``).
 
-    Outlines OFF: ``render_results`` draws the raw mesh with its
+    Outlines OFF: ``results.render`` draws the raw mesh with its
     element edges and no feature-edge pass, so this pins the substrate
     against exactly that. Since S3 the boot style has BOTH buttons on
     (§3), which paints one more layer than the old still — a
@@ -151,10 +151,10 @@ def test_contour_still_parity_with_render_results(
 ) -> None:
     """Decision-5 pin at the pixel level: the session's one-shot
     realize (pose before extraction, session-authored legend) and
-    ``render_results(view='contour')`` (attach then sync, diagram-
-    registered legend) must paint the same picture.
+    ``results.render(view='contour')`` (once attach then sync and a
+    diagram-registered legend; the session path since X2-d) must paint the same picture.
 
-    Both style buttons off here: ``render_results(view='contour')``
+    Both style buttons off here: ``results.render(view='contour')``
     paints the bare contour (``ContourStyle.show_edges`` defaults to
     False and no feature-edge pass runs), while a session view boots
     with mesh + outlines on — and since S3 the "Mesh" button rides the

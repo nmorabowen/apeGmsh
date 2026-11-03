@@ -14,6 +14,12 @@ ADR 0094 S5: ``python -m apeGmsh.viewers render …`` writes stills via
 ``results.render`` / ``render_pack`` / ``fem.render``. The no-subcommand
 path must still open the Qt viewer. Drive ``main`` directly; skip is
 exit 0.
+
+VA6b (ADR 0128 slice 6): on Windows the render door draws through
+``apeGmsh.agent_view.render_stills`` with one ``apegmsh-view/1`` spec.
+The ``app_backend`` tests take that path on any platform with the app
+replaced by a fake that records the spec and writes stand-in PNGs; every
+other test is pinned to the VTK path, which Linux keeps (G2).
 """
 from __future__ import annotations
 
@@ -22,6 +28,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 import apeGmsh.viewers.__main__ as main_mod
@@ -72,6 +79,16 @@ class _StubResults:
         dest = Path(out_dir)
         self.pack_calls.append((dest, kwargs))
         return (dest / "mesh.png",)
+
+
+@pytest.fixture(autouse=True)
+def _vtk_backend_unless_asked(request, monkeypatch):
+    """Every test here runs the VTK path (Linux's, G2) on any platform,
+    except the ``app_backend`` tests, which take the Windows path."""
+    from apeGmsh.viewers import render as render_mod
+
+    if "app_backend" not in request.fixturenames:
+        monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
 
 
 @pytest.fixture
@@ -475,3 +492,232 @@ def test_render_subcommand_has_no_event_loop():
                 raise AssertionError(
                     f"forbidden name in {node.name}: {child.id}"
                 )
+
+
+# =====================================================================
+# VA6b: the Windows path, apegmsh-view/1 through agent_view
+# =====================================================================
+
+
+class _FakeApp:
+    """``agent_view.render_stills`` without the app: records each spec,
+    writes one stand-in PNG per shot and an all-ok manifest, as the app
+    does on exit 0 (``apeGmshViewer/src/spec/manifest.ts``)."""
+
+    def __init__(self) -> None:
+        self.specs: list[dict] = []
+
+    def __call__(self, spec, out, **kwargs):
+        import json
+
+        self.specs.append(json.loads(json.dumps(spec)))
+        out = Path(out)
+        assert not out.exists(), "the app refuses an --out that is not empty"
+        out.mkdir(parents=True)
+        shots = []
+        for shot in spec["shots"]:
+            (out / f"{shot['name']}.png").write_bytes(b"\x89PNG stand-in")
+            shots.append({"name": shot["name"], "status": "ok", "png": f"{shot['name']}.png"})
+        manifest = {"spec": spec["spec"], "shots": shots}
+        (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return manifest
+
+
+@pytest.fixture
+def app_backend(monkeypatch):
+    """The Windows path, on any platform, with a fake app."""
+    import apeGmsh.agent_view as agent_view
+    from apeGmsh.viewers import render as render_mod
+
+    fake = _FakeApp()
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "app")
+    monkeypatch.setattr(agent_view, "render_stills", fake)
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    return fake
+
+
+@pytest.fixture
+def ladruno_set(tmp_path: Path) -> Path:
+    """The demo's run as one stem: ``run.h5`` beside ``run.ladruno``,
+    the pair the app opens (``main/pairing.ts``). The demo writes
+    ``demo_model.h5`` / ``demo_results.ladruno``, which do not pair."""
+    import shutil
+
+    from apeGmsh.results import Results
+
+    src = tmp_path / "demo"
+    demo = Results.demo(n_steps=3, n_elements=4, path=src)
+    demo.close()
+    run = tmp_path / "set"
+    run.mkdir()
+    shutil.copy(src / "demo_model.h5", run / "run.h5")
+    shutil.copy(src / "demo_results.ladruno", run / "run.ladruno")
+    return run / "run.ladruno"
+
+
+def _auto_scale_oracle(ladruno: Path) -> float:
+    """G3's closed form, computed here from the raw slabs: 0.12 of the
+    bbox diagonal over the largest |u| component at the last step."""
+    from apeGmsh.results import Results
+
+    with Results.from_ladruno(ladruno, model_h5=ladruno.with_suffix(".h5")) as r:
+        coords = np.asarray(r.fem.nodes.coords, dtype=float)
+        stage = r.stage(r.stages[-1].id)
+        comps = set(stage.nodes.available_components())
+        peak = max(
+            float(np.nanmax(np.abs(np.asarray(stage.nodes.get(component=c, time=-1).values))))
+            for c in ("displacement_x", "displacement_y", "displacement_z") if c in comps
+        )
+    diag = float(np.linalg.norm(coords.max(axis=0) - coords.min(axis=0)))
+    return 0.12 * diag / peak
+
+
+def test_app_pack_is_one_v2_spec(app_backend, ladruno_set, tmp_path, capsys):
+    """G5: the pack is ONE apegmsh-view/1 spec (mesh, contour, deformed),
+    reactions dropped (G1), history kept as matplotlib (G6), and the
+    app's manifest kept beside the PNGs."""
+    import json
+
+    dest = tmp_path / "pack"
+    dest.mkdir()
+    (dest / "old.txt").write_text("a pack folder may hold files")
+    code = main(["render", str(ladruno_set), "--pack", str(dest), "--json"])
+    assert code == 0, capsys.readouterr()
+    assert len(app_backend.specs) == 1
+    spec = app_backend.specs[0]
+    assert spec["spec"] == "apegmsh-view/1"
+    assert Path(spec["files"]["model"]) == ladruno_set.with_suffix(".h5").resolve()
+    assert Path(spec["files"]["results"]) == ladruno_set.resolve()
+    shots = {s["name"]: s for s in spec["shots"]}
+    assert list(shots) == ["mesh", "contour", "deformed"]
+    assert "stage" not in shots["mesh"]
+    for name in ("contour", "deformed"):
+        assert shots[name]["stage"] == 0
+        assert shots[name]["step"] == 2  # the last of 3 steps
+        # v1's starter heuristic (uz first): the demo records all three axes.
+        assert shots[name]["contour"] == {"field": "DISPLACEMENT", "component": "z"}
+    assert "deform" not in shots["contour"]
+    assert shots["deformed"]["deform"]["scale"] == pytest.approx(
+        _auto_scale_oracle(ladruno_set), rel=1e-12,
+    )
+    for name in ("mesh.png", "contour.png", "deformed.png", "manifest.json", "old.txt"):
+        assert (dest / name).is_file(), name
+    out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert out["ok"] is True
+    written = [Path(p).name for p in out["written"]]
+    assert written[:3] == ["mesh.png", "contour.png", "deformed.png"]
+    assert "reactions.png" not in written
+
+
+def test_app_still_maps_the_flags(app_backend, ladruno_set, tmp_path):
+    """R13, R19, R20, R5-R8: component, step, deform, camera and size map onto one shot."""
+    out = tmp_path / "stills" / "ux.png"
+    code = main([
+        "render", str(ladruno_set), str(out),
+        "--view", "deformed", "--component", "displacement_x",
+        "--step", "-2", "--deform", "40", "--camera", "xz",
+        "--window", "640x480",
+    ])
+    assert code == 0
+    spec = app_backend.specs[-1]
+    assert spec["size"] == [640, 480]
+    (shot,) = spec["shots"]
+    assert shot["camera"] == "-y"
+    assert shot["step"] == 1
+    assert shot["contour"] == {"field": "DISPLACEMENT", "component": "x"}
+    assert shot["deform"] == {"scale": 40.0}
+    assert out.is_file()
+
+
+@pytest.mark.parametrize("camera, expected", [
+    ("iso", "iso"), ("xy", "top"), ("xz", "-y"), ("yz", "+x"),
+])
+def test_app_model_h5_is_a_mesh_shot(app_backend, ladruno_set, tmp_path, camera, expected):
+    """R1, R3-R7: a model.h5 on disk is the spec's files.model, no copy."""
+    model = ladruno_set.with_suffix(".h5")
+    out = tmp_path / "mesh.png"
+    assert main(["render", str(model), str(out), "--camera", camera]) == 0
+    spec = app_backend.specs[-1]
+    assert spec["files"] == {"model": str(model.resolve())}
+    assert spec["shots"] == [{"name": "mesh", "camera": expected}]
+    assert out.is_file()
+
+
+@pytest.mark.parametrize("name", ["run.mpco", "run.results.h5"])
+def test_app_refuses_every_source_but_ladruno(app_backend, tmp_path, capsys, name):
+    """R22b, R31, G8: .ladruno only; the refusal names it; no app run."""
+    src = tmp_path / name
+    if name.endswith(".h5"):
+        import h5py
+
+        with h5py.File(src, "w") as f:
+            f.create_group("stages")
+    else:
+        src.write_bytes(b"x")
+    code = main(["render", str(src), str(tmp_path / "x.png")])
+    assert code == 2
+    assert ".ladruno" in capsys.readouterr().err
+    assert app_backend.specs == []
+
+
+@pytest.mark.parametrize("flags, needle", [
+    (["--view", "reactions"], "G1"),
+    (["--view", "contour", "--deform", "velocity,2"], "G4"),
+])
+def test_app_refuses_the_dropped_stills(app_backend, ladruno_set, tmp_path, capsys, flags, needle):
+    code = main(["render", str(ladruno_set), str(tmp_path / "x.png"), *flags])
+    assert code == 2
+    assert needle in capsys.readouterr().err
+    assert app_backend.specs == []
+
+
+def test_app_model_h5_must_be_the_stem_model(app_backend, ladruno_set, tmp_path, capsys):
+    """The app opens a .ladruno with its own <stem>.h5; another model is refused."""
+    other = tmp_path / "other.h5"
+    other.write_bytes(ladruno_set.with_suffix(".h5").read_bytes())
+    code = main(["render", str(ladruno_set), str(tmp_path / "x.png"), "--model-h5", str(other)])
+    assert code == 2
+    assert "stem rule" in capsys.readouterr().err
+    assert app_backend.specs == []
+
+
+def test_app_without_the_app_exits_2(ladruno_set, tmp_path, monkeypatch, capsys):
+    """G9: no app is an error, never a silent skip."""
+    import apeGmsh.agent_view as agent_view
+    from apeGmsh.viewers import render as render_mod
+
+    def _missing(spec, out, **kwargs):
+        raise FileNotFoundError("apeGmshViewer was not found")
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "app")
+    monkeypatch.setattr(agent_view, "render_stills", _missing)
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    out = tmp_path / "x.png"
+    assert main(["render", str(ladruno_set), str(out)]) == 2
+    assert "apeGmshViewer was not found" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_vtk_backend_never_reaches_agent_view(patch_open_results, tmp_path, monkeypatch):
+    """G2: the Linux path is unchanged; agent_view is never called."""
+    import apeGmsh.agent_view as agent_view
+
+    def _boom(*a, **k):
+        raise AssertionError("the VTK path called agent_view.render_stills")
+
+    monkeypatch.setattr(agent_view, "render_stills", _boom)
+    fpath = tmp_path / "run.ladruno"
+    fpath.write_bytes(b"x")
+    assert main(["render", str(fpath), str(tmp_path / "x.png")]) == 0
+    assert patch_open_results["results"][0].render_calls
+
+
+@pytest.mark.parametrize("platform, backend", [
+    ("win32", "app"), ("linux", "vtk"), ("darwin", "vtk"),
+])
+def test_stills_backend_is_the_platform_rule(monkeypatch, platform, backend):
+    from apeGmsh.viewers import render as render_mod
+
+    monkeypatch.undo()  # drop the autouse pin: this test reads the real switch
+    monkeypatch.setattr(render_mod.sys, "platform", platform)
+    assert render_mod._stills_backend() == backend
