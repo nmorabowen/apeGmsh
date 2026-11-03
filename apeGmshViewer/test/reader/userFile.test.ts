@@ -8,7 +8,9 @@
 // (the PR body says how); this file holds the rules in CI.
 //
 // The staleness tests pair the user file with a copy of the repository's
-// truss2d.ladruno, whose rf1 is a cross-language golden (test/reader/rf1.test.ts).
+// truss2d.ladruno, whose rf1 is a cross-language golden (test/reader/rf1.test.ts),
+// or (VU7a, the `/modes` row rule) with fixtures/ladruno_modes.ladruno, whose two
+// eigenvalues test/reader/userModes.test.ts holds as Python reads them.
 
 import assert from "node:assert/strict";
 import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
@@ -24,6 +26,9 @@ await h5wasm.ready;
 const H5 = h5wasm as unknown as UserH5;
 const TRUSS = fileURLToPath(new URL("../../../tests/fixtures/ladruno/truss2d.ladruno", import.meta.url));
 const TRUSS_RF1 = "rf1:76a404478cbb9ef919c2d79a676fbe1a0a300712819b344edd9a43e7289cfcc3";
+const MODES = fileURLToPath(new URL("../../fixtures/ladruno_modes.ladruno", import.meta.url));
+/** fixtures/ladruno_modes.ladruno's LAMBDA of modes 1 and 2 on stage_0 STEP_0, as Python's `recorded_lambdas` reads them. */
+const LAMBDAS = [381.9660112501052, 2618.0339887498953];
 const FEM = "fedcba9876543210fedcba9876543210";
 const MODEL = "0123456789abcdef0123456789abcdef";
 const list = (d: string) => readdirSync(d);
@@ -127,13 +132,13 @@ function entry(results: G, link: string, o: EntryOpts): G {
   return g;
 }
 
-/** A two-mode `/modes` table (h5-schema.md `/modes`), checked as a zone by this slice. */
-function modesTable(z: G, drop: string | null = null, lam: number[] = [4, 9]): void {
+/** A two-mode `/modes` table (h5-schema.md `/modes`). */
+function modesTable(z: G, drop: string | null = null, lam: number[] = [4, 9], step = 1): void {
   z.create_attribute("components", "MX,MY");
   const cols: [string, (g: G, n: string) => unknown][] = [
     ["host", (g, n) => str(g, n, ["stage_0", "stage_0"])],
     ["kind", (g, n) => str(g, n, ["eigen", "eigen"])],
-    ["step", (g, n) => i4(g, n, [1, 1])],
+    ["step", (g, n) => i4(g, n, [step, step])],
     ["mode", (g, n) => i4(g, n, [1, 2])],
     ["lambda", (g, n) => f8(g, n, lam)],
     ["period", (g, n) => f8(g, n, lam.map((x) => (2 * Math.PI) / Math.sqrt(Math.abs(x) || 1)))],
@@ -145,6 +150,63 @@ function modesTable(z: G, drop: string | null = null, lam: number[] = [4, 9]): v
   for (const [name, write] of cols) if (name !== drop) write(z, name);
 }
 
+/** One result of a spectrum case: `(on, label, ids or null, components)`. */
+type Quantity = [string, string, number[] | null, string[]];
+
+function quantities(root: G, s: number, qs: Quantity[]): void {
+  const results = root.create_group("RESULTS") as G;
+  const families = new Map<string, G>();
+  for (const [on, label, ids, comps] of qs) {
+    if (!families.has(on)) families.set(on, results.create_group(on) as G);
+    const h = families.get(on)!.create_group(label) as G;
+    const n = ids?.length ?? 1;
+    f8(h, "DATA", Array.from({ length: s * n * comps.length }, (_, k) => k / 3), [s, n, comps.length]);
+    i4(h, "STEP", Array.from({ length: s }, (_, k) => k));
+    f8(h, "TIME", Array.from({ length: s }, (_, k) => k));
+    if (ids) i4(h, "ID", ids, [n, 1]);
+    h.create_attribute("COMPONENTS", comps.join(","));
+  }
+}
+
+interface CaseOpts {
+  name?: string;
+  kind?: string;
+  direction?: number;
+  modes?: number[];
+  damping?: number[];
+  periods?: number[];
+  results?: Quantity[];
+  reference?: Quantity[];
+}
+
+const BASE_SHEAR: Quantity = ["ON_DOMAIN", "base_shear", null, ["Vx", "Vy"]];
+const DISP: Quantity = ["ON_NODES", "DISPLACEMENT", [1, 2, 3], ["Ux", "Uy"]];
+
+/** `/spectra/<link>` as h5-schema.md lays it out (and Python's `write_spectra` writes it). */
+function spectrumCase(z: G, link: string, o: CaseOpts = {}): G {
+  const g = z.create_group(link) as G;
+  g.create_attribute("name", o.name ?? "Ex");
+  g.create_attribute("KIND", o.kind ?? "static");
+  g.create_attribute("direction", Int32Array.of(o.direction ?? 1));
+  g.create_attribute("scale", Float64Array.of(9.81));
+  const sp = g.create_group("spectrum") as G;
+  f8(sp, "T", o.periods ?? [0, 0.5, 1, 2]);
+  f8(sp, "Sa", [0.4, 1, 0.6, 0.3]);
+  const modes = o.modes ?? [1, 2];
+  const m = g.create_group("modes") as G;
+  i4(m, "mode", modes);
+  str(m, "kind", modes.map(() => "eigen"));
+  f8(m, "lambda", modes.map((k) => LAMBDAS[k - 1] ?? 100 * k));
+  f8(m, "sa_period", modes.map(() => 0));
+  f8(m, "gamma", modes.map((k) => 1 / k));
+  f8(m, "sa", modes.map(() => 5));
+  f8(m, "damping", o.damping ?? modes.map(() => 0.05));
+  const results = o.results ?? [BASE_SHEAR, DISP];
+  quantities(g, modes.length, results);
+  quantities(g.create_group("reference") as G, 1, o.reference ?? results);
+  return g;
+}
+
 interface UserOpts {
   resultsHash?: string | null;
   femHash?: string;
@@ -153,6 +215,8 @@ interface UserOpts {
   rows?: Row[];
   /** writes the `/modes` group (default: a valid two-mode table) */
   modes?: (z: G) => void;
+  /** writes the `/spectra` group (default: one valid case, `Ex`) */
+  spectra?: (z: G) => void;
   edit?: (f: h5wasm.File) => void;
 }
 
@@ -187,7 +251,7 @@ function writeUser(path: string, o: UserOpts = {}): string {
     entry(r, "r2", { name: "pier P1 base", target: "entities" });
     entry(r, "r10", { name: "energy", target: "domain", basis: "results" });
     (o.modes ?? ((z: G) => modesTable(z)))(f.create_group("modes") as G);
-    f.create_group("spectra"); // listed by name only (VU7)
+    (o.spectra ?? ((z: G) => spectrumCase(z, "s0")))(f.create_group("spectra") as G);
     o.edit?.(f);
   } finally {
     f.close();
@@ -262,7 +326,7 @@ test("a set's user file reads: /meta, the generation in force, the /results inde
   assert.deepEqual(r.refused.map((x) => [x.name, x.reason, x.row]), [["pier P1 base", "unresolved", 2]]);
 });
 
-test("the index reads no /results DATA value (the first-frame criterion: only shapes)", (t: TestContext) => {
+test("the index reads no /results or /spectra DATA value (the first-frame criterion: only shapes)", (t: TestContext) => {
   const s = set();
   const read: string[] = [];
   const proto = h5wasm.Dataset.prototype;
@@ -280,8 +344,9 @@ test("the index reads no /results DATA value (the first-frame criterion: only sh
   assert.ok(r.ok, r.ok ? "" : r.error);
   assert.ok(read.some((p) => p.startsWith("/combinations/")), "the probe sees reads (the mock is live)");
   assert.deepEqual(read.filter((p) => /^\/results\/.*\/DATA$/.test(p)), []);
-  // /modes is a small table read whole for its zone check, as Python's staleness reads it; /spectra is never read.
-  assert.deepEqual(read.filter((p) => /^\/spectra\//.test(p)), []);
+  // /modes is a small table read whole, as Python's staleness reads it; a /spectra case is read but for its DATA.
+  assert.ok(read.some((p) => p === "/spectra/s0/modes/lambda"), "the case's modes table is read");
+  assert.deepEqual(read.filter((p) => /^\/spectra\/.*\/DATA$/.test(p)), []);
 });
 
 test("a bad /meta refuses the file, naming why (Python's UserFileRefused)", () => {
@@ -549,7 +614,11 @@ test("a model whose /opensees/combinations cannot be read refuses the combinatio
 test("/modes is checked as a zone: a missing key, another major, a missing column or a bad table stales it", () => {
   const good = set();
   const u = readUserFile(H5, good.user, good.model);
-  assert.deepEqual(u.modes, { ok: true, value: { rows: 2, components: ["MX", "MY"] } });
+  const table = ok(u.modes!);
+  assert.deepEqual(table.components, ["MX", "MY"]);
+  assert.deepEqual(table.rows.map((r) => [r.host, r.kind, r.step, r.mode, r.lambda, r.generalizedMass]), [["stage_0", "eigen", 1, 1, 4, 1], ["stage_0", "eigen", 1, 2, 9, 1]]);
+  // The (M, C) tables are row-major: row i holds one value per component.
+  assert.deepEqual(table.rows.map((r) => [r.participation, r.massRatio, r.cumulativeRatio]), [[[0.9, 0.1], [0.7, 0], [0.7, 0]], [[0.1, 0.8], [0, 0.6], [0.7, 0.6]]]);
   const cases: [string, UserOpts, RegExp][] = [
     ["key gone", { versions: { modes_schema_version: null } }, /^refused: \/modes: \/meta has no version key for zone 'modes'$/],
     ["major 2", { versions: { modes_schema_version: "2.0.0" } }, /^refused: \/modes: modes_schema_version 2\.0\.0: this app reads major 1 only$/],
@@ -576,4 +645,134 @@ test("a model.h5 whose opensees zone is newer than this app gives one banner, na
   assert.ok(u.combinations.ok);
   assert.equal(u.warnings.length, 1, JSON.stringify(u.warnings));
   assert.ok(u.warnings[0]!.startsWith(`${s.model} (read for /opensees/combinations): opensees_schema_version 2.99.0 is newer than this app`), u.warnings[0]);
+});
+
+// ---- /modes rows: A6's lambda rule (VU7a) ----------------------------------
+
+/** A set whose results file is fixtures/ladruno_modes.ladruno, with a `/modes` table over its two modes. */
+function modalSet(lam: number[], step = 0) {
+  const s = set({ modes: (z) => modesTable(z, null, lam, step) });
+  copyFileSync(MODES, s.results);
+  return s;
+}
+
+test("a /modes row is current when its lambda equals the .ladruno's LAMBDA, and stale past 1e-9 relative", () => {
+  const cur = modalSet(LAMBDAS);
+  const st = staleness(H5, readUserFile(H5, cur.user, cur.model), cur.model, cur.results, list);
+  assert.equal(st.zones["modes"]!.stale, false);
+  assert.deepEqual(st.modes, [{ stale: false, reason: "" }, { stale: false, reason: "" }]);
+  // step -1 names the only set (STEP_0).
+  const only = modalSet(LAMBDAS, -1);
+  assert.deepEqual(staleness(H5, readUserFile(H5, only.user, only.model), only.model, only.results, list).modes.map((v) => v.stale), [false, false]);
+  const moved = modalSet([LAMBDAS[0]!, LAMBDAS[1]! * (1 + 2e-9)]);
+  const v = staleness(H5, readUserFile(H5, moved.user, moved.model), moved.model, moved.results, list).modes;
+  assert.deepEqual(v[0], { stale: false, reason: "" });
+  assert.equal(v[1]!.stale, true);
+  assert.match(v[1]!.reason, /^lambda 2618\.03399\d* here, 2618\.0339887498953 in the results file \(more than 1e-09 relative\)$/);
+});
+
+test("a /modes row with no proof is stale: no results file, no such set, a stale zone, a modal record that does not read", () => {
+  const s = modalSet(LAMBDAS);
+  const u = readUserFile(H5, s.user, s.model);
+  assert.deepEqual(staleness(H5, u, s.model, null, list).modes, [0, 1].map(() => ({ stale: true, reason: "no results file to compare lambda with" })));
+  // The truss records no mode.
+  copyFileSync(TRUSS, s.results);
+  assert.deepEqual(staleness(H5, u, s.model, s.results, list).modes.map((v) => v.reason), [0, 1].map(() => "the results file records no modes on stage_0"));
+  const step = modalSet(LAMBDAS, 1);
+  assert.deepEqual(staleness(H5, readUserFile(H5, step.user, step.model), step.model, step.results, list).modes.map((v) => v.reason), [0, 1].map(() => "the results file records no STEP_1 on stage_0"));
+  // A row of a stale zone is stale with the zone's reason.
+  writeModel(s.model, { fem: "00000000000000000000000000000000", rows: [M1] });
+  copyFileSync(MODES, s.results);
+  const remodel = staleness(H5, readUserFile(H5, s.user, s.model), s.model, s.results, list);
+  assert.equal(remodel.modes.length, 2);
+  for (const v of remodel.modes) assert.match(v.reason, /^fem_hash differs/);
+  // A results file that is not HDF5: the modes cannot be read, so every row is stale, and staleness still answers.
+  const broken = join(s.dir, "broken.ladruno");
+  copyFileSync(s.model, broken);
+  writeModel(s.model, { rows: [M1] });
+  const v = staleness(H5, readUserFile(H5, s.user, s.model), s.model, broken, list).modes;
+  assert.deepEqual(v.map((x) => x.stale), [true, true]);
+  // A refused table has no rows to judge.
+  const refused = set({ modes: (z) => modesTable(z, "period") });
+  assert.deepEqual(staleness(H5, readUserFile(H5, refused.user, refused.model), refused.model, refused.results, list).modes, []);
+});
+
+// ---- /spectra: the cases (VU7a) --------------------------------------------
+
+test("a /spectra case reads: name, direction, scale, the spectrum, the modes table, its results by shape", () => {
+  const s = set();
+  const sp = ok(readUserFile(H5, s.user, s.model).spectra!);
+  assert.deepEqual(sp.refused, []);
+  assert.equal(sp.cases.length, 1);
+  const c = sp.cases[0]!;
+  assert.deepEqual([c.name, c.link, c.direction, c.scale], ["Ex", "s0", 1, 9.81]);
+  assert.deepEqual([c.periods, c.sa], [[0, 0.5, 1, 2], [0.4, 1, 0.6, 0.3]]);
+  assert.deepEqual(c.modes, [
+    { mode: 1, kind: "eigen", lambda: LAMBDAS[0], saPeriod: 0, gamma: 1, sa: 5, damping: 0.05 },
+    { mode: 2, kind: "eigen", lambda: LAMBDAS[1], saPeriod: 0, gamma: 0.5, sa: 5, damping: 0.05 },
+  ]);
+  assert.deepEqual(c.results.map((q) => [q.target, q.label, q.components, q.shape, q.ids]), [
+    ["domain", "base_shear", ["Vx", "Vy"], [2, 1, 2], null],
+    ["nodes", "DISPLACEMENT", ["Ux", "Uy"], [2, 3, 2], [1, 2, 3]],
+  ]);
+  assert.deepEqual(c.reference.map((q) => q.shape), [[1, 1, 2], [1, 3, 2]]);
+  // A /spectra group with no version key refuses the zone; an empty one holds no case.
+  assert.equal(readUserFile(H5, writeUser(join(s.dir, "n.user.h5"), { versions: { spectra_schema_version: null } }), s.model).spectra!.ok, false);
+  assert.deepEqual(ok(readUserFile(H5, writeUser(join(s.dir, "e.user.h5"), { spectra: () => undefined }), s.model).spectra!), { cases: [], refused: [] });
+});
+
+test("a bad /spectra case refuses alone, with Python's reason; duplicate names refuse both; the zone still opens", () => {
+  const s = set({
+    spectra: (z) => {
+      spectrumCase(z, "s0", { name: "Ex" });
+      spectrumCase(z, "s1", { name: "Ey", direction: 2 });
+      spectrumCase(z, "s2", { name: "elements", results: [["ON_ELEMENTS", "force", [1], ["N"]]] });
+      spectrumCase(z, "s3", { name: "Ey" });
+      spectrumCase(z, "s4", { name: " padded" });
+      spectrumCase(z, "s5", { name: "dynamic", kind: "transient" });
+      spectrumCase(z, "s6", { name: "wet", damping: [0.05, 1.5] });
+      spectrumCase(z, "s7", { name: "unmatched", reference: [BASE_SHEAR] });
+      spectrumCase(z, "s8", { name: "repeat", modes: [1, 1] });
+      spectrumCase(z, "s9", { name: "flat", periods: [0, 1, 1, 2] });
+      spectrumCase(z, "s10", { name: "down", direction: 0 });
+      z.create_group("notacase");
+    },
+  });
+  const sp = ok(readUserFile(H5, s.user, s.model).spectra!);
+  assert.deepEqual(sp.cases.map((c) => c.name), ["Ex"]);
+  const by = (name: string) => sp.refused.filter((r) => r.name === name);
+  assert.deepEqual(sp.refused.map((r) => [r.name, r.reason, r.row]).sort((a, b) => Number(a[2]) - Number(b[2])), [
+    ["Ey", "duplicate", 1],
+    ["elements", "bad-param", 2],
+    ["Ey", "duplicate", 3],
+    [" padded", "empty-name", 4],
+    ["dynamic", "bad-param", 5],
+    ["wet", "bad-param", 6],
+    ["unmatched", "bad-param", 7],
+    ["repeat", "bad-param", 8],
+    ["flat", "bad-param", 9],
+    ["down", "bad-param", 10],
+  ]);
+  assert.match(by("elements")[0]!.detail, /\/spectra\/s2\/RESULTS\/ON_ELEMENTS: the family ON_ELEMENTS is not in spectra 1\.0\.0, whose cases hold ON_DOMAIN, ON_NODES only$/);
+  assert.match(by("dynamic")[0]!.detail, /@KIND is "transient", not 'static'$/);
+  assert.match(by("wet")[0]!.detail, /damping must be NaN or lie in \(0, 1\)$/);
+  assert.match(by("unmatched")[0]!.detail, /reference\/RESULTS must hold the results of RESULTS, with their ids and columns$/);
+  assert.match(by("repeat")[0]!.detail, /modes\/mode must be distinct, 1-based and fit i4$/);
+  assert.match(by("flat")[0]!.detail, /spectrum T must be non-negative and strictly increasing$/);
+  assert.match(by("down")[0]!.detail, /direction 0 is 1-based$/);
+  assert.equal(by("Ey")[0]!.detail, '2 cases are named "Ey"');
+});
+
+test("/spectra is versioned as its zone: another major refuses it, a newer minor opens with one banner, and it stales by the model", () => {
+  const major = set({ versions: { spectra_schema_version: "2.0.0" } });
+  const u = readUserFile(H5, major.user, major.model);
+  assert.ok(!u.spectra!.ok && /spectra_schema_version 2\.0\.0: this app reads major 1 only/.test(u.spectra!.reason));
+  assert.ok(u.modes!.ok, "the other zones still read");
+  const newer = set({ versions: { spectra_schema_version: "1.3.0" } });
+  const n = readUserFile(H5, newer.user, newer.model);
+  assert.ok(n.spectra!.ok);
+  assert.deepEqual(n.warnings.filter((w) => /spectra_schema_version 1\.3\.0 is newer than this app/.test(w)).length, 1);
+  const s = set();
+  writeModel(s.model, { fem: "00000000000000000000000000000000", rows: [M1] });
+  assert.match(staleness(H5, readUserFile(H5, s.user, s.model), s.model, s.results, list).zones["spectra"]!.reason, /^fem_hash differs/);
 });
