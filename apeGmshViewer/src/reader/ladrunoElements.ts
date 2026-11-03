@@ -18,9 +18,11 @@
 //   nodal `<RESULT>/<label>` by accident of spelling;
 // - positions are the file's: natural coordinates are QUADRATURE/GP_PARAM of the
 //   bucket's MODEL/ELEMENTS group, row g for GAUSS_ID g, never a TS table of rules.
-//   They are offered (for the Gauss-to-node extrapolation) only on PARAM_DOMAIN
-//   "[-1,1]", the domain state/extrapolation.ts's shape functions read; another
-//   domain ("[0,1]", "bary") warns and offers none, never a re-mapped guess;
+//   They are offered (for the Gauss-to-node extrapolation) on PARAM_DOMAIN
+//   "[-1,1]", the domain state/extrapolation.ts's shape functions read, and on a
+//   "bary" rule whose frame is known (`baryToGmsh`, Python `gp_param_to_gmsh`);
+//   another domain ("[0,1]"), or a "bary" rule of an unknown TOPOLOGY / FAMILY,
+//   warns and offers none, never a re-mapped guess;
 // - a Gauss bucket that disagrees with itself is refused by name, with the reason,
 //   in `GaussGroupInfo.refused`, and never read: a GAUSS_ID count that is not
 //   GP_PARAM's (or a GLOBAL_GP_COORDS width that is no multiple of it), NUM_COLUMNS
@@ -46,6 +48,35 @@ const H5T_INTEGER = 0;
 const H5T_FLOAT = 1;
 /** The PARAM_DOMAIN whose GP_PARAM rows are the natural coordinates state/extrapolation.ts reads. */
 const EXTRAPOLATION_DOMAIN = "[-1,1]";
+/** The simplex PARAM_DOMAIN: free barycentric coordinates, converted by `baryToGmsh`. */
+const BARY_DOMAIN = "bary";
+/** Free barycentric columns per simplex TOPOLOGY (schema v1 §3 vocabulary; Python `_SIMPLEX_NDIR`). */
+const BARY_NDIR: Readonly<Record<string, number>> = { tri: 2, tet: 3 };
+
+/**
+ * A `"bary"` GP_PARAM's rows in gmsh reference coordinates (`(u, v[, w])` on the
+ * unit simplex, node 0 carrying `1 - Σ`, gmsh corner order), or why its frame
+ * cannot be told. Python `gp_param_to_gmsh` / `_node0_first`, restated (ADR 0112
+ * D4: read as context, never imported). The frame is the element's:
+ * - Lagrange tri/tet and BezierTet10 are node-0-first: column k is node k's
+ *   weight, the last node's is implicit (fork `Ladruno_ElementResults.h`
+ *   `computeGlobalGP`: Tri31 `N0 = ξ, N1 = η`, tet `N0 = r, …, N3 = 1 - Σ`;
+ *   `BezierTet10.cpp` `N0 = L1²`), so gmsh is columns 1.. of the full row;
+ * - BezierTri6, the one bernstein triangle, writes `(ξ1, ξ2)` as the weights of
+ *   nodes 1 and 2 (`BezierTri6.cpp` `N0 = ξ3²`): gmsh already.
+ * The element's nodes are taken in gmsh corner order: the bridge emits these
+ * classes with identity node order (`_element_capabilities.py` `node_reorder`).
+ * Any other TOPOLOGY or FAMILY, or a row width that is not the topology's, has
+ * no known frame: a guess would silently rotate the points.
+ */
+export function baryToGmsh(rows: readonly (readonly number[])[], topology: unknown, family: unknown): number[][] | string {
+  const ndir = typeof topology === "string" ? BARY_NDIR[topology] : undefined;
+  if (ndir === undefined) return `TOPOLOGY ${JSON.stringify(topology ?? null)} is not a simplex with a known barycentric frame (known: ${Object.keys(BARY_NDIR).map((t) => JSON.stringify(t)).join(", ")})`;
+  if (family !== "lagrange" && family !== "bernstein") return `no known barycentric frame for TOPOLOGY ${JSON.stringify(topology)}, FAMILY ${JSON.stringify(family ?? null)}`;
+  if (rows.some((r) => r.length !== ndir)) return `its GP_PARAM rows are not the ${ndir} free barycentric coordinates of a ${topology}`;
+  if (topology === "tri" && family === "bernstein") return rows.map((r) => [...r]);
+  return rows.map((r) => [...r.slice(1), 1 - r.reduce((a, x) => a + x, 0)]);
+}
 
 interface ENode {
   path: string;
@@ -293,9 +324,16 @@ export class LadrunoGauss {
     });
     const domain = oneValue(model.attrs["PARAM_DOMAIN"]?.value);
     let naturalCoords: number[][] | null = null;
-    if (domain === EXTRAPOLATION_DOMAIN) {
+    const gpRows = () => {
       const flat = gp.value instanceof Float64Array ? gp.value : Float64Array.from(gp.value as ArrayLike<number>);
-      naturalCoords = Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * ndir, (r + 1) * ndir)));
+      return Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * ndir, (r + 1) * ndir)));
+    };
+    if (domain === EXTRAPOLATION_DOMAIN) {
+      naturalCoords = gpRows();
+    } else if (domain === BARY_DOMAIN) {
+      const m = baryToGmsh(gpRows(), oneValue(model.attrs["TOPOLOGY"]?.value), oneValue(model.attrs["FAMILY"]?.value));
+      if (typeof m === "string") warnings.push(`${bg.path}: ${model.path}@PARAM_DOMAIN is "${BARY_DOMAIN}", but ${m}; its Gauss points are read, but not extrapolated to nodes`);
+      else naturalCoords = m;
     } else {
       warnings.push(`${bg.path}: ${model.path}@PARAM_DOMAIN is ${JSON.stringify(domain ?? null)}, not "${EXTRAPOLATION_DOMAIN}"; its Gauss points are read, but not extrapolated to nodes`);
     }

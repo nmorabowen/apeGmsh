@@ -217,13 +217,14 @@ export function extrapolationVerdict(groups: readonly PlanGroupInput[], cellOf: 
     }
     codesSeen.set(g.id, codes);
     if (g.nGauss > 1) {
-      // #2187: a `.ladruno` group offers none when its QUADRATURE's PARAM_DOMAIN is not the [-1,1] these shape functions read;
+      // #2187: a `.ladruno` group offers none when its QUADRATURE's PARAM_DOMAIN is neither the [-1,1] these shape functions
+      // read nor a "bary" rule whose frame reader/ladrunoElements.ts `baryToGmsh` knows;
       // #2274: a native simplex group offers none when its rows are neither its class's older table nor its current one.
       if (!g.naturalCoords) {
         matrix.push(
           `group ${g.id} has no natural coordinates these shape functions can read: a native _natural_coords that is not floating point, ` +
             `a native triangle or tet group whose _natural_coords match neither the Gauss table older apeGmsh versions wrote for its class nor the current one (#2274), ` +
-            `or a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]" (the warning shown when the file opened names the class or the domain)`,
+            `or a .ladruno QUADRATURE whose PARAM_DOMAIN is neither "[-1,1]" nor a "bary" rule of a known frame (the warning shown when the file opened names the class or the domain)`,
         );
       }
       else {
