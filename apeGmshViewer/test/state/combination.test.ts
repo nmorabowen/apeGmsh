@@ -19,7 +19,9 @@
 // marked current, or stale where a test says so.
 
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
@@ -29,15 +31,18 @@ import { userCombinationColumn, type Bridge } from "../../src/effects.ts";
 import { familiesOf, mountPhase } from "../../src/panels/phase.ts";
 import { deformLines } from "../../src/panels/legend.ts";
 import { readUserFile, readUserSet, type UserH5 } from "../../src/reader/userFile.ts";
-import { readCaseValues, spectrumSource, type CaseRead } from "../../src/reader/userSpectra.ts";
+import { canonicalNodal, readCaseValues, spectrumSource, type CaseRead } from "../../src/reader/userSpectra.ts";
 import { combinationColours, CombinationFeed, combinationContourKey, contourShownKey, toLinear, type CombinationFetch } from "../../src/renderer/contour.ts";
-import { compileShot } from "../../src/spec/compile.ts";
+import { compileShot, type CombinationFields } from "../../src/spec/compile.ts";
+import type { SetDescription } from "../../src/spec/describe.ts";
+import { manifestEntry } from "../../src/spec/manifest.ts";
+import { opened } from "../contour/harness.ts";
 import { validateSpec } from "../../src/spec/spec.ts";
 import { viewVerdict } from "../../src/spec/verdict.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
 import { NO_DATA_RGB, primitiveColours } from "../../src/state/contour.ts";
 import { initialState, reduce, userEventOf } from "../../src/state/reduce.ts";
-import { combinationRequestOf, combinationTableOf, contourFieldsOf, contourView, deformOf, deformView, noticesOf } from "../../src/state/selectors.ts";
+import { combinationFieldsOf, combinationRequestOf, combinationTableOf, contourFieldsOf, contourView, deformOf, deformView, noticesOf } from "../../src/state/selectors.ts";
 import type { Store } from "../../src/state/store.ts";
 import type { Event, MeshInfo, State, UserReadIn } from "../../src/state/types.ts";
 
@@ -99,6 +104,11 @@ function storeOf(s: State): Store & { events: Event[] } {
     },
   } as unknown as Store & { events: Event[] };
 }
+
+/** A set description with no results and no groups: a combination shot reads none of it. */
+const NO_SET = { files: { results: null }, pairing: { state: "none" }, stages: [], groups: [] } as unknown as SetDescription;
+/** What the render mode hands the compiler: the combination's fields on the open set. */
+const fieldsIn = (s: State): CombinationFields => (name) => combinationFieldsOf(s, name);
 
 /** Show combination `name` as the phase bar does: the state, then colouring by contour. */
 const show = (s: State, name: string): State => reduce(reduce(s, { type: "setPhase", at: { kind: "combination", name } }), { type: "setColourBy", by: "contour" });
@@ -245,9 +255,9 @@ test("a --render shot that asks a User Combination for a deformed shape is refus
   const v = validateSpec({ spec: "apegmsh-view/1", files: { model: "m.h5" }, shots: [{ name: "d", combination: "CQC Ex", contour: { field: "DISPLACEMENT", component: "Ux" }, deform: {} }] });
   assert.ok(v.ok);
   const shot = v.spec.shots[0]!;
-  const plan = compileShot(shot, { files: { results: null }, pairing: { state: "none" }, stages: [], groups: [] } as never);
-  assert.ok(plan.ok, plan.ok ? "" : plan.reason);
   let s: State = { ...base(meshOf(new BlobStore(), [], [])), phase: { axis: [{ kind: "mesh" }], at: { kind: "mesh" } } };
+  const plan = compileShot(shot, NO_SET, fieldsIn(s));
+  assert.ok(plan.ok, plan.ok ? "" : plan.reason);
   for (const e of plan.plan.events) s = reduce(s, e);
   const key = combinationRequestOf(s)!.key;
   s = reduce(s, { type: "combinationRead", read: { key, status: "ready", label: UX, range: { min: 0, max: 1 }, nodes: 40, signed: false } });
@@ -309,6 +319,120 @@ test("a late answer is dropped: leaving the combination, or another pick, before
   assert.throws(() => reduce(s, { type: "combinationRead", read: { key: "x", status: "maybe" } as never }), /is not a combination read/);
 });
 
+test("#2772 review: read A (CQC Ex) answering after read B (SRSS Ex) was asked leaves B drawn; the column on hand stays B's", async () => {
+  let releaseA!: () => void;
+  let releaseB!: () => void;
+  const gateA = new Promise<void>((r) => (releaseA = r));
+  const gateB = new Promise<void>((r) => (releaseB = r));
+  const gated: CombinationFetch = async (req) => {
+    await (req.name === "CQC Ex" ? gateA : gateB);
+    return fetchOf(bridge)(req);
+  };
+  const blobs = new BlobStore();
+  const want = GOLDEN.combinations["SRSS Ex"]!["displacement_x"]!;
+  const store = storeOf(show(base(meshOf(blobs, [want.ids[0]!, want.ids[1]!, want.ids[2]!], [])), "CQC Ex"));
+  const feed = new CombinationFeed(store, gated);
+  const a = feed.check()!;
+  store.dispatch({ type: "setPhase", at: { kind: "combination", name: "SRSS Ex" } });
+  const b = feed.check()!;
+  releaseB();
+  await b;
+  releaseA();
+  await a;
+  const s = store.get();
+  const v = contourView(s);
+  assert.ok(v.state === "combination" && v.name === "SRSS Ex", JSON.stringify(v));
+  assert.equal(s.combination?.key, v.key);
+  // What the viewport and the manifest read: the manifest throws unless the column on hand is the read the view shows.
+  assert.equal(feed.held?.key, v.key, "A's late column replaced B's: the viewport would keep A's colours and the manifest would throw");
+  assert.equal(feed.held!.column.name, "SRSS Ex");
+  close(feed.held!.column.values, want.values, "SRSS Ex displacement_x");
+  assert.ok(combinationColours(v, s.mesh!, blobs, feed.held, Int32Array.of(), Int32Array.of(0)) !== null, "B is drawn");
+});
+
+/** The fixture's cases on another model: the first `ids.length` nodes of each case, renamed to `ids` (the model's own). */
+function onNodes(ids: readonly number[]): Pick<Bridge, "readUserCase"> {
+  return {
+    readUserCase: async (req) => {
+      const r = await bridge.readUserCase!(req);
+      if (!r.ok) return r;
+      const [S, n, c] = r.value.quantity.shape;
+      const k = Math.min(n, ids.length);
+      const cut = (data: Float64Array, rows: number) => {
+        const out = new Float64Array(rows * k * c);
+        for (let s = 0; s < rows; s++) out.set(data.subarray(s * n * c, s * n * c + k * c), s * k * c);
+        return out;
+      };
+      const quantity = { ...r.value.quantity, ids: ids.slice(0, k), shape: [S, k, c] as [number, number, number] };
+      return { ok: true, value: { ...r.value, quantity, data: cut(r.value.data, S), reference: cut(r.value.reference, 1) } };
+    },
+  };
+}
+
+test("#2772 review: on a real mesh, the manifest states a combination: its key and label as the legend's, its own range as `state`; a late read never replaces the one shown", async () => {
+  const h = await opened();
+  try {
+    const store = h.store;
+    store.dispatch({ type: "userOpened", path: USER });
+    store.dispatch(userEventOf(USER, userRead()));
+    const modelIds = [...(h.blobs.get(store.get().mesh!.nodes!.ids) as Float64Array)];
+    const b = onNodes(modelIds);
+    let releaseA: () => void = () => {};
+    let gateA: Promise<void> = Promise.resolve();
+    const feed = new CombinationFeed(store, async (req) => {
+      if (req.name === "CQC Ex") await gateA;
+      return fetchOf(b)(req);
+    });
+    const entryFor = (name: string, component: string) => {
+      const v = validateSpec({ spec: "apegmsh-view/1", files: { model: "m.h5" }, shots: [{ name: "s", combination: name, contour: { field: "DISPLACEMENT", component } }] });
+      assert.ok(v.ok);
+      const shot = v.spec.shots[0]!;
+      const plan = compileShot(shot, NO_SET, fieldsIn(store.get()));
+      assert.ok(plan.ok, plan.ok ? "" : plan.reason);
+      for (const e of plan.plan.events) store.dispatch(e);
+      return { shot, plan: plan.plan };
+    };
+    const entry = (shot: ReturnType<typeof entryFor>["shot"]) =>
+      manifestEntry(store.get(), { shot, png: "s.png", image: [16, 10], camera: { eye: [1, 1, 1], target: [0, 0, 0], up: [0, 0, 1], fov: 30 }, layout: null, blobs: h.blobs, step: null, combination: feed.held });
+    const contours = [];
+    for (const component of ["x", "Ux", UX]) {
+      const { shot, plan } = entryFor("SRSS Ex", component);
+      await feed.check();
+      assert.equal(plan.contour!.label, "x");
+      contours.push(entry(shot).contour);
+    }
+    const c = contours[0]!;
+    assert.ok(c.drawn);
+    const col = feed.held!.column;
+    const values = [...col.values];
+    const max = Math.max(...values.filter(Number.isFinite));
+    assert.deepEqual([c.source, c.component, c.label, c.topology, c.combination], ["combination", UX, "x", "nodal", { name: "SRSS Ex", signed: false }]);
+    assert.deepEqual([c.range.mode, c.range.max, c.range.label], ["state", max, "range: this combination (one state, no history)"]);
+    assert.deepEqual([c.extrema.recorded!.max.value, c.extrema.recorded!.max.node], [max, col.ids[values.indexOf(max)]]);
+    assert.deepEqual(contours[1], c, "the case's spelling names the same view");
+    assert.deepEqual(contours[2], c, "the key names the same view");
+    // A user's fixed range is stated as fixed.
+    const again = entryFor("SRSS Ex", "x");
+    store.dispatch({ type: "setContourRange", range: "fixed", fixed: { min: 0, max: 1 } });
+    const fixed = entry(again.shot).contour;
+    assert.ok(fixed?.drawn && fixed.range.mode === "fixed" && fixed.range.max === 1);
+    store.dispatch({ type: "setContourRange", range: "history" });
+    // Read A (CQC Ex) is asked and held back; B (SRSS Ex) is asked and answers; then A answers.
+    gateA = new Promise<void>((r) => (releaseA = r));
+    entryFor("CQC Ex", "x");
+    const a = feed.check()!;
+    const late = entryFor("SRSS Ex", "x");
+    await feed.check();
+    releaseA();
+    await a;
+    const after = entry(late.shot).contour;
+    assert.ok(after?.drawn && after.combination?.name === "SRSS Ex", "B stays drawn, and the manifest states it");
+  } finally {
+    h.effects.dispose();
+    h.host.close();
+  }
+});
+
 // ---- the deferred VU7b-1 review items (#2748) -----------------------------
 
 const table = () => combinationTableOf(base(null))!;
@@ -346,10 +470,38 @@ test("#2748: `Ux` and `ux` in one result are two columns for one quantity, refus
   const read = await userCombinationColumn(both, { path: USER, table: table(), name: "CQC Ex", quantity: { label: "DISPLACEMENT", component: "Ux" }, staleness: CURRENT });
   assert.ok(!read.ok);
   assert.equal(read.refusal.reason, "unresolved");
-  assert.match(read.refusal.detail, /holds 2 columns for nodes quantity 'DISPLACEMENT\/Ux'/);
+  assert.match(read.refusal.detail, /holds 2 results for nodes quantity 'displacement_x'/);
   // A spelling the file does not use is not taken for one it does.
   const lower = await userCombinationColumn(bridge, { path: USER, table: table(), name: "CQC Ex", quantity: { label: "DISPLACEMENT", component: "ux" }, staleness: CURRENT });
   assert.ok(!lower.ok && /holds no nodes quantity/.test(lower.refusal.detail));
+});
+
+test("#2772 review: Python reads a column by its axis, so `Ux` beside `X` is ambiguous: refused in Python's own words, never drawn", async () => {
+  // The review's repro: a copy of the fixture with both COMPONENTS set to `Ux,Uy,X`. Python's UserSpectra answers, on that
+  // file (probe in the PR body): case 'NEC-15 Ex (synthetic nodal)' holds 2 results for nodes quantity 'displacement_x'; ...
+  const dir = mkdtempSync(join(tmpdir(), "vu7b2-axis-"));
+  const copy = join(dir, "sanramon_case.user.h5");
+  copyFileSync(USER, copy);
+  const f = new h5wasm.File(copy, "a");
+  try {
+    for (const g of ["spectra/s0/RESULTS/ON_NODES/DISPLACEMENT", "spectra/s0/reference/RESULTS/ON_NODES/DISPLACEMENT"]) {
+      const grp = f.get(g) as h5wasm.Group;
+      grp.delete_attribute("COMPONENTS");
+      grp.create_attribute("COMPONENTS", "Ux,Uy,X");
+    }
+  } finally {
+    f.close();
+  }
+  const idx = readUserFile(H5, copy, null);
+  assert.ok(idx.spectra?.ok && idx.spectra.value.cases[0]!.results[0]!.components.join(",") === "Ux,Uy,X", "the copy reads as the review's repro");
+  const read = await userCombinationColumn(bridge, { path: copy, table: table(), name: "CQC Ex", quantity: { label: "DISPLACEMENT", component: "Ux" }, staleness: CURRENT });
+  assert.ok(!read.ok, "Ux must not be drawn where Python refuses it");
+  assert.equal(read.refusal.reason, "unresolved");
+  assert.equal(read.refusal.detail, "case 'NEC-15 Ex (synthetic nodal)' holds 2 results for nodes quantity 'displacement_x'; it holds ['nodes/DISPLACEMENT(Ux,Uy,X)']");
+  // `Uy` is one axis there, so it is drawn.
+  const uy = await userCombinationColumn(bridge, { path: copy, table: table(), name: "CQC Ex", quantity: { label: "DISPLACEMENT", component: "Uy" }, staleness: CURRENT });
+  assert.ok(uy.ok);
+  assert.deepEqual([canonicalNodal({ label: "DISPLACEMENT", component: "X" }), canonicalNodal({ label: "PRESSURE", component: "p" }), canonicalNodal({ label: "MY_RESULT", component: "Ux" })], ["displacement_x", "pore_pressure", null]);
 });
 
 test("#2748: a mode or stage term refuses unresolved and says the app does not combine it yet, where Python's Results does", () => {
@@ -377,10 +529,29 @@ test("the spec names a combination as the state shown: no stage beside it, and n
   assert.deepEqual(spec({ combination: "CQC Ex", stage: 0 }), { ok: false, key: "shots[0].combination", reason: "names the state shown, as stage does: a shot shows a stage or a User Combination, not both" });
   assert.deepEqual(spec({ combination: "CQC Ex", step: 0 }), { ok: false, key: "shots[0].step", reason: "a User Combination is one state: it has no step" });
   assert.deepEqual(spec({ combination: "" }), { ok: false, key: "shots[0].combination", reason: 'must be a non-empty string; got ""' });
-  const plan = compileShot(ok.spec.shots[0]!, { files: { results: null }, pairing: { state: "none" }, stages: [], groups: [] } as never);
-  assert.ok(plan.ok);
-  assert.deepEqual([plan.plan.phase, plan.plan.combination, plan.plan.stage, plan.plan.contour], [{ kind: "combination", name: "CQC Ex" }, "CQC Ex", null, { field: "DISPLACEMENT", component: UX, label: "Ux", source: "nodal" }]);
-  assert.ok(plan.plan.events.some((e) => e.type === "setContourField" && e.component === UX));
+  // #2772 review: the component by its key, by the legend's label, or as the case spells it, as a stage shot takes it (`fieldOf`).
+  const fields = fieldsIn(base(meshOf(new BlobStore(), [], [])));
+  for (const component of [UX, "x", "Ux"]) {
+    const shot = spec({ combination: "CQC Ex", contour: { field: "DISPLACEMENT", component } });
+    assert.ok(shot.ok);
+    const plan = compileShot(shot.spec.shots[0]!, NO_SET, fields);
+    assert.ok(plan.ok, plan.ok ? "" : plan.reason);
+    assert.deepEqual([plan.plan.phase, plan.plan.combination, plan.plan.stage, plan.plan.contour], [{ kind: "combination", name: "CQC Ex" }, "CQC Ex", null, { field: "DISPLACEMENT", component: UX, label: "x", source: "nodal" }], component);
+    assert.ok(plan.plan.events.some((e) => e.type === "setContourField" && e.component === UX));
+  }
+  const refused = (shot: object, of = fields) => {
+    const v = spec(shot);
+    assert.ok(v.ok);
+    const c = compileShot(v.spec.shots[0]!, NO_SET, of);
+    assert.ok(!c.ok);
+    return c.reason;
+  };
+  assert.equal(refused({ combination: "CQC Ex", contour: { field: "DISPLACEMENT", component: "w" } }), 'field "DISPLACEMENT" of User Combination "CQC Ex" has no component "w"; its components are DISPLACEMENT/Ux (x), DISPLACEMENT/Uy (y), DISPLACEMENT/Uz (z)');
+  assert.equal(refused({ combination: "CQC Ex", contour: { field: "ROTATION", component: "x" } }), 'User Combination "CQC Ex" has no field "ROTATION"; its fields are DISPLACEMENT');
+  assert.match(refused({ combination: "nope", contour: { field: "DISPLACEMENT", component: "x" } }), /^User Combination "nope" colours by nothing: /);
+  const bare = spec({ combination: "CQC Ex", contour: { field: "DISPLACEMENT", component: "x" } });
+  assert.ok(bare.ok);
+  assert.deepEqual(compileShot(bare.spec.shots[0]!, NO_SET), { ok: false, reason: 'this view has no user file to find User Combination "CQC Ex" in' });
 });
 
 // ---- the phase bar, mounted ---------------------------------------------------

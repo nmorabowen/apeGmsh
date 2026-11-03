@@ -297,6 +297,47 @@ export interface SpectraStaleness {
 const termName = (a: StateAddress) => `<${a.kind} ${a.source}>`;
 
 /**
+ * The `ON_NODES` results Python's reader names canonically, and their prefix:
+ * `_NODAL_RESULT_NAME_MAP` in src/apeGmsh/results/readers/_mpco_translation.py,
+ * copied here because the app cannot import it (ADR 0112 D4). `PRESSURE` is a
+ * scalar: every one of its columns is the one quantity.
+ */
+export const CANONICAL_NODAL: Readonly<Record<string, { prefix: string; scalar: boolean }>> = {
+  DISPLACEMENT: { prefix: "displacement", scalar: false },
+  ROTATION: { prefix: "rotation", scalar: false },
+  VELOCITY: { prefix: "velocity", scalar: false },
+  ANGULAR_VELOCITY: { prefix: "angular_velocity", scalar: false },
+  ACCELERATION: { prefix: "acceleration", scalar: false },
+  ANGULAR_ACCELERATION: { prefix: "angular_acceleration", scalar: false },
+  REACTION_FORCE: { prefix: "reaction_force", scalar: false },
+  REACTION_MOMENT: { prefix: "reaction_moment", scalar: false },
+  REACTION_FORCE_INCLUDING_INERTIA: { prefix: "reaction_force", scalar: false },
+  REACTION_MOMENT_INCLUDING_INERTIA: { prefix: "reaction_moment", scalar: false },
+  UNBALANCED_FORCE: { prefix: "force", scalar: false },
+  UNBALANCED_MOMENT: { prefix: "moment", scalar: false },
+  UNBALANCED_FORCE_INCLUDING_INERTIA: { prefix: "force", scalar: false },
+  UNBALANCED_MOMENT_INCLUDING_INERTIA: { prefix: "moment", scalar: false },
+  PRESSURE: { prefix: "pore_pressure", scalar: true },
+  CONSTRAINT_TIE_FORCE: { prefix: "constraint_tie_force", scalar: false },
+};
+
+/**
+ * Python's `canonical_node_component(label, component)`: the canonical name of
+ * one column (`DISPLACEMENT`, `Ux` -> `displacement_x`), read from the last
+ * character of the column, ignoring case (`component_axis`). So `Ux` and `X`
+ * are one quantity there, and a case that holds both is ambiguous. Null where
+ * Python names nothing: a result it does not map (which the app reads by the
+ * file's spelling, ADR 0122 D7), or a column with no axis.
+ */
+export function canonicalNodal(q: CaseQuantityName): string | null {
+  const m = Object.hasOwn(CANONICAL_NODAL, q.label) ? CANONICAL_NODAL[q.label]! : null;
+  if (m === null) return null;
+  if (m.scalar) return m.prefix;
+  const last = q.component.slice(-1).toLowerCase();
+  return last === "x" || last === "y" || last === "z" ? `${m.prefix}_${last}` : null;
+}
+
+/**
  * The cases in `reads` (by case name, each as `user:readCase` answered it) as
  * the evaluator's `Source` for quantity `q`. A whole case gives one signed
  * increment per mode, `spectrum` mode `k` one of them, and `reference` the
@@ -319,14 +360,23 @@ export function spectrumSource(reads: ReadonlyMap<string, CaseRead>, q: CaseQuan
     if (v.quantity.target !== "nodes" || v.quantity.label !== q.label) {
       throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} was read for ${v.quantity.target}/${v.quantity.label}, not nodes/${q.label}`);
     }
-    // The app names a column as the file spells it (ADR 0122 D7). Python's reader reads a column by its axis, ignoring
-    // case, so `Ux` and `ux` in one result are two columns for one quantity there: refused as ambiguous here too (#2748 review).
-    const folded = v.quantity.components.flatMap((c, i) => (c.toLowerCase() === q.component.toLowerCase() ? [i] : []));
-    const hits = folded.length > 1 ? folded : folded.filter((i) => v.quantity.components[i] === q.component);
+    // Which column is the quantity (#2772 review). Where Python names the result, its rule decides first: the
+    // columns of one axis (`Ux` and `X` are both `displacement_x`), and two of them are ambiguous, refused in
+    // Python's words. The app then reads the column the file spells as asked (ADR 0122 D7), so it never draws
+    // where Python refuses, nor under another column's name. A result Python does not name is read by spelling.
+    const canonical = canonicalNodal(q);
+    const comps = v.quantity.components;
+    let named = fieldLabel;
+    let hits = comps.flatMap((c, i) => (c === q.component ? [i] : []));
+    if (Object.hasOwn(CANONICAL_NODAL, q.label)) {
+      const axis = canonical === null ? [] : comps.flatMap((c, i) => (canonicalNodal({ label: q.label, component: c }) === canonical ? [i] : []));
+      if (axis.length !== 1 || hits.length === 1) named = canonical ?? fieldLabel;
+      hits = axis.length > 1 ? axis : axis.filter((i) => comps[i] === q.component);
+    }
     if (hits.length !== 1) {
-      const what = hits.length === 0 ? "no" : `${hits.length} columns for`;
+      const what = hits.length === 0 ? "no" : `${hits.length} results for`;
       const held = v.case.results.map((r) => `${r.target}/${r.label}(${r.components.join(",")})`);
-      throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} holds ${what} nodes quantity ${pyStr(fieldLabel)}; it holds ${pyList(held)}`);
+      throw new CombinationRefused(who, "unresolved", `case ${pyStr(name)} holds ${what} nodes quantity ${pyStr(named)}; it holds ${pyList(held)}`);
     }
     return { values: v, column: hits[0]! };
   };

@@ -109,8 +109,38 @@ function fieldOf(shot: SpecShot, st: DescribedStage): { ok: true; field: Describ
   return { ok: true, field: f, key: f.source === "nodal" && hit.key === SPEC_MAGNITUDE ? MAGNITUDE : hit.key, label: hit.label };
 }
 
-/** Compile one validated shot against the open set (INV-2: the one compiler D4, D5 and D6 share). */
-export function compileShot(shot: SpecShot, d: SetDescription): Compiled {
+/**
+ * VU7b-2: what User Combination `name` colours by (state/selectors.ts
+ * `combinationFieldsOf` on the open set), or why it colours by nothing.
+ */
+export type CombinationFields = (name: string) => { ok: true; fields: readonly DescribedNodal[] } | { ok: false; reason: string };
+type DescribedNodal = { name: string; components: readonly { key: string; label: string }[] };
+
+/**
+ * A combination shot's field and component, as `fieldOf` finds a stage's: the
+ * component by its key (`DISPLACEMENT/Ux`), by the legend's label (`x`), or as
+ * the case spells it (`Ux`, the key's part after the field). One only.
+ */
+function combinationFieldOf(c: NonNullable<SpecShot["contour"]>, name: string, of: CombinationFields): { ok: true; field: string; key: string; label: string } | { ok: false; reason: string } {
+  const label = `User Combination ${JSON.stringify(name)}`;
+  const r = of(name);
+  if (!r.ok) return { ok: false, reason: `${label} colours by nothing: ${r.reason}` };
+  const f = r.fields.find((x) => x.name === c.field);
+  if (!f) return { ok: false, reason: `${label} has no field ${JSON.stringify(c.field)}; its fields are ${list(r.fields.map((x) => x.name))}` };
+  const hits = f.components.filter((x) => x.key === c.component || x.label === c.component || x.key === `${f.name}/${c.component}`);
+  if (hits.length === 0) {
+    return { ok: false, reason: `field ${JSON.stringify(f.name)} of ${label} has no component ${JSON.stringify(c.component)}; its components are ${list(f.components.map((x) => `${x.key} (${x.label})`))}` };
+  }
+  if (hits.length > 1) return { ok: false, reason: `component ${JSON.stringify(c.component)} names ${hits.length} components of ${JSON.stringify(f.name)} (${hits.map((x) => x.key).join(", ")}); name it by its key` };
+  return { ok: true, field: f.name, key: hits[0]!.key, label: hits[0]!.label };
+}
+
+/**
+ * Compile one validated shot against the open set (INV-2: the one compiler D4,
+ * D5 and D6 share). VU7b-2: `combinationFields` finds a combination shot's
+ * component; without it, a combination shot is refused.
+ */
+export function compileShot(shot: SpecShot, d: SetDescription, combinationFields?: CombinationFields): Compiled {
   const events: Event[] = [...BASE_EVENTS];
   let phase: PhaseKey = { kind: "mesh" };
   let stage: ShotPlan["stage"] = null;
@@ -137,12 +167,13 @@ export function compileShot(shot: SpecShot, d: SetDescription): Compiled {
   }
   events.push({ type: "setColourBy", by: shot.colour_by });
   if (shot.contour && combination !== null) {
-    // A combination offers one nodal component of its cases, named as a `.ladruno` stage names it (`DISPLACEMENT` and `DISPLACEMENT/Ux`, or `Ux`).
     const c = shot.contour;
     if (c.source === "element") return { ok: false, reason: `User Combination ${JSON.stringify(combination)} colours by a nodal component; contour.source is "element"` };
-    const component = c.component.includes("/") ? c.component : `${c.field}/${c.component}`;
-    contour = { field: c.field, component, label: c.component, source: "nodal" };
-    events.push({ type: "setContourField", field: c.field, component, source: "nodal" });
+    if (!combinationFields) return { ok: false, reason: `this view has no user file to find User Combination ${JSON.stringify(combination)} in` };
+    const f = combinationFieldOf(c, combination, combinationFields);
+    if (!f.ok) return f;
+    contour = { field: f.field, component: f.key, label: f.label, source: "nodal" };
+    events.push({ type: "setContourField", field: f.field, component: f.key, source: "nodal" });
     events.push(c.range.mode === "fixed" ? { type: "setContourRange", range: "fixed", fixed: { min: c.range.min, max: c.range.max } } : { type: "setContourRange", range: c.range.mode });
     events.push({ type: "setContourCmap", cmap: c.cmap });
   } else if (shot.contour && shot.stage !== null) {

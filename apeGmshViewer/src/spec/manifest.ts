@@ -83,7 +83,8 @@ export type ManifestContour =
       range: {
         min: number | null;
         max: number | null;
-        mode: "history" | "step" | "fixed";
+        /** VU7b-2: `state` is a User Combination's own range (one state: no step, no history) */
+        mode: "history" | "step" | "fixed" | "state";
         label: string;
         /** the whole-history scan of this field, and how far it got; `none` when none ran */
         history_scan: { status: ContourScan["status"] | "none"; done: number; total: number };
@@ -405,7 +406,8 @@ function combinationContour(s: State, v: Extract<ContourView, { state: "combinat
     combination: { name: v.name, signed: v.signed },
     topology: "nodal",
     cmap: v.cmap,
-    range: { min: v.clim.min, max: v.clim.max, mode: v.clim.mode, label: v.clim.label, history_scan: { status: "none", done: 0, total: 0 } },
+    // One state: the range is the user's (fixed) or the combination's own, never a step's or a history's.
+    range: { min: v.clim.min, max: v.clim.max, mode: v.clim.mode === "fixed" ? "fixed" : "state", label: v.clim.label, history_scan: { status: "none", done: 0, total: 0 } },
     extrema: {
       recorded: extremaOf(c, () => true, (i) => at(ids[i]!)),
       drawn: cut ? null : drawn,
