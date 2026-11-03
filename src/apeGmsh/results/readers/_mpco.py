@@ -36,6 +36,17 @@ from . import _mpco_material_io as _mmat
 from . import _mpco_nodal_io as _mnodal
 from . import _mpco_spring_io as _mspring
 from . import _mpco_translation as _mtr
+from ._buckets import (
+    _PROGRAM_STAGE_KINDS,
+    MPCOBucketSkippedWarning,
+    _empty_element_slab,
+    _empty_fiber_slab,
+    _empty_gauss_slab,
+    _empty_layer_slab,
+    _empty_line_station_slab,
+    _empty_node_slab,
+    _empty_spring_slab,
+)
 from ._gauss_refusals import GaussDimensionMixed
 from ._mpco_refusals import MPCOElementInTwoBuckets
 from ._protocol import ResultLevel, StageInfo, TimeSlice
@@ -49,48 +60,6 @@ if TYPE_CHECKING:
 
 # Stage groups in MPCO are ``MODEL_STAGE[<stamp>]``
 _STAGE_PREFIX = "MODEL_STAGE["
-
-#: The kinds a program stage takes (:meth:`MPCOReader.attach_stage_names`).
-_PROGRAM_STAGE_KINDS = frozenset({"static", "transient"})
-
-
-class MPCOBucketSkippedWarning(UserWarning):
-    """A bucket the MPCO reader leaves unread, so its elements return no
-    values.
-
-    It covers two kinds of bucket:
-
-    * **Refused by its decoder** at read time, at the material-state,
-      spring and line-station levels (malformed ``META``, a
-      ``NUM_COLUMNS`` mismatch, a missing ``GP_X``, a section code with
-      no canonical). One warning per read names the file, every such
-      bucket and the decoder's reason.
-    * **Left out at discovery**, one warning per bucket naming its path,
-      the reason and the file:
-
-      - at the Gauss and material-state levels, a bucket on a nonzero
-        custom-rule index (#2115), and a standard-rule bucket whose
-        class and rule have no ``RESPONSE_CATALOG`` row (#2160);
-      - at the spring level, a ZeroLength-family bucket on a nonzero
-        custom-rule index (#2160);
-      - at the Gauss, material-state, spring, fiber and line-station
-        levels, a bucket whose bracket key does not parse as
-        ``<tag>-<Class>[<rule>:<cust>:<hdr>]`` (#2165). A key under two
-        alias groups of one token is named once.
-
-    Discovery only records a skipped bucket; the read names it, and only
-    when the bucket holds an element the read asked for (``element_ids``,
-    or a selection that resolves to them). An unfiltered read and a
-    component listing name every one, and a bucket whose ``ID`` cannot
-    be read is always named. The same filter holds for a bucket refused
-    by its decoder (#2165).
-
-    The layer level names its unread buckets, an unparseable key among
-    them, in
-    :class:`~apeGmsh.results.readers._mpco_layer_io.LayerBucketUnreadWarning`,
-    and the nodal-force level in
-    :class:`~apeGmsh.results.readers._mpco_nodal_io.NodalForceBucketSkippedWarning`.
-    """
 
 
 def _warn_skipped_buckets(
@@ -128,7 +97,6 @@ class MPCOGaussDimensionMixed(GaussDimensionMixed):
     refuses, naming one bucket of each width; a read narrowed to one
     class's elements answers (#2165).
     """
-
 
 
 def _refuse_mixed_gauss_dims(
@@ -1877,82 +1845,3 @@ def _locate_canonical_in_mpco(
     )
 
 
-def _empty_node_slab(component: str, time: ndarray, t_idx) -> NodeSlab:
-    if t_idx is None:
-        t_idx = np.arange(time.size, dtype=np.int64)
-    return NodeSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        node_ids=np.array([], dtype=np.int64),
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )
-
-
-def _empty_element_slab(component: str, time: ndarray, time_slice) -> ElementSlab:
-    t_idx = resolve_time_slice(time_slice, time)
-    return ElementSlab(
-        component=component,
-        values=np.zeros((t_idx.size, 0, 0), dtype=np.float64),
-        element_ids=np.array([], dtype=np.int64),
-        time=time[t_idx],
-    )
-
-
-def _empty_gauss_slab(component: str, time: ndarray, t_idx) -> GaussSlab:
-    return GaussSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        element_index=np.array([], dtype=np.int64),
-        natural_coords=np.zeros((0, 3), dtype=np.float64),
-        local_axes_quaternion=None,
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )
-
-
-def _empty_line_station_slab(
-    component: str, time: ndarray, t_idx,
-) -> LineStationSlab:
-    return LineStationSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        element_index=np.array([], dtype=np.int64),
-        station_natural_coord=np.array([], dtype=np.float64),
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )
-
-
-def _empty_fiber_slab(component: str, time: ndarray, t_idx) -> FiberSlab:
-    return FiberSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        element_index=np.array([], dtype=np.int64),
-        gp_index=np.array([], dtype=np.int64),
-        y=np.array([], dtype=np.float64),
-        z=np.array([], dtype=np.float64),
-        area=np.array([], dtype=np.float64),
-        material_tag=np.array([], dtype=np.int64),
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )
-
-
-def _empty_layer_slab(component: str, time: ndarray, t_idx) -> LayerSlab:
-    return LayerSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        element_index=np.array([], dtype=np.int64),
-        gp_index=np.array([], dtype=np.int64),
-        layer_index=np.array([], dtype=np.int64),
-        sub_gp_index=np.array([], dtype=np.int64),
-        thickness=np.array([], dtype=np.float64),
-        local_axes_quaternion=np.zeros((0, 4), dtype=np.float64),
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )
-
-
-def _empty_spring_slab(component: str, time: ndarray, t_idx) -> SpringSlab:
-    return SpringSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        element_index=np.array([], dtype=np.int64),
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )

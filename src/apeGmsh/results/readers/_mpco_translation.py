@@ -21,89 +21,13 @@ column 1 (zero-based) → canonical ``displacement_y``.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, Sequence
 
-
-@dataclass(frozen=True)
-class _Mapping:
-    canonical_prefix: str   # e.g. "displacement"
-    is_scalar: bool = False
-
-
-# MPCO RESULT_NAME → canonical prefix.
-# All entries except scalar are vector-valued; the column index maps
-# to the axis suffix via ``component_axis``.
-_NODAL_RESULT_NAME_MAP: dict[str, _Mapping] = {
-    # Kinematics
-    "DISPLACEMENT": _Mapping("displacement"),
-    "ROTATION": _Mapping("rotation"),
-    "VELOCITY": _Mapping("velocity"),
-    "ANGULAR_VELOCITY": _Mapping("angular_velocity"),
-    "ACCELERATION": _Mapping("acceleration"),
-    "ANGULAR_ACCELERATION": _Mapping("angular_acceleration"),
-
-    # Reactions — the static and the inertia-including flavors map to the
-    # same canonical names; :data:`_NODAL_PRECEDENCE` picks between them
-    # when a file records both. The Rayleigh groups are not reactions and
-    # are left out (see :data:`_NODAL_NOT_CANONICAL`).
-    "REACTION_FORCE": _Mapping("reaction_force"),
-    "REACTION_MOMENT": _Mapping("reaction_moment"),
-    "REACTION_FORCE_INCLUDING_INERTIA": _Mapping("reaction_force"),
-    "REACTION_MOMENT_INCLUDING_INERTIA": _Mapping("reaction_moment"),
-
-    # Unbalanced — same canonical names as forces; precedence as for
-    # reactions.
-    "UNBALANCED_FORCE": _Mapping("force"),
-    "UNBALANCED_MOMENT": _Mapping("moment"),
-    "UNBALANCED_FORCE_INCLUDING_INERTIA": _Mapping("force"),
-    "UNBALANCED_MOMENT_INCLUDING_INERTIA": _Mapping("moment"),
-
-    # Pressure — scalar, no axis suffix.
-    "PRESSURE": _Mapping("pore_pressure", is_scalar=True),
-
-    # Constraint tie force (Ladruno fork, ADR-30 P4 / ADR 0068 P5) — the
-    # ``recorder ladruno -N constraintTieForce`` channel writes
-    # ``RESULTS/ON_NODES/CONSTRAINT_TIE_FORCE`` with COMPONENTS
-    # ``"TFx,TFy,TFz"`` (the projection constraint force M(a_raw - a_proj)
-    # at each tied node). ``component_axis("TFx")`` already resolves the
-    # trailing axis, so this single entry unlocks readback via
-    # ``results.nodes.get(component="constraint_tie_force_x")``.
-    "CONSTRAINT_TIE_FORCE": _Mapping("constraint_tie_force"),
-}
-
-
-# Several ON_NODES groups translate to one canonical prefix. A read takes
-# the first group of the prefix's tuple that the file records, never the
-# first in HDF5 iteration order: a file written without ``track_order``
-# iterates its groups by name. The static reaction leads because
-# it is what ``ops.reactions()`` / ``ops.nodeReaction`` report by default.
-# Every prefix with more than one group must be listed here, and list
-# exactly those groups; :func:`_check_precedence` enforces it at import.
-_NODAL_PRECEDENCE: dict[str, tuple[str, ...]] = {
-    "reaction_force": (
-        "REACTION_FORCE", "REACTION_FORCE_INCLUDING_INERTIA",
-    ),
-    "reaction_moment": (
-        "REACTION_MOMENT", "REACTION_MOMENT_INCLUDING_INERTIA",
-    ),
-    "force": ("UNBALANCED_FORCE", "UNBALANCED_FORCE_INCLUDING_INERTIA"),
-    "moment": ("UNBALANCED_MOMENT", "UNBALANCED_MOMENT_INCLUDING_INERTIA"),
-}
-
-
-# ON_NODES groups the readers recognise but translate to no canonical
-# name, with the canonical prefix each is mistaken for. A Rayleigh group
-# holds the Rayleigh damping force alone (OpenSees
-# ``calculateNodalReactions(2)``), not a reaction. A read of that prefix from a file that records only
-# these groups is refused by name. Real MPCO files use ``RAYLEIGH_*``;
-# the ``*_RAYLEIGH`` spelling is kept for older skill docs.
-_NODAL_NOT_CANONICAL: dict[str, str] = {
-    "RAYLEIGH_FORCE": "reaction_force",
-    "RAYLEIGH_MOMENT": "reaction_moment",
-    "REACTION_FORCE_RAYLEIGH": "reaction_force",
-    "REACTION_MOMENT_RAYLEIGH": "reaction_moment",
-}
+from ._buckets import (
+    _NODAL_NOT_CANONICAL,
+    _NODAL_PRECEDENCE,
+    _NODAL_RESULT_NAME_MAP,
+    component_axis,
+)
 
 
 def _check_precedence() -> None:
@@ -131,85 +55,6 @@ def _check_precedence() -> None:
 
 
 _check_precedence()
-
-
-class NodeComponentAmbiguous(ValueError):
-    """The ON_NODES groups of a stage cannot decide a canonical component.
-
-    Raised when the group that precedence picks holds no column for the
-    component while a lower-ranked group does (the read would mix
-    sources), when one group holds the component in two columns, and when
-    the only groups of the prefix are ones that translate to no canonical
-    name (:data:`_NODAL_NOT_CANONICAL`).
-    """
-
-
-def _maps_to(mapping: _Mapping, component: str) -> bool:
-    if mapping.is_scalar:
-        return component == mapping.canonical_prefix
-    return component in {
-        f"{mapping.canonical_prefix}_{axis}" for axis in ("x", "y", "z")
-    }
-
-
-def locate_node_component(
-    groups: Iterable[tuple[str, Sequence[str]]], component: str,
-) -> tuple[str, int] | None:
-    """``(result_name, column)`` of ``component`` among ON_NODES groups.
-
-    ``groups`` yields ``(result_name, component_labels)`` for each group
-    under ``RESULTS/ON_NODES`` that carries a ``COMPONENTS`` attribute.
-    The group comes from :data:`_NODAL_PRECEDENCE`, never from the order
-    of ``groups``. Returns ``None`` when no group of the component's
-    prefix is recorded; raises :class:`NodeComponentAmbiguous` when the
-    groups cannot decide (see the class).
-    """
-    holders: dict[str, int] = {}
-    contenders: list[str] = []
-    impostors: list[str] = []
-    for name, labels in groups:
-        mapping = _NODAL_RESULT_NAME_MAP.get(name)
-        if mapping is None:
-            prefix = _NODAL_NOT_CANONICAL.get(name)
-            if prefix is not None and _maps_to(_Mapping(prefix), component):
-                impostors.append(name)
-            continue
-        if not _maps_to(mapping, component):
-            continue
-        contenders.append(name)
-        cols = [
-            col for col, label in enumerate(labels)
-            if canonical_node_component(name, label.strip()) == component
-        ]
-        if len(cols) > 1:
-            raise NodeComponentAmbiguous(
-                f"ON_NODES/{name} holds {component!r} in columns {cols}; "
-                f"its COMPONENTS cannot name one column."
-            )
-        if cols:
-            holders[name] = cols[0]
-    if not contenders:
-        if impostors:
-            raise NodeComponentAmbiguous(
-                f"{component!r} is not recorded: ON_NODES holds only "
-                f"{sorted(impostors)}, the Rayleigh damping force, which "
-                f"is not a reaction. Record reactionForce (or "
-                f"reactionForceIncludingInertia) to read {component!r}."
-            )
-        return None
-    order = _NODAL_PRECEDENCE.get(_NODAL_RESULT_NAME_MAP[contenders[0]]
-                                  .canonical_prefix, (contenders[0],))
-    winner = min(contenders, key=order.index)
-    if winner in holders:
-        return winner, holders[winner]
-    if holders:
-        raise NodeComponentAmbiguous(
-            f"ON_NODES/{winner} takes precedence for {component!r} but holds "
-            f"no column for it, while {sorted(holders)} hold it; refusing "
-            f"to read {component!r} from a different group than its sibling "
-            f"components. Precedence: {list(order)}."
-        )
-    return None
 
 
 # Modal result groups (``-N modesOfVibration`` / ``modesOfVibrationRotational``)
@@ -246,82 +91,6 @@ def canonical_modal_component(
     if axis is None:
         return None
     return f"{prefix}_{axis}"
-
-
-def canonical_node_component(
-    mpco_result_name: str, component_label: str,
-) -> str | None:
-    """Translate one ``(RESULT_NAME, component)`` to a canonical name.
-
-    Parameters
-    ----------
-    mpco_result_name : str
-        The HDF5 group name under ``RESULTS/ON_NODES``, e.g. ``"DISPLACEMENT"``.
-    component_label : str
-        The component label from the group's ``COMPONENTS`` attribute,
-        e.g. ``"Ux"`` or ``"Rz"``.
-
-    Returns
-    -------
-    str or None
-        The canonical name, or ``None`` if the combination is not
-        recognized (the caller should skip unmapped entries).
-    """
-    mapping = _NODAL_RESULT_NAME_MAP.get(mpco_result_name)
-    if mapping is None:
-        return None
-
-    if mapping.is_scalar:
-        return mapping.canonical_prefix
-
-    axis = component_axis(component_label)
-    if axis is None:
-        return None
-    return f"{mapping.canonical_prefix}_{axis}"
-
-
-# How the copies of a node on a partition interface combine when the
-# per-rank files of an OpenSeesMP run are stitched (Ladruno schema §7.1,
-# attribute ``PARTITION_REDUCTION`` on each result group; WP-126).
-PARTITION_REDUCTION_NONE = "NONE"                # every copy is the same
-PARTITION_REDUCTION_SUM = "SUM"                  # each copy is a partial
-PARTITION_REDUCTION_UNSUPPORTED = "UNSUPPORTED"  # partial, no sum recovers it
-PARTITION_REDUCTIONS = (
-    PARTITION_REDUCTION_NONE,
-    PARTITION_REDUCTION_SUM,
-    PARTITION_REDUCTION_UNSUPPORTED,
-)
-
-
-def partition_reduction_from_name(result_name: str) -> str:
-    """Reduction kind for a result group that carries no attribute.
-
-    The fallback for ``.ladruno`` files written before WP-126 and for
-    every ``.mpco``. Each rank computes nodal reactions and unbalanced
-    loads from its own elements only, so those are summed; everything
-    else (kinematics, pressure, tie force) is the same in every copy.
-    ``RAYLEIGH_*`` is the damping part of the reaction, a partial too.
-    """
-    name = result_name.upper()
-    if name.startswith(("REACTION", "UNBALANCED", "RAYLEIGH")):
-        return PARTITION_REDUCTION_SUM
-    return PARTITION_REDUCTION_NONE
-
-
-def component_axis(label: str) -> str | None:
-    """Return the canonical axis suffix (``"x"``, ``"y"``, ``"z"``)
-    inferred from a component label.
-
-    Recognizes both Latin (``Ux``, ``Vy``, ``Rz``) and Greek
-    (``ωx``, ``αz``) prefixes — only the trailing axis character
-    matters. Case-insensitive.
-    """
-    if not label:
-        return None
-    last = label[-1].lower()
-    if last in ("x", "y", "z"):
-        return last
-    return None
 
 
 def has_canonical_mapping(mpco_result_name: str) -> bool:

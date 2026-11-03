@@ -77,6 +77,7 @@ from ...opensees._response_catalog import (
     mpco_layer_group_aliases,
     parse_mpco_element_key,
 )
+from ._buckets import LayerBucketUnreadWarning
 from ._mpco_element_io import _attr_scalar
 from ._mpco_fiber_io import _SECTION_KEY_RE
 
@@ -118,13 +119,6 @@ def canonical_to_layer_token(canonical: str) -> tuple[str, str] | None:
 # =====================================================================
 # Per-bucket descriptor
 # =====================================================================
-
-class LayerBucketUnreadWarning(UserWarning):
-    """A layered-shell bucket the reader leaves unread, so neither the fiber
-    nor the layer level returns its values. The warning names the bucket,
-    its class and why: on ``.ladruno`` a fiber-token bucket whose blocks of
-    several components per fiber it does not decode (#1995); on MPCO a
-    layer-group bucket that bucket discovery leaves out (#2090)."""
 
 
 @dataclass(frozen=True)
@@ -1027,7 +1021,6 @@ def read_layer_bucket_slab(
 
 __all__ = [
     "LayerBucketLayout",
-    "LayerBucketUnreadWarning",
     "LayerSectionData",
     "ShellFrameUnavailableWarning",
     "canonical_to_layer_token",
