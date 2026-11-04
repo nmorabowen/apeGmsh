@@ -417,11 +417,13 @@ p = ops_bridge.eigen(10).to_ladruno("modes.ladruno")
 modes = Results.from_ladruno(p, model_h5=p.with_suffix(".h5"))
 
 # A plain openseespy deck: capture_live_modes against the FEMData archive
-# it was built from (an .h5 output path refuses)
+# it was built from (an .h5 output path refuses). Its own file name: the
+# Results above holds modes.ladruno open, and on Windows a file another
+# Results holds open cannot be replaced
 from apeGmsh.results.live import capture_live_modes
 fem.to_h5("fem_model.h5")
-p = capture_live_modes("fem_model.h5", 10, "modes.ladruno", ops=ops)
-modes = Results.from_ladruno(p, model_h5="fem_model.h5")
+q = capture_live_modes("fem_model.h5", 10, "deck_modes.ladruno", ops=ops)
+deck_modes = Results.from_ladruno(q, model_h5="fem_model.h5")
 
 # Other records → emit_recorders separately
 with spec.emit_recorders("out/", model=model) as live:

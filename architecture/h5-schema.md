@@ -2650,8 +2650,9 @@ in. Nothing in `results.h5` or `/model` records that system.
 
 Modes are written to a `.ladruno` by default (ADR 0131 D10), not to a
 native file. `EigenResult.to_ladruno` and `EigenResult.results()` write
-them for a bridge solve, and `capture_live_modes` (from #2768) writes them
-for a plain openseespy deck. Both go through the Python writer
+them for a bridge solve, `ParallelModalResult.to_ladruno` for a parallel
+modal harvest, and `capture_live_modes` (from #2768) for a plain
+openseespy deck. All three go through the Python writer
 `write_modes`
 ([`results/readers/_ladruno_writer.py`](../src/apeGmsh/results/readers/_ladruno_writer.py)),
 in the layout the fork recorder writes for `modesOfVibration` +
@@ -2688,7 +2689,10 @@ bridge's export; `capture_live_modes` refuses it and writes nothing.
 ([`results/readers/_ladruno_provenance.py`](../src/apeGmsh/results/readers/_ladruno_provenance.py)):
 `fem_hash` and `model_hash`, copied byte-equal from the archive's
 `/meta/lineage`, plus `unsupported` (`["elements"]`), `writer`,
-`opensees_backend` and `opensees_build_sha`. A bridge archive (`ops.h5`)
+`opensees_backend` and `opensees_build_sha`, and `units` when the
+archive declares a unit system. The full owned set also holds
+`stage_names` and `element_index_space`, which a modes file does not
+carry (`PROVENANCE_ATTRS` plus `units` in that module). A bridge archive (`ops.h5`)
 is stamped with both hashes. A bare FEMData archive (`fem.to_h5`) holds no
 `model_hash`, so its stamp carries **`fem_hash` alone**, and the file pairs
 to the archive whose `/meta/lineage@fem_hash` matches it (ADR 0133 D1,
