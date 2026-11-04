@@ -73,6 +73,7 @@ submodules (``_internal/build/<module>.py``) here only.
 from __future__ import annotations
 
 import os
+import sys
 import weakref
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -143,8 +144,8 @@ _MPCO_REMEDIES = (
 )
 
 #: Windows' ERROR_SHARING_VIOLATION, the ``winerror`` of a replace that an
-#: open handle (an open :class:`Results`) blocks. The attribute exists on
-#: Windows only; elsewhere an open file never blocks a replace.
+#: open handle (an open :class:`Results`) blocks. ``OSError.winerror``
+#: exists on Windows only; elsewhere an open file never blocks a replace.
 _ERROR_SHARING_VIOLATION = 32
 
 #: Typed ``recorder.Node`` response token -> (translational prefix,
@@ -873,7 +874,8 @@ def _write_and_read_mpco(
         # its ERROR_SHARING_VIOLATION (winerror 32) as PermissionError.
         # Any other denial (a directory ACL, say) is quoted as it is.
         if (overwrite and isinstance(e, PermissionError)
-                and getattr(e, "winerror", None) == _ERROR_SHARING_VIOLATION):
+                and sys.platform == "win32"
+                and e.winerror == _ERROR_SHARING_VIOLATION):
             raise BridgeError(
                 f"{failed} This read converts afresh, replacing the "
                 f".ladruno already there, because {why_not}; a Results "

@@ -393,7 +393,7 @@ class LiveDefault:
             # Reached only with overwrite=True or with nothing there. The
             # run rewrites the .mpco, so an earlier run's .ladruno would
             # stand beside it as its conversion if the read then refused:
-            # remove it now, as the fork route does (#2805).
+            # remove it now, as the fork route does.
             for old in existing_fork_files(fork_target_of(target)):
                 old.unlink()
             self._route, self._target, self._tag = "mpco", target, int(tag)

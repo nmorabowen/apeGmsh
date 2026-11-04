@@ -922,8 +922,12 @@ def test_only_a_sharing_violation_blames_an_open_results(
 ) -> None:
     """#2805 amendment 1: a replace of the earlier ``.ladruno`` that fails
     for another reason than a sharing violation quotes the plain failure
-    and never tells the user to close a Results."""
+    and never tells the user to close a Results. ``winerror`` is Windows'
+    alone: elsewhere no open file blocks a replace, so nothing blames
+    one."""
     import os
+
+    blames_open = blames_open and sys.platform == "win32"
 
     ops = springs_ops(staged=True)
     ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
