@@ -37,7 +37,6 @@ import numpy as np
 import pytest
 
 from apeGmsh.results import Results
-from apeGmsh.results.readers._ladruno import StageStampRefused
 from apeGmsh.results.readers._ladruno_live import stamp_fork_file
 from apeGmsh.results.readers._ladruno_provenance import stamp_provenance
 
@@ -159,12 +158,12 @@ def test_capture_live_modes_is_not_named_after_the_program(tmp_path: Path) -> No
     model_h5 = _model_h5(tmp_path / "model.h5", ("pushover", "static"))
     path = capture_live_modes(model_h5, 2, tmp_path / "modes.ladruno", ops=_TrussOps())
 
-    assert _stamp(path) == ["MODEL_STAGE[1]"]
     r, raised = _open(path, model_h5)
     with r:
-        assert raised == []
         assert _hosts(r) == [("stage_0", "MODEL_STAGE[1]")]
+        assert raised == []
         assert "pushover" not in [s.name for s in r.stages]
+        assert _stamp(path) == ["MODEL_STAGE[1]"]
         modes = sorted(r.modes, key=lambda m: m.mode_index)
         assert [m.eigenvalue for m in modes] == _TrussOps.LAMS
         ux = modes[1].nodes.get(component="displacement_x")
@@ -193,15 +192,15 @@ def test_parallel_modal_result_is_not_named_after_the_program(tmp_path: Path) ->
     path = ParallelModalResult.from_job(job).to_ladruno(
         tmp_path / "modes.ladruno", model_h5=model_h5)
 
-    assert _stamp(path) == ["MODEL_STAGE[1]"]
     r, raised = _open(path, model_h5)
     with r:
-        assert raised == []
         assert _hosts(r) == [("stage_0", "MODEL_STAGE[1]")]
+        assert raised == []
         modes = sorted(r.modes, key=lambda m: m.mode_index)
         assert [m.eigenvalue for m in modes] == lams
         ux = modes[0].nodes.get(component="displacement_x")
         assert ux.values[0].tolist() == [100.0 + n for n in NODE_IDS]
+    assert _stamp(path) == ["MODEL_STAGE[1]"]
 
 
 def test_an_unstamped_modes_file_is_no_static_host(tmp_path: Path) -> None:
@@ -213,7 +212,8 @@ def test_an_unstamped_modes_file_is_no_static_host(tmp_path: Path) -> None:
     model_h5 = _model_h5(tmp_path / "model.h5", ("pushover", "static"))
     path = capture_live_modes(model_h5, 1, tmp_path / "modes.ladruno", ops=_TrussOps())
     with h5py.File(path, "r+") as f:
-        del f["INFO/PROVENANCE"].attrs["stage_names"]
+        if "stage_names" in f["INFO/PROVENANCE"].attrs:
+            del f["INFO/PROVENANCE"].attrs["stage_names"]
 
     r, raised = _open(path, model_h5)
     with r:
@@ -294,6 +294,8 @@ def _stamped(tmp_path: Path, names: "list[str]", kinds: "list[str]") -> Path:
 
 
 def test_a_stamped_name_the_program_does_not_declare_refuses(tmp_path: Path) -> None:
+    from apeGmsh.results.readers._ladruno import StageStampRefused
+
     model_h5 = _model_h5(tmp_path / "model.h5",
                          ("gravity", "static"), ("pushover", "static"))
     path = _stamped(tmp_path, ["gravity", "shake"], ["static", "static"])
@@ -302,6 +304,8 @@ def test_a_stamped_name_the_program_does_not_declare_refuses(tmp_path: Path) -> 
 
 
 def test_a_stamped_stage_of_another_kind_refuses(tmp_path: Path) -> None:
+    from apeGmsh.results.readers._ladruno import StageStampRefused
+
     model_h5 = _model_h5(tmp_path / "model.h5",
                          ("gravity", "static"), ("shake", "transient"))
     path = _stamped(tmp_path, ["gravity", "shake"], ["static", "static"])
