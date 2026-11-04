@@ -497,12 +497,14 @@ class Results:
         Parses the ``.out`` / ``.xml`` files emitted at ``output_dir``
         (matching what ``spec.emit_recorders(...)`` or the bridge's Tcl/Py
         emit produced), caches the result at ``cache_root`` and opens it
-        (ADR 0131 D6). Nodal records only, over stages whose names and kinds
-        are the first of ``model``'s ``ops.stage`` blocks in order, are cached
-        as ``<key>.ladruno`` (stamped ``opensees_backend="unknown"`` against
-        ``<key>.model.h5``) and read with ``from_ladruno(model_h5=)``. Any
-        other run (an element record, ``displacement_increment``, stages the
-        program does not declare in that order) is cached as native HDF5
+        (ADR 0131 D6). Nodal records only, over stages each of which is one
+        of ``model``'s ``ops.stage`` blocks with its kind (in any order and
+        any subset), are cached as ``<key>.ladruno``, stamped against
+        ``<key>.model.h5`` with ``opensees_backend="unknown"`` and the
+        stage names, which ``from_ladruno(model_h5=)`` binds by name
+        (#2823); the results are bound to ``model`` itself. Any other run
+        (an element record, ``displacement_increment``, a stage the program
+        does not declare or of another kind) is cached as native HDF5
         embedding ``model``'s ``/opensees/`` zone, which keeps the names.
         A layers record refuses by name; modal records are not emitted.
 
@@ -571,7 +573,11 @@ class Results:
                 model_h5_src=model_h5_src, stages=stages,
             ).run()
         if target != cached_h5:
-            return open_transcode(target, plan, fem=fem, model_h5=model_h5_src)
+            res = open_transcode(target, plan, fem=fem, model_h5=model_h5_src)
+            # Bound to the caller's model, as the native route binds it; the
+            # archive the file pairs with is its to_h5 (amendment 1, #2823).
+            res._model = model
+            return res
         return cls.from_native(cached_h5, fem=fem, model=model)
 
     @classmethod
@@ -1635,6 +1641,11 @@ class Results:
         * the stamps are another model's: the names here would read other
           stages than ``model_h5``'s.
 
+        A ``.ladruno`` that carries ``INFO/PROVENANCE@stage_names`` binds by
+        those names, in any order (#2823): its binding is ``model_h5``'s when
+        each stage carries the stamped name ``model_h5`` declares (and a
+        stage stamped with its own ``MODEL_STAGE`` name, none).
+
         Nothing is renamed: each reason says how to bind the names.
         """
         import h5py
@@ -1653,6 +1664,16 @@ class Results:
             return None
         hosts = [s for s in self._all_stages() if s.kind != "mode"]
         stamped = [canonical_stage_name(s) != s.id for s in hosts]
+        by_name = self._stamped_binding(hosts, names)
+        if by_name is not None and (any(stamped) or not by_name[1]):
+            if by_name[0]:
+                return None  # the binding model_h5's stamp gives
+            return (
+                f"these results are bound to another model's stage names "
+                f"({[canonical_stage_name(s) for s in hosts]}), not to "
+                f"model_h5={str(model_h5)!r}'s {names}; open them with "
+                f"model_h5={str(model_h5)!r} (ADR 0130 A3)"
+            )
         k = stamped.index(False) if False in stamped else len(stamped)
         here = [canonical_stage_name(s) for s in hosts[:k]]
         if k == 0:
@@ -1673,6 +1694,27 @@ class Results:
             f"model_h5={str(model_h5)!r}'s {names}; open them with "
             f"model_h5={str(model_h5)!r} (ADR 0130 A3)"
         )
+
+    def _stamped_binding(
+        self, hosts: "list[Any]", names: "list[str]",
+    ) -> "Optional[tuple[bool, bool]]":
+        """``(this binding is the stamp's under names, the stamp names a
+        program stage)`` for a ``.ladruno`` whose ``stage_names`` is stamped;
+        ``None`` for any other file."""
+        from .readers._ladruno import read_stage_stamp
+        from .readers._ladruno_multi import discover_partition_files
+        from .user._states import canonical_stage_name
+
+        if self._path is None or Path(self._path).suffix != ".ladruno":
+            return None
+        stamp = read_stage_stamp(discover_partition_files(Path(self._path)))
+        if stamp.names is None or len(stamp.names) != len(hosts):
+            return None
+        want = [n if n in names else h.id for h, n in zip(hosts, stamp.names)]
+        known = all(n in names or n == rec.group
+                    for n, rec in zip(stamp.names, stamp.stages))
+        here = [canonical_stage_name(h) for h in hosts]
+        return known and here == want, any(n in names for n in stamp.names)
 
     # ------------------------------------------------------------------
     # Stage-scoped properties (raise on unscoped or wrong-kind access)

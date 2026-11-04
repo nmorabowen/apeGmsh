@@ -14,9 +14,13 @@ Attribute                   Value (scalar, variable-length UTF-8 string)
 ``model_hash``              ``<model_h5>/meta/lineage@model_hash``, byte-equal;
                             absent for a bare FEMData archive (ADR 0133)
 ``fem_hash``                ``<model_h5>/meta/lineage@fem_hash``, byte-equal
-``stage_names``             JSON array: the program's stage names, written
-                            only when the file's ``MODEL_STAGE`` count and
-                            ``KIND`` s match the program's stages
+``stage_names``             JSON array, one per ``MODEL_STAGE``: the program
+                            stage it recorded, or its own ``MODEL_STAGE[<k>]``
+                            name for a stage that is no program stage
+                            (modes). Written when the writer names the
+                            stages (``recorded_stages=``), or when the file's
+                            ``MODEL_STAGE`` count and ``KIND`` s match the
+                            program's stages
 ``element_index_space``     ``"fem"``, or absent (unverified)
 ``unsupported``             JSON array of the lossy categories; ``"[]"``
 ``writer``                  the apeGmsh component and version
@@ -124,6 +128,7 @@ def stamp_provenance(
     model_h5: "str | Path",
     *,
     stage_names: "Optional[Sequence[str]]" = None,
+    recorded_stages: "Optional[Sequence[Optional[str]]]" = None,
     unsupported: "Sequence[str]" = (),
     writer: "Optional[str]" = None,
     opensees_backend: "Optional[str]" = None,
@@ -147,6 +152,18 @@ def stamp_provenance(
     ``MODEL_STAGE`` count or ``KIND`` s differ from the program's gets no
     ``stage_names`` and :class:`StageNamesOmittedWarning`; a program with
     no stages has nothing to name and stays silent.
+
+    ``recorded_stages`` is the writer's own account of the stages, which
+    a reader binds by name (#2823): one entry per ``MODEL_STAGE`` in file
+    order, the program stage that stage recorded, in any order, or
+    ``None`` for a stage that is no program stage (a modes stage), which
+    is stamped with its own ``MODEL_STAGE[<k>]`` name. Each name must be a
+    stage of the archive's program, and a stage whose ``KIND`` is
+    ``static`` or ``transient`` must record that program stage's kind;
+    otherwise ``ValueError`` is raised before any write. A ``None`` stage
+    whose own name the program declares cannot be told from that program
+    stage, so ``stage_names`` is then omitted with
+    :class:`StageNamesOmittedWarning`. It excludes ``stage_names``.
 
     ``element_index_space`` is ``"fem"`` only when the part records at
     least one element and every element id it records (``MODEL/ELEMENTS``
@@ -208,6 +225,10 @@ def stamp_provenance(
     Returns the part paths, in partition order.
     """
     names_override = _string_list(stage_names, "stage_names")
+    recorded = _recorded_list(recorded_stages)
+    if names_override is not None and recorded is not None:
+        raise TypeError("stamp_provenance: pass stage_names= or "
+                        "recorded_stages=, not both.")
     lossy = _string_list(unsupported, "unsupported") or []
     writer_text = _writer_text(writer)
     backend_arg, build_arg = _engine_args(opensees_backend, opensees_build_sha)
@@ -249,8 +270,12 @@ def stamp_provenance(
         }
         if model_units is not None:
             wanted["units"] = str(model_units)
-        names = _stage_names_for(
-            part, facts.kinds, program_names, program_kinds, kind_error,
+        names = (
+            _stage_names_for(part, facts.kinds, program_names,
+                             program_kinds, kind_error)
+            if recorded is None else
+            _recorded_names(part, facts, recorded, program_names,
+                            program_kinds, kind_error)
         )
         if names is not None:
             wanted["stage_names"] = _json(names)
@@ -307,6 +332,22 @@ def _string_list(
     if bad:
         raise TypeError(f"stamp_provenance: {name} holds non-str items "
                         f"{bad[:5]!r}.")
+    return out
+
+
+def _recorded_list(
+    value: "Optional[Sequence[Optional[str]]]",
+) -> "Optional[list[Optional[str]]]":
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)):
+        raise TypeError("stamp_provenance: recorded_stages must be a sequence "
+                        f"of str or None, not one {type(value).__name__}.")
+    out = list(value)
+    bad = [v for v in out if v is not None and not isinstance(v, str)]
+    if bad:
+        raise TypeError("stamp_provenance: recorded_stages holds items that "
+                        f"are neither str nor None: {bad[:5]!r}.")
     return out
 
 
@@ -517,14 +558,15 @@ def _program_facts(
 
 
 class _PartFacts:
-    __slots__ = ("kinds", "element_tags", "owned", "all_vlen_utf8",
+    __slots__ = ("groups", "kinds", "element_tags", "owned", "all_vlen_utf8",
                  "malformed")
 
     def __init__(
-        self, kinds: "list[Optional[str]]", element_tags: "np.ndarray",
-        owned: "dict[str, str]", all_vlen_utf8: bool,
-        malformed: "list[str]",
+        self, groups: "list[str]", kinds: "list[Optional[str]]",
+        element_tags: "np.ndarray", owned: "dict[str, str]",
+        all_vlen_utf8: bool, malformed: "list[str]",
     ) -> None:
+        self.groups = groups
         self.kinds = kinds
         self.element_tags = element_tags
         self.owned = owned
@@ -585,15 +627,16 @@ def _read_part(path: Path) -> _PartFacts:
             owned[name] = _as_text(prov.attrs[name], f"{path}:{_PROVENANCE}@{name}")
         kinds: "list[Optional[str]]" = []
         tags = [np.empty(0, dtype=np.int64)]
-        for gname in _stage_groups(h5):
+        groups = _stage_groups(h5)
+        for gname in groups:
             grp = h5[gname]
             kinds.append(
                 _as_text(grp.attrs["KIND"], f"{path}:{gname}@KIND")
                 if "KIND" in grp.attrs else None
             )
             tags.extend(_stage_element_tags(grp))
-    return _PartFacts(kinds, np.unique(np.concatenate(tags)), owned, all_vlen,
-                      malformed)
+    return _PartFacts(groups, kinds, np.unique(np.concatenate(tags)), owned,
+                      all_vlen, malformed)
 
 
 def _stage_element_tags(stage: "h5py.Group") -> "list[np.ndarray]":
@@ -810,6 +853,52 @@ def _stage_names_for(
              f"program's {kinds}")
         return None
     return list(names)
+
+
+def _recorded_names(
+    part: Path, facts: "_PartFacts", recorded: "list[Optional[str]]",
+    names: "list[str]", kinds: "list[str]", kind_error: "Optional[str]",
+) -> "Optional[list[str]]":
+    """``stage_names`` from the writer's ``recorded_stages``, checked
+    against the program and the file; ``None`` (omitted) only for a
+    program with no stages, or a modes stage named like a program stage."""
+    if not names:
+        return None
+    if len(recorded) != len(facts.groups):
+        raise ValueError(
+            f"stamp_provenance: recorded_stages names {len(recorded)} "
+            f"stage(s) {recorded} but {part.name} holds {len(facts.groups)} "
+            f"MODEL_STAGE group(s) {facts.groups}. Nothing was stamped.")
+    unknown = sorted({r for r in recorded if r is not None} - set(names))
+    if unknown:
+        raise ValueError(
+            f"stamp_provenance: recorded_stages {unknown} are not stages of "
+            f"the program ({names}). Nothing was stamped.")
+    if kind_error is not None and any(r is not None for r in recorded):
+        raise ValueError(
+            "stamp_provenance: recorded_stages cannot be checked: the "
+            f"program's stage kinds are unknown ({kind_error}). Nothing was "
+            "stamped.")
+    out: list[str] = []
+    for group, raw, name in zip(facts.groups, facts.kinds, recorded):
+        if name is None:
+            if group in names:
+                warnings.warn(StageNamesOmittedWarning(
+                    f"{part.name}: stage_names not stamped: {group} is no "
+                    "program stage, and the program names a stage "
+                    f"{group!r} too, so its own name would bind it."),
+                    stacklevel=4)
+                return None
+            out.append(group)
+            continue
+        declared = {k for n, k in zip(names, kinds) if n == name}
+        if raw in ("static", "transient") and raw not in declared:
+            raise ValueError(
+                f"stamp_provenance: {part.name} {group} records KIND {raw!r} "
+                f"but recorded_stages names it {name!r}, which the program "
+                f"declares {sorted(declared)}. Nothing was stamped.")
+        out.append(name)
+    return out
 
 
 def _conversion(
