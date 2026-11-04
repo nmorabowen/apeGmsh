@@ -309,6 +309,32 @@ def test_a_bridge_archive_capture_carries_both_hashes(tmp_path: Path) -> None:
             == [4.0, 9.0]
 
 
+class _ForkOps(FakeOps):
+    """The fake, answering the fork's one signal (``ladrunoBuild``)."""
+
+    def ladrunoBuild(self) -> str:  # noqa: N802 -- the OpenSees command name
+        return "0123456789abcdef0123456789abcdef01234567"
+
+
+@pytest.mark.parametrize("fork, backend", [(False, "unknown"), (True, "ladruno")])
+def test_the_backend_stamp_names_only_a_proven_engine(
+    tmp_path: Path, fork: bool, backend: str,
+) -> None:
+    """ADR 0131 D6 carry-forward (W2 review): a Python-written file never
+    claims the fork's engine by default. Stock openseespy stamps
+    ``"unknown"`` (§7b.1 keeps ``"stock"`` for a converted file); only a
+    module that answers ``ladrunoBuild`` stamps the fork's engine."""
+    fem, stock = _frame_2d()
+    ops = stock
+    if fork:
+        ops = _ForkOps(stock.ndm, stock.coords, stock.ndf, stock.elements,
+                       stock.eigenvalues)
+    p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
+    stamp = _stamp(p)
+    assert stamp["opensees_backend"] == backend
+    assert stamp["opensees_build_sha"] == "unknown"
+
+
 def test_a_refused_stamp_leaves_no_file_behind(tmp_path: Path) -> None:
     """An archive the stamp refuses (no /meta/lineage): nothing new at the
     path, no staging directory, and a file already there is untouched."""

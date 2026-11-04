@@ -32,7 +32,7 @@ from ...opensees.analysis.eigen import _live_slots, _spatial, _warn_unresolved
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
 from ..readers._ladruno_live import FORK_SUFFIX
-from ..readers._ladruno_writer import write_modes
+from ..readers._ladruno_writer import solved_backend, write_modes
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
@@ -74,8 +74,11 @@ def capture_live_modes(
     The file is stamped (``INFO/PROVENANCE``) against the model archive:
     a bridge archive with both ``model_hash`` and ``fem_hash``, a bare
     FEMData archive (or the FEMData passed in) with ``fem_hash`` alone,
-    which pairs it by the mesh (ADR 0133). A refused stamp leaves no file
-    behind. Read it with the archive as the model::
+    which pairs it by the mesh (ADR 0133). ``opensees_backend`` names the
+    fork only when ``ops`` is the fork; on stock openseespy it is
+    ``"unknown"``, since §7b.1 keeps ``"stock"`` for a converted file. A
+    refused stamp leaves no file behind. Read it with the archive as the
+    model::
 
         p = capture_live_modes("model.h5", 3, "modes.ladruno", ops=ops)
         r = Results.from_ladruno(p, model_h5="model.h5")
@@ -264,5 +267,6 @@ def _capture(
         eigenvalues=eigenvalues, fields=lambda k: shapes[k - 1],
         rotations=rotations,
         record_ids=None if len(node_ids) == len(all_ids) else node_ids,
-        source="live_modes", stacklevel=4,
+        source="live_modes", opensees_backend=solved_backend(ops),
+        stacklevel=4,
     )

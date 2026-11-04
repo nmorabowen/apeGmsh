@@ -491,20 +491,23 @@ class Results:
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
-        ``model=`` is required (else :class:`TypeError`); its ``/opensees/``
-        zone is embedded in the transcoded file, which
-        :meth:`Results.from_native` then opens.
+        ``model=`` is required (else :class:`TypeError`).
 
-        Parses the ``.out`` / ``.xml`` files emitted at
-        ``output_dir`` (matching what ``spec.emit_recorders(...)`` or
-        the apeGmsh OpenSees bridge's Tcl/Py emit produced) into an
-        apeGmsh native HDF5, caches the result at
-        ``cache_root``, and opens it through ``NativeReader``.
+        Parses the ``.out`` / ``.xml`` files emitted at ``output_dir``
+        (matching what ``spec.emit_recorders(...)`` or the bridge's Tcl/Py
+        emit produced), caches the result at ``cache_root`` and opens it
+        (ADR 0131 D6). Nodal records only, over stages whose names and kinds
+        are the first of ``model``'s ``ops.stage`` blocks in order, are cached
+        as ``<key>.ladruno`` (stamped ``opensees_backend="unknown"`` against
+        ``<key>.model.h5``) and read with ``from_ladruno(model_h5=)``. Any
+        other run (an element record, ``displacement_increment``, stages the
+        program does not declare in that order) is cached as native HDF5
+        embedding ``model``'s ``/opensees/`` zone, which keeps the names.
+        A layers record refuses by name; modal records are not emitted.
 
-        Caching: unchanged input files, model, stage name and stage kind
-        reuse the cached HDF5 (``writers/_cache.py``). Recorders sample
-        every step or every ``dt=``: sampling at arbitrary caller
-        instants has no recorder equivalent.
+        Caching: unchanged input files, model, stage names and kinds reuse
+        the cached file (``writers/_cache.py``). Recorders sample every step
+        or every ``dt=``, never at arbitrary caller instants.
 
         ``stage_id`` matches the per-stage filename prefix used by
         :meth:`ResolvedRecorderSpec.emit_recorders` together with
@@ -517,16 +520,14 @@ class Results:
         run into one file, one stage each with its name and kind; it
         excludes ``stage_id`` / ``stage_name`` / ``stage_kind``.
 
-        Nodes, element forces, gauss points and line stations are
-        transcoded; fiber and layer records are skipped (``.out`` cannot
-        carry them; use MPCO) and modal records are not emitted. Rows
-        are labelled with the spec's FEM ids, so the files must come from
-        an emit that translated them to OpenSees tags
+        Rows are labelled with the spec's FEM ids, so the files must come
+        from an emit that translated them to OpenSees tags
         (``spec.emit_recorders(..., model=)`` or
         ``spec.to_tcl_commands(model=)``).
         """
         if model is None:
             raise TypeError(_MODEL_REQUIRED_MESSAGE)
+        from .readers._ladruno_writer import open_transcode, transcode_target
         from .schema._versions import PARSER_VERSION
         from .transcoders import RecorderTranscoder
         from .writers import _cache
@@ -537,10 +538,7 @@ class Results:
                 "(the spec's snapshot_id must match)."
             )
 
-        # When stage_id is provided and stage_name was left at its
-        # default, mirror stage_id so the resulting Results stage is
-        # named meaningfully (otherwise everything ends up as
-        # "analysis" regardless of which stage the user loaded).
+        # stage_id names the stage when stage_name is left at its default.
         if stage_id is not None and stage_name in (None, "analysis"):
             stage_name = stage_id
         stages = None if stages is None else tuple(stages)   # read a generator once
@@ -561,18 +559,18 @@ class Results:
             model_token=_cache.model_cache_token(model), stages=plan,
         )
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
-
-        if not cached_h5.exists():
-            # The model's /opensees/ zone, written beside the target for
-            # NativeWriter to copy in at open time (ADR 0020).
-            model_h5_src: Path = cached_h5.with_suffix(".model.h5")
+        model_h5_src: Path = cached_h5.with_suffix(".model.h5")   # embedded, or stamped by
+        target = transcode_target(spec, cached_h5, plan, model, model_h5_src)
+        if not target.exists() or not model_h5_src.exists():
             model.to_h5(model_h5_src)
+        if not target.exists():
             RecorderTranscoder(
-                spec, out_dir, cached_h5, fem, stage_name=stage_name,
+                spec, out_dir, target, fem, stage_name=stage_name,
                 stage_kind=stage_kind, file_format=file_format, stage_id=stage_id,
                 model_h5_src=model_h5_src, stages=stages,
             ).run()
-
+        if target != cached_h5:
+            return open_transcode(target, plan, fem=fem, model_h5=model_h5_src)
         return cls.from_native(cached_h5, fem=fem, model=model)
 
     @classmethod
