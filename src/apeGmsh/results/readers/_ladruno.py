@@ -86,6 +86,10 @@ if TYPE_CHECKING:
 
 
 _STAGE_PREFIX = "MODEL_STAGE["
+_SUFFIX = ".ladruno"
+#: ``PROVENANCE@writer``'s mark on a recorder transcode
+#: (``_ladruno_writer._writer("recorders")``).
+_TRANSCODE_MARK = "recorders->ladruno"
 
 _DIM_UNKNOWN = (
     "no INFO/SPATIAL_DIM, and no single MODEL/NODES/COORDINATES width "
@@ -133,6 +137,195 @@ def warn_stage_kind_conflicts(conflicts: "Sequence[str]") -> None:
         ),
         stacklevel=3,
     )
+
+
+class StageStampRefused(ValueError):
+    """``INFO/PROVENANCE@stage_names`` cannot name the file's stages.
+
+    Raised (ADR 0122 D3, #2823) when the stamp is not a JSON array of
+    strings, counts other than the file's ``MODEL_STAGE`` groups, differs
+    between the parts of a set, or contradicts the program it is opened
+    with: a name the program does not declare, or a program stage whose
+    kind is not the ``KIND`` the file recorded. The message names the
+    stage and the stamp. Nothing is renamed.
+    """
+
+
+class StageRecord(NamedTuple):
+    """One ``MODEL_STAGE`` group as the stage-name binding sees it.
+
+    ``kind`` is the raw ``KIND`` (of the first part that is not an
+    ``EMPTY_PARTITION``), ``None`` when no part records one.
+    ``modes_only`` is a stage that records ``KIND="eigen"`` and no
+    ``TIME`` axis: it holds modes and no analysis step, so it is never a
+    program stage (``EigenResult.to_ladruno``, ``capture_live_modes``, a
+    modes-only stage of a converted ``.mpco``).
+    """
+
+    group: str
+    kind: Optional[str]
+    modes_only: bool
+
+
+class StageStamp(NamedTuple):
+    """A ``.ladruno``'s (or a set's) stages and its stamped stage names.
+
+    ``names`` is ``INFO/PROVENANCE@stage_names``, one per ``MODEL_STAGE``
+    in order, or ``None`` when the file carries none. A stamped name equal
+    to its own ``MODEL_STAGE[<k>]`` group name says the stage is not a
+    program stage.
+    """
+
+    stages: "tuple[StageRecord, ...]"
+    names: "Optional[tuple[str, ...]]"
+    source: str
+    #: ``PROVENANCE@writer`` names the ``.out`` recorder transcode, which
+    #: may hold its stages in any order of the program's.
+    transcoded: bool = False
+    #: ``INFO/PROVENANCE@stage_display_names``: the names shown in place of
+    #: the bound program names (a ``stage_names=`` override); ``None``
+    #: when absent. Binding never comes from them.
+    display: "Optional[tuple[str, ...]]" = None
+
+
+def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
+    """The stages and ``stage_names`` of a ``.ladruno`` or of a part set.
+
+    Raises :class:`StageStampRefused` for a malformed or miscounted
+    ``stage_names`` or ``stage_display_names``, one the parts disagree on
+    (one part stamped, the other not, or with other names), or display
+    names with no ``stage_names`` to bind by; and ``ValueError`` when the
+    parts hold different numbers of ``MODEL_STAGE`` groups.
+    """
+    import h5py
+
+    files = [Path(p) for p in paths]
+    source = files[0].name if len(files) == 1 else f"{files[0].name} (+{len(files) - 1} parts)"
+    per_part: list[list[tuple[str, Optional[str], bool, bool]]] = []
+    stamps: list[Optional[tuple[str, ...]]] = []
+    shown: list[Optional[tuple[str, ...]]] = []
+    transcoded = False
+    for path in files:
+        with h5py.File(path, "r") as h5:
+            groups = sorted(
+                (k for k in h5.keys() if k.startswith(_STAGE_PREFIX)),
+                key=_stage_sort_key,
+            )
+            rows = []
+            for name in groups:
+                grp = h5[name]
+                kind = _decode(grp.attrs["KIND"]) if "KIND" in grp.attrs else None
+                empty = _attr_int(grp.attrs, "EMPTY_PARTITION", default=0) == 1
+                results = _child(grp, "RESULTS")
+                timed = results is not None and any(
+                    bucket in results
+                    and LadrunoReader._find_time_dataset(results[bucket]) is not None
+                    for bucket in ("ON_NODES", "ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS")
+                )
+                rows.append((name, kind, kind == "eigen" and not timed, empty))
+            per_part.append(rows)
+            prov = _child(h5, "INFO/PROVENANCE")
+            if prov is not None and "writer" in prov.attrs:
+                transcoded |= _TRANSCODE_MARK in _decode(prov.attrs["writer"])
+            stamps.append(_stage_list(prov, "stage_names", path, groups))
+            shown.append(_stage_list(prov, "stage_display_names", path, groups))
+            if shown[-1] is not None and stamps[-1] is None:
+                raise StageStampRefused(
+                    f"{path.name}: INFO/PROVENANCE@stage_display_names "
+                    f"{list(shown[-1])} has no stage_names to bind the stages "
+                    "by; nothing is renamed.")
+    if len({len(rows) for rows in per_part}) > 1:
+        raise ValueError(
+            f"{source}: the parts hold different numbers of MODEL_STAGE "
+            f"groups ({[len(rows) for rows in per_part]}).")
+    for attr, got in (("stage_names", stamps), ("stage_display_names", shown)):
+        if any(s != got[0] for s in got[1:]):
+            raise StageStampRefused(
+                f"{source}: the parts carry different INFO/PROVENANCE@{attr} "
+                f"({dict(zip((p.name for p in files), got))}); a set is "
+                "stamped as one.")
+    stages = []
+    for k in range(len(per_part[0])):
+        column = [rows[k] for rows in per_part]
+        live = [row for row in column if not row[3]] or column
+        stages.append(StageRecord(
+            group=live[0][0], kind=live[0][1],
+            modes_only=all(row[2] for row in live),
+        ))
+    return StageStamp(tuple(stages), stamps[0], source, transcoded, shown[0])
+
+
+def _stage_list(
+    prov: "Optional[h5py.Group]", attr: str, path: Path, groups: "list[str]",
+) -> "Optional[tuple[str, ...]]":
+    """``INFO/PROVENANCE@<attr>`` as one string per ``MODEL_STAGE``;
+    ``None`` when absent. Malformed or miscounted refuses."""
+    import json
+
+    if prov is None or attr not in prov.attrs:
+        return None
+    raw = _decode(prov.attrs[attr])
+    try:
+        names = json.loads(raw)
+    except ValueError as e:
+        raise StageStampRefused(
+            f"{path.name}: INFO/PROVENANCE@{attr} is not JSON ({e}): {raw!r}."
+        ) from e
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise StageStampRefused(
+            f"{path.name}: INFO/PROVENANCE@{attr} is not a JSON array of "
+            f"strings: {raw!r}.")
+    if len(names) != len(groups):
+        raise StageStampRefused(
+            f"{path.name}: INFO/PROVENANCE@{attr} names {len(names)} "
+            f"stage(s) {names} but the file holds {len(groups)} MODEL_STAGE "
+            f"group(s) {groups}.")
+    return tuple(names)
+
+
+def stamped_stage_binding(
+    path: Path, model_h5: Path, ids: "Sequence[str]", here: "Sequence[str]",
+    names: "Sequence[str]",
+) -> "Optional[tuple[bool, bool]]":
+    """Whether stages bound as ``here`` are the binding ``path``'s stamp gives.
+
+    ``ids`` and ``here`` are the host stages' ids and their names as a
+    combination term reads them (``stage_<i>`` when unnamed); ``names``
+    the program of ``model_h5``. ``(the stamp binds exactly here, the stamp
+    names a program stage)``; ``None`` when ``path`` is no ``.ladruno`` (or
+    set) carrying ``stage_names`` for these stages, or when it was stamped
+    against another archive (its ``model_hash`` / ``fem_hash`` are not
+    ``model_h5``'s ``/meta/lineage`` ones): the stamp vouches for its own
+    program's names only, so another program that shares them is judged
+    as an unstamped file would be.
+    """
+    import h5py
+
+    from ._ladruno_multi import discover_partition_files
+
+    if path.suffix != _SUFFIX:
+        return None
+    parts = discover_partition_files(path)
+    stamp = read_stage_stamp(parts)
+    if stamp.names is None or len(stamp.names) != len(ids):
+        return None
+    keys = ("model_hash", "fem_hash")
+    with h5py.File(parts[0], "r") as f:
+        prov = f["INFO/PROVENANCE"].attrs
+        stamped = {k: _decode(prov[k]) if k in prov else None for k in keys}
+    with h5py.File(model_h5, "r") as f:
+        lineage = _child(f, "meta/lineage")
+        held = {k: _decode(lineage.attrs[k])
+                if lineage is not None and k in lineage.attrs else None
+                for k in keys}
+    if stamped != held:
+        return None
+    want = [n if n in names else i for i, n in zip(ids, stamp.names)]
+    if stamp.display is not None:   # the shown names are the stages' names
+        want = list(stamp.display)
+    known = all(n in names or n == rec.group
+                for n, rec in zip(stamp.names, stamp.stages))
+    return known and list(here) == want, any(n in names for n in stamp.names)
 
 
 class LadrunoRepeatedNodeId(ValueError):
@@ -632,6 +825,10 @@ class LadrunoReader:
         :class:`StageKindMismatchWarning` lists the conflicts.  The
         program kind fills in only where a stage records no ``KIND``, or
         ``eigen`` (no evidence of static or transient).
+
+        A stage given its own current name and kind is left as it is (no
+        alias is added): the caller pairs only some stages (#2823) and
+        passes the rest through unchanged.
         """
         conflicts = self.stage_kind_conflicts(names, kinds)
         if conflicts:
@@ -639,13 +836,36 @@ class LadrunoReader:
             return
         current = self.stages()
         hosts = [s for s in current if s.kind != "mode"]
-        new = {s.id: (str(n), str(k)) for s, n, k in zip(hosts, names, kinds)}
+        new = {s.id: (str(n), str(k)) for s, n, k in zip(hosts, names, kinds)
+               if (str(n), str(k)) != (s.name, s.kind)}
+        program = self._renamed_program_names(hosts, new)
         self._stage_cache = [
             replace(s, name=new[s.id][0], kind=new[s.id][1],
-                    aliases=(s.name, *s.aliases))
+                    aliases=(s.name, *program.get(s.id, ()), *s.aliases))
             if s.id in new else s
             for s in current
         ]
+
+    def _renamed_program_names(
+        self, hosts: "list[StageInfo]", new: "dict[str, tuple[str, str]]",
+    ) -> "dict[str, tuple[str]]":
+        """``{stage id: (program name,)}`` for each stage this file shows by
+        its ``stage_display_names`` instead of its stamped program name:
+        the program name stays an alias, so ``stage(<program name>)`` reads
+        the same stage after a rename (the stamp refuses a display name
+        that another stage answers to)."""
+        prov = _child(self._h5, "INFO/PROVENANCE")
+        groups = [self._stage_to_grp[s.id] for s in hosts]
+        bound = _stage_list(prov, "stage_names", self._path, groups)
+        shown = _stage_list(prov, "stage_display_names", self._path, groups)
+        if bound is None or shown is None:
+            return {}
+        return {
+            s.id: (program,)
+            for s, program, display, group in zip(hosts, bound, shown, groups)
+            if s.id in new and new[s.id][0] == display
+            and program not in (display, group)
+        }
 
     def stages(self) -> list[StageInfo]:
         if self._stage_cache is not None:

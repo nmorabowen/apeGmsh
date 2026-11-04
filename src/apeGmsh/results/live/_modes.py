@@ -76,9 +76,11 @@ def capture_live_modes(
     FEMData archive (or the FEMData passed in) with ``fem_hash`` alone,
     which pairs it by the mesh (ADR 0133). ``opensees_backend`` names the
     fork only when ``ops`` is the fork; on stock openseespy it is
-    ``"unknown"``, since §7b.1 keeps ``"stock"`` for a converted file. A
-    refused stamp leaves no file behind. Read it with the archive as the
-    model::
+    ``"unknown"``, since §7b.1 keeps ``"stock"`` for a converted file.
+    ``stage_names`` is the stage's own ``MODEL_STAGE[1]``: the modes are
+    no program stage, so a staged archive never names the stage after one
+    (#2824: a one-stage archive named it ``pushover``). A refused stamp
+    leaves no file behind. Read it with the archive as the model::
 
         p = capture_live_modes("model.h5", 3, "modes.ladruno", ops=ops)
         r = Results.from_ladruno(p, model_h5="model.h5")

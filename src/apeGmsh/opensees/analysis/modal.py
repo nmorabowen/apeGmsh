@@ -1476,7 +1476,9 @@ class ParallelModalResult:
         ``model_h5`` is the bridge archive the deck was emitted from
         (``ops.h5``). ``MODEL/NODES`` is its fem, ``MODEL/ELEMENTS`` is
         empty (``INFO/PROVENANCE@unsupported`` says so), and the file is
-        stamped against it::
+        stamped against it. Its ``stage_names`` is the stage's own
+        ``MODEL_STAGE[1]``: the modes are no program stage, so a staged
+        archive never names the stage after one (#2824)::
 
             res = ParallelModalResult.from_job(job_dir)
             p = res.to_ladruno("modes.ladruno", model_h5="model.h5")
