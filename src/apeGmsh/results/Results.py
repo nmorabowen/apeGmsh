@@ -79,6 +79,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional
 from numpy import ndarray
 
 from ._bind import (
+    _bind_ladruno_stage_names,
     _bind_stage_names,
     _resolve_fem,
     _resolve_fem_via_model,
@@ -777,23 +778,23 @@ class Results:
         )
 
         if isinstance(path, (list, tuple)):
-            paths = [Path(p) for p in path]
+            files = [Path(p) for p in path]
             reader = (
-                LadrunoMultiPartitionReader(paths)
-                if len(paths) > 1
-                else LadrunoReader(paths[0])
+                LadrunoMultiPartitionReader(files)
+                if len(files) > 1
+                else LadrunoReader(files[0])
             )
-            anchor = paths[0]
+            anchor = files[0]
         else:
             anchor = Path(path)
-            discovered = (
+            files = (
                 discover_partition_files(anchor)
                 if merge_partitions else [anchor]
             )
             reader = (
-                LadrunoMultiPartitionReader(discovered)
-                if len(discovered) > 1
-                else LadrunoReader(discovered[0])
+                LadrunoMultiPartitionReader(files)
+                if len(files) > 1
+                else LadrunoReader(files[0])
             )
         # A step after the open that raises closes the reader
         # first (the file is free again on Windows), then re-raises.
@@ -829,8 +830,14 @@ class Results:
                     reader, fem, bound_model, model_path=model_h5,
                     spatial_dim=spatial_dim,
                 )
-                # The program's stage names and kinds, as in from_mpco.
-                _bind_stage_names(reader, bound_model, model_path=model_h5)
+                # The program's stage names and kinds: by the file's
+                # stamped stage_names, else by a proven kind match, never
+                # by position alone (ADR 0122 D3, #2823).
+                from .readers._ladruno import read_stage_stamp
+                _bind_ladruno_stage_names(
+                    reader, bound_model, model_path=model_h5,
+                    stamp=read_stage_stamp(files),
+                )
                 # Attach the fem_eid↔ops-tag translator whenever the
                 # model carries a real element_meta pairing — see the
                 # twin comment in :meth:`from_mpco` (the pairing diverges

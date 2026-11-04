@@ -26,13 +26,14 @@ from __future__ import annotations
 import warnings
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 
 if TYPE_CHECKING:
     from ..mesh.FEMData import FEMData
     from ..opensees.opensees_model import OpenSeesModel
+    from .readers._ladruno import StageStamp
     from .readers._protocol import ResultsReader
 
 
@@ -65,6 +66,20 @@ class DuplicateStageNameWarning(UserWarning):
     The names are still attached, but ``results.stage(<name>)`` resolves
     to the first stage so named; select the others by id (``stage_<k>``)
     or by their ``MODEL_STAGE[<k>]`` alias.
+    """
+
+
+class UnpairedStageWarning(UserWarning):
+    """``model_h5=`` declares stages the ``.ladruno`` cannot be paired with.
+
+    The file carries no ``INFO/PROVENANCE@stage_names`` and holds fewer
+    stages than the program, and their recorded ``KIND`` s do not prove
+    which program stages they are (two program stages of one kind, or a
+    stage with no ``KIND`` evidence).  A recorder bound to a later stage
+    writes such a file; pairing it with the program's first stages would
+    name it wrongly (#2824).  The message names the stages, which keep
+    their ``MODEL_STAGE[<k>]`` names; stamp the file with the stages it
+    recorded to name them.
     """
 
 
@@ -350,18 +365,38 @@ def _bind_stage_names(
         # count warning below is then the only account of the run.
         return
     if len(capture) < len(program):
-        unrun = program[len(capture):]
-        warnings.warn(
-            StageCountMismatchWarning(
-                f"model_h5={str(model_path)!r} declares {len(program)} "
-                f"stages ({program}) but the capture holds only "
-                f"{len(capture)} MODEL_STAGE groups: a partial run. The "
-                f"first {len(capture)} program names are paired onto "
-                f"the capture in order; {unrun} have no capture."
-            ),
-            stacklevel=3,
-        )
-    repeated = sorted(n for n, k in Counter(paired).items() if k > 1)
+        _warn_partial_run(program, len(capture), model_path=model_path)
+    _warn_named_alike(capture, paired, model_path=model_path)
+
+
+def _warn_partial_run(
+    program: "list[str]", n_capture: int, *, model_path: "str | Path",
+    stacklevel: int = 4,
+) -> None:
+    unrun = program[n_capture:]
+    warnings.warn(
+        StageCountMismatchWarning(
+            f"model_h5={str(model_path)!r} declares {len(program)} "
+            f"stages ({program}) but the capture holds only "
+            f"{n_capture} MODEL_STAGE groups: a partial run. The "
+            f"first {n_capture} program names are paired onto "
+            f"the capture in order; {unrun} have no capture."
+        ),
+        stacklevel=stacklevel,
+    )
+
+
+def _warn_named_alike(
+    capture: "Sequence[Any]", paired: "Sequence[Optional[str]]", *,
+    model_path: "str | Path",
+) -> None:
+    """The duplicate and shadow warnings over the stages that took a name.
+
+    ``paired[i]`` is the program name ``capture[i]`` took, ``None`` where
+    it kept its own.
+    """
+    taken = [n for n in paired if n is not None]
+    repeated = sorted(n for n, k in Counter(taken).items() if k > 1)
     if repeated:
         warnings.warn(
             DuplicateStageNameWarning(
@@ -371,12 +406,14 @@ def _bind_stage_names(
                 f"(results.stage('stage_<k>')) or by their MODEL_STAGE "
                 f"alias."
             ),
-            stacklevel=3,
+            stacklevel=4,
         )
     ids = [s.id for s in capture]
     raw = [s.name for s in capture]          # the MODEL_STAGE[<k>] aliases
     shadowed = []
     for i, name in enumerate(paired):
+        if name is None:
+            continue
         if name in ids and ids.index(name) != i:
             shadowed.append(f"{name!r} (id {ids[i]!r}) by the id of stage {ids.index(name)}")
         elif name in raw and raw.index(name) != i:
@@ -390,8 +427,219 @@ def _bind_stage_names(
                 f"aliases, so select each stage by its own id, or rename "
                 f"it in the program."
             ),
-            stacklevel=3,
+            stacklevel=4,
         )
+
+
+#: The raw ``KIND`` s that say which kind of program stage ran.
+_EVIDENCE = ("static", "transient")
+#: The raw ``KIND`` s a stage may record without contradicting a program kind.
+_NO_EVIDENCE = (None, "eigen")
+
+
+def _bind_ladruno_stage_names(
+    reader: "Any",
+    model: "OpenSeesModel",
+    *,
+    model_path: "str | Path",
+    stamp: "StageStamp",
+) -> None:
+    """Name and kind a ``.ladruno``'s stages after the archive's program.
+
+    The ``.ladruno`` sibling of :func:`_bind_stage_names` (ADR 0122 D3,
+    #2823); ``stamp`` is the file's :func:`read_stage_stamp`. A stage is
+    never paired with a program stage by position alone (#2824):
+
+    * **Stamped** (``INFO/PROVENANCE@stage_names``): each stage takes the
+      program stage its stamp names, in any order. A stamped name equal to
+      the stage's own ``MODEL_STAGE[<k>]`` group (a stage that is no program
+      stage: modes) keeps the stage as it is. A name the program does not
+      declare, or a program stage of another kind than the ``KIND`` the
+      file recorded, raises :class:`StageStampRefused` naming it. No count
+      warning: the stamp says which stages ran.
+    * **Unstamped**: a modes-only stage (``KIND="eigen"``, no step) is not a
+      program stage and keeps its name. The other stages pair with the
+      program by kind: as many stages as the program pairs one to one, and
+      a conflicting ``KIND`` renames nothing (the reader's
+      ``StageKindMismatchWarning``); fewer pair with the program's first
+      stages only when no other run of program stages fits their ``KIND`` s
+      (a partial run, :class:`StageCountMismatchWarning`); otherwise
+      nothing is renamed and :class:`UnpairedStageWarning` names the
+      stages. More stages than the program warn the count and rename
+      nothing.
+
+    Duplicate and shadowed names warn as in :func:`_bind_stage_names`.
+    """
+    from .readers._ladruno import StageStampRefused
+
+    program = list(model.stages())
+    names = [str(s.name) for s in program]
+    if not names:
+        return
+    hosts = [s for s in reader.stages() if s.kind != "mode"]
+    if len(hosts) != len(stamp.stages):
+        raise RuntimeError(
+            f"{stamp.source}: the reader lists {len(hosts)} MODEL_STAGE "
+            f"groups and the file {len(stamp.stages)}.")
+    odd = [f"{rec.group} records KIND {rec.kind!r}" for rec in stamp.stages
+           if rec.kind not in _EVIDENCE and rec.kind not in _NO_EVIDENCE]
+    kinds: "dict[int, str]" = {}
+
+    def kind_of(j: int) -> str:
+        if j not in kinds:
+            kinds[j] = _stage_kind(program[j], model_path=model_path)
+        return kinds[j]
+
+    if stamp.names is not None:
+        if odd:
+            raise StageStampRefused(
+                f"{stamp.source}: {'; '.join(odd)}, which is no stage kind; "
+                f"its stamped stage_names {list(stamp.names)} cannot be "
+                f"checked against model_h5={str(model_path)!r}.")
+        pairing = _pair_by_stamp(stamp, names, kind_of, model_path=model_path)
+    else:
+        pairing = _pair_by_kind(stamp, names, kind_of, model_path=model_path)
+        if pairing is None:
+            return
+    paired = [None if j is None else names[j] for j in pairing]
+    if all(n is None for n in paired):
+        return
+    before = _stage_naming(reader)
+    reader.attach_stage_names(
+        [h.name if j is None else names[j] for h, j in zip(hosts, pairing)],
+        [h.kind if j is None else kind_of(j) for h, j in zip(hosts, pairing)],
+    )
+    if _stage_naming(reader) == before:
+        return  # the reader declined the pairing and has said why
+    if stamp.names is None:
+        n_paired = sum(j is not None for j in pairing)
+        if n_paired < len(names):
+            _warn_partial_run(names, n_paired, model_path=model_path)
+    _warn_named_alike(hosts, paired, model_path=model_path)
+
+
+def _pair_by_stamp(
+    stamp: "StageStamp", names: "list[str]", kind_of: "Any", *,
+    model_path: "str | Path",
+) -> "list[Optional[int]]":
+    """The program stage each stamped stage names (``None``: not one)."""
+    from .readers._ladruno import StageStampRefused
+
+    assert stamp.names is not None
+    out: "list[Optional[int]]" = []
+    used: "set[int]" = set()
+    for rec, name in zip(stamp.stages, stamp.names):
+        candidates = [j for j, n in enumerate(names) if n == name]
+        if not candidates:
+            if name == rec.group:
+                out.append(None)    # the stamp keeps it: not a program stage
+                continue
+            raise StageStampRefused(
+                f"{stamp.source}: {rec.group} is stamped {name!r}, which "
+                f"model_h5={str(model_path)!r} does not declare (its stages "
+                f"are {names}). The file was stamped against another "
+                f"program; nothing is renamed.")
+        if rec.kind in _EVIDENCE:
+            fits = [j for j in candidates if kind_of(j) == rec.kind]
+            if not fits:
+                raise StageStampRefused(
+                    f"{stamp.source}: {rec.group} is stamped {name!r} and "
+                    f"records KIND {rec.kind!r}, but model_h5="
+                    f"{str(model_path)!r} declares {name!r} "
+                    f"{sorted({kind_of(j) for j in candidates})}. The stamp "
+                    f"contradicts the program; nothing is renamed.")
+        else:
+            fits = candidates
+            if len({kind_of(j) for j in fits}) > 1:
+                raise StageStampRefused(
+                    f"{stamp.source}: {rec.group} is stamped {name!r} and "
+                    f"records no stage kind (KIND {rec.kind!r}), and "
+                    f"model_h5={str(model_path)!r} declares {name!r} more than "
+                    f"once with kinds {sorted({kind_of(j) for j in fits})}; "
+                    f"which one it is cannot be told. Nothing is renamed.")
+        j = next((j for j in fits if j not in used), fits[0])
+        used.add(j)
+        out.append(j)
+    return out
+
+
+def _pair_by_kind(
+    stamp: "StageStamp", names: "list[str]", kind_of: "Any", *,
+    model_path: "str | Path",
+) -> "Optional[list[Optional[int]]]":
+    """The program stage each unstamped stage pairs with, by kind.
+
+    ``None`` when the caller has nothing to rename and has warned (or
+    needs no warning).
+    """
+    stages = stamp.stages
+    steps = [i for i, rec in enumerate(stages) if not rec.modes_only]
+    m, n = len(steps), len(names)
+    out: "list[Optional[int]]" = [None] * len(stages)
+    if not stages:
+        _warn_partial_run(names, 0, model_path=model_path, stacklevel=5)
+        return None
+    if m == 0:
+        return None     # modes only: no program stage ran here
+    if m > n:
+        warnings.warn(
+            StageCountMismatchWarning(
+                f"model_h5={str(model_path)!r} declares {n} stages "
+                f"({names}) but the capture holds {m} MODEL_STAGE groups "
+                f"with steps ({[stages[i].group for i in steps]}); keeping "
+                f"the capture's names. Select stages by MODEL_STAGE name or "
+                f"by id (results.stage('stage_<k>'))."
+            ),
+            stacklevel=4,
+        )
+        return None
+    evidence = [stages[i].kind if stages[i].kind in _EVIDENCE else None
+                for i in steps]
+    if m < n:
+        program_kinds: "list[Optional[str]]" = []
+        for j in range(n):
+            try:
+                program_kinds.append(kind_of(j))
+            except ValueError:
+                if j < m:
+                    raise
+                program_kinds.append(None)   # a wildcard: proves nothing
+        prefix_fits = all(e is None or e == program_kinds[j]
+                          for j, e in enumerate(evidence))
+        if prefix_fits and _embeddings(evidence, program_kinds) > 1:
+            groups = [stages[i].group for i in steps]
+            warnings.warn(
+                UnpairedStageWarning(
+                    f"model_h5={str(model_path)!r} declares {n} stages "
+                    f"({names}, kinds {program_kinds}) but {stamp.source} "
+                    f"holds {m} ({groups}, KIND {[stages[i].kind for i in steps]}) "
+                    f"and no INFO/PROVENANCE@stage_names, so which program "
+                    f"stages they recorded cannot be told (a recorder bound "
+                    f"to a later stage writes such a file). {groups} keep "
+                    f"their names; stamp the file with the stages it "
+                    f"recorded to name them."
+                ),
+                stacklevel=4,
+            )
+            return None
+    for j, i in enumerate(steps):
+        out[i] = j
+    return out
+
+
+def _embeddings(evidence: "list[Optional[str]]", kinds: "list[Optional[str]]") -> int:
+    """How many ways (0, 1 or 2, meaning "more") ``evidence`` runs in order
+    over ``kinds``; ``None`` on either side fits anything."""
+    m, n = len(evidence), len(kinds)
+    # ways[i][j]: embeddings of evidence[i:] into kinds[j:], capped at 2.
+    ways = [[0] * (n + 1) for _ in range(m + 1)]
+    for j in range(n + 1):
+        ways[m][j] = 1
+    for i in range(m - 1, -1, -1):
+        for j in range(n - 1, -1, -1):
+            fit = evidence[i] is None or kinds[j] is None or evidence[i] == kinds[j]
+            ways[i][j] = min(2, ways[i][j + 1] + (ways[i + 1][j + 1] if fit else 0))
+    return ways[0][0]
 
 
 def _stage_naming(reader: "Any") -> "list[tuple[str, str, str, tuple[str, ...]]]":

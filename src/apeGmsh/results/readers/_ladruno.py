@@ -135,6 +135,124 @@ def warn_stage_kind_conflicts(conflicts: "Sequence[str]") -> None:
     )
 
 
+class StageStampRefused(ValueError):
+    """``INFO/PROVENANCE@stage_names`` cannot name the file's stages.
+
+    Raised (ADR 0122 D3, #2823) when the stamp is not a JSON array of
+    strings, counts other than the file's ``MODEL_STAGE`` groups, differs
+    between the parts of a set, or contradicts the program it is opened
+    with: a name the program does not declare, or a program stage whose
+    kind is not the ``KIND`` the file recorded. The message names the
+    stage and the stamp. Nothing is renamed.
+    """
+
+
+class StageRecord(NamedTuple):
+    """One ``MODEL_STAGE`` group as the stage-name binding sees it.
+
+    ``kind`` is the raw ``KIND`` (of the first part that is not an
+    ``EMPTY_PARTITION``), ``None`` when no part records one.
+    ``modes_only`` is a stage that records ``KIND="eigen"`` and no
+    ``TIME`` axis: it holds modes and no analysis step, so it is never a
+    program stage (``EigenResult.to_ladruno``, ``capture_live_modes``, a
+    modes-only stage of a converted ``.mpco``).
+    """
+
+    group: str
+    kind: Optional[str]
+    modes_only: bool
+
+
+class StageStamp(NamedTuple):
+    """A ``.ladruno``'s (or a set's) stages and its stamped stage names.
+
+    ``names`` is ``INFO/PROVENANCE@stage_names``, one per ``MODEL_STAGE``
+    in order, or ``None`` when the file carries none. A stamped name equal
+    to its own ``MODEL_STAGE[<k>]`` group name says the stage is not a
+    program stage.
+    """
+
+    stages: "tuple[StageRecord, ...]"
+    names: "Optional[tuple[str, ...]]"
+    source: str
+
+
+def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
+    """The stages and ``stage_names`` of a ``.ladruno`` or of a part set.
+
+    Raises :class:`StageStampRefused` for a malformed or miscounted
+    ``stage_names``, or one the parts disagree on (one part stamped, the
+    other not, or with other names), and ``ValueError`` when the parts
+    hold different numbers of ``MODEL_STAGE`` groups.
+    """
+    import json
+
+    import h5py
+
+    files = [Path(p) for p in paths]
+    source = files[0].name if len(files) == 1 else f"{files[0].name} (+{len(files) - 1} parts)"
+    per_part: list[list[tuple[str, Optional[str], bool, bool]]] = []
+    stamps: list[Optional[tuple[str, ...]]] = []
+    for path in files:
+        with h5py.File(path, "r") as h5:
+            groups = sorted(
+                (k for k in h5.keys() if k.startswith(_STAGE_PREFIX)),
+                key=_stage_sort_key,
+            )
+            rows = []
+            for name in groups:
+                grp = h5[name]
+                kind = _decode(grp.attrs["KIND"]) if "KIND" in grp.attrs else None
+                empty = _attr_int(grp.attrs, "EMPTY_PARTITION", default=0) == 1
+                results = _child(grp, "RESULTS")
+                timed = results is not None and any(
+                    bucket in results
+                    and LadrunoReader._find_time_dataset(results[bucket]) is not None
+                    for bucket in ("ON_NODES", "ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS")
+                )
+                rows.append((name, kind, kind == "eigen" and not timed, empty))
+            per_part.append(rows)
+            prov = _child(h5, "INFO/PROVENANCE")
+            if prov is None or "stage_names" not in prov.attrs:
+                stamps.append(None)
+                continue
+            raw = _decode(prov.attrs["stage_names"])
+            try:
+                names = json.loads(raw)
+            except ValueError as e:
+                raise StageStampRefused(
+                    f"{path.name}: INFO/PROVENANCE@stage_names is not JSON "
+                    f"({e}): {raw!r}.") from e
+            if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+                raise StageStampRefused(
+                    f"{path.name}: INFO/PROVENANCE@stage_names is not a JSON "
+                    f"array of strings: {raw!r}.")
+            if len(names) != len(groups):
+                raise StageStampRefused(
+                    f"{path.name}: INFO/PROVENANCE@stage_names names "
+                    f"{len(names)} stage(s) {names} but the file holds "
+                    f"{len(groups)} MODEL_STAGE group(s) {groups}.")
+            stamps.append(tuple(names))
+    if len({len(rows) for rows in per_part}) > 1:
+        raise ValueError(
+            f"{source}: the parts hold different numbers of MODEL_STAGE "
+            f"groups ({[len(rows) for rows in per_part]}).")
+    if any(s != stamps[0] for s in stamps[1:]):
+        raise StageStampRefused(
+            f"{source}: the parts carry different INFO/PROVENANCE@stage_names "
+            f"({dict(zip((p.name for p in files), stamps))}); a set is stamped "
+            "as one.")
+    stages = []
+    for k in range(len(per_part[0])):
+        column = [rows[k] for rows in per_part]
+        live = [row for row in column if not row[3]] or column
+        stages.append(StageRecord(
+            group=live[0][0], kind=live[0][1],
+            modes_only=all(row[2] for row in live),
+        ))
+    return StageStamp(tuple(stages), stamps[0], source)
+
+
 class LadrunoRepeatedNodeId(ValueError):
     """A ``.ladruno`` node ``ID`` list names one node id more than once.
 
@@ -632,6 +750,10 @@ class LadrunoReader:
         :class:`StageKindMismatchWarning` lists the conflicts.  The
         program kind fills in only where a stage records no ``KIND``, or
         ``eigen`` (no evidence of static or transient).
+
+        A stage given its own current name and kind is left as it is (no
+        alias is added): the caller pairs only some stages (#2823) and
+        passes the rest through unchanged.
         """
         conflicts = self.stage_kind_conflicts(names, kinds)
         if conflicts:
@@ -639,7 +761,8 @@ class LadrunoReader:
             return
         current = self.stages()
         hosts = [s for s in current if s.kind != "mode"]
-        new = {s.id: (str(n), str(k)) for s, n, k in zip(hosts, names, kinds)}
+        new = {s.id: (str(n), str(k)) for s, n, k in zip(hosts, names, kinds)
+               if (str(n), str(k)) != (s.name, s.kind)}
         self._stage_cache = [
             replace(s, name=new[s.id][0], kind=new[s.id][1],
                     aliases=(s.name, *s.aliases))
