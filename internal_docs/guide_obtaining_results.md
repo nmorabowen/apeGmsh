@@ -207,11 +207,12 @@ jobs moved:
 |---|---|
 | Record an in-process run | `spec.emit_default("run", model_h5=...)` — the fork's `.ladruno`, MPCO on a stock build that has it, classic `.out` on pip; read with `run.results()` |
 | Several stages in one notebook run | Strategy A₃ (`emit_recorders`, one `begin_stage` per stage) |
-| Modes of a bridge model | `ops.eigen(n)` → `EigenResult.to_native(path)` / `.results()` |
-| Modes of a plain openseespy deck | `apeGmsh.results.live.capture_live_modes(model_h5, n, path)` |
+| Modes of a bridge model | `ops.eigen(n)` → `EigenResult.results()`, a stamped `.ladruno` (ADR 0131 D10); `to_ladruno(path)` keeps the file, `to_native(path)` is the explicit native export |
+| Modes of a plain openseespy deck | `apeGmsh.results.live.capture_live_modes(model_h5, n, "modes.ladruno")`, read with `Results.from_ladruno(path, model_h5=model_h5)`; a `fem.to_h5` archive pairs by `fem_hash` alone (ADR 0133) |
 | Fibres, layers, per-material Gauss | `emit_mpco`, the fork's `.ladruno`, and pip `.out` fibres |
 
-Modes now land in their own native file: no route writes a run's
+Modes now land in their own `.ladruno`, one `eigen` stage holding every
+mode: no route writes a run's
 static, mode and transient stages into one file the way the capture
 did (the open question is on #2191).
 
@@ -407,11 +408,22 @@ to Strategy A₃ (`emit_recorders`) or `emit_default`.
 ### "`emit_recorders` raises about modal records"
 
 The classic recorder path can't drive `ops.eigen()`. Take the modes
-from the eigen solve instead, into their own file:
+from the eigen solve instead, into their own `.ladruno`:
 
 ```python
-# Modes → ops.eigen on the bridge (capture_live_modes for a plain deck)
-ops.eigen(10).to_native("modes.h5")
+# Modes → the bridge's eigen solve; to_ladruno also writes modes.h5,
+# the archive it is stamped against
+p = ops_bridge.eigen(10).to_ladruno("modes.ladruno")
+modes = Results.from_ladruno(p, model_h5=p.with_suffix(".h5"))
+
+# A plain openseespy deck: capture_live_modes against the FEMData archive
+# it was built from (an .h5 output path refuses). Its own file name: the
+# Results above holds modes.ladruno open, and on Windows a file another
+# Results holds open cannot be replaced
+from apeGmsh.results.live import capture_live_modes
+fem.to_h5("fem_model.h5")
+q = capture_live_modes("fem_model.h5", 10, "deck_modes.ladruno", ops=ops)
+deck_modes = Results.from_ladruno(q, model_h5="fem_model.h5")
 
 # Other records → emit_recorders separately
 with spec.emit_recorders("out/", model=model) as live:
