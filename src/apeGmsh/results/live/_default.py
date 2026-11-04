@@ -754,7 +754,7 @@ def _read_neutral_recorders(
     from every model-bearing transcode. The emit refused every rotation
     the read could not keep as written, so no read mask is owed.
     """
-    from ..readers._ladruno_writer import open_transcode
+    from ..readers._ladruno_writer import open_transcode, transcode_target
     from ..schema._versions import PARSER_VERSION
     from ..transcoders import RecorderTranscoder
     from ..writers import _cache
@@ -772,20 +772,17 @@ def _read_neutral_recorders(
         stages=plan,
     )
     cached_h5, _ = _cache.cache_paths(_cache.resolve_cache_root(cache_root), key)
-    nodal = facts is not None and RecorderTranscoder.writes_nodal_history(spec)
-    target = RecorderTranscoder.target_for(spec, cached_h5) if nodal else cached_h5
+    # The live ndm (facts) gives the fork format its coordinates.
+    target = cached_h5 if facts is None else transcode_target(spec, cached_h5)
     archive = cached_h5.with_suffix(".fem.h5")
-    if nodal and (not target.exists() or not archive.exists()):
+    if target != cached_h5 and (not target.exists() or not archive.exists()):
         fem.to_h5(str(archive))
     if not target.exists():
         RecorderTranscoder(spec, out_dir, target, fem, stages=stages,
                            pairing=facts, model_archive=archive).run()
-    if nodal:
-        return open_transcode(
-            target, stage_names=[n for n, _, _ in plan],
-            stage_kinds=[k for _, k, _ in plan], fem=fem, model=model,
-            model_h5=archive, rotation_mask=False,
-        )
+    if target != cached_h5:
+        return open_transcode(target, plan, fem=fem, model=model,
+                              model_h5=archive, rotation_mask=False)
     return Results.from_native(cached_h5, fem=fem, model=model)
 
 

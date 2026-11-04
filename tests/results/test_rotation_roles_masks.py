@@ -139,9 +139,8 @@ def _transcode(fem: Any, tmp_path: Path, node_ids: list[int],
         target = tmp_path / "with_model.ladruno"
         RecorderTranscoder(spec, out, target, fem, model_h5_src=model_h5).run()
         return open_transcode(
-            target, stage_names=["analysis"], stage_kinds=["transient"],
-            fem=fem, model=OpenSeesModel.from_h5(str(model_h5)),
-            model_h5=model_h5, rotation_mask=True)
+            target, [("analysis", "transient", None)], fem=fem,
+            model=OpenSeesModel.from_h5(str(model_h5)), model_h5=model_h5)
     target = tmp_path / ("with_model.h5" if model_h5 else "no_model.h5")
     RecorderTranscoder(spec, out, target, fem, model_h5_src=model_h5).run()
     return Results.from_native(target, fem=fem,

@@ -118,11 +118,13 @@ if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
     from ...opensees.opensees_model import OpenSeesModel
     from ..Results import Results
+    from ..spec._resolved import ResolvedRecorderSpec
 
 __all__ = [
-    "NODE_COMPONENTS", "NodalStage", "check_target", "open_transcode",
-    "solved_backend", "write_modes", "write_nodal_history",
-    "write_nodal_stages",
+    "NODE_COMPONENTS", "NodalStage", "check_target", "is_transcode_target",
+    "merge_node_records", "nodal_history_misfits", "open_transcode",
+    "solved_backend", "transcode_target", "write_modes",
+    "write_nodal_history", "write_nodal_stages", "write_transcode",
 ]
 
 #: ``PROVENANCE@opensees_backend`` when no engine is proven (§7b.1).
@@ -530,26 +532,128 @@ def solved_backend(ops: Any) -> str:
             else UNKNOWN_BACKEND)
 
 
+def nodal_history_misfits(spec: "ResolvedRecorderSpec") -> list[str]:
+    """``category:name`` of each record of ``spec`` a recorder transcode in
+    this format cannot hold: an element record (Gauss points, line
+    stations, nodal forces, fibres), or a nodes record with a component
+    :data:`NODE_COMPONENTS` has no group for (``displacement_increment``).
+    Modal and layers records are written by no transcode. Empty when the
+    format holds everything ``spec`` records."""
+    from ..spec._emit import _DEFERRED_CATEGORIES
+
+    return sorted(
+        f"{rec.category}:{rec.name}" for rec in spec.records
+        if rec.category not in _DEFERRED_CATEGORIES and (
+            rec.category != "nodes"
+            or not set(rec.components) <= NODE_COMPONENTS.keys()))
+
+
+def transcode_target(spec: "ResolvedRecorderSpec", native: Path) -> Path:
+    """Where a recorder transcode of ``spec`` is cached: ``native`` with
+    this format's suffix when :func:`nodal_history_misfits` is empty (ADR
+    0131 D6), else ``native`` itself, a native file, so no record is
+    dropped."""
+    from ._ladruno_live import FORK_SUFFIX
+
+    return native if nodal_history_misfits(spec) else native.with_suffix(FORK_SUFFIX)
+
+
+def is_transcode_target(
+    path: Path, spec: "ResolvedRecorderSpec", archive: "Optional[Path]",
+) -> bool:
+    """Whether ``RecorderTranscoder`` writes ``path`` in this format (its
+    suffix says so). Such a target refuses, before any file is read, a
+    spec it cannot hold (naming the records) and a missing archive to
+    stamp against."""
+    from ._ladruno_live import FORK_SUFFIX
+
+    if path.suffix != FORK_SUFFIX:
+        return False
+    misfits = nodal_history_misfits(spec)
+    if misfits:
+        raise ValueError(
+            f"RecorderTranscoder: {path} holds nodal records only, and "
+            f"{misfits} are not ones it can hold (element records, or a "
+            "node component it has no group for); transcode to a native "
+            ".h5 target instead. Nothing was written.")
+    if archive is None:
+        raise ValueError(
+            f"RecorderTranscoder: {path} is stamped against the model "
+            "archive it pairs with; pass model_h5_src= or model_archive=. "
+            "Nothing was written.")
+    return True
+
+
+def merge_node_records(
+    records: "Sequence[Any]", time_vec: np.ndarray,
+) -> "Optional[tuple[np.ndarray, dict[str, np.ndarray]]]":
+    """``(node ids, {component: [T x n]})`` over the union of the records'
+    nodes (each with ``node_ids`` and ``components``), NaN where a record
+    does not hold a node; ``None`` when no record holds a component."""
+    non_empty = [r for r in records if r.components]
+    if not non_empty:
+        return None
+    master = np.unique(np.concatenate([r.node_ids for r in non_empty]))
+    col = {int(n): i for i, n in enumerate(master)}
+    merged: dict[str, np.ndarray] = {}
+    for r in non_empty:
+        cols = np.array([col[int(n)] for n in r.node_ids], dtype=np.int64)
+        for comp, arr in r.components.items():
+            if comp not in merged:
+                merged[comp] = np.full((time_vec.size, master.size), np.nan)
+            merged[comp][:, cols] = arr
+    return master, merged
+
+
+def write_transcode(
+    path: Path, stages: "Sequence[tuple[str, np.ndarray, Sequence[Any]]]", *,
+    fem: "FEMData", model: Any, archive: "Optional[Path]",
+) -> Path:
+    """Write a recorder transcode's parsed stages, ``(kind, time, node
+    records)`` each, as :func:`write_nodal_stages` stages over ``fem``'s
+    nodes; stamp it against ``archive`` with ``opensees_backend="unknown"``
+    (the ``.out`` files do not say which engine wrote them) and no program
+    ``stage_names`` (the stages are the transcode's, not the program's).
+    ``model`` (an ``OpenSeesModel`` or the live pairing) gives the ndm."""
+    ndm = 0 if model is None else int(model.ndm)
+    if ndm < 1 or archive is None:
+        raise ValueError(
+            f"RecorderTranscoder: {path} records coordinates in the model's "
+            f"spatial dimension, and the model declares none (ndm={ndm}). "
+            "Nothing was written.")
+    nodal = []
+    for kind, time_vec, records in stages:
+        ids, comps = merge_node_records(records, time_vec) or (
+            np.array([], dtype=np.int64), {})
+        nodal.append(NodalStage(kind, time_vec, ids, comps))
+    return write_nodal_stages(
+        path, model_h5=archive,
+        node_ids=np.asarray(fem.nodes.ids, dtype=np.int64),
+        coords=np.asarray(fem.nodes.coords, dtype=np.float64), ndm=ndm,
+        stages=nodal, source="recorders", opensees_backend=UNKNOWN_BACKEND,
+        stage_names=(), stacklevel=3)
+
+
 def open_transcode(
     path: "str | os.PathLike[str]",
+    plan: "Sequence[tuple[str, str, Any]]",
     *,
-    stage_names: "Sequence[str]",
-    stage_kinds: "Sequence[str]",
     fem: "FEMData",
     model: "OpenSeesModel",
     model_h5: "str | os.PathLike[str]",
-    rotation_mask: bool,
+    rotation_mask: bool = True,
 ) -> "Results":
-    """Open a recorder transcode that :func:`write_nodal_stages` wrote.
+    """Open a recorder transcode that :func:`write_transcode` wrote.
 
-    The stages take the transcode's own names and kinds, in file order:
-    the recorders were read by them, so the program stages of
-    ``model_h5`` are not paired on by position (as
-    ``Results.from_ladruno(model_h5=)`` pairs them). ``fem`` and ``model``
-    are bound as given, and ``model_h5``, the archive the file is stamped
-    against, is the model path. ``rotation_mask`` attaches ``model_h5``'s
-    per-node ndf and DOF roles, as ``from_ladruno(model_h5=)`` does; it is
-    False for an archive that holds none (a FEMData archive).
+    The stages take the names and kinds of ``plan`` (the transcode's
+    ``(name, kind, file prefix)`` per stage, in file order): the
+    recorders were read by them, so the program stages of ``model_h5``
+    are not paired on by position, as ``Results.from_ladruno(model_h5=)``
+    pairs them. ``fem`` and ``model`` are bound as given, and
+    ``model_h5``, the archive the file is stamped against, is the model
+    path. ``rotation_mask`` attaches ``model_h5``'s per-node ndf and DOF
+    roles, as ``from_ladruno(model_h5=)`` does; it is False for an
+    archive that holds none (a FEMData archive).
     """
     from ..Results import Results
     from ._ladruno import LadrunoReader, attach_model_nodes_ndf
@@ -558,7 +662,7 @@ def open_transcode(
     archive = Path(os.fspath(model_h5))
     reader = LadrunoReader(target)
     try:
-        reader.attach_stage_names(list(stage_names), list(stage_kinds))
+        reader.attach_stage_names([n for n, _, _ in plan], [k for _, k, _ in plan])
         if rotation_mask:
             attach_model_nodes_ndf(reader, archive, int(model.ndm))
         res = Results(reader, fem=fem, path=target, model=model,

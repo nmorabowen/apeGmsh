@@ -491,29 +491,23 @@ class Results:
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
-        ``model=`` is required (else :class:`TypeError`), and is bound to
-        the result as given.
+        ``model=`` is required (else :class:`TypeError`) and bound as given.
 
-        Parses the ``.out`` / ``.xml`` files emitted at
-        ``output_dir`` (matching what ``spec.emit_recorders(...)`` or
-        the apeGmsh OpenSees bridge's Tcl/Py emit produced), caches the
-        result at ``cache_root``, and opens it (ADR 0131 D6):
+        Parses the ``.out`` / ``.xml`` files emitted at ``output_dir``
+        (matching what ``spec.emit_recorders(...)`` or the bridge's Tcl/Py
+        emit produced), caches the result at ``cache_root`` and opens it
+        (ADR 0131 D6). A spec of nodal records only is cached as
+        ``<key>.ladruno``, one ``MODEL_STAGE`` per stage named and kinded
+        as given here (never by the program's ``ops.stage`` names), stamped
+        ``opensees_backend="unknown"`` against ``model``'s archive
+        ``<key>.model.h5``. A spec with an element record (Gauss points,
+        line stations, nodal forces, fibres) or ``displacement_increment``
+        is cached as native HDF5 embedding ``model``'s ``/opensees/`` zone.
+        A layers record refuses by name; modal records are not emitted.
 
-        * a spec of nodal records only is written as ``<key>.ladruno``,
-          one ``MODEL_STAGE`` per stage, stamped against ``model``'s
-          archive written beside it (``<key>.model.h5``) with
-          ``opensees_backend="unknown"``. Its stages keep the names and
-          kinds given here; the program's ``ops.stage`` names are not
-          paired onto them.
-        * a spec with element records (or a node component the
-          ``.ladruno`` has no group for, ``displacement_increment``) is
-          written as native HDF5 with ``model``'s ``/opensees/`` zone
-          embedded, and opened with :meth:`Results.from_native`.
-
-        Caching: unchanged input files, model, stage name and stage kind
-        reuse the cached file (``writers/_cache.py``). Recorders sample
-        every step or every ``dt=``: sampling at arbitrary caller
-        instants has no recorder equivalent.
+        Caching: unchanged input files, model, stage names and kinds reuse
+        the cached file (``writers/_cache.py``). Recorders sample every step
+        or every ``dt=``, never at arbitrary caller instants.
 
         ``stage_id`` matches the per-stage filename prefix used by
         :meth:`ResolvedRecorderSpec.emit_recorders` together with
@@ -526,16 +520,14 @@ class Results:
         run into one file, one stage each with its name and kind; it
         excludes ``stage_id`` / ``stage_name`` / ``stage_kind``.
 
-        Nodes, element forces, gauss points and line stations are
-        transcoded; fiber and layer records are skipped (``.out`` cannot
-        carry them; use MPCO) and modal records are not emitted. Rows
-        are labelled with the spec's FEM ids, so the files must come from
-        an emit that translated them to OpenSees tags
+        Rows are labelled with the spec's FEM ids, so the files must come
+        from an emit that translated them to OpenSees tags
         (``spec.emit_recorders(..., model=)`` or
         ``spec.to_tcl_commands(model=)``).
         """
         if model is None:
             raise TypeError(_MODEL_REQUIRED_MESSAGE)
+        from .readers._ladruno_writer import open_transcode, transcode_target
         from .schema._versions import PARSER_VERSION
         from .transcoders import RecorderTranscoder
         from .writers import _cache
@@ -546,10 +538,7 @@ class Results:
                 "(the spec's snapshot_id must match)."
             )
 
-        # When stage_id is provided and stage_name was left at its
-        # default, mirror stage_id so the resulting Results stage is
-        # named meaningfully (otherwise everything ends up as
-        # "analysis" regardless of which stage the user loaded).
+        # stage_id names the stage when stage_name is left at its default.
         if stage_id is not None and stage_name in (None, "analysis"):
             stage_name = stage_id
         stages = None if stages is None else tuple(stages)   # read a generator once
@@ -570,30 +559,18 @@ class Results:
             model_token=_cache.model_cache_token(model), stages=plan,
         )
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
-        nodal = RecorderTranscoder.writes_nodal_history(spec)
-        target = RecorderTranscoder.target_for(spec, cached_h5)
-        # The model archive beside the target: a native target copies its
-        # /opensees/ zone in (ADR 0020); a nodal-history target is stamped
-        # against it and reads its pairing and rotation roles from it.
-        model_h5_src: Path = cached_h5.with_suffix(".model.h5")
-
-        if not target.exists():
+        target = transcode_target(spec, cached_h5)
+        model_h5_src: Path = cached_h5.with_suffix(".model.h5")   # embedded, or stamped by
+        if not target.exists() or not model_h5_src.exists():
             model.to_h5(model_h5_src)
+        if not target.exists():
             RecorderTranscoder(
                 spec, out_dir, target, fem, stage_name=stage_name,
                 stage_kind=stage_kind, file_format=file_format, stage_id=stage_id,
                 model_h5_src=model_h5_src, stages=stages,
             ).run()
-        elif nodal and not model_h5_src.exists():
-            model.to_h5(model_h5_src)
-
-        if nodal:
-            from .readers._ladruno_writer import open_transcode
-            return open_transcode(
-                target, stage_names=[n for n, _, _ in plan],
-                stage_kinds=[k for _, k, _ in plan], fem=fem, model=model,
-                model_h5=model_h5_src, rotation_mask=True,
-            )
+        if target != cached_h5:
+            return open_transcode(target, plan, fem=fem, model=model, model_h5=model_h5_src)
         return cls.from_native(cached_h5, fem=fem, model=model)
 
     @classmethod

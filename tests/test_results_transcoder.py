@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from apeGmsh.results import Results
+from apeGmsh.results.readers._ladruno_writer import nodal_history_misfits, transcode_target
 from apeGmsh.results.transcoders import RecorderTranscoder
 from apeGmsh.results.spec._resolved import (
     ResolvedRecorderRecord,
@@ -529,7 +530,7 @@ def test_a_spec_the_ladruno_cannot_hold_keeps_the_native_target(tmp_path: Path) 
     native file, read as before, and no record is dropped."""
     fem = _MockFem([1, 2, 3, 4])
     spec = _nodal_spec(fem, ("displacement_x", "displacement_increment_x"))
-    assert not RecorderTranscoder.writes_nodal_history(spec)
+    assert nodal_history_misfits(spec) == ["nodes:a", "nodes:b"]
     out = tmp_path / "out"
     _write_spec_files(spec, out)
     model = _open_model_from_h5(_stub_model_h5_path())
@@ -547,8 +548,8 @@ def test_element_records_keep_the_native_target() -> None:
         dt=None, n_steps=None, node_ids=np.array([1]))
     modal = ResolvedRecorderRecord(
         category="modal", name="m", components=(), dt=None, n_steps=None, n_modes=2)
-    assert RecorderTranscoder.writes_nodal_history(
-        ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(nodes, modal)))
+    assert nodal_history_misfits(
+        ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(nodes, modal))) == []
     for category, comp in (("gauss", "stress_xx"), ("line_stations", "axial_force"),
                            ("elements", "nodal_resisting_force_x"),
                            ("fibers", "fiber_stress")):
@@ -556,8 +557,8 @@ def test_element_records_keep_the_native_target() -> None:
             category=category, name="e", components=(comp,),
             dt=None, n_steps=None, element_ids=np.array([1]))
         spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(nodes, rec))
-        assert not RecorderTranscoder.writes_nodal_history(spec), category
-        assert RecorderTranscoder.target_for(spec, Path("k.h5")) == Path("k.h5")
+        assert nodal_history_misfits(spec) == [f"{category}:e"], category
+        assert transcode_target(spec, Path("k.h5")) == Path("k.h5")
 
 
 def test_a_ladruno_target_refuses_an_element_record_by_name(tmp_path: Path) -> None:

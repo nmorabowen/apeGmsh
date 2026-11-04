@@ -1,22 +1,11 @@
 """RecorderTranscoder — parse OpenSees ``.out`` files into a results file.
 
-Drives the Phase 5 emission output back to a results file. The
-``ResolvedRecorderSpec`` is the source of truth for what was recorded;
-we reuse :mod:`apeGmsh.solvers._recorder_emit` to recompute the file
-paths and column layouts (so transcoder ↔ emitter stay in lockstep).
-
-Target format (ADR 0131 D6): the target's suffix picks it. A target
-with the fork recorder's suffix gets the nodal records in that format,
-one ``MODEL_STAGE`` per stage, through
-:func:`~apeGmsh.results.readers._ladruno_writer.write_nodal_stages`,
-stamped against the model archive with ``opensees_backend="unknown"``
-(the ``.out`` files do not say which engine wrote them). It holds nodal
-records only: a spec with element records (Gauss points, line stations,
-nodal forces, fibres), or with a node component the format has no group
-for, is refused there by name, and
-:meth:`RecorderTranscoder.writes_nodal_history` says which specs it
-holds. Any other target is written as native HDF5, which carries every
-category below.
+Drives the Phase 5 emission output back to a native HDF5 file, or, for a
+target with the fork recorder's suffix and nodal records only, to that
+format (``readers/_ladruno_writer.py::write_transcode``, ADR 0131 D6). The ``ResolvedRecorderSpec`` is the
+source of truth for what was recorded; we reuse
+:mod:`apeGmsh.solvers._recorder_emit` to recompute the file paths
+and column layouts (so transcoder ↔ emitter stay in lockstep).
 
 Scope
 -----
@@ -79,12 +68,7 @@ from ..spec._emit import (
     line_stations_from_local_force,
     refuse_non_elastic_local_force,
 )
-from ..readers._ladruno_writer import (
-    NODE_COMPONENTS,
-    UNKNOWN_BACKEND,
-    NodalStage,
-    write_nodal_stages,
-)
+from ..readers._ladruno_writer import is_transcode_target, merge_node_records, write_transcode
 from ..writers._cache import quiet_emit_logical
 from ..writers._native import NativeWriter
 from . import _txt
@@ -134,9 +118,8 @@ class RecorderTranscoder:
         # only. Without one, pairing= (lineage + typed elements()) stands in for its element pairing only.
         self._model_h5_src = None if model_h5_src is None else Path(model_h5_src)
         self._pairing = pairing
-        # The archive a nodal-history target is stamped against; model_h5_src by default.
-        self._model_archive = (self._model_h5_src if model_archive is None
-                               else Path(model_archive))
+        # The archive a fork-format target is stamped against.
+        self._archive = model_archive if model_archive is not None else self._model_h5_src
         # Records the run() skipped — populated post-run for inspection.
         self.unsupported: list[str] = []
 
@@ -165,44 +148,21 @@ class RecorderTranscoder:
             raise ValueError(f"stages= kinds must be 'static' or 'transient', got {sorted(kinds)}.")
         return plan
 
-    @staticmethod
-    def writes_nodal_history(spec: "ResolvedRecorderSpec") -> bool:
-        """Whether a nodal-history target holds everything ``spec`` records.
-
-        True when every record is a nodes record whose components are all
-        in :data:`~apeGmsh.results.readers._ladruno_writer.NODE_COMPONENTS`,
-        or of a category no transcode writes (modal; layers raises by
-        name). A spec with element records, or with a node component that
-        format has no group for (``displacement_increment``), takes the
-        native target, so no record is dropped.
-        """
-        return not _not_nodal_history(spec)
-
-    @staticmethod
-    def target_for(spec: "ResolvedRecorderSpec", native: Path) -> Path:
-        """The target to transcode ``spec`` into: ``native`` with the fork
-        recorder's suffix when :meth:`writes_nodal_history`, else ``native``."""
-        from ..readers._ladruno_live import FORK_SUFFIX
-
-        if RecorderTranscoder.writes_nodal_history(spec):
-            return native.with_suffix(FORK_SUFFIX)
-        return native
-
     def run(self) -> Path:
-        """Parse every stage's files, then write the target.
+        """Parse every stage's files, then write the target; return its path.
 
-        A target with the fork recorder's suffix is written as one nodal
-        stage per stage (module docstring); any other as native HDF5.
-        Returns the path of the written file.
+        A fork-format target (nodal records only, else refused by name
+        before any file is read) is written by ``write_transcode``.
         """
-        nodal_history = self._target_is_nodal_history()
+        fork_format = is_transcode_target(self._target_path, self._spec, self._archive)
         # Parse all stages before the writer opens: a bad file leaves no target.
         parsed = [(name, kind, self._parse_stage())
                   for name, kind, self._stage_id in self._plan]
 
         stages = [(name, kind, self._stage_time(p), *p.values()) for name, kind, p in parsed]
-        if nodal_history:
-            return self._write_nodal_history(stages)
+        if fork_format:
+            return write_transcode(self._target_path, [s[1:4] for s in stages], fem=self._fem,
+                                   model=self._model_or_pairing(), archive=self._archive)
         proven_fem_index = self._element_index_is_fem()
         # Write a sibling, then rename: a failed write leaves no target behind.
         partial = self._target_path.with_name(self._target_path.name + ".partial")
@@ -224,55 +184,6 @@ class RecorderTranscoder:
         finally:
             partial.unlink(missing_ok=True)
         return self._target_path
-
-    def _target_is_nodal_history(self) -> bool:
-        """Whether the target takes the nodal-history format. A spec that
-        format cannot hold, or no archive to stamp against, refuses by name
-        before any file is read."""
-        from ..readers._ladruno_live import FORK_SUFFIX
-
-        if self._target_path.suffix != FORK_SUFFIX:
-            return False
-        held = _not_nodal_history(self._spec)
-        if held:
-            raise ValueError(
-                f"RecorderTranscoder: {self._target_path} holds nodal "
-                f"records only, and {held} are not ones it can hold "
-                "(element records, or a node component it has no group "
-                "for); transcode to a native .h5 target instead. Nothing "
-                "was written.")
-        if self._model_archive is None:
-            raise ValueError(
-                f"RecorderTranscoder: {self._target_path} is stamped against "
-                "the model archive it pairs with; pass model_h5_src= or "
-                "model_archive=. Nothing was written.")
-        return True
-
-    def _write_nodal_history(self, stages: "list[tuple]") -> Path:
-        """Write the parsed stages' merged nodes as a nodal-history file."""
-        model = self._model_or_pairing()
-        ndm = 0 if model is None else int(model.ndm)
-        if ndm < 1:
-            raise ValueError(
-                f"RecorderTranscoder: {self._target_path} records "
-                "coordinates in the model's spatial dimension, and the model "
-                f"declares none (ndm={ndm}). Nothing was written.")
-        nodal_stages = []
-        for _name, kind, time_vec, nodes, *_elements in stages:
-            merged = _merge_nodes(nodes, time_vec)
-            ids, comps = merged if merged is not None else (
-                np.array([], dtype=np.int64), {})
-            nodal_stages.append(NodalStage(kind, time_vec, ids, comps))
-        assert self._model_archive is not None
-        # The stages are the plan's, not the program's: no program stage
-        # names are stamped onto them.
-        return write_nodal_stages(
-            self._target_path, model_h5=self._model_archive,
-            node_ids=np.asarray(self._fem.nodes.ids, dtype=np.int64),
-            coords=np.asarray(self._fem.nodes.coords, dtype=np.float64),
-            ndm=ndm, stages=nodal_stages, source="recorders",
-            opensees_backend=UNKNOWN_BACKEND, stage_names=(),
-        )
 
     def _parse_stage(self) -> "dict[str, list]":
         """Payloads by category (nodes, gauss, line_stations, elements, fibers)
@@ -851,7 +762,7 @@ class RecorderTranscoder:
         time_vec: ndarray,
     ) -> None:
         """Merge per-record node data into one ``nodes/`` slab."""
-        got = _merge_nodes(records, time_vec)
+        got = merge_node_records(records, time_vec)
         if got is None:
             return
         master, merged = got
@@ -860,47 +771,6 @@ class RecorderTranscoder:
             node_ids=master,
             components=merged,
         )
-
-
-def _merge_nodes(
-    records: list["_NodeRecordPayload"], time_vec: ndarray,
-) -> "tuple[ndarray, dict[str, ndarray]] | None":
-    """``(node ids, {component: [T x n]})`` over the union of the records'
-    nodes, NaN where a record does not hold a node; ``None`` when no
-    record holds a component."""
-    non_empty = [r for r in records if r.components]
-    if not non_empty:
-        return None
-
-    all_ids = np.concatenate([r.node_ids for r in non_empty])
-    master = np.unique(all_ids)
-    n_total = master.size
-    T = time_vec.size
-    id_to_col = {int(n): i for i, n in enumerate(master)}
-
-    merged: dict[str, ndarray] = {}
-    for r in non_empty:
-        cols = np.array(
-            [id_to_col[int(n)] for n in r.node_ids], dtype=np.int64,
-        )
-        for comp, arr in r.components.items():
-            if comp not in merged:
-                merged[comp] = np.full(
-                    (T, n_total), np.nan, dtype=np.float64,
-                )
-            merged[comp][:, cols] = arr
-    return master, merged
-
-
-def _not_nodal_history(spec: "ResolvedRecorderSpec") -> list[str]:
-    """``category:name`` of each record a nodal-history file cannot hold:
-    an element record, or a nodes record with a component the format has
-    no group for. Modal and layers records are not written by any target."""
-    return sorted(
-        f"{rec.category}:{rec.name}" for rec in spec.records
-        if rec.category not in _DEFERRED_CATEGORIES and (
-            rec.category != "nodes"
-            or not set(rec.components) <= NODE_COMPONENTS.keys()))
 
 
 # =====================================================================
