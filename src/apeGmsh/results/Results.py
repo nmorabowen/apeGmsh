@@ -491,18 +491,27 @@ class Results:
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
-        ``model=`` is required (else :class:`TypeError`); its ``/opensees/``
-        zone is embedded in the transcoded file, which
-        :meth:`Results.from_native` then opens.
+        ``model=`` is required (else :class:`TypeError`), and is bound to
+        the result as given.
 
         Parses the ``.out`` / ``.xml`` files emitted at
         ``output_dir`` (matching what ``spec.emit_recorders(...)`` or
-        the apeGmsh OpenSees bridge's Tcl/Py emit produced) into an
-        apeGmsh native HDF5, caches the result at
-        ``cache_root``, and opens it through ``NativeReader``.
+        the apeGmsh OpenSees bridge's Tcl/Py emit produced), caches the
+        result at ``cache_root``, and opens it (ADR 0131 D6):
+
+        * a spec of nodal records only is written as ``<key>.ladruno``,
+          one ``MODEL_STAGE`` per stage, stamped against ``model``'s
+          archive written beside it (``<key>.model.h5``) with
+          ``opensees_backend="unknown"``. Its stages keep the names and
+          kinds given here; the program's ``ops.stage`` names are not
+          paired onto them.
+        * a spec with element records (or a node component the
+          ``.ladruno`` has no group for, ``displacement_increment``) is
+          written as native HDF5 with ``model``'s ``/opensees/`` zone
+          embedded, and opened with :meth:`Results.from_native`.
 
         Caching: unchanged input files, model, stage name and stage kind
-        reuse the cached HDF5 (``writers/_cache.py``). Recorders sample
+        reuse the cached file (``writers/_cache.py``). Recorders sample
         every step or every ``dt=``: sampling at arbitrary caller
         instants has no recorder equivalent.
 
@@ -561,18 +570,30 @@ class Results:
             model_token=_cache.model_cache_token(model), stages=plan,
         )
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
+        nodal = RecorderTranscoder.writes_nodal_history(spec)
+        target = RecorderTranscoder.target_for(spec, cached_h5)
+        # The model archive beside the target: a native target copies its
+        # /opensees/ zone in (ADR 0020); a nodal-history target is stamped
+        # against it and reads its pairing and rotation roles from it.
+        model_h5_src: Path = cached_h5.with_suffix(".model.h5")
 
-        if not cached_h5.exists():
-            # The model's /opensees/ zone, written beside the target for
-            # NativeWriter to copy in at open time (ADR 0020).
-            model_h5_src: Path = cached_h5.with_suffix(".model.h5")
+        if not target.exists():
             model.to_h5(model_h5_src)
             RecorderTranscoder(
-                spec, out_dir, cached_h5, fem, stage_name=stage_name,
+                spec, out_dir, target, fem, stage_name=stage_name,
                 stage_kind=stage_kind, file_format=file_format, stage_id=stage_id,
                 model_h5_src=model_h5_src, stages=stages,
             ).run()
+        elif nodal and not model_h5_src.exists():
+            model.to_h5(model_h5_src)
 
+        if nodal:
+            from .readers._ladruno_writer import open_transcode
+            return open_transcode(
+                target, stage_names=[n for n, _, _ in plan],
+                stage_kinds=[k for _, k, _ in plan], fem=fem, model=model,
+                model_h5=model_h5_src, rotation_mask=True,
+            )
         return cls.from_native(cached_h5, fem=fem, model=model)
 
     @classmethod

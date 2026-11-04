@@ -74,12 +74,27 @@ the first record's), and ``ON_NODES/DISPLACEMENT`` with
 element buckets either, for the same reason, and stamps ``elements``
 unsupported.
 
+:func:`write_nodal_stages` writes several stages, ``MODEL_STAGE[1..k]``,
+each holding its own nodes, ``KIND`` and time, from canonical node
+components (``displacement_x``, ``reaction_force_z``, ``pore_pressure``):
+the ``.out`` recorder transcode writes it. :data:`NODE_COMPONENTS` maps
+each canonical name onto the recorder's group and label
+(``Ladruno_NodeResults.cpp`` at ``FORK_PIN``). A group's ``COMPONENTS``
+lists only the components recorded, in the recorder's order, so a read
+of one never recorded finds nothing, as it did in the native file; the
+recorder itself writes all ``ndm`` of them. A name the table does not
+hold is refused, never dropped.
+
 Both
 ----
 
 The file is written and stamped in a staging directory under its final
 name, then moved into place: either a stamped file is at ``path`` or
 nothing new is. ``path`` may not be the model archive, nor any ``.h5``.
+
+``opensees_backend`` defaults to ``"unknown"``: a file Python writes is
+never stamped with the engine of the fork's recorder unless its caller
+proves that engine solved the values (:func:`solved_backend`).
 """
 from __future__ import annotations
 
@@ -88,8 +103,9 @@ import os
 import shutil
 import warnings
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
@@ -99,9 +115,19 @@ from ._ladruno_provenance import stamp_provenance
 if TYPE_CHECKING:
     import h5py
 
-__all__ = ["check_target", "write_modes", "write_nodal_history"]
+    from ...mesh.FEMData import FEMData
+    from ...opensees.opensees_model import OpenSeesModel
+    from ..Results import Results
 
-_STAGE = "MODEL_STAGE[1]"
+__all__ = [
+    "NODE_COMPONENTS", "NodalStage", "check_target", "open_transcode",
+    "solved_backend", "write_modes", "write_nodal_history",
+    "write_nodal_stages",
+]
+
+#: ``PROVENANCE@opensees_backend`` when no engine is proven (§7b.1).
+UNKNOWN_BACKEND = "unknown"
+_FORK_BACKEND = "ladruno"
 _U = "MODES_OF_VIBRATION(U)"
 _R = "MODES_OF_VIBRATION(R)"
 _SCALAR, _VECTORIAL = 0, 1  # the recorder's ResultDataType
@@ -134,6 +160,7 @@ def write_modes(
     rotations: "np.ndarray | Sequence[bool]",
     record_ids: "np.ndarray | Sequence[int] | None" = None,
     source: str,
+    opensees_backend: str = UNKNOWN_BACKEND,
     stacklevel: int = 2,
 ) -> Path:
     """Write the modes as one ``eigen`` stage of a ``.ladruno``; stamp it.
@@ -166,6 +193,9 @@ def write_modes(
     source
         What the modes came from, for ``PROVENANCE@writer``
         (``"apeGmsh <source>->ladruno <version>"``): ``eigen``, ``modal_deck``.
+    opensees_backend
+        ``PROVENANCE@opensees_backend``: ``"unknown"`` unless the caller
+        proves which engine solved the modes (:func:`solved_backend`).
     stacklevel
         Of every warning this raises, the stamp's
         ``StageNamesOmittedWarning`` included, counted from this function.
@@ -224,7 +254,8 @@ def write_modes(
         out, model_h5,
         lambda staged: _write_file(staged, nids, xyz[:, :ndm], rids, ndm,
                                    lams, scalars, shapes, rot),
-        source=source, opensees_backend=None, stacklevel=stacklevel + 1,
+        source=source, opensees_backend=opensees_backend,
+        stacklevel=stacklevel + 1,
     )
     return out
 
@@ -238,6 +269,65 @@ NODAL_GROUPS: dict[str, tuple[str, str, str, str]] = {
 }
 _NODAL = 0  # the recorder's ResultType::Nodal
 
+#: Each ``ON_NODES`` group :func:`write_nodal_stages` writes, as the fork
+#: recorder writes it (``Ladruno_NodeResults.cpp`` at ``FORK_PIN``):
+#: ``(canonical prefix, label prefix, DESCRIPTION, DIMENSION,
+#: DISPLAY_NAME)``. A vector group's labels are ``<label prefix><axis>``;
+#: ``PRESSURE`` holds the one scalar ``p``.
+_NODE_GROUPS: dict[str, tuple[str, str, str, str, str]] = {
+    "DISPLACEMENT": ("displacement", "U", "Nodal displacement field", "L",
+                     "Displacement"),
+    "ROTATION": ("rotation", "R", "Nodal rotation field", "A", "Rotation"),
+    "VELOCITY": ("velocity", "V", "Nodal velocity field", "L/t", "Velocity"),
+    "ANGULAR_VELOCITY": ("angular_velocity", "RV",
+                         "Nodal angular velocity field", "L/t*A",
+                         "Angular Velocity"),
+    "ACCELERATION": ("acceleration", "A", "Nodal acceleration field",
+                     "L/t^2", "Acceleration"),
+    "ANGULAR_ACCELERATION": ("angular_acceleration", "RA",
+                             "Nodal angular acceleration field", "L/t^2*A",
+                             "Angular Acceleration"),
+    "REACTION_FORCE": ("reaction_force", "RF", "Nodal reaction force field",
+                       "F", "Reaction Force"),
+    "REACTION_MOMENT": ("reaction_moment", "RM",
+                        "Nodal reaction moment field", "F*L",
+                        "Reaction Moment"),
+    "UNBALANCED_FORCE": ("force", "F", "Nodal unbalanced force field", "F",
+                         "Unbalanced Force"),
+    "UNBALANCED_MOMENT": ("moment", "M", "Nodal unbalanced moment field",
+                          "F*L", "Unbalanced Moment"),
+    "PRESSURE": ("pore_pressure", "p", "Nodal pressure field", "F/L^2",
+                 "Pressure"),
+}
+_SCALAR_GROUP = "PRESSURE"
+
+#: Canonical node component -> ``(ON_NODES group, COMPONENTS label)``, in
+#: the recorder's column order. The reader translates each label back
+#: (``_buckets.canonical_node_component``); a name this table does not
+#: hold (``displacement_increment``: the recorder has no group for it) is
+#: refused by :func:`write_nodal_stages`.
+NODE_COMPONENTS: dict[str, tuple[str, str]] = {
+    (prefix if group == _SCALAR_GROUP else f"{prefix}_{axis}"):
+        (group, label if group == _SCALAR_GROUP else f"{label}{axis}")
+    for group, (prefix, label, *_) in _NODE_GROUPS.items()
+    for axis in ("x" if group == _SCALAR_GROUP else "xyz")
+}
+
+
+@dataclass(frozen=True)
+class NodalStage:
+    """One stage :func:`write_nodal_stages` writes.
+
+    ``components`` maps a name of :data:`NODE_COMPONENTS` to its values
+    ``[T x len(node_ids)]`` (NaN where a node does not record it); ``time``
+    is ``TIME[T]``. A stage with no component has no step either.
+    """
+
+    kind: str
+    time: np.ndarray
+    node_ids: np.ndarray
+    components: Mapping[str, np.ndarray]
+
 
 def write_nodal_history(
     path: "str | os.PathLike[str]",
@@ -250,7 +340,7 @@ def write_nodal_history(
     time: "np.ndarray | Sequence[float]",
     results: "Mapping[str, np.ndarray]",
     source: str,
-    opensees_backend: "str | None" = None,
+    opensees_backend: str = UNKNOWN_BACKEND,
     stacklevel: int = 2,
 ) -> Path:
     """Write nodal results as one stage of a ``.ladruno``; stamp it.
@@ -269,7 +359,7 @@ def write_nodal_history(
     opensees_backend
         ``PROVENANCE@opensees_backend``, as
         :func:`~apeGmsh.results.readers._ladruno_provenance.stamp_provenance`
-        takes it: ``"unknown"`` when no engine solved the values.
+        takes it; ``"unknown"`` unless the caller proves the engine.
 
     Raises
     ------
@@ -302,7 +392,7 @@ def write_nodal_history(
     if not results:
         raise ValueError(
             "write_nodal_history: no result to write; no file was created.")
-    blocks: dict[str, np.ndarray] = {}
+    components: dict[str, np.ndarray] = {}
     for name, data in results.items():
         if name not in NODAL_GROUPS:
             raise ValueError(
@@ -315,22 +405,174 @@ def write_nodal_history(
             raise ValueError(
                 f"write_nodal_history: {name} has shape {block.shape}; "
                 f"expected {list(want)} (steps x nodes x ndm).")
-        blocks[name] = block
+        prefix = _NODE_GROUPS[name][0]
+        for j, axis in enumerate("xyz"[:ndm]):
+            components[f"{prefix}_{axis}"] = block[:, :, j]
 
+    stage = NodalStage(kind, times, nids, components)
     _place_stamped(
         out, model_h5,
         lambda staged: _write_nodal_file(staged, nids, xyz[:, :ndm], ndm,
-                                         kind, times, blocks),
+                                         [stage]),
         source=source, opensees_backend=opensees_backend,
         stacklevel=stacklevel + 1,
     )
     return out
 
 
+def write_nodal_stages(
+    path: "str | os.PathLike[str]",
+    *,
+    model_h5: "str | os.PathLike[str]",
+    node_ids: "np.ndarray | Sequence[int]",
+    coords: np.ndarray,
+    ndm: int,
+    stages: "Sequence[NodalStage]",
+    source: str,
+    opensees_backend: str = UNKNOWN_BACKEND,
+    stage_names: "Optional[Sequence[str]]" = None,
+    stacklevel: int = 2,
+) -> Path:
+    """Write ``stages`` as ``MODEL_STAGE[1..k]`` of a ``.ladruno``; stamp it.
+
+    Parameters
+    ----------
+    path, model_h5, node_ids, coords, ndm, source, stacklevel
+        As :func:`write_modes`: ``node_ids`` and ``coords`` are the
+        ``MODEL/NODES`` of every stage.
+    stages
+        In order. Each stage's nodes must be nodes of ``node_ids``, and its
+        components names of :data:`NODE_COMPONENTS`.
+    opensees_backend
+        As :func:`write_nodal_history`.
+    stage_names
+        Passed to
+        :func:`~apeGmsh.results.readers._ladruno_provenance.stamp_provenance`:
+        ``None`` pairs the program's stage names with the file's stages;
+        ``()`` stamps none, for stages that are not the program's.
+
+    Raises
+    ------
+    ValueError
+        No stage, a ``kind`` other than ``static`` / ``transient``, a
+        component the table does not hold, a node outside ``node_ids``, a
+        block of the wrong shape, a stage with steps and no component, or
+        what :func:`write_modes` raises for the shared parameters. Nothing
+        is written.
+    """
+    where = "write_nodal_stages"
+    out = Path(os.fspath(path))
+    check_target(out, model_h5)
+    if ndm not in (1, 2, 3):
+        raise ValueError(f"{where}: ndm must be 1, 2 or 3, got {ndm}.")
+    nids = _int32_ids(node_ids, "node_ids")
+    xyz = np.asarray(coords, dtype=np.float64)
+    if xyz.ndim != 2 or xyz.shape[0] != nids.size or xyz.shape[1] < ndm:
+        raise ValueError(
+            f"{where}: coords has shape {xyz.shape}; expected "
+            f"[{nids.size} x >={ndm}].")
+    if not stages:
+        raise ValueError(f"{where}: no stage to write; no file was created.")
+    checked: list[NodalStage] = []
+    for k, st in enumerate(stages, start=1):
+        if st.kind not in ("static", "transient"):
+            raise ValueError(
+                f"{where}: stage {k} kind must be one of ['static', "
+                f"'transient'] (got {st.kind!r}); nothing was written.")
+        times = np.asarray(st.time, dtype=np.float64).ravel()
+        rids = _int32_ids(st.node_ids, "node_ids")
+        stray = np.setdiff1d(rids, nids)
+        if stray.size:
+            raise ValueError(
+                f"{where}: stage {k} records node(s) {stray[:5].tolist()} "
+                "that are not in node_ids; nothing was written.")
+        unknown = sorted(set(st.components) - set(NODE_COMPONENTS))
+        if unknown:
+            raise ValueError(
+                f"{where}: stage {k} holds {unknown}, which the recorder "
+                "has no ON_NODES group for; nothing was written.")
+        if times.size and not st.components:
+            raise ValueError(
+                f"{where}: stage {k} has {times.size} step(s) and no "
+                "component, so its time cannot be stored; nothing was "
+                "written.")
+        comps: dict[str, np.ndarray] = {}
+        for name, data in st.components.items():
+            block = np.asarray(data, dtype=np.float64)
+            if block.shape != (times.size, rids.size):
+                raise ValueError(
+                    f"{where}: stage {k} {name} has shape {block.shape}; "
+                    f"expected [{times.size} x {rids.size}] (steps x "
+                    "nodes); nothing was written.")
+            comps[name] = block
+        checked.append(NodalStage(st.kind, times, rids, comps))
+
+    _place_stamped(
+        out, model_h5,
+        lambda staged: _write_nodal_file(staged, nids, xyz[:, :ndm], ndm,
+                                         checked),
+        source=source, opensees_backend=opensees_backend,
+        stage_names=stage_names, stacklevel=stacklevel + 1,
+    )
+    return out
+
+
+def solved_backend(ops: Any) -> str:
+    """``PROVENANCE@opensees_backend`` for values ``ops`` solved in process.
+
+    The fork's engine when ``ops`` is the fork (it answers
+    ``ladrunoBuild``), else ``"unknown"``: §7b.1 allows ``"stock"`` only
+    on a converted file.
+    """
+    from ...opensees._target import backend_info_of
+
+    return (_FORK_BACKEND if backend_info_of(ops).kind == "fork"
+            else UNKNOWN_BACKEND)
+
+
+def open_transcode(
+    path: "str | os.PathLike[str]",
+    *,
+    stage_names: "Sequence[str]",
+    stage_kinds: "Sequence[str]",
+    fem: "FEMData",
+    model: "OpenSeesModel",
+    model_h5: "str | os.PathLike[str]",
+    rotation_mask: bool,
+) -> "Results":
+    """Open a recorder transcode that :func:`write_nodal_stages` wrote.
+
+    The stages take the transcode's own names and kinds, in file order:
+    the recorders were read by them, so the program stages of
+    ``model_h5`` are not paired on by position (as
+    ``Results.from_ladruno(model_h5=)`` pairs them). ``fem`` and ``model``
+    are bound as given, and ``model_h5``, the archive the file is stamped
+    against, is the model path. ``rotation_mask`` attaches ``model_h5``'s
+    per-node ndf and DOF roles, as ``from_ladruno(model_h5=)`` does; it is
+    False for an archive that holds none (a FEMData archive).
+    """
+    from ..Results import Results
+    from ._ladruno import LadrunoReader, attach_model_nodes_ndf
+
+    target = Path(os.fspath(path))
+    reader = LadrunoReader(target)
+    try:
+        reader.attach_stage_names(list(stage_names), list(stage_kinds))
+        if rotation_mask:
+            attach_model_nodes_ndf(reader, model_h5, int(model.ndm))
+        res = Results(reader, fem=fem, path=target, model=model,
+                      model_path=Path(os.fspath(model_h5)))
+    except BaseException:
+        reader.close()
+        raise
+    return res._with_autoloaded_definitions()
+
+
 def _place_stamped(
     out: Path, model_h5: "str | os.PathLike[str]",
     write: Callable[[Path], None], *, source: str,
-    opensees_backend: "str | None", stacklevel: int,
+    opensees_backend: str, stacklevel: int,
+    stage_names: "Optional[Sequence[str]]" = None,
 ) -> None:
     """Write with ``write`` and stamp in a staging directory, then move the
     file to ``out``. ``stacklevel`` counts from this function."""
@@ -346,6 +588,7 @@ def _place_stamped(
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             stamp_provenance(staged, Path(os.fspath(model_h5)),
+                             stage_names=stage_names,
                              unsupported=list(UNSUPPORTED),
                              writer=_writer(source),
                              opensees_backend=opensees_backend)
@@ -489,11 +732,12 @@ def _write_head(
     f: "h5py.File", ndm: int, kind: str, time0: float, nids: np.ndarray,
     xyz: np.ndarray,
 ) -> "h5py.Group":
-    """``INFO`` and ``MODEL_STAGE[1]`` with its ``MODEL``; returns the stage.
+    """``INFO`` and ``MODEL_STAGE[1]`` with its ``MODEL``; returns the stage."""
+    _write_info(f, ndm)
+    return _write_stage(f, 1, kind, time0, nids, xyz)
 
-    The stage's ``STEP`` / ``TIME`` are its first record's, as the
-    recorder stamps them.
-    """
+
+def _write_info(f: "h5py.File", ndm: int) -> None:
     info = f.create_group("INFO", track_order=True)
     info.attrs["GENERATOR"] = _s("Ladruno")
     info.attrs["FORMAT_VERSION"] = _i(1)
@@ -505,7 +749,17 @@ def _write_head(
     info.attrs["NUM_PARTITIONS"] = _i(1)
     info.create_group("PROVENANCE", track_order=True)
 
-    stage = f.create_group(_STAGE, track_order=True)
+
+def _write_stage(
+    f: "h5py.File", k: int, kind: str, time0: float, nids: np.ndarray,
+    xyz: np.ndarray,
+) -> "h5py.Group":
+    """``MODEL_STAGE[k]`` with its ``MODEL``; returns the stage.
+
+    The stage's ``STEP`` / ``TIME`` are its first record's, as the
+    recorder stamps them.
+    """
+    stage = f.create_group(f"MODEL_STAGE[{k}]", track_order=True)
     stage.attrs["KIND"] = _s(kind)
     stage.attrs["STEP"] = _i(0)
     stage.attrs["TIME"] = _d(time0)
@@ -519,31 +773,43 @@ def _write_head(
 
 
 def _write_nodal_file(
-    out: Path, nids: np.ndarray, xyz: np.ndarray, ndm: int, kind: str,
-    times: np.ndarray, blocks: "dict[str, np.ndarray]",
+    out: Path, nids: np.ndarray, xyz: np.ndarray, ndm: int,
+    stages: "Sequence[NodalStage]",
 ) -> None:
     import h5py
 
     with h5py.File(out, "w-", track_order=True) as f:
-        stage = _write_head(f, ndm, kind, float(times[0]), nids, xyz)
-        on_nodes = stage.create_group("RESULTS", track_order=True) \
-            .create_group("ON_NODES", track_order=True)
-        for name, block in blocks.items():
-            prefix, description, dimension, display = NODAL_GROUPS[name]
-            labels = [prefix + c for c in "xyz"[:ndm]]
-            grp = on_nodes.create_group(name, track_order=True)
-            grp.attrs["COMPONENTS"] = _s(",".join(labels))
-            grp.attrs["DATA_TYPE"] = _i(_VECTORIAL if ndm > 1 else _SCALAR)
-            grp.attrs["DESCRIPTION"] = _s(description)
-            grp.attrs["DIMENSION"] = _s(dimension)
-            grp.attrs["DISPLAY_NAME"] = _s(display)
-            grp.attrs["TYPE"] = _i(_NODAL)
-            grp.create_dataset(
-                "ID", data=nids.astype(np.int32).reshape(-1, 1))
-            grp.create_dataset("DATA", data=block)
-            grp.create_dataset(
-                "STEP", data=np.arange(times.size, dtype=np.int32))
-            grp.create_dataset("TIME", data=times)
+        _write_info(f, ndm)
+        for k, st in enumerate(stages, start=1):
+            times = st.time
+            stage = _write_stage(f, k, st.kind,
+                                 float(times[0]) if times.size else 0.0,
+                                 nids, xyz)
+            on_nodes = stage.create_group("RESULTS", track_order=True) \
+                .create_group("ON_NODES", track_order=True)
+            rids = st.node_ids.astype(np.int32).reshape(-1, 1)
+            for name, (_, _, description, dimension, display) \
+                    in _NODE_GROUPS.items():
+                held = [(label, st.components[c])
+                        for c, (group, label) in NODE_COMPONENTS.items()
+                        if group == name and c in st.components]
+                if not held:
+                    continue
+                grp = on_nodes.create_group(name, track_order=True)
+                grp.attrs["COMPONENTS"] = _s(",".join(lb for lb, _ in held))
+                grp.attrs["DATA_TYPE"] = _i(_VECTORIAL if len(held) > 1
+                                            else _SCALAR)
+                grp.attrs["DESCRIPTION"] = _s(description)
+                grp.attrs["DIMENSION"] = _s(dimension)
+                grp.attrs["DISPLAY_NAME"] = _s(display)
+                grp.attrs["TYPE"] = _i(_NODAL)
+                grp.create_dataset("ID", data=rids)
+                grp.create_dataset(
+                    "DATA", data=np.stack([v for _, v in held], axis=-1))
+                grp.create_dataset(
+                    "STEP", data=np.arange(times.size, dtype=np.int32))
+                grp.create_dataset("TIME", data=times)
+
 
 
 # ---------------------------------------------------------------------------

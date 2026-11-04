@@ -122,12 +122,15 @@ def test_a_failed_write_leaves_no_cache_entry(tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="kind must be one of"):
             _read(tmp_path / "out", fem, tmp_path / "c",
                   stage_id="gravity", stage_kind="dynamic")
-    assert [p for p in (tmp_path / "c").glob("*.h5")
-            if not p.name.endswith(".model.h5")] == []
+    assert _cached(tmp_path / "c") == set()
+    assert not list((tmp_path / "c").glob("*.partial"))
 
 
 def _cached(cache: Path) -> "set[str]":
-    return {p.name for p in cache.glob("*.h5") if not p.name.endswith(".model.h5")}
+    """The cached transcodes: a nodal spec's is ``<key>.ladruno``; the
+    ``<key>.model.h5`` beside it is the archive it is stamped against."""
+    return {p.name for p in [*cache.glob("*.h5"), *cache.glob("*.ladruno")]
+            if not p.name.endswith(".model.h5")}
 
 
 def test_a_rewritten_stage_file_is_read_again(tmp_path: Path) -> None:

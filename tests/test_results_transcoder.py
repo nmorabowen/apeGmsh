@@ -42,6 +42,15 @@ class _MockFem:
 # Helpers — emit synthetic .out files matching spec emission
 # =====================================================================
 
+def _cached_files(cache_root: Path) -> list[Path]:
+    """The cached transcodes, sorted: ``<key>.h5`` (native) or
+    ``<key>.ladruno`` (nodal records only), never the ``<key>.model.h5``
+    archive beside them."""
+    return sorted(
+        p for p in [*cache_root.glob("*.h5"), *cache_root.glob("*.ladruno")]
+        if not p.name.endswith(".model.h5"))
+
+
 def _write_synthetic_node_out(
     path: Path,
     *,
@@ -272,10 +281,8 @@ def test_from_recorders_caches_result(tmp_path: Path) -> None:
         slab = r.nodes.get(component="displacement_x")
         np.testing.assert_allclose(slab.values[0], [0.1, 0.2])
 
-    # Cache directory should now have one HDF5 cache file.  Phase 8
-    # also materializes a sibling ``<key>.model.h5`` (the model zone
-    # the Composed-file pattern embeds); filter those out.
-    cached = [p for p in cache_root.glob("*.h5") if not p.stem.endswith(".model")]
+    # Cache directory should now have one cache file.
+    cached = _cached_files(cache_root)
     assert len(cached) == 1
     cached_mtime = cached[0].stat().st_mtime_ns
 
@@ -314,11 +321,7 @@ def test_cache_invalidates_on_source_change(tmp_path: Path) -> None:
         spec, output_dir, fem=fem, cache_root=cache_root,
         model=_open_model_from_h5(_stub_model_h5_path()),
     ).close()
-    # Phase 8 also materializes ``<key>.model.h5`` alongside each
-    # cache entry; filter those out.
-    cached_files_v1 = sorted(
-        p for p in cache_root.glob("*.h5") if not p.stem.endswith(".model")
-    )
+    cached_files_v1 = _cached_files(cache_root)
     assert len(cached_files_v1) == 1
     v1_key = cached_files_v1[0].stem
 
@@ -328,9 +331,7 @@ def test_cache_invalidates_on_source_change(tmp_path: Path) -> None:
         spec, output_dir, fem=fem, cache_root=cache_root,
         model=_open_model_from_h5(_stub_model_h5_path()),
     ).close()
-    cached_files_v2 = sorted(
-        p for p in cache_root.glob("*.h5") if not p.stem.endswith(".model")
-    )
+    cached_files_v2 = _cached_files(cache_root)
     # Either two cached files coexist, or v1 was overwritten — at minimum
     # the new key differs from v1.
     new_keys = {f.stem for f in cached_files_v2}
@@ -370,9 +371,5 @@ def test_cache_invalidates_on_fem_change(tmp_path: Path) -> None:
         model=_open_model_from_h5(_stub_model_h5_path()),
     ).close()
 
-    # Filter out the Phase 8 ``<key>.model.h5`` sidecars.
-    keys = {
-        f.stem for f in cache_root.glob("*.h5")
-        if not f.stem.endswith(".model")
-    }
+    keys = {f.stem for f in _cached_files(cache_root)}
     assert len(keys) == 2     # different fem → different cache entry
