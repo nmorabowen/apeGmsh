@@ -884,8 +884,9 @@ def _check_override(
 ) -> None:
     """Refuse a ``stage_names`` override a reader would refuse: a name the
     program does not declare, or one that names a program stage of another
-    kind than the stage it replaces. A wrong count is the omission rule's."""
-    if not names:
+    kind than the stage it replaces. A wrong count is the omission rule's:
+    nothing is stamped then, so there is nothing to refuse."""
+    if not names or len(override) != len(names):
         return
     unknown = sorted(set(override) - set(names))
     if unknown:
@@ -893,7 +894,7 @@ def _check_override(
             f"stamp_provenance: stage_names {unknown} are not stages of the "
             f"program ({names}); a reader binds stamped names by name and "
             "would refuse them. Nothing was stamped.")
-    if kind_error is not None or len(override) != len(kinds):
+    if kind_error is not None:
         return
     for name, kind in zip(override, kinds):
         declared = {k for n, k in zip(names, kinds) if n == name}
