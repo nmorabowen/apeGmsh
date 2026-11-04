@@ -212,6 +212,110 @@ def test_the_transcoder_writes_each_stage_from_its_own_files(tmp_path: Path) -> 
 
 
 # =====================================================================
+# ADR 0131 D6: the multi-stage transcode is a .ladruno
+# =====================================================================
+
+_NAMED = (SimpleNamespace(name="load", kind="static"),
+          SimpleNamespace(name="erect", kind="transient"),
+          SimpleNamespace(name="base", kind="static"))
+
+
+def _write_named_stages(out: Path) -> None:
+    """Three stages, each its own cadence; ``erect`` records node 2 only
+    through a second record, so its merge leaves a NaN hole."""
+    out.mkdir(exist_ok=True)
+    for i, st in enumerate(_NAMED):
+        time = [0.1 * (i + 1) * (k + 1) for k in range(i + 2)]
+        _write_synthetic_node_out(
+            out / f"{st.name}__r_disp.out", time=time, node_ids=[1, 2],
+            dofs=[1], value_fn=lambda k, nid, dof, i=i: 100.0 * i + nid + 0.5 * k)
+
+
+def test_named_stages_read_as_the_native_file_and_reload(tmp_path: Path) -> None:
+    """Stage names stay as given (``load``, ``erect``, ``base``: the
+    names the manifest oracles assert), with their kinds and cadences;
+    every read equals the native transcode of the same files; the
+    cached ``.ladruno`` reopens with the same stages, times and ids."""
+    from tests.test_results_transcoder import _assert_same_reads
+
+    fem = _MockFem([1, 2])
+    out, cache = tmp_path / "out", tmp_path / "c"
+    _write_named_stages(out)
+    model = _open_model_from_h5(_stub_model_h5_path())
+    archive = tmp_path / "native.model.h5"
+    model.to_h5(archive)
+    RecorderTranscoder(_node_spec(fem), out, tmp_path / "n.h5", fem,
+                       model_h5_src=archive, stages=_NAMED).run()
+    with Results.from_native(tmp_path / "n.h5", fem=fem, model=model) as native:
+        for _ in range(2):   # the transcode, then the cached file
+            with _read(out, fem, cache, stages=_NAMED) as r:
+                assert r.path is not None and r.path.suffix == ".ladruno"
+                assert [(s.name, s.kind, s.n_steps) for s in r.stages] == [
+                    ("load", "static", 2), ("erect", "transient", 3),
+                    ("base", "static", 4)]
+                _assert_same_reads(r, native)
+                np.testing.assert_allclose(
+                    r.stage("erect").nodes.get(component="displacement_x").time,
+                    [0.2, 0.4, 0.6])
+    assert len(_cached(cache)) == 1
+
+
+def _staged_model(tmp_path: Path) -> Any:
+    """A bridge program that declares two stages, ``gravity`` then ``push``."""
+    from apeGmsh.opensees.apesees import apeSees
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    fem = _cantilever_fem()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    ops.element.elasticBeamColumn(pg="Col", transf=ops.geomTransf.Linear(),
+                                  A=0.02, E=2.0e11, Iz=3.0e-4)
+    ops.fix(label="base", dofs=(1, 1, 1))
+    for name in ("gravity", "push"):
+        with ops.stage(name=name) as s:
+            s.analysis(test=ops.test.NormDispIncr(tol=1e-8, max_iter=10),
+                       algorithm=ops.algorithm.Linear(),
+                       integrator=ops.integrator.LoadControl(dlam=0.5),
+                       constraints=ops.constraints.Plain(),
+                       numberer=ops.numberer.RCM(),
+                       system=ops.system.BandGeneral(),
+                       analysis=ops.analysis.Static())
+            s.run(n_increments=2)
+    ops.h5(str(tmp_path / "model.h5"))
+    return fem, OpenSeesModel.from_h5(str(tmp_path / "model.h5"))
+
+
+def test_one_stage_of_a_staged_program_keeps_its_own_name(tmp_path: Path) -> None:
+    """``stage_id="push"`` read alone is named ``push``. The program's
+    stages are not paired onto the transcode by position (that would name
+    it ``gravity`` and warn of a partial run): the transcode's stages are
+    the ones the recorders were read by."""
+    import warnings
+
+    fem, model = _staged_model(tmp_path)
+    assert [s.name for s in model.stages()] == ["gravity", "push"]
+    nodes = [int(n) for n in fem.nodes.ids]
+    spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(
+        ResolvedRecorderRecord(
+            category="nodes", name="r", components=("displacement_x",),
+            dt=None, n_steps=None, node_ids=np.array(nodes)),))
+    out = tmp_path / "out"
+    out.mkdir()
+    _write_synthetic_node_out(
+        out / "push__r_disp.out", time=[0.5, 1.0], node_ids=nodes, dofs=[1],
+        value_fn=lambda k, nid, dof: nid + 0.5 * k)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with Results.from_recorders(spec, out, fem=fem, model=model,
+                                    cache_root=tmp_path / "c",
+                                    stage_id="push", stage_kind="static") as r:
+            assert r.path is not None and r.path.suffix == ".ladruno"
+            assert [(s.name, s.kind) for s in r.stages] == [("push", "static")]
+            got = r.stage("push").nodes.get(component="displacement_x")
+    np.testing.assert_allclose(got.values[-1], [n + 0.5 for n in nodes])
+
+
+# =====================================================================
 # Live, stock openseespy: gravity (static) then Newmark (dt=0.01) on .out
 # =====================================================================
 
