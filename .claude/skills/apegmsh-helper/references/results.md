@@ -21,7 +21,7 @@ native `<stem>.results.h5` slot goes at slice V1d (D2).
 | Constructor | Required kwarg | Source |
 |---|---|---|
 | `Results.from_ladruno(path, *, fem=None, merge_partitions=True, model_h5=None)` | *(none — self-sufficient)* | a `.ladruno` (fork recorder, `convert_mpco`, `EigenResult.results()`, `Results.demo()`), single or `part-N`; pass `model_h5=` for stage names, PGs and labels |
-| `Results.from_recorders(spec, output_dir, *, fem, model=...)` | `fem=` **and** `model=` | `.out`/`.xml` from a Tcl/Py recorder run; transcodes → native + caches |
+| `Results.from_recorders(spec, output_dir, *, fem, model=...)` | `fem=` **and** `model=` | `.out`/`.xml` from a Tcl/Py recorder run; transcodes + caches: nodal records only → a `.ladruno`, any element record → native |
 | `Results.from_mpco(path, *, fem=None, merge_partitions=True, model_h5=...)` | `model_h5=<path>` | STKO `.mpco` (single or `part-N`). **Being retired** (ADR 0131 D5): convert instead |
 | `Results.from_native(path, *, fem=None, model=...)` | `model=OpenSeesModel` | apeGmsh native `results.h5`. **Being retired** with `to_native` (ADR 0131 D10) |
 
@@ -43,7 +43,18 @@ results = Results.from_ladruno("run.ladruno", model_h5="model.h5")
 
 # Recorder .out/.xml run — needs BOTH fem= and model=.
 results = Results.from_recorders(spec, "out/", fem=fem, model=model)
+# Nodal records only: results.path is <cache>/<key>.ladruno, one stage per
+# stage, named as given (stage_id= / stages=), stamped against
+# <key>.model.h5 with opensees_backend="unknown". Any element record (or
+# displacement_increment, which a .ladruno has no group for): <key>.h5.
+# verified: tests/test_results_transcoder.py::test_a_nodal_run_transcodes_to_ladruno_read_as_the_native_file
 ```
+
+A `.ladruno` that Python writes (`from_recorders`, `EigenResult.to_ladruno`,
+`ParallelModalResult.to_ladruno`, `Results.demo()`) stamps
+`INFO/PROVENANCE@opensees_backend="unknown"`: it names the fork's engine
+only where the fork provably solved the values (`capture_live_modes` on
+the fork), and never `"stock"`, which is kept for a converted `.mpco`.
 
 `convert_mpco(src, dst, *, model_h5, overwrite=False)` converts a
 partitioned set too (`run.part-0.mpco` writes `run.part-0.ladruno` …),
@@ -89,9 +100,10 @@ Notes:
   `precision=<int>` (significant digits per value). A deck run with `ops.py/tcl(run=True)`
   returns a `RunReport`, and a failed run raises.
 - `from_recorders` also requires `fem=` (a separate `TypeError`) — the
-  spec's `snapshot_id` is part of the transcode cache key. Phase 6 v1
-  supports **nodal records only**; element-level records in the spec
-  are skipped with a note.
+  spec's `snapshot_id` is part of the transcode cache key. Nodal,
+  Gauss-point, line-station, nodal-force and fibre records are read;
+  a layers record refuses by name, and a modal record is skipped (no
+  `.out` emission).
 - `from_mpco` over a **composed** model (ADR 0038/0043) auto-attaches
   an `ElementTagTranslator` so element queries speak `fem_eid`, not the
   raw OpenSees ops tag. (`tests/test_results_mpco_composed_join.py::test_query_by_offset_fem_eid_returns_the_row`)

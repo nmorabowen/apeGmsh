@@ -555,13 +555,14 @@ def open_transcode(
     from ._ladruno import LadrunoReader, attach_model_nodes_ndf
 
     target = Path(os.fspath(path))
+    archive = Path(os.fspath(model_h5))
     reader = LadrunoReader(target)
     try:
         reader.attach_stage_names(list(stage_names), list(stage_kinds))
         if rotation_mask:
-            attach_model_nodes_ndf(reader, model_h5, int(model.ndm))
+            attach_model_nodes_ndf(reader, archive, int(model.ndm))
         res = Results(reader, fem=fem, path=target, model=model,
-                      model_path=Path(os.fspath(model_h5)))
+                      model_path=archive)
     except BaseException:
         reader.close()
         raise

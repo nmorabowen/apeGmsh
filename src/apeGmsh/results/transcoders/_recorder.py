@@ -195,13 +195,13 @@ class RecorderTranscoder:
         stage per stage (module docstring); any other as native HDF5.
         Returns the path of the written file.
         """
-        nodal = self._target_is_nodal_history()
+        nodal_history = self._target_is_nodal_history()
         # Parse all stages before the writer opens: a bad file leaves no target.
         parsed = [(name, kind, self._parse_stage())
                   for name, kind, self._stage_id in self._plan]
 
         stages = [(name, kind, self._stage_time(p), *p.values()) for name, kind, p in parsed]
-        if nodal:
+        if nodal_history:
             return self._write_nodal_history(stages)
         proven_fem_index = self._element_index_is_fem()
         # Write a sibling, then rename: a failed write leaves no target behind.
