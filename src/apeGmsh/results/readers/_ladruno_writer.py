@@ -92,12 +92,15 @@ The file is written and stamped in a staging directory under its final
 name, then moved into place: either a stamped file is at ``path`` or
 nothing new is. ``path`` may not be the model archive, nor any ``.h5``.
 
-Every writer here stamps ``INFO/PROVENANCE@stage_names`` itself (ADR 0122
-D3, #2823), because a reader never pairs unnamed stages with the program by
-position: :func:`write_modes` names its ``eigen`` stage by its own
-``MODEL_STAGE[1]`` (modes are no program stage), and
-:func:`write_nodal_stages` takes the program stage each of its stages
-recorded (``recorded_stages=``).
+Every writer here stamps ``INFO/PROVENANCE@stage_names`` (ADR 0122 D3,
+#2823), because a reader never pairs unnamed stages with the program by
+position alone: :func:`write_modes` names its ``eigen`` stage by its own
+``MODEL_STAGE[1]`` (modes are no program stage); :func:`write_nodal_history`
+and :func:`write_nodal_stages` take the program stage each of their stages
+recorded (``recorded_stages=``) and, without it, stamp the program's names
+when the file's stages are the program's one to one and kind for kind (else
+:class:`StageNamesOmittedWarning`); :func:`write_transcode` stamps its
+stages' own names until :func:`open_transcode` stamps the plan's.
 
 ``opensees_backend`` defaults to ``"unknown"``: a file Python writes is
 never stamped with the engine of the fork's recorder unless its caller
@@ -357,6 +360,7 @@ def write_nodal_history(
     results: "Mapping[str, np.ndarray]",
     source: str,
     opensees_backend: str = UNKNOWN_BACKEND,
+    recorded_stages: "Optional[Sequence[Optional[str]]]" = None,
     stacklevel: int = 2,
 ) -> Path:
     """Write nodal results as one stage of a ``.ladruno``; stamp it.
@@ -376,6 +380,12 @@ def write_nodal_history(
         ``PROVENANCE@opensees_backend``, as
         :func:`~apeGmsh.results.readers._ladruno_provenance.stamp_provenance`
         takes it; ``"unknown"`` unless the caller proves the engine.
+    recorded_stages
+        ``[name]``: the program stage the one stage recorded, stamped as
+        ``stage_names`` and checked against the program (``ValueError``).
+        ``None`` stamps the program's name when the program has exactly one
+        stage, of ``kind``; with more, ``StageNamesOmittedWarning`` and no
+        names (a reader then pairs the stage only on a proven kind match).
 
     Raises
     ------
@@ -431,7 +441,7 @@ def write_nodal_history(
         lambda staged: _write_nodal_file(staged, nids, xyz[:, :ndm], ndm,
                                          [stage]),
         source=source, opensees_backend=opensees_backend,
-        stacklevel=stacklevel + 1,
+        recorded_stages=recorded_stages, stacklevel=stacklevel + 1,
     )
     return out
 

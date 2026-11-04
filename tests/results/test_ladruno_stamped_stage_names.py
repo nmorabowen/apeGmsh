@@ -454,3 +454,122 @@ def test_a_cached_transcode_opens_while_another_read_holds_it(tmp_path: Path) ->
             Results.from_recorders(spec, out, **kw) as second:
         assert first.path == second.path
         assert _last(second) == {"base": _BASE, "load": _LOAD}
+
+
+# =====================================================================
+# Review round 1 (#2825): the stamp writers refuse what the reader refuses
+# =====================================================================
+
+
+def test_a_stage_names_override_the_program_does_not_declare_refuses(tmp_path: Path) -> None:
+    """``stage_names=`` replaced the names unchecked, so the file was stamped
+    with names its reopen then refused; it refuses at write time, by name."""
+    model_h5 = _model_h5(tmp_path / "model.h5",
+                         ("gravity", "static"), ("pushover", "static"))
+    path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])
+    with pytest.raises(ValueError, match=r"\['Gravity load', 'Push'\] are not stages"):
+        stamp_provenance(path, model_h5, stage_names=["Gravity load", "Push"])
+    assert _stamp(path) is None
+    r, _ = _open(path, model_h5)     # the unstamped file still opens
+    r.close()
+
+
+def test_a_stage_names_override_of_another_kind_refuses(tmp_path: Path) -> None:
+    model_h5 = _model_h5(tmp_path / "model.h5",
+                         ("gravity", "static"), ("shake", "transient"))
+    path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "transient"])
+    with pytest.raises(ValueError, match=r"names a 'static' stage 'shake'"):
+        stamp_provenance(path, model_h5, stage_names=["shake", "gravity"])
+    assert _stamp(path) is None
+
+
+def test_an_unstamped_partial_run_is_its_models_binding(tmp_path: Path) -> None:
+    """Two static stages of ``[gravity, live, wind(transient)]`` fit only the
+    prefix: they take ``gravity`` and ``live`` (a partial run), and stage
+    terms resolve against that model (the prefix rule of
+    ``Results._unbound_stage_names``), with no stamp involved."""
+    from apeGmsh.results._bind import StageCountMismatchWarning
+
+    model_h5 = _model_h5(tmp_path / "model.h5", ("gravity", "static"),
+                         ("live", "static"), ("wind", "transient"))
+    path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])
+    r, raised = _open(path, model_h5)
+    with r:
+        assert _stamp(path) is None
+        assert [w.category for w in raised] == [StageCountMismatchWarning]
+        assert _hosts(r) == [("stage_0", "gravity"), ("stage_1", "live")]
+        assert _ux_last(r, "live") == [_ux(2, 1, n) for n in NODE_IDS]
+        assert r._unbound_stage_names(model_h5) is None
+
+
+def test_a_set_with_an_empty_partition_is_stamped_and_named(tmp_path: Path) -> None:
+    """A part whose stage is an ``EMPTY_PARTITION`` records no ``KIND``; it
+    has no say in the stamp, so the set is stamped as one and opens named
+    (part 0 alone was stamped, and the mixed set refused)."""
+    model_h5 = _model_h5(tmp_path / "model.h5", ("pull", "static"))
+    _fork_file(tmp_path / "run.part-0.ladruno", [1], ["static"], part=(0, 2))
+    empty = _fork_file(tmp_path / "run.part-1.ladruno", [1], ["static"], part=(1, 2))
+    with h5py.File(empty, "r+") as f:
+        stage = f["MODEL_STAGE[1]"]
+        del stage.attrs["KIND"]
+        stage.attrs["EMPTY_PARTITION"] = np.array([1], dtype=np.int32)
+        del stage["RESULTS"]
+    target = tmp_path / "run.part-0.ladruno"
+    assert stamp_fork_file(target, model_h5) is None
+    assert _stamp(target) == _stamp(empty) == ["pull"]
+
+    r, raised = _open(target, model_h5)
+    with r:
+        assert raised == []
+        assert _hosts(r) == [("stage_0", "pull")]
+        assert _ux_last(r, "pull") == [_ux(1, 1, n) for n in NODE_IDS]
+
+
+@pytest.mark.parametrize("program, recorded, want", [
+    ((("pushover", "static"),), None, "pushover"),
+    ((("gravity", "static"), ("pushover", "static")), ["pushover"], "pushover"),
+])
+def test_write_nodal_history_stamps_its_stage(
+    tmp_path: Path, program: Any, recorded: Any, want: str,
+) -> None:
+    """``write_nodal_history`` stamps its stage: the program's one stage, or
+    the stage ``recorded_stages=`` names (a later one), bound by name."""
+    from apeGmsh.results.readers._ladruno_writer import write_nodal_history
+
+    model_h5 = _model_h5(tmp_path / "model.h5", *program)
+    disp = np.zeros((2, 3, 2))
+    disp[:, :, 0] = [[_ux(2, s, int(n)) for n in NODE_IDS] for s in range(2)]
+    path = write_nodal_history(
+        tmp_path / "h.ladruno", model_h5=model_h5, node_ids=NODE_IDS,
+        coords=COORDS, ndm=2, kind="static", time=[0.5, 1.0],
+        results={"DISPLACEMENT": disp}, source="test",
+        recorded_stages=recorded)
+    assert _stamp(path) == [want]
+    r, raised = _open(path, model_h5)
+    with r:
+        assert raised == []
+        assert _hosts(r) == [("stage_0", want)]
+        assert _ux_last(r, want) == [_ux(2, 1, n) for n in NODE_IDS]
+
+
+def test_an_unstamped_multi_stage_transcode_is_not_paired_by_position(
+    tmp_path: Path,
+) -> None:
+    """A recorder transcode written at d4d6f2e4a carries no stage names and
+    may hold the program's stages in another order: same count, same kinds,
+    so nothing else tells. It keeps its names, with a warning."""
+    from apeGmsh.results.transcoders import RecorderTranscoder
+
+    fem, model, spec, out = _transcode_inputs(tmp_path)
+    archive = tmp_path / "archive.model.h5"
+    model.to_h5(archive)
+    target = RecorderTranscoder(spec, out, tmp_path / "t.ladruno", fem,
+                                model_h5_src=archive, stages=_REORDERED).run()
+    with h5py.File(target, "r+") as f:
+        del f["INFO/PROVENANCE"].attrs["stage_names"]
+
+    r, raised = _open(target, archive)
+    with r:
+        assert [w.category.__name__ for w in raised] == ["UnpairedStageWarning"]
+        assert "recorder transcode" in str(raised[0].message)
+        assert _last(r) == {"MODEL_STAGE[1]": _BASE, "MODEL_STAGE[2]": _LOAD}

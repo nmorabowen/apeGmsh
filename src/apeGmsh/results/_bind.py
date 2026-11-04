@@ -77,7 +77,8 @@ class UnpairedStageWarning(UserWarning):
     which program stages they are (two program stages of one kind, or a
     stage with no ``KIND`` evidence).  A recorder bound to a later stage
     writes such a file; pairing it with the program's first stages would
-    name it wrongly (#2824).  The message names the stages, which keep
+    name it wrongly (#2824).  An unstamped recorder transcode of more than
+    one stage warns too: it may hold the program's stages in any order.  The message names the stages, which keep
     their ``MODEL_STAGE[<k>]`` names; stamp the file with the stages it
     recorded to name them.
     """
@@ -600,6 +601,20 @@ def _pair_by_kind(
         return None
     if m == 0:
         return None     # modes only: no program stage ran here
+    if stamp.transcoded and m > 1:
+        groups = [stages[i].group for i in steps]
+        warnings.warn(
+            UnpairedStageWarning(
+                f"{stamp.source} is a recorder transcode with {m} stages "
+                f"({groups}) and no INFO/PROVENANCE@stage_names: it may hold "
+                f"the program's stages ({names}) in any order, so they are "
+                f"not paired by position. {groups} keep their names; read the "
+                f"recorders again with Results.from_recorders(...) to name "
+                f"them."
+            ),
+            stacklevel=4,
+        )
+        return None
     if m > n:
         warnings.warn(
             StageCountMismatchWarning(

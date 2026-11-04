@@ -87,6 +87,9 @@ if TYPE_CHECKING:
 
 _STAGE_PREFIX = "MODEL_STAGE["
 _SUFFIX = ".ladruno"
+#: ``PROVENANCE@writer``'s mark on a recorder transcode
+#: (``_ladruno_writer._writer("recorders")``).
+_TRANSCODE_MARK = "recorders->ladruno"
 
 _DIM_UNKNOWN = (
     "no INFO/SPATIAL_DIM, and no single MODEL/NODES/COORDINATES width "
@@ -176,6 +179,9 @@ class StageStamp(NamedTuple):
     stages: "tuple[StageRecord, ...]"
     names: "Optional[tuple[str, ...]]"
     source: str
+    #: ``PROVENANCE@writer`` names the ``.out`` recorder transcode, which
+    #: may hold its stages in any order of the program's.
+    transcoded: bool = False
 
 
 def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
@@ -194,6 +200,7 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
     source = files[0].name if len(files) == 1 else f"{files[0].name} (+{len(files) - 1} parts)"
     per_part: list[list[tuple[str, Optional[str], bool, bool]]] = []
     stamps: list[Optional[tuple[str, ...]]] = []
+    transcoded = False
     for path in files:
         with h5py.File(path, "r") as h5:
             groups = sorted(
@@ -214,6 +221,8 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
                 rows.append((name, kind, kind == "eigen" and not timed, empty))
             per_part.append(rows)
             prov = _child(h5, "INFO/PROVENANCE")
+            if prov is not None and "writer" in prov.attrs:
+                transcoded |= _TRANSCODE_MARK in _decode(prov.attrs["writer"])
             if prov is None or "stage_names" not in prov.attrs:
                 stamps.append(None)
                 continue
@@ -251,7 +260,7 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
             group=live[0][0], kind=live[0][1],
             modes_only=all(row[2] for row in live),
         ))
-    return StageStamp(tuple(stages), stamps[0], source)
+    return StageStamp(tuple(stages), stamps[0], source, transcoded)
 
 
 def stamped_stage_binding(
