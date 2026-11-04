@@ -48,13 +48,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy import ndarray
 
-from ...opensees._response_catalog import (
-    LAYER_CATALOG,
-    NON_BEAM_LINE_CLASSES,
-    RESPONSE_CATALOG,
-    ZEROLENGTH_CATALOG,
-    local_force_station_signs,
-)
+from ...opensees._response_catalog import local_force_station_signs
+from ._buckets import LINE_STATION_NON_BEAM_CLASSES, is_non_beam_class
 
 if TYPE_CHECKING:
     import h5py
@@ -351,35 +346,10 @@ LINE_STATION_SOURCE_TOKENS = frozenset({
     "localForce", "localForces", "basicForce", "basicForces",
 })
 
-#: The classes that are no beam, from the response catalog's family
-#: tables: the continuum, shell and truss classes of ``RESPONSE_CATALOG``,
-#: the shells of ``LAYER_CATALOG``, the springs of ``ZEROLENGTH_CATALOG``,
-#: and the bearings, walls and links of ``NON_BEAM_LINE_CLASSES``. A
-#: never-source bucket of one of these is silent: a bearing's or a wall's
-#: element forces are no beam's stations. Every other class warns, a beam
-#: the catalog does not know (``ModElasticBeam3d``) above all.
-LINE_STATION_NON_BEAM_CLASSES: frozenset[str] = frozenset(
-    NON_BEAM_LINE_CLASSES
-    | {cname for cname, _rule, _tok in RESPONSE_CATALOG}
-    | {cname for cname, _tok in LAYER_CATALOG}
-    | {cname for cname, _tok in ZEROLENGTH_CATALOG}
-)
-
-
 def bracket_class(bracket_key: str) -> str | None:
     """``5-ElasticBeam3d[1:0:0]`` -> ``ElasticBeam3d``; ``None`` unparsed."""
     m = _BRACKET_CLASS_RE.match(bracket_key)
     return None if m is None else m.group("cls")
-
-
-def is_non_beam_class(class_name: str | None) -> bool:
-    """True when ``class_name`` is in :data:`LINE_STATION_NON_BEAM_CLASSES`.
-
-    ``None`` or ``""`` (a bucket key whose class does not parse) is not
-    known to be a non-beam, so it answers False: its never-source bucket
-    is named, not passed over.
-    """
-    return bool(class_name) and class_name in LINE_STATION_NON_BEAM_CLASSES
 
 
 #: ``basicForce``'s two-station components: the basic-system end moments

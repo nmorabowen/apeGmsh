@@ -26,7 +26,7 @@ from apeGmsh.opensees._response_catalog import NODAL_FORCE_CATALOG
 from apeGmsh.results import Results
 from apeGmsh.results.readers import _mpco_nodal_io as _mn
 from apeGmsh.results.readers._buckets import NodalForceBucketSkippedWarning
-from apeGmsh.results.readers._mpco_refusals import (
+from apeGmsh.results.readers._buckets import (
     MPCOElementInTwoBuckets,
     refuse_element_in_two_buckets,
 )

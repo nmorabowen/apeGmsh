@@ -23,7 +23,7 @@ import pytest
 from apeGmsh.results.readers._ladruno import LadrunoReader
 from apeGmsh.results.readers._ladruno_multi import LadrunoMultiPartitionReader
 from apeGmsh.results.readers._mpco_multi import MPCOMultiPartitionReader
-from apeGmsh.results.readers._mpco_refusals import MPCOElementInTwoBuckets
+from apeGmsh.results.readers._buckets import MPCOElementInTwoBuckets
 from tests.results.test_mpco_mixed_dim_gauss import (
     _TET,
     _fiber_file,

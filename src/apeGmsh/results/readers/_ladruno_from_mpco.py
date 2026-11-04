@@ -800,7 +800,7 @@ def _scan_stage(stage: "h5py.Group", where: str, unsupported: set[str]) -> None:
 
 def _holds_only_modes(stage: "h5py.Group") -> bool:
     """True when the stage's only data are modal groups (an eigen stage)."""
-    from ._mpco_translation import is_modal_result_name
+    from ._buckets import is_modal_result_name
 
     if "RESULTS" not in stage:
         return False
@@ -822,7 +822,7 @@ def _holds_only_modes(stage: "h5py.Group") -> bool:
 
 def _stage_step_counts(stage: "h5py.Group") -> "set[int]":
     """The step counts of a stage's non-modal results (empty: none)."""
-    from ._mpco_translation import is_modal_result_name
+    from ._buckets import is_modal_result_name
 
     if "RESULTS" not in stage:
         return set()

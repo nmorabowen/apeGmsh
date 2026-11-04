@@ -34,6 +34,14 @@ from tests.opensees.h5._opensees_model_fixtures import build_simple_frame_fem
 # ---------------------------------------------------------------------------
 
 
+# transition: moves to a .ladruno source in VA6e #2794 (R22b refuses non-.ladruno on the app path)
+@pytest.fixture(autouse=True)
+def _vtk_backend(monkeypatch):
+    from apeGmsh.viewers import render as render_mod
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+
+
 def _empty_sets() -> tuple[PhysicalGroupSet, LabelSet]:
     return PhysicalGroupSet({}), LabelSet({})
 

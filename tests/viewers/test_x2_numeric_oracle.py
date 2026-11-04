@@ -98,6 +98,14 @@ _CAMERA = G._MANIFEST["camera"]
 # =====================================================================
 
 
+# transition: moves to a .ladruno source in VA6e #2794 (R22b refuses non-.ladruno on the app path)
+@pytest.fixture(autouse=True)
+def _vtk_backend(monkeypatch):
+    from apeGmsh.viewers import render as render_mod
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+
+
 def _merge_points(pts: np.ndarray, tol: float = X_ATOL) -> np.ndarray:
     """Distinct rows of ``pts`` (merged within ``tol``), lexsorted."""
     kept: list[np.ndarray] = []
