@@ -69,7 +69,12 @@ program stages, and otherwise keeps its `MODEL_STAGE[k]` names with
 stage (`KIND="eigen"`, no step) is never a program stage. Every Python
 writer stamps the names; a writer that knows which program stages a file
 holds passes them, `stamp_provenance(path, "model.h5",
-recorded_stages=["pushover"])`.
+recorded_stages=["pushover"])`. `stage_names=["Push 2"]` renames the
+stages for display only: the program's names still bind
+(`stage_names` in the file), the rename is stored as
+`stage_display_names` and becomes the stage's name on read; when the
+program's names cannot be determined (and no `recorded_stages=`), it
+raises `ValueError` at write time.
 (`tests/results/test_ladruno_stamped_stage_names.py`)
 
 A `.ladruno` that Python writes (`from_recorders`, `EigenResult.to_ladruno`,

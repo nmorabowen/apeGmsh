@@ -475,7 +475,10 @@ def _bind_ladruno_stage_names(
       stage: modes) keeps the stage as it is. A name the program does not
       declare, or a program stage of another kind than the ``KIND`` the
       file recorded, raises :class:`StageStampRefused` naming it. No count
-      warning: the stamp says which stages ran.
+      warning: the stamp says which stages ran. A file that also carries
+      ``stage_display_names`` (a ``stage_names=`` rename) binds the same
+      way and shows those names as the stages' names instead (the
+      program's kind still).
     * **Unstamped**: a modes-only stage (``KIND="eigen"``, no step) is not a
       program stage and keeps its name. The other stages pair with the
       program by kind: as many stages as the program pairs one to one, and
@@ -521,12 +524,16 @@ def _bind_ladruno_stage_names(
         if by_kind is None:
             return
         pairing = by_kind
-    paired = [None if j is None else names[j] for j in pairing]
+    shown = (stamp.display if stamp.display is not None
+             else [h.name if j is None else names[j]
+                   for h, j in zip(hosts, pairing)])
+    paired = [None if j is None and s == h.name else s
+              for h, j, s in zip(hosts, pairing, shown)]
     if all(n is None for n in paired):
         return
     before = _stage_naming(reader)
     reader.attach_stage_names(
-        [h.name if j is None else names[j] for h, j in zip(hosts, pairing)],
+        list(shown),
         [h.kind if j is None else kind_of(j) for h, j in zip(hosts, pairing)],
     )
     if _stage_naming(reader) == before:

@@ -25,6 +25,10 @@ any plan that was not a program prefix in a native file.
   `capture_live_modes`) stamps the modes stage with its own name.
   `stamp_provenance(..., recorded_stages=[...])` stamps the program stage
   each file stage recorded, checked against the program.
+  `stamp_provenance(..., stage_names=[...])` now renames for display only:
+  the program's names still bind, the rename is stamped as
+  `stage_display_names` and read back as the stages' names, and it raises
+  `ValueError` when the program's names cannot be determined.
 - **The `.out` transcode writes a `.ladruno` for every nodal plan** whose
   stages are program stages of their kind, in any order or subset, stamped
   with the plan's names. A prefix plan no longer warns

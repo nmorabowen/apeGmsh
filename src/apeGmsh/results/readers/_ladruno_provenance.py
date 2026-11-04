@@ -21,6 +21,10 @@ Attribute                   Value (scalar, variable-length UTF-8 string)
                             stages (``recorded_stages=``), or when the file's
                             ``MODEL_STAGE`` count and ``KIND`` s match the
                             program's stages
+``stage_display_names``     JSON array, one per ``MODEL_STAGE``: the names a
+                            reader shows for the stages, written only with a
+                            ``stage_names=`` override; binding stays by
+                            ``stage_names``
 ``element_index_space``     ``"fem"``, or absent (unverified)
 ``unsupported``             JSON array of the lossy categories; ``"[]"``
 ``writer``                  the apeGmsh component and version
@@ -75,7 +79,7 @@ PROVENANCE_ATTRS: tuple[str, ...] = (
     "model_hash", "fem_hash", "stage_names", "element_index_space",
     "unsupported", "writer", "opensees_backend", "opensees_build_sha",
 )
-_OWNED_ATTRS: tuple[str, ...] = (*PROVENANCE_ATTRS, "units")
+_OWNED_ATTRS: tuple[str, ...] = (*PROVENANCE_ATTRS, "units", "stage_display_names")
 
 #: §7b.1 ``opensees_backend`` values. The fork's recorder writes only
 #: ``"ladruno"`` files; ``"stock"`` is possible only on a converted file.
@@ -146,17 +150,24 @@ def stamp_provenance(
     no ``model_hash``, so its stamp carries ``fem_hash`` alone (ADR 0133
     D1). An archive with no ``fem_hash``, or an empty hash, refuses.
 
-    ``stage_names`` defaults to the archive's ``ops.stage(name=...)``
-    names; passing it replaces the names, never the kinds, which always
-    come from each program stage's ``analysis`` record. A reader binds the
-    stamped names by name, so each passed name must be a program stage of
-    the kind of the stage it replaces; otherwise ``ValueError`` names it
-    before any write. A part whose ``MODEL_STAGE`` count or ``KIND`` s
-    differ from the program's gets no ``stage_names`` and
-    :class:`StageNamesOmittedWarning`; a program with no stages has nothing
-    to name and stays silent. The ``KIND`` of a stage is decided over the
-    whole set, from the parts where it is not an ``EMPTY_PARTITION`` (an
-    empty part may record none), so every part of a set gets one decision.
+    ``INFO/PROVENANCE@stage_names`` is always the program's
+    ``ops.stage(name=...)`` names: a reader binds by them. A part whose
+    ``MODEL_STAGE`` count or ``KIND`` s differ from the program's gets no
+    ``stage_names`` and :class:`StageNamesOmittedWarning`; a program with
+    no stages has nothing to name and stays silent. The ``KIND`` of a stage
+    is decided over the whole set, from the parts where it is not an
+    ``EMPTY_PARTITION`` (an empty part may record none), so every part of a
+    set gets one decision.
+
+    ``stage_names`` passed here renames the stages for display only (any
+    text, one per ``MODEL_STAGE`` in file order): it is stamped as
+    ``stage_display_names`` beside the program's names, and a reader shows
+    it in their place. Binding never comes from it, so the program's names
+    must be known: the stages are the program's one to one and kind for
+    kind, or ``recorded_stages=`` says which program stage each recorded.
+    When they cannot be determined, ``ValueError`` names the reason before
+    any write. An override of the wrong length is omitted with
+    :class:`StageNamesOmittedWarning`, with no names at all.
 
     ``recorded_stages`` is the writer's own account of the stages, which
     a reader binds by name (#2823): one entry per ``MODEL_STAGE`` in file
@@ -231,9 +242,6 @@ def stamp_provenance(
     """
     names_override = _string_list(stage_names, "stage_names")
     recorded = _recorded_list(recorded_stages)
-    if names_override is not None and recorded is not None:
-        raise TypeError("stamp_provenance: pass stage_names= or "
-                        "recorded_stages=, not both.")
     lossy = _string_list(unsupported, "unsupported") or []
     writer_text = _writer_text(writer)
     backend_arg, build_arg = _engine_args(opensees_backend, opensees_build_sha)
@@ -245,9 +253,6 @@ def stamp_provenance(
     program_names, program_kinds, kind_error, pairing, model_units = _program_facts(
         Path(model_h5),
     )
-    if names_override is not None:
-        _check_override(names_override, program_names, program_kinds, kind_error)
-        program_names = names_override
     _check_part_set(parts)
 
     all_facts = [_read_part(part) for part in parts]
@@ -277,13 +282,18 @@ def stamp_provenance(
         }
         if model_units is not None:
             wanted["units"] = str(model_units)
-        names = (
-            _stage_names_for(part, set_kinds, program_names,
-                             program_kinds, kind_error)
-            if recorded is None else
-            _recorded_names(part, facts.groups, set_kinds, recorded,
-                            program_names, program_kinds, kind_error)
-        )
+        if names_override is not None:
+            names, display = _displayed_names(
+                part, facts.groups, set_kinds, names_override, recorded,
+                program_names, program_kinds, kind_error)
+            if display is not None:
+                wanted["stage_display_names"] = _json(display)
+        elif recorded is None:
+            names = _stage_names_for(part, set_kinds, program_names,
+                                     program_kinds, kind_error)
+        else:
+            names = _recorded_names(part, facts.groups, set_kinds, recorded,
+                                    program_names, program_kinds, kind_error)
         if names is not None:
             wanted["stage_names"] = _json(names)
         if _is_fem_index_space(facts.element_tags, pairing):
@@ -878,31 +888,56 @@ def _stage_names_for(
     return list(names)
 
 
-def _check_override(
-    override: "list[str]", names: "list[str]", kinds: "list[str]",
-    kind_error: "Optional[str]",
-) -> None:
-    """Refuse a ``stage_names`` override a reader would refuse: a name the
-    program does not declare, or one that names a program stage of another
-    kind than the stage it replaces. A wrong count is the omission rule's:
-    nothing is stamped then, so there is nothing to refuse."""
-    if not names or len(override) != len(names):
-        return
-    unknown = sorted(set(override) - set(names))
-    if unknown:
+def _displayed_names(
+    part: Path, groups: "list[str]", file_kinds: "list[Optional[str]]",
+    override: "list[str]", recorded: "Optional[list[Optional[str]]]",
+    names: "list[str]", kinds: "list[str]", kind_error: "Optional[str]",
+) -> "tuple[Optional[list[str]], Optional[list[str]]]":
+    """``(stage_names, stage_display_names)`` for a ``stage_names=``
+    override: the program's names to bind by, and the override to show.
+    Refuses (``ValueError``) when the program's names cannot be determined,
+    since binding never comes from the override."""
+    if len(override) != len(groups):
+        warnings.warn(StageNamesOmittedWarning(
+            f"{part.name}: stage_names not stamped: {len(override)} stage "
+            f"names for {len(groups)} MODEL_STAGE groups {groups}."),
+            stacklevel=4)
+        return None, None
+    if recorded is not None:
+        binding = _recorded_names(part, groups, file_kinds, recorded, names,
+                                  kinds, kind_error)
+        reason = "a modes stage is named like a program stage"
+    else:
+        binding, reason = _program_names(file_kinds, names, kinds, kind_error)
+    if binding is None:
+        if not names:
+            reason = "the program declares no ops.stage block"
         raise ValueError(
-            f"stamp_provenance: stage_names {unknown} are not stages of the "
-            f"program ({names}); a reader binds stamped names by name and "
-            "would refuse them. Nothing was stamped.")
+            f"stamp_provenance: stage_names {override} cannot be stamped on "
+            f"{part.name}: a reader binds by the program's stage names, and "
+            f"they cannot be determined ({reason}). Pass recorded_stages= "
+            "with the program stage each MODEL_STAGE recorded. Nothing was "
+            "stamped.")
+    return binding, list(override)
+
+
+def _program_names(
+    file_kinds: "list[Optional[str]]", names: "list[str]", kinds: "list[str]",
+    kind_error: "Optional[str]",
+) -> "tuple[Optional[list[str]], str]":
+    """The program's names when the stages are its own one to one and kind
+    for kind, else ``None`` and why (:func:`_stage_names_for`'s rule)."""
+    if not names:
+        return None, "the program declares no ops.stage block"
     if kind_error is not None:
-        return
-    for name, kind in zip(override, kinds):
-        declared = {k for n, k in zip(names, kinds) if n == name}
-        if kind not in declared:
-            raise ValueError(
-                f"stamp_provenance: stage_names names a {kind!r} stage "
-                f"{name!r}, which the program declares {sorted(declared)}; a "
-                "reader would refuse the stamp. Nothing was stamped.")
+        return None, f"the program's stage kinds are unknown ({kind_error})"
+    if len(file_kinds) != len(names):
+        return None, (f"the file holds {len(file_kinds)} MODEL_STAGE groups "
+                      f"and the program {len(names)} stages ({names})")
+    if list(file_kinds) != list(kinds):
+        return None, (f"the file's stage KINDs {file_kinds} differ from the "
+                      f"program's {kinds}")
+    return list(names), ""
 
 
 def _recorded_names(

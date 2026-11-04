@@ -182,24 +182,28 @@ class StageStamp(NamedTuple):
     #: ``PROVENANCE@writer`` names the ``.out`` recorder transcode, which
     #: may hold its stages in any order of the program's.
     transcoded: bool = False
+    #: ``INFO/PROVENANCE@stage_display_names``: the names shown in place of
+    #: the bound program names (a ``stage_names=`` override); ``None``
+    #: when absent. Binding never comes from them.
+    display: "Optional[tuple[str, ...]]" = None
 
 
 def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
     """The stages and ``stage_names`` of a ``.ladruno`` or of a part set.
 
     Raises :class:`StageStampRefused` for a malformed or miscounted
-    ``stage_names``, or one the parts disagree on (one part stamped, the
-    other not, or with other names), and ``ValueError`` when the parts
-    hold different numbers of ``MODEL_STAGE`` groups.
+    ``stage_names`` or ``stage_display_names``, one the parts disagree on
+    (one part stamped, the other not, or with other names), or display
+    names with no ``stage_names`` to bind by; and ``ValueError`` when the
+    parts hold different numbers of ``MODEL_STAGE`` groups.
     """
-    import json
-
     import h5py
 
     files = [Path(p) for p in paths]
     source = files[0].name if len(files) == 1 else f"{files[0].name} (+{len(files) - 1} parts)"
     per_part: list[list[tuple[str, Optional[str], bool, bool]]] = []
     stamps: list[Optional[tuple[str, ...]]] = []
+    shown: list[Optional[tuple[str, ...]]] = []
     transcoded = False
     for path in files:
         with h5py.File(path, "r") as h5:
@@ -223,35 +227,23 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
             prov = _child(h5, "INFO/PROVENANCE")
             if prov is not None and "writer" in prov.attrs:
                 transcoded |= _TRANSCODE_MARK in _decode(prov.attrs["writer"])
-            if prov is None or "stage_names" not in prov.attrs:
-                stamps.append(None)
-                continue
-            raw = _decode(prov.attrs["stage_names"])
-            try:
-                names = json.loads(raw)
-            except ValueError as e:
+            stamps.append(_stage_list(prov, "stage_names", path, groups))
+            shown.append(_stage_list(prov, "stage_display_names", path, groups))
+            if shown[-1] is not None and stamps[-1] is None:
                 raise StageStampRefused(
-                    f"{path.name}: INFO/PROVENANCE@stage_names is not JSON "
-                    f"({e}): {raw!r}.") from e
-            if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
-                raise StageStampRefused(
-                    f"{path.name}: INFO/PROVENANCE@stage_names is not a JSON "
-                    f"array of strings: {raw!r}.")
-            if len(names) != len(groups):
-                raise StageStampRefused(
-                    f"{path.name}: INFO/PROVENANCE@stage_names names "
-                    f"{len(names)} stage(s) {names} but the file holds "
-                    f"{len(groups)} MODEL_STAGE group(s) {groups}.")
-            stamps.append(tuple(names))
+                    f"{path.name}: INFO/PROVENANCE@stage_display_names "
+                    f"{list(shown[-1])} has no stage_names to bind the stages "
+                    "by; nothing is renamed.")
     if len({len(rows) for rows in per_part}) > 1:
         raise ValueError(
             f"{source}: the parts hold different numbers of MODEL_STAGE "
             f"groups ({[len(rows) for rows in per_part]}).")
-    if any(s != stamps[0] for s in stamps[1:]):
-        raise StageStampRefused(
-            f"{source}: the parts carry different INFO/PROVENANCE@stage_names "
-            f"({dict(zip((p.name for p in files), stamps))}); a set is stamped "
-            "as one.")
+    for attr, got in (("stage_names", stamps), ("stage_display_names", shown)):
+        if any(s != got[0] for s in got[1:]):
+            raise StageStampRefused(
+                f"{source}: the parts carry different INFO/PROVENANCE@{attr} "
+                f"({dict(zip((p.name for p in files), got))}); a set is "
+                "stamped as one.")
     stages = []
     for k in range(len(per_part[0])):
         column = [rows[k] for rows in per_part]
@@ -260,7 +252,35 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
             group=live[0][0], kind=live[0][1],
             modes_only=all(row[2] for row in live),
         ))
-    return StageStamp(tuple(stages), stamps[0], source, transcoded)
+    return StageStamp(tuple(stages), stamps[0], source, transcoded, shown[0])
+
+
+def _stage_list(
+    prov: "Optional[h5py.Group]", attr: str, path: Path, groups: "list[str]",
+) -> "Optional[tuple[str, ...]]":
+    """``INFO/PROVENANCE@<attr>`` as one string per ``MODEL_STAGE``;
+    ``None`` when absent. Malformed or miscounted refuses."""
+    import json
+
+    if prov is None or attr not in prov.attrs:
+        return None
+    raw = _decode(prov.attrs[attr])
+    try:
+        names = json.loads(raw)
+    except ValueError as e:
+        raise StageStampRefused(
+            f"{path.name}: INFO/PROVENANCE@{attr} is not JSON ({e}): {raw!r}."
+        ) from e
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        raise StageStampRefused(
+            f"{path.name}: INFO/PROVENANCE@{attr} is not a JSON array of "
+            f"strings: {raw!r}.")
+    if len(names) != len(groups):
+        raise StageStampRefused(
+            f"{path.name}: INFO/PROVENANCE@{attr} names {len(names)} "
+            f"stage(s) {names} but the file holds {len(groups)} MODEL_STAGE "
+            f"group(s) {groups}.")
+    return tuple(names)
 
 
 def stamped_stage_binding(
@@ -301,6 +321,8 @@ def stamped_stage_binding(
     if stamped != held:
         return None
     want = [n if n in names else i for i, n in zip(ids, stamp.names)]
+    if stamp.display is not None:   # the shown names are the stages' names
+        want = list(stamp.display)
     known = all(n in names or n == rec.group
                 for n, rec in zip(stamp.names, stamp.stages))
     return known and list(here) == want, any(n in names for n in stamp.names)

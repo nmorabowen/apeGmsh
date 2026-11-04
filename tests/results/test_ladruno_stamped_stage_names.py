@@ -26,6 +26,7 @@ no warning, and a transcode whose binding fails is removed from the cache.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import warnings
 from pathlib import Path
@@ -461,26 +462,78 @@ def test_a_cached_transcode_opens_while_another_read_holds_it(tmp_path: Path) ->
 # =====================================================================
 
 
-def test_a_stage_names_override_the_program_does_not_declare_refuses(tmp_path: Path) -> None:
-    """``stage_names=`` replaced the names unchecked, so the file was stamped
-    with names its reopen then refused; it refuses at write time, by name."""
+def _shown(path: Path) -> "list[str] | None":
+    with h5py.File(path, "r") as f:
+        raw = f["INFO/PROVENANCE"].attrs.get("stage_display_names")
+    if raw is None:
+        return None
+    return json.loads(raw.decode() if isinstance(raw, bytes) else str(raw))
+
+
+def test_a_renamed_file_binds_by_the_program_names_and_shows_the_rename(
+    tmp_path: Path,
+) -> None:
+    """``stage_names=["Gravity load", "Push"]`` over ``[gravity, pushover]``
+    (both static) was stamped as the binding names and the reopen refused
+    them. The program's names bind (``stage_names``); the rename is shown
+    (``stage_display_names``), each stage with its own values."""
     model_h5 = _model_h5(tmp_path / "model.h5",
                          ("gravity", "static"), ("pushover", "static"))
     path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])
-    with pytest.raises(ValueError, match=r"\['Gravity load', 'Push'\] are not stages"):
-        stamp_provenance(path, model_h5, stage_names=["Gravity load", "Push"])
-    assert _stamp(path) is None
-    r, _ = _open(path, model_h5)     # the unstamped file still opens
-    r.close()
+    stamp_provenance(path, model_h5, stage_names=["Gravity load", "Push"])
+    assert _stamp(path) == ["gravity", "pushover"]
+    assert _shown(path) == ["Gravity load", "Push"]
+
+    r, raised = _open(path, model_h5)
+    with r:
+        assert raised == []
+        assert [(s.name, s.kind, s.aliases) for s in r.stages] == [
+            ("Gravity load", "static", ("MODEL_STAGE[1]",)),
+            ("Push", "static", ("MODEL_STAGE[2]",))]
+        assert _ux_last(r, "Gravity load") == [_ux(1, 1, n) for n in NODE_IDS]
+        assert _ux_last(r, "Push") == [_ux(2, 1, n) for n in NODE_IDS]
+        assert r._unbound_stage_names(model_h5) is None
 
 
-def test_a_stage_names_override_of_another_kind_refuses(tmp_path: Path) -> None:
+def test_a_renamed_file_of_the_second_stage_binds_pushover(tmp_path: Path) -> None:
+    """A file holding only ``pushover``, renamed: never bound by KIND in
+    order (it would take ``gravity``). ``recorded_stages=`` names the
+    program stage; the rename is shown, with pushover's values."""
     model_h5 = _model_h5(tmp_path / "model.h5",
-                         ("gravity", "static"), ("shake", "transient"))
-    path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "transient"])
-    with pytest.raises(ValueError, match=r"names a 'static' stage 'shake'"):
-        stamp_provenance(path, model_h5, stage_names=["shake", "gravity"])
-    assert _stamp(path) is None
+                         ("gravity", "static"), ("pushover", "static"))
+    path = _fork_file(tmp_path / "run.ladruno", [2], ["static"])
+    stamp_provenance(path, model_h5, recorded_stages=["pushover"],
+                     stage_names=["Push 2"])
+    assert (_stamp(path), _shown(path)) == (["pushover"], ["Push 2"])
+
+    r, raised = _open(path, model_h5)
+    with r:
+        assert raised == []
+        assert [(s.name, s.kind) for s in r.stages] == [("Push 2", "static")]
+        assert _ux_last(r, "Push 2") == [_ux(2, 1, n) for n in NODE_IDS]
+
+
+@pytest.mark.parametrize("program, stage_ks, kinds, match", [
+    ((("gravity", "static"), ("pushover", "static")), [2], ["static"],
+     r"1 MODEL_STAGE groups and the program 2 stages"),
+    ((("gravity", "static"), ("shake", "transient")), [1, 2], ["static", "static"],
+     r"KINDs \['static', 'static'\] differ"),
+    ((), [1], ["static"], r"declares no ops\.stage block"),
+])
+def test_a_rename_whose_program_names_cannot_be_determined_refuses(
+    tmp_path: Path, program: Any, stage_ks: "list[int]", kinds: "list[str]",
+    match: str,
+) -> None:
+    """Binding never comes from the rename, so with no ``recorded_stages=``
+    and stages that are not the program's one to one, the rename refuses by
+    name at write time and stamps nothing."""
+    model_h5 = _model_h5(tmp_path / "model.h5", *program)
+    path = _fork_file(tmp_path / "run.ladruno", stage_ks, kinds)
+    names = [f"Stage {k}" for k in stage_ks]
+    with pytest.raises(ValueError, match=rf"stage_names {re.escape(str(names))} "
+                       rf"cannot be stamped.*{match}"):
+        stamp_provenance(path, model_h5, stage_names=names)
+    assert _stamp(path) is None and _shown(path) is None
 
 
 def test_an_unstamped_partial_run_is_its_models_binding(tmp_path: Path) -> None:
