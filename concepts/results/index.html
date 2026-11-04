@@ -2199,10 +2199,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#one-container-three-doors" class="md-nav__link">
+  <a href="#one-container-four-doors" class="md-nav__link">
     <span class="md-ellipsis">
       
-        One container, three doors
+        One container, four doors
       
     </span>
   </a>
@@ -3623,10 +3623,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#one-container-three-doors" class="md-nav__link">
+  <a href="#one-container-four-doors" class="md-nav__link">
     <span class="md-ellipsis">
       
-        One container, three doors
+        One container, four doors
       
     </span>
   </a>
@@ -3709,32 +3709,40 @@ model: it mirrors the <code>FEMData</code> composite shape — <code>results.nod
 <code>pg=</code> / <code>label=</code> / <code>ids=</code> selection vocabulary, so once you know how to
 query a mesh you already know how to query results on that mesh. The
 container itself owns no arrays; it reads lazily from a backing file
-(native HDF5, MPCO, or transcoded recorder output), which is why opening a
+(a <code>.ladruno</code>, native HDF5, MPCO, or transcoded recorder output), which is why opening a
 multi-gigabyte run is instant and why <code>Results</code> has a close-when-done
 lifecycle rather than a load-everything constructor.</p>
-<h2 id="one-container-three-doors">One container, three doors<a class="headerlink" href="#one-container-three-doors" title="Permanent link">&para;</a></h2>
-<p>A run can leave its numbers on disk in three formats, and each has a
+<h2 id="one-container-four-doors">One container, four doors<a class="headerlink" href="#one-container-four-doors" title="Permanent link">&para;</a></h2>
+<p>A run can leave its numbers on disk in four formats, and each has a
 constructor. Which one you use is decided entirely by <em>how the run was
 recorded</em> — the object you get back is the same class with the same query
 surface:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">Results</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenSeesModel</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># All three REQUIRE the model broker — omitting it raises TypeError.</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">model</span>   <span class="o">=</span> <span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">"modes.h5"</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>        <span class="c1"># apeGmsh native</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">"out/"</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>    <span class="c1"># classic .out files</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">"run.mpco"</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">"model.h5"</span><span class="p">)</span>            <span class="c1"># STKO MPCO</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># The fork's .ladruno carries its own nodes; model_h5= binds the archive</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># it was stamped against.</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_ladruno</span><span class="p">(</span><span class="s2">"modes.ladruno"</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">"modes.h5"</span><span class="p">)</span>   <span class="c1"># Ladruno: fork runs, modes</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1"># These three REQUIRE the model broker — omitting it raises TypeError.</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">model</span>   <span class="o">=</span> <span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">)</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">"results.h5"</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>       <span class="c1"># apeGmsh native</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">"out/"</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">)</span>    <span class="c1"># classic .out files</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">"run.mpco"</span><span class="p">,</span> <span class="n">model_h5</span><span class="o">=</span><span class="s2">"model.h5"</span><span class="p">)</span>            <span class="c1"># STKO MPCO</span>
 </span></code></pre></div>
-<p><code>from_native</code> opens apeGmsh's own HDF5, written by <code>EigenResult.to_native</code>
-and the other modes writers (and by the recorder transcoder's cache).
+<p><code>from_ladruno</code> opens the fork's canonical format: a fork recorder run, and
+the modes that <code>EigenResult.to_ladruno</code> / <code>.results()</code> and
+<code>capture_live_modes</code> write (ADR 0131 D10), one <code>kind="mode"</code> stage per
+mode. <code>from_native</code> opens apeGmsh's own HDF5, written by the explicit
+<code>EigenResult.to_native</code> export and the other native writers (and by the
+recorder transcoder's cache).
 <code>from_recorders</code> parses classic OpenSees <code>.out</code>/<code>.xml</code> files against the
 recorder spec that declared them, transcodes them once into a cached native
 file, and opens that — re-reads with unchanged inputs hit the cache.
 <code>from_mpco</code> reads STKO's <code>.mpco</code> HDF5 directly, including multi-partition
 parallel runs (pass one <code>run.part-0.mpco</code> and siblings are auto-discovered
 — the <a href="../../how-to/results-mpco/">MPCO how-to</a> is the end-to-end recipe).</p>
-<p>Every constructor <strong>requires the model broker</strong> — <code>model=</code> as an in-memory
+<p>Every constructor but <code>from_ladruno</code> <strong>requires the model broker</strong> — <code>model=</code> as an in-memory
 <code>OpenSeesModel</code> for <code>from_native</code>/<code>from_recorders</code>, <code>model_h5=</code> as a <em>path</em>
 to the canonical <code>model.h5</code> for <code>from_mpco</code> (MPCO files carry no solver
 zone of their own). Omit it and you get a <code>TypeError</code> at the call site, not
