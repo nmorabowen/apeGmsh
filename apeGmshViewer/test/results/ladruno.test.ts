@@ -28,6 +28,7 @@ import { uniqueNodeIds } from "../../src/reader/ladrunoChecks.ts";
 import { resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes } from "../../src/reader/ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "../../src/reader/ladrunoNodal.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
+import { pairResults } from "../../src/state/results.ts";
 
 await h5wasm.ready;
 const H5 = h5wasm as unknown as ResultsH5;
@@ -472,6 +473,44 @@ test("a §7b.1 stamp reads attribute by attribute, and gives the lineage", () =>
     assert.deepEqual(p.unsupported, []);
     assert.deepEqual(r.index.lineage, { modelHash: STAMP.model_hash, femHash: STAMP.fem_hash });
     assert.equal(r.index.lineageReason, null);
+  });
+});
+
+test("ADR 0133: a fem_hash-only stamp (a bare FEMData archive) gives a lineage with no model_hash, and pairs by fem_hash", async () => {
+  const femOnly = edited(STAMPED, (f) => setAttr(f.get("INFO/PROVENANCE") as h5wasm.Group, "model_hash", null));
+  withFile(femOnly, (r) => {
+    const p = r.index.provenance;
+    assert.equal(p.state, "present");
+    if (p.state !== "present") return;
+    assert.deepEqual(p.attrs.model_hash, { state: "absent" });
+    assert.deepEqual(r.index.lineage, { modelHash: null, femHash: STAMP.fem_hash });
+    assert.equal(r.index.lineageReason, null);
+  });
+  // The app's open answer carries it, and pairResults pairs it to the model.h5 of that mesh.
+  const host = new ResultsHost(H5, h5wasm.ready);
+  try {
+    const opened = await host.open(femOnly);
+    assert.ok(opened.ok, opened.ok ? "" : opened.error);
+    assert.deepEqual(opened.meta.lineage, { femHash: STAMP.fem_hash, modelHash: null, resultsHash: null });
+    const model = (lineage: { femHash: string | null; modelHash: string | null }) => ({ lineage: { ...lineage, resultsHash: null }, openseesVersion: null, programDecl: null });
+    // a bare FEMData archive of the mesh, and a bridge archive of it: both pair by fem_hash
+    assert.deepEqual(pairResults(model({ femHash: STAMP.fem_hash, modelHash: null }), opened.meta), { state: "paired", by: "fem_hash" });
+    assert.deepEqual(pairResults(model({ femHash: STAMP.fem_hash, modelHash: STAMP.model_hash }), opened.meta), { state: "paired", by: "fem_hash" });
+    // another mesh: a mismatch, never a pairing
+    const other = pairResults(model({ femHash: "0".repeat(32), modelHash: null }), opened.meta);
+    assert.equal(other.state, "mismatch");
+  } finally {
+    host.close();
+  }
+  // A malformed model_hash is never read as absent: no lineage.
+  withFile(edited(femOnly, (f) => setAttr(f.get("INFO/PROVENANCE") as h5wasm.Group, "model_hash", "")), (r) => {
+    assert.equal(r.index.lineage, null);
+    assert.match(r.index.lineageReason!, /@model_hash is an empty string/);
+  });
+  // fem_hash is still required: model_hash alone pairs nothing.
+  withFile(edited(STAMPED, (f) => setAttr(f.get("INFO/PROVENANCE") as h5wasm.Group, "fem_hash", null)), (r) => {
+    assert.equal(r.index.lineage, null);
+    assert.match(r.index.lineageReason!, /^INFO\/PROVENANCE has no @fem_hash/);
   });
 });
 

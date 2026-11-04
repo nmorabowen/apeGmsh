@@ -1106,9 +1106,15 @@ not co-presence.
    files (`Results.from_recorders`); the two stock routes warn once
    with `DefaultRouteWarning`. Modal records refuse there: modes come
    from `ops.eigen(n)`, whose `EigenResult.results()` /
-   `.to_native(path)` / `.to_ladruno(path)` write and open them; a
-   plain openseespy deck's modes come from
-   `apeGmsh.results.live.capture_live_modes`. The old in-process
+   `.to_ladruno(path)` write a stamped `.ladruno` (with the bridge
+   archive beside it as `<stem>.h5`) and open it; a plain openseespy
+   deck's modes come from
+   `apeGmsh.results.live.capture_live_modes(model_h5_or_fem, n, path)`,
+   which also writes a `.ladruno` (an `.h5` path refuses). Over a bare
+   FEMData archive (`fem.to_h5`, no `model_hash`) the stamp carries
+   `fem_hash` alone and the file pairs by the mesh: the viewer pairs it
+   by `fem_hash`, and the fork route's `run.results()` reads it with no
+   warning (ADR 0133). The old in-process
    capture route was deleted (#2191).
 
 The canonical component vocabulary is the neutral top-level
