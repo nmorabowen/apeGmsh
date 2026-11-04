@@ -525,6 +525,7 @@ def test_a_nodal_run_transcodes_to_ladruno_read_as_the_native_file(tmp_path: Pat
         assert r.path is not None and r.path.suffix == ".ladruno"
         assert isinstance(r._reader, LadrunoReader)
         assert [(s.name, s.kind) for s in r.stages] == [("analysis", "transient")]
+        assert r.model is model   # card #2823 amendment 1: the caller's model
         _assert_same_reads(r, native)
         assert np.isnan(r.nodes.get(component="velocity_y").values[:, -1]).all()
         path, model_path = r.path, r._model_path
@@ -536,7 +537,8 @@ def test_a_nodal_run_transcodes_to_ladruno_read_as_the_native_file(tmp_path: Pat
     assert prov["writer"] == f"apeGmsh recorders->ladruno {apeGmsh.__version__}"
     assert prov["unsupported"] == '["elements"]'
     assert prov["fem_hash"] == str(model.lineage.fem_hash)
-    assert "stage_names" not in prov
+    # #2823: the transcode names its stages; a reopen binds them by name.
+    assert prov["stage_names"] == '["analysis"]'
 
     (tmp_path / "again").mkdir()
     with open_results(path, model_path) as lad, \

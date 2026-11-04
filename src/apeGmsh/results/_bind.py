@@ -322,6 +322,11 @@ def _bind_stage_names(
     alike warns :class:`DuplicateStageNameWarning`: ``stage(<name>)``
     then resolves to the first, and the ids stay unique.
 
+    This is the ``.mpco`` path: an ``.mpco`` records no stage kind and
+    no stamp, so its stages pair by position.  A ``.ladruno`` binds by
+    its stamped names or a proven kind match instead
+    (:func:`_bind_ladruno_stage_names`, #2823).
+
     The reader has the last word on the pairing (#2101).  A ``.ladruno``
     stage records the ``KIND`` it ran, and where that disagrees with the
     program kind the reader renames nothing and warns
@@ -498,9 +503,10 @@ def _bind_ladruno_stage_names(
                 f"checked against model_h5={str(model_path)!r}.")
         pairing = _pair_by_stamp(stamp, names, kind_of, model_path=model_path)
     else:
-        pairing = _pair_by_kind(stamp, names, kind_of, model_path=model_path)
-        if pairing is None:
+        by_kind = _pair_by_kind(stamp, names, kind_of, model_path=model_path)
+        if by_kind is None:
             return
+        pairing = by_kind
     paired = [None if j is None else names[j] for j in pairing]
     if all(n is None for n in paired):
         return

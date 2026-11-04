@@ -84,6 +84,14 @@ def stamp_fork_file(
     :class:`ProvenanceStampRefused` is returned as its message, so the
     caller can warn and read the file unstamped (§7b.1 rule 3); nothing
     else is caught.
+
+    ``stage_names`` is stamped only when the file's stages are the
+    program's, one to one and kind for kind; this caller does not know
+    which stages the recorder covered. A recorder opened in a later stage
+    leaves them unstamped, and the read then never names them after the
+    program's first stages (#2824): it pairs them only on a proven kind
+    match, else keeps their ``MODEL_STAGE`` names with
+    ``UnpairedStageWarning``.
     """
     try:
         stamp_provenance(target, model_h5, opensees_build_sha=build)

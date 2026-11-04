@@ -44,15 +44,33 @@ results = Results.from_ladruno("run.ladruno", model_h5="model.h5")
 # Recorder .out/.xml run — needs BOTH fem= and model=.
 results = Results.from_recorders(spec, "out/", fem=fem, model=model)
 # results.path is <cache>/<key>.ladruno (stamped against <key>.model.h5,
-# opensees_backend="unknown") only for nodal records whose stages
-# (stage_id= / stages=) are the program's first ops.stage blocks, same
-# names and kinds, in order: a .ladruno stores no stage names, and every
-# reopen binds the program's by position. Otherwise <key>.h5 (native),
-# which keeps the names: a reordered or non-prefix plan, a program with no
-# ops.stage, a FEMData archive, any element record, displacement_increment.
+# opensees_backend="unknown", stage_names = the plan's) for nodal records
+# whose every stage (stage_id= / stages=) is one of the program's ops.stage
+# blocks with its kind, in any order or subset: a reopen binds the stamped
+# names. results.model is the model= you passed. Otherwise <key>.h5
+# (native), which keeps the names: a stage the program does not declare
+# or of another kind, a program with no ops.stage, a FEMData archive, any
+# element record, displacement_increment.
 # verified: tests/test_results_transcoder.py::test_a_nodal_run_transcodes_to_ladruno_read_as_the_native_file
-# verified: tests/test_results_out_multistage.py::test_a_reordered_plan_keeps_the_native_file
+# verified: tests/results/test_ladruno_stamped_stage_names.py::test_a_reordered_plan_is_a_ladruno_bound_by_name
 ```
+
+**Stage names on a `.ladruno` come from its stamp, never from position**
+(ADR 0122 D3, #2823). With `model_h5=`, a file stamped with
+`INFO/PROVENANCE@stage_names` binds each stage to the program stage its
+stamp names, in any order; a stage stamped with its own `MODEL_STAGE[k]`
+name (a modes stage) keeps it. A stamped name the program does not
+declare, or a program stage of another kind than the recorded `KIND`,
+raises `StageStampRefused`. An unstamped file pairs one to one with the
+program when it holds as many stages with steps; with fewer, it pairs
+with the program's first stages only when the `KIND`s fit no other run of
+program stages, and otherwise keeps its `MODEL_STAGE[k]` names with
+`UnpairedStageWarning` (a recorder opened in a later stage). A modes-only
+stage (`KIND="eigen"`, no step) is never a program stage. Every Python
+writer stamps the names; a writer that knows which program stages a file
+holds passes them, `stamp_provenance(path, "model.h5",
+recorded_stages=["pushover"])`.
+(`tests/results/test_ladruno_stamped_stage_names.py`)
 
 A `.ladruno` that Python writes (`from_recorders`, `EigenResult.to_ladruno`,
 `ParallelModalResult.to_ladruno`, `Results.demo()`) stamps

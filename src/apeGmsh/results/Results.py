@@ -748,17 +748,29 @@ class Results:
         ``MODEL`` group (no physical groups) is bound instead. Without
         ``model_h5=`` the file's ``MODEL`` group is bound, as before.
 
-        Stage names with ``model_h5=`` (ADR 0122 design point 9, #2101):
-        as in :meth:`from_mpco`, the ``ops.stage(name=...)`` names and
-        each stage's ``analysis`` kind from ``/opensees/stages`` replace
-        the file's ``MODEL_STAGE[<k>]`` names in order, and
-        ``MODEL_STAGE[<k>]`` stays resolvable as an alias. The count
-        rules and warnings are :meth:`from_mpco`'s. A ``.ladruno`` stage
-        also records the ``KIND`` it ran, so where that disagrees with
-        the program kind the pairing is misaligned: nothing is renamed
-        and ``StageKindMismatchWarning`` is the one warning (#2079 Q7).
-        A stage recorded ``KIND=eigen`` (every stage of a recorder that
-        asks for modes) or with no ``KIND`` is no evidence either way.
+        Stage names with ``model_h5=`` (ADR 0122 D3, #2101, #2823): the
+        ``ops.stage(name=...)`` names and each stage's ``analysis`` kind
+        from ``/opensees/stages`` replace the file's ``MODEL_STAGE[<k>]``
+        names, which stay resolvable as aliases; a stage is never paired
+        with a program stage by position alone
+        (``_bind.py::_bind_ladruno_stage_names``):
+
+        * a file stamped with ``INFO/PROVENANCE@stage_names`` binds each
+          stage to the program stage its stamp names, in any order; a
+          stage stamped with its own ``MODEL_STAGE`` name (modes) keeps
+          it. A stamped name the program does not declare, or a program
+          stage of another kind than the recorded ``KIND``, raises
+          ``StageStampRefused`` naming it;
+        * an unstamped file: a modes-only stage (``KIND=eigen``, no step)
+          is no program stage and keeps its name. The others pair one to
+          one when they are as many as the program's stages, where a
+          disagreeing ``KIND`` renames nothing and warns
+          ``StageKindMismatchWarning`` (#2079 Q7; ``KIND=eigen`` or none
+          is no evidence either way); fewer pair with the program's first
+          stages only when their ``KIND`` s fit no other run of program
+          stages (a partial run, ``StageCountMismatchWarning``), and
+          otherwise keep their names with ``UnpairedStageWarning``.
+
         Without ``model_h5=`` the file's names stand.
 
         The file records no per-node ndf, so the recorder writes 0.0 for
