@@ -1202,6 +1202,18 @@ deck: `OpenSees.exe` exits 0 after a Tcl `error`, so the deck's completion line 
 `.mpco` is complete in the same script; it also closes the bridge's read session. Node and
 Element recorders take `precision=<positive int>`, the significant digits written per value.
 
+**`ops.results(path)` reads the deck run back (ADR 0115 D3, ADR 0131 D11).** Pass the path the
+finished `py`/`tcl(run=True)` wrote; it returns a `Results`. One `recorder.Ladruno` is read with
+`Results.from_ladruno`. One `recorder.MPCO` is converted to `<stem>.ladruno` beside the `.mpco`
+and that file is read; it is never read with `Results.from_mpco`. The conversion needs the stage
+kinds to be facts: declare `ops.stage(...)` blocks, or run the unstaged deck with
+`analyze_steps=`, which writes `<file>.run.json` for the converter's checks. Otherwise the read
+refuses by name, and it never replaces a `.ladruno` the converter did not write.
+`recorder.declare(nodes=...)` and typed `recorder.Node` text records (`time_format="dt"`) are
+read with `Results.from_recorders`. Every other record refuses the whole read, and so do a
+staged or partitioned run with text records, two history recorders, and a history recorder
+beside text ones.
+
 **Per-rank Tcl decks — `ops.tcl(path, per_rank=True)` (ADR 0061).** For a
 **partitioned** model, write the driver deck at `path` plus one guard-free
 `ranks/rank<K>_<seq>.tcl` fragment per `if {[getPID]==K} {…}` block; the

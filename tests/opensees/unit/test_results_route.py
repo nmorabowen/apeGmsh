@@ -15,6 +15,7 @@ The real-run oracles are in ``tests/opensees/live/test_results_route_live.py``.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, cast
@@ -25,7 +26,7 @@ import pytest
 from apeGmsh.opensees import apesees as apesees_mod
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.tag_allocator import TagAllocator
-from apeGmsh.opensees._results_route import RUN_COMPLETE_MARKER, _mpco_files
+from apeGmsh.opensees._results_route import RUN_COMPLETE_MARKER, _history_files
 from apeGmsh.opensees.apesees import apeSees
 
 from tests.opensees.live.test_readback_live import (
@@ -236,8 +237,10 @@ def test_no_recorder_refuses_naming_the_alternatives(
     ops = cantilever_bridge(cantilever)
     ran(ops, monkeypatch)
     refuses(ops, "run/deck.py", run_dir,
-            r"declared no recorder.*recorder\.MPCO.*recorder\.declare"
-            r".*np\.loadtxt")
+            r"declared no recorder.*recorder\.Ladruno\(\.\.\.\) on the "
+            r"Ladruno fork build, with ops\.recorder\.MPCO\(\.\.\.\) under "
+            r"declared ops\.stage\(\.\.\.\) blocks on stock.*"
+            r"recorder\.declare.*np\.loadtxt")
 
 
 @pytest.mark.parametrize("with_node", [False, True])
@@ -390,7 +393,11 @@ def test_a_staged_deck_text_record_refuses(
         s.analysis(**chain(ops))
         s.run(n_increments=1)
     ran(ops, monkeypatch, write_rows("run/c.out", [1.0, 0.0]))
-    refuses(ops, "run/deck.py", run_dir, r"is staged")
+    # It recommends routes that read a staged run (ADR 0131 D11).
+    refuses(ops, "run/deck.py", run_dir,
+            r"is staged.*ops\.recorder\.Ladruno on the Ladruno fork build, "
+            r"or with ops\.recorder\.MPCO on stock OpenSees \(its stages "
+            r"are declared, so its \.mpco converts\)")
 
 
 def test_mpco_beside_text_records_refuses(
@@ -491,6 +498,450 @@ def test_a_read_builds_nothing_and_allocates_nothing(
     assert calls == []
 
 
+# ---------------------------------------------------------------------------
+# History recorders (ADR 0131 D11): MPCO converts, Ladruno reads directly
+# ---------------------------------------------------------------------------
+#
+# The committed ``zl_springs.mpco`` (one stage, five steps, nodes 1-4)
+# stands for the run's output, its element tags renumbered to the
+# bridge's own (``_bridge_copy``). The oracle is the file itself: every
+# displacement read back equals the ``.mpco``'s own dataset, read with
+# h5py, step for step.
+
+
+def springs_ops(*, staged: bool) -> apeSees:
+    """The springs model the fixture records: one ``ops.stage`` block
+    (static), or unstaged with one global static ``analysis``."""
+    from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
+
+    from tests.test_results_mpco_to_ladruno import (
+        SPRINGS,
+        _fem_from_mpco,
+        _stages,
+        _unstaged_springs_bridge,
+    )
+
+    if not staged:
+        return cast(apeSees, _unstaged_springs_bridge(["static"]))
+    ops = apeSees(_fem_from_mpco(SPRINGS, {"One": [100], "Three": [200]}))
+    ops.model(ndm=3, ndf=3)
+    mat = ops.uniaxialMaterial.ElasticMaterial(E=1000.0)
+    ops.element.ZeroLength(
+        pg="One", mat_dirs=(ZeroLengthMatDir(material=mat, dof=1),))
+    ops.element.ZeroLength(pg="Three", mat_dirs=tuple(
+        ZeroLengthMatDir(material=mat, dof=d) for d in (1, 2, 3)))
+    _stages(ops, [("load", "static")])
+    return ops
+
+
+def run_output(ops: apeSees, where: Path) -> Path:
+    """The fixture ``.mpco`` as this bridge's run would write it, at
+    ``where`` (outside the run directory, so listings stay the run's)."""
+    from tests.test_results_mpco_to_ladruno import SPRINGS, _bridge_copy
+
+    where.mkdir(parents=True, exist_ok=True)
+    tags = where / "tags.h5"
+    ops.h5(str(tags))
+    return cast(Path, _bridge_copy(SPRINGS, tags, where / "r.mpco"))
+
+
+def copy_to(src: Path, dst: str) -> Callable[[], None]:
+    import shutil
+
+    def _write() -> None:
+        shutil.copy(src, dst)
+    return _write
+
+
+def mpco_displacements(mpco: Path) -> dict[int, np.ndarray]:
+    """``{node: (T, 3)}`` displacement history, straight from the file."""
+    import h5py
+
+    with h5py.File(mpco, "r") as f:
+        g = f["MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT"]
+        ids = np.asarray(g["ID"][...]).ravel()
+        steps = sorted(g["DATA"], key=lambda k: int(k.split("_")[1]))
+        data = np.stack([np.asarray(g["DATA"][k][...]) for k in steps])
+    return {int(n): data[:, i, :] for i, n in enumerate(ids)}
+
+
+def assert_reads_the_file(r: Any, mpco: Path) -> None:
+    expected = mpco_displacements(mpco)
+    for node, rows in expected.items():
+        for j, axis in enumerate("xyz"):
+            got = r.nodes.get(ids=[node], component=f"displacement_{axis}")
+            np.testing.assert_array_equal(
+                np.asarray(got.values).ravel(), rows[:, j])
+    assert len(expected) == 4 and expected[1].shape[0] == 5
+
+
+def ladrunos(root: Path) -> list[str]:
+    return sorted(p.name for p in root.rglob("*.ladruno"))
+
+
+def test_a_staged_mpco_converts_and_reads_the_ladruno(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """The program declares its stage, so the kind is a fact: the
+    ``.mpco`` converts beside itself and the read is the ``.ladruno``."""
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    r = ops.results("run/deck.py")
+    try:
+        assert type(r._reader).__name__ == "LadrunoReader"
+        assert_reads_the_file(r, src)
+    finally:
+        r.close()
+    assert ladrunos(run_dir) == ["r.ladruno"]
+    # A second read replaces the converted file an earlier read left.
+    r = ops.results("run/deck.py")
+    try:
+        assert_reads_the_file(r, src)
+    finally:
+        r.close()
+
+
+def test_a_second_read_while_the_first_is_open_reuses_its_conversion(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Review of #2796 (finding 1): the first Results holds the converted
+    ``.ladruno`` open. A second read of the same run reuses that
+    conversion (it still pairs: same ``.mpco``, same file, same lineage)
+    instead of replacing a file Windows will not let it replace."""
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    r1 = ops.results("run/deck.py")
+    try:
+        target = run_dir / "run" / "r.ladruno"
+        stamp = target.stat().st_mtime_ns
+        r2 = ops.results("run/deck.py")
+        try:
+            assert_reads_the_file(r2, src)
+        finally:
+            r2.close()
+        assert target.stat().st_mtime_ns == stamp    # not converted again
+        assert_reads_the_file(r1, src)
+    finally:
+        r1.close()
+
+
+def test_a_rewritten_mpco_under_an_open_read_refuses_by_name(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """The run wrote the ``.mpco`` again, so the earlier conversion no
+    longer pairs and must be replaced. With the earlier Results still open
+    the replace fails; the read refuses by name, never with an OSError."""
+    import os
+
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    r1 = ops.results("run/deck.py")
+    try:
+        mpco = run_dir / "run" / "r.mpco"
+        st = mpco.stat()
+        os.utime(mpco, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+        try:
+            r2 = ops.results("run/deck.py")
+        except BridgeError as e:
+            assert "close it (results.close()) and read again" in str(e).lower()
+            # The reason is the true one (#2796 review 2, finding 3).
+            assert "changed on disk since this deck run's earlier read" in (
+                str(e))
+            assert isinstance(e.__cause__, OSError)
+        else:
+            # Windows never lets an open file be replaced; a platform
+            # that does converts again.
+            assert sys.platform != "win32"
+            try:
+                assert_reads_the_file(r2, src)
+            finally:
+                r2.close()
+    finally:
+        r1.close()
+    # Closed, the next read converts again and reads the file.
+    r3 = ops.results("run/deck.py")
+    try:
+        assert_reads_the_file(r3, src)
+    finally:
+        r3.close()
+
+
+def test_a_conversion_os_error_on_a_first_read_quotes_the_plain_reason(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """#2796 review 3: a first read with no ``.ladruno`` on disk replaces
+    nothing, so a disk-full ``OSError`` from the converter is quoted by
+    name and never blamed on an open Results."""
+    from apeGmsh.results.readers import _ladruno_from_mpco as conv
+
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    assert ladrunos(run_dir) == []
+
+    def full(*a: Any, **k: Any) -> Any:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(conv, "_convert_part", full)
+    with pytest.raises(BridgeError) as info:
+        ops.results("run/deck.py")
+    msg = str(info.value)
+    assert "converting its .mpco to a .ladruno failed (OSError: [Errno 28] " \
+        "No space left on device)." in msg
+    assert "open" not in msg.split("failed", 1)[1].lower()
+    assert "close it" not in msg.lower()
+    assert ladrunos(run_dir) == []
+
+
+def doubled(src: Path, where: Path) -> Path:
+    """``src`` with every displacement doubled: the same bytes count."""
+    import shutil
+
+    import h5py
+
+    dst = where / "doubled.mpco"
+    shutil.copy(src, dst)
+    with h5py.File(dst, "r+") as f:
+        data = f["MODEL_STAGE[1]/RESULTS/ON_NODES/DISPLACEMENT/DATA"]
+        for k in data:
+            data[k][...] = 2.0 * data[k][...]
+    assert dst.stat().st_size == src.stat().st_size
+    return dst
+
+
+@pytest.mark.parametrize("keep_open", [False, True])
+def test_a_same_size_rerun_with_a_reset_mtime_never_serves_the_old_read(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory, keep_open: bool,
+) -> None:
+    """#2796 review 2, finding 1: a second deck run rewrites ``r.mpco``
+    with other values at the same size, and its mtime is reset to the
+    first run's (a 1-second-mtime filesystem does the same). The read of
+    the new run is the new values: an earlier read's conversion is reused
+    only by the deck run that made it. With the first Results still open,
+    the replace refuses by name, giving the true reason."""
+    import os
+
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    where = tmp_path_factory.mktemp("springs")
+    src = run_output(ops, where)
+    twice = doubled(src, where)
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    mpco = run_dir / "run" / "r.mpco"
+    first = mpco.stat()
+    r1 = ops.results("run/deck.py")
+    try:
+        assert_reads_the_file(r1, src)
+
+        def rewrite() -> None:
+            copy_to(twice, "run/r.mpco")()
+            os.utime(mpco, ns=(first.st_atime_ns, first.st_mtime_ns))
+
+        ran(ops, monkeypatch, rewrite)
+        assert (mpco.stat().st_size, mpco.stat().st_mtime_ns) == (
+            first.st_size, first.st_mtime_ns)
+        if keep_open:
+            try:
+                r2 = ops.results("run/deck.py")
+            except BridgeError as e:
+                msg = str(e)
+                assert "no earlier read of this deck run converted it" in msg
+                assert "close it (results.close()) and read again" in msg.lower()
+                assert isinstance(e.__cause__, OSError)
+            else:
+                assert sys.platform != "win32"
+                try:
+                    assert_reads_the_file(r2, twice)
+                finally:
+                    r2.close()
+            return
+    finally:
+        r1.close()
+    r2 = ops.results("run/deck.py")
+    try:
+        assert_reads_the_file(r2, twice)
+    finally:
+        r2.close()
+
+
+def test_an_unstaged_mpco_deck_that_wrote_nothing_names_the_remedies(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review of #2796 (finding 2): an unstaged deck emitted without
+    ``analyze_steps`` drives no analysis, so no ``.mpco`` is written; the
+    missing-file refusal names what makes an MPCO read."""
+    ops = springs_ops(staged=False)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    ran(ops, monkeypatch)
+    refuses(ops, "run/deck.py", run_dir,
+            r"does not exist or is empty; the run wrote no history there\. "
+            r"The deck run declares no ops\.stage block and left no run "
+            r"record .*r\.mpco\.run\.json'\. Declare the stages with "
+            r"ops\.stage\(\.\.\.\), or emit and run the deck with "
+            r"analyze_steps=")
+
+
+def test_a_staged_mpco_that_wrote_nothing_names_no_stage_remedy(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    ran(ops, monkeypatch)
+    before = listing(run_dir)
+    with pytest.raises(BridgeError) as info:
+        ops.results("run/deck.py")
+    assert str(info.value).endswith("the run wrote no history there.")
+    assert listing(run_dir) == before
+
+
+def test_an_unstaged_mpco_without_a_run_record_refuses_by_name(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """No ``ops.stage`` block and no run record (a deck emitted without
+    ``analyze_steps``): the kind is not a fact, so the read refuses before
+    any write, naming the two remedies and never ``convert_mpco``."""
+    ops = springs_ops(staged=False)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    before = listing(run_dir)
+    with pytest.raises(BridgeError) as info:
+        ops.results("run/deck.py")
+    msg = str(info.value)
+    assert "recorder.MPCO(file='run/r.mpco')" in msg
+    assert "left no run record" in msg and "r.mpco.run.json" in msg
+    assert "ops.stage(" in msg and "analyze_steps=" in msg
+    assert "recorder.Ladruno" in msg
+    assert "convert_mpco" not in msg and "from_mpco" not in msg
+    assert listing(run_dir) == before
+    assert ladrunos(run_dir) == []
+
+
+def test_an_unstaged_mpco_whose_record_fails_a_check_refuses_by_name(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """A run record that fails the converter's checks: the read refuses,
+    quoting the failed check, and never reads the ``.mpco`` with
+    ``Results.from_mpco``; no ``.ladruno`` is left beside it."""
+    ops = springs_ops(staged=False)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+
+    def write() -> None:
+        copy_to(src, "run/r.mpco")()
+        Path("run/r.mpco.run.json").write_text("{}", encoding="utf-8")
+
+    ran(ops, monkeypatch, write)
+    from apeGmsh.results import Results
+
+    def no_from_mpco(*a: Any, **k: Any) -> Any:
+        raise AssertionError("ops.results read the .mpco with from_mpco")
+
+    monkeypatch.setattr(Results, "from_mpco", classmethod(no_from_mpco))
+    with pytest.raises(BridgeError) as info:
+        ops.results("run/deck.py")
+    msg = str(info.value)
+    assert "the stage kinds of the deck run" in msg
+    assert "are not facts, so its .mpco is not converted" in msg
+    assert "check 1 (the record)" in msg
+    assert "ops.stage(" in msg and "analyze_steps=" in msg
+    assert "convert_mpco" not in msg
+    assert ladrunos(run_dir) == []
+
+
+def test_a_target_the_converter_did_not_write_is_never_replaced(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+
+    def write() -> None:
+        copy_to(src, "run/r.mpco")()
+        Path("run/r.ladruno").write_bytes(b"the fork's own file")
+
+    ran(ops, monkeypatch, write)
+    refuses(ops, "run/deck.py", run_dir,
+            r"converts to \[.*r\.ladruno'\], which already exist and were "
+            r"not written by the converter")
+    assert (run_dir / "run" / "r.ladruno").read_bytes() == (
+        b"the fork's own file")
+
+
+def test_a_ladruno_history_reads_back(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """``recorder.Ladruno``: the fork's file is read with
+    ``Results.from_ladruno`` (on ``main`` before D11 it was refused)."""
+    from apeGmsh.results import convert_mpco
+
+    ops = springs_ops(staged=True)
+    ops.recorder.Ladruno(file="run/r.ladruno",
+                         nodal_responses=("displacement",))
+    where = tmp_path_factory.mktemp("springs")
+    src = run_output(ops, where)
+    [fork] = convert_mpco(src, where / "fork.ladruno",
+                          model_h5=where / "tags.h5")
+    ran(ops, monkeypatch, copy_to(fork, "run/r.ladruno"))
+    r = ops.results("run/deck.py")
+    try:
+        assert type(r._reader).__name__ == "LadrunoReader"
+        assert_reads_the_file(r, src)
+    finally:
+        r.close()
+
+
+def test_a_ladruno_with_no_file_refuses_by_name(
+    cantilever: Any, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ops = cantilever_bridge(cantilever)
+    ops.recorder.Ladruno(file="", nodal_responses=("displacement",))
+    ran(ops, monkeypatch)
+    refuses(ops, "run/deck.py", run_dir,
+            r"recorder\.Ladruno\(file=''\) names no file")
+
+
+def test_two_history_recorders_refuse(
+    cantilever: Any, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ops = cantilever_bridge(cantilever)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    ops.recorder.Ladruno(file="run/r.ladruno",
+                         nodal_responses=("displacement",))
+    ran(ops, monkeypatch)
+    refuses(ops, "run/deck.py", run_dir,
+            r"2 history recorders \(recorder\.MPCO\(file='run/r\.mpco'\), "
+            r"recorder\.Ladruno\(file='run/r\.ladruno'\)\)")
+
+
+def test_a_missing_ladruno_file_refuses(
+    cantilever: Any, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ops = cantilever_bridge(cantilever)
+    ops.recorder.Ladruno(file="run/r.ladruno",
+                         nodal_responses=("displacement",))
+    ran(ops, monkeypatch)
+    refuses(ops, "run/deck.py", run_dir,
+            r"recorder\.Ladruno\(file='run/r\.ladruno'\)'s output .* does "
+            r"not exist or is empty")
+
+
 def _partitioned_run(root: Path, n_ranks: int) -> Any:
     fem = SimpleNamespace(partitions=list(range(n_ranks)))
     return cast(Any, SimpleNamespace(
@@ -509,12 +960,12 @@ def test_partitioned_mpco_reads_exactly_the_runs_ranks(
         (tmp_path / name).write_bytes(b"x")
     rec = SimpleNamespace(file="r.mpco")
     with pytest.raises(BridgeError, match=match):
-        _mpco_files(_partitioned_run(tmp_path, 2), cast(Any, rec))
+        _history_files(_partitioned_run(tmp_path, 2), cast(Any, rec))
 
 
 def test_partitioned_mpco_returns_one_file_per_rank(tmp_path: Path) -> None:
     for k in range(2):
         (tmp_path / f"r.part-{k}.mpco").write_bytes(b"x")
     rec = SimpleNamespace(file="r.mpco")
-    got = _mpco_files(_partitioned_run(tmp_path, 2), cast(Any, rec))
+    got = _history_files(_partitioned_run(tmp_path, 2), cast(Any, rec))
     assert [p.name for p in got] == ["r.part-0.mpco", "r.part-1.mpco"]

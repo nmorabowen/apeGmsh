@@ -3,7 +3,9 @@ after ``ops.tcl(path, run=True)``, where an OpenSees binary is available.
 
 The 2-D cantilever at ``ndf=3``: tip ``displacement_y`` against
 ``PL^3/3EI`` and ``rotation_z`` against ``PL^2/2EI``, through a typed
-``recorder.Node`` and through ``recorder.declare``. The openseespy-deck
+``recorder.Node`` and through ``recorder.declare``; the deflection
+through ``recorder.MPCO``, converted by way of the Tcl deck's run record
+(ADR 0131 D11). The openseespy-deck
 oracles are ``tests/opensees/live/test_results_route_live.py``.
 """
 from __future__ import annotations
@@ -61,6 +63,27 @@ def test_tcl_run_reads_back_typed_and_declared_records(
         pytest.approx(RZ, rel=1e-9))
     assert get(label="tip", component="displacement_x").item() == (
         pytest.approx(0.0, abs=1e-15))
+
+
+def test_tcl_mpco_run_converts_through_its_run_record(
+    cantilever: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR 0131 D11 on the Tcl route: the unstaged deck emitted with
+    ``analyze_steps`` writes its run record from Tcl, the record passes
+    the converter's checks, and the read is the converted ``.ladruno``."""
+    monkeypatch.chdir(tmp_path)
+    ops = cantilever_bridge(cantilever)
+    ops.recorder.MPCO(file="r.mpco", nodal_responses=("displacement",))
+    ops.tcl("deck.tcl", run=True, analyze_steps=1)
+    assert (tmp_path / "r.mpco.run.json").is_file()
+    r = ops.results("deck.tcl")
+    try:
+        assert type(r._reader).__name__ == "LadrunoReader"
+        uy = r.nodes.get(label="tip", component="displacement_y").item()
+    finally:
+        r.close()
+    assert uy == pytest.approx(UY, rel=1e-9)
+    assert (tmp_path / "r.ladruno").is_file()
 
 
 def test_an_aborted_tcl_deck_exits_0_and_the_read_refuses(
