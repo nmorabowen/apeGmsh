@@ -212,7 +212,7 @@ def test_the_transcoder_writes_each_stage_from_its_own_files(tmp_path: Path) -> 
 
 
 # =====================================================================
-# ADR 0131 D6: the multi-stage transcode is a .ladruno
+# ADR 0131 D6: a .ladruno only where the program's stages name it
 # =====================================================================
 
 _NAMED = (SimpleNamespace(name="load", kind="static"),
@@ -221,8 +221,7 @@ _NAMED = (SimpleNamespace(name="load", kind="static"),
 
 
 def _write_named_stages(out: Path) -> None:
-    """Three stages, each its own cadence; ``erect`` records node 2 only
-    through a second record, so its merge leaves a NaN hole."""
+    """Three stages, each its own cadence, valued ``100 * i + node``."""
     out.mkdir(exist_ok=True)
     for i, st in enumerate(_NAMED):
         time = [0.1 * (i + 1) * (k + 1) for k in range(i + 2)]
@@ -231,88 +230,118 @@ def _write_named_stages(out: Path) -> None:
             dofs=[1], value_fn=lambda k, nid, dof, i=i: 100.0 * i + nid + 0.5 * k)
 
 
-def test_named_stages_read_as_the_native_file_and_reload(tmp_path: Path) -> None:
-    """Stage names stay as given (``load``, ``erect``, ``base``: the
-    names the manifest oracles assert), with their kinds and cadences;
-    every read equals the native transcode of the same files; the
-    cached ``.ladruno`` reopens with the same stages, times and ids."""
-    from tests.test_results_transcoder import _assert_same_reads
+def _named_read(tmp_path: Path, stages: Any, program: Any, **kw: Any) -> Results:
+    """``from_recorders`` of the ``_NAMED`` files over a program declaring
+    ``program`` (``(name, kind)`` pairs)."""
+    from tests.test_results_transcoder import staged_model
 
-    fem = _MockFem([1, 2])
+    fem, model = staged_model(tmp_path / "m", program)
+    out = tmp_path / "out"
+    if not out.exists():
+        _write_named_stages(out)
+    return Results.from_recorders(_node_spec(fem), out, fem=fem, model=model,
+                                  cache_root=tmp_path / "c", stages=stages, **kw)
+
+
+def _reopen(r: Results) -> "dict[str, list[float]]":
+    """``{stage name: last displacement_x}`` of ``r``, then of its file
+    reopened the way the viewer reopens it (``open_results``)."""
+    from apeGmsh.results._open import open_results
+
+    def last(res: Results) -> "dict[str, list[float]]":
+        return {s.name: res.stage(s.id).nodes.get(component="displacement_x")
+                .values[-1].tolist() for s in res.stages}
+
+    here = last(r)
+    path, model_path = r.path, r._model_path
+    r.close()
+    with open_results(path, model_path) as again:
+        assert last(again) == here, (last(again), here)
+    return here
+
+
+_PROGRAM = (("load", "static"), ("erect", "transient"), ("base", "static"))
+
+
+def test_named_stages_of_the_program_read_as_the_native_file_and_reload(tmp_path: Path) -> None:
+    """The plan is the program's ``ops.stage`` list (``load``, ``erect``,
+    ``base``: the names the manifest oracles assert): a ``.ladruno``, with
+    each stage's kind and cadence; every read equals the native transcode
+    of the same files; the cached file reopens with the same names, times,
+    ids and values, and combinations resolve its stage names (F2)."""
+    from tests.test_results_transcoder import _assert_same_reads, staged_model
+
+    fem, model = staged_model(tmp_path / "m", _PROGRAM)
     out, cache = tmp_path / "out", tmp_path / "c"
     _write_named_stages(out)
-    model = _open_model_from_h5(_stub_model_h5_path())
     archive = tmp_path / "native.model.h5"
     model.to_h5(archive)
     RecorderTranscoder(_node_spec(fem), out, tmp_path / "n.h5", fem,
                        model_h5_src=archive, stages=_NAMED).run()
     with Results.from_native(tmp_path / "n.h5", fem=fem, model=model) as native:
         for _ in range(2):   # the transcode, then the cached file
-            with _read(out, fem, cache, stages=_NAMED) as r:
+            with Results.from_recorders(_node_spec(fem), out, fem=fem, model=model,
+                                        cache_root=cache, stages=_NAMED) as r:
                 assert r.path is not None and r.path.suffix == ".ladruno"
                 assert [(s.name, s.kind, s.n_steps) for s in r.stages] == [
                     ("load", "static", 2), ("erect", "transient", 3),
                     ("base", "static", 4)]
                 _assert_same_reads(r, native)
-                np.testing.assert_allclose(
-                    r.stage("erect").nodes.get(component="displacement_x").time,
-                    [0.2, 0.4, 0.6])
+                assert r._unbound_stage_names(r._model_path) is None
     assert len(_cached(cache)) == 1
+    r = _named_read(tmp_path, _NAMED, _PROGRAM)
+    assert _reopen(r) == {"load": [1.5, 2.5], "erect": [102.0, 103.0],
+                          "base": [202.5, 203.5]}
 
 
-def _staged_model(tmp_path: Path) -> Any:
-    """A bridge program that declares two stages, ``gravity`` then ``push``."""
-    from apeGmsh.opensees.apesees import apeSees
-    from apeGmsh.opensees.opensees_model import OpenSeesModel
-
-    fem = _cantilever_fem()
-    ops = apeSees(fem, default_orientation=None)
-    ops.model(ndm=2, ndf=3)
-    ops.element.elasticBeamColumn(pg="Col", transf=ops.geomTransf.Linear(),
-                                  A=0.02, E=2.0e11, Iz=3.0e-4)
-    ops.fix(label="base", dofs=(1, 1, 1))
-    for name in ("gravity", "push"):
-        with ops.stage(name=name) as s:
-            s.analysis(test=ops.test.NormDispIncr(tol=1e-8, max_iter=10),
-                       algorithm=ops.algorithm.Linear(),
-                       integrator=ops.integrator.LoadControl(dlam=0.5),
-                       constraints=ops.constraints.Plain(),
-                       numberer=ops.numberer.RCM(),
-                       system=ops.system.BandGeneral(),
-                       analysis=ops.analysis.Static())
-            s.run(n_increments=2)
-    ops.h5(str(tmp_path / "model.h5"))
-    return fem, OpenSeesModel.from_h5(str(tmp_path / "model.h5"))
+def test_a_reordered_plan_keeps_the_native_file(tmp_path: Path) -> None:
+    """F1 (the review's reproducer): stages ``[base, load]`` over a program
+    ``[load, base]``. A ``.ladruno`` stores no names, so a reopen would pair
+    ``load`` onto the ``base`` values; the run stays native and every name
+    reads its own values, here and on reopen."""
+    program = (("load", "static"), ("base", "static"))
+    r = _named_read(tmp_path, (_NAMED[2], _NAMED[0]), program)
+    assert r.path is not None and r.path.suffix == ".h5"
+    assert _reopen(r) == {"base": [202.5, 203.5], "load": [1.5, 2.5]}
 
 
 def test_one_stage_of_a_staged_program_keeps_its_own_name(tmp_path: Path) -> None:
-    """``stage_id="push"`` read alone is named ``push``. The program's
-    stages are not paired onto the transcode by position (that would name
-    it ``gravity`` and warn of a partial run): the transcode's stages are
-    the ones the recorders were read by."""
+    """``stage_id="base"`` read alone is not a prefix of the program: native,
+    named ``base`` here and on reopen (F1: as a ``.ladruno`` it reopened as
+    ``load``)."""
+    program = (("load", "static"), ("base", "static"))
+    r = _named_read(tmp_path, None, program, stage_id="base", stage_kind="static")
+    assert r.path is not None and r.path.suffix == ".h5"
+    assert _reopen(r) == {"base": [202.5, 203.5]}
+
+
+def test_a_prefix_of_the_program_is_a_ladruno(tmp_path: Path) -> None:
+    """``stage_id="load"`` is the program's first stage (a partial run): a
+    ``.ladruno`` that reopens with the same name and values, and whose
+    stage terms resolve (F2)."""
     import warnings
 
-    fem, model = _staged_model(tmp_path)
-    assert [s.name for s in model.stages()] == ["gravity", "push"]
-    nodes = [int(n) for n in fem.nodes.ids]
-    spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(
-        ResolvedRecorderRecord(
-            category="nodes", name="r", components=("displacement_x",),
-            dt=None, n_steps=None, node_ids=np.array(nodes)),))
-    out = tmp_path / "out"
-    out.mkdir()
-    _write_synthetic_node_out(
-        out / "push__r_disp.out", time=[0.5, 1.0], node_ids=nodes, dofs=[1],
-        value_fn=lambda k, nid, dof: nid + 0.5 * k)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        with Results.from_recorders(spec, out, fem=fem, model=model,
-                                    cache_root=tmp_path / "c",
-                                    stage_id="push", stage_kind="static") as r:
-            assert r.path is not None and r.path.suffix == ".ladruno"
-            assert [(s.name, s.kind) for s in r.stages] == [("push", "static")]
-            got = r.stage("push").nodes.get(component="displacement_x")
-    np.testing.assert_allclose(got.values[-1], [n + 0.5 for n in nodes])
+    from apeGmsh.results._bind import StageCountMismatchWarning
+
+    program = (("load", "static"), ("base", "static"))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        r = _named_read(tmp_path, None, program, stage_id="load", stage_kind="static")
+    assert [w.category for w in caught] == [StageCountMismatchWarning]
+    assert r.path is not None and r.path.suffix == ".ladruno"
+    assert r._unbound_stage_names(r._model_path) is None
+    assert _reopen(r) == {"load": [1.5, 2.5]}
+
+
+@pytest.mark.parametrize("kind", ["transient"])
+def test_a_stage_of_another_kind_keeps_the_native_file(tmp_path: Path, kind: str) -> None:
+    """The names match but the kind does not (the program's ``load`` is
+    static): native, so the file keeps the kind it was read by."""
+    program = (("load", "static"), ("base", "static"))
+    r = _named_read(tmp_path, None, program, stage_id="load", stage_kind=kind)
+    assert r.path is not None and r.path.suffix == ".h5"
+    assert [(s.name, s.kind) for s in r.stages] == [("load", kind)]
+    r.close()
 
 
 # =====================================================================

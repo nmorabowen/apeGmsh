@@ -102,7 +102,6 @@ class RecorderTranscoder:
         model_h5_src: str | Path | None = None,
         stages: "Iterable[Any] | None" = None,
         pairing: Any = None,
-        model_archive: str | Path | None = None,
     ) -> None:
         if pairing is not None and model_h5_src is not None:
             raise TypeError("pass model_h5_src= or pairing=, not both.")
@@ -118,8 +117,6 @@ class RecorderTranscoder:
         # only. Without one, pairing= (lineage + typed elements()) stands in for its element pairing only.
         self._model_h5_src = None if model_h5_src is None else Path(model_h5_src)
         self._pairing = pairing
-        # The archive a fork-format target is stamped against.
-        self._archive = self._model_h5_src if model_archive is None else Path(model_archive)
         # Records the run() skipped — populated post-run for inspection.
         self.unsupported: list[str] = []
 
@@ -154,7 +151,7 @@ class RecorderTranscoder:
         A fork-format target (nodal records only, else refused by name
         before any file is read) is written by ``write_transcode``.
         """
-        fork_format = is_transcode_target(self._target_path, self._spec, self._archive)
+        fork_format = is_transcode_target(self._target_path, self._spec, self._model_h5_src)
         # Parse all stages before the writer opens: a bad file leaves no target.
         parsed = [(name, kind, self._parse_stage())
                   for name, kind, self._stage_id in self._plan]
@@ -162,7 +159,7 @@ class RecorderTranscoder:
         stages = [(name, kind, self._stage_time(p), *p.values()) for name, kind, p in parsed]
         if fork_format:
             return write_transcode(self._target_path, [s[1:4] for s in stages], fem=self._fem,
-                                   model=self._model_or_pairing(), archive=self._archive)
+                                   model=self._model_or_pairing(), archive=self._model_h5_src)
         proven_fem_index = self._element_index_is_fem()
         # Write a sibling, then rename: a failed write leaves no target behind.
         partial = self._target_path.with_name(self._target_path.name + ".partial")

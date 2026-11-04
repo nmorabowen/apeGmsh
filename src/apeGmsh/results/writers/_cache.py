@@ -4,8 +4,9 @@ Phase 6 cache strategy
 ----------------------
 Recorder output (``.out`` / ``.xml`` from a Tcl/Py-driven OpenSees
 run) is parsed into a results file under the key: ``<key>.h5`` (native
-HDF5) or, for nodal records only, the same name with the fork
-recorder's suffix (``RecorderTranscoder.target_for``), beside the model
+HDF5) or, for nodal records over a prefix of the program's stages, the
+same name with the fork recorder's suffix
+(``readers/_ladruno_writer.py::transcode_target``), beside the model
 archive it is stamped against. Subsequent ``Results.from_recorders(...)``
 calls hash the inputs and skip the re-parse if the cached file already
 exists.

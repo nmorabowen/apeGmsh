@@ -115,7 +115,7 @@ def model(g: Any, tmp_path: Path) -> tuple[Any, Path, list[int], list[int]]:
 def _transcode(fem: Any, tmp_path: Path, node_ids: list[int],
                model_h5: Path | None, route: str = "native") -> Results:
     """``route="ladruno"`` writes the ``.ladruno`` target (ADR 0131 D6)
-    and opens it as ``Results.from_recorders`` does; the mask is the same."""
+    and opens it with ``Results.from_ladruno(model_h5=)``; the mask is the same."""
     comps = ("displacement_x", "displacement_y", "rotation_z")
     dofs = [1, 2, 6]        # the reader's file convention: rz is DOF 6
     out = tmp_path / "out"
@@ -132,15 +132,10 @@ def _transcode(fem: Any, tmp_path: Path, node_ids: list[int],
         ),
     ))
     if route == "ladruno":
-        from apeGmsh.opensees.opensees_model import OpenSeesModel
-        from apeGmsh.results.readers._ladruno_writer import open_transcode
-
         assert model_h5 is not None
         target = tmp_path / "with_model.ladruno"
         RecorderTranscoder(spec, out, target, fem, model_h5_src=model_h5).run()
-        return open_transcode(
-            target, [("analysis", "transient", None)], fem=fem,
-            model=OpenSeesModel.from_h5(str(model_h5)), model_h5=model_h5)
+        return Results.from_ladruno(target, fem=fem, model_h5=model_h5)
     target = tmp_path / ("with_model.h5" if model_h5 else "no_model.h5")
     RecorderTranscoder(spec, out, target, fem, model_h5_src=model_h5).run()
     return Results.from_native(target, fem=fem,

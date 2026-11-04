@@ -275,32 +275,17 @@ def test_a_planar_frame_rotation_is_dof_3_from_the_live_ndm(frame, tmp_path) -> 
 
 
 def test_the_read_embeds_no_opensees_zone(frame, tmp_path) -> None:
-    """A nodal-only spec is cached as ``<key>.ladruno`` (ADR 0131 D6),
-    beside the FEMData archive it is stamped against (``<key>.fem.h5``):
-    neither holds an ``/opensees`` zone, and the stamp pairs by the user
-    archive's ``fem_hash`` alone (ADR 0133)."""
-    import h5py
-
     fem, model_h5 = frame
     ops = LiveOps(**_MIXED_3D)  # type: ignore[arg-type]
     run, _ = _run(_spec(fem, ("nodes", "all", _DISP3, [1, 2])),
                   tmp_path / "run", model_h5, ops)
-    cache = tmp_path / "cache"
-    res = run.results(cache_root=cache)
+    res = run.results(cache_root=tmp_path / "cache")
     try:
-        cached = res.path
-        assert cached is not None and cached.suffix == ".ladruno"
-        archive = cached.with_suffix(".fem.h5")
-        assert sorted(p.name for p in cache.iterdir()) == sorted(
-            [cached.name, archive.name])
-        with h5py.File(str(model_h5), "r") as f:
-            want = str(f["meta/lineage"].attrs["fem_hash"])
+        import h5py
+        (cached,) = [f for f in (tmp_path / "cache").glob("*.h5")
+                     if not f.name.endswith(".model.h5")]
         with h5py.File(str(cached), "r") as f:
-            assert "opensees" not in f and "MODEL_STAGE[1]" in f
-            prov = {k: str(v) for k, v in f["INFO/PROVENANCE"].attrs.items()}
-        assert prov["fem_hash"] == want and "model_hash" not in prov
-        with h5py.File(str(archive), "r") as f:
-            assert "opensees" not in f
+            assert "opensees" not in f and "model" in f
     finally:
         res.close()
 

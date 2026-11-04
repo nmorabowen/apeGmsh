@@ -491,18 +491,18 @@ class Results:
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
-        ``model=`` is required (else :class:`TypeError`) and bound as given.
+        ``model=`` is required (else :class:`TypeError`).
 
         Parses the ``.out`` / ``.xml`` files emitted at ``output_dir``
         (matching what ``spec.emit_recorders(...)`` or the bridge's Tcl/Py
         emit produced), caches the result at ``cache_root`` and opens it
-        (ADR 0131 D6). A spec of nodal records only is cached as
-        ``<key>.ladruno``, one ``MODEL_STAGE`` per stage named and kinded
-        as given here (never by the program's ``ops.stage`` names), stamped
-        ``opensees_backend="unknown"`` against ``model``'s archive
-        ``<key>.model.h5``. A spec with an element record (Gauss points,
-        line stations, nodal forces, fibres) or ``displacement_increment``
-        is cached as native HDF5 embedding ``model``'s ``/opensees/`` zone.
+        (ADR 0131 D6). Nodal records only, over stages whose names and kinds
+        are the first of ``model``'s ``ops.stage`` blocks in order, are cached
+        as ``<key>.ladruno`` (stamped ``opensees_backend="unknown"`` against
+        ``<key>.model.h5``) and read with ``from_ladruno(model_h5=)``. Any
+        other run (an element record, ``displacement_increment``, stages the
+        program does not declare in that order) is cached as native HDF5
+        embedding ``model``'s ``/opensees/`` zone, which keeps the names.
         A layers record refuses by name; modal records are not emitted.
 
         Caching: unchanged input files, model, stage names and kinds reuse
@@ -559,8 +559,8 @@ class Results:
             model_token=_cache.model_cache_token(model), stages=plan,
         )
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
-        target = transcode_target(spec, cached_h5)
         model_h5_src: Path = cached_h5.with_suffix(".model.h5")   # embedded, or stamped by
+        target = transcode_target(spec, cached_h5, plan, model, model_h5_src)
         if not target.exists() or not model_h5_src.exists():
             model.to_h5(model_h5_src)
         if not target.exists():
@@ -570,7 +570,7 @@ class Results:
                 model_h5_src=model_h5_src, stages=stages,
             ).run()
         if target != cached_h5:
-            return open_transcode(target, plan, fem=fem, model=model, model_h5=model_h5_src)
+            return open_transcode(target, plan, fem=fem, model_h5=model_h5_src)
         return cls.from_native(cached_h5, fem=fem, model=model)
 
     @classmethod

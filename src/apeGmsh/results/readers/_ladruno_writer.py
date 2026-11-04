@@ -548,14 +548,39 @@ def nodal_history_misfits(spec: "ResolvedRecorderSpec") -> list[str]:
             or not set(rec.components) <= NODE_COMPONENTS.keys()))
 
 
-def transcode_target(spec: "ResolvedRecorderSpec", native: Path) -> Path:
-    """Where a recorder transcode of ``spec`` is cached: ``native`` with
-    this format's suffix when :func:`nodal_history_misfits` is empty (ADR
-    0131 D6), else ``native`` itself, a native file, so no record is
-    dropped."""
+def transcode_target(
+    spec: "ResolvedRecorderSpec", native: Path,
+    plan: "Sequence[tuple[str, str, Any]]", model: "OpenSeesModel",
+    model_h5: "str | os.PathLike[str]",
+) -> Path:
+    """Where a recorder transcode of ``spec`` is cached (ADR 0131 D6).
+
+    ``native`` with this format's suffix only when the format holds every
+    record (:func:`nodal_history_misfits` is empty) and the transcode's
+    stages, ``plan``'s ``(name, kind)`` in order, are the first
+    ``len(plan)`` of ``model``'s program stages, names and kinds. The file
+    stores no stage names: a reader binds the program's onto its stages by
+    position, so any other plan (reordered, a subset that is not a prefix,
+    a program with no stages or with a stage of unknown kind) would reopen
+    under the wrong names, and keeps ``native``, a native file that stores
+    them. ``model_h5`` names the archive in a refusal.
+    """
+    from .._bind import _stage_kind
     from ._ladruno_live import FORK_SUFFIX
 
-    return native if nodal_history_misfits(spec) else native.with_suffix(FORK_SUFFIX)
+    if nodal_history_misfits(spec):
+        return native
+    program = list(model.stages())
+    if not 0 < len(plan) <= len(program):
+        return native
+    try:
+        kinds = [_stage_kind(s, model_path=Path(os.fspath(model_h5))) for s in program[:len(plan)]]
+    except ValueError:
+        return native   # a stage whose kind is not on record pairs nothing
+    pairs = [(str(s.name), k) for s, k in zip(program, kinds)]
+    if [(str(n), str(k)) for n, k, _ in plan] != pairs:
+        return native
+    return native.with_suffix(FORK_SUFFIX)
 
 
 def is_transcode_target(
@@ -579,7 +604,7 @@ def is_transcode_target(
     if archive is None:
         raise ValueError(
             f"RecorderTranscoder: {path} is stamped against the model "
-            "archive it pairs with; pass model_h5_src= or model_archive=. "
+            "archive it pairs with; pass model_h5_src=. "
             "Nothing was written.")
     return True
 
@@ -612,9 +637,11 @@ def write_transcode(
     """Write a recorder transcode's parsed stages, ``(kind, time, node
     records)`` each, as :func:`write_nodal_stages` stages over ``fem``'s
     nodes; stamp it against ``archive`` with ``opensees_backend="unknown"``
-    (the ``.out`` files do not say which engine wrote them) and no program
-    ``stage_names`` (the stages are the transcode's, not the program's).
-    ``model`` (an ``OpenSeesModel`` or the live pairing) gives the ndm."""
+    (the ``.out`` files do not say which engine wrote them) and no
+    ``stage_names``: a reader binds the program's names from the archive,
+    and :func:`transcode_target` sends a file here only when those are the
+    transcode's. ``model`` (an ``OpenSeesModel`` or the live pairing)
+    gives the ndm."""
     ndm = 0 if model is None else int(model.ndm)
     if ndm < 1 or archive is None:
         raise ValueError(
@@ -639,38 +666,24 @@ def open_transcode(
     plan: "Sequence[tuple[str, str, Any]]",
     *,
     fem: "FEMData",
-    model: "OpenSeesModel",
     model_h5: "str | os.PathLike[str]",
-    rotation_mask: bool = True,
 ) -> "Results":
-    """Open a recorder transcode that :func:`write_transcode` wrote.
-
-    The stages take the names and kinds of ``plan`` (the transcode's
-    ``(name, kind, file prefix)`` per stage, in file order): the
-    recorders were read by them, so the program stages of ``model_h5``
-    are not paired on by position, as ``Results.from_ladruno(model_h5=)``
-    pairs them. ``fem`` and ``model`` are bound as given, and
-    ``model_h5``, the archive the file is stamped against, is the model
-    path. ``rotation_mask`` attaches ``model_h5``'s per-node ndf and DOF
-    roles, as ``from_ladruno(model_h5=)`` does; it is False for an
-    archive that holds none (a FEMData archive).
-    """
+    """Open a recorder transcode that :func:`write_transcode` wrote, the way
+    every reopen opens it (``Results.from_ladruno(model_h5=)``), and check
+    that the stages it binds are ``plan``'s names and kinds in order, as
+    :func:`transcode_target` requires. A mismatch closes the file and
+    raises: nothing is relabelled."""
     from ..Results import Results
-    from ._ladruno import LadrunoReader, attach_model_nodes_ndf
 
-    target = Path(os.fspath(path))
-    archive = Path(os.fspath(model_h5))
-    reader = LadrunoReader(target)
-    try:
-        reader.attach_stage_names([n for n, _, _ in plan], [k for _, k, _ in plan])
-        if rotation_mask:
-            attach_model_nodes_ndf(reader, archive, int(model.ndm))
-        res = Results(reader, fem=fem, path=target, model=model,
-                      model_path=archive)
-    except BaseException:
-        reader.close()
-        raise
-    return res._with_autoloaded_definitions()
+    res = Results.from_ladruno(Path(os.fspath(path)), fem=fem, model_h5=Path(os.fspath(model_h5)))
+    got = [(s.name, s.kind) for s in res.stages if s.kind != "mode"]
+    want = [(str(n), str(k)) for n, k, _ in plan]
+    if got != want:
+        res.close()
+        raise RuntimeError(
+            f"open_transcode: {path} binds the stages {got} from "
+            f"model_h5={str(model_h5)!r}, not the transcode's {want}.")
+    return res
 
 
 def _place_stamped(

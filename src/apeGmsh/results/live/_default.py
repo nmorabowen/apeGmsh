@@ -770,12 +770,7 @@ def _read_neutral_recorders(
 ) -> Results:
     """Read a FEMData-archive run's classic recorder files.
 
-    A spec of nodal records only, with the live ndm in hand (``facts``),
-    is transcoded as :meth:`Results.from_recorders` transcodes one: one
-    ``MODEL_STAGE`` per stage, stamped by ``fem_hash`` against the
-    FEMData archive written beside it (``<key>.fem.h5``, ADR 0133), its
-    stages named as given. Otherwise the transcode is native HDF5 and
-    embeds no ``/opensees`` zone (the archive has none, and
+    The transcode embeds no ``/opensees`` zone (the archive has none, and
     :meth:`OpenSeesModel.to_h5` would refuse to write one), so the file
     holds ``/meta`` and ``/model`` only. The element pairing the run
     proved (``facts``) is carried into the transcode, so element rows are
@@ -785,7 +780,6 @@ def _read_neutral_recorders(
     from every model-bearing transcode. The emit refused every rotation
     the read could not keep as written, so no read mask is owed.
     """
-    from ..readers._ladruno_writer import open_transcode, transcode_target
     from ..schema._versions import PARSER_VERSION
     from ..transcoders import RecorderTranscoder
     from ..writers import _cache
@@ -803,17 +797,9 @@ def _read_neutral_recorders(
         stages=plan,
     )
     cached_h5, _ = _cache.cache_paths(_cache.resolve_cache_root(cache_root), key)
-    # The live ndm (facts) gives the fork format its coordinates.
-    target = cached_h5 if facts is None else transcode_target(spec, cached_h5)
-    archive = cached_h5.with_suffix(".fem.h5")
-    if target != cached_h5 and (not target.exists() or not archive.exists()):
-        fem.to_h5(str(archive))
-    if not target.exists():
-        RecorderTranscoder(spec, out_dir, target, fem, stages=stages,
-                           pairing=facts, model_archive=archive).run()
-    if target != cached_h5:
-        return open_transcode(target, plan, fem=fem, model=model,
-                              model_h5=archive, rotation_mask=False)
+    if not cached_h5.exists():
+        RecorderTranscoder(spec, out_dir, cached_h5, fem, stages=stages,
+                           pairing=facts).run()
     return Results.from_native(cached_h5, fem=fem, model=model)
 
 

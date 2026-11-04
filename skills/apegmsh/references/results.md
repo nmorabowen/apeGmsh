@@ -21,7 +21,7 @@ native `<stem>.results.h5` slot goes at slice V1d (D2).
 | Constructor | Required kwarg | Source |
 |---|---|---|
 | `Results.from_ladruno(path, *, fem=None, merge_partitions=True, model_h5=None)` | *(none — self-sufficient)* | a `.ladruno` (fork recorder, `convert_mpco`, `EigenResult.results()`, `Results.demo()`), single or `part-N`; pass `model_h5=` for stage names, PGs and labels |
-| `Results.from_recorders(spec, output_dir, *, fem, model=...)` | `fem=` **and** `model=` | `.out`/`.xml` from a Tcl/Py recorder run; transcodes + caches: nodal records only → a `.ladruno`, any element record → native |
+| `Results.from_recorders(spec, output_dir, *, fem, model=...)` | `fem=` **and** `model=` | `.out`/`.xml` from a Tcl/Py recorder run; transcodes + caches: nodal records over the program's first `ops.stage` blocks (same names and kinds, in order) → a `.ladruno`; anything else → native |
 | `Results.from_mpco(path, *, fem=None, merge_partitions=True, model_h5=...)` | `model_h5=<path>` | STKO `.mpco` (single or `part-N`). **Being retired** (ADR 0131 D5): convert instead |
 | `Results.from_native(path, *, fem=None, model=...)` | `model=OpenSeesModel` | apeGmsh native `results.h5`. **Being retired** with `to_native` (ADR 0131 D10) |
 
@@ -43,11 +43,15 @@ results = Results.from_ladruno("run.ladruno", model_h5="model.h5")
 
 # Recorder .out/.xml run — needs BOTH fem= and model=.
 results = Results.from_recorders(spec, "out/", fem=fem, model=model)
-# Nodal records only: results.path is <cache>/<key>.ladruno, one stage per
-# stage, named as given (stage_id= / stages=), stamped against
-# <key>.model.h5 with opensees_backend="unknown". Any element record (or
-# displacement_increment, which a .ladruno has no group for): <key>.h5.
+# results.path is <cache>/<key>.ladruno (stamped against <key>.model.h5,
+# opensees_backend="unknown") only for nodal records whose stages
+# (stage_id= / stages=) are the program's first ops.stage blocks, same
+# names and kinds, in order: a .ladruno stores no stage names, and every
+# reopen binds the program's by position. Otherwise <key>.h5 (native),
+# which keeps the names: a reordered or non-prefix plan, a program with no
+# ops.stage, a FEMData archive, any element record, displacement_increment.
 # verified: tests/test_results_transcoder.py::test_a_nodal_run_transcodes_to_ladruno_read_as_the_native_file
+# verified: tests/test_results_out_multistage.py::test_a_reordered_plan_keeps_the_native_file
 ```
 
 A `.ladruno` that Python writes (`from_recorders`, `EigenResult.to_ladruno`,
