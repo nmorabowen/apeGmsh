@@ -301,8 +301,12 @@ def _bind_stage_names(
     model: "OpenSeesModel",
     *,
     model_path: "str | Path",
+    stamp: "Optional[StageStamp]" = None,
 ) -> None:
     """Name and kind the capture's stages after the archive's program.
+
+    ``stamp`` is a ``.ladruno``'s :func:`read_stage_stamp`; with it the
+    binding is :func:`_bind_ladruno_stage_names`. An ``.mpco`` has none.
 
     #1324 names, #1948 kinds: a stage's kind comes from its archived
     ``analysis`` record (:func:`_stage_kind`), not from ``analyze_dt``.
@@ -337,6 +341,15 @@ def _bind_stage_names(
     happened is read back from ``reader.stages()``, so the single-file
     and partitioned readers of both formats take the same path.
     """
+    if stamp is not None:
+        # Raised again from here, so each warning names the caller's line.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _bind_ladruno_stage_names(reader, model, model_path=model_path,
+                                      stamp=stamp)
+        for w in caught:
+            warnings.warn(w.message, w.category, stacklevel=3)
+        return
     program = [str(s.name) for s in model.stages()]
     if not program:
         return

@@ -79,7 +79,6 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional
 from numpy import ndarray
 
 from ._bind import (
-    _bind_ladruno_stage_names,
     _bind_stage_names,
     _resolve_fem,
     _resolve_fem_via_model,
@@ -497,15 +496,13 @@ class Results:
         Parses the ``.out`` / ``.xml`` files emitted at ``output_dir``
         (matching what ``spec.emit_recorders(...)`` or the bridge's Tcl/Py
         emit produced), caches the result at ``cache_root`` and opens it
-        (ADR 0131 D6). Nodal records only, over stages each of which is one
-        of ``model``'s ``ops.stage`` blocks with its kind (in any order and
-        any subset), are cached as ``<key>.ladruno``, stamped against
-        ``<key>.model.h5`` with ``opensees_backend="unknown"`` and the
-        stage names, which ``from_ladruno(model_h5=)`` binds by name
-        (#2823); the results are bound to ``model`` itself. Any other run
-        (an element record, ``displacement_increment``, a stage the program
-        does not declare or of another kind) is cached as native HDF5
-        embedding ``model``'s ``/opensees/`` zone, which keeps the names.
+        (ADR 0131 D6). Nodal records only, over ``ops.stage`` blocks of ``model``
+        with their kinds (any order or subset), are cached as ``<key>.ladruno``
+        stamped against ``<key>.model.h5`` (``opensees_backend="unknown"``, the
+        stage names), read by name with ``from_ladruno(model_h5=)`` and bound to
+        ``model``. Any other run (an element record, ``displacement_increment``,
+        a stage the program does not declare or of another kind) is cached as
+        native HDF5 embedding ``model``'s ``/opensees/`` zone (keeps the names).
         A layers record refuses by name; modal records are not emitted.
 
         Caching: unchanged input files, model, stage names and kinds reuse
@@ -573,11 +570,8 @@ class Results:
                 model_h5_src=model_h5_src, stages=stages,
             ).run()
         if target != cached_h5:
-            res = open_transcode(target, plan, fem=fem, model_h5=model_h5_src)
-            # Bound to the caller's model, as the native route binds it; the
-            # archive the file pairs with is its to_h5.
-            res._model = model
-            return res
+            (res := open_transcode(target, plan, fem=fem, model_h5=model_h5_src))._model = model
+            return res   # bound to the caller's model, as the native route is
         return cls.from_native(cached_h5, fem=fem, model=model)
 
     @classmethod
@@ -852,7 +846,7 @@ class Results:
                 # stamped stage_names, else by a proven kind match, never
                 # by position alone (ADR 0122 D3).
                 from .readers._ladruno import read_stage_stamp
-                _bind_ladruno_stage_names(
+                _bind_stage_names(
                     reader, bound_model, model_path=model_h5,
                     stamp=read_stage_stamp(files),
                 )
