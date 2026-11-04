@@ -429,14 +429,23 @@ spine here uses the two common ones:
 
 ```python
 from apeGmsh import Results
-from apeGmsh.opensees import OpenSeesModel
 
-# Native apeGmsh two-zone HDF5 (model+results often in one file), e.g.
-# the modes file EigenResult.to_native writes; a recorded run is read
-# with run.results() after spec.emit_default(...)
-model = OpenSeesModel.from_h5("modes.h5")        # model= is REQUIRED
-results = Results.from_native("modes.h5", model=model)
-# verified: tests/test_results_bind.py::test_from_native_without_model_raises_typeerror
+# The modes of ops.eigen(n): EigenResult.to_ladruno writes a stamped
+# .ladruno and the bridge archive beside it (<stem>.h5); r.results() is
+# the one-call form. A recorded run is read with run.results() after
+# spec.emit_default(...)
+r = ops.eigen(3)
+p = r.to_ladruno("modes.ladruno")
+results = Results.from_ladruno(p, model_h5=p.with_suffix(".h5"))
+# verified: tests/opensees/live/test_eigen_to_native_live.py::test_results_opens_the_modes
+
+# A plain openseespy deck (no bridge) built over a FEMData archive
+# (fem.to_h5): capture_live_modes writes a .ladruno stamped with
+# fem_hash alone, which pairs by the mesh (ADR 0133). An .h5 path refuses.
+from apeGmsh.results.live import capture_live_modes
+p = capture_live_modes("model.h5", 3, "deck_modes.ladruno", ops=ops)
+results = Results.from_ladruno(p, model_h5="model.h5")
+# verified: tests/results/live/test_live_modes.py::test_a_femdata_capture_is_stamped_by_fem_hash_alone
 
 # STKO .mpco: model_h5= (sibling model archive) is REQUIRED
 results = Results.from_mpco("run.mpco", model_h5="model.h5")
