@@ -442,8 +442,10 @@ results = Results.from_ladruno(p, model_h5=p.with_suffix(".h5"))
 # A plain openseespy deck (no bridge) built over a FEMData archive
 # (fem.to_h5): capture_live_modes writes a .ladruno stamped with
 # fem_hash alone, which pairs by the mesh (ADR 0133). An .h5 path refuses.
+# ops= takes the openseespy module the deck drives, not an apeSees bridge.
+import openseespy.opensees as opspy
 from apeGmsh.results.live import capture_live_modes
-p = capture_live_modes("model.h5", 3, "deck_modes.ladruno", ops=ops)
+p = capture_live_modes("model.h5", 3, "deck_modes.ladruno", ops=opspy)
 results = Results.from_ladruno(p, model_h5="model.h5")
 # verified: tests/results/live/test_live_modes.py::test_a_femdata_capture_is_stamped_by_fem_hash_alone
 
@@ -470,6 +472,26 @@ print(report.text)
 # Static matplotlib (headless; needs the [plot] extra)
 results.plot.contour("displacement_z", step=-1)
 ```
+
+**A recorded stock-MPCO run converts, or refuses by name (ADR 0131 D5).**
+`spec.emit_default(path, model_h5=)` on a stock build with the MPCO
+recorder records `<stem>.mpco`, and `run.results()` converts it to
+`<stem>.ladruno` beside it (the `.mpco` is kept) and opens that; it never
+reads the `.mpco` with `Results.from_mpco`. It converts only when the stage
+kinds are facts: `model_h5` declares `ops.stage(...)` blocks, each with an
+analysis of known kind. An in-process loop's own `opspy.analysis(...)`
+calls never reach the archive, so an unstaged program refuses at
+`__enter__` with `StageKindRefused` (the recorder removed, nothing
+recorded), naming the remedies: declare the stages with `ops.stage(...)`,
+or run the program as a deck emitted with `analyze_steps=`. `ops.run()`
+refuses a staged program until #2181, so this in-process route refuses
+today. A deck's `.mpco` reads with `ops.results(path)`, or with
+`read_deck_mpco(path, model_h5=)` from `apeGmsh.results.live`: it converts
+a staged deck, or an unstaged one emitted with `analyze_steps=` (its run
+record `<file>.run.json`), and otherwise refuses by name. No stage kind is
+ever defaulted. `emit_default` and `read_deck_mpco` refuse to replace an
+earlier run's `.ladruno` unless `overwrite=True`.
+<!-- verified: tests/test_results_live_default_format.py::test_a_stock_run_whose_kind_is_not_a_fact_refuses_by_name, tests/test_results_live_default_format.py::test_a_staged_deck_mpco_converts_and_keeps_the_mpco -->
 
 **Agents do not open a viewer to check a solve.** Qt / web windows are
 for humans who asked to look. `results.viewer()` default is

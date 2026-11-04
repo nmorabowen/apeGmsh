@@ -504,7 +504,7 @@ res.to_dataframe()            # per node: f_dom frf_max a_p_lf a_espa_hf a_p reg
 res.frf(j)                    # (freq, |A_ij|) acceleration per unit force, i defaults to exc_node[j]
 res.mode_table(j)             # (f_n, phi_i, phi_j, a_p,m) — the Eq 7-4 rows of the impulse branch
 res.modes.f_n, res.modes.beta # the basis and its per-mode damping
-res.to_results(fem, path)     # one-frame nodal map → Results.from_fem(fem, path, kind="native")
+res.to_results(fem, "bay.user.h5", model_h5="model.h5")   # state-free "footfall" user result → UserFile(path).read_result("footfall")
 ```
 
 What it computes, per response node: the FRF between walker and occupant
@@ -1101,10 +1101,24 @@ not co-presence.
    (`apeGmsh.opensees.emitter.live`) inside the `with` block. The
    single read-back is `run.results()` after the block closes. The route
    follows the build (`run.route`): the fork records `.ladruno`
-   (`Results.from_ladruno`), a stock build with MPCO records `.mpco`
-   (`Results.from_mpco`), and pip openseespy records classic `.out`
-   files (`Results.from_recorders`); the two stock routes warn once
-   with `DefaultRouteWarning`. Modal records refuse there: modes come
+   (`Results.from_ladruno`); a stock build with MPCO records `.mpco`
+   and `run.results()` converts it to `<stem>.ladruno` beside it, never
+   reading it with `Results.from_mpco`; pip openseespy records classic
+   `.out` files (`Results.from_recorders`) after one
+   `DefaultRouteWarning`. The stock MPCO route converts only when the
+   stage kinds are facts (ADR 0131 D5): `model_h5` declares
+   `ops.stage(...)` blocks, each with an analysis of known kind.
+   Otherwise it refuses by name at `__enter__` with `StageKindRefused`
+   (an `MPCOConversionRefused`; the recorder is removed and nothing is
+   recorded), naming the remedies:
+   declare the stages with `ops.stage(...)`, or run the program as a
+   deck emitted with `analyze_steps=`. No stage kind is defaulted, and
+   `ops.run()` refuses a staged program until #2181, so in process this
+   route refuses today. A deck's `.mpco` is read with `ops.results(path)`
+   (below), or `read_deck_mpco(path, model_h5=)` from
+   `apeGmsh.results.live`: it converts a staged deck, or an unstaged one
+   emitted with `analyze_steps=` (its run record `<file>.run.json`), and
+   otherwise refuses by name. Modal records refuse there: modes come
    from `ops.eigen(n)`, whose `EigenResult.results()` /
    `.to_ladruno(path)` write a stamped `.ladruno` (with the bridge
    archive beside it as `<stem>.h5`) and open it; a plain openseespy
