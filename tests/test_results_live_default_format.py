@@ -24,6 +24,7 @@ are exact (``record=True`` with ``"always"``). The pip read itself, on real
 from __future__ import annotations
 
 import shutil
+import sys
 import warnings
 from pathlib import Path
 from typing import Any
@@ -266,6 +267,110 @@ def test_a_staged_stock_rerun_refuses_unless_overwrite(files, tmp_path) -> None:
                         files["model"], overwrite=True)
     assert caught == []
     run2.results().close()
+
+
+def test_a_refusal_after_overwrite_leaves_no_stale_ladruno(
+    files, tmp_path,
+) -> None:
+    """#2805 item 5: ``overwrite=True`` reruns onto ``run.mpco``, and the
+    new run's stages do not pair with the declared one, so the read
+    refuses. The earlier run's ``run.ladruno`` must not stay beside the
+    new ``run.mpco`` as if it were its conversion: like the fork route,
+    the stock route removes it at ``__enter__``. The converter's own
+    rollback is unchanged. In process this needs live staged emission
+    (#2181), so the test drives the route directly."""
+    import h5py
+
+    run, _ = _run(FakeOps(files["mpco"]), tmp_path / "run", files["model"])
+    run.results().close()
+    stale = tmp_path / "run.ladruno"
+    assert stale.exists()
+    two = Path(shutil.copy(files["mpco"], tmp_path / "two.mpco"))
+    with h5py.File(two, "r+") as f:
+        f.copy(f["MODEL_STAGE[1]"], "MODEL_STAGE[2]")
+    run2, caught = _run(FakeOps(two), tmp_path / "run", files["model"],
+                        overwrite=True)
+    assert caught == [] and run2.route == "mpco"
+    assert not stale.exists()                  # removed at __enter__
+    with pytest.raises(StageKindRefused, match="cannot be paired"):
+        run2.results()
+    assert (tmp_path / "run.mpco").exists()
+    assert sorted(p.name for p in tmp_path.iterdir()
+                  if p.name.startswith("run.")) == ["run.mpco"]
+
+
+def _assert_unlink_refusal(ops: FakeOps, e: BaseException, tmp: Path) -> None:
+    """A failed removal of the earlier ``.ladruno`` refuses by name, with
+    the probe's recorder removed and the earlier pair kept."""
+    assert ops.live == {} and ops.removed == [1]     # no recorder leaks
+    assert (tmp / "run.mpco").exists() and (tmp / "run.ladruno").exists()
+    msg = str(e)
+    assert "could not remove the earlier run's" in msg and "run.ladruno" in msg
+    assert "nothing was recorded" in msg
+    assert isinstance(e.__cause__, OSError)
+
+
+def test_an_overwrite_onto_an_open_ladruno_removes_the_probe_recorder(
+    files, tmp_path,
+) -> None:
+    """Review F1 on #2821: the earlier run's Results is still open when
+    the rerun with ``overwrite=True`` removes its ``.ladruno``. On Windows
+    the removal fails (a sharing violation); the refusal names the file,
+    and the probe's recorder is removed rather than left live. Elsewhere
+    an open file is removed and the run records."""
+    run, _ = _run(FakeOps(files["mpco"]), tmp_path / "run", files["model"])
+    held = run.results()
+    try:
+        ops = FakeOps(files["mpco"])
+        if sys.platform == "win32":
+            with pytest.raises(PermissionError) as e:
+                _run(ops, tmp_path / "run", files["model"], overwrite=True)
+            _assert_unlink_refusal(ops, e.value, tmp_path)
+        else:
+            run2, _ = _run(ops, tmp_path / "run", files["model"],
+                           overwrite=True)
+            assert run2.route == "mpco" and ops.live == {}
+    finally:
+        held.close()
+
+
+def test_a_failed_unlink_of_the_earlier_ladruno_removes_the_probe_recorder(
+    files, tmp_path, monkeypatch,
+) -> None:
+    """The same seam on every platform: the removal of the earlier
+    ``.ladruno`` raises, so the probe's recorder is removed and the
+    refusal is by name."""
+    run, _ = _run(FakeOps(files["mpco"]), tmp_path / "run", files["model"])
+    run.results().close()
+    real = Path.unlink
+
+    def deny(self: Path, *a: Any, **k: Any) -> None:
+        if self.suffix == ".ladruno":
+            raise PermissionError(13, "denied", str(self))
+        real(self, *a, **k)
+
+    ops = FakeOps(files["mpco"])
+    with monkeypatch.context() as m:
+        m.setattr(Path, "unlink", deny)
+        with pytest.raises(PermissionError) as e:
+            _run(ops, tmp_path / "run", files["model"], overwrite=True)
+    _assert_unlink_refusal(ops, e.value, tmp_path)
+
+
+def test_a_kind_refusal_after_overwrite_keeps_the_earlier_pair(
+    files, tmp_path,
+) -> None:
+    """The other side of item 5: a refusal at ``__enter__`` (the kinds
+    are not facts) records nothing, so the earlier run's ``.mpco`` and
+    its ``.ladruno`` still pair and both stay."""
+    run, _ = _run(FakeOps(files["mpco"]), tmp_path / "run", files["model"])
+    run.results().close()
+    ops = FakeOps(files["mpco"])
+    with pytest.raises(StageKindRefused, match="declares no ops.stage"):
+        _run(ops, tmp_path / "run", files["flat"], overwrite=True)
+    assert ops.live == {} and ops.removed == [1]
+    assert (tmp_path / "run.mpco").exists()
+    assert (tmp_path / "run.ladruno").exists()
 
 
 def _bogus_model(files: "dict[str, Path]", tmp: Path) -> Path:

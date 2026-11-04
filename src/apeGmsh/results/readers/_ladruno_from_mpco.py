@@ -135,8 +135,9 @@ class StageKindRefused(MPCOConversionRefused):
     Every other refusal (the archive is another model's, a partition set
     is incomplete, a target or staging directory is in the way, the source
     holds what the converter cannot carry) is a plain
-    :class:`MPCOConversionRefused`. ``read_deck_mpco`` reads the ``.mpco``
-    on this one only and re-raises the rest.
+    :class:`MPCOConversionRefused`. No caller reads the ``.mpco`` in its
+    place (ADR 0131 D5): ``read_deck_mpco`` and ``emit_default`` raise it
+    again as one, naming the remedies, and re-raise the rest as they are.
     """
 
 

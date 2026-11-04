@@ -157,9 +157,10 @@ def read_deck_mpco(
     ``path`` is the ``.mpco`` written by running the bridge's own exported
     deck (``ops.py`` / ``ops.tcl``) out of process, as it was emitted, and
     ``model_h5`` the archive of that bridge. An in-process run (``ops.run()``
-    then your own ``opspy.analyze`` loop) is not a deck: read its ``.mpco``
-    with :meth:`Results.from_mpco`, or record it with
-    :meth:`ResolvedRecorderSpec.emit_default`.
+    then your own ``opspy.analyze`` loop) is not a deck and writes no run
+    record: record it with :meth:`ResolvedRecorderSpec.emit_default`,
+    whose stock MPCO route converts the same way when ``model_h5``
+    declares its stages and otherwise refuses by name (ADR 0131 D5).
 
     The ``.mpco`` (or any part of a partitioned set) converts to the fork's
     format beside it, which is then opened; the ``.mpco`` is always kept.
@@ -168,10 +169,15 @@ def read_deck_mpco(
     ``_implicit_stage`` path, which only this function passes, when the
     deck's run record (``<recorder file>.run.json``, written by a deck
     emitted with ``analyze_steps``) passes the checks in the converter's
-    module docstring. A refusal about stage kinds
+    module docstring. Otherwise it refuses by name: a refusal about stage
+    kinds
     (:class:`~apeGmsh.results.readers._ladruno_from_mpco.StageKindRefused`)
-    raises again as one, quoting it and naming the remedies; the ``.mpco``
-    is never read in its place, and nothing is written. Every other
+    raises again as one, quoting it, naming the remedies (declare the
+    stages with ``ops.stage(...)``, or emit the deck with
+    ``analyze_steps``), and chained from the converter's refusal
+    (``__cause__``), which ``ops.results`` quotes under its own
+    remedies. No kind is defaulted, the ``.mpco`` is never read in its
+    place, and nothing is written. Every other
     refusal (the archive is another model's, an incomplete partition set,
     a staging directory in the way) raises as it is. A converted file from
     an earlier run refuses unless ``overwrite=True``.
@@ -224,7 +230,10 @@ class LiveDefault:
     overwrite
         Replace the fork's file of an earlier run (on a stock MPCO build,
         the ``.ladruno`` the run converts to). Without it a rerun onto an
-        existing file refuses at ``__enter__``.
+        existing file refuses at ``__enter__``. With it, both routes
+        remove that file at ``__enter__``, once the run will record: a
+        stock read that then refuses leaves no earlier ``.ladruno``
+        beside the new ``.mpco``.
     """
 
     def __init__(
@@ -376,6 +385,12 @@ class LiveDefault:
                 # registered the recorder, so it is removed and its new
                 # file deleted, and nothing is converted.
                 self._refuse_unless_kinds_are_facts(target)
+                # Reached only with overwrite=True or with nothing there.
+                # The run rewrites the .mpco, so an earlier run's .ladruno
+                # would stand beside it as its conversion if the read then
+                # refused: remove it now, as the fork route does. Inside
+                # the try, so a failed removal removes the probe too.
+                _remove_earlier(fork_target_of(target))
             except BaseException:
                 self._remove(int(tag))
                 if target.exists() and not existed:
@@ -558,6 +573,22 @@ class LiveDefault:
     def tag(self) -> Optional[int]:
         """The recorder tag of the fork or MPCO route."""
         return self._tag
+
+
+def _remove_earlier(target: Path) -> None:
+    """Remove the earlier run's ``.ladruno`` file(s) at ``target``, or
+    refuse by name: a removal that fails (on Windows, a :class:`Results`
+    still open on the file) re-raises as its own ``OSError`` class."""
+    for old in existing_fork_files(target):
+        try:
+            old.unlink()
+        except OSError as e:
+            raise type(e)(
+                e.errno,
+                f"emit_default could not remove the earlier run's {old} "
+                f"({type(e).__name__}: {e}); nothing was recorded. If a "
+                "Results is still open on it, close it (results.close()) "
+                "and run again.") from e
 
 
 def _begin_quietly(live: LiveRecorders) -> None:
