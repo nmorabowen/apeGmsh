@@ -268,6 +268,52 @@ def test_a_staged_stock_rerun_refuses_unless_overwrite(files, tmp_path) -> None:
     run2.results().close()
 
 
+def test_a_refusal_after_overwrite_leaves_no_stale_ladruno(
+    files, tmp_path,
+) -> None:
+    """#2805 item 5: ``overwrite=True`` reruns onto ``run.mpco``, and the
+    new run's stages do not pair with the declared one, so the read
+    refuses. The earlier run's ``run.ladruno`` must not stay beside the
+    new ``run.mpco`` as if it were its conversion: like the fork route,
+    the stock route removes it at ``__enter__``. The converter's own
+    rollback is unchanged. In process this needs live staged emission
+    (#2181), so the test drives the route directly."""
+    import h5py
+
+    run, _ = _run(FakeOps(files["mpco"]), tmp_path / "run", files["model"])
+    run.results().close()
+    stale = tmp_path / "run.ladruno"
+    assert stale.exists()
+    two = Path(shutil.copy(files["mpco"], tmp_path / "two.mpco"))
+    with h5py.File(two, "r+") as f:
+        f.copy(f["MODEL_STAGE[1]"], "MODEL_STAGE[2]")
+    run2, caught = _run(FakeOps(two), tmp_path / "run", files["model"],
+                        overwrite=True)
+    assert caught == [] and run2.route == "mpco"
+    assert not stale.exists()                  # removed at __enter__
+    with pytest.raises(StageKindRefused, match="cannot be paired"):
+        run2.results()
+    assert (tmp_path / "run.mpco").exists()
+    assert sorted(p.name for p in tmp_path.iterdir()
+                  if p.name.startswith("run.")) == ["run.mpco"]
+
+
+def test_a_kind_refusal_after_overwrite_keeps_the_earlier_pair(
+    files, tmp_path,
+) -> None:
+    """The other side of item 5: a refusal at ``__enter__`` (the kinds
+    are not facts) records nothing, so the earlier run's ``.mpco`` and
+    its ``.ladruno`` still pair and both stay."""
+    run, _ = _run(FakeOps(files["mpco"]), tmp_path / "run", files["model"])
+    run.results().close()
+    ops = FakeOps(files["mpco"])
+    with pytest.raises(StageKindRefused, match="declares no ops.stage"):
+        _run(ops, tmp_path / "run", files["flat"], overwrite=True)
+    assert ops.live == {} and ops.removed == [1]
+    assert (tmp_path / "run.mpco").exists()
+    assert (tmp_path / "run.ladruno").exists()
+
+
 def _bogus_model(files: "dict[str, Path]", tmp: Path) -> Path:
     """The staged springs archive with its one stage's analysis unknown."""
     import h5py

@@ -863,6 +863,88 @@ def test_an_unstaged_mpco_whose_record_fails_a_check_refuses_by_name(
     assert ladrunos(run_dir) == []
 
 
+def test_a_stage_kind_refusal_names_each_remedy_once(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """#2805 item 6: the read quotes the converter's refusal and names
+    the bridge's remedies once. ``read_deck_mpco``'s own remedies (and its
+    name, which the user never called) are not repeated after them."""
+    ops = springs_ops(staged=False)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+
+    def write() -> None:
+        copy_to(src, "run/r.mpco")()
+        Path("run/r.mpco.run.json").write_text("{}", encoding="utf-8")
+
+    ran(ops, monkeypatch, write)
+    with pytest.raises(BridgeError) as info:
+        ops.results("run/deck.py")
+    msg = str(info.value)
+    assert "check 1 (the record)" in msg
+    for remedy in ("ops.stage(", "emit and run the deck with analyze_steps=",
+                   "recorder.Ladruno("):
+        assert msg.count(remedy) == 1, (remedy, msg)
+    # read_deck_mpco's own wording of the deck remedy is not repeated.
+    assert "run the program as a deck emitted with analyze_steps" not in msg
+    assert "read_deck_mpco" not in msg
+
+
+def _replace_refuses(monkeypatch: pytest.MonkeyPatch, winerror: int) -> None:
+    """The converter's first replace (moving the old ``.ladruno`` aside)
+    raises a ``PermissionError`` carrying ``winerror``; later calls (the
+    rollback) run as usual."""
+    from apeGmsh import _atomic_io
+
+    real = _atomic_io.replace_with_retry
+    calls = []
+
+    def refuse_first(src: Any, dest: Any) -> None:
+        calls.append(src)
+        if len(calls) == 1:
+            e = PermissionError(13, "denied", str(src))
+            e.winerror = winerror  # type: ignore[attr-defined]
+            raise e
+        real(src, dest)
+
+    monkeypatch.setattr(_atomic_io, "replace_with_retry", refuse_first)
+
+
+@pytest.mark.parametrize("winerror, blames_open", [
+    (32, True),     # ERROR_SHARING_VIOLATION: an open Results holds it
+    (5, False),     # ERROR_ACCESS_DENIED: a directory ACL, say
+], ids=["sharing-violation", "access-denied"])
+def test_only_a_sharing_violation_blames_an_open_results(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory, winerror: int,
+    blames_open: bool,
+) -> None:
+    """#2805 amendment 1: a replace of the earlier ``.ladruno`` that fails
+    for another reason than a sharing violation quotes the plain failure
+    and never tells the user to close a Results."""
+    import os
+
+    ops = springs_ops(staged=True)
+    ops.recorder.MPCO(file="run/r.mpco", nodal_responses=("displacement",))
+    src = run_output(ops, tmp_path_factory.mktemp("springs"))
+    ran(ops, monkeypatch, copy_to(src, "run/r.mpco"))
+    ops.results("run/deck.py").close()
+    mpco = run_dir / "run" / "r.mpco"
+    st = mpco.stat()
+    os.utime(mpco, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+    _replace_refuses(monkeypatch, winerror)
+    with pytest.raises(BridgeError) as info:
+        ops.results("run/deck.py")
+    msg = str(info.value)
+    assert "converting its .mpco to a .ladruno failed (PermissionError: " \
+        in msg
+    assert isinstance(info.value.__cause__, PermissionError)
+    assert ("close it (results.close())" in msg.lower()) is blames_open
+    assert ("blocks the replace" in msg) is blames_open
+    assert (run_dir / "run" / "r.ladruno").exists()   # rolled back
+
+
 def test_a_target_the_converter_did_not_write_is_never_replaced(
     run_dir: Path, monkeypatch: pytest.MonkeyPatch,
     tmp_path_factory: pytest.TempPathFactory,

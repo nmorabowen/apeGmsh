@@ -73,7 +73,6 @@ submodules (``_internal/build/<module>.py``) here only.
 from __future__ import annotations
 
 import os
-import warnings
 import weakref
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -142,6 +141,11 @@ _MPCO_REMEDIES = (
     "which writes the run record; on the Ladruno fork build, record with "
     "ops.recorder.Ladruno(...) instead"
 )
+
+#: Windows' ERROR_SHARING_VIOLATION, the ``winerror`` of a replace that an
+#: open handle (an open :class:`Results`) blocks. The attribute exists on
+#: Windows only; elsewhere an open file never blocks a replace.
+_ERROR_SHARING_VIOLATION = 32
 
 #: Typed ``recorder.Node`` response token -> (translational prefix,
 #: rotational prefix) of the canonical component a DOF slot carries.
@@ -828,7 +832,7 @@ def _write_and_read_mpco(
     second read never replaces a file an open :class:`Results` holds."""
     from ..results import MPCOConversionRefused
     from ..results.Results import Results
-    from ..results.live import DefaultRouteWarning, read_deck_mpco
+    from ..results.live import read_deck_mpco
     from ..results.readers._ladruno_from_mpco import StageKindRefused
 
     _root, archive = _results_dir(bridge, run)
@@ -839,18 +843,21 @@ def _write_and_read_mpco(
             str(reuse[0]) if len(reuse) == 1 else list[str | Path](reuse))
         return Results.from_ladruno(target, model_h5=str(archive))
     try:
-        with warnings.catch_warnings():
-            # read_deck_mpco warns this just before it would read the
-            # .mpco with Results.from_mpco: as an error, it never does.
-            warnings.simplefilter("error", DefaultRouteWarning)
-            results = read_deck_mpco(files[0], model_h5=archive,
-                                     overwrite=overwrite)
-    except (StageKindRefused, DefaultRouteWarning) as e:
-        why = str(e).partition("Results.from_mpco: ")[2] or str(e)
+        results = read_deck_mpco(files[0], model_h5=archive,
+                                 overwrite=overwrite)
+    except StageKindRefused as e:
+        # read_deck_mpco names its own remedies after the converter's
+        # refusal, which it chains as the cause: quote that one, so the
+        # bridge's remedies are said once.
+        cause = e.__cause__
+        if not isinstance(cause, StageKindRefused):
+            raise RuntimeError(
+                "read_deck_mpco raised a stage-kind refusal that is not "
+                "chained from the converter's") from e
         raise BridgeError(
             f"{_WHERE}: {origin}: the stage kinds of the deck run "
             f"({run.verb}) are not facts, so its .mpco is not converted "
-            f"(ADR 0131 D11): {why} {_MPCO_REMEDIES}."
+            f"(ADR 0131 D11): {cause} {_MPCO_REMEDIES}."
         ) from e
     except MPCOConversionRefused as e:
         raise BridgeError(
@@ -864,7 +871,9 @@ def _write_and_read_mpco(
         # Only a replace of an existing .ladruno can meet an open Results,
         # and only a sharing violation says one holds it: Windows raises
         # its ERROR_SHARING_VIOLATION (winerror 32) as PermissionError.
-        if overwrite and isinstance(e, PermissionError):
+        # Any other denial (a directory ACL, say) is quoted as it is.
+        if (overwrite and isinstance(e, PermissionError)
+                and getattr(e, "winerror", None) == _ERROR_SHARING_VIOLATION):
             raise BridgeError(
                 f"{failed} This read converts afresh, replacing the "
                 f".ladruno already there, because {why_not}; a Results "
