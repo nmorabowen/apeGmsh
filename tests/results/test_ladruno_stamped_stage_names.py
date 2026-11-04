@@ -442,3 +442,15 @@ def test_a_transcode_whose_binding_fails_leaves_the_cache(tmp_path: Path) -> Non
                        fem=fem, model_h5=archive)
     assert not target.exists()
     assert _stamp(kept) == ["MODEL_STAGE[1]", "MODEL_STAGE[2]"]   # untouched copy
+
+
+def test_a_cached_transcode_opens_while_another_read_holds_it(tmp_path: Path) -> None:
+    """The cached file already carries the plan's names, so the second read
+    stamps nothing and is not refused for the open file it would write."""
+    fem, model, spec, out = _transcode_inputs(tmp_path)
+    kw: "dict[str, Any]" = dict(fem=fem, model=model, cache_root=tmp_path / "c",
+                                stages=_REORDERED)
+    with Results.from_recorders(spec, out, **kw) as first, \
+            Results.from_recorders(spec, out, **kw) as second:
+        assert first.path == second.path
+        assert _last(second) == {"base": _BASE, "load": _LOAD}

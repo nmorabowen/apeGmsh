@@ -715,24 +715,38 @@ def open_transcode(
     and raises: nothing is relabelled, and the next read transcodes
     again."""
     from ..Results import Results
+    from ._ladruno import read_stage_stamp
 
     target = Path(os.fspath(path))
     want = [(str(n), str(k)) for n, k, _ in plan]
+    names = [n for n, _ in want]
     try:
-        stamp_transcode(target, model_h5, [n for n, _ in want])
+        # A cached file already carries the names: it is not opened for
+        # writing, so a Results still reading it does not refuse the read.
+        if read_stage_stamp([target]).names != tuple(names):
+            stamp_transcode(target, model_h5, names)
         res = Results.from_ladruno(target, fem=fem, model_h5=Path(os.fspath(model_h5)))
     except BaseException:
-        target.unlink(missing_ok=True)
+        _discard(target)
         raise
     got = [(s.name, s.kind) for s in res.stages if s.kind != "mode"]
     if got != want:
         res.close()
-        target.unlink(missing_ok=True)
+        _discard(target)
         raise RuntimeError(
             f"open_transcode: {path} binds the stages {got} from "
             f"model_h5={str(model_h5)!r}, not the transcode's {want}; the "
             "cached file was removed.")
     return res
+
+
+def _discard(path: Path) -> None:
+    """Remove a cached transcode that did not bind; a file another reader
+    holds stays, and the caller's own error is the one raised."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _place_stamped(
