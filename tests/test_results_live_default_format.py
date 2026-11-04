@@ -24,6 +24,7 @@ are exact (``record=True`` with ``"always"``). The pip read itself, on real
 from __future__ import annotations
 
 import shutil
+import sys
 import warnings
 from pathlib import Path
 from typing import Any
@@ -296,6 +297,64 @@ def test_a_refusal_after_overwrite_leaves_no_stale_ladruno(
     assert (tmp_path / "run.mpco").exists()
     assert sorted(p.name for p in tmp_path.iterdir()
                   if p.name.startswith("run.")) == ["run.mpco"]
+
+
+def _assert_unlink_refusal(ops: FakeOps, e: BaseException, tmp: Path) -> None:
+    """A failed removal of the earlier ``.ladruno`` refuses by name, with
+    the probe's recorder removed and the earlier pair kept."""
+    assert ops.live == {} and ops.removed == [1]     # no recorder leaks
+    assert (tmp / "run.mpco").exists() and (tmp / "run.ladruno").exists()
+    msg = str(e)
+    assert "could not remove the earlier run's" in msg and "run.ladruno" in msg
+    assert "nothing was recorded" in msg
+    assert isinstance(e.__cause__, OSError)
+
+
+def test_an_overwrite_onto_an_open_ladruno_removes_the_probe_recorder(
+    files, tmp_path,
+) -> None:
+    """Review F1 on #2821: the earlier run's Results is still open when
+    the rerun with ``overwrite=True`` removes its ``.ladruno``. On Windows
+    the removal fails (a sharing violation); the refusal names the file,
+    and the probe's recorder is removed rather than left live. Elsewhere
+    an open file is removed and the run records."""
+    run, _ = _run(FakeOps(files["mpco"]), tmp_path / "run", files["model"])
+    held = run.results()
+    try:
+        ops = FakeOps(files["mpco"])
+        if sys.platform == "win32":
+            with pytest.raises(PermissionError) as e:
+                _run(ops, tmp_path / "run", files["model"], overwrite=True)
+            _assert_unlink_refusal(ops, e.value, tmp_path)
+        else:
+            run2, _ = _run(ops, tmp_path / "run", files["model"],
+                           overwrite=True)
+            assert run2.route == "mpco" and ops.live == {}
+    finally:
+        held.close()
+
+
+def test_a_failed_unlink_of_the_earlier_ladruno_removes_the_probe_recorder(
+    files, tmp_path, monkeypatch,
+) -> None:
+    """The same seam on every platform: the removal of the earlier
+    ``.ladruno`` raises, so the probe's recorder is removed and the
+    refusal is by name."""
+    run, _ = _run(FakeOps(files["mpco"]), tmp_path / "run", files["model"])
+    run.results().close()
+    real = Path.unlink
+
+    def deny(self: Path, *a: Any, **k: Any) -> None:
+        if self.suffix == ".ladruno":
+            raise PermissionError(13, "denied", str(self))
+        real(self, *a, **k)
+
+    ops = FakeOps(files["mpco"])
+    with monkeypatch.context() as m:
+        m.setattr(Path, "unlink", deny)
+        with pytest.raises(PermissionError) as e:
+            _run(ops, tmp_path / "run", files["model"], overwrite=True)
+    _assert_unlink_refusal(ops, e.value, tmp_path)
 
 
 def test_a_kind_refusal_after_overwrite_keeps_the_earlier_pair(

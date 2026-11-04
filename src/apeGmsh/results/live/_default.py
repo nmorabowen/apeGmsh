@@ -385,17 +385,17 @@ class LiveDefault:
                 # registered the recorder, so it is removed and its new
                 # file deleted, and nothing is converted.
                 self._refuse_unless_kinds_are_facts(target)
+                # Reached only with overwrite=True or with nothing there.
+                # The run rewrites the .mpco, so an earlier run's .ladruno
+                # would stand beside it as its conversion if the read then
+                # refused: remove it now, as the fork route does. Inside
+                # the try, so a failed removal removes the probe too.
+                _remove_earlier(fork_target_of(target))
             except BaseException:
                 self._remove(int(tag))
                 if target.exists() and not existed:
                     target.unlink()
                 raise
-            # Reached only with overwrite=True or with nothing there. The
-            # run rewrites the .mpco, so an earlier run's .ladruno would
-            # stand beside it as its conversion if the read then refused:
-            # remove it now, as the fork route does.
-            for old in existing_fork_files(fork_target_of(target)):
-                old.unlink()
             self._route, self._target, self._tag = "mpco", target, int(tag)
             return
         if target.exists() and not existed:
@@ -573,6 +573,22 @@ class LiveDefault:
     def tag(self) -> Optional[int]:
         """The recorder tag of the fork or MPCO route."""
         return self._tag
+
+
+def _remove_earlier(target: Path) -> None:
+    """Remove the earlier run's ``.ladruno`` file(s) at ``target``, or
+    refuse by name: a removal that fails (on Windows, a :class:`Results`
+    still open on the file) re-raises as its own ``OSError`` class."""
+    for old in existing_fork_files(target):
+        try:
+            old.unlink()
+        except OSError as e:
+            raise type(e)(
+                e.errno,
+                f"emit_default could not remove the earlier run's {old} "
+                f"({type(e).__name__}: {e}); nothing was recorded. If a "
+                "Results is still open on it, close it (results.close()) "
+                "and run again.") from e
 
 
 def _begin_quietly(live: LiveRecorders) -> None:
