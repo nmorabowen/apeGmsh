@@ -838,12 +838,34 @@ class LadrunoReader:
         hosts = [s for s in current if s.kind != "mode"]
         new = {s.id: (str(n), str(k)) for s, n, k in zip(hosts, names, kinds)
                if (str(n), str(k)) != (s.name, s.kind)}
+        program = self._renamed_program_names(hosts, new)
         self._stage_cache = [
             replace(s, name=new[s.id][0], kind=new[s.id][1],
-                    aliases=(s.name, *s.aliases))
+                    aliases=(s.name, *program.get(s.id, ()), *s.aliases))
             if s.id in new else s
             for s in current
         ]
+
+    def _renamed_program_names(
+        self, hosts: "list[StageInfo]", new: "dict[str, tuple[str, str]]",
+    ) -> "dict[str, tuple[str]]":
+        """``{stage id: (program name,)}`` for each stage this file shows by
+        its ``stage_display_names`` instead of its stamped program name:
+        the program name stays an alias, so ``stage(<program name>)`` reads
+        the same stage after a rename (the stamp refuses a display name
+        that another stage answers to)."""
+        prov = _child(self._h5, "INFO/PROVENANCE")
+        groups = [self._stage_to_grp[s.id] for s in hosts]
+        bound = _stage_list(prov, "stage_names", self._path, groups)
+        shown = _stage_list(prov, "stage_display_names", self._path, groups)
+        if bound is None or shown is None:
+            return {}
+        return {
+            s.id: (program,)
+            for s, program, display, group in zip(hosts, bound, shown, groups)
+            if s.id in new and new[s.id][0] == display
+            and program not in (display, group)
+        }
 
     def stages(self) -> list[StageInfo]:
         if self._stage_cache is not None:

@@ -88,6 +88,8 @@ _RECORDER_BACKEND = "ladruno"
 _UNKNOWN = "unknown"
 #: §7b.1 ``opensees_build_sha``: 40 lowercase hex, as ``ladrunoBuild`` answers.
 _BUILD_SHA = re.compile(r"[0-9a-f]{40}")
+#: A reader's stage id, ``stage_<i>``.
+_STAGE_ID = re.compile(r"stage_\d+")
 #: §7b.1: ``writer`` is what marks a converted file (``apeGmsh mpco->ladruno``).
 _CONVERTED_MARK = "mpco->ladruno"
 
@@ -918,7 +920,42 @@ def _displayed_names(
             f"they cannot be determined ({reason}). Pass recorded_stages= "
             "with the program stage each MODEL_STAGE recorded. Nothing was "
             "stamped.")
+    _refuse_confusable(part, override, binding, groups, names)
     return binding, list(override)
+
+
+def _refuse_confusable(
+    part: Path, shown: "list[str]", bound: "list[str]", groups: "list[str]",
+    names: "list[str]",
+) -> None:
+    """Refuse display names a reader could resolve to another stage.
+
+    A reader resolves a stage by its shown name, its program name, its id
+    ``stage_<i>`` and its ``MODEL_STAGE[<k>]`` alias, so a shown name may
+    be its own stage's program name and nothing else any stage answers to:
+    no other program stage's name, no other stage's id or group, and no
+    two stages shown alike (``stage_names=["pushover", "gravity"]`` on a
+    ``[gravity, pushover]`` file would swap them).
+    """
+    repeated = sorted({n for n in shown if shown.count(n) > 1})
+    if repeated:
+        raise ValueError(
+            f"stamp_provenance: stage_names shows {repeated} for more than "
+            f"one stage of {part.name}; each stage needs its own name. "
+            "Nothing was stamped.")
+    for i, (name, own) in enumerate(zip(shown, bound)):
+        if name == own:
+            continue
+        clash = (
+            f"the program stage {name!r}" if name in names else
+            f"the MODEL_STAGE group {name!r}" if name in groups and name != groups[i] else
+            f"the stage id {name!r}" if _STAGE_ID.fullmatch(name) and name != f"stage_{i}"
+            else None)
+        if clash is not None:
+            raise ValueError(
+                f"stamp_provenance: stage_names shows {groups[i]} (program "
+                f"stage {own!r}) as {name!r}, which is {clash}: a reader "
+                "would resolve it to another stage. Nothing was stamped.")
 
 
 def _program_names(

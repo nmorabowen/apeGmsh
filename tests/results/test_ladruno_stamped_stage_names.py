@@ -488,8 +488,8 @@ def test_a_renamed_file_binds_by_the_program_names_and_shows_the_rename(
     with r:
         assert raised == []
         assert [(s.name, s.kind, s.aliases) for s in r.stages] == [
-            ("Gravity load", "static", ("MODEL_STAGE[1]",)),
-            ("Push", "static", ("MODEL_STAGE[2]",))]
+            ("Gravity load", "static", ("MODEL_STAGE[1]", "gravity")),
+            ("Push", "static", ("MODEL_STAGE[2]", "pushover"))]
         assert _ux_last(r, "Gravity load") == [_ux(1, 1, n) for n in NODE_IDS]
         assert _ux_last(r, "Push") == [_ux(2, 1, n) for n in NODE_IDS]
         assert r._unbound_stage_names(model_h5) is None
@@ -626,3 +626,76 @@ def test_an_unstamped_multi_stage_transcode_is_not_paired_by_position(
         assert [w.category.__name__ for w in raised] == ["UnpairedStageWarning"]
         assert "recorder transcode" in str(raised[0].message)
         assert _last(r) == {"MODEL_STAGE[1]": _BASE, "MODEL_STAGE[2]": _LOAD}
+
+
+# =====================================================================
+# Review round 2 (#2825): a display name never swaps two stages
+# =====================================================================
+
+_TWO = (("gravity", "static"), ("pushover", "static"))
+
+
+@pytest.mark.parametrize("shown, match", [
+    (["pushover", "gravity"], r"MODEL_STAGE\[1\] \(program stage 'gravity'\) as "
+                              r"'pushover', which is the program stage 'pushover'"),
+    (["Push", "Push"], r"shows \['Push'\] for more than one stage"),
+    (["stage_1", "Push"], r"which is the stage id 'stage_1'"),
+    (["MODEL_STAGE[2]", "Push"], r"which is the MODEL_STAGE group 'MODEL_STAGE\[2\]'"),
+])
+def test_a_display_name_another_stage_answers_to_refuses(
+    tmp_path: Path, shown: "list[str]", match: str,
+) -> None:
+    """The reviewer's swap: ``["pushover", "gravity"]`` on a ``[gravity,
+    pushover]`` file made ``stage("gravity")`` read pushover's values. Any
+    display name another stage answers to refuses by name at write time."""
+    model_h5 = _model_h5(tmp_path / "model.h5", *_TWO)
+    path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])
+    with pytest.raises(ValueError, match=match):
+        stamp_provenance(path, model_h5, stage_names=shown)
+    assert _stamp(path) is None and _shown(path) is None
+
+
+def test_a_display_name_may_be_its_own_program_name(tmp_path: Path) -> None:
+    model_h5 = _model_h5(tmp_path / "model.h5", *_TWO)
+    path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])
+    stamp_provenance(path, model_h5, stage_names=["gravity", "Push"])
+    with Results.from_ladruno(path, model_h5=model_h5) as r:
+        assert [s.name for s in r.stages] == ["gravity", "Push"]
+
+
+def test_after_a_rename_both_names_read_the_same_stage(tmp_path: Path) -> None:
+    model_h5 = _model_h5(tmp_path / "model.h5", *_TWO)
+    path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])
+    stamp_provenance(path, model_h5, stage_names=["Gravity load", "Push"])
+    with Results.from_ladruno(path, model_h5=model_h5) as r:
+        for shown, program, k in (("Gravity load", "gravity", 1), ("Push", "pushover", 2)):
+            want = [_ux(k, 1, n) for n in NODE_IDS]
+            assert _ux_last(r, shown) == _ux_last(r, program) == want
+            assert r.stage(shown)._stage_id == r.stage(program)._stage_id
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "a combination term resolves a stage by its shown name only "
+    "(results/user/_states.py::_RecordedSource._host, outside #2823's Owned): "
+    "it must also accept the program-name alias of a renamed stage"))
+def test_a_combination_term_by_program_name_reads_the_renamed_stage(
+    tmp_path: Path,
+) -> None:
+    """Terms written by the program's names keep evaluating after a rename,
+    each on its own stage, and agree with terms by the shown names."""
+    from apeGmsh.results.user import Combination, Term, write_user_file
+
+    model_h5 = _model_h5(tmp_path / "run.h5", *_TWO)
+    path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])
+    stamp_provenance(path, model_h5, stage_names=["Gravity load", "Push"])
+    write_user_file(tmp_path / "run.user.h5", model_h5, results_file=path, combinations=[
+        Combination("by_program", "linear", (Term("stage", "gravity", -1, 0, 1.2),
+                                              Term("stage", "pushover", -1, 0, 1.6))),
+        Combination("by_shown", "linear", (Term("stage", "Gravity load", -1, 0, 1.2),
+                                            Term("stage", "Push", -1, 0, 1.6)))])
+    want = np.array([1.2 * _ux(1, 1, n) + 1.6 * _ux(2, 1, n) for n in NODE_IDS])
+    with Results.from_ladruno(path, model_h5=model_h5) as r:
+        combos = r.combinations()
+        for name in ("by_program", "by_shown"):
+            got = combos.evaluate(name, "displacement_x").field.values[-1]
+            np.testing.assert_allclose(got, want, rtol=1e-15)
