@@ -606,7 +606,7 @@ def merge_node_records(
 
 
 def write_transcode(
-    path: Path, stages: "Sequence[tuple[str, np.ndarray, Sequence[Any]]]", *,
+    path: Path, stages: "Sequence[Sequence[Any]]", *,
     fem: "FEMData", model: Any, archive: "Optional[Path]",
 ) -> Path:
     """Write a recorder transcode's parsed stages, ``(kind, time, node

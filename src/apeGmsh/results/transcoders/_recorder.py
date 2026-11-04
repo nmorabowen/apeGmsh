@@ -119,7 +119,7 @@ class RecorderTranscoder:
         self._model_h5_src = None if model_h5_src is None else Path(model_h5_src)
         self._pairing = pairing
         # The archive a fork-format target is stamped against.
-        self._archive = model_archive if model_archive is not None else self._model_h5_src
+        self._archive = self._model_h5_src if model_archive is None else Path(model_archive)
         # Records the run() skipped — populated post-run for inspection.
         self.unsupported: list[str] = []
 
