@@ -1647,10 +1647,10 @@ class Results:
         * the stamps are another model's: the names here would read other
           stages than ``model_h5``'s.
 
-        A ``.ladruno`` that carries ``INFO/PROVENANCE@stage_names`` binds by
-        those names, in any order (#2823): its binding is ``model_h5``'s when
-        each stage carries the stamped name ``model_h5`` declares (and a
-        stage stamped with its own ``MODEL_STAGE`` name, none).
+        A ``.ladruno`` stamped against ``model_h5`` (its hashes) with
+        ``INFO/PROVENANCE@stage_names`` binds by those names, in any order:
+        its binding is ``model_h5``'s when each stage carries the stamped
+        name (and a stage stamped with its own ``MODEL_STAGE`` name, none).
 
         Nothing is renamed: each reason says how to bind the names.
         """
@@ -1670,7 +1670,7 @@ class Results:
             return None
         hosts = [s for s in self._all_stages() if s.kind != "mode"]
         stamped = [canonical_stage_name(s) != s.id for s in hosts]
-        by_name = self._stamped_binding(hosts, names)
+        by_name = self._stamped_binding(model_h5, hosts, names)
         if by_name is not None and (any(stamped) or not by_name[1]):
             if by_name[0]:
                 return None  # the binding model_h5's stamp gives
@@ -1702,7 +1702,7 @@ class Results:
         )
 
     def _stamped_binding(
-        self, hosts: "list[Any]", names: "list[str]",
+        self, model_h5: Path, hosts: "list[Any]", names: "list[str]",
     ) -> "Optional[tuple[bool, bool]]":
         """``(this binding is the stamp's under names, the stamp names a
         program stage)`` for a results file whose ``stage_names`` is
@@ -1714,7 +1714,7 @@ class Results:
         if self._path is None:
             return None
         return stamped_stage_binding(
-            Path(self._path), [h.id for h in hosts],
+            Path(self._path), model_h5, [h.id for h in hosts],
             [canonical_stage_name(h) for h in hosts], names)
 
     # ------------------------------------------------------------------

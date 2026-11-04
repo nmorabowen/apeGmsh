@@ -466,11 +466,12 @@ def test_parallel_rotations_follow_each_nodes_own_ndf(
     np.testing.assert_array_equal(r[row[frame]], shapes[0, row[frame], 3:6])
 
 
-def test_parallel_stamp_warning_points_at_the_caller(
+def test_parallel_stamp_names_the_modes_stage_itself(
     fem3: Any, tmp_path: Path,
 ) -> None:
-    """A staged archive: the stamp omits ``stage_names`` and warns, from
-    the user's line."""
+    """A staged archive: the modes are no program stage, so the stamp names
+    the stage by its own ``MODEL_STAGE[1]`` (#2823) and warns nothing; a
+    reopen keeps that name instead of the program's ``gravity``."""
     from apeGmsh.results.readers._ladruno_provenance import (
         StageNamesOmittedWarning,
     )
@@ -497,9 +498,10 @@ def test_parallel_stamp_warning_points_at_the_caller(
         lad = res.to_ladruno(tmp_path / "m.ladruno", model_h5=archive)
     omitted = [w for w in caught
                if issubclass(w.category, StageNamesOmittedWarning)]
-    assert len(omitted) == 1
-    assert Path(omitted[0].filename) == Path(__file__)
-    assert "stage_names" not in _provenance(lad)
+    assert omitted == []
+    assert json.loads(_provenance(lad)["stage_names"]) == [_STAGE]
+    with Results.from_ladruno(lad, model_h5=archive) as r:
+        assert [s.name for s in r.stages if s.kind != "mode"] == [_STAGE]
 
 
 @pytest.mark.parametrize("ndm,labels,mask", [

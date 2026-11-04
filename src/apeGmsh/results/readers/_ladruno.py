@@ -255,23 +255,41 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
 
 
 def stamped_stage_binding(
-    path: Path, ids: "Sequence[str]", here: "Sequence[str]",
+    path: Path, model_h5: Path, ids: "Sequence[str]", here: "Sequence[str]",
     names: "Sequence[str]",
 ) -> "Optional[tuple[bool, bool]]":
     """Whether stages bound as ``here`` are the binding ``path``'s stamp gives.
 
     ``ids`` and ``here`` are the host stages' ids and their names as a
     combination term reads them (``stage_<i>`` when unnamed); ``names``
-    the program's. ``(the stamp binds exactly here, the stamp names a
-    program stage)``; ``None`` when ``path`` is no ``.ladruno`` (or set)
-    carrying ``stage_names`` for these stages.
+    the program of ``model_h5``. ``(the stamp binds exactly here, the stamp
+    names a program stage)``; ``None`` when ``path`` is no ``.ladruno`` (or
+    set) carrying ``stage_names`` for these stages, or when it was stamped
+    against another archive (its ``model_hash`` / ``fem_hash`` are not
+    ``model_h5``'s ``/meta/lineage`` ones): the stamp vouches for its own
+    program's names only, so another program that shares them is judged
+    as an unstamped file would be.
     """
+    import h5py
+
     from ._ladruno_multi import discover_partition_files
 
     if path.suffix != _SUFFIX:
         return None
-    stamp = read_stage_stamp(discover_partition_files(path))
+    parts = discover_partition_files(path)
+    stamp = read_stage_stamp(parts)
     if stamp.names is None or len(stamp.names) != len(ids):
+        return None
+    keys = ("model_hash", "fem_hash")
+    with h5py.File(parts[0], "r") as f:
+        prov = f["INFO/PROVENANCE"].attrs
+        stamped = {k: _decode(prov[k]) if k in prov else None for k in keys}
+    with h5py.File(model_h5, "r") as f:
+        lineage = _child(f, "meta/lineage")
+        held = {k: _decode(lineage.attrs[k])
+                if lineage is not None and k in lineage.attrs else None
+                for k in keys}
+    if stamped != held:
         return None
     want = [n if n in names else i for i, n in zip(ids, stamp.names)]
     known = all(n in names or n == rec.group
