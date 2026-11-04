@@ -86,6 +86,7 @@ if TYPE_CHECKING:
 
 
 _STAGE_PREFIX = "MODEL_STAGE["
+_SUFFIX = ".ladruno"
 
 _DIM_UNKNOWN = (
     "no INFO/SPATIAL_DIM, and no single MODEL/NODES/COORDINATES width "
@@ -251,6 +252,31 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
             modes_only=all(row[2] for row in live),
         ))
     return StageStamp(tuple(stages), stamps[0], source)
+
+
+def stamped_stage_binding(
+    path: Path, ids: "Sequence[str]", here: "Sequence[str]",
+    names: "Sequence[str]",
+) -> "Optional[tuple[bool, bool]]":
+    """Whether stages bound as ``here`` are the binding ``path``'s stamp gives.
+
+    ``ids`` and ``here`` are the host stages' ids and their names as a
+    combination term reads them (``stage_<i>`` when unnamed); ``names``
+    the program's. ``(the stamp binds exactly here, the stamp names a
+    program stage)``; ``None`` when ``path`` is no ``.ladruno`` (or set)
+    carrying ``stage_names`` for these stages.
+    """
+    from ._ladruno_multi import discover_partition_files
+
+    if path.suffix != _SUFFIX:
+        return None
+    stamp = read_stage_stamp(discover_partition_files(path))
+    if stamp.names is None or len(stamp.names) != len(ids):
+        return None
+    want = [n if n in names else i for i, n in zip(ids, stamp.names)]
+    known = all(n in names or n == rec.group
+                for n, rec in zip(stamp.names, stamp.stages))
+    return known and list(here) == want, any(n in names for n in stamp.names)
 
 
 class LadrunoRepeatedNodeId(ValueError):

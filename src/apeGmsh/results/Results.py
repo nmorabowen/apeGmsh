@@ -575,7 +575,7 @@ class Results:
         if target != cached_h5:
             res = open_transcode(target, plan, fem=fem, model_h5=model_h5_src)
             # Bound to the caller's model, as the native route binds it; the
-            # archive the file pairs with is its to_h5 (amendment 1, #2823).
+            # archive the file pairs with is its to_h5.
             res._model = model
             return res
         return cls.from_native(cached_h5, fem=fem, model=model)
@@ -850,7 +850,7 @@ class Results:
                 )
                 # The program's stage names and kinds: by the file's
                 # stamped stage_names, else by a proven kind match, never
-                # by position alone (ADR 0122 D3, #2823).
+                # by position alone (ADR 0122 D3).
                 from .readers._ladruno import read_stage_stamp
                 _bind_ladruno_stage_names(
                     reader, bound_model, model_path=model_h5,
@@ -1711,22 +1711,17 @@ class Results:
         self, hosts: "list[Any]", names: "list[str]",
     ) -> "Optional[tuple[bool, bool]]":
         """``(this binding is the stamp's under names, the stamp names a
-        program stage)`` for a ``.ladruno`` whose ``stage_names`` is stamped;
-        ``None`` for any other file."""
-        from .readers._ladruno import read_stage_stamp
-        from .readers._ladruno_multi import discover_partition_files
+        program stage)`` for a results file whose ``stage_names`` is
+        stamped (:func:`~.readers._ladruno.stamped_stage_binding`); ``None``
+        for any other file."""
+        from .readers._ladruno import stamped_stage_binding
         from .user._states import canonical_stage_name
 
-        if self._path is None or Path(self._path).suffix != ".ladruno":
+        if self._path is None:
             return None
-        stamp = read_stage_stamp(discover_partition_files(Path(self._path)))
-        if stamp.names is None or len(stamp.names) != len(hosts):
-            return None
-        want = [n if n in names else h.id for h, n in zip(hosts, stamp.names)]
-        known = all(n in names or n == rec.group
-                    for n, rec in zip(stamp.names, stamp.stages))
-        here = [canonical_stage_name(h) for h in hosts]
-        return known and here == want, any(n in names for n in stamp.names)
+        return stamped_stage_binding(
+            Path(self._path), [h.id for h in hosts],
+            [canonical_stage_name(h) for h in hosts], names)
 
     # ------------------------------------------------------------------
     # Stage-scoped properties (raise on unscoped or wrong-kind access)
