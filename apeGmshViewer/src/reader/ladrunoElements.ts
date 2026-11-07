@@ -20,7 +20,10 @@
 //   bucket's MODEL/ELEMENTS group, row g for GAUSS_ID g, never a TS table of rules.
 //   They are offered (for the Gauss-to-node extrapolation) only on PARAM_DOMAIN
 //   "[-1,1]", the domain state/extrapolation.ts's shape functions read; another
-//   domain ("[0,1]", "bary") warns and offers none, never a re-mapped guess;
+//   domain ("[0,1]", "bary") warns and offers none, never a re-mapped guess. A
+//   group with no QUADRATURE/GP_PARAM at all (the fork's recorder writes none for a
+//   class it has no rule for) is read the same way: G from GAUSS_ID, a warning, and
+//   no natural coordinates, so its values draw per element but are never placed;
 // - a Gauss bucket that disagrees with itself is refused by name, with the reason,
 //   in `GaussGroupInfo.refused`, and never read: a GAUSS_ID count that is not
 //   GP_PARAM's (or a GLOBAL_GP_COORDS width that is no multiple of it), NUM_COLUMNS
@@ -278,9 +281,12 @@ export class LadrunoGauss {
 
     // The Gauss points against the file's quadrature (seam "positions").
     if (!model) return refuse(`no MODEL/ELEMENTS group matches ${key}, so its Gauss points cannot be placed`, ids);
-    if (!gp || gp.metadata.type !== H5T_FLOAT || ndir === null) return refuse(`${model.path} has no floating-point QUADRATURE/GP_PARAM, so its Gauss points cannot be placed`, ids);
-    const G = gp.shape![0]!;
-    if (gids.length !== G) return refuse(`${cm.path}/GAUSS_ID lists ${gids.length} Gauss points and ${gp.path} ${G}: the counts disagree`, ids);
+    // No QUADRATURE/GP_PARAM at all (the fork writes none for a class its recorder has no rule for, as LadrunoBrick at
+    // 6050d78e: INTEGRATION_RULE 0, TOPOLOGY "custom"): the values are the file's and read, G is GAUSS_ID's, and no
+    // position is offered, never a TS rule table's guess. One that is there but unreadable still refuses the bucket.
+    if (gp && (gp.metadata.type !== H5T_FLOAT || ndir === null)) return refuse(`${gp.path} is not a floating-point (Gauss points, directions) dataset, so its Gauss points cannot be placed`, ids);
+    const G = gp ? gp.shape![0]! : gids.length;
+    if (gp && gids.length !== G) return refuse(`${cm.path}/GAUSS_ID lists ${gids.length} Gauss points and ${gp.path} ${G}: the counts disagree`, ids);
     if (new Set(gids).size !== G || gids.some((g) => g >= G)) return refuse(`${cm.path}/GAUSS_ID = [${gids.join(", ")}] is not each GP_PARAM row 0..${G - 1} once`, ids);
     const glob = this.datasetOf(model, "GLOBAL_GP_COORDS");
     if (glob && (glob.shape?.length !== 2 || glob.shape[1]! % G !== 0)) return refuse(`${glob.path} has shape (${(glob.shape ?? []).join(", ")}), not (elements, ${G} x dimension)`, ids);
@@ -293,7 +299,13 @@ export class LadrunoGauss {
     });
     const domain = oneValue(model.attrs["PARAM_DOMAIN"]?.value);
     let naturalCoords: number[][] | null = null;
-    if (domain === EXTRAPOLATION_DOMAIN) {
+    if (!gp) {
+      const ruleNote = rule === null ? "no INTEGRATION_RULE" : `INTEGRATION_RULE ${rule}`;
+      warnings.push(
+        `${bg.path}: ${model.path} has no QUADRATURE/GP_PARAM (${ruleNote}), so its ${G} Gauss points are read per element ` +
+          `but not placed, drawn as Gauss points, or extrapolated to nodes; the recorder that wrote the file has no quadrature rule for class ${classTag}`,
+      );
+    } else if (domain === EXTRAPOLATION_DOMAIN && ndir !== null) {
       const flat = gp.value instanceof Float64Array ? gp.value : Float64Array.from(gp.value as ArrayLike<number>);
       naturalCoords = Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * ndir, (r + 1) * ndir)));
     } else {
