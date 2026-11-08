@@ -2242,12 +2242,12 @@ This section describes the layout those modules write at results zone
 `/meta` holds only the lineage, and the model is embedded under `/model`
 rather than written at the root.
 
-Five writers produce the file, and files from two former writers stay readable. `source_type` names the writer, but it is a stamp, not proof of origin:
+Four writers produce the file, and files from three former writers stay readable. `source_type` names the writer, but it is a stamp, not proof of origin:
 
 | `source_type` | Writer | `/model` | `/opensees` | Stages |
 |---|---|---|---|---|
-| `eigen` | `EigenResult.to_native` (`ops.eigen(n)`, `opensees/analysis/eigen.py`) | yes | yes: the bridge's zone | one `mode` stage per mode |
-| `eigen` | `capture_live_modes` (`results/live/_modes.py`), a plain openseespy deck | yes | no: the deck is not the bridge's | one `mode` stage per mode |
+| `eigen` | `EigenResult.to_native` (`ops.eigen(n)`, `opensees/analysis/eigen.py`), the explicit native export; `EigenResult.results()` and `to_ladruno` write a `.ladruno` | yes | yes: the bridge's zone | one `mode` stage per mode |
+| `eigen` (legacy) | `capture_live_modes` (`results/live/_modes.py`), a plain openseespy deck, before #2768. It now writes a stamped `.ladruno` ([Modes in a `.ladruno`](#modes-in-a-ladruno)) | yes | no: the deck is not the bridge's | one `mode` stage per mode |
 | `domain_capture` (legacy) | the in-process `DomainCapture`, deleted in #2191; its files stay readable until the native format retires | yes | yes when the bridge archived a `model.h5` sidecar, else absent | the user's `begin_stage` calls, then one `mode` stage per mode |
 | `tcl_recorders` | the recorder transcoder (`Results.from_recorders`) | yes | when `model=` is given | one stage per transcode |
 | `parallel_modal` | `ParallelModalResult` harvest (`opensees/analysis/modal.py`) | yes | no | one `mode` stage per mode |
@@ -2384,7 +2384,7 @@ Who writes it:
 |---|---|
 | recorder transcoder (`tcl_recorders`) | `"fem"` when it can prove it, whatever apeGmsh version emitted the recorders; otherwise absent (below) |
 | `DomainCapture` (`domain_capture`, legacy files; the writer was deleted in #2191) | `"fem"` on every capture from #1764 on. An element-scoped capture refused unless a `{fem_eid: ops_tag}` pairing covered every recorded id ([Domain capture eras](#domain-capture-eras)) |
-| `EigenResult.to_native`, `capture_live_modes` (`eigen`) | never: they write nodal rows only |
+| `EigenResult.to_native`, and `capture_live_modes` before #2768 (`eigen`) | never: they write nodal rows only |
 | `make_demo_results` (`domain_capture`, legacy files; it writes a `.ladruno` since #2778) | `"fem"`, from #1764 until #2778. It wrote nodal rows only, in every version |
 | `ParallelModalResult` (`parallel_modal`) | never: absent |
 | `FootfallResult` (`footfall_walking`) | never: absent |
@@ -2645,6 +2645,66 @@ in. Nothing in `results.h5` or `/model` records that system.
   file whose writer could not prove its element ids
   ([`element_index_space`](#element_index_space)). Such a file reads as
   unverified.
+
+### Modes in a `.ladruno`
+
+Modes are written to a `.ladruno` by default (ADR 0131 D10), not to a
+native file. `EigenResult.to_ladruno` and `EigenResult.results()` write
+them for a bridge solve, `ParallelModalResult.to_ladruno` for a parallel
+modal harvest, and `capture_live_modes` (from #2768) for a plain
+openseespy deck. All three go through the Python writer
+`write_modes`
+([`results/readers/_ladruno_writer.py`](../src/apeGmsh/results/readers/_ladruno_writer.py)),
+in the layout the fork recorder writes for `modesOfVibration` +
+`modesOfVibrationRotational`. The fork owns that format (ADR 0122 D4);
+this is the subset the writer emits:
+
+```
+modes.ladruno
+├── INFO                                 GENERATOR="Ladruno", FORMAT_VERSION=1,
+│   │                                    FORMAT_MINOR_VERSION=1, SPATIAL_DIM,
+│   │                                    STORED_PRECISION="f64", one partition
+│   └── PROVENANCE                       the apeGmsh stamp (below)
+└── MODEL_STAGE[1]                       KIND="eigen", STEP=0, TIME=0.0
+    ├── MODEL/NODES/{ID, COORDINATES}    every fem node; the first ndm coordinates
+    ├── MODEL/ELEMENTS                   empty: no element buckets are written
+    ├── MODEL/SECTION_ASSIGNMENTS        empty
+    └── RESULTS/ON_NODES
+        ├── MODES_OF_VIBRATION(U)        COMPONENTS="Ux[,Uy[,Uz]]" (ndm columns)
+        └── MODES_OF_VIBRATION(R)        COMPONENTS="Rz" (ndm=2) or "Rx,Ry,Rz" (ndm=3)
+
+each MODES_OF_VIBRATION(*) group:
+    ├── ID [n x 1]
+    └── DATA/STEP_0/MODE_<k>             [n x nComp], k 0-based; attrs MODE,
+                                         LAMBDA, OMEGA, FREQUENCY, PERIOD
+```
+
+One `eigen` stage holds every mode. The vectors are the raw
+`nodeEigenvector` values, unscaled. A rotation slot holds the rotation
+only where the DOF roles say so, and 0.0 elsewhere. A non-positive
+eigenvalue writes `OMEGA = FREQUENCY = PERIOD = 0` with a warning on the
+bridge's export; `capture_live_modes` refuses it and writes nothing.
+
+`INFO/PROVENANCE` carries the stamp of `stamp_provenance`
+([`results/readers/_ladruno_provenance.py`](../src/apeGmsh/results/readers/_ladruno_provenance.py)):
+`fem_hash` and `model_hash`, copied byte-equal from the archive's
+`/meta/lineage`, plus `unsupported` (`["elements"]`), `writer`,
+`opensees_backend` and `opensees_build_sha`, and `units` when the
+archive declares a unit system. The full owned set also holds
+`stage_names` and `element_index_space`, which a modes file does not
+carry (`PROVENANCE_ATTRS` plus `units` in that module). A bridge archive (`ops.h5`)
+is stamped with both hashes. A bare FEMData archive (`fem.to_h5`) holds no
+`model_hash`, so its stamp carries **`fem_hash` alone**, and the file pairs
+to the archive whose `/meta/lineage@fem_hash` matches it (ADR 0133 D1,
+D2). That is a pairing, not a fallback. An archive with no `fem_hash`, or
+an empty one, refuses the stamp, and a refused stamp leaves no file.
+
+`Results.from_ladruno(path, model_h5=...)` reads each mode as its own
+`kind="mode"` stage named `mode_<k>`, with `mode_index` 1..n and
+`eigenvalue`, `frequency_hz` and `period_s`; `results.modes` lists them. The
+`eigen` stage itself reads as a `static` stage with no steps.
+`capture_live_modes` refuses an output path with an `.h5` suffix, the
+model archive's.
 
 ## `<stem>.user.h5`: user results (ADR 0130)
 

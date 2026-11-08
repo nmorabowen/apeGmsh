@@ -17,6 +17,11 @@ kernel. In-process ``results.render`` / ``fem.render`` stay the
 default. The first token must be exactly ``render``; a file named
 ``render.h5`` still opens the interactive viewer.
 
+On Windows each flag maps to one ``apegmsh-view/1`` shot drawn by
+apeGmshViewer (ADR 0128 slice 6; the parity plan). Results must be a
+``.ladruno`` beside its ``<stem>.h5``, else refused (R22b, R31); no app
+is exit 2 (G9). Linux keeps the VTK path (G2).
+
 Phase 8 (ADR 0020 INV-1) — for native ``.h5`` results the viewer reads
 the OpenSeesModel from ``Results.model`` (auto-resolved against the
 embedded ``/opensees/`` zone of the Composed-file pattern). The
@@ -328,10 +333,17 @@ def _main_render(argv: Sequence[str]) -> int:
         )
         return 2
 
+    from apeGmsh.viewers.render import _stills_backend
+
     try:
         if _is_model_only(path):
             return _render_fem(path, args)
+        if _stills_backend() == "app":
+            return _render_results_app(path, args)
         return _render_results(_open_results(path, args.model_h5), args)
+    except FileNotFoundError as exc:
+        # No apeGmshViewer on Windows (G9), or no <stem>.h5 beside a .ladruno.
+        return _exit_error(exc, args)
     except ValueError as exc:
         if getattr(args, "as_json", False):
             print(json.dumps({"ok": False, "written": [], "error": str(exc)}))
@@ -357,12 +369,63 @@ def _render_fem(path: Path, args: argparse.Namespace) -> int:
         else:
             print(msg, file=sys.stderr)
         return 2
+    from apeGmsh.viewers.render import _stills_backend
+
+    if _stills_backend() == "app":
+        return _render_fem_app(path, args)
     written = _open_fem(path).render(
         Path(args.output),
         camera=args.camera,
         window_size=args.window,
     )
     return _exit_written(written, as_json=getattr(args, "as_json", False))
+
+
+def _render_fem_app(path: Path, args: argparse.Namespace) -> int:
+    """R1: the model file on disk is the spec's ``files.model``; no copy."""
+    from apeGmsh.viewers._stills import _SKIP_ENV, _env_skips
+    from apeGmsh.agent_view import mesh_spec, shoot
+    from apeGmsh.viewers.render import _app_camera, _app_size
+
+    spec = mesh_spec(path, camera=_app_camera(args.camera), size=_app_size(args.window))
+    if _env_skips():
+        print(_SKIP_ENV)
+        return _exit_written(None, as_json=getattr(args, "as_json", False))
+    _, written = shoot(spec, {"mesh": Path(args.output)})
+    return _exit_written(written["mesh"], as_json=getattr(args, "as_json", False))
+
+
+def _render_results_app(path: Path, args: argparse.Namespace) -> int:
+    """The Windows results door: a ``.ladruno`` and its ``<stem>.h5``."""
+    from apeGmsh.agent_view import ladruno_files
+    from apeGmsh.viewers.session._results_stills import app_pack, app_still
+
+    files = ladruno_files(path, args.model_h5)
+    results = _open_results(path, Path(files["model"]))
+    try:
+        if args.pack is not None:
+            written = app_pack(
+                results, args.pack, files=files,
+                camera=args.camera, window_size=args.window,
+            )
+        else:
+            written = app_still(
+                results, Path(args.output), files=files,
+                view=args.view, component=args.component, step=args.step,
+                deform=args.deform, camera=args.camera,
+                window_size=args.window,
+            )
+    finally:
+        results.close()
+    return _exit_written(written, as_json=getattr(args, "as_json", False))
+
+
+def _exit_error(exc: BaseException, args: argparse.Namespace) -> int:
+    if getattr(args, "as_json", False):
+        print(json.dumps({"ok": False, "written": [], "error": str(exc)}))
+    else:
+        print(f"error: {exc}", file=sys.stderr)
+    return 2
 
 
 def _render_results(results, args: argparse.Namespace) -> int:

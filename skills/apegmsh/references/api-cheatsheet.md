@@ -615,7 +615,7 @@ kinematic_coupling(master_label, slave_label, *, master_point=(0,0,0), dofs=None
     k=None|"auto", k_alpha=None, host=None, kr=None,
     enforce="penalty"|"al", bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None)
 distributing_coupling(master_label, slave_label, *, master_point=(0,0,0),  # RBE3 → LadrunoDistributingCoupling (tag 33011)
-    weighting="uniform"|"area", k=None|"auto", k_alpha=None, host=None, kr=None,
+    weighting="uniform"|"area"|"footprint", footprint=None, k=None|"auto", k_alpha=None, host=None, kr=None,
     enforce="penalty"|"al", bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None)
 #   master_label / slave_label may be a labelled g.decouple_node (string label=
 #   or the handle) — resolve binds the singleton tag; no post-mesh retarget.
@@ -629,7 +629,10 @@ the reference node with correct moment-arm transport (`u_i = u_R + θ_R × d_i`)
 `distributing_coupling` (RBE3) makes the reference a weighted-average rigid-body
 fit of the independents and **adds no stiffness** (set stays flexible).
 `weighting="area"` is tributary-area over the slave surface (requires meshed
-faces). Coupling knobs (commit `818b91eb`): `k="auto"` scales the penalty off
+faces). `weighting="footprint"` with `footprint=[(x, y, z), ...]` (a convex
+planar polygon) weights each node by its share of the faces' overlap with the
+polygon, and keeps only the nodes with a share: a uniform pressure over the
+footprint, which need not follow the mesh. Coupling knobs (commit `818b91eb`): `k="auto"` scales the penalty off
 the host element diagonal (`K_t = k_alpha·max|K_host|`, needs `host=`); `host=`
 is the **FEM element id** (the bridge translates to the ops tag at emit);
 `bipenalty_wcap` sets bipenalty via host frequency (needs `host=`, exclusive
@@ -1026,9 +1029,10 @@ env.labels / env.physical_groups / env.phase / env.unnamed
 ```
 fem = g.mesh.queries.get_fem_data(dim=3)
 fem.info / fem.nodes / fem.elements / fem.inspect / fem.mesh_selection
-fem.assess() / fem.render("mesh.png")     # verdict + mesh still; see assess.md
-results.assess(figures=True)              # + render_pack; closed view= set
-results.render("uz.png", view="contour")  # mesh|contour|deformed|reactions
+fem.assess() / fem.render("mesh.png")     # verdict + mesh still (apeGmshViewer on Windows); see assess.md
+results.assess(figures=True)              # + render_pack; apegmsh-view/1 on Windows, VTK on Linux
+results.render("uz.png", view="contour")  # mesh|contour|deformed (+reactions on Linux); assess.md
+results.path                              # read-only Path of the source file (a .ladruno: what Windows stills draw), or None
 
 FEMData.from_gmsh(dim=3, session=g, ndf=6, remove_orphans=False)
 FEMData.from_msh("bridge.msh", dim=2)

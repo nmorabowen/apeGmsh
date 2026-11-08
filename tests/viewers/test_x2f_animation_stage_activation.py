@@ -37,6 +37,14 @@ pytest.importorskip("pyvista")
 # ---------------------------------------------------------------------
 
 
+# transition: moves to a .ladruno source in VA6e #2794 (R22b refuses non-.ladruno on the app path)
+@pytest.fixture(autouse=True)
+def _vtk_backend(monkeypatch):
+    from apeGmsh.viewers import render as render_mod
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+
+
 def _drawn(plotter: Any) -> list[dict[str, Any]]:
     out = []
     for renderer in plotter.renderers:

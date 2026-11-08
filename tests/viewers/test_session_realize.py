@@ -8,7 +8,8 @@ against the emitted scene IR, straight from the ADR laws —
 * averaged vs unaveraged contour route to distinct emissions (§4);
 * the bars on the backend match ``view.legends()`` exactly, hide is
   chrome (INV-LEGEND-1..5);
-* pose parity with ``render_results``'s composition (S1 decision 5 —
+* pose parity with the retired director still's composition
+  (``render_results``, since deleted from ``viewers/render.py``; S1 decision 5 —
   warp-before-extract emits the same points attach-then-sync does).
 
 Oracles are paired positive/negative (substrate present ↔ replaced,
@@ -215,7 +216,7 @@ def test_deform_on_slots_empty_zero_bars(session_results, backend):
     assert realized.scalar_bars == ()
     assert realized.legend_controller is None
     # ... and the mesh really is warped: composition parity with the
-    # render_results pose (read_nodal_vector_field + compose).
+    # retired director still's pose (read_nodal_vector_field + compose).
     scene = build_fem_scene(session_results.fem)
     vals = read_nodal_vector_field(
         session_results.stage(STAGE), scene, "displacement", 3,
@@ -364,15 +365,16 @@ def test_contour_nodal_ignores_averaging(session_results):
 
 # =====================================================================
 # Decision 5 — pose ordering parity (warp-before-extract ==
-# render_results' attach-then-sync)
+# the retired director still's attach-then-sync)
 # =====================================================================
 
 
 def test_contour_deform_pose_parity(session_results, backend):
     """The contour's emitted points equal the composed pose sampled at
     each submesh point's substrate row — exactly what
-    ``render_results``'s ``_apply_deform`` + ``sync_substrate_points``
-    produce. Rows are recovered from the painted values (node ids)."""
+    the retired director still (``render_results``, since deleted from
+    ``viewers/render.py``) produced with ``_apply_deform`` +
+    ``sync_substrate_points``. Rows are recovered from the painted values (node ids)."""
     session, view = _session_view(session_results)
     scale = 2.5
     step = 3

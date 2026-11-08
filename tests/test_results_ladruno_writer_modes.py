@@ -216,6 +216,9 @@ def test_the_stamp_pairs_with_the_written_archive(
     assert json.loads(prov["unsupported"]) == ["elements"]
     assert "stage_names" not in prov   # the program has no stages
     assert not (tmp_path / "m.ladruno.partial").exists()
+    # A Python-written file never claims the fork's engine by default
+    # (ADR 0131 D6, from the W2 review); the fake module is not the fork.
+    assert prov["opensees_backend"] == "unknown"
 
 
 def test_mixed_ndf_zero_fills_and_a_pressure_slot_is_not_a_rotation(
@@ -712,3 +715,120 @@ def test_parallel_3d_elementless_node_in_a_up_model_gets_no_rotations(
     for n in ids.tolist():
         assert r[n].tolist() == [0.0, 0.0, 0.0]
         assert u[n].tolist() == shapes[0, row[n], :3].tolist()
+
+
+# ---------------------------------------------------------------------------
+# write_nodal_stages: the .out transcode's writer (ADR 0131 D6)
+# ---------------------------------------------------------------------------
+
+
+def test_every_node_component_reads_back_as_itself() -> None:
+    """The writer's table and the reader's translation agree on every
+    name, and the table holds every node component the ``.out`` emit
+    records except ``displacement_increment``, which the recorder has no
+    group for (that spec keeps the native target)."""
+    from apeGmsh.results.readers._buckets import canonical_node_component
+    from apeGmsh.results.readers._ladruno_writer import NODE_COMPONENTS
+    from apeGmsh.results.spec._emit import _NODAL_PREFIX_TABLE, _NODAL_SCALAR_TABLE
+
+    for name, (group, label) in NODE_COMPONENTS.items():
+        assert canonical_node_component(group, label) == name, name
+    emitted = {f"{p}_{a}" for p in _NODAL_PREFIX_TABLE for a in "xyz"} \
+        | set(_NODAL_SCALAR_TABLE)
+    assert set(NODE_COMPONENTS) == emitted - {
+        f"displacement_increment_{a}" for a in "xyz"}
+
+
+def _stages(ids: np.ndarray) -> list[Any]:
+    """Two stages over node subsets: closed-form values, a NaN hole."""
+    from apeGmsh.results.readers._ladruno_writer import NodalStage
+
+    a, b = ids[:3], ids[1:]
+    t1, t2 = np.array([0.5, 1.0]), np.array([0.01, 0.02, 0.03])
+
+    def val(t: np.ndarray, n: np.ndarray, c: float) -> np.ndarray:
+        return t[:, None] * 10.0 + n[None, :] + c
+
+    hole = val(t2, b, 3.0)
+    hole[:, 0] = np.nan
+    return [
+        NodalStage("static", t1, a, {
+            "displacement_x": val(t1, a, 0.1), "displacement_z": val(t1, a, 0.3),
+            "rotation_y": val(t1, a, 0.5), "pore_pressure": val(t1, a, 0.7)}),
+        NodalStage("transient", t2, b, {
+            "velocity_y": val(t2, b, 1.0), "reaction_force_x": hole,
+            "moment_z": val(t2, b, 5.0)}),
+    ]
+
+
+def test_nodal_stages_pass_validate_and_read_back(
+    fem3: Any, spec: ModuleType, tmp_path: Path,
+) -> None:
+    """Two stages, each with its own nodes, kind, time and a subset of the
+    components: the fork's ``validate()`` accepts the file, and each read
+    is the value written (NaN kept), in the recorder's group and label."""
+    from apeGmsh.results.readers._ladruno_writer import write_nodal_stages
+
+    archive = tmp_path / "model.h5"
+    _frame(fem3, ndm=3).h5(str(archive))
+    ids = _ids(fem3)
+    stages = _stages(ids)
+    lad = write_nodal_stages(
+        tmp_path / "n.ladruno", model_h5=archive, node_ids=ids,
+        coords=np.asarray(fem3.nodes.coords, dtype=np.float64), ndm=3,
+        stages=stages, source="test", stage_names=())
+
+    assert spec.validate(str(lad)) == []
+    with h5py.File(lad, "r") as f:
+        on = f["MODEL_STAGE[1]/RESULTS/ON_NODES"]
+        assert list(on) == ["DISPLACEMENT", "ROTATION", "PRESSURE"]
+        assert on["DISPLACEMENT"].attrs["COMPONENTS"][0] == b"Ux,Uz"
+        assert on["PRESSURE"].attrs["COMPONENTS"][0] == b"p"
+        on2 = f["MODEL_STAGE[2]/RESULTS/ON_NODES"]
+        assert list(on2) == ["VELOCITY", "REACTION_FORCE", "UNBALANCED_MOMENT"]
+        assert f["MODEL_STAGE[2]"].attrs["KIND"][0] == b"transient"
+    prov = _provenance(lad)
+    assert prov["opensees_backend"] == "unknown"
+    assert "stage_names" not in prov
+
+    with Results.from_ladruno(lad, model_h5=archive) as r:
+        assert [(s.kind, s.n_steps) for s in r.stages] == [
+            ("static", 2), ("transient", 3)]
+        for sid, st in zip(("stage_0", "stage_1"), stages):
+            scoped = r.stage(sid)
+            assert sorted(scoped.nodes.available_components()) \
+                == sorted(st.components)
+            for name, want in st.components.items():
+                slab = scoped.nodes.get(component=name)
+                np.testing.assert_array_equal(slab.node_ids, st.node_ids)
+                np.testing.assert_array_equal(slab.time, st.time)
+                np.testing.assert_array_equal(slab.values, want)
+
+
+@pytest.mark.parametrize("bad, match", [
+    ({"kind": "mode"}, "kind must be one of"),
+    ({"components": {"displacement_increment_x": np.zeros((2, 3))}},
+     "no ON_NODES group"),
+    ({"node_ids": "two of the model's, then 99999"}, r"\[99999\] that are not"),
+    ({"components": {"displacement_x": np.zeros((3, 3))}}, "has shape"),
+    ({"components": {}}, "no component"),
+])
+def test_write_nodal_stages_refuses_before_any_file(
+    fem3: Any, tmp_path: Path, bad: "dict[str, Any]", match: str,
+) -> None:
+    import dataclasses
+
+    from apeGmsh.results.readers._ladruno_writer import write_nodal_stages
+
+    archive = tmp_path / "model.h5"
+    _frame(fem3, ndm=3).h5(str(archive))
+    ids = _ids(fem3)
+    if "node_ids" in bad:
+        bad = {"node_ids": np.append(ids[:2], 99999)}
+    first = dataclasses.replace(_stages(ids)[0], **bad)
+    with pytest.raises(ValueError, match=match):
+        write_nodal_stages(
+            tmp_path / "n.ladruno", model_h5=archive, node_ids=ids,
+            coords=np.asarray(fem3.nodes.coords, dtype=np.float64), ndm=3,
+            stages=[first], source="test")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["model.h5"]

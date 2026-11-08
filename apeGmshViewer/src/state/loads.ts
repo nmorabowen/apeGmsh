@@ -9,7 +9,7 @@
 
 import { DARK_MAIN, hexToRgb, LIGHT_MAIN, themeTokens, type ThemeMode } from "../theme/tokens.ts";
 import { activationOf } from "./activation.ts";
-import { sampleCmap } from "./contour.ts";
+import { nodalFields, sampleCmap } from "./contour.ts";
 import type { BlobStore } from "./blobs.ts";
 import { beamLocalAxes, elementTransformVecxzFromState } from "./lineDiagram.ts";
 import type {
@@ -2417,19 +2417,28 @@ export function supportsOf(s: State): {
 }
 
 
-/** The components of one reaction kind a results stage records (`reaction_<kind>_x`, `_y`, `_z`), in that order; null for none. */
+/**
+ * The components of one reaction kind a results stage records, x, y, z in that order; null for none. The names are
+ * apeGmsh's (`reaction_<kind>_x`) or a `.ladruno` file's (`REACTION_FORCE/RFx`, `REACTION_MOMENT/RMx`), read by
+ * contour.ts `nodalFields`; so a `.ladruno` moment group holding only `RMz` (ndm 2, perhaps a pore pressure) is no axis.
+ */
 function recordedReactionOf(s: State, kind: "force" | "moment"): readonly (string | null)[] | null {
   const at = s.phase.at;
   if (at?.kind !== "results" || !s.results) return null;
-  const nodal = s.results.stages[at.stage]?.nodal ?? [];
-  const comps = ["x", "y", "z"].map((c) => (nodal.includes(`reaction_${kind}_${c}`) ? `reaction_${kind}_${c}` : null));
+  const stage = s.results.stages[at.stage];
+  const groups = [`reaction_${kind}`, `REACTION_${kind.toUpperCase()}`];
+  // A refused axis (a partial write) refuses the kind: a resultant of the axes that survived is a guessed value.
+  const refused = (stage?.refusedNodal ?? []).some((r) => groups.some((g) => r.component === g || r.component.startsWith(`${g}/`) || r.component.startsWith(`${g}_`)));
+  if (refused) return null;
+  const field = nodalFields(stage?.nodal ?? []).find((f) => groups.includes(f.name));
+  const comps = ["x", "y", "z"].map((c) => field?.components.find((k) => !k.magnitude && k.label === c)?.key ?? null);
   return comps.some((c) => c !== null) ? comps : null;
 }
 
-/** The reaction-force components a results stage records (`reaction_force_x`, `_y`, `_z`), in that order; null for none. */
+/** The reaction-force components a results stage records (`reaction_force_x` or `REACTION_FORCE/RFx`, then y, z); null for none. */
 export const reactionComponentsOf = (s: State): readonly (string | null)[] | null => recordedReactionOf(s, "force");
 
-/** The reaction-moment components a results stage records (`reaction_moment_x`, `_y`, `_z`), in that order; null for none. */
+/** The reaction-moment components a results stage records (`reaction_moment_x` or `REACTION_MOMENT/RMx`, then y, z); null for none. */
 export const reactionMomentComponentsOf = (s: State): readonly (string | null)[] | null => recordedReactionOf(s, "moment");
 
 /** A reaction glyph below this fraction of its kind's largest in the step is solver noise, not drawn. */

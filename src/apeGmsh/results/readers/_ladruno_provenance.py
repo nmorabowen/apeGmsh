@@ -11,7 +11,8 @@ and apeGmsh owns only these attributes.
 ==========================  ===============================================
 Attribute                   Value (scalar, variable-length UTF-8 string)
 ==========================  ===============================================
-``model_hash``              ``<model_h5>/meta/lineage@model_hash``, byte-equal
+``model_hash``              ``<model_h5>/meta/lineage@model_hash``, byte-equal;
+                            absent for a bare FEMData archive (ADR 0133)
 ``fem_hash``                ``<model_h5>/meta/lineage@fem_hash``, byte-equal
 ``stage_names``             JSON array: the program's stage names, written
                             only when the file's ``MODEL_STAGE`` count and
@@ -23,6 +24,11 @@ Attribute                   Value (scalar, variable-length UTF-8 string)
 ``opensees_build_sha``      the 40-hex ``ladrunoBuild`` hash, or
                             ``"unknown"``
 ==========================  ===============================================
+
+A bare FEMData archive (``fem.to_h5``) carries ``fem_hash`` and no
+``model_hash``: it holds no OpenSees model to hash. Its stamp carries
+``fem_hash`` alone and pairs by it (ADR 0133 D1, D2); it never writes an
+empty or invented ``model_hash``.
 
 The last two say which engine solved the file (§7b.1, fork doc PR
 nmorabowen/OpenSees #997). The fork records no build hash of its own in the
@@ -89,10 +95,12 @@ class ProvenanceStampRefused(RuntimeError):
     detected; when a part file is open in this process or locked by
     another (OpenSees, a viewer, an ``h5py`` session), is not a file this
     reader supports, or lacks ``INFO/PROVENANCE``; when the partition set
-    is incomplete or mixed; when the model archive has no complete
-    ``/meta/lineage``; when the parts disagree on their MODEL; or, unless
-    ``overwrite`` is True, when a different ``model_hash`` is already
-    stamped or an owned attribute is not a string.
+    is incomplete or mixed; when the model archive has no
+    ``/meta/lineage``, no ``fem_hash`` or an empty hash there; when the
+    parts disagree on their MODEL; or, unless ``overwrite`` is True, when
+    the part is already stamped with another ``model_hash`` or
+    ``fem_hash`` (or with a ``model_hash`` the archive does not carry), or
+    an owned attribute is not a string.
 
     §7b.1 rule 3 has a consumer that cannot open the file for writing
     *skip and warn*. That policy belongs to the caller: the resolver
@@ -126,9 +134,12 @@ def stamp_provenance(
 
     ``path`` is one ``.ladruno``, or any ``<stem>.part-<N>.ladruno`` of a
     partitioned run: every part of the set is stamped (§7b.1, partitioned
-    sets). ``model_h5`` is the bridge-written model archive the run was
-    emitted from; ``model_hash`` and ``fem_hash`` are copied from its
-    ``/meta/lineage`` byte for byte.
+    sets). ``model_h5`` is the model archive the run was emitted from: the
+    bridge's (``ops.h5``), or a bare FEMData archive (``fem.to_h5``) for a
+    deck the bridge did not build. ``model_hash`` and ``fem_hash`` are
+    copied from its ``/meta/lineage`` byte for byte; a FEMData archive has
+    no ``model_hash``, so its stamp carries ``fem_hash`` alone (ADR 0133
+    D1). An archive with no ``fem_hash``, or an empty hash, refuses.
 
     ``stage_names`` defaults to the archive's ``ops.stage(name=...)``
     names; passing it replaces the names, never the kinds, which always
@@ -138,11 +149,15 @@ def stamp_provenance(
     no stages has nothing to name and stays silent.
 
     ``element_index_space`` is ``"fem"`` only when the part records at
-    least one element and every element id it records (``MODEL/ELEMENTS``
-    connectivity and ``ON_ELEMENTS`` bucket ids) is an element the archive
-    pairs with a FEM id equal to that id. An element the bridge minted
-    without a FEM id (``fem_eid`` -1), or one the archive does not know,
-    leaves it absent, which a reader treats as unverified (#2079).
+    least one element the archive pairs with a FEM id equal to its own id,
+    every result row (an ``ON_ELEMENTS`` bucket ``ID``) is such an element,
+    and every other element its ``MODEL/ELEMENTS`` lists is either such an
+    element or one the archive records as bridge-minted (``fem_eid`` -1:
+    an RBE3 coupling, say) whose id no FEM element carries. A minted
+    element with result rows, an id the archive does not know, or a
+    minted id equal to a FEM id leaves it absent, which a reader treats
+    as unverified (#2079). The stamp speaks for the result rows (h5-schema
+    §``element_index_space``); a model-only minted element carries none.
 
     ``unsupported`` lists the lossy categories the producer could not carry
     (``"[]"`` when none). ``writer`` defaults to ``"apeGmsh <version>"``.
@@ -175,10 +190,12 @@ def stamp_provenance(
       it.
 
     Re-stamping with identical values writes nothing. A part already
-    stamped with another ``model_hash``, or carrying an owned attribute
-    that is not a string, refuses unless ``overwrite=True``, which
-    replaces it; a re-stamp removes an owned attribute the new stamp
-    leaves out.
+    stamped with another ``model_hash`` or ``fem_hash``, stamped with a
+    ``model_hash`` the archive does not carry, or carrying an owned
+    attribute that is not a string, refuses unless ``overwrite=True``,
+    which replaces it; a re-stamp removes an owned attribute the new stamp
+    leaves out. A ``fem_hash``-only stamp re-stamped against a bridge
+    archive of the same mesh gains its ``model_hash``.
 
     What it cannot see: the fork writes no close marker, so a file whose
     recorder was killed before closing it is indistinguishable here from a
@@ -225,9 +242,10 @@ def stamp_provenance(
             facts, backend_arg, build_arg, converted=converted,
             overwrite=overwrite,
         )
-        wanted: dict[str, str] = {
-            "model_hash": model_hash,
-            "fem_hash": fem_hash,
+        wanted: dict[str, str] = {"fem_hash": fem_hash}
+        if model_hash is not None:
+            wanted["model_hash"] = model_hash
+        wanted |= {
             "unsupported": _json(lossy),
             "writer": writer_text,
             "opensees_backend": backend,
@@ -240,7 +258,7 @@ def stamp_provenance(
         )
         if names is not None:
             wanted["stage_names"] = _json(names)
-        if _is_fem_index_space(facts.element_tags, pairing):
+        if _is_fem_index_space(facts.model_tags, facts.result_tags, pairing):
             wanted["element_index_space"] = "fem"
         if facts.malformed and not overwrite:
             raise ProvenanceStampRefused(
@@ -249,10 +267,14 @@ def stamp_provenance(
                 "replace them."
             )
         stamped = facts.owned.get("model_hash")
-        if stamped is not None and stamped != model_hash and not overwrite:
+        stamped_fem = facts.owned.get("fem_hash")
+        if not overwrite and (
+                (stamped is not None and stamped != model_hash)
+                or (stamped_fem is not None and stamped_fem != fem_hash)):
             raise ProvenanceStampRefused(
                 f"{part}: INFO/PROVENANCE is already stamped with "
-                f"model_hash={stamped!r}, not {model_hash!r} from "
+                f"model_hash={stamped!r}, fem_hash={stamped_fem!r}, not "
+                f"model_hash={model_hash!r}, fem_hash={fem_hash!r} from "
                 f"{model_h5}. Pass overwrite=True to re-pair the file."
             )
         if facts.owned != wanted or not facts.all_vlen_utf8 \
@@ -409,8 +431,14 @@ def _refuse_if_open_here(parts: list[Path]) -> None:
             )
 
 
-def _lineage_hashes(model_h5: Path) -> tuple[str, str]:
-    """``(model_hash, fem_hash)`` from ``/meta/lineage``, exactly as stored."""
+def _lineage_hashes(model_h5: Path) -> "tuple[Optional[str], str]":
+    """``(model_hash, fem_hash)`` from ``/meta/lineage``, exactly as stored.
+
+    ``model_hash`` is ``None`` when the archive carries none: a bare
+    FEMData archive (``fem.to_h5``) has no OpenSees model to hash (ADR 0133
+    D1). ``fem_hash`` is always required. A hash that is present but empty
+    refuses by name: the stamp never writes ``""``.
+    """
     import h5py
 
     if not model_h5.is_file():
@@ -418,22 +446,31 @@ def _lineage_hashes(model_h5: Path) -> tuple[str, str]:
     with h5py.File(model_h5, "r") as f:
         if "meta" not in f or "lineage" not in f["meta"]:
             raise ProvenanceStampRefused(
-                f"{model_h5} has no /meta/lineage: it was not written by "
-                "the bridge (ops.h5) or predates the lineage chain, so "
-                "there is no model_hash to pair with."
+                f"{model_h5} has no /meta/lineage: it was written by "
+                "neither the bridge (ops.h5) nor fem.to_h5, or predates the "
+                "lineage chain, so there is no fem_hash to pair with."
             )
         lin = f["meta/lineage"].attrs
-        out = []
+        texts: dict[str, Optional[str]] = {}
         for key in ("model_hash", "fem_hash"):
-            raw = lin[key] if key in lin else None
-            text = _as_text(raw, f"{model_h5}:/meta/lineage@{key}")
+            if key not in lin:
+                texts[key] = None
+                continue
+            text = _as_text(lin[key], f"{model_h5}:/meta/lineage@{key}")
             if not text:
                 raise ProvenanceStampRefused(
-                    f"{model_h5}: /meta/lineage carries no {key}; a pairing "
-                    "needs both model_hash and fem_hash."
+                    f"{model_h5}: /meta/lineage@{key} is an empty string; "
+                    "the stamp copies a hash byte-equal and never writes an "
+                    "empty one."
                 )
-            out.append(text)
-    return out[0], out[1]
+            texts[key] = text
+    fem_hash = texts["fem_hash"]
+    if fem_hash is None:
+        raise ProvenanceStampRefused(
+            f"{model_h5}: /meta/lineage carries no fem_hash; a pairing "
+            "needs fem_hash (and model_hash too, for a bridge archive)."
+        )
+    return texts["model_hash"], fem_hash
 
 
 def _as_text(raw: Any, where: str) -> str:
@@ -484,16 +521,17 @@ def _program_facts(
 
 
 class _PartFacts:
-    __slots__ = ("kinds", "element_tags", "owned", "all_vlen_utf8",
-                 "malformed")
+    __slots__ = ("kinds", "model_tags", "result_tags", "owned",
+                 "all_vlen_utf8", "malformed")
 
     def __init__(
-        self, kinds: "list[Optional[str]]", element_tags: "np.ndarray",
-        owned: "dict[str, str]", all_vlen_utf8: bool,
-        malformed: "list[str]",
+        self, kinds: "list[Optional[str]]", model_tags: "np.ndarray",
+        result_tags: "np.ndarray", owned: "dict[str, str]",
+        all_vlen_utf8: bool, malformed: "list[str]",
     ) -> None:
         self.kinds = kinds
-        self.element_tags = element_tags
+        self.model_tags = model_tags
+        self.result_tags = result_tags
         self.owned = owned
         self.all_vlen_utf8 = all_vlen_utf8
         self.malformed = malformed
@@ -551,23 +589,30 @@ def _read_part(path: Path) -> _PartFacts:
                 all_vlen = False
             owned[name] = _as_text(prov.attrs[name], f"{path}:{_PROVENANCE}@{name}")
         kinds: "list[Optional[str]]" = []
-        tags = [np.empty(0, dtype=np.int64)]
+        model_tags = [np.empty(0, dtype=np.int64)]
+        result_tags = [np.empty(0, dtype=np.int64)]
         for gname in _stage_groups(h5):
             grp = h5[gname]
             kinds.append(
                 _as_text(grp.attrs["KIND"], f"{path}:{gname}@KIND")
                 if "KIND" in grp.attrs else None
             )
-            tags.extend(_stage_element_tags(grp))
-    return _PartFacts(kinds, np.unique(np.concatenate(tags)), owned, all_vlen,
+            in_model, in_results = _stage_element_tags(grp)
+            model_tags.extend(in_model)
+            result_tags.extend(in_results)
+    return _PartFacts(kinds, np.unique(np.concatenate(model_tags)),
+                      np.unique(np.concatenate(result_tags)), owned, all_vlen,
                       malformed)
 
 
-def _stage_element_tags(stage: "h5py.Group") -> "list[np.ndarray]":
-    """Element ids one stage records: ``MODEL/ELEMENTS`` and bucket ``ID`` s."""
+def _stage_element_tags(
+    stage: "h5py.Group",
+) -> "tuple[list[np.ndarray], list[np.ndarray]]":
+    """Element ids one stage records: ``(MODEL/ELEMENTS, bucket ID s)``."""
     import h5py
 
     out: list[np.ndarray] = []
+    rows: list[np.ndarray] = []
     if "MODEL" in stage and "ELEMENTS" in stage["MODEL"]:
         for grp in stage["MODEL/ELEMENTS"].values():
             if isinstance(grp, h5py.Group) and "CONNECTIVITY" in grp:
@@ -580,9 +625,9 @@ def _stage_element_tags(stage: "h5py.Group") -> "list[np.ndarray]":
                 continue
             for bucket in token.values():
                 if isinstance(bucket, h5py.Group) and "ID" in bucket:
-                    out.append(np.asarray(bucket["ID"][...],
-                                          dtype=np.int64).ravel())
-    return out
+                    rows.append(np.asarray(bucket["ID"][...],
+                                           dtype=np.int64).ravel())
+    return out, rows
 
 
 def _check_part_set(parts: list[Path]) -> None:
@@ -835,10 +880,31 @@ def _engine_for(
     return backend, build
 
 
-def _is_fem_index_space(tags: "np.ndarray", pairing: "dict[int, int]") -> bool:
-    if tags.size == 0:
+def _is_fem_index_space(
+    model_tags: "np.ndarray", result_tags: "np.ndarray",
+    pairing: "dict[int, int]",
+) -> bool:
+    """Whether the part's element ids are provably FEM ids (#2079).
+
+    Every result row must be an element the archive pairs with itself.
+    A model-only element may instead be bridge-minted (``fem_eid`` -1),
+    provided no FEM element carries its id: a minted id that equals a FEM
+    id could be joined to the wrong element.
+    """
+    def self_paired(t: int) -> bool:
+        return pairing.get(t) == t
+
+    if not all(self_paired(int(t)) for t in result_tags):
         return False
-    return all(int(t) in pairing and pairing[int(t)] == int(t) for t in tags)
+    fem_ids = {v for v in pairing.values() if v != -1}
+    seen_fem = result_tags.size > 0
+    for raw in np.setdiff1d(model_tags, result_tags):
+        tag = int(raw)
+        if self_paired(tag):
+            seen_fem = True
+        elif pairing.get(tag) != -1 or tag in fem_ids:
+            return False
+    return seen_fem
 
 
 # ---------------------------------------------------------------------------
@@ -869,6 +935,9 @@ def _write(prov: "h5py.Group", wanted: "dict[str, str]") -> None:
     import h5py
 
     vlen = h5py.string_dtype("utf-8")
+    # model_hash before fem_hash (_OWNED_ATTRS order): a two-hash stamp cut
+    # short is model_hash alone, which pairs with nothing, never a
+    # fem_hash-only stamp (ADR 0133 D2), which pairs by the mesh.
     for name in _OWNED_ATTRS:
         if name in wanted:
             prov.attrs.create(name, data=wanted[name], dtype=vlen)

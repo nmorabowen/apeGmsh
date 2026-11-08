@@ -54,7 +54,7 @@ A bucket the reader is unable to decode is listed by
 MPCO writes each element once, to exactly one bucket. A read that would
 return one element id twice, from two buckets (header indices, custom
 rules or classes) or from one bucket's ``ID``, raises
-:class:`~._mpco_refusals.MPCOElementInTwoBuckets` (#2173). The check
+:class:`~._buckets.MPCOElementInTwoBuckets` (#2173). The check
 covers the ids the read returns, as :func:`read_nodal_bucket_slab`
 selects them, and reads no ``ID`` a second time.
 """
@@ -81,20 +81,10 @@ from ._ladruno_element_io import (
     decode_local_nodal_force_columns,
     decode_nodal_force_columns,
 )
-from ._mpco_refusals import refuse_element_in_two_buckets
+from ._buckets import refuse_element_in_two_buckets
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     import h5py
-
-    from typing import TypeAlias
-
-    from ...opensees._readback import RotationRoles
-
-    #: What :meth:`RotationMask.attach` takes for the model's DOF roles:
-    #: called once, on the first read that needs them.
-    RolesSource: TypeAlias = "Callable[[], RotationRoles]"
 
 
 # =====================================================================
@@ -131,7 +121,7 @@ class _ReturnedIds:
     ledger, so the buckets of one scan serve one read.
     :func:`read_nodal_bucket_slab` adds each bucket's selected ids, and
     an id seen twice raises
-    :class:`~._mpco_refusals.MPCOElementInTwoBuckets`.
+    :class:`~._buckets.MPCOElementInTwoBuckets`.
     """
 
     def __init__(self) -> None:

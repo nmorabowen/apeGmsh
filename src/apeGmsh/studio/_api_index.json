@@ -896,7 +896,7 @@
     },
     "g.constraints.distributing_coupling": {
       "doc": "RBE3 / distributing coupling — distribute a load at a reference",
-      "signature": "distributing_coupling(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), weighting='uniform', k=None, k_alpha=None, host=None, kr=None, enforce='penalty', bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None) -> 'DistributingCouplingDef'",
+      "signature": "distributing_coupling(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), weighting='uniform', footprint=None, k=None, k_alpha=None, host=None, kr=None, enforce='penalty', bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None) -> 'DistributingCouplingDef'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.constraints.distributing_coupling"
     },

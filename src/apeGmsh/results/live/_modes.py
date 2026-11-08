@@ -4,9 +4,12 @@ A deck the bridge did not build (hand-written ``ops.node`` /
 ``ops.element`` calls over a FEMData) has no :class:`EigenResult`
 (``apeSees.eigen`` makes one) and no default recorder route for modes
 (``emit_default`` refuses modal records). :func:`capture_live_modes`
-solves ``ops.eigen(n)`` on the live domain and writes one native
-``mode_<k>`` stage per mode, in the layout ``EigenResult.to_native``
-writes, through the same writer helpers.
+solves ``ops.eigen(n)`` on the live domain and writes the modes to a
+``.ladruno`` (ADR 0131 D10) through the Python writer
+:func:`~apeGmsh.results.readers._ladruno_writer.write_modes`, as
+``EigenResult.to_ladruno`` does: one ``eigen`` stage holding every mode,
+stamped against the model archive. A bare FEMData archive is stamped with
+``fem_hash`` alone and pairs by it (ADR 0133).
 
 Each fem node is paired with the live node of its tag by fact
 (:class:`~apeGmsh.opensees._recorder_translate.LiveDomainFacts`): the
@@ -25,12 +28,11 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 
 from ...opensees._recorder_translate import LiveDomainFacts
-from ...opensees._target import backend_info_of
-from ...opensees.analysis.eigen import _live_slots, _warn_unresolved
-from ...opensees.analysis.modal import _native_fields, _write_mode_stages
+from ...opensees.analysis.eigen import _live_slots, _spatial, _warn_unresolved
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
-from ..writers._native import NativeWriter
+from ..readers._ladruno_live import FORK_SUFFIX
+from ..readers._ladruno_writer import solved_backend, write_modes
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
@@ -55,24 +57,31 @@ def capture_live_modes(
     solver: Optional[str] = None,
 ) -> Path:
     """Solve ``ops.eigen(n_modes)`` on the live domain and write the modes
-    as ``kind="mode"`` stages of a native results file; return its path.
+    to a ``.ladruno``; return its path.
 
-    One stage per mode (``mode_<k>``, ``mode_index`` 1..n, at ``time =
-    [0.0]``) carries ``eigenvalue``, ``frequency_hz = ω/2π`` and
-    ``period_s = 2π/ω`` (``ω = √λ``), the layout ``EigenResult.to_native``
-    writes. Each fem node's ``nodeEigenvector`` is written raw (unscaled),
-    laid onto ``ux..rz`` by its own live ndf: ``displacement_*`` holds the
-    first ``min(3, ndm)`` slots. A rotation slot holds the rotation only
-    where the live elements' DOF roles say so (a beam, shell or
-    zero-length element touches the node); a slot they cannot settle is
-    written as 0.0 with one ``RotationSlotUnresolvedWarning``.
+    The file holds one ``eigen`` stage with every mode, in the layout
+    ``EigenResult.to_ladruno`` writes
+    (:func:`~apeGmsh.results.readers._ladruno_writer.write_modes`): each
+    mode carries ``λ``, ``ω = √λ``, ``f = ω/2π`` and ``T = 2π/ω``, and
+    reads back as ``kind="mode"`` with ``mode_index`` 1..n. Each fem
+    node's ``nodeEigenvector`` is written raw (unscaled), laid onto
+    ``ux..rz`` by its own live ndf: the translations are the first
+    ``min(3, ndm)`` slots. A rotation slot holds the rotation only where
+    the live elements' DOF roles say so (a beam, shell or zero-length
+    element touches the node); elsewhere it is written as 0.0, and a slot
+    they cannot settle gets one ``RotationSlotUnresolvedWarning``.
 
-    The file embeds the FEMData as ``/model`` and no ``/opensees`` zone
-    (the deck is not the bridge's). Read it with the FEMData archive as
-    the model, or with ``Results.from_fem(fem, p, kind="native")``::
+    The file is stamped (``INFO/PROVENANCE``) against the model archive:
+    a bridge archive with both ``model_hash`` and ``fem_hash``, a bare
+    FEMData archive (or the FEMData passed in) with ``fem_hash`` alone,
+    which pairs it by the mesh (ADR 0133). ``opensees_backend`` names the
+    fork only when ``ops`` is the fork; on stock openseespy it is
+    ``"unknown"``, since §7b.1 keeps ``"stock"`` for a converted file. A
+    refused stamp leaves no file behind. Read it with the archive as the
+    model::
 
-        p = capture_live_modes("model.h5", 3, "modes.h5", ops=ops)
-        r = Results.from_native(p, model=OpenSeesModel.from_h5("model.h5"))
+        p = capture_live_modes("model.h5", 3, "modes.ladruno", ops=ops)
+        r = Results.from_ladruno(p, model_h5="model.h5")
 
     The capture trusts the eigenvalues its own ``ops.eigen`` call returns.
     On an indefinite stiffness (a negative spring, a softened member) the
@@ -91,11 +100,13 @@ def capture_live_modes(
     model_h5_or_fem
         The FEMData the deck was built from, or a ``model.h5`` holding it
         (``fem.to_h5``, or a bridge archive, whose FEMData alone is read).
-        Every fem node is captured.
+        Every fem node is captured. A FEMData passed in is stamped by its
+        ``fem_hash``, the one ``fem.to_h5`` writes.
     n_modes
         How many modes to solve for, at least 1.
     path
-        The native file to write (replaced when it exists).
+        The ``.ladruno`` to write (replaced when it exists). An ``.h5``
+        path refuses: that is a model archive's suffix.
     ops
         The OpenSees module holding the deck. ``None`` takes the one the
         bridge resolves (:func:`~apeGmsh.opensees.emitter.live.get_ops`).
@@ -111,7 +122,8 @@ def capture_live_modes(
     ------
     ValueError
         ``n_modes`` is not a positive integer; ``solver`` is not one of
-        the flags above; the live domain declares no
+        the flags above; ``path`` has an ``.h5`` suffix or is the model
+        archive; the live domain declares no
         ndm; a fem node is not in the live domain, or its live coordinates
         are not the FEM node's; a node's eigenvector length is not its
         live ndf; ``ops.eigen`` raised (on stock openseespy, a second
@@ -125,6 +137,9 @@ def capture_live_modes(
         another number of modes, or a
         non-positive or non-finite eigenvalue (a mechanism or an
         unconverged solve). Nothing is written.
+    ProvenanceStampRefused
+        The stamp refused the archive (no ``/meta/lineage``, no
+        ``fem_hash``, an empty hash). Nothing is written.
     FileNotFoundError
         ``model_h5_or_fem`` names no file.
     """
@@ -141,16 +156,22 @@ def capture_live_modes(
     if ops is None:
         ops = get_ops()
     with tempfile.TemporaryDirectory(prefix="apegmsh_live_modes_") as tmp:
-        archive = _archive(model_h5_or_fem, out_path, Path(tmp))
-        return _capture(archive, n_modes, out_path, ops, solver)
+        src = _archive(model_h5_or_fem, out_path, Path(tmp))
+        if out_path.suffix.lower() == ".h5":
+            raise ValueError(
+                f"{_WHERE}: path {out_path} has an .h5 suffix, a model "
+                f"archive's; the modes are written to a {FORK_SUFFIX} file "
+                f"(ADR 0131 D10). Pass a {FORK_SUFFIX} path. Nothing was "
+                "written.")
+        return _capture(src, n_modes, out_path, ops, solver)
 
 
 def _archive(
     model_h5_or_fem: "str | os.PathLike[str] | FEMData", out_path: Path,
     tmp: Path,
-) -> OpenSeesModel:
-    """The archive broker of a ``model.h5`` path, or of a FEMData written
-    to ``tmp``; refuses an ``out_path`` that is the archive itself."""
+) -> Path:
+    """The ``model.h5`` path, or a FEMData written to ``tmp``; refuses an
+    ``out_path`` that is the archive itself."""
     if isinstance(model_h5_or_fem, (str, os.PathLike)):
         src = Path(os.fspath(model_h5_or_fem))
         if not src.is_file():
@@ -165,13 +186,14 @@ def _archive(
     else:
         src = tmp / "model.h5"
         model_h5_or_fem.to_h5(str(src))
-    return OpenSeesModel.from_h5(src)
+    return src
 
 
 def _capture(
-    archive: OpenSeesModel, n_modes: int, out_path: Path, ops: Any,
+    src: Path, n_modes: int, out_path: Path, ops: Any,
     solver: Optional[str],
 ) -> Path:
+    archive = OpenSeesModel.from_h5(src)
     fem = archive.fem
     facts = LiveDomainFacts(ops, archive)
     ndm = facts.ndm
@@ -234,22 +256,17 @@ def _capture(
             "laid out. Nothing was written.")
 
     layouts, rotations, unresolved = _live_slots(facts, node_ids, ndf_of, ndm)
-    spatial, rotation_slots = _native_fields(vectors, layouts, rotations, ndm)
+    shapes = np.stack([_spatial(rows, layouts) for rows in vectors])
     _warn_unresolved(_WHERE, unresolved, 3)
-    info = backend_info_of(ops)
-    writer = NativeWriter(out_path)
-    writer.open(
-        fem=fem,
-        source_type="eigen",
-        source_path="<openseespy>",
-        opensees_backend=info.kind,
-        opensees_build=info.build,
+    all_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    # Written and stamped in a staging directory, then moved into place:
+    # a refused stamp leaves nothing at out_path.
+    return write_modes(
+        out_path, model_h5=src, node_ids=all_ids,
+        coords=np.asarray(fem.nodes.coords, dtype=np.float64), ndm=ndm,
+        eigenvalues=eigenvalues, fields=lambda k: shapes[k - 1],
+        rotations=rotations,
+        record_ids=None if len(node_ids) == len(all_ids) else node_ids,
+        source="live_modes", opensees_backend=solved_backend(ops),
+        stacklevel=4,
     )
-    try:
-        _write_mode_stages(
-            writer, eigenvalues, node_ids, lambda k: spatial[k - 1],
-            n_trans=min(3, ndm), rotation_slots=rotation_slots,
-        )
-    finally:
-        writer.close()
-    return out_path

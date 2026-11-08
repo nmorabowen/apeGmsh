@@ -19,7 +19,7 @@ import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import type { LadrunoLineStationStep } from "../reader/ladruno.ts";
 import { contourView, geometryPairing, gizmoPlanes, legendEntryColour, selectedElementsOf } from "../state/selectors.ts";
-import { combinationColours, contourColours, contourShownKey, elementColours, noDataColours, toLinear, type CombinationColumnOf, type StepValues } from "./contour.ts";
+import { combinationColours, contourColours, contourShownKey, differenceColours, elementColours, noDataColours, toLinear, type CombinationColumnOf, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
@@ -878,6 +878,7 @@ export class Viewport {
     }
     if (v.state === "element") return elementColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
     if (v.state === "combination") return combinationColours(v, info, this.blobs, this.combinationSource(), drawn.lineMap, drawn.triMap);
+    if (v.state === "difference") return differenceColours(v, info, this.blobs, drawn.lineMap, drawn.triMap);
     return contourColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
   }
 

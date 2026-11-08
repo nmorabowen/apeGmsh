@@ -12,13 +12,13 @@ model: it mirrors the `FEMData` composite shape — `results.nodes`,
 `pg=` / `label=` / `ids=` selection vocabulary, so once you know how to
 query a mesh you already know how to query results on that mesh. The
 container itself owns no arrays; it reads lazily from a backing file
-(native HDF5, MPCO, or transcoded recorder output), which is why opening a
+(a `.ladruno`, native HDF5, MPCO, or transcoded recorder output), which is why opening a
 multi-gigabyte run is instant and why `Results` has a close-when-done
 lifecycle rather than a load-everything constructor.
 
-## One container, three doors
+## One container, four doors
 
-A run can leave its numbers on disk in three formats, and each has a
+A run can leave its numbers on disk in four formats, and each has a
 constructor. Which one you use is decided entirely by *how the run was
 recorded* — the object you get back is the same class with the same query
 surface:
@@ -27,15 +27,23 @@ surface:
 from apeGmsh import Results
 from apeGmsh.opensees import OpenSeesModel
 
-# All three REQUIRE the model broker — omitting it raises TypeError.
+# The fork's .ladruno carries its own nodes; model_h5= binds the archive
+# it was stamped against.
+results = Results.from_ladruno("modes.ladruno", model_h5="modes.h5")   # Ladruno: fork runs, modes
+
+# These three REQUIRE the model broker — omitting it raises TypeError.
 model   = OpenSeesModel.from_h5("model.h5")
-results = Results.from_native("modes.h5", fem=fem, model=model)        # apeGmsh native
+results = Results.from_native("results.h5", fem=fem, model=model)       # apeGmsh native
 results = Results.from_recorders(spec, "out/", fem=fem, model=model)    # classic .out files
 results = Results.from_mpco("run.mpco", model_h5="model.h5")            # STKO MPCO
 ```
 
-`from_native` opens apeGmsh's own HDF5, written by `EigenResult.to_native`
-and the other modes writers (and by the recorder transcoder's cache).
+`from_ladruno` opens the fork's canonical format: a fork recorder run, and
+the modes that `EigenResult.to_ladruno` / `.results()` and
+`capture_live_modes` write (ADR 0131 D10), one `kind="mode"` stage per
+mode. `from_native` opens apeGmsh's own HDF5, written by the explicit
+`EigenResult.to_native` export and the other native writers (and by the
+recorder transcoder's cache).
 `from_recorders` parses classic OpenSees `.out`/`.xml` files against the
 recorder spec that declared them, transcodes them once into a cached native
 file, and opens that — re-reads with unchanged inputs hit the cache.
@@ -43,7 +51,7 @@ file, and opens that — re-reads with unchanged inputs hit the cache.
 parallel runs (pass one `run.part-0.mpco` and siblings are auto-discovered
 — the [MPCO how-to](../how-to/results-mpco.md) is the end-to-end recipe).
 
-Every constructor **requires the model broker** — `model=` as an in-memory
+Every constructor but `from_ladruno` **requires the model broker** — `model=` as an in-memory
 `OpenSeesModel` for `from_native`/`from_recorders`, `model_h5=` as a *path*
 to the canonical `model.h5` for `from_mpco` (MPCO files carry no solver
 zone of their own). Omit it and you get a `TypeError` at the call site, not
