@@ -1676,9 +1676,9 @@ export type Event =
   | { type: "lineDiagramScan"; scan: ContourScan }
   /** The Display card's BC toggle */
   | { type: "setSupports"; on?: boolean; scale?: number }
-  /** The Reactions card's controls */
   /** The Principal card's controls */
   | { type: "setPrincipal"; on?: boolean; field?: string | null; show?: readonly [boolean, boolean, boolean]; head?: PrincipalHead; cmap?: ContourCmap; scale?: number; headSize?: number; thin?: boolean }
+  /** The Reactions card's controls */
   | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean; forces?: boolean; moments?: boolean }
   /** The Vectors card's controls (`field` null: the stage's first vector field) */
   | { type: "setVectors"; on?: boolean; field?: string | null; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent }

@@ -171,7 +171,7 @@ in the developer console (DevTools), not in the window.
 
 On the Loads & SPs, Reactions, Vectors and Principal cards every arrow is sized on screen: the
 head is twice as long as it is wide and
-`head` pixels long (12 by default), and a shaft stays between 15 and 80
+`head` pixels long (12 by default; 10 on Principal, where a Gauss point carries up to six arrows), and a shaft stays between 15 and 80
 pixels times the card's `scale`. Zooming rebuilds nothing. **thin out** (on
 by default) draws one arrow, the largest, where several would overlap;
 zoom in to see the rest.

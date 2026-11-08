@@ -8,4 +8,4 @@ engineering), and a zz the element does not record is taken as 0 (plane stress f
 strain); the card says so. A direction is an axis, so `axis` draws a head each way and `arrow` draws one along the
 sign-canonical direction. The card also offers p1, p2 and p3 switches, the field, the colour map, scale, head size and
 thin-out. The arrows follow the deformed shape. The step read gains a `tensor` request for several Gauss components at
-once, and the arrow record gains an `anchor` field so an arrow can start at its point.
+once; the arrows start at their Gauss points through the arrow record's `anchor` field.
