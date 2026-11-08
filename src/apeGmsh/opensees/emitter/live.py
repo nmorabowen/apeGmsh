@@ -1030,8 +1030,12 @@ class LiveOpsEmitter:
     #: Trims nodes to ``_model_ndm`` and refuses a lossy trim (#1337).
     _dropped_axes: DroppedAxisGuard = DroppedAxisGuard.BEFORE_MODEL
 
+    #: Builder ndf in force, learned from :meth:`model`; ``None`` until then.
+    _builder_ndf: "int | None" = None
+
     def model(self, *, ndm: int, ndf: int) -> None:
         self._model_ndm = ndm
+        self._builder_ndf = ndf
         self._dropped_axes = DroppedAxisGuard(ndm)
         self._ops.model("basic", "-ndm", ndm, "-ndf", ndf)
 
@@ -1053,7 +1057,19 @@ class LiveOpsEmitter:
         self._ops.fix(tag, *dofs)
 
     def mass(self, tag: int, *values: float) -> None:
-        self._ops.mass(tag, *values)
+        n, env = len(values), self._builder_ndf
+        if env is None or n == env:
+            self._ops.mass(tag, *values)
+            return
+        # openseespy sizes the mass matrix by the BUILDER ndf
+        # (``OPS_addNodalMass``); the bridge sizes ``values`` to the
+        # node's ndf.  Bracket the call — see ``PyEmitter.mass``.
+        ndm = self._model_ndm
+        self._ops.model("basic", "-ndm", ndm, "-ndf", n)
+        try:
+            self._ops.mass(tag, *values)
+        finally:
+            self._ops.model("basic", "-ndm", ndm, "-ndf", env)
 
     # -- MP constraints (ADR 0022, Phase 7b) -----------------------------
 
