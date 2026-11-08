@@ -655,6 +655,22 @@ def test_a_display_name_another_stage_answers_to_refuses(
     assert _stamp(path) is None and _shown(path) is None
 
 
+def test_a_swapped_display_stamp_never_reads_the_other_stage(tmp_path: Path) -> None:
+    """Finding 1 of verdict c30f25020, by its symptom: whatever the swapped
+    stamp does, each program name reads its own stage afterwards. At
+    c30f25020 the stamp was written and ``stage("gravity")`` read pushover's
+    values (``_ux(2, ...)``)."""
+    model_h5 = _model_h5(tmp_path / "model.h5", *_TWO)
+    path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])
+    try:
+        stamp_provenance(path, model_h5, stage_names=["pushover", "gravity"])
+    except ValueError:
+        stamp_provenance(path, model_h5)
+    with Results.from_ladruno(path, model_h5=model_h5) as r:
+        for program, k in (("gravity", 1), ("pushover", 2)):
+            assert _ux_last(r, program) == [_ux(k, 1, n) for n in NODE_IDS]
+
+
 def test_a_display_name_may_be_its_own_program_name(tmp_path: Path) -> None:
     model_h5 = _model_h5(tmp_path / "model.h5", *_TWO)
     path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])
