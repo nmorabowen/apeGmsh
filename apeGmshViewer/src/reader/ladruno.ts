@@ -66,15 +66,10 @@ const MODAL_GROUPS = ["MODES_OF_VIBRATION(U)", "MODES_OF_VIBRATION(R)"];
 const UNREAD_BUCKETS = new Set(["ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS", "ENVELOPES"]);
 const STAGE_CHILDREN = new Set(["MODEL", "RESULTS"]);
 
-/**
- * The consumer-owned attributes of schema §7b.1, in its order, then apeGmsh's
- * own: `units`, and `stage_display_names` (#2823: the names a
- * `stamp_provenance(stage_names=)` override shows; `stage_names` keeps the
- * program's names, which bind).
- */
-export const PROVENANCE_ATTRS = ["model_hash", "fem_hash", "stage_names", "element_index_space", "unsupported", "writer", "units", "stage_display_names"] as const;
+/** The consumer-owned attributes of schema §7b.1, in its order. */
+export const PROVENANCE_ATTRS = ["model_hash", "fem_hash", "stage_names", "element_index_space", "unsupported", "writer", "units"] as const;
 export type ProvenanceAttr = (typeof PROVENANCE_ATTRS)[number];
-const PROVENANCE_JSON_LISTS = new Set<ProvenanceAttr>(["stage_names", "unsupported", "stage_display_names"]);
+const PROVENANCE_JSON_LISTS = new Set<ProvenanceAttr>(["stage_names", "unsupported"]);
 
 const H5T_INTEGER = 0;
 const H5T_FLOAT = 1;
@@ -120,7 +115,7 @@ interface LFile extends LGroup {
 export type ProvenanceFact =
   | { state: "present"; value: string }
   | { state: "absent" }
-  /** not a scalar variable-length UTF-8 string, or (stage_names, unsupported, stage_display_names) not a JSON array of strings */
+  /** not a scalar variable-length UTF-8 string, or (stage_names, unsupported) not a JSON array of strings */
   | { state: "malformed"; reason: string };
 
 export type LadrunoProvenance =
@@ -131,8 +126,6 @@ export type LadrunoProvenance =
       attrs: Record<ProvenanceAttr, ProvenanceFact>;
       /** `stage_names` decoded, or null when it is not present and well formed */
       stageNames: string[] | null;
-      /** `stage_display_names` decoded (the names Python shows, #2823), or null when it is not present and well formed */
-      stageDisplayNames: string[] | null;
       /** `unsupported` decoded, or null when it is not present and well formed */
       unsupported: string[] | null;
       /** `units` decoded when it is a valid `UnitSystemId`, else null */
@@ -1141,7 +1134,6 @@ export class LadrunoFile {
     const g = this.group(info, "PROVENANCE");
     const attrs = {} as Record<ProvenanceAttr, ProvenanceFact>;
     let stageNames: string[] | null = null;
-    let stageDisplayNames: string[] | null = null;
     let unsupported: string[] | null = null;
     let units: UnitSystemId | null = null;
     for (const name of PROVENANCE_ATTRS) {
@@ -1153,7 +1145,6 @@ export class LadrunoFile {
           continue;
         }
         if (name === "stage_names") stageNames = list;
-        else if (name === "stage_display_names") stageDisplayNames = list;
         else unsupported = list;
       }
       if (fact.state === "present" && name === "element_index_space" && fact.value !== "fem") {
@@ -1176,7 +1167,7 @@ export class LadrunoFile {
     }
     const known = new Set<string>(PROVENANCE_ATTRS);
     const other = Object.keys(g.attrs).filter((k) => !known.has(k)).sort();
-    return { state: "present", attrs, stageNames, stageDisplayNames, unsupported, units, other };
+    return { state: "present", attrs, stageNames, unsupported, units, other };
   }
 
   // -- helpers ----------------------------------------------------------------
