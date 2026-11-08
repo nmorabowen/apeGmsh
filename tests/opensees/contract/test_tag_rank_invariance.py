@@ -255,8 +255,8 @@ def _plan(
     """Build and emit the model; return the model, the plan its emit
     held, and the ``(kind, tag)`` stream it wrote."""
     bm = _model(n_ranks, variant).build()
-    mode = emit_mode(bm, split=False, supports_partitions=True)
-    assert mode == TagMode(False, n_ranks is not None, variant == "staged")
+    mode = emit_mode(bm, supports_partitions=True)
+    assert mode == TagMode(n_ranks is not None, variant == "staged")
     stream = ts.emit_stream(bm, RecordingEmitter)
     return bm, bm._tag_plans[mode], stream
 
