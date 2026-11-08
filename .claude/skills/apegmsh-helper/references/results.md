@@ -73,11 +73,13 @@ recorded_stages=["pushover"])`. `stage_names=["Push 2"]` renames the
 stages for display only: the program's names still bind
 (`stage_names` in the file), the rename is stored as
 `stage_display_names` and becomes the stage's name on read, with the
-program name kept as an alias (`r.stage("pushover")` still works). It
-raises `ValueError` at write time when the program's names cannot be
-determined (and no `recorded_stages=`), or when a shown name is one
-another stage answers to (another program stage, id or `MODEL_STAGE[k]`,
-or a repeat). The desktop viewer shows the same display names.
+program name kept as an alias (`r.stage("pushover")` and a combination
+term naming `"pushover"` still work). It raises `ValueError` at write
+time when the program's names cannot be determined (and no
+`recorded_stages=`), or when a shown name is one another stage answers to
+(another program stage, a stage id, any `MODEL_STAGE[k]`, a mode stage's
+name or id, or a repeat). The desktop viewer still shows the program's
+names (`stage_names`), not the display names.
 (`tests/results/test_ladruno_stamped_stage_names.py`)
 
 A `.ladruno` that Python writes (`from_recorders`, `EigenResult.to_ladruno`,

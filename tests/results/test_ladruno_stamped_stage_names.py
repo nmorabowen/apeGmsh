@@ -728,10 +728,6 @@ def test_after_a_rename_both_names_read_the_same_stage(tmp_path: Path) -> None:
             assert r.stage(shown)._stage_id == r.stage(program)._stage_id
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "a combination term resolves a stage by its shown name only "
-    "(results/user/_states.py::_RecordedSource._host, outside #2823's Owned): "
-    "it must also accept the program-name alias of a renamed stage"))
 def test_a_combination_term_by_program_name_reads_the_renamed_stage(
     tmp_path: Path,
 ) -> None:
@@ -751,5 +747,5 @@ def test_a_combination_term_by_program_name_reads_the_renamed_stage(
     with Results.from_ladruno(path, model_h5=model_h5) as r:
         combos = r.combinations()
         for name in ("by_program", "by_shown"):
-            got = combos.evaluate(name, "displacement_x").field.values[-1]
+            got = combos.evaluate(name, "displacement_x").field.values[:, 0]
             np.testing.assert_allclose(got, want, rtol=1e-15)
