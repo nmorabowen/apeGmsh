@@ -2842,6 +2842,26 @@ none. `@FAMILY` and `@ORDER` are required because the `.ladruno` read path needs
 them to place `GP_PARAM`: a barycentric rule's frame differs between `lagrange` and
 `bernstein`, and a group with no `@ORDER` reads as an old conversion.
 
+**A `"bary"` `GP_PARAM`.** The fork's schema (`ladruno_schema_v1.md` §3) says only
+that a simplex rule stores free barycentric coordinates. It does not say which
+element node each column weights, and the answer depends on the element. The
+readers (Python `gp_param_to_gmsh`, the app's `baryToGmsh`) need `@FAMILY` beside
+`@TOPOLOGY` to tell, and convert to gmsh `(u, v[, w])` with the element's nodes in
+gmsh corner order:
+
+| `@TOPOLOGY` | `@FAMILY` | column k weights | gmsh `(u, v[, w])` |
+|---|---|---|---|
+| `tri`, `tet` | `lagrange` | node k; the last node is `1 - Σ` (fork `computeGlobalGP`) | columns `1..` of the full row |
+| `tet` | `bernstein` (BezierTet10) | node k; the last node is `1 - Σ` (`BezierTet10.cpp`, `N0 = L1²`) | columns `1..` of the full row |
+| `tri` | `bernstein` (BezierTri6) | node k + 1; node 0 is `1 - Σ` (`BezierTri6.cpp`, `N0 = ξ3²`) | the row as stored |
+
+Any other `@TOPOLOGY` or `@FAMILY`, including the `"triangle"` that tims-workbench's
+`enrich_native_ladruno` writes over the recorder's `"tri"`, has no known frame. The
+group's values are still read, but it gets no natural coordinates, so it is neither
+extrapolated to nodes nor given Gauss markers. Do not use `GLOBAL_GP_COORDS` to
+decide the frame: that writer computes it node-0-first for BezierTri6, against the
+element.
+
 **Names.** A name is data in `@name` or a table column, never a link. It is
 non-empty NFC UTF-8 with no control characters and no leading or trailing
 whitespace, and compares byte-equal.
