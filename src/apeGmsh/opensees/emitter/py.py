@@ -722,10 +722,18 @@ class PyEmitter:
     #: Trims nodes to ``_model_ndm`` and refuses a lossy trim (#1337).
     _dropped_axes: DroppedAxisGuard = DroppedAxisGuard.BEFORE_MODEL
 
+    #: Builder ndf in force, learned from :meth:`model`; ``None`` until then.
+    _builder_ndf: "int | None" = None
+    #: ``(ndf, index of the restore line, indent)`` of the open mass
+    #: bracket, so a run of consecutive off-envelope masses in one block
+    #: shares one bracket.
+    _mass_bracket: "tuple[int, int, str] | None" = None
+
     def model(self, *, ndm: int, ndf: int) -> None:
         # openseespy.model takes positional + flag-style args:
         # ops.model('basic', '-ndm', 3, '-ndf', 6).
         self._model_ndm = ndm
+        self._builder_ndf = ndf
         self._dropped_axes = DroppedAxisGuard(ndm)
         self._lines.append(
             _ops_call("model", "basic", "-ndm", ndm, "-ndf", ndf)
@@ -776,7 +784,30 @@ class PyEmitter:
         self._lines.append(_ops_call("fix", tag, *dofs))
 
     def mass(self, tag: int, *values: float) -> None:
-        self._lines.append(_ops_call("mass", tag, *values))
+        line = _ops_call("mass", tag, *values)
+        n, env = len(values), self._builder_ndf
+        if env is None or n == env:
+            self._lines.append(line)
+            return
+        # openseespy's ``mass`` sizes the matrix by the BUILDER ndf, not
+        # the node's (``OPS_addNodalMass``), so a mass on a node whose ndf
+        # differs from the envelope dies in ``Node::setMass``.  The bridge
+        # sizes ``values`` to the node's ndf; bracket the line in
+        # ``model basic -ndf <n>``.  An openseespy ``model`` re-issue only
+        # sets ndm/ndf (``OPS_model``), so the bracket purges nothing.
+        lines = self._lines
+        if self._mass_bracket == (n, len(lines) - 1, lines.indent):
+            # Extend the bracket the previous mass opened: insert before
+            # its restore line.
+            lines.insert(len(lines) - 1, lines.indent + line)
+            self._mass_bracket = (n, len(lines) - 1, lines.indent)
+            return
+        lines.append(_ops_call(
+            "model", "basic", "-ndm", self._model_ndm, "-ndf", n))
+        lines.append(line)
+        lines.append(_ops_call(
+            "model", "basic", "-ndm", self._model_ndm, "-ndf", env))
+        self._mass_bracket = (n, len(lines) - 1, lines.indent)
 
     # -- MP constraints (ADR 0022, Phase 7b) -----------------------------
 

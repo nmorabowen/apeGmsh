@@ -92,8 +92,7 @@ def emit_tags(
     """
     planner = TagAllocator() if tags is None else tags
     inputs = _PlanInputs(fem=fem, stage_records=tuple(stages))
-    mode = TagMode(
-        split=False, partitioned=False, staged=bool(inputs.stage_records))
+    mode = TagMode(partitioned=False, staged=bool(inputs.stage_records))
     mp, interfaces = _plan_mp_elements_and_interfaces(
         inputs, mode, planner)  # type: ignore[arg-type]
     contacts = _plan_contacts(inputs, mode, planner)  # type: ignore[arg-type]
@@ -132,7 +131,7 @@ def parameter_plan(
     lines = plan_parameters(sites, planner)
     planner.freeze()
     return TagPlan(
-        mode=TagMode(split=False, partitioned=partitioned, staged=True),
+        mode=TagMode(partitioned=partitioned, staged=True),
         allocator=planner,
         elements=ElementTagPlan(),
         transforms=TransformTagPlan(),

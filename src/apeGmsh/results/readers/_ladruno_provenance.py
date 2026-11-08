@@ -184,11 +184,15 @@ def stamp_provenance(
     :class:`StageNamesOmittedWarning`. It excludes ``stage_names``.
 
     ``element_index_space`` is ``"fem"`` only when the part records at
-    least one element and every element id it records (``MODEL/ELEMENTS``
-    connectivity and ``ON_ELEMENTS`` bucket ids) is an element the archive
-    pairs with a FEM id equal to that id. An element the bridge minted
-    without a FEM id (``fem_eid`` -1), or one the archive does not know,
-    leaves it absent, which a reader treats as unverified (#2079).
+    least one element the archive pairs with a FEM id equal to its own id,
+    every result row (an ``ON_ELEMENTS`` bucket ``ID``) is such an element,
+    and every other element its ``MODEL/ELEMENTS`` lists is either such an
+    element or one the archive records as bridge-minted (``fem_eid`` -1:
+    an RBE3 coupling, say) whose id no FEM element carries. A minted
+    element with result rows, an id the archive does not know, or a
+    minted id equal to a FEM id leaves it absent, which a reader treats
+    as unverified (#2079). The stamp speaks for the result rows (h5-schema
+    §``element_index_space``); a model-only minted element carries none.
 
     ``unsupported`` lists the lossy categories the producer could not carry
     (``"[]"`` when none). ``writer`` defaults to ``"apeGmsh <version>"``.
@@ -298,7 +302,7 @@ def stamp_provenance(
                                     program_names, program_kinds, kind_error)
         if names is not None:
             wanted["stage_names"] = _json(names)
-        if _is_fem_index_space(facts.element_tags, pairing):
+        if _is_fem_index_space(facts.model_tags, facts.result_tags, pairing):
             wanted["element_index_space"] = "fem"
         if facts.malformed and not overwrite:
             raise ProvenanceStampRefused(
@@ -577,18 +581,20 @@ def _program_facts(
 
 
 class _PartFacts:
-    __slots__ = ("groups", "kinds", "empty", "element_tags", "owned",
-                 "all_vlen_utf8", "malformed")
+    __slots__ = ("groups", "kinds", "empty", "model_tags", "result_tags",
+                 "owned", "all_vlen_utf8", "malformed")
 
     def __init__(
         self, groups: "list[str]", kinds: "list[Optional[str]]",
-        empty: "list[bool]", element_tags: "np.ndarray",
-        owned: "dict[str, str]", all_vlen_utf8: bool, malformed: "list[str]",
+        empty: "list[bool]", model_tags: "np.ndarray",
+        result_tags: "np.ndarray", owned: "dict[str, str]",
+        all_vlen_utf8: bool, malformed: "list[str]",
     ) -> None:
         self.groups = groups
         self.kinds = kinds
         self.empty = empty
-        self.element_tags = element_tags
+        self.model_tags = model_tags
+        self.result_tags = result_tags
         self.owned = owned
         self.all_vlen_utf8 = all_vlen_utf8
         self.malformed = malformed
@@ -647,7 +653,8 @@ def _read_part(path: Path) -> _PartFacts:
             owned[name] = _as_text(prov.attrs[name], f"{path}:{_PROVENANCE}@{name}")
         kinds: "list[Optional[str]]" = []
         empty: "list[bool]" = []
-        tags = [np.empty(0, dtype=np.int64)]
+        model_tags = [np.empty(0, dtype=np.int64)]
+        result_tags = [np.empty(0, dtype=np.int64)]
         groups = _stage_groups(h5)
         for gname in groups:
             grp = h5[gname]
@@ -657,9 +664,13 @@ def _read_part(path: Path) -> _PartFacts:
             )
             empty.append("EMPTY_PARTITION" in grp.attrs and int(
                 np.asarray(grp.attrs["EMPTY_PARTITION"]).ravel()[0]) == 1)
-            tags.extend(_stage_element_tags(grp))
-    return _PartFacts(groups, kinds, empty, np.unique(np.concatenate(tags)),
-                      owned, all_vlen, malformed)
+            in_model, in_results = _stage_element_tags(grp)
+            model_tags.extend(in_model)
+            result_tags.extend(in_results)
+    return _PartFacts(groups, kinds, empty,
+                      np.unique(np.concatenate(model_tags)),
+                      np.unique(np.concatenate(result_tags)), owned, all_vlen,
+                      malformed)
 
 
 def _set_kinds(all_facts: "list[_PartFacts]") -> "list[Optional[str]]":
@@ -674,11 +685,14 @@ def _set_kinds(all_facts: "list[_PartFacts]") -> "list[Optional[str]]":
     return out
 
 
-def _stage_element_tags(stage: "h5py.Group") -> "list[np.ndarray]":
-    """Element ids one stage records: ``MODEL/ELEMENTS`` and bucket ``ID`` s."""
+def _stage_element_tags(
+    stage: "h5py.Group",
+) -> "tuple[list[np.ndarray], list[np.ndarray]]":
+    """Element ids one stage records: ``(MODEL/ELEMENTS, bucket ID s)``."""
     import h5py
 
     out: list[np.ndarray] = []
+    rows: list[np.ndarray] = []
     if "MODEL" in stage and "ELEMENTS" in stage["MODEL"]:
         for grp in stage["MODEL/ELEMENTS"].values():
             if isinstance(grp, h5py.Group) and "CONNECTIVITY" in grp:
@@ -691,9 +705,9 @@ def _stage_element_tags(stage: "h5py.Group") -> "list[np.ndarray]":
                 continue
             for bucket in token.values():
                 if isinstance(bucket, h5py.Group) and "ID" in bucket:
-                    out.append(np.asarray(bucket["ID"][...],
-                                          dtype=np.int64).ravel())
-    return out
+                    rows.append(np.asarray(bucket["ID"][...],
+                                           dtype=np.int64).ravel())
+    return out, rows
 
 
 def _check_part_set(parts: list[Path]) -> None:
@@ -1080,10 +1094,31 @@ def _engine_for(
     return backend, build
 
 
-def _is_fem_index_space(tags: "np.ndarray", pairing: "dict[int, int]") -> bool:
-    if tags.size == 0:
+def _is_fem_index_space(
+    model_tags: "np.ndarray", result_tags: "np.ndarray",
+    pairing: "dict[int, int]",
+) -> bool:
+    """Whether the part's element ids are provably FEM ids (#2079).
+
+    Every result row must be an element the archive pairs with itself.
+    A model-only element may instead be bridge-minted (``fem_eid`` -1),
+    provided no FEM element carries its id: a minted id that equals a FEM
+    id could be joined to the wrong element.
+    """
+    def self_paired(t: int) -> bool:
+        return pairing.get(t) == t
+
+    if not all(self_paired(int(t)) for t in result_tags):
         return False
-    return all(int(t) in pairing and pairing[int(t)] == int(t) for t in tags)
+    fem_ids = {v for v in pairing.values() if v != -1}
+    seen_fem = result_tags.size > 0
+    for raw in np.setdiff1d(model_tags, result_tags):
+        tag = int(raw)
+        if self_paired(tag):
+            seen_fem = True
+        elif pairing.get(tag) != -1 or tag in fem_ids:
+            return False
+    return seen_fem
 
 
 # ---------------------------------------------------------------------------

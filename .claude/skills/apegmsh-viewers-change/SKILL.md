@@ -153,6 +153,11 @@ The page is not trusted to name a path (owner ruling "option A", #2753). Read th
       the test parses. `preload.test.ts` loads the preload against the same stub. Every path a
       refusal test refuses is a readable file, so the door would read it without the check
       (`setDoors.test.ts` header). Run `npm test` in `apeGmshViewer/`.
+- [ ] **A door onto a second set reads it as a slot of its own.** VU10's compare doors
+      (`variants:compare`, `compare:readStep`, `compare:close`) take a manifest row by index
+      and label (`Study.row`, which resolves and confines it again at open time), never touch
+      `windowSet`, `dropped` or `followModel`, read through their own `ResultsHost`, and are
+      emptied in `pageLoading`. `test/main/variantDoors.test.ts` is the pattern.
 
 ## Before the PR
 

@@ -141,7 +141,7 @@ def _chain(ops, handler: str = "Plain"):
 
 def _ops(fem, *, beam_slave: bool = False):
     ops = apeSees(fem, default_orientation=None)
-    ops.model(ndm=2, ndf=2)
+    ops.model(ndm=2, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
     ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mat)
     if beam_slave:
@@ -483,7 +483,8 @@ def test_partitioned_plus_staged_emits_the_unit_in_the_owner_stage_block(
     # The whole unit sits inside the owner (rank 0) bracket, with the
     # foreign slave's ghost decl preceding it.
     assert i_open < i_unit < i_zl < i_close
-    assert "node 5 2.0 1.0" in block[i_open:i_unit]   # ndm=2: no padded z
+    # ndm=2: no padded z; the 2-dof liner node ghosts with its home ndf.
+    assert "node 5 2.0 1.0 -ndf 2" in block[i_open:i_unit]
     # Nothing interface-shaped in the base pass or the ground stage.
     base = lines[:lines.index("# === Stage: ground ===")]
     assert not [ln for ln in base if ln.startswith("uniaxialMaterial ENT ")]

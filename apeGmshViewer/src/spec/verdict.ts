@@ -58,7 +58,7 @@ export function viewVerdict(s: State, shot: SpecShot, plan: ShotPlan, on: OnScre
         if (!(scan?.key === v.keys.scan && scan.status === "done")) ready = false;
       }
       if (!v.stepMeasured || !on.contour) ready = false;
-    } else if (v.state === "combination") {
+    } else if (v.state === "combination" || v.state === "difference") {
       // One state: no step to measure and no history to scan; shown once its colours are applied.
       if (!on.contour) ready = false;
     } else ready = false;

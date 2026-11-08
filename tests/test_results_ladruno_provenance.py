@@ -641,6 +641,56 @@ def test_element_index_space_absent_for_a_bridge_minted_element(
     assert _provenance(parts[0])["element_index_space"] == "fem"  # element 2 only
 
 
+def _mint_element_3(src: Path, dst: Path) -> Path:
+    """A copy of a bridge archive whose element 3 carries ``fem_eid`` -1."""
+    shutil.copy(src, dst)
+    with h5py.File(dst, "r+") as f:
+        for g in f["opensees/element_meta"].values():
+            if "fem_eids" not in g:
+                continue
+            ids = np.asarray(g["ids"][...]).ravel()
+            fem = np.asarray(g["fem_eids"][...]).copy()
+            fem.reshape(-1)[ids == 3] = -1
+            g["fem_eids"][...] = fem
+    return dst
+
+
+def test_element_index_space_fem_with_a_model_only_minted_element(
+    tmp_path, model_dir,
+) -> None:
+    """YOO T2_solid: RBE3 couplings the bridge minted sit in MODEL/ELEMENTS
+    with no result rows; every result row is a FEM id, so the file is "fem".
+    """
+    path = tmp_path / "truss2d.ladruno"
+    shutil.copy(FIXTURES / "truss2d.ladruno", path)
+    _renumber(path)  # elements 2, 3: the bars' ops tags
+    with h5py.File(path, "r+") as f:  # results for element 2 only
+        b = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/basicForce/12-Truss[1:0:0]"]
+        ids, data = b["ID"][...], b["DATA"][...]
+        keep = ids[:, 0] == 2
+        del b["ID"], b["DATA"]
+        b.create_dataset("ID", data=ids[keep])
+        b.create_dataset("DATA", data=data[:, keep, :])
+    model = _mint_element_3(model_dir / "one_static.h5", tmp_path / "minted.h5")
+    stamp_provenance(path, model)
+    assert _provenance(path)["element_index_space"] == "fem"
+
+
+def test_fem_index_space_rule() -> None:
+    from apeGmsh.results.readers._ladruno_provenance import _is_fem_index_space
+
+    a = np.asarray
+    pairing = {2: 2, 3: -1, 4: 3}  # 3 minted; tag 4 is FEM element 3
+    # A minted model-only id that equals a FEM id could join the wrong element.
+    assert not _is_fem_index_space(a([2, 3]), a([2]), pairing)
+    assert _is_fem_index_space(a([2, 3]), a([2]), {2: 2, 3: -1})
+    # A minted element with result rows, or an unknown id, is never "fem".
+    assert not _is_fem_index_space(a([2, 3]), a([2, 3]), {2: 2, 3: -1})
+    assert not _is_fem_index_space(a([2, 9]), a([2]), {2: 2})
+    # Only minted elements: nothing proves a FEM id.
+    assert not _is_fem_index_space(a([3]), a([], dtype=int), {3: -1})
+
+
 def test_inputs_are_type_checked(parts, model_dir) -> None:
     before = _sha(parts)
     with pytest.raises(TypeError, match="unsupported"):
