@@ -706,8 +706,7 @@ def _build_case(name: str) -> Case:
     """Build case ``name`` afresh (a mutation test patches the emit first)."""
     bm = _MODELS[name]().build()
     cls: type = RecordingEmitter
-    mode = emit_mode(
-        bm, split=False, supports_partitions=cls.caps.supports_partitions,
+    mode = emit_mode(bm, supports_partitions=cls.caps.supports_partitions,
     )
     assert mode not in bm._tag_plans
     with _mint_log() as log:
@@ -1095,7 +1094,7 @@ def test_emit_refuses_a_short_or_empty_contact_plan(
     from apeGmsh.opensees._internal.tag_plan import ContactTagPlan
 
     bm = _MODELS[name]().build()
-    mode = emit_mode(bm, split=False, supports_partitions=True)
+    mode = emit_mode(bm, supports_partitions=True)
     plan = bm._tag_plan(mode)
     contacts = plan.contacts.contacts
     assert contacts is not None and contacts.lines
@@ -1124,7 +1123,7 @@ def test_emit_refuses_a_contact_plan_with_a_swapped_record(name: str) -> None:
     from apeGmsh.opensees._internal.tag_plan import ContactTagPlan
 
     bm = _MODELS[name]().build()
-    mode = emit_mode(bm, split=False, supports_partitions=True)
+    mode = emit_mode(bm, supports_partitions=True)
     plan = bm._tag_plan(mode)
     contacts = plan.contacts.contacts
     assert contacts is not None
@@ -1429,7 +1428,7 @@ def test_a_stray_region_mint_raises(
 
 def _memoised_region_plan(name: str) -> tuple[Any, TagMode, TagPlan]:
     bm = _MODELS[name]().build()
-    mode = emit_mode(bm, split=False, supports_partitions=True)
+    mode = emit_mode(bm, supports_partitions=True)
     return bm, mode, bm._tag_plan(mode)
 
 
@@ -1617,7 +1616,7 @@ def test_short_or_empty_parameter_plan_fails_the_oracle() -> None:
         assert _family_mismatch(case, "parameters", ()), name
     assert set(_PARAM_CASES) <= checked
     modes = {_case(n).plan.mode for n in _PARAM_CASES}
-    assert modes == {TagMode(False, p, s) for p in (False, True)
+    assert modes == {TagMode(p, s) for p in (False, True)
                      for s in (False, True)}
 
 
@@ -2079,8 +2078,8 @@ def test_short_or_empty_mp_or_interface_plan_fails_the_oracle(
         assert _family_mismatch(case, family, ()), name
     assert set(names) <= checked
     modes = {_case(n).plan.mode for n in names}
-    assert TagMode(False, True, True) in modes      # staged partitioned
-    assert TagMode(False, False, True) in modes     # staged flat
+    assert TagMode(True, True) in modes      # staged partitioned
+    assert TagMode(False, True) in modes     # staged flat
 
 
 def test_partitioned_mp_elements_take_the_flat_tags() -> None:
@@ -2534,11 +2533,10 @@ def test_fem_ids_case_reserves_past_the_carrier() -> None:
 
 def test_corpus_reaches_every_mode() -> None:
     modes = {_case(n).plan.mode for n in CASES}
-    for split, partitioned, staged in (
-        (False, False, False), (False, True, False),
-        (False, False, True), (False, True, True),
+    for partitioned, staged in (
+        (False, False), (True, False), (False, True), (True, True),
     ):
-        assert TagMode(split, partitioned, staged) in modes
+        assert TagMode(partitioned, staged) in modes
 
 
 def test_two_rank_regions_take_one_tag_in_every_mode() -> None:
@@ -2983,7 +2981,7 @@ def test_a_cut_contact_plan_is_a_named_plan_miss(name: str) -> None:
     from apeGmsh.opensees._internal.tag_plan import ContactTagPlan
 
     bm = _MODELS[name]().build()
-    mode = emit_mode(bm, split=False, supports_partitions=True)
+    mode = emit_mode(bm, supports_partitions=True)
     plan = bm._tag_plan(mode)
     contacts = plan.contacts.contacts
     assert contacts is not None and contacts.lines
