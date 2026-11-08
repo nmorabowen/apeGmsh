@@ -208,7 +208,7 @@ def _model(n_ranks: int | None, variant: str) -> Any:
         raise ValueError(f"unknown variant {variant!r}")
     partitioned = n_ranks is not None
     ops = apeSees(cast(Any, _fem(n_ranks, contact=variant == "contact")))
-    ops.model(ndm=3, ndf=3)
+    ops.model(ndm=3, ndf=6)
     mat = ops.uniaxialMaterial.ElasticMaterial(E=1.0e6)
     ops.uniaxialMaterial.ElasticMaterial(E=2.0e5, name="steel")
     ops.element.Truss(pg="Bars", A=0.01, material=mat)

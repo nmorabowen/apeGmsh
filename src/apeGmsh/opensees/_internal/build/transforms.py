@@ -56,6 +56,75 @@ _TRANSF_TYPE_TOKEN: dict[type[GeomTransf], str] = {
 }
 
 
+#: The builder ``ndf`` each transform's parser accepts, by ``ndm``, on
+#: BOTH interpreters (one model emits a Tcl and a py deck).  The parsers
+#: gate on the BUILDER state, never on the nodes' per-node ``-ndf``,
+#: upstream and the Ladruno fork alike:
+#: ``SRC/interpreter/OpenSeesCrdTransfCommands.cpp:29-63`` (py:
+#: Linear/PDelta 2-D {3}, 3-D {6}; Corotational 2-D {3, 4}, 3-D {6, 7}) and
+#: ``SRC/coordTransformation/TclGeomTransfCommand.cpp:113-215`` (Tcl: every
+#: kind 2-D {3, 4}, 3-D {6}).  This table is their intersection.  The frame
+#: ELEMENT half of the same gate is ``_element_capabilities._FRAME_BUILDER_NDF``.
+_TRANSF_BUILDER_NDF: dict[type[GeomTransf], dict[int, frozenset[int]]] = {
+    Linear:       {2: frozenset({3}), 3: frozenset({6})},
+    PDelta:       {2: frozenset({3}), 3: frozenset({6})},
+    Corotational: {2: frozenset({3, 4}), 3: frozenset({6})},
+}
+
+
+def _frame_ndf_error(
+    what: str, allowed: "Iterable[int]", *, ndm: int, envelope_ndf: int,
+) -> BridgeError:
+    allowed = sorted(allowed)
+    frame = {2: 3, 3: 6}.get(int(ndm), allowed[0])
+    return BridgeError(
+        f"{what} is declared under ops.model(ndm={ndm}, ndf={envelope_ndf}), "
+        f"but OpenSees parses it only under a builder with ndf "
+        f"{' or '.join(str(n) for n in allowed)} at ndm={ndm}: its parser "
+        f"reads the builder ndf, never a node's -ndf (py: \"current NDM and "
+        f"NDF is incompatible with frame elements\"). Declare "
+        f"ops.model(ndm={ndm}, ndf={frame}). Per-node ndf is inferred from "
+        f"the elements (ADR 0048), so solid nodes still get their own -ndf; "
+        f"only nodes no element reaches (decoupled, element-less) take the "
+        f"envelope ndf={frame}."
+    )
+
+
+def validate_frame_builder_ndf(
+    transforms: Iterable[GeomTransf],
+    elements: Iterable[Element],
+    *, ndm: int, envelope_ndf: int,
+) -> None:
+    """Refuse a ``geomTransf`` or frame element the envelope builder rejects.
+
+    Transforms and frame elements are declared under the envelope builder
+    (``ops.model(ndm, ndf)``): they are not bracketed, because a bracket
+    purges the ``geomTransf`` / ``beamIntegration`` / ``damping`` they
+    reference on Tcl (ADR 0099 INV-1/INV-3).  Under ``ndm=3, ndf=3`` (a
+    solid model with beam piles) the deck would die at its first
+    ``geomTransf`` line.  This raises at emit instead, before anything is
+    written.  Choosing the envelope for the user is not an option: it is
+    also the ndf of every node inference cannot see (ADR 0048, shipped
+    variant (1)), so changing it silently would change those nodes.
+    """
+    from ..._element_capabilities import element_frame_builder_ndf
+
+    for t in transforms:
+        allowed = _TRANSF_BUILDER_NDF.get(type(t), {}).get(int(ndm))
+        if allowed is None or int(envelope_ndf) in allowed:
+            continue
+        raise _frame_ndf_error(
+            f"geomTransf {_TRANSF_TYPE_TOKEN[type(t)]}", allowed,
+            ndm=ndm, envelope_ndf=envelope_ndf)
+    for e in elements:
+        need = element_frame_builder_ndf(type(e).__name__, ndm)
+        if need is None or int(envelope_ndf) == need:
+            continue
+        raise _frame_ndf_error(
+            f"element {type(e).__name__}", (need,),
+            ndm=ndm, envelope_ndf=envelope_ndf)
+
+
 def is_orientation_transform(t: Primitive) -> bool:
     """True if ``t`` is a Linear / PDelta / Corotational with an
     ``orientation=`` parameter set (and hence needs per-element

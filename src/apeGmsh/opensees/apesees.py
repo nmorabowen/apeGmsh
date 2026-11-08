@@ -140,7 +140,10 @@ from ._internal.build.stage_validate import (
     validate_class_wide_stage_flags,
     validate_stage_routes,
 )
-from ._internal.build.transforms import emit_transform_specs
+from ._internal.build.transforms import (
+    emit_transform_specs,
+    validate_frame_builder_ndf,
+)
 from ._internal.build.pg_expand import (
     expand_pg_to_elements,
     expand_pg_to_nodes,
@@ -1497,6 +1500,12 @@ class BuiltModel:
                 elements.append(p)
             else:
                 rest.append(p)
+
+        # 3a. Transforms and frame elements are declared under the
+        # envelope builder, whose ndf their parsers gate on (not the
+        # nodes'). Before anything is written, so no partial deck.
+        validate_frame_builder_ndf(
+            transforms, elements, ndm=self.ndm, envelope_ndf=self.ndf)
 
         # Fail loud on the shell-on-solid node-sharing trap: a node
         # shared by two elements with disjoint per-node ndf (shell 6 vs

@@ -143,7 +143,7 @@ def test_equal_ndf_needs_no_constraint_handler(tmp_path):
 # ======================================================================
 def _mixed_ops(fem):
     ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
-    ops.model(ndm=2, ndf=2)
+    ops.model(ndm=2, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     ops.element.FourNodeQuad(
         pg="rock", thickness=THICKNESS, material=mat,
@@ -161,13 +161,15 @@ def test_mixed_ndf_flat_deck_phantom_equaldof_materials_zerolength(tmp_path):
     lines = _deck(_mixed_ops(fem), tmp_path)
 
     # The phantom node is declared with the record's OWN ndf (2), not the
-    # shared helper's hardcoded 6.
-    phantom_lines = [
-        ln for ln in lines
+    # shared helper's hardcoded 6. (Under the frame envelope ndf=3 the quad
+    # nodes carry an explicit ``-ndf 2`` too, so this is a subset check;
+    # the per-pair loop below pins each phantom line exactly.)
+    ndf2_ids = {
+        int(ln.split()[1]) for ln in lines
         if ln.startswith("node ") and ln.endswith("-ndf 2")
-    ]
+    }
     phantoms = {int(r.phantom_node) for r in recs}
-    assert {int(ln.split()[1]) for ln in phantom_lines} == phantoms
+    assert phantoms <= ndf2_ids
 
     eq = [ln for ln in lines if ln.startswith("equalDOF ")]
     assert len(eq) == 2
