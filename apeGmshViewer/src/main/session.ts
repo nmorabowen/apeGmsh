@@ -10,6 +10,8 @@
 //                         than leaving it watched (Fable, #1310 finding 2)
 
 import { resolve } from "node:path";
+import type { VariantsIn } from "../state/types.ts";
+import { rowOf, type VariantRow, type VariantsRead } from "../reader/variants.ts";
 import { pairSet, samePath, type OpenSet } from "./pairing.ts";
 import type { WatchSink } from "./watch.ts";
 
@@ -91,5 +93,122 @@ export class OpenSession {
     });
     this.watcher = watcher;
     this.set = set;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// VU10 (ADR 0132 D9, under owner ruling option A, #2753): the study main holds.
+// Main reads a manifest only from a path the user gave (a drop, argv, a
+// double-click, a render spec), keeps the rows that pass with their resolved
+// paths, and re-reads the same path when it changes. The page names a row by
+// index and label, never by path (`row`). The compare slot holds at most one
+// row's set, read-only, apart from the window set (`OpenSession`): nothing
+// here adopts it, watches it or writes into it.
+// ---------------------------------------------------------------------------
+
+export interface StudyDeps {
+  /** reader/variants.ts `readVariants` over the disk */
+  read(manifest: string): VariantsRead;
+  /** watch the manifest; `changed` is called when it is rewritten */
+  watch(manifest: string, changed: () => void): { close(): void };
+  /** a note for the log */
+  note(message: string): void;
+  /** reader/variants.ts `resolveRow` over the disk now: the file to open, or why the row no longer opens */
+  recheck(manifest: string, row: VariantRow): { ok: true; real: string } | { ok: false; code: string; reason: string };
+  /** reader/variants.ts `confinedToStudy` over the disk now: null when `path` lies inside the manifest's folder */
+  confined(manifest: string, path: string): string | null;
+}
+
+export class Study {
+  private readonly deps: StudyDeps;
+  private watcher: { close(): void } | null = null;
+  /** the manifest the user opened, and its last read */
+  manifest: string | null = null;
+  read: VariantsRead | null = null;
+  /** the compare slot: a row and the set paired from it */
+  compare: { row: VariantRow; set: OpenSet } | null = null;
+  /** called after a re-read of the watched manifest */
+  onChange: (() => void) | null = null;
+
+  constructor(deps: StudyDeps) {
+    this.deps = deps;
+  }
+
+  /** Read `manifest` (absolute, a path the user gave). A refused file leaves the study as it was and answers why. */
+  open(manifest: string): VariantsRead {
+    const r = this.deps.read(manifest);
+    if (!r.ok) return r;
+    this.close();
+    this.manifest = manifest;
+    this.read = r;
+    this.watcher = this.deps.watch(manifest, () => this.reread());
+    return r;
+  }
+
+  /**
+   * D9.3: re-read the same path; the rows come from that read. A compare row
+   * that no longer passes with its label and its file leaves the slot.
+   */
+  reread(): void {
+    if (this.manifest === null) return;
+    const r = this.deps.read(this.manifest);
+    this.read = r;
+    if (!r.ok) this.deps.note(`the variants manifest ${this.manifest} is refused on re-read: ${r.reason}`);
+    const c = this.compare;
+    if (c) {
+      const now = rowOf(r, c.row.index, c.row.label);
+      if (!now.ok || !samePath(now.row.resolved, c.row.resolved)) this.compare = null;
+    }
+    this.onChange?.();
+  }
+
+  /**
+   * The row the page named, when its label matches (D9.2), and the file to
+   * open: the row resolved and confined again now, so a folder swapped for a
+   * junction since the read is refused, never followed (INV-5; #2817 review 3).
+   */
+  row(index: unknown, label: unknown): { ok: true; row: VariantRow; open: string } | { ok: false; reason: string } {
+    const r = rowOf(this.read, index, label);
+    if (!r.ok) return r;
+    const now = this.deps.recheck(this.manifest!, r.row);
+    if (!now.ok) return { ok: false, reason: `variant row ${r.row.index} (${JSON.stringify(r.row.label)}) no longer opens (${now.code}): ${now.reason}` };
+    return { ok: true, row: r.row, open: now.real };
+  }
+
+  /** Why a file of an opened row's set lies outside the manifest's folder, or null (D9.4: the paired siblings are confined too). */
+  confine(path: string | null): string | null {
+    if (path === null || this.manifest === null) return null;
+    return this.deps.confined(this.manifest, path);
+  }
+
+  /** The row whose model file is `model` (as written or resolved), or null. */
+  rowOfModel(model: string | null): VariantRow | null {
+    if (model === null || !this.read?.ok) return null;
+    return this.read.rows.find((r) => samePath(r.resolved, model) || samePath(r.real, model)) ?? null;
+  }
+
+  /** What the page sees: never a resolved path. Null with no study open. */
+  view(windowModel: string | null): VariantsIn | null {
+    if (this.manifest === null || this.read === null) return null;
+    const r = this.read;
+    const compare = this.compare ? { index: this.compare.row.index, label: this.compare.row.label } : null;
+    if (!r.ok) return { manifest: this.manifest, version: "", newer: null, rows: [], refused: [{ index: -1, label: null, code: r.code, reason: r.reason }], active: null, compare };
+    return {
+      manifest: r.manifest,
+      version: r.version,
+      newer: r.newer,
+      rows: r.rows.map((x) => ({ index: x.index, label: x.label, path: x.path, params: { ...x.params } })),
+      refused: r.refused.map((x) => ({ ...x })),
+      active: this.rowOfModel(windowModel)?.index ?? null,
+      compare,
+    };
+  }
+
+  close(): void {
+    this.watcher?.close();
+    this.watcher = null;
+    this.manifest = null;
+    this.read = null;
+    this.compare = null;
   }
 }

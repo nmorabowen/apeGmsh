@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
 
 from apeGmsh.results import Results
+from apeGmsh.results.readers._ladruno_writer import nodal_history_misfits, transcode_target
 from apeGmsh.results.transcoders import RecorderTranscoder
 from apeGmsh.results.spec._resolved import (
     ResolvedRecorderRecord,
@@ -41,6 +43,15 @@ class _MockFem:
 # =====================================================================
 # Helpers — emit synthetic .out files matching spec emission
 # =====================================================================
+
+def _cached_files(cache_root: Path) -> list[Path]:
+    """The cached transcodes, sorted: ``<key>.h5`` (native) or
+    ``<key>.ladruno`` (nodal records only), never the ``<key>.model.h5``
+    archive beside them."""
+    return sorted(
+        p for p in [*cache_root.glob("*.h5"), *cache_root.glob("*.ladruno")]
+        if not p.name.endswith(".model.h5"))
+
 
 def _write_synthetic_node_out(
     path: Path,
@@ -272,10 +283,8 @@ def test_from_recorders_caches_result(tmp_path: Path) -> None:
         slab = r.nodes.get(component="displacement_x")
         np.testing.assert_allclose(slab.values[0], [0.1, 0.2])
 
-    # Cache directory should now have one HDF5 cache file.  Phase 8
-    # also materializes a sibling ``<key>.model.h5`` (the model zone
-    # the Composed-file pattern embeds); filter those out.
-    cached = [p for p in cache_root.glob("*.h5") if not p.stem.endswith(".model")]
+    # Cache directory should now have one cache file.
+    cached = _cached_files(cache_root)
     assert len(cached) == 1
     cached_mtime = cached[0].stat().st_mtime_ns
 
@@ -314,11 +323,7 @@ def test_cache_invalidates_on_source_change(tmp_path: Path) -> None:
         spec, output_dir, fem=fem, cache_root=cache_root,
         model=_open_model_from_h5(_stub_model_h5_path()),
     ).close()
-    # Phase 8 also materializes ``<key>.model.h5`` alongside each
-    # cache entry; filter those out.
-    cached_files_v1 = sorted(
-        p for p in cache_root.glob("*.h5") if not p.stem.endswith(".model")
-    )
+    cached_files_v1 = _cached_files(cache_root)
     assert len(cached_files_v1) == 1
     v1_key = cached_files_v1[0].stem
 
@@ -328,9 +333,7 @@ def test_cache_invalidates_on_source_change(tmp_path: Path) -> None:
         spec, output_dir, fem=fem, cache_root=cache_root,
         model=_open_model_from_h5(_stub_model_h5_path()),
     ).close()
-    cached_files_v2 = sorted(
-        p for p in cache_root.glob("*.h5") if not p.stem.endswith(".model")
-    )
+    cached_files_v2 = _cached_files(cache_root)
     # Either two cached files coexist, or v1 was overwritten — at minimum
     # the new key differs from v1.
     new_keys = {f.stem for f in cached_files_v2}
@@ -370,9 +373,281 @@ def test_cache_invalidates_on_fem_change(tmp_path: Path) -> None:
         model=_open_model_from_h5(_stub_model_h5_path()),
     ).close()
 
-    # Filter out the Phase 8 ``<key>.model.h5`` sidecars.
-    keys = {
-        f.stem for f in cache_root.glob("*.h5")
-        if not f.stem.endswith(".model")
-    }
+    keys = {f.stem for f in _cached_files(cache_root)}
     assert len(keys) == 2     # different fem → different cache entry
+
+
+# =====================================================================
+# ADR 0131 D6: nodal records transcode to .ladruno
+# =====================================================================
+
+#: Every node recorder type the read decodes (rotations aside: the stub
+#: model's archive masks them, and tests/test_results_transcoder_nodes_ndf.py
+#: holds them on both targets).
+_ALL_NODAL = (
+    "displacement_x", "displacement_y", "displacement_z", "velocity_y",
+    "acceleration_z", "reaction_force_x", "reaction_force_z", "force_y",
+    "pore_pressure",
+)
+
+
+def _value(k: int, nid: int, dof: int) -> float:
+    return 1.0 + 0.01 * nid + 0.001 * dof + 0.0001 * k
+
+
+def _nodal_spec(fem: Any, components: tuple[str, ...] = _ALL_NODAL) -> ResolvedRecorderSpec:
+    """Two records over overlapping nodes, so the merge leaves NaN holes."""
+    return ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(
+            ResolvedRecorderRecord(
+                category="nodes", name="a", components=components,
+                dt=None, n_steps=None, node_ids=np.array([1, 2, 3])),
+            ResolvedRecorderRecord(
+                category="nodes", name="b", components=components[:2],
+                dt=None, n_steps=None, node_ids=np.array([3, 4])),
+        ),
+    )
+
+
+def _write_spec_files(spec: ResolvedRecorderSpec, out: Path,
+                      time: tuple[float, ...] = (0.0, 0.5, 1.0),
+                      stage_id: "str | None" = None) -> None:
+    """Every file the emit names for ``spec``, valued by :func:`_value`."""
+    from apeGmsh.results.writers._cache import quiet_emit_logical
+
+    out.mkdir(exist_ok=True)
+    for rec in spec.records:
+        for lr in quiet_emit_logical(rec, output_dir=str(out), file_format="out",
+                                     stage_id=stage_id):
+            _write_synthetic_node_out(
+                Path(lr.file_path), time=list(time),
+                node_ids=list(lr.target_ids), dofs=list(lr.dofs),
+                value_fn=_value)
+
+
+def _native_read(spec: ResolvedRecorderSpec, out: Path, fem: Any, tmp: Path,
+                 model: Any, **kw: Any) -> Results:
+    """The read every nodal transcode was before: a native target."""
+    archive = tmp / "native.model.h5"
+    model.to_h5(archive)
+    target = tmp / "native.h5"
+    RecorderTranscoder(spec, out, target, fem, model_h5_src=archive, **kw).run()
+    return Results.from_native(target, fem=fem, model=model)
+
+
+def _assert_same_reads(got: Results, want: Results) -> None:
+    """Stages, times, node ids and values (NaN in place) are the native read's."""
+    assert [(s.name, s.kind, s.n_steps) for s in got.stages] \
+        == [(s.name, s.kind, s.n_steps) for s in want.stages]
+    for g_stage, w_stage in zip(got.stages, want.stages):
+        g, w = got.stage(g_stage.id), want.stage(w_stage.id)
+        comps = sorted(w.nodes.available_components())
+        assert sorted(g.nodes.available_components()) == comps
+        assert comps
+        for comp in comps:
+            gs, ws = g.nodes.get(component=comp), w.nodes.get(component=comp)
+            np.testing.assert_array_equal(gs.node_ids, ws.node_ids, err_msg=comp)
+            np.testing.assert_array_equal(gs.time, ws.time, err_msg=comp)
+            np.testing.assert_array_equal(gs.values, ws.values, err_msg=comp)
+
+
+def _cantilever_fem() -> Any:
+    """A four-node cantilever column (nodes 1..4), labels ``base`` / ``tip``."""
+    import gmsh
+
+    from apeGmsh import apeGmsh
+
+    with apeGmsh(model_name="g8_cantilever", verbose=False) as g:
+        p0 = g.model.geometry.add_point(0.0, 0.0, 0.0)
+        p1 = g.model.geometry.add_point(0.0, 3.0, 0.0)
+        c = g.model.geometry.add_line(p0, p1)
+        gmsh.model.mesh.setTransfiniteCurve(c, 4)
+        g.physical.add(1, [c], name="Col")
+        g.labels.add(0, [p0], "base")
+        g.labels.add(0, [p1], "tip")
+        g.mesh.generation.generate(dim=1)
+        return g.mesh.queries.get_fem_data(dim=1)
+
+
+def staged_model(tmp: Path, stages: "tuple[tuple[str, str], ...]") -> Any:
+    """``(fem, model)``: a bridge program over the cantilever that declares
+    ``stages``, each ``(name, kind)``, as ``ops.stage`` blocks."""
+    from apeGmsh.opensees.apesees import apeSees
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    fem = _cantilever_fem()
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    ops.element.elasticBeamColumn(pg="Col", transf=ops.geomTransf.Linear(),
+                                  A=0.02, E=2.0e11, Iz=3.0e-4)
+    ops.fix(label="base", dofs=(1, 1, 1))
+    for name, kind in stages:
+        transient = kind == "transient"
+        with ops.stage(name=name) as s:
+            s.analysis(test=ops.test.NormDispIncr(tol=1e-8, max_iter=10),
+                       algorithm=ops.algorithm.Linear(),
+                       integrator=(ops.integrator.Newmark(gamma=0.5, beta=0.25)
+                                   if transient else
+                                   ops.integrator.LoadControl(dlam=0.5)),
+                       constraints=ops.constraints.Plain(),
+                       numberer=ops.numberer.RCM(),
+                       system=ops.system.BandGeneral(),
+                       analysis=(ops.analysis.Transient() if transient
+                                 else ops.analysis.Static()))
+            s.run(n_increments=2, **({"dt": 0.01} if transient else {}))
+    tmp.mkdir(parents=True, exist_ok=True)
+    ops.h5(str(tmp / "model.h5"))
+    return fem, OpenSeesModel.from_h5(str(tmp / "model.h5"))
+
+
+def test_a_nodal_run_transcodes_to_ladruno_read_as_the_native_file(tmp_path: Path) -> None:
+    """The card's oracle, for a run whose one stage is the program's one
+    ``ops.stage`` (``analysis``, transient): ``from_recorders`` opens a
+    ``.ladruno`` whose every stage, time, node id and value (the merge's
+    NaN holes included) equal the native transcode of the same files, and
+    a reopen (``open_results``, as the viewer opens it) reads the same
+    names and values."""
+    import h5py
+
+    import apeGmsh
+    from apeGmsh.results._open import open_results
+    from apeGmsh.results.readers._ladruno import LadrunoReader
+
+    fem, model = staged_model(tmp_path / "m", (("analysis", "transient"),))
+    spec = _nodal_spec(fem)
+    out = tmp_path / "out"
+    _write_spec_files(spec, out)
+    cache = tmp_path / "cache"
+
+    with Results.from_recorders(spec, out, fem=fem, cache_root=cache, model=model) as r, \
+            _native_read(spec, out, fem, tmp_path, model) as native:
+        assert r.path is not None and r.path.suffix == ".ladruno"
+        assert isinstance(r._reader, LadrunoReader)
+        assert [(s.name, s.kind) for s in r.stages] == [("analysis", "transient")]
+        _assert_same_reads(r, native)
+        assert np.isnan(r.nodes.get(component="velocity_y").values[:, -1]).all()
+        path, model_path = r.path, r._model_path
+
+    with h5py.File(path, "r") as f:
+        prov = {k: str(v) for k, v in f["INFO/PROVENANCE"].attrs.items()}
+    assert prov["opensees_backend"] == "unknown"
+    assert prov["opensees_build_sha"] == "unknown"
+    assert prov["writer"] == f"apeGmsh recorders->ladruno {apeGmsh.__version__}"
+    assert prov["unsupported"] == '["elements"]'
+    assert prov["fem_hash"] == str(model.lineage.fem_hash)
+    assert "stage_names" not in prov
+
+    (tmp_path / "again").mkdir()
+    with open_results(path, model_path) as lad, \
+            _native_read(spec, out, fem, tmp_path / "again", model) as native:
+        _assert_same_reads(lad, native)
+
+
+def test_a_cached_ladruno_transcode_reopens_unchanged(tmp_path: Path) -> None:
+    """Reload: the second call opens the cached ``.ladruno`` without
+    re-writing it, with the same stages, times and node ids; a deleted
+    model archive beside it is written again before the read."""
+    fem, model = staged_model(tmp_path / "m", (("analysis", "transient"),))
+    spec = _nodal_spec(fem)
+    out = tmp_path / "out"
+    _write_spec_files(spec, out)
+    cache = tmp_path / "cache"
+    with Results.from_recorders(spec, out, fem=fem, cache_root=cache, model=model) as first:
+        path = first.path
+        assert path is not None and path.suffix == ".ladruno"
+        stamp = path.stat().st_mtime_ns
+        before = [(s.name, s.kind, s.n_steps) for s in first.stages]
+        slab = first.nodes.get(component="displacement_x")
+    path.with_suffix(".model.h5").unlink()
+    with Results.from_recorders(spec, out, fem=fem, cache_root=cache, model=model) as again:
+        assert again.path == path and path.stat().st_mtime_ns == stamp
+        assert [(s.name, s.kind, s.n_steps) for s in again.stages] == before
+        reread = again.nodes.get(component="displacement_x")
+        np.testing.assert_array_equal(reread.node_ids, slab.node_ids)
+        np.testing.assert_array_equal(reread.time, slab.time)
+        np.testing.assert_array_equal(reread.values, slab.values)
+    assert path.with_suffix(".model.h5").is_file()
+
+
+def test_a_program_with_no_stages_keeps_the_native_target(tmp_path: Path) -> None:
+    """F1: a program that declares no ``ops.stage`` has no names to bind
+    onto a ``.ladruno`` (it would reopen as ``MODEL_STAGE[1]``), so the
+    run stays a native file, which keeps ``analysis``."""
+    fem = _MockFem([1, 2, 3, 4])
+    spec = _nodal_spec(fem)
+    out = tmp_path / "out"
+    _write_spec_files(spec, out)
+    model = _open_model_from_h5(_stub_model_h5_path())
+    assert list(model.stages()) == []
+    with Results.from_recorders(spec, out, fem=fem, cache_root=tmp_path / "c",
+                                model=model) as r:
+        assert r.path is not None and r.path.suffix == ".h5"
+        path = r.path
+    with Results.from_native(path, fem=fem, model=model) as again:
+        assert [s.name for s in again.stages] == ["analysis"]
+
+
+def test_a_spec_the_ladruno_cannot_hold_keeps_the_native_target(tmp_path: Path) -> None:
+    """``displacement_increment`` has no recorder group: the spec keeps the
+    native file, read as before, and no record is dropped."""
+    fem = _MockFem([1, 2, 3, 4])
+    spec = _nodal_spec(fem, ("displacement_x", "displacement_increment_x"))
+    assert nodal_history_misfits(spec) == ["nodes:a", "nodes:b"]
+    out = tmp_path / "out"
+    _write_spec_files(spec, out)
+    model = _open_model_from_h5(_stub_model_h5_path())
+    with Results.from_recorders(spec, out, fem=fem, cache_root=tmp_path / "c",
+                                model=model) as r:
+        assert r.path is not None and r.path.suffix == ".h5"
+        assert sorted(r.nodes.available_components()) == [
+            "displacement_increment_x", "displacement_x"]
+
+
+def test_element_records_keep_the_native_target() -> None:
+    fem = _MockFem([1])
+    nodes = ResolvedRecorderRecord(
+        category="nodes", name="n", components=("displacement_x",),
+        dt=None, n_steps=None, node_ids=np.array([1]))
+    modal = ResolvedRecorderRecord(
+        category="modal", name="m", components=(), dt=None, n_steps=None, n_modes=2)
+    assert nodal_history_misfits(
+        ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(nodes, modal))) == []
+    for category, comp in (("gauss", "stress_xx"), ("line_stations", "axial_force"),
+                           ("elements", "nodal_resisting_force_x"),
+                           ("fibers", "fiber_stress")):
+        rec = ResolvedRecorderRecord(
+            category=category, name="e", components=(comp,),
+            dt=None, n_steps=None, element_ids=np.array([1]))
+        spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(nodes, rec))
+        assert nodal_history_misfits(spec) == [f"{category}:e"], category
+        # An element record keeps the native file before the stages are asked.
+        assert transcode_target(spec, Path("k.h5"), [("analysis", "transient", None)],
+                                None, "m.h5") == Path("k.h5")
+
+
+def test_a_ladruno_target_refuses_an_element_record_by_name(tmp_path: Path) -> None:
+    """Never a silent drop: a ``.ladruno`` target with a Gauss record refuses
+    naming it, before any file is read or written."""
+    fem = _MockFem([1])
+    spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(
+        ResolvedRecorderRecord(
+            category="nodes", name="n", components=("displacement_x",),
+            dt=None, n_steps=None, node_ids=np.array([1])),
+        ResolvedRecorderRecord(
+            category="gauss", name="g", components=("stress_xx",),
+            dt=None, n_steps=None, element_ids=np.array([1])),
+    ))
+    target = tmp_path / "t.ladruno"
+    with pytest.raises(ValueError, match=r"\['gauss:g'\]"):
+        RecorderTranscoder(spec, tmp_path / "missing", target, fem,
+                           model_h5_src=_stub_model_h5_path()).run()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_ladruno_target_needs_an_archive_to_stamp(tmp_path: Path) -> None:
+    fem = _MockFem([1])
+    spec = _nodal_spec(fem)
+    with pytest.raises(ValueError, match="pass model_h5_src="):
+        RecorderTranscoder(spec, tmp_path / "missing", tmp_path / "t.ladruno", fem).run()
+    assert list(tmp_path.iterdir()) == []

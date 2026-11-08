@@ -135,8 +135,9 @@ class StageKindRefused(MPCOConversionRefused):
     Every other refusal (the archive is another model's, a partition set
     is incomplete, a target or staging directory is in the way, the source
     holds what the converter cannot carry) is a plain
-    :class:`MPCOConversionRefused`. ``read_deck_mpco`` reads the ``.mpco``
-    on this one only and re-raises the rest.
+    :class:`MPCOConversionRefused`. No caller reads the ``.mpco`` in its
+    place (ADR 0131 D5): ``read_deck_mpco`` and ``emit_default`` raise it
+    again as one, naming the remedies, and re-raise the rest as they are.
     """
 
 
@@ -800,7 +801,7 @@ def _scan_stage(stage: "h5py.Group", where: str, unsupported: set[str]) -> None:
 
 def _holds_only_modes(stage: "h5py.Group") -> bool:
     """True when the stage's only data are modal groups (an eigen stage)."""
-    from ._mpco_translation import is_modal_result_name
+    from ._buckets import is_modal_result_name
 
     if "RESULTS" not in stage:
         return False
@@ -822,7 +823,7 @@ def _holds_only_modes(stage: "h5py.Group") -> bool:
 
 def _stage_step_counts(stage: "h5py.Group") -> "set[int]":
     """The step counts of a stage's non-modal results (empty: none)."""
-    from ._mpco_translation import is_modal_result_name
+    from ._buckets import is_modal_result_name
 
     if "RESULTS" not in stage:
         return set()

@@ -395,7 +395,7 @@ class _GravityModalMixin(_ProcedureHost):
             gravity = snapshot_state(ops)
 
         live_plan = bm._tag_plan(emit_mode(
-            bm, split=False,
+            bm,
             supports_partitions=live_emitter.caps.supports_partitions))
         self._read_state = open_session(
             live_emitter, ndm=bm.ndm,

@@ -121,8 +121,10 @@ def _frame_beside_quad(g: Any, tmp_path: Path) -> tuple[Any, Path, list[int], li
 def _transcode(
     fem: Any, tmp_path: Path, node_ids: list[int],
     components: tuple[str, ...], ops_type: str, dofs: list[int],
-    model_h5: Path | None,
+    model_h5: Path | None, route: str = "native",
 ) -> Results:
+    """``route="ladruno"`` writes the ``.ladruno`` target (ADR 0131 D6)
+    and opens it with ``Results.from_ladruno(model_h5=)``: the same mask."""
     out = tmp_path / "out"
     out.mkdir(exist_ok=True)
     spec = ResolvedRecorderSpec(fem_snapshot_id=fem.snapshot_id, records=(
@@ -132,6 +134,11 @@ def _transcode(
         ),
     ))
     _write_out(out / f"all_{ops_type}.out", node_ids, dofs)
+    if route == "ladruno":
+        assert model_h5 is not None
+        target = tmp_path / "with_model.ladruno"
+        RecorderTranscoder(spec, out, target, fem, model_h5_src=model_h5).run()
+        return Results.from_ladruno(target, fem=fem, model_h5=model_h5)
     target = tmp_path / ("with_model.h5" if model_h5 else "no_model.h5")
     RecorderTranscoder(spec, out, target, fem, model_h5_src=model_h5).run()
     return Results.from_native(target, fem=fem,
@@ -148,6 +155,9 @@ def _last(r: Results, comp: str) -> dict[int, float]:
 # Tests
 # ---------------------------------------------------------------------------
 
+#: Both targets of a nodal transcode (ADR 0131 D6) mask the same way.
+ROUTES = pytest.mark.parametrize("route", ["native", "ladruno"])
+
 #: (translational prefix, rotational prefix, OpenSees recorder type)
 FAMILIES = [
     ("displacement", "rotation", "disp"),
@@ -155,9 +165,10 @@ FAMILIES = [
 ]
 
 
+@ROUTES
 @pytest.mark.parametrize("trans, rot, ops_type", FAMILIES)
 def test_3dof_solid_nodes_read_nan_rotation(
-    g: Any, tmp_path: Path, trans: str, rot: str, ops_type: str,
+    g: Any, tmp_path: Path, trans: str, rot: str, ops_type: str, route: str,
 ) -> None:
     fem, model_h5, solid, shell = _shell_beside_solid(g, tmp_path)
     ndf = _nodes_ndf(model_h5)
@@ -165,7 +176,7 @@ def test_3dof_solid_nodes_read_nan_rotation(
     assert {ndf[n] for n in shell} == {6}
     comps = tuple(f"{p}_{a}" for p in (trans, rot) for a in "xyz")
     r = _transcode(fem, tmp_path, solid + shell, comps, ops_type,
-                   [1, 2, 3, 4, 5, 6], model_h5)
+                   [1, 2, 3, 4, 5, 6], model_h5, route)
     k = len(TIME) - 1
     for d, comp in enumerate(comps, start=1):
         got = _last(r, comp)
@@ -179,7 +190,8 @@ def test_3dof_solid_nodes_read_nan_rotation(
                 assert np.isnan(got[n]), f"{comp} at 3-dof node {n}"
 
 
-def test_2dof_quad_nodes_read_nan_rotation_z(g: Any, tmp_path: Path) -> None:
+@ROUTES
+def test_2dof_quad_nodes_read_nan_rotation_z(g: Any, tmp_path: Path, route: str) -> None:
     fem, model_h5, quad, frame = _frame_beside_quad(g, tmp_path)
     ndf = _nodes_ndf(model_h5)
     assert {ndf[n] for n in quad} == {2}
@@ -190,7 +202,7 @@ def test_2dof_quad_nodes_read_nan_rotation_z(g: Any, tmp_path: Path) -> None:
     # carries rz, a quad node (ndf 2) does not.
     r = _transcode(fem, tmp_path, quad + frame,
                    ("displacement_x", "displacement_y", "rotation_z"),
-                   "disp", [1, 2, 6], model_h5)
+                   "disp", [1, 2, 6], model_h5, route)
     k = len(TIME) - 1
     rz = _last(r, "rotation_z")
     assert all(np.isnan(rz[n]) for n in quad)
@@ -212,7 +224,8 @@ def test_without_a_model_the_values_are_kept(g: Any, tmp_path: Path) -> None:
                for n in solid + shell)
 
 
-def test_a_node_missing_from_nodes_ndf_refuses(g: Any, tmp_path: Path) -> None:
+@ROUTES
+def test_a_node_missing_from_nodes_ndf_refuses(g: Any, tmp_path: Path, route: str) -> None:
     fem, model_h5, solid, shell = _shell_beside_solid(g, tmp_path)
     cut = tmp_path / "cut_model.h5"
     shutil.copy(model_h5, cut)
@@ -225,12 +238,13 @@ def test_a_node_missing_from_nodes_ndf_refuses(g: Any, tmp_path: Path) -> None:
         grp.create_dataset("ndf", data=ndf[keep])
     with pytest.raises(ValueError, match=rf"nodes \[{solid[0]}\]"):
         _transcode(fem, tmp_path, solid + shell, ("rotation_x",), "disp",
-                   [4], cut)
+                   [4], cut, route)
 
 
+@ROUTES
 @pytest.mark.parametrize("ndf_solid", [4, 5])
 def test_ndf_without_a_layout_carries_no_rotation(
-    g: Any, tmp_path: Path, ndf_solid: int,
+    g: Any, tmp_path: Path, ndf_solid: int, route: str,
 ) -> None:
     """A 3-D node of ndf 4 or 5 (a u-p node: the pressure DOF follows the
     translations) has no rotation slot. The mask uses the emit's guarded
@@ -248,7 +262,7 @@ def test_ndf_without_a_layout_carries_no_rotation(
     assert {_nodes_ndf(up)[n] for n in solid} == {ndf_solid}
     comps = tuple(f"{p}_{a}" for p in ("displacement", "rotation") for a in "xyz")
     r = _transcode(fem, tmp_path, solid + shell, comps, "disp",
-                   [1, 2, 3, 4, 5, 6], up)
+                   [1, 2, 3, 4, 5, 6], up, route)
     k = len(TIME) - 1
     for d, comp in enumerate(comps, start=1):
         got = _last(r, comp)
@@ -261,8 +275,9 @@ def test_ndf_without_a_layout_carries_no_rotation(
                 assert np.isnan(got[n]), f"{comp} at ndf-{ndf_solid} node {n}"
 
 
+@ROUTES
 def test_an_archive_without_nodes_ndf_keeps_the_values(
-    g: Any, tmp_path: Path,
+    g: Any, tmp_path: Path, route: str,
 ) -> None:
     """An archive older than ``/opensees/nodes_ndf``: the transcode is unchanged."""
     fem, model_h5, solid, shell = _shell_beside_solid(g, tmp_path)
@@ -271,7 +286,7 @@ def test_an_archive_without_nodes_ndf_keeps_the_values(
     with h5py.File(old, "a") as f:
         del f["opensees/nodes_ndf"]
     r = _transcode(fem, tmp_path, solid + shell, ("rotation_x",), "disp",
-                   [4], old)
+                   [4], old, route)
     k = len(TIME) - 1
     got = _last(r, "rotation_x")
     assert all(got[n] == pytest.approx(_value(k, n, 4), rel=1e-9)

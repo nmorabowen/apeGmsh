@@ -1,7 +1,8 @@
-"""RecorderTranscoder — parse OpenSees ``.out`` files into native HDF5.
+"""RecorderTranscoder — parse OpenSees ``.out`` files into a results file.
 
-Drives the Phase 5 emission output back to a native HDF5 file that
-matches the apeGmsh schema. The ``ResolvedRecorderSpec`` is the
+Drives the Phase 5 emission output back to a native HDF5 file, or, for a
+target with the fork recorder's suffix and nodal records only, to that
+format (``readers/_ladruno_writer.py::write_transcode``, ADR 0131 D6). The ``ResolvedRecorderSpec`` is the
 source of truth for what was recorded; we reuse
 :mod:`apeGmsh.solvers._recorder_emit` to recompute the file paths
 and column layouts (so transcoder ↔ emitter stay in lockstep).
@@ -67,6 +68,7 @@ from ..spec._emit import (
     line_stations_from_local_force,
     refuse_non_elastic_local_force,
 )
+from ..readers._ladruno_writer import is_transcode_target, merge_node_records, write_transcode
 from ..writers._cache import quiet_emit_logical
 from ..writers._native import NativeWriter
 from . import _txt
@@ -144,15 +146,20 @@ class RecorderTranscoder:
         return plan
 
     def run(self) -> Path:
-        """Parse every stage's files, then write the native HDF5 target.
+        """Parse every stage's files, then write the target; return its path.
 
-        Returns the path of the written file.
+        A fork-format target (nodal records only, else refused by name
+        before any file is read) is written by ``write_transcode``.
         """
+        fork_format = is_transcode_target(self._target_path, self._spec, self._model_h5_src)
         # Parse all stages before the writer opens: a bad file leaves no target.
         parsed = [(name, kind, self._parse_stage())
                   for name, kind, self._stage_id in self._plan]
 
         stages = [(name, kind, self._stage_time(p), *p.values()) for name, kind, p in parsed]
+        if fork_format:
+            return write_transcode(self._target_path, [s[1:4] for s in stages], fem=self._fem,
+                                   model=self._model_or_pairing(), archive=self._model_h5_src)
         proven_fem_index = self._element_index_is_fem()
         # Write a sibling, then rename: a failed write leaves no target behind.
         partial = self._target_path.with_name(self._target_path.name + ".partial")
@@ -752,28 +759,10 @@ class RecorderTranscoder:
         time_vec: ndarray,
     ) -> None:
         """Merge per-record node data into one ``nodes/`` slab."""
-        non_empty = [r for r in records if r.components]
-        if not non_empty:
+        got = merge_node_records(records, time_vec)
+        if got is None:
             return
-
-        all_ids = np.concatenate([r.node_ids for r in non_empty])
-        master = np.unique(all_ids)
-        n_total = master.size
-        T = time_vec.size
-        id_to_col = {int(n): i for i, n in enumerate(master)}
-
-        merged: dict[str, ndarray] = {}
-        for r in non_empty:
-            cols = np.array(
-                [id_to_col[int(n)] for n in r.node_ids], dtype=np.int64,
-            )
-            for comp, arr in r.components.items():
-                if comp not in merged:
-                    merged[comp] = np.full(
-                        (T, n_total), np.nan, dtype=np.float64,
-                    )
-                merged[comp][:, cols] = arr
-
+        master, merged = got
         writer.write_nodes(
             stage_id, "partition_0",
             node_ids=master,

@@ -12,7 +12,7 @@
 // `manifest.json` or `describe.json`, and Chromium's profile under `.chromium`
 // (main.ts, INV-1), so a second run into the same folder is refused too.
 
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveSpecFiles } from "./files.ts";
 import { MANIFEST_FILE, refusedManifest } from "./manifest.ts";
@@ -26,7 +26,15 @@ export interface RenderJobFiles {
   model: string;
   geometry: string | null;
   results: string | null;
+  /** VU10: the spec's `files.variants`, resolved; null when it names none */
+  variants: string | null;
 }
+
+/**
+ * VU10: main's read of a spec's `files.variants` (main.ts opens it as the
+ * study): null when it opens and `model` is one of its rows, else why not.
+ */
+export type CheckVariants = (manifest: string, model: string) => string | null;
 
 export interface JobFs {
   readFile(path: string): string;
@@ -74,7 +82,7 @@ export function appVersion(fs: Pick<JobFs, "readFile" | "exists">, from = dirnam
  * before anything is read, and nothing is written; any other refusal writes
  * `<outDir>/manifest.json` and nothing else.
  */
-export function prepareRender(specPath: string, outDir: string, fs: JobFs): Prepared {
+export function prepareRender(specPath: string, outDir: string, fs: JobFs, checkVariants?: CheckVariants): Prepared {
   const busy = outRefusal(outDir, fs);
   if (busy) return { ok: false, key: "--out", reason: busy, wrote: false };
   const refuse = (key: string, reason: string): Prepared => {
@@ -92,5 +100,15 @@ export function prepareRender(specPath: string, outDir: string, fs: JobFs): Prep
   if (!v.ok) return refuse(v.key, v.reason);
   const f = resolveSpecFiles(v.spec, dirname(specPath), fs.exists);
   if (!f.ok) return refuse(f.key, f.reason);
-  return { ok: true, job: { spec: v.spec, model: f.set.model, geometry: f.set.geometry, results: f.set.results } };
+  let variants: string | null = null;
+  const named = v.spec.files.variants ?? null;
+  if (named !== null) {
+    // VU10: the manifest is a path the user gave (the spec's), read by main; its rows must include the spec's model.
+    variants = isAbsolute(named) ? resolve(named) : resolve(dirname(specPath), named);
+    if (!fs.exists(variants)) return refuse("files.variants", `no such file: ${variants}`);
+    if (!checkVariants) return refuse("files.variants", "this run cannot read a variants manifest");
+    const why = checkVariants(variants, f.set.model);
+    if (why !== null) return refuse("files.variants", why);
+  }
+  return { ok: true, job: { spec: v.spec, model: f.set.model, geometry: f.set.geometry, results: f.set.results, variants } };
 }

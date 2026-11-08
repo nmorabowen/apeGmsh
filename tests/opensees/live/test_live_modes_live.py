@@ -9,7 +9,7 @@ fork checks the same file there. Each deck is tagged by FEM id:
 * a ``stdBrick`` cube (ndf 3) whose top corner drives a 3-D column
   (ndf 6) through ``equalDOF`` on the translations.
 
-Oracles, read back through ``Results.from_native``:
+Oracles, read back from the ``.ladruno`` through ``Results.from_ladruno``:
 
 * every written eigenvalue is the one ``ops.eigen`` returned in the
   capture, bit for bit (a spy records it), and ``frequency_hz`` /
@@ -40,7 +40,6 @@ import pytest
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
 from apeGmsh.mesh.FEMData import ElementComposite, FEMData, MeshInfo, NodeComposite
-from apeGmsh.opensees.opensees_model import OpenSeesModel
 from apeGmsh.results import Results
 from apeGmsh.results.live import capture_live_modes
 
@@ -108,7 +107,7 @@ def _capture(fem: FEMData, ops: Any, n: int, tmp: Path) -> "tuple[Path, Path, Sp
     spy = Spy(ops)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        p = capture_live_modes(archive, n, tmp / "modes.h5", ops=spy)
+        p = capture_live_modes(archive, n, tmp / "modes.ladruno", ops=spy)
     return p, archive, spy
 
 
@@ -117,7 +116,7 @@ def _check_file(p: Path, archive: Path, spy: Spy, ops: Any, n: int,
     """Assert the file against the live domain; return its eigenvalues."""
     lam_live = spy.eigen_returned
     assert lam_live is not None and len(lam_live) == n
-    with Results.from_native(p, model=OpenSeesModel.from_h5(archive)) as res:
+    with Results.from_ladruno(p, model_h5=archive) as res:
         modes = sorted(res.modes, key=lambda m: m.mode_index)
         assert [m.mode_index for m in modes] == list(range(1, n + 1))
         trans = [f"displacement_{a}" for a in _AXES[:ndm]]
@@ -296,7 +295,7 @@ def test_a_deck_off_the_fem_coordinates_refuses(opspy: Any, tmp_path: Path) -> N
     moved = xy.copy()
     moved[2] = [2.0, 0.8]
     _cantilever_2d(opspy, moved)
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"capture_live_modes: .*node 3: live \[2\.0, 0\.8\]"):
         capture_live_modes(_line_fem(xy), 2, out, ops=opspy)
     assert not out.exists()
@@ -305,7 +304,7 @@ def test_a_deck_off_the_fem_coordinates_refuses(opspy: Any, tmp_path: Path) -> N
 def test_a_fem_node_the_deck_never_built_refuses(opspy: Any, tmp_path: Path) -> None:
     xy = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
     _cantilever_2d(opspy, xy[:3])
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"capture_live_modes: nodes \[4\] are not in the live domain"):
         capture_live_modes(_line_fem(xy), 2, out, ops=opspy)
     assert not out.exists()
@@ -329,7 +328,7 @@ def test_a_non_positive_eigenvalue_refuses(opspy: Any, tmp_path: Path) -> None:
     # Node 6 (the spring's fixed end, at node 5's position) is not FEM.
     fem = _fem(xy, {1: ("Line 2", 1, [[1, 2], [2, 3], [3, 4]], [1, 2, 3])},
                "live_modes_neg")
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"capture_live_modes: mode \d+ has a non-positive or non-finite eigenvalue"):
         capture_live_modes(fem, 2, out, ops=ops)
     assert not out.exists()
@@ -346,7 +345,7 @@ def test_a_second_default_solve_refuses_with_the_remedy(opspy: Any, tmp_path: Pa
     ops = opspy
     _cantilever_2d(ops, xy)
     ops.eigen(2)                                 # the user's own solve
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     if get_backend_info().kind == "stock":
         with pytest.raises(ValueError, match=r"ops.eigen\(2\) failed .*wipeAnalysis") as err:
             capture_live_modes(_line_fem(xy), 2, out, ops=ops)
@@ -397,7 +396,7 @@ def test_the_documented_remedy_keeps_the_bandgeneral_guard(opspy: Any, tmp_path:
     fem = _springs(ops)
     ops.system("BandGeneral")
     np.testing.assert_allclose(ops.eigen(2), [-10.0, 100.0], rtol=1e-12)
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     if get_backend_info().kind == "stock":
         with pytest.raises(ValueError, match=r"ops.eigen\(2\) failed") as err:
             capture_live_modes(fem, 2, out, ops=ops)
@@ -416,7 +415,7 @@ def test_the_fullgen_solver_guards_the_capture(opspy: Any, tmp_path: Path) -> No
     solve see the -10 and refuse it by name, writing nothing."""
     ops = opspy
     fem = _springs(ops)
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"mode 1 has a non-positive or non-finite eigenvalue \(-10\)"):
         capture_live_modes(fem, 2, out, ops=ops, solver="-fullGenLapack")
     assert not out.exists()
@@ -437,7 +436,7 @@ def test_an_analysis_with_the_user_s_system_solves_twice(opspy: Any, tmp_path: P
     ops.integrator("LoadControl", 1.0)
     ops.analysis("Static")
     np.testing.assert_allclose(ops.eigen(2), [-10.0, 100.0], rtol=1e-12)
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"mode 1 has a non-positive or non-finite eigenvalue \(-10\)"):
         capture_live_modes(fem, 2, out, ops=ops)
     assert not out.exists()

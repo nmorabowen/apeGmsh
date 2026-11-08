@@ -1,0 +1,449 @@
+{
+ "files": [
+  "slab_uncracked.h5",
+  "slab_cracked.h5",
+  "bischoff/slab_pass2.h5",
+  "slab_cracked.user.h5"
+ ],
+ "cases": [
+  {
+   "name": "variants.newer-minor.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.1.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      },\n      \"colour\": \"#1f77b4\"\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ],\n  \"shared_params\": {\n    \"code\": \"ACI 318-25\"\n  }\n}\n",
+   "python": {
+    "file": "newer"
+   }
+  },
+  {
+   "name": "variants.valid.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": { \"state\": \"uncracked\", \"Ie/Ig\": 1.0 }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": { \"state\": \"cracked\", \"Ie/Ig\": 0.35 }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": { \"state\": \"cracked\", \"bischoff\": \"D+SD+0.25L\", \"pass\": 2, \"converged\": false }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     0,
+     1,
+     2
+    ],
+    "refused": []
+   }
+  },
+  {
+   "name": "invalid/variants.param-null.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": null\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     0,
+     2
+    ],
+    "refused": [
+     [
+      1,
+      "bad-param"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.param-overflow.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1e400\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     1,
+     2
+    ],
+    "refused": [
+     [
+      0,
+      "bad-param"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.path-absolute.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"C:/runs/slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     1,
+     2
+    ],
+    "refused": [
+     [
+      0,
+      "bad-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.path-empty-stem-subfolder.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     0,
+     1
+    ],
+    "refused": [
+     [
+      2,
+      "bad-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.path-empty-stem.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \".h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     1,
+     2
+    ],
+    "refused": [
+     [
+      0,
+      "bad-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.path-folder-trailing-dot.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff./slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     0,
+     1
+    ],
+    "refused": [
+     [
+      2,
+      "bad-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.path-folder-trailing-space.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff /slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     0,
+     1
+    ],
+    "refused": [
+     [
+      2,
+      "bad-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.path-leaves-folder.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"../other_study/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     0,
+     1
+    ],
+    "refused": [
+     [
+      2,
+      "bad-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.path-not-model.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.ladruno\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     0,
+     2
+    ],
+    "refused": [
+     [
+      1,
+      "bad-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.path-user-sibling-uppercase.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.USER.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     0,
+     2
+    ],
+    "refused": [
+     [
+      1,
+      "bad-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.path-workspace-sibling.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.workspace.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "rows": [
+     0,
+     2
+    ],
+    "refused": [
+     [
+      1,
+      "bad-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "invalid/variants.version-number.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": 1,\n  \"variants\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "file": "bad-version"
+   }
+  },
+  {
+   "name": "invalid/variants.wrong-list-key.json",
+   "text": "{\n  \"format\": \"apegmsh-variants\",\n  \"version\": \"1.0.0\",\n  \"sets\": [\n    {\n      \"label\": \"Uncracked\",\n      \"path\": \"slab_uncracked.h5\",\n      \"params\": {\n        \"state\": \"uncracked\",\n        \"Ie/Ig\": 1.0\n      }\n    },\n    {\n      \"label\": \"Cracked\",\n      \"path\": \"slab_cracked.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"Ie/Ig\": 0.35\n      }\n    },\n    {\n      \"label\": \"Bischoff D+SD+0.25L\",\n      \"path\": \"bischoff/slab_pass2.h5\",\n      \"params\": {\n        \"state\": \"cracked\",\n        \"bischoff\": \"D+SD+0.25L\",\n        \"pass\": 2,\n        \"converged\": false\n      }\n    }\n  ]\n}\n",
+   "python": {
+    "file": "bad-envelope"
+   }
+  },
+  {
+   "name": "row-not-object",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [1, {\"label\": \"Uncracked\", \"path\": \"slab_uncracked.h5\", \"params\": {}}]}",
+   "python": {
+    "rows": [
+     1
+    ],
+    "refused": [
+     [
+      0,
+      "bad-param"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "row-unknown-key",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"A\", \"path\": \"slab_uncracked.h5\", \"params\": {}, \"colour\": \"#fff\"}, {\"label\": \"B\", \"path\": \"slab_cracked.h5\", \"params\": {}}]}",
+   "python": {
+    "rows": [
+     1
+    ],
+    "refused": [
+     [
+      0,
+      "bad-param"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "row-no-label",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"path\": \"slab_uncracked.h5\", \"params\": {}}, {\"label\": \"B\", \"path\": \"slab_cracked.h5\", \"params\": {}}]}",
+   "python": {
+    "rows": [
+     1
+    ],
+    "refused": [
+     [
+      0,
+      "empty-name"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "row-params-list",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"A\", \"path\": \"slab_uncracked.h5\", \"params\": [1]}, {\"label\": \"B\", \"path\": \"slab_cracked.h5\", \"params\": {}}]}",
+   "python": {
+    "rows": [
+     1
+    ],
+    "refused": [
+     [
+      0,
+      "bad-param"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "row-params-key-empty",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"A\", \"path\": \"slab_uncracked.h5\", \"params\": {\"\": 1}}, {\"label\": \"B\", \"path\": \"slab_cracked.h5\", \"params\": {}}]}",
+   "python": {
+    "rows": [
+     1
+    ],
+    "refused": [
+     [
+      0,
+      "empty-name"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "row-label-not-nfc",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"Cafe\\u0301\", \"path\": \"slab_uncracked.h5\", \"params\": {}}, {\"label\": \"B\", \"path\": \"slab_cracked.h5\", \"params\": {}}]}",
+   "python": {
+    "rows": [
+     1
+    ],
+    "refused": [
+     [
+      0,
+      "empty-name"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "duplicate-label-one-bad",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"A\", \"path\": \"slab_uncracked.h5\", \"params\": {}}, {\"label\": \"A\", \"path\": \"C:/x.h5\", \"params\": {}}]}",
+   "python": {
+    "rows": [],
+    "refused": [
+     [
+      0,
+      "duplicate"
+     ],
+     [
+      1,
+      "bad-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "duplicate-label",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"A\", \"path\": \"slab_uncracked.h5\", \"params\": {}}, {\"label\": \"A\", \"path\": \"slab_cracked.h5\", \"params\": {}}, {\"label\": \"B\", \"path\": \"bischoff/slab_pass2.h5\", \"params\": {}}]}",
+   "python": {
+    "rows": [
+     2
+    ],
+    "refused": [
+     [
+      0,
+      "duplicate"
+     ],
+     [
+      1,
+      "duplicate"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "duplicate-path",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"A\", \"path\": \"slab_uncracked.h5\", \"params\": {}}, {\"label\": \"B\", \"path\": \"slab_uncracked.h5\", \"params\": {}}, {\"label\": \"C\", \"path\": \"slab_cracked.h5\", \"params\": {}}]}",
+   "python": {
+    "rows": [
+     2
+    ],
+    "refused": [
+     [
+      0,
+      "duplicate-path"
+     ],
+     [
+      1,
+      "duplicate-path"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "missing",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"A\", \"path\": \"slab_uncracked.h5\", \"params\": {}}, {\"label\": \"B\", \"path\": \"nope.h5\", \"params\": {}}]}",
+   "python": {
+    "rows": [
+     0
+    ],
+    "refused": [
+     [
+      1,
+      "missing"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "top-unknown-key",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"Uncracked\", \"path\": \"slab_uncracked.h5\", \"params\": {}}], \"extra\": 1}",
+   "python": {
+    "file": "bad-envelope"
+   }
+  },
+  {
+   "name": "variants-empty",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": []}",
+   "python": {
+    "file": "bad-envelope"
+   }
+  },
+  {
+   "name": "variants-not-list",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": {}}",
+   "python": {
+    "file": "bad-envelope"
+   }
+  },
+  {
+   "name": "version-major",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"2.0.0\", \"variants\": [{\"label\": \"Uncracked\", \"path\": \"slab_uncracked.h5\", \"params\": {}}]}",
+   "python": {
+    "file": "major"
+   }
+  },
+  {
+   "name": "version-old-major",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"0.9.0\", \"variants\": [{\"label\": \"Uncracked\", \"path\": \"slab_uncracked.h5\", \"params\": {}}]}",
+   "python": {
+    "file": "major"
+   }
+  },
+  {
+   "name": "version-two-parts",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0\", \"variants\": [{\"label\": \"Uncracked\", \"path\": \"slab_uncracked.h5\", \"params\": {}}]}",
+   "python": {
+    "file": "bad-version"
+   }
+  },
+  {
+   "name": "format-wrong",
+   "text": "{\"format\": \"apegmsh-variant\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"Uncracked\", \"path\": \"slab_uncracked.h5\", \"params\": {}}]}",
+   "python": {
+    "file": "not-a-manifest"
+   }
+  },
+  {
+   "name": "root-list",
+   "text": "[{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"Uncracked\", \"path\": \"slab_uncracked.h5\", \"params\": {}}]}]",
+   "python": {
+    "file": "not-a-manifest"
+   }
+  },
+  {
+   "name": "not-json",
+   "text": "{ not json",
+   "python": {
+    "file": "bad-json"
+   }
+  },
+  {
+   "name": "nan-token",
+   "text": "{\"format\": \"apegmsh-variants\", \"version\": \"1.0.0\", \"variants\": [{\"label\": \"A\", \"path\": \"slab_uncracked.h5\", \"params\": {\"x\": NaN}}]}",
+   "python": {
+    "file": "bad-json"
+   }
+  }
+ ]
+}

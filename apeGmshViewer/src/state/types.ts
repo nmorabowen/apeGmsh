@@ -645,6 +645,82 @@ export type CombinationRead =
   | { key: string; status: "refused"; reason: string; detail: string }
   | { key: string; status: "failed"; error: string };
 
+// -- VU10 (ADR 0132 D8, D9): a study's variants, the compare set, the difference ----
+
+/** One row of the open manifest that passed D8, as main sends it: never its resolved path (the page names a row by index and label). */
+export interface VariantRowIn {
+  index: number;
+  label: string;
+  /** as the manifest writes it, relative to its folder: shown, never sent back */
+  path: string;
+  params: Readonly<Record<string, string | number | boolean>>;
+}
+
+/** A refused row of the manifest (reader/variants.ts `RowRefusal`). */
+export interface VariantRefusalIn {
+  index: number;
+  label: string | null;
+  code: string;
+  reason: string;
+}
+
+/** The study main holds (main.ts `studyView`): the manifest the user opened, its rows, the row on screen and main's compare slot. */
+export interface VariantsIn {
+  manifest: string;
+  version: string;
+  /** the banner of a same-major newer manifest (read with its unknown keys dropped), or null */
+  newer: string | null;
+  rows: readonly VariantRowIn[];
+  refused: readonly VariantRefusalIn[];
+  /** the row whose model is the window set's, or null */
+  active: number | null;
+  /** the row in main's compare slot, or null */
+  compare: { index: number; label: string } | null;
+}
+
+/** A stage of the compare set's results file, as the difference needs it: its id, name, nodal datasets and times. */
+export interface CompareStageIn {
+  id: string;
+  name: string;
+  nodal: readonly string[];
+  time: readonly number[];
+}
+
+/** The compare set main opened (`variants:compare`): the row, its results file (shown only) and its lineage. */
+export interface CompareIn {
+  index: number;
+  label: string;
+  results: string;
+  /** the compare results' `fem_hash`, or null when it is not stamped */
+  femHash: string | null;
+  stages: readonly CompareStageIn[];
+}
+
+export type CompareState =
+  | { index: number; label: string; status: "opening" }
+  | ({ status: "open" } & CompareIn)
+  | { index: number; label: string; status: "failed"; reason: string };
+
+/** The read of the difference shown, under the key of selectors `differencePlanOf`. */
+export type DifferenceRead =
+  | { key: string; status: "loading" }
+  | { key: string; status: "ready"; range: { min: number; max: number } | null; nodes: number; missing: number }
+  | { key: string; status: "refused"; reason: string };
+
+export interface VariantsState {
+  /** the study main holds, or null with no manifest open */
+  study: VariantsIn | null;
+  /** a switch asked for and not yet answered */
+  switching: { index: number; label: string } | null;
+  /** why the last switch or compare was refused, for the panel; null otherwise */
+  notice: string | null;
+  /** the compare set (read-only, never the window set) */
+  compare: CompareState | null;
+  /** whether the contour shows the window variant minus the compare variant */
+  difference: boolean;
+  read: DifferenceRead | null;
+}
+
 /** ADR 0130: the set's `.user.h5`. Read on request, after the model's first frame (renderer/app.ts). */
 export type UserFileState =
   | { status: "reading"; path: string }
@@ -1009,6 +1085,26 @@ export interface PrincipalState {
 /** `axis`: two heads, one each way from the point (a direction is an axis); `arrow`: one along the sign-canonical direction (Qt). */
 export type PrincipalHead = "axis" | "arrow";
 
+/**
+ * The Vectors card: a nodal vector field of the results step on screen as
+ * arrows starting at the nodes (state/vectors.ts `buildVectors3D`), or half
+ * circles about their axes for a rotational field; sized, coloured and
+ * thinned like the reaction arrows, on its own settings.
+ */
+export interface VectorsState {
+  readonly on: boolean;
+  /** The field drawn, by its nodal field name (`DISPLACEMENT`, `velocity`); null: the stage's first vector field. */
+  readonly field: string | null;
+  /** Shaft multiplier (default 1, > 0). */
+  readonly scale: number;
+  /** Arrowhead length on screen, in CSS pixels (default 12, > 0). */
+  readonly headSize: number;
+  readonly colorBy: LoadsColorBy;
+  readonly thin: boolean;
+  /** What each node draws: the resultant, its three global-axis components as separate arrows, or one of them (default resultant). */
+  readonly component: ReactionComponent;
+}
+
 /** The Display card's BC toggle: restraint glyphs at the supports (state/loads.ts `buildSupports3D`). */
 export interface SupportsState {
   readonly on: boolean;
@@ -1241,6 +1337,8 @@ export interface State {
   user: UserFileState | null;
   /** VU7b-2: the read of the User Combination shown, for the quantity picked; null off a combination, and after the user file is read again */
   combination: CombinationRead | null;
+  /** VU10 (ADR 0132 D9): the study's variants, the compare set and the difference; it lasts across the window set's loads */
+  variants: VariantsState;
   /** V4c1: the nodal contour (shown when `visibility.colourBy` is `contour`) */
   contour: ContourState;
   /** V4d: the model's spatial dimension (`/meta/ndm`), or why it is not known */
@@ -1257,6 +1355,7 @@ export interface State {
   loads: LoadsState;
   reactions: ReactionsState;
   principal: PrincipalState;
+  vectors: VectorsState;
   supports: SupportsState;
   /** Spotlight (`Ctrl+K`) command and search palette */
   spotlight: SpotlightState;
@@ -1581,6 +1680,8 @@ export type Event =
   /** The Principal card's controls */
   | { type: "setPrincipal"; on?: boolean; field?: string | null; show?: readonly [boolean, boolean, boolean]; head?: PrincipalHead; cmap?: ContourCmap; scale?: number; headSize?: number; thin?: boolean }
   | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean; forces?: boolean; moments?: boolean }
+  /** The Vectors card's controls (`field` null: the stage's first vector field) */
+  | { type: "setVectors"; on?: boolean; field?: string | null; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent }
   /** 3-D structural loading and prescribed-SP visualization controls */
   | {
       type: "setLoads";
@@ -1632,6 +1733,20 @@ export type Event =
   /** ADR 0130: the set has no `.user.h5` (none beside it, or it was deleted) */
   | { type: "userClosed" }
   /** VU7b-2 (renderer/app.ts): the User Combination shown is being read, or its read answered; one for another key is dropped */
-  | { type: "combinationRead"; read: CombinationRead };
+  | { type: "combinationRead"; read: CombinationRead }
+  /** VU10 (renderer/contour.ts `VariantRunner`): main's study, at start and after every change; null with no manifest */
+  | { type: "variantsRead"; study: VariantsIn | null }
+  /** VU10: the variants panel asks main to open row `index` as the window set (D9.6) */
+  | { type: "variantSwitch"; index: number; label: string }
+  /** VU10 (the runner): main answered the switch; `reason` when it refused */
+  | { type: "variantSwitched"; reason: string | null }
+  /** VU10: the variants panel asks main to open row `index` as the compare set (D9.5), or with null to close it */
+  | { type: "variantCompare"; row: { index: number; label: string } | null }
+  /** VU10 (the runner): main answered the compare */
+  | { type: "compareOpened"; result: CompareIn | { index: number; label: string; reason: string } }
+  /** VU10: the contour shows the window variant minus the compare variant, or not */
+  | { type: "setDifference"; on: boolean }
+  /** VU10 (the runner): the difference shown is being read, or its read answered; one for another key is dropped */
+  | { type: "differenceRead"; read: DifferenceRead };
 
 export type EventType = Event["type"];

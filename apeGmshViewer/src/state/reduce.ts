@@ -14,7 +14,7 @@ import {
 } from "./lineDiagram.ts";
 import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
 import { elementsOfDecl, selectedElementsOf } from "./search.ts";
-import { combinationFieldsOf, combinationRequestOf, deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
+import { combinationFieldsOf, combinationRequestOf, deformOf, differencePlanOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
 import { initialSearch, initialSpotlight } from "./spotlight.ts";
 import { THEME_MODES } from "../theme/tokens.ts";
 import {
@@ -48,6 +48,7 @@ import {
   type PrincipalState,
   type ReactionsState,
   type SupportsState,
+  type VectorsState,
   type MeshInfo,
   type Offer,
   type OffersState,
@@ -56,6 +57,8 @@ import {
   type State,
   type UnitSystemId,
   type Vec3,
+  type VariantsIn,
+  type VariantsState,
 } from "./types.ts";
 import { UNIT_SYSTEM_IDS } from "./units.ts";
 
@@ -82,7 +85,8 @@ export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
 export const initialSupports: SupportsState = { on: false, scale: 1 };
 
 export const initialPrincipal: PrincipalState = { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true };
-export const initialReactions: ReactionsState ={ on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
+export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
+export const initialVectors: VectorsState = { on: false, field: null, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant" };
 
 export const initialLoads: LoadsState = {
   on: false,
@@ -226,6 +230,9 @@ function syncContourUnits(c: ContourState, declaredUnits: UnitSystemId | null, k
   return { ...c, declaredUnits: null };
 }
 
+/** VU10: no study, no compare set, no difference. */
+export const initialVariants: VariantsState = { study: null, switching: null, notice: null, compare: null, difference: false, read: null };
+
 export const initialState: State = {
   artifacts: { geometry: null, model: null, results: null },
   decls: emptyRecord(),
@@ -256,6 +263,7 @@ export const initialState: State = {
   resultStep: null,
   user: null,
   combination: null,
+  variants: initialVariants,
   contour: initialContour,
   ndm: NO_NDM,
   units: null,
@@ -265,6 +273,7 @@ export const initialState: State = {
   loads: initialLoads,
   reactions: initialReactions,
   principal: initialPrincipal,
+  vectors: initialVectors,
   supports: initialSupports,
   spotlight: initialSpotlight,
   search: initialSearch,
@@ -671,6 +680,31 @@ export function userReadable(s: State, model: string | null): boolean {
   return a !== null && a.path === model && a.status !== "opened";
 }
 
+/** The study's row `index` when its label is `label` (the panel offers only those); a stale or unknown row is a bug. */
+function studyRow(s: State, index: number, label: string, who: string): VariantsIn["rows"][number] {
+  const study = s.variants.study;
+  if (!study) throw new Error(`${who}: no variants manifest is open`);
+  const row = study.rows.find((r) => r.index === index);
+  if (!row || row.label !== label) throw new Error(`${who}: the study has no variant row ${index} labelled ${JSON.stringify(label)}`);
+  return row;
+}
+
+/**
+ * VU10: main's study replaces the page's. With none, the compare set and the
+ * difference go; a compare set main no longer holds (its row left the
+ * manifest, or main closed it) goes too, so the page never shows a slot main
+ * has emptied. A switch in flight stays until main answers it.
+ */
+function withStudy(s: State, study: VariantsIn | null): State {
+  if (study !== null && (typeof study !== "object" || !Array.isArray(study.rows) || !Array.isArray(study.refused) || typeof study.manifest !== "string")) {
+    throw new RangeError(`variantsRead: ${JSON.stringify(study)} is not a study`);
+  }
+  const v = s.variants;
+  const c = v.compare;
+  const kept = c !== null && study !== null && (c.status === "opening" || (study.compare !== null && study.compare.index === c.index && study.compare.label === c.label));
+  return { ...s, variants: { ...v, study, compare: kept ? c : null, difference: kept && v.difference, read: kept ? v.read : null } };
+}
+
 export function reduce(s: State, e: Event): State {
   switch (e.type) {
     case "fileOpened": {
@@ -799,6 +833,8 @@ export function reduce(s: State, e: Event): State {
         theme: s.theme,
         // VA5: offers last for the window session (ADR 0128 D5).
         offers: s.offers,
+        // VU10: the study and the compare set are the window's, not the model's (a switch loads another model).
+        variants: s.variants,
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -836,6 +872,8 @@ export function reduce(s: State, e: Event): State {
         theme: s.theme,
         // VA5: offers last for the window session (ADR 0128 D5).
         offers: s.offers,
+        // VU10: the study and the compare set are the window's, not the model's (a switch loads another model).
+        variants: s.variants,
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -1400,6 +1438,33 @@ export function reduce(s: State, e: Event): State {
       };
       return (Object.keys(next) as (keyof ReactionsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, reactions: next };
     }
+    case "setVectors": {
+      for (const k of ["on", "thin"] as const) {
+        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setVectors: ${k} ${JSON.stringify(e[k])}`);
+      }
+      for (const k of ["scale", "headSize"] as const) {
+        const v = e[k];
+        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
+          throw new RangeError(`setVectors: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
+        }
+      }
+      if (e.field !== undefined && e.field !== null && (typeof e.field !== "string" || e.field === "")) throw new RangeError(`setVectors: field ${JSON.stringify(e.field)}`);
+      if (e.colorBy !== undefined && !["mono", "type", "magnitude"].includes(e.colorBy)) throw new RangeError(`setVectors: colorBy ${JSON.stringify(e.colorBy)}`);
+      if (e.component !== undefined && !["resultant", "xyz", "x", "y", "z"].includes(e.component)) {
+        throw new RangeError(`setVectors: component ${JSON.stringify(e.component)}`);
+      }
+      const cur = s.vectors;
+      const next: VectorsState = {
+        on: e.on ?? cur.on,
+        field: e.field !== undefined ? e.field : cur.field,
+        scale: e.scale ?? cur.scale,
+        headSize: e.headSize ?? cur.headSize,
+        colorBy: e.colorBy ?? cur.colorBy,
+        thin: e.thin ?? cur.thin,
+        component: e.component ?? cur.component,
+      };
+      return (Object.keys(next) as (keyof VectorsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, vectors: next };
+    }
     case "setLoads": {
       if (e.on !== undefined && typeof e.on !== "boolean") {
         throw new RangeError(`setLoads: on ${JSON.stringify(e.on)}`);
@@ -1592,6 +1657,48 @@ export function reduce(s: State, e: Event): State {
       // Only for the combination and quantity shown now: a late answer for another is dropped.
       if (combinationRequestOf(s)?.key !== r.key) return s;
       return { ...s, combination: r };
+    }
+    case "variantsRead":
+      return withStudy(s, e.study);
+    case "variantSwitch": {
+      const row = studyRow(s, e.index, e.label, "variantSwitch");
+      if (s.variants.study!.active === row.index) return s;
+      return { ...s, variants: { ...s.variants, switching: { index: row.index, label: row.label }, notice: null } };
+    }
+    case "variantSwitched":
+      if (s.variants.switching === null) return s;
+      return { ...s, variants: { ...s.variants, switching: null, notice: e.reason } };
+    case "variantCompare": {
+      if (e.row === null) return s.variants.compare === null ? s : { ...s, variants: { ...s.variants, compare: null, difference: false, read: null } };
+      const row = studyRow(s, e.row.index, e.row.label, "variantCompare");
+      // INV-6: the compare set is never the window set.
+      if (s.variants.study!.active === row.index) throw new Error(`variantCompare: variant ${JSON.stringify(row.label)} is the window set; a compare set is another row`);
+      return { ...s, variants: { ...s.variants, compare: { index: row.index, label: row.label, status: "opening" }, difference: false, read: null, notice: null } };
+    }
+    case "compareOpened": {
+      const c = s.variants.compare;
+      const r = e.result;
+      // Only the compare asked for now: a late answer for another row is dropped.
+      if (c?.status !== "opening" || c.index !== r.index || c.label !== r.label) return s;
+      if ("reason" in r) return { ...s, variants: { ...s.variants, compare: { index: r.index, label: r.label, status: "failed", reason: r.reason }, notice: r.reason } };
+      return { ...s, variants: { ...s.variants, compare: { status: "open", ...r } } };
+    }
+    case "setDifference": {
+      if (e.on === s.variants.difference) return s;
+      // A spec turns it on as it asks for the compare set (spec/compile.ts); the difference then waits for the set.
+      const st = s.variants.compare?.status;
+      if (e.on && st !== "open" && st !== "opening") throw new Error("setDifference: no compare set is open, so there is nothing to subtract");
+      return { ...s, variants: { ...s.variants, difference: e.on, read: null } };
+    }
+    case "differenceRead": {
+      const r = e.read;
+      if (r === null || typeof r !== "object" || typeof r.key !== "string" || !["loading", "ready", "refused"].includes(r.status)) {
+        throw new RangeError(`differenceRead: ${JSON.stringify(r)} is not a difference read`);
+      }
+      // Only for the difference shown now: a late answer for another key is dropped.
+      const plan = differencePlanOf(s);
+      if (plan === null || !plan.ok || plan.key !== r.key) return s;
+      return { ...s, variants: { ...s.variants, read: r } };
     }
     default: {
       const unknown: never = e;

@@ -8,15 +8,29 @@ working directory the subprocess inherited, the frozen
 the run finished). :func:`open_results` turns it into the existing
 :class:`~apeGmsh.results.Results`:
 
-- one ``recorder.MPCO`` → :meth:`Results.from_mpco`;
+- one ``recorder.Ladruno`` (the fork's file) →
+  :meth:`Results.from_ladruno`;
+- one ``recorder.MPCO`` → converted to a ``.ladruno`` beside the
+  ``.mpco`` and read with :meth:`Results.from_ladruno`, through
+  :func:`~apeGmsh.results.live.read_deck_mpco` (ADR 0131 D11). It
+  converts only when the stage kinds are facts: the program declares
+  ``ops.stage`` blocks, or the unstaged deck was emitted with
+  ``analyze_steps`` and left its run record ``<file>.run.json``, which
+  must pass the checks in the module docstring of
+  ``results/readers/_ladruno_from_mpco.py``. Otherwise the read refuses,
+  naming those two remedies. The ``.mpco`` is never read with
+  ``Results.from_mpco``;
 - ``recorder.declare(nodes=...)`` and typed ``recorder.Node`` text
   records → one recorder spec synthesised from the records, read by
   :meth:`Results.from_recorders` (Q3: one history reader);
-- otherwise a :class:`BridgeError` naming ``recorder.MPCO``,
-  ``recorder.declare`` and ``np.loadtxt``.
+- otherwise a :class:`BridgeError` naming ``recorder.Ladruno``,
+  ``recorder.MPCO`` under declared stages, ``recorder.declare`` and
+  ``np.loadtxt``.
 
-Every refusal is decided before the first file write. A refusal names
-its cause:
+Every refusal is decided before the first file write, except the
+converter's own: the run record's checks read the model archive, so they
+come after it is written, and a refused conversion writes no
+``.ladruno``. A refusal names its cause:
 
 - no deck run on this bridge, or a live ``analyze`` since (``.read``
   answers there, Q4);
@@ -27,9 +41,13 @@ its cause:
 - the bridge's declarations changed after the run;
 - a record this route cannot read (a typed ``recorder.Element``, a
   ``recorder.declare`` element category or ``raw_*`` token, a
-  ``Ladruno`` or ``Monitor`` recorder, an unknown recorder class): the
-  route refuses the whole read rather than return a ``Results`` that
-  silently lacks it;
+  ``Monitor`` recorder, an unknown recorder class): the route refuses the
+  whole read rather than return a ``Results`` that silently lacks it;
+- a history recorder (``MPCO`` or ``Ladruno``) with no ``file=``, more
+  than one of them, or one beside text records;
+- an ``MPCO`` recorder whose stage kinds are not facts (above), or whose
+  ``.ladruno`` target beside it is a file the converter did not write
+  (the fork's own, say), which the read never replaces;
 - a text record on a staged or partitioned deck (per-stage and per-rank
   files are not one history);
 - a typed record without a time column (``time_format="step"``), or a
@@ -41,7 +59,13 @@ What a successful read writes sits beside the deck, under
 ``<deck>.results/`` (the way ``<deck>.log`` sits beside it): the model
 archive ``model.h5`` the readers bind, the text records transcribed to
 the layout :meth:`Results.from_recorders` reads (``out/``), and that
-reader's cache.
+reader's cache. A converted ``.mpco`` is the exception: its ``.ladruno``
+is the converter's target, beside the ``.mpco``. A later read of the
+same deck run (the same :class:`DeckRun` object, held in memory) reuses
+that conversion while the ``.mpco``, its run record and the ``.ladruno``
+are unchanged, even while an earlier ``Results`` holds it open. Any other
+read converts afresh, replacing the file; an open ``Results`` on it then
+refuses the replace by name.
 
 This route imports the build package's names from their defining
 submodules (``_internal/build/<module>.py``) here only.
@@ -49,9 +73,11 @@ submodules (``_internal/build/<module>.py``) here only.
 from __future__ import annotations
 
 import os
+import sys
+import weakref
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 import numpy as np
 
@@ -98,12 +124,29 @@ __all__ = [
 
 _WHERE = "ops.results"
 
-#: What to use instead, named by every "nothing this route can read" refusal.
+#: What to use instead, named by every "nothing this route can read"
+#: refusal: routes that read (ADR 0131 D11), never one that refuses too.
 _ALTERNATIVES = (
-    "Record the history with ops.recorder.MPCO(...) or "
-    "ops.recorder.declare(nodes=...), or read a typed recorder's file "
-    "yourself with np.loadtxt"
+    "Record the history with ops.recorder.Ladruno(...) on the Ladruno fork "
+    "build, with ops.recorder.MPCO(...) under declared ops.stage(...) "
+    "blocks on stock OpenSees, or with ops.recorder.declare(nodes=...); or "
+    "read a typed recorder's file yourself with np.loadtxt"
 )
+
+#: What makes an MPCO recorder's stage kinds facts, so its ``.mpco``
+#: converts (ADR 0131 D5, D11). It never names ``convert_mpco``, which
+#: refuses an unstaged program.
+_MPCO_REMEDIES = (
+    "Declare the stages with ops.stage(...), or emit and run the deck with "
+    "analyze_steps= (ops.py(path, run=True, analyze_steps=n), or ops.tcl), "
+    "which writes the run record; on the Ladruno fork build, record with "
+    "ops.recorder.Ladruno(...) instead"
+)
+
+#: Windows' ERROR_SHARING_VIOLATION, the ``winerror`` of a replace that an
+#: open handle (an open :class:`Results`) blocks. ``OSError.winerror``
+#: exists on Windows only; elsewhere an open file never blocks a replace.
+_ERROR_SHARING_VIOLATION = 32
 
 #: Typed ``recorder.Node`` response token -> (translational prefix,
 #: rotational prefix) of the canonical component a DOF slot carries.
@@ -245,10 +288,14 @@ class _TextSource:
 def open_results(bridge: "apeSees", path: str) -> "Results":
     """``bridge``'s last deck run at ``path``, as a :class:`Results`."""
     run = _the_run(bridge, path)
-    mpco, sources = _classify(bridge, run)
-    if mpco is not None:
-        mpco_files = _mpco_files(run, mpco)
-        return _write_and_read_mpco(bridge, run, mpco_files)
+    history, sources = _classify(bridge, run)
+    if isinstance(history, Ladruno):
+        return _write_and_read_ladruno(
+            bridge, run, _history_files(run, history))
+    if isinstance(history, MPCO):
+        files = _history_files(run, history)
+        overwrite = _plan_conversion(run, history, files)
+        return _write_and_read_mpco(bridge, run, history, files, overwrite)
     tables = [_read_source(s) for s in sources]
     _check_time_columns(sources, tables)
     return _write_and_read_text(bridge, run, sources, tables)
@@ -301,22 +348,23 @@ def _the_run(bridge: "apeSees", path: str) -> DeckRun:
 
 def _classify(
     bridge: "apeSees", run: DeckRun,
-) -> "tuple[MPCO | None, list[_TextSource]]":
-    """The one MPCO recorder, or the text sources; every record this
-    route cannot read refuses here, all of them named at once."""
+) -> "tuple[MPCO | Ladruno | None, list[_TextSource]]":
+    """The one history recorder (MPCO or Ladruno), or the text sources;
+    every record this route cannot read refuses here, all of them named
+    at once."""
     recorders = [p for p in run.built.primitives if isinstance(p, Recorder)]
     if not recorders:
         raise BridgeError(
             f"{_WHERE}: the deck run ({run.verb}) declared no recorder, so it "
             f"wrote no history to read. {_ALTERNATIVES}."
         )
-    mpcos: list[MPCO] = []
+    histories: list[MPCO | Ladruno] = []
     typed: list[NodeRecorder] = []
     declared: list[RecorderDeclaration] = []
     unreadable: list[str] = []
     for rec in recorders:
-        if isinstance(rec, MPCO):
-            mpcos.append(rec)
+        if isinstance(rec, (MPCO, Ladruno)):
+            histories.append(rec)
         elif isinstance(rec, NodeRecorder):
             typed.append(rec)
         elif isinstance(rec, RecorderDeclaration):
@@ -329,7 +377,8 @@ def _classify(
                 unreadable.append(
                     f"recorder.declare(name={decl.name!r}) {record.category}= "
                     "record (element-level histories are read from "
-                    "recorder.MPCO)"
+                    "recorder.Ladruno, or from recorder.MPCO under declared "
+                    "stages)"
                 )
             elif record.raw:
                 unreadable.append(
@@ -344,32 +393,48 @@ def _classify(
             + "; ".join(unreadable) + f". {_ALTERNATIVES}."
         )
     text = bool(typed or declared)
-    if mpcos and text:
+    if histories and text:
+        kind = type(histories[0]).__name__
         raise BridgeError(
-            f"{_WHERE}: the deck run ({run.verb}) holds an MPCO recorder and "
+            f"{_WHERE}: the deck run ({run.verb}) holds "
+            f"{'an' if kind == 'MPCO' else 'a'} {kind} recorder and "
             f"{len(typed) + len(declared)} text recorder(s); one Results "
-            "reads one of the two. Keep the MPCO recorder, or the text ones."
+            f"reads one of the two. Keep the {kind} recorder, or the text "
+            "ones."
         )
-    if len(mpcos) > 1:
+    if len(histories) > 1:
         raise BridgeError(
-            f"{_WHERE}: the deck run ({run.verb}) holds {len(mpcos)} MPCO "
-            f"recorders ({', '.join(repr(m.file) for m in mpcos)}); one "
-            "Results reads one file. Declare one MPCO recorder."
+            f"{_WHERE}: the deck run ({run.verb}) holds {len(histories)} "
+            "history recorders ("
+            + ", ".join(_history_origin(h) for h in histories)
+            + "); one Results reads one file. Declare one MPCO or Ladruno "
+            "recorder."
         )
-    if mpcos:
-        return mpcos[0], []
+    if histories:
+        history = histories[0]
+        if not str(history.file).strip():
+            raise BridgeError(
+                f"{_WHERE}: {_history_origin(history)} names no file, so "
+                "ops.results cannot find the history the run wrote. "
+                "Declare it with file=<path>."
+            )
+        return history, []
     if run.built.stage_records:
         raise BridgeError(
             f"{_WHERE}: the deck run ({run.verb}) is staged "
             f"({len(run.built.stage_records)} stage(s)); its text recorders "
             "write one file across every stage, which is not one history "
-            "per stage. Record a staged run with ops.recorder.MPCO."
+            "per stage. Record a staged run with ops.recorder.Ladruno on "
+            "the Ladruno fork build, or with ops.recorder.MPCO on stock "
+            "OpenSees (its stages are declared, so its .mpco converts)."
         )
     if run.partitioned:
         raise BridgeError(
             f"{_WHERE}: the deck run ({run.verb}) is partitioned; its text "
             "recorders are written per rank. Record a partitioned run with "
-            "ops.recorder.MPCO, or emit it with flat=True."
+            "ops.recorder.Ladruno on the Ladruno fork build, or with "
+            "ops.recorder.MPCO under declared ops.stage(...) blocks on "
+            "stock OpenSees, or emit it with flat=True."
         )
     roles = _NodeRoles(bridge, run)
     sources: list[_TextSource] = []
@@ -384,14 +449,16 @@ def _unreadable(rec: Recorder) -> str:
     if isinstance(rec, ElementRecorder):
         return (
             f"typed recorder.Element(file={rec.file!r}) (element records "
-            "are read from recorder.MPCO, or with np.loadtxt)"
+            "are read from recorder.Ladruno, from recorder.MPCO under "
+            "declared stages, or with np.loadtxt)"
         )
-    if isinstance(rec, (Ladruno, Monitor)):
-        return (
-            f"recorder.{type(rec).__name__} (not a history ops.results "
-            "reads)"
-        )
+    if isinstance(rec, Monitor):
+        return "recorder.Monitor (not a history ops.results reads)"
     return f"a {type(rec).__name__} recorder (unknown to ops.results)"
+
+
+def _history_origin(rec: "MPCO | Ladruno") -> str:
+    return f"recorder.{type(rec).__name__}(file={rec.file!r})"
 
 
 class _NodeRoles:
@@ -439,7 +506,7 @@ class _NodeRoles:
         unpartitioned run), so this mints nothing."""
         built = self._run.built
         plan = built._tag_plan(emit_mode(
-            built, split=False,
+            built,
             supports_partitions=self._run.supports_partitions))
         return tuple(plan.elements.specs)
 
@@ -621,7 +688,9 @@ def _check_time_columns(
             )
 
 
-def _mpco_files(run: DeckRun, rec: MPCO) -> list[Path]:
+def _history_files(run: DeckRun, rec: "MPCO | Ladruno") -> list[Path]:
+    """The file(s) a history recorder wrote: one, or one per rank."""
+    origin = _history_origin(rec)
     path = _resolve_file(run, rec.file)
     if run.partitioned:
         # Exactly one file per rank of this run: a missing rank is a
@@ -633,7 +702,7 @@ def _mpco_files(run: DeckRun, rec: MPCO) -> list[Path]:
         stale = sorted(str(p.name) for p in found - set(files))
         if stale:
             raise BridgeError(
-                f"{_WHERE}: recorder.MPCO(file={rec.file!r}): the run has "
+                f"{_WHERE}: {origin}: the run has "
                 f"{n_ranks} rank(s), but {str(path.parent)!r} also holds "
                 f"{stale}, which this run did not write. Remove them and "
                 "run the deck again."
@@ -642,12 +711,85 @@ def _mpco_files(run: DeckRun, rec: MPCO) -> list[Path]:
         files = [path]
     for f in files:
         if not f.is_file() or f.stat().st_size == 0:
+            hint = ""
+            if (isinstance(rec, MPCO) and not run.built.stage_records
+                    and not _run_record(run, rec).is_file()):
+                # A deck emitted without analyze_steps drives no analysis,
+                # so it records nothing; name what makes an MPCO read.
+                hint = (
+                    " The deck run declares no ops.stage block and left no "
+                    f"run record {str(_run_record(run, rec))!r}. "
+                    f"{_MPCO_REMEDIES}."
+                )
             raise BridgeError(
-                f"{_WHERE}: recorder.MPCO(file={rec.file!r})'s output "
+                f"{_WHERE}: {origin}'s output "
                 f"{str(f)!r} does not exist or is empty; the run wrote no "
-                "history there."
+                f"history there.{hint}"
             )
     return files
+
+
+def _run_record(run: DeckRun, rec: MPCO) -> Path:
+    """``<file>.run.json``: where a deck emitted with ``analyze_steps``
+    writes its run record (for a set, beside ``<stem>.mpco``)."""
+    from .emitter.py import DECK_RUN_SUFFIX
+
+    return Path(str(_resolve_file(run, rec.file)) + DECK_RUN_SUFFIX)
+
+
+def _plan_conversion(run: DeckRun, rec: MPCO, files: list[Path]) -> bool:
+    """Decide, before any write, whether ``rec``'s ``.mpco`` converts
+    (ADR 0131 D11); return whether its target replaces an earlier read's.
+
+    The stage kinds are facts when the program declares ``ops.stage``
+    blocks, or, unstaged, when the deck left its run record beside the
+    ``.mpco`` (``read_deck_mpco`` then runs the record's checks). No
+    record refuses here, naming the remedies. A ``.ladruno`` target that
+    the converter did not write (the fork's own file) is never replaced.
+    """
+    from ..results.readers._ladruno_live import (
+        existing_fork_files,
+        fork_target_of,
+    )
+
+    origin = _history_origin(rec)
+    if not run.built.stage_records:
+        record = _run_record(run, rec)
+        if not record.is_file():
+            raise BridgeError(
+                f"{_WHERE}: {origin}: the deck run ({run.verb}) declares no "
+                f"ops.stage block and left no run record {str(record)!r}, so "
+                "the kind of its one stage is not a fact and its .mpco is "
+                f"not converted (ADR 0131 D11). {_MPCO_REMEDIES}."
+            )
+    existing = existing_fork_files(fork_target_of(files[0]))
+    foreign = [str(p) for p in existing if not _converted(p)]
+    if foreign:
+        raise BridgeError(
+            f"{_WHERE}: {origin}: its .mpco converts to {foreign}, which "
+            "already exist and were not written by the converter (a "
+            "Ladruno recorder's file, say); the read never replaces them. "
+            "Move them aside, or record to another file."
+        )
+    return bool(existing)
+
+
+def _converted(path: Path) -> bool:
+    """``path`` is a ``.ladruno`` the MPCO converter wrote: its
+    ``INFO/PROVENANCE@writer`` carries the converter's mark. Anything
+    unreadable is not."""
+    import h5py
+
+    from ..results.readers._ladruno_provenance import _CONVERTED_MARK
+
+    try:
+        with h5py.File(path, "r") as f:
+            writer = f["INFO/PROVENANCE"].attrs.get("writer")
+    except (OSError, KeyError):
+        return False
+    if isinstance(writer, bytes):
+        writer = writer.decode("utf-8", errors="replace")
+    return isinstance(writer, str) and _CONVERTED_MARK in writer
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +808,7 @@ def _results_dir(bridge: "apeSees", run: DeckRun) -> tuple[Path, Path]:
     return root, archive
 
 
-def _write_and_read_mpco(
+def _write_and_read_ladruno(
     bridge: "apeSees", run: DeckRun, files: list[Path],
 ) -> "Results":
     from ..results.Results import Results
@@ -674,9 +816,148 @@ def _write_and_read_mpco(
     _root, archive = _results_dir(bridge, run)
     target: "Path | list[str | Path]" = (
         files[0] if len(files) == 1 else list[str | Path](files))
-    return Results.from_mpco(
-        target, fem=bridge.fem, model_h5=archive,
+    return Results.from_ladruno(target, fem=bridge.fem, model_h5=archive)
+
+
+def _write_and_read_mpco(
+    bridge: "apeSees", run: DeckRun, rec: MPCO, files: list[Path],
+    overwrite: bool,
+) -> "Results":
+    """Convert the ``.mpco`` beside itself and read the ``.ladruno``,
+    through ``read_deck_mpco`` (the one caller of the converter's
+    run-record path). A conversion refusal raises here, by name: the
+    read never falls back to ``Results.from_mpco``.
+
+    A conversion an earlier read of this same deck run made is reused
+    while its files are unchanged (:func:`_reusable_conversion`), so a
+    second read never replaces a file an open :class:`Results` holds."""
+    from ..results import MPCOConversionRefused
+    from ..results.Results import Results
+    from ..results.live import read_deck_mpco
+    from ..results.readers._ladruno_from_mpco import StageKindRefused
+
+    _root, archive = _results_dir(bridge, run)
+    origin = _history_origin(rec)
+    reuse, why_not = _reusable_conversion(run, rec, files)
+    if reuse is not None:
+        target: "str | list[str | Path]" = (
+            str(reuse[0]) if len(reuse) == 1 else list[str | Path](reuse))
+        return Results.from_ladruno(target, model_h5=str(archive))
+    try:
+        results = read_deck_mpco(files[0], model_h5=archive,
+                                 overwrite=overwrite)
+    except StageKindRefused as e:
+        # read_deck_mpco names its own remedies after the converter's
+        # refusal, which it chains as the cause: quote that one, so the
+        # bridge's remedies are said once.
+        cause = e.__cause__
+        if not isinstance(cause, StageKindRefused):
+            raise RuntimeError(
+                "read_deck_mpco raised a stage-kind refusal that is not "
+                "chained from the converter's") from e
+        raise BridgeError(
+            f"{_WHERE}: {origin}: the stage kinds of the deck run "
+            f"({run.verb}) are not facts, so its .mpco is not converted "
+            f"(ADR 0131 D11): {cause} {_MPCO_REMEDIES}."
+        ) from e
+    except MPCOConversionRefused as e:
+        raise BridgeError(
+            f"{_WHERE}: {origin}: its .mpco does not convert: {e}"
+        ) from e
+    except OSError as e:
+        failed = (
+            f"{_WHERE}: {origin}: converting its .mpco to a .ladruno failed "
+            f"({type(e).__name__}: {e})."
+        )
+        # Only a replace of an existing .ladruno can meet an open Results,
+        # and only a sharing violation says one holds it: Windows raises
+        # its ERROR_SHARING_VIOLATION (winerror 32) as PermissionError.
+        # Any other denial (a directory ACL, say) is quoted as it is.
+        if (overwrite and isinstance(e, PermissionError)
+                and sys.platform == "win32"
+                and e.winerror == _ERROR_SHARING_VIOLATION):
+            raise BridgeError(
+                f"{failed} This read converts afresh, replacing the "
+                f".ladruno already there, because {why_not}; a Results "
+                "still open on that file (an earlier ops.results or "
+                "Results.from_ladruno) blocks the replace. Close it "
+                "(results.close()) and read again."
+            ) from e
+        raise BridgeError(failed) from e
+    _remember_conversion(run, rec, files)
+    return results
+
+
+#: The last conversion this route made for a deck run, keyed by the
+#: :class:`DeckRun` object's id (its weak reference proves it is the same
+#: object): the facts of the files it read and wrote. In memory only, so
+#: nothing on disk can claim a conversion pairs; a new deck run on the
+#: bridge is a new object and converts again.
+_CONVERSIONS: "dict[int, tuple[weakref.ref[DeckRun], tuple[Any, ...]]]" = {}
+
+
+def _file_facts(paths: Sequence[Path]) -> tuple[tuple[str, int, int], ...]:
+    out = []
+    for p in paths:
+        st = p.stat()
+        out.append((os.path.normcase(str(p)), st.st_size, st.st_mtime_ns))
+    return tuple(out)
+
+
+def _conversion_facts(
+    run: DeckRun, rec: MPCO, files: Sequence[Path],
+) -> "tuple[Any, ...] | None":
+    """The size and mtime of the ``.mpco`` files, the run record and the
+    ``.ladruno`` files of ``rec``, or ``None`` when one cannot be read."""
+    from ..results.readers._ladruno_live import (
+        existing_fork_files,
+        fork_target_of,
     )
+
+    record = _run_record(run, rec)
+    try:
+        targets = existing_fork_files(fork_target_of(files[0]))
+        return (
+            _file_facts(files),
+            _file_facts([record]) if record.is_file() else (),
+            _file_facts(targets),
+        )
+    except OSError:
+        return None
+
+
+def _reusable_conversion(
+    run: DeckRun, rec: MPCO, files: Sequence[Path],
+) -> "tuple[list[Path] | None, str]":
+    """The ``.ladruno`` file(s) an earlier read of this same deck run
+    converted, or ``None`` and why not.
+
+    Reused only when this :class:`DeckRun` object made the conversion and
+    the ``.mpco`` files, the run record and the ``.ladruno`` files are as
+    that conversion left them (size and mtime): the record's checks then
+    passed on exactly these files.
+    """
+    for key in [k for k, (ref, _) in _CONVERSIONS.items() if ref() is None]:
+        del _CONVERSIONS[key]
+    entry = _CONVERSIONS.get(id(run))
+    if entry is None or entry[0]() is not run:
+        return None, "no earlier read of this deck run converted it"
+    now = _conversion_facts(run, rec, files)
+    if now is None or now != entry[1] or not now[2]:
+        return None, (
+            "its .mpco, its run record or the .ladruno changed on disk "
+            "since this deck run's earlier read converted it")
+    return [Path(row[0]) for row in now[2]], ""
+
+
+def _remember_conversion(
+    run: DeckRun, rec: MPCO, files: Sequence[Path],
+) -> None:
+    facts = _conversion_facts(run, rec, files)
+    if facts is None:
+        _CONVERSIONS.pop(id(run), None)
+    else:
+        _CONVERSIONS[id(run)] = (weakref.ref(run), facts)
 
 
 def _write_and_read_text(
