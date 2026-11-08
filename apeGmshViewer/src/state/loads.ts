@@ -1471,15 +1471,15 @@ export const COMB_STRIDE = 17;
 /** Thinning levels; level k keeps arrows at least `radius * 2^(k - THIN_LEVELS)` apart, the stronger first (level 0 keeps every arrow). */
 export const THIN_LEVELS = 12;
 
-interface GlyphBuffers {
+export interface GlyphBuffers {
   readonly arrows: number[];
   readonly combs: number[];
 }
 
-type Vec3 = readonly [number, number, number];
+export type Vec3 = readonly [number, number, number];
 
 /** Push an arrow whose tip touches `tip`, pointing along `dir` (unit), `len` long at its nominal size. */
-function pushArrowToPoint(
+export function pushArrowToPoint(
   g: GlyphBuffers,
   tip: Vec3,
   dir: Vec3,
@@ -1557,6 +1557,27 @@ export function thinningLevels(arrows: Float32Array, radius: number): void {
 }
 
 /**
+ * `thinningLevels` decided per node: one record per node (its strongest glyph,
+ * of any kind), then each glyph takes its node's level, so a node's components
+ * and its moment show or hide together. `records` are views of one record each
+ * (into any buffers), `nodes` the node each belongs to.
+ */
+export function thinningLevelsByNode(records: readonly Float32Array[], nodes: readonly number[], radius: number): void {
+  const firstOf = new Map<number, number>();
+  records.forEach((r, i) => {
+    const k = firstOf.get(nodes[i]!);
+    if (k === undefined || r[ARROW.priority]! > records[k]![ARROW.priority]!) firstOf.set(nodes[i]!, i);
+  });
+  const reps = [...firstOf.values()];
+  const perNode = new Float32Array(reps.length * ARROW_STRIDE);
+  reps.forEach((i, j) => perNode.set(records[i]!, j * ARROW_STRIDE));
+  thinningLevels(perNode, radius);
+  const levelOf = new Map<number, number>();
+  reps.forEach((i, j) => levelOf.set(nodes[i]!, perNode[j * ARROW_STRIDE + ARROW.level]!));
+  records.forEach((r, i) => (r[ARROW.level] = levelOf.get(nodes[i]!)!));
+}
+
+/**
  * The arrows at their nominal size as plain segments and head triangles, a
  * head `headLen` long and lying in a fixed plane: the CPU twin of the
  * renderer's instance shader without its pixel sizing, for tests and probes.
@@ -1592,7 +1613,7 @@ export function expandArrows(geom: Pick<Loads3DGeometry, "arrows" | "combs">, he
   return { linePositions: new Float32Array(lines), conePositions: new Float32Array(cones) };
 }
 
-function buildNodeCoordsMap(
+export function buildNodeCoordsMap(
   s: State,
   blobs: BlobStore,
   opts?: BuildLoads3DOptions,
@@ -2535,20 +2556,7 @@ export function buildReactions3D(
   const arrows = new Float32Array(forces.arrows);
   const arcs = new Float32Array(moments.arrows);
   const recordAt = (i: number) => (items[i]!.arc ? arcs : arrows).subarray(recordOf[i]! * ARROW_STRIDE, (recordOf[i]! + 1) * ARROW_STRIDE);
-  // Thinning is decided per node: one record per node (its strongest glyph of either kind), then
-  // each glyph takes its node's level, so a node's components and its moment show or hide together.
-  const firstOf = new Map<number, number>();
-  items.forEach((it, i) => {
-    const k = firstOf.get(it.node);
-    if (k === undefined || recordAt(i)[ARROW.priority]! > recordAt(k)[ARROW.priority]!) firstOf.set(it.node, i);
-  });
-  const reps = [...firstOf.values()];
-  const perNode = new Float32Array(reps.length * ARROW_STRIDE);
-  reps.forEach((i, j) => perNode.set(recordAt(i), j * ARROW_STRIDE));
-  thinningLevels(perNode, radius);
-  const levelOf = new Map<number, number>();
-  reps.forEach((i, j) => levelOf.set(items[i]!.node, perNode[j * ARROW_STRIDE + ARROW.level]!));
-  items.forEach((it, i) => (recordAt(i)[ARROW.level] = levelOf.get(it.node)!));
+  thinningLevelsByNode(items.map((_, i) => recordAt(i)), items.map((it) => it.node), radius);
   return { arrows, arcs, count: arrows.length / ARROW_STRIDE, arcCount: arcs.length / ARROW_STRIDE, maxMag: max.force, maxMoment: max.moment };
 }
 

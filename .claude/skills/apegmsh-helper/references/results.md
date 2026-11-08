@@ -628,6 +628,13 @@ runs `--render` and returns the manifest, raising `AgentViewError` with
 every refusal (`assess.md`). Quote numbers from the manifest, not from
 the pixels.
 
+### apeGmshViewer: the Vectors card
+
+The desktop app's Vectors card draws one nodal vector field of the step
+on screen as arrows starting at the nodes (rotations as half circles). It
+shows direction and relative size, not values, and `--render` cannot draw
+it. What it offers and how it draws: `viewer.md` §8.
+
 ### Headless animation export — `results.export_animation(...)` (#755)
 
 ```python

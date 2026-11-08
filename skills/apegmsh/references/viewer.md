@@ -167,9 +167,9 @@ screen (not on the geometry phase). Refused rows never draw. A storey
 naming a node the model does not hold is not drawn; the reason is a warning
 in the developer console (DevTools), not in the window.
 
-## 8. Loads & SPs, Reactions and supports
+## 8. Loads & SPs, Reactions, Vectors and supports
 
-On the Loads & SPs and Reactions cards every arrow is sized on screen: the
+On the Loads & SPs, Reactions and Vectors cards every arrow is sized on screen: the
 head is twice as long as it is wide and
 `head` pixels long (12 by default), and a shaft stays between 15 and 80
 pixels times the card's `scale`. Zooming rebuilds nothing. **thin out** (on
@@ -193,6 +193,21 @@ a kind the step records. The menu picks the resultant, the X, Y, Z
 components, or one axis (Z only when it is recorded). It draws at the
 supports; **all nodes** adds the reactions recorded elsewhere (a free
 node's residual, a constrained node's constraint force).
+
+**Vectors** shows when the stage on screen records a nodal vector field:
+each nodal field with two or more axes, such as `DISPLACEMENT`, `VELOCITY`
+and `ACCELERATION` in a `.ladruno`. **3D vectors** (off by default) draws
+the picked field as arrows that start at the nodes and point along the
+vector, and they follow the deformed shape. A rotational field
+(`ROTATION`, `ANGULAR_VELOCITY`, `moment`) draws a half circle about each
+node's axis (right-hand rule). A 2-D model's lone `Rz` is not offered: the
+fork's schema allows it to hold a pore pressure. The menu picks the
+resultant, the X, Y, Z components, or one axis (Z only when the field
+records it). An axis the field does not record falls back to the
+resultant. Lengths are relative to the step's largest vector, so the card
+shows direction and relative size, not a value. Vectors under 1e-6 of
+the largest are not drawn. An `apegmsh-view/1` spec has no key for the
+card, so `--render` cannot draw it.
 
 **Supports**: the **BC** switch in the Display card (off by default) draws
 the restraints from the model alone: an arrow into the node per restrained

@@ -168,6 +168,7 @@ export {
   type LoadsSummary,
   type LoadsUnitLabels,
 } from "./loads.ts";
+export { vectorComponentOf, vectorFieldOf, vectorFieldsOf, type VectorField } from "./vectors.ts";
 import type {
   AnalysisDef,
   ArtifactInfo,

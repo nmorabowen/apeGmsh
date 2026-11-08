@@ -13,6 +13,7 @@ import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
 import { ARROW, ARROW_STRIDE, buildLoads3D, buildReactions3D, buildSupports3D, COMB_STRIDE, THIN_LEVELS } from "../state/loads.ts";
 import type { State } from "../state/types.ts";
+import { buildVectors3D, vectorFieldOf } from "../state/vectors.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
 import { toLinear, type StepValues } from "./contour.ts";
 import type { FullPositions } from "./deform.ts";
@@ -476,14 +477,25 @@ class ArcGlyphs {
     this.headMaterial.dispose();
   }
 }
-/** The Reactions card's glyphs (`s.reactions`): the reaction forces and moments of the results step on screen. */
-export class ReactionsLayer extends ArrowLayer {
-  /** The moment arcs, on this card's uniforms. */
+/** What a step card's builder hands its layer: arrow and half-circle records, `ARROW_STRIDE` floats each. */
+interface StepGlyphs {
+  readonly arrows: Float32Array;
+  readonly arcs: Float32Array;
+}
+
+/**
+ * A card drawing one results step's nodal data: its arrows and its half
+ * circles on the card's own uniforms, rebuilt when the step's data or the
+ * card's settings change. Until the step on screen is read (a scrub) the last
+ * step's glyphs stay; another stage's, or a step whose read failed, hide.
+ */
+abstract class StepGlyphLayer extends ArrowLayer {
+  /** The half circles, on this card's uniforms. */
   readonly arcs = new ArcGlyphs(this.uniforms);
   private appliedKey: string | null = null;
-  /** The step data drawn: a re-read of the same step rebuilds the arrows. */
+  /** The step data drawn: a re-read of the same step rebuilds the glyphs. */
   private drawnStep: StepValues | null = null;
-  /** The results stage the arrows on screen were built for. */
+  /** The results stage the glyphs on screen were built for. */
   private drawnStage: number | null = null;
 
   constructor() {
@@ -491,22 +503,29 @@ export class ReactionsLayer extends ArrowLayer {
     this.root.add(this.arcs.root);
   }
 
+  /** The card's switch and pixel sizing. */
+  protected abstract card(s: State): ArrowSizing & { readonly on: boolean };
+  /** The card's settings a rebuild depends on (the step, mesh, deformed shape and theme are keyed here). */
+  protected abstract settingsKey(s: State): string;
+  protected abstract build(s: State, blobs: BlobStore, nodal: Readonly<Record<string, Float64Array>>, nodeIds: Float64Array, opts: ReturnType<typeof drawnOpts>): StepGlyphs;
+
   sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
     const at = s.phase.at;
-    if (!s.reactions.on || !s.mesh || at?.kind !== "results") {
+    const card = this.card(s);
+    if (!card.on || !s.mesh || at?.kind !== "results") {
       this.appliedKey = null;
       this.drawnStep = null;
       this.drawnStage = null;
       return this.hide();
     }
-    const sized = this.size(s.reactions);
+    const sized = this.size(card);
     const ids = s.results?.stages[at.stage]?.nodeIds;
-    // Until the step's data is here (a scrub), the last step's arrows stay.
+    // Until the step's data is here (a scrub), the last step's glyphs stay.
     const here = step && step.stage === at.stage && step.step === at.step && ids && blobs.has(ids) ? step : null;
-    const nextKey = [s.mesh.linePositions.id, full ? full.key : "base", s.reactions.scale, s.reactions.colorBy, s.reactions.component, s.reactions.allNodes, s.reactions.forces, s.reactions.moments, s.contour.sourceUnits ?? "", s.contour.targetUnits ?? "", this.theme].join("|");
+    const nextKey = [s.mesh.linePositions.id, full ? full.key : "base", this.settingsKey(s), this.theme].join("|");
     if (!here) {
-      // A scrub within the stage keeps the last arrows until the step arrives; another stage's, or a
-      // step whose read failed, are not this step's reactions.
+      // A scrub within the stage keeps the last glyphs until the step arrives; another stage's, or a
+      // step whose read failed, are not this step's.
       const failed = s.resultStep?.stage === at.stage && s.resultStep.step === at.step && s.resultStep.status === "failed";
       if (this.drawnStage !== at.stage || failed) {
         this.appliedKey = null;
@@ -517,7 +536,7 @@ export class ReactionsLayer extends ArrowLayer {
       return sized;
     }
     if (this.appliedKey === nextKey && here === this.drawnStep) return sized;
-    const r = buildReactions3D(s, blobs, here.nodal, blobs.get(ids!) as Float64Array, drawnOpts(this.theme, full));
+    const r = this.build(s, blobs, here.nodal, blobs.get(ids!) as Float64Array, drawnOpts(this.theme, full));
     this.drawnStep = here;
     this.drawnStage = at.stage;
     this.appliedKey = nextKey;
@@ -535,6 +554,42 @@ export class ReactionsLayer extends ArrowLayer {
   override dispose(): void {
     super.dispose();
     this.arcs.dispose();
+  }
+}
+
+/** The Reactions card's glyphs (`s.reactions`): the reaction forces and moments of the results step on screen. */
+export class ReactionsLayer extends StepGlyphLayer {
+  protected card(s: State) {
+    return s.reactions;
+  }
+
+  protected settingsKey(s: State): string {
+    const r = s.reactions;
+    return [r.scale, r.colorBy, r.component, r.allNodes, r.forces, r.moments, s.contour.sourceUnits ?? "", s.contour.targetUnits ?? ""].join("|");
+  }
+
+  protected build(s: State, blobs: BlobStore, nodal: Readonly<Record<string, Float64Array>>, nodeIds: Float64Array, opts: ReturnType<typeof drawnOpts>): StepGlyphs {
+    return buildReactions3D(s, blobs, nodal, nodeIds, opts);
+  }
+}
+
+/**
+ * The Vectors card's glyphs (`s.vectors`): a nodal vector field of the results
+ * step on screen, arrows starting at the nodes (tail-anchored records) or, for
+ * a rotational field, half circles about each node's axis.
+ */
+export class VectorsLayer extends StepGlyphLayer {
+  protected card(s: State) {
+    return s.vectors;
+  }
+
+  protected settingsKey(s: State): string {
+    const v = s.vectors;
+    return [vectorFieldOf(s)?.name ?? "", v.scale, v.colorBy, v.component].join("|");
+  }
+
+  protected build(s: State, blobs: BlobStore, nodal: Readonly<Record<string, Float64Array>>, nodeIds: Float64Array, opts: ReturnType<typeof drawnOpts>): StepGlyphs {
+    return buildVectors3D(s, blobs, nodal, nodeIds, opts);
   }
 }
 
