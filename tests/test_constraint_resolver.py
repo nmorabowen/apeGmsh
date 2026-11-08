@@ -612,6 +612,131 @@ class TestResolveDistributingAreaWeighting(unittest.TestCase):
 # resolve_node_to_surface
 # =====================================================================
 
+class TestResolveDistributingFootprintWeighting:
+    """``weighting="footprint"`` → the overlap area of each slave face with
+    a convex footprint polygon, split equally among the face's nodes; only
+    nodes with a positive share are independents."""
+
+    # A 2 × 2 grid of unit quads on z = 0 (nodes 2..10), ref node 1 above.
+    #   8  9 10
+    #   5  6  7
+    #   2  3  4
+    _COORDS = {1: (1.0, 1.0, 1.0)} | {
+        2 + 3 * j + i: (float(i), float(j), 0.0) for j in range(3) for i in range(3)
+    }
+    _FACES = np.array([[2, 3, 6, 5], [3, 4, 7, 6], [5, 6, 9, 8], [6, 7, 10, 9]])
+
+    def _rec(self, footprint, faces=None):
+        r = _make_resolver(self._COORDS)
+        defn = DistributingCouplingDef(
+            master_label="ref", slave_label="surf", master_point=(1.0, 1.0, 1.0),
+            weighting="footprint", footprint=(tuple(map(tuple, footprint)),),
+        )
+        return r.resolve_distributing(
+            defn, {1}, set(range(2, 11)),
+            slave_face_conn=self._FACES if faces is None else faces,
+        )
+
+    def test_centred_square_spreads_over_four_faces(self):
+        # 1 × 1 square centred on node 6: a quarter of each face → 0.25 / 4 per node.
+        rec = self._rec([(0.5, 0.5, 0), (1.5, 0.5, 0), (1.5, 1.5, 0), (0.5, 1.5, 0)])
+        assert rec.master_nodes == list(range(2, 11))
+        w = dict(zip(rec.master_nodes, rec.weights))
+        assert w[6] == pytest.approx(4 * 0.0625)        # on all four faces
+        for n in (3, 5, 7, 9):
+            assert w[n] == pytest.approx(2 * 0.0625)    # on two
+        for n in (2, 4, 8, 10):
+            assert w[n] == pytest.approx(0.0625)        # on one
+        assert sum(rec.weights) == pytest.approx(1.0)   # = the footprint area
+
+    def test_partial_footprint_keeps_only_touched_nodes(self):
+        # 0.5 × 0.5 square inside the lower-left face only.
+        rec = self._rec([(0.2, 0.2, 0), (0.7, 0.2, 0), (0.7, 0.7, 0), (0.2, 0.7, 0)])
+        assert rec.master_nodes == [2, 3, 5, 6]
+        np.testing.assert_allclose(rec.weights, [0.0625] * 4)
+
+    def test_orientation_of_footprint_and_faces_does_not_matter(self):
+        cw = [(0.5, 1.5, 0), (1.5, 1.5, 0), (1.5, 0.5, 0), (0.5, 0.5, 0)]
+        a = self._rec(cw)
+        b = self._rec(cw[::-1], faces=self._FACES[:, ::-1])
+        assert a.master_nodes == b.master_nodes
+        np.testing.assert_allclose(a.weights, b.weights)
+
+    def test_two_polygons_add_their_shares(self):
+        # two halves of the centred square give the same weights as the whole
+        r = _make_resolver(self._COORDS)
+        halves = (
+            ((0.5, 0.5, 0), (1.0, 0.5, 0), (1.0, 1.5, 0), (0.5, 1.5, 0)),
+            ((1.0, 0.5, 0), (1.5, 0.5, 0), (1.5, 1.5, 0), (1.0, 1.5, 0)),
+        )
+        defn = DistributingCouplingDef(
+            master_label="ref", slave_label="surf", master_point=(1.0, 1.0, 1.0),
+            weighting="footprint", footprint=halves,
+        )
+        a = r.resolve_distributing(defn, {1}, set(range(2, 11)),
+                                   slave_face_conn=self._FACES)
+        b = self._rec([(0.5, 0.5, 0), (1.5, 0.5, 0), (1.5, 1.5, 0), (0.5, 1.5, 0)])
+        assert a.master_nodes == b.master_nodes
+        np.testing.assert_allclose(a.weights, b.weights)
+
+    def test_faces_touching_only_an_edge_get_no_share(self):
+        # a footprint that is exactly the lower-left face: its neighbours
+        # touch it along edges only and must not become independents
+        rec = self._rec([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)])
+        assert rec.master_nodes == [2, 3, 5, 6]
+        np.testing.assert_allclose(rec.weights, [0.25] * 4)
+
+    def test_footprint_off_the_surface_raises(self):
+        with pytest.raises(ValueError, match="overlaps no face"):
+            self._rec([(5, 5, 0), (6, 5, 0), (6, 6, 0), (5, 6, 0)])
+
+    def test_overlaps_sum_to_the_footprint_area_on_a_skewed_mesh(self):
+        from apeGmsh._kernel.resolvers._constraint_resolver._footprint import (
+            face_overlap_shares,
+        )
+        rng = np.random.default_rng(0)
+        g = np.stack(np.meshgrid(np.arange(5.0), np.arange(5.0), indexing="xy"), -1)
+        g = g + rng.uniform(-0.2, 0.2, g.shape)
+        faces = np.array([
+            [g[j, i], g[j, i + 1], g[j + 1, i + 1], g[j + 1, i]]
+            for j in range(4) for i in range(4)
+        ])
+        faces = np.concatenate([faces, np.zeros(faces.shape[:2] + (1,))], -1)
+        fp = np.array([(0.7, 0.9, 0), (3.1, 0.6, 0), (2.8, 2.9, 0), (1.0, 3.2, 0)])
+        d1, d2 = fp[2, :2] - fp[0, :2], fp[3, :2] - fp[1, :2]
+        area = 0.5 * abs(d1[0] * d2[1] - d1[1] * d2[0])
+        got = face_overlap_shares(faces, fp)
+        assert sum(s for _, s in got) * 4 == pytest.approx(area, rel=1e-12)
+
+
+class TestFootprintPolygonValidation:
+    def test_requires_and_refuses_footprint(self):
+        from apeGmsh.core.ConstraintsComposite import _footprint_polygon
+        with pytest.raises(ValueError, match="needs footprint"):
+            _footprint_polygon("footprint", None)
+        with pytest.raises(ValueError, match="read only by"):
+            _footprint_polygon("area", [(0, 0, 0), (1, 0, 0), (1, 1, 0)])
+        assert _footprint_polygon("uniform", None) is None
+
+    def test_refuses_bad_polygons(self):
+        from apeGmsh.core.ConstraintsComposite import _footprint_polygon
+        with pytest.raises(ValueError, match="at least 3"):
+            _footprint_polygon("footprint", [(0, 0, 0), (1, 0, 0)])
+        with pytest.raises(ValueError, match="degenerate"):
+            _footprint_polygon("footprint", [(0, 0, 0), (1, 0, 0), (2, 0, 0)])
+        with pytest.raises(ValueError, match="not planar"):
+            _footprint_polygon("footprint", [(0, 0, 0), (1, 0, 0), (1, 1, 0.5), (0, 1, 0)])
+        with pytest.raises(ValueError, match="convex"):
+            _footprint_polygon("footprint", [(0, 0, 0), (2, 0, 0), (1, 0.3, 0), (1, 2, 0)])
+        out = _footprint_polygon("footprint", np.array([(0, 0, 1), (1, 0, 1), (1, 1, 1)]))
+        assert out == (((0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (1.0, 1.0, 1.0)),)
+        two = _footprint_polygon("footprint", [
+            [(0, 0, 0), (1, 0, 0), (1, 1, 0)], [(2, 0, 0), (3, 0, 0), (3, 1, 0)]])
+        assert len(two) == 2
+        with pytest.raises(ValueError, match="empty"):
+            _footprint_polygon("footprint", [])
+
+
 class TestResolveNodeToSurface(unittest.TestCase):
 
     def test_generates_phantom_nodes_and_records(self):

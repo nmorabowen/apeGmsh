@@ -639,12 +639,21 @@ class DistributingCouplingDef(ConstraintDef):
         surface faces (each face's area split equally among its nodes —
         the ``g.loads`` surface-tributary lumping model) and stores
         them on the record's ``weights`` ⇒ ``-w w1..wN`` emitted in the
-        sorted independent order.
+        sorted independent order. ``"footprint"`` ⇒ the weights are the
+        **overlap areas** of each slave face with the convex planar
+        polygon ``footprint`` (each face's overlap split equally among
+        its nodes); only the nodes with a positive share become
+        independents, so a footprint can sit anywhere on a coarser mesh.
+    footprint : tuple of polygons, optional
+        The convex planar polygons (each a tuple of (x, y, z)) of
+        ``weighting="footprint"``, whose shares add; ``None`` for the
+        other weightings.
     """
     kind: str = field(init=False, default="distributing")
     master_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
     slave_entities: list[tuple[int, int]] | None = None
     weighting: str = "uniform"
+    footprint: tuple[tuple[tuple[float, float, float], ...], ...] | None = None
     #: Explicit penalty / enforcement knobs (see :class:`CouplingControl`).
     control: CouplingControl = field(default_factory=CouplingControl)
 

@@ -727,7 +727,7 @@ def _route_distributing(fem: "FEMData", source, defn) -> "FEMData":
     slave_nodes = _require_nodes(source, defn.slave_label, kind, "slave")
 
     slave_face_conn = None
-    if getattr(defn, "weighting", "uniform") == "area":
+    if getattr(defn, "weighting", "uniform") in ("area", "footprint"):
         slave_face_conn = source.boundary_faces_for(defn.slave_label)
 
     resolver = _build_resolver(fem, ConstraintResolver)
