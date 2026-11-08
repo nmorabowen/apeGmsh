@@ -198,15 +198,6 @@ source = "card #1806 seed row; expiry = 90 days, proposed by X4-a"
 
 # --- Shadow paths (PROGRAM.md section 8: 30 days without a flip) -----------
 
-[[row]]
-id = "shadow-tagmode-split"
-kind = "shadow"
-symbols = ["src/apeGmsh/opensees/_internal/tag_plan.py::TagMode.split"]
-texts = ['src/apeGmsh/opensees/_internal/build/builder_scope.py::_HOISTING_PATHS = frozenset({"flat", "partitioned", "split"})']
-expires = 2026-11-05
-basis = "ruling"
-source = "PROGRAM.md section 8 (30 days); always false since #1505 merged 2026-10-06"
-
 # --- xfail ledger (KC4: shrink-only, zero within 60 days) ------------------
 
 [[row]]

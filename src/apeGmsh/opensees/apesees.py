@@ -1985,7 +1985,7 @@ class BuiltModel:
         # below.
         emitter_can_partition = emitter.caps.supports_partitions
         tag_plan = self._tag_plan(emit_mode(
-            self, split=False, supports_partitions=emitter_can_partition))
+            self, supports_partitions=emitter_can_partition))
         # A recorder that reads an upstream shell's sections after
         # an ``algorithm Linear`` step records stale values on every route
         # (.out, MPCO, .ladruno) with no error. Warn, naming Newton. Runs
@@ -9899,7 +9899,7 @@ class apeSees(
                 warn_stale_shell_probe_under_linear(
                     bm.fem,
                     bm._tag_plan(emit_mode(
-                        bm, split=False,
+                        bm,
                         supports_partitions=(
                             live_emitter.caps.supports_partitions),
                     )).elements.specs,
@@ -9935,7 +9935,7 @@ class apeSees(
         # by ``bm.emit``, so this mints nothing) rides the session, which
         # then never needs the allocator or a build to answer a read.
         live_plan = bm._tag_plan(emit_mode(
-            bm, split=False,
+            bm,
             supports_partitions=live_emitter.caps.supports_partitions))
         self._read_state = open_session(
             live_emitter, ndm=bm.ndm,

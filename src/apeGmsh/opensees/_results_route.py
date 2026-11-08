@@ -506,7 +506,7 @@ class _NodeRoles:
         unpartitioned run), so this mints nothing."""
         built = self._run.built
         plan = built._tag_plan(emit_mode(
-            built, split=False,
+            built,
             supports_partitions=self._run.supports_partitions))
         return tuple(plan.elements.specs)
 
