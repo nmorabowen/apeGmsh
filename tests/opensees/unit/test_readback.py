@@ -95,7 +95,7 @@ def with_session(ops: apeSees, fake: FakeOps, *, ndm: int = 2) -> None:
     """Open a read session over ``fake`` with the plan the live emit
     would read (made here, outside any read)."""
     bm = ops.build()
-    plan = bm._tag_plan(emit_mode(bm, split=False, supports_partitions=False))
+    plan = bm._tag_plan(emit_mode(bm, supports_partitions=False))
     ops._read_state = open_session(
         FakeEmitter(fake),  # type: ignore[arg-type]
         ndm=ndm, element_plan=tuple(plan.elements.specs),
