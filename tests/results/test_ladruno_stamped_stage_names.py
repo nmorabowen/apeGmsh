@@ -671,6 +671,44 @@ def test_a_swapped_display_stamp_never_reads_the_other_stage(tmp_path: Path) -> 
             assert _ux_last(r, program) == [_ux(k, 1, n) for n in NODE_IDS]
 
 
+def _with_a_mode(path: Path) -> Path:
+    """``path`` with one recorded mode in ``MODEL_STAGE[1]``: the reader
+    lists it as the mode stage ``mode_1``, id ``stage_0_mode_1``."""
+    with h5py.File(path, "a") as f:
+        grp = f.create_group("MODEL_STAGE[1]/RESULTS/ON_NODES/MODES_OF_VIBRATION(U)")
+        grp.attrs["COMPONENTS"] = np.array([b"Ux,Uy"])
+        grp.create_dataset("ID", data=NODE_IDS.reshape(-1, 1).astype(np.int32))
+        mode = grp.create_dataset("DATA/STEP_0/MODE_0", data=np.ones((NODE_IDS.size, 2)))
+        mode.attrs["LAMBDA"] = 16.0
+    return path
+
+
+@pytest.mark.parametrize("shown", [["G", "mode_1"], ["G", "stage_0_mode_1"]])
+def test_a_display_name_a_mode_stage_answers_to_refuses(
+    tmp_path: Path, shown: "list[str]",
+) -> None:
+    """Review of 822bf5448, finding 2: shown as a mode stage's name or id,
+    ``stage("mode_1")`` read the mode stage, not pushover. Refused."""
+    model_h5 = _model_h5(tmp_path / "model.h5", *_TWO)
+    path = _with_a_mode(_fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"]))
+    with Results.from_ladruno(path) as r:
+        assert {(s.id, s.name) for s in r.stages if s.kind == "mode"} == {("stage_0_mode_1", "mode_1")}
+    with pytest.raises(ValueError, match=rf"which is the mode stage '{shown[1]}'"):
+        stamp_provenance(path, model_h5, stage_names=shown)
+    assert _stamp(path) is None and _shown(path) is None
+
+
+def test_a_display_name_equal_to_its_own_group_refuses(tmp_path: Path) -> None:
+    """Review of 822bf5448, finding 3: shown as its own ``MODEL_STAGE[1]``,
+    the stage was not renamed and lost its program name, so
+    ``stage("gravity")`` raised KeyError. Refused."""
+    model_h5 = _model_h5(tmp_path / "model.h5", *_TWO)
+    path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])
+    with pytest.raises(ValueError, match=r"which is the MODEL_STAGE group 'MODEL_STAGE\[1\]'"):
+        stamp_provenance(path, model_h5, stage_names=["MODEL_STAGE[1]", "P"])
+    assert _stamp(path) is None and _shown(path) is None
+
+
 def test_a_display_name_may_be_its_own_program_name(tmp_path: Path) -> None:
     model_h5 = _model_h5(tmp_path / "model.h5", *_TWO)
     path = _fork_file(tmp_path / "run.ladruno", [1, 2], ["static", "static"])

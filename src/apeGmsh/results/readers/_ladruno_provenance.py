@@ -263,6 +263,7 @@ def stamp_provenance(
 
     all_facts = [_read_part(part) for part in parts]
     set_kinds = _set_kinds(all_facts)
+    modes = _mode_stage_names(parts) if names_override is not None else set()
     writer_text, converted = _conversion(writer, writer_text, all_facts)
     if backend_arg == "stock" and not converted:
         raise ValueError(
@@ -291,7 +292,7 @@ def stamp_provenance(
         if names_override is not None:
             names, display = _displayed_names(
                 part, facts.groups, set_kinds, names_override, recorded,
-                program_names, program_kinds, kind_error)
+                program_names, program_kinds, kind_error, modes)
             if display is not None:
                 wanted["stage_display_names"] = _json(display)
         elif recorded is None:
@@ -908,6 +909,7 @@ def _displayed_names(
     part: Path, groups: "list[str]", file_kinds: "list[Optional[str]]",
     override: "list[str]", recorded: "Optional[list[Optional[str]]]",
     names: "list[str]", kinds: "list[str]", kind_error: "Optional[str]",
+    modes: "set[str]",
 ) -> "tuple[Optional[list[str]], Optional[list[str]]]":
     """``(stage_names, stage_display_names)`` for a ``stage_names=``
     override: the program's names to bind by, and the override to show.
@@ -934,22 +936,39 @@ def _displayed_names(
             f"they cannot be determined ({reason}). Pass recorded_stages= "
             "with the program stage each MODEL_STAGE recorded. Nothing was "
             "stamped.")
-    _refuse_confusable(part, override, binding, groups, names)
+    _refuse_confusable(part, override, binding, groups, names, modes)
     return binding, list(override)
+
+
+def _mode_stage_names(parts: list[Path]) -> "set[str]":
+    """Every name and id the file's (or set's) mode stages answer to, as
+    the reader lists them (``mode_1``, ``stage_0_mode_1``, ...)."""
+    from ._ladruno import LadrunoReader
+    from ._ladruno_multi import LadrunoMultiPartitionReader
+
+    reader: Any = (LadrunoMultiPartitionReader(parts) if len(parts) > 1
+                   else LadrunoReader(parts[0]))
+    try:
+        return {n for s in reader.stages() if s.kind == "mode"
+                for n in (s.id, s.name, *s.aliases)}
+    finally:
+        reader.close()
 
 
 def _refuse_confusable(
     part: Path, shown: "list[str]", bound: "list[str]", groups: "list[str]",
-    names: "list[str]",
+    names: "list[str]", modes: "set[str]",
 ) -> None:
     """Refuse display names a reader could resolve to another stage.
 
     A reader resolves a stage by its shown name, its program name, its id
     ``stage_<i>`` and its ``MODEL_STAGE[<k>]`` alias, so a shown name may
     be its own stage's program name and nothing else any stage answers to:
-    no other program stage's name, no other stage's id or group, and no
-    two stages shown alike (``stage_names=["pushover", "gravity"]`` on a
-    ``[gravity, pushover]`` file would swap them).
+    no other program stage's name, no stage's id or group (its own group
+    too: shown as its group, a stage is not renamed and loses its program
+    name), no mode stage's name or id, and no two stages shown alike
+    (``stage_names=["pushover", "gravity"]`` on a ``[gravity, pushover]``
+    file would swap them).
     """
     repeated = sorted({n for n in shown if shown.count(n) > 1})
     if repeated:
@@ -962,14 +981,16 @@ def _refuse_confusable(
             continue
         clash = (
             f"the program stage {name!r}" if name in names else
-            f"the MODEL_STAGE group {name!r}" if name in groups and name != groups[i] else
+            f"the MODEL_STAGE group {name!r}" if name in groups else
+            f"the mode stage {name!r}" if name in modes else
             f"the stage id {name!r}" if _STAGE_ID.fullmatch(name) and name != f"stage_{i}"
             else None)
         if clash is not None:
             raise ValueError(
                 f"stamp_provenance: stage_names shows {groups[i]} (program "
                 f"stage {own!r}) as {name!r}, which is {clash}: a reader "
-                "would resolve it to another stage. Nothing was stamped.")
+                "would resolve it to another stage, or not rename the stage "
+                "and lose its program name. Nothing was stamped.")
 
 
 def _program_names(
