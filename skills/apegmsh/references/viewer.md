@@ -167,9 +167,9 @@ screen (not on the geometry phase). Refused rows never draw. A storey
 naming a node the model does not hold is not drawn; the reason is a warning
 in the developer console (DevTools), not in the window.
 
-## 8. Loads & SPs, Reactions, Vectors and supports
+## 8. Loads & SPs, Reactions, Vectors, Principal and supports
 
-On the Loads & SPs, Reactions and Vectors cards every arrow is sized on screen: the
+On the Loads & SPs, Reactions, Vectors and Principal cards every arrow is sized on screen: the
 head is twice as long as it is wide and
 `head` pixels long (12 by default), and a shaft stays between 15 and 80
 pixels times the card's `scale`. Zooming rebuilds nothing. **thin out** (on
@@ -208,6 +208,26 @@ resultant. Lengths are relative to the step's largest vector, so the card
 shows direction and relative size, not a value. Vectors under 1e-6 of
 the largest are not drawn. An `apegmsh-view/1` spec has no key for the
 card, so `--render` cannot draw it.
+
+**Principal** shows when the stage on screen records a stress or strain
+tensor at the Gauss points of a `.ladruno` whose element ids are verified
+(a group needs its xx, yy and xy components). **3D principal** (off by
+default) draws, at each Gauss point, an arrow along each principal
+direction: the length follows |p|, the colour is the signed value on a
+diverging map over −max..max of the step (RdBu_r by default: compression
+blue, tension red). A direction is an axis, not a sense: **axis** (the
+default) draws a head each way from the point, **arrow** one head along
+the sign-canonical direction, as the Qt diagram does. **p1**, **p2**,
+**p3** pick the principal values (p1 ≥ p2 ≥ p3); the menu picks the field
+(`stress`, `strain`). The arrows follow the deformed shape, and **thin
+out** hides a point's arrows together. The tensor is Python's
+`principal_frame`'s: a strain's shear is read as engineering and halved,
+and a zz the element does not record is taken as 0 (plane stress for a
+stress, plane strain for a strain); the card says both. Principal values
+under 1e-6 of the largest are not drawn, so a 2-D element's zz draws
+nothing. A field the card cannot draw is listed as "(not drawn)", with its
+reasons. Like the Vectors card it shows direction and relative size, not
+values, and `--render` cannot draw it.
 
 **Supports**: the **BC** switch in the Display card (off by default) draws
 the restraints from the model alone: an arrow into the node per restrained

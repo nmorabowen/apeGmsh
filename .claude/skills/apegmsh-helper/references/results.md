@@ -635,6 +635,16 @@ on screen as arrows starting at the nodes (rotations as half circles). It
 shows direction and relative size, not values, and `--render` cannot draw
 it. What it offers and how it draws: `viewer.md` §8.
 
+### apeGmshViewer: the Principal card
+
+The desktop app's Principal card draws the principal directions of a
+`.ladruno` stress or strain field at its Gauss points: an arrow per
+principal value, the length from |p|, the colour from the signed value on
+a diverging map, so tension and compression read apart. It follows
+`apeGmsh.results._derived.principal_frame` (engineering shear halved, a
+missing zz taken as 0). It shows direction and relative size, not values,
+and `--render` cannot draw it. What it offers: `viewer.md` §8.
+
 ### Headless animation export — `results.export_animation(...)` (#755)
 
 ```python
