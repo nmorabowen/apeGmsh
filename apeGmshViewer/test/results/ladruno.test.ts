@@ -537,6 +537,74 @@ test("a stamp in the wrong encodings is reported as such, never coerced, and giv
   });
 });
 
+// #2823 (finding 3 of verdict c30f25020): a `stamp_provenance(stage_names=)`
+// override keeps the program's names in @stage_names and writes the user's in
+// @stage_display_names. Python shows the display names; so does the viewer.
+// Pairing stays on the lineage hashes, and @stage_names still decodes as the
+// program's names. Fixtures are the stamped truss edited in place (`edited`).
+const withDisplay = (display: string | null, names: string | null = '["push"]') =>
+  edited(STAMPED, (f) => {
+    const g = f.get("INFO/PROVENANCE") as h5wasm.Group;
+    setAttr(g, "stage_names", names);
+    setAttr(g, "stage_display_names", display);
+  });
+const openMeta = async (p: string) => {
+  const host = new ResultsHost(H5, h5wasm.ready);
+  try {
+    const a = await host.open(p);
+    assert.ok(a.ok, a.ok ? "" : a.error);
+    return a.ok ? { meta: a.meta, warnings: a.warnings } : null!;
+  } finally {
+    host.close();
+  }
+};
+
+test("#2823: @stage_display_names is decoded beside @stage_names, which keeps the program's names", () => {
+  withFile(withDisplay('["Push over"]'), (r) => {
+    const p = r.index.provenance;
+    assert.equal(p.state, "present");
+    if (p.state !== "present") return;
+    assert.deepEqual(p.attrs.stage_display_names, { state: "present", value: '["Push over"]' });
+    assert.deepEqual(p.stageDisplayNames, ["Push over"]);
+    assert.deepEqual(p.stageNames, ["push"]);
+    assert.deepEqual(p.other, []);
+  });
+  withFile(withDisplay('{"push": 1}'), (r) => {
+    const p = r.index.provenance;
+    if (p.state !== "present") return assert.fail("provenance absent");
+    assert.match(p.attrs.stage_display_names.state === "malformed" ? p.attrs.stage_display_names.reason : "", /not a JSON array of strings/);
+    assert.equal(p.stageDisplayNames, null);
+  });
+});
+
+test("#2823: the viewer shows the display names Python shows; the pairing is unchanged", async () => {
+  const shown = await openMeta(withDisplay('["Push over"]'));
+  assert.deepEqual(shown.meta.stages.map((s) => s.name), ["Push over"]);
+  assert.ok(!shown.warnings.some((w) => /stage_(display_)?names/.test(w)), shown.warnings.join("\n"));
+  const model = { lineage: { femHash: STAMP.fem_hash, modelHash: STAMP.model_hash, resultsHash: null }, openseesVersion: null, programDecl: null };
+  assert.deepEqual(pairResults(model, shown.meta), { state: "paired", by: "model_hash" });
+  // No display names: the program's names show, as before.
+  assert.deepEqual((await openMeta(STAMPED)).meta.stages.map((s) => s.name), ["push"]);
+});
+
+test("#2823: unusable display names warn and are not shown", async () => {
+  // miscounted: the program's names show
+  const miscount = await openMeta(withDisplay('["a","b"]'));
+  assert.deepEqual(miscount.meta.stages.map((s) => s.name), ["push"]);
+  assert.ok(
+    miscount.warnings.some((w) => /INFO\/PROVENANCE@stage_display_names names 2 stage\(s\), the file has 1 MODEL_STAGE group\(s\); the stamped stage_names are shown$/.test(w)),
+    miscount.warnings.join("\n"),
+  );
+  // malformed: the program's names show
+  const malformed = await openMeta(withDisplay('{"push": 1}'));
+  assert.deepEqual(malformed.meta.stages.map((s) => s.name), ["push"]);
+  assert.ok(malformed.warnings.some((w) => /@stage_display_names = .* is not a JSON array of strings; the stamped stage_names are shown$/.test(w)), malformed.warnings.join("\n"));
+  // no stage_names to bind by (Python refuses this file): the file's own names show
+  const unbound = await openMeta(withDisplay('["Push over"]', null));
+  assert.deepEqual(unbound.meta.stages.map((s) => s.name), ["MODEL_STAGE[1]"]);
+  assert.ok(unbound.warnings.some((w) => /stage_display_names has no usable stage_names to bind the stages by; the file's own stage names are shown$/.test(w)), unbound.warnings.join("\n"));
+});
+
 test("a value outside §7b.1, an unknown attribute, and a missing group are reported", () => {
   const p = edited(STAMPED, (f) => {
     const g = f.get("INFO/PROVENANCE") as h5wasm.Group;

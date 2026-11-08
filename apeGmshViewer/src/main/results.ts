@@ -237,25 +237,44 @@ const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
  * counts as many; a mode stage keeps its own name, its host prefix renamed.
  * Otherwise every stage keeps the file's name, and a malformed or miscounted
  * stage_names warns. An absent one is silent (the pairing says unstamped).
+ *
+ * #2823: a `stamp_provenance(stage_names=)` override keeps the program's
+ * names in `stage_names` and writes the user's in `stage_display_names`;
+ * Python shows the display names, so the viewer does too. They show only
+ * over a usable `stage_names` (Python refuses display names with nothing to
+ * bind by); a malformed or miscounted one warns and the `stage_names` show.
+ * Pairing never reads either: it is by lineage hash (state/results.ts).
  */
 function ladrunoStageNames(rf: AnyLadruno, warningsOut?: string[]): string[] {
   const ix = rf.index;
   const own = ix.stages.map((s) => s.name);
   const prov = ix.provenance;
   if (prov.state !== "present") return own;
-  const fact = prov.attrs.stage_names;
-  if (fact.state === "absent") return own;
-  const warn = (w: string) => warningsOut?.push(`${ix.path}: ${w}; the file's own stage names are shown`);
-  if (fact.state === "malformed" || prov.stageNames === null) {
-    warn(fact.state === "malformed" ? fact.reason : "INFO/PROVENANCE@stage_names could not be read");
-    return own;
-  }
   const hosts = ix.stages.filter((s) => Object.hasOwn(ix.fileKinds, s.id));
-  if (prov.stageNames.length !== hosts.length) {
-    warn(`INFO/PROVENANCE@stage_names names ${prov.stageNames.length} stage(s), the file has ${hosts.length} MODEL_STAGE group(s)`);
+  /** One stamped list, or null (absent silently; malformed or miscounted with a warning ending `shown`). */
+  const stamped = (attr: "stage_names" | "stage_display_names", list: string[] | null, shown: string): string[] | null => {
+    const fact = prov.attrs[attr];
+    if (fact.state === "absent") return null;
+    const warn = (w: string) => warningsOut?.push(`${ix.path}: ${w}; ${shown}`);
+    if (fact.state === "malformed" || list === null) {
+      warn(fact.state === "malformed" ? fact.reason : `INFO/PROVENANCE@${attr} could not be read`);
+      return null;
+    }
+    if (list.length !== hosts.length) {
+      warn(`INFO/PROVENANCE@${attr} names ${list.length} stage(s), the file has ${hosts.length} MODEL_STAGE group(s)`);
+      return null;
+    }
+    return list;
+  };
+  const program = stamped("stage_names", prov.stageNames, "the file's own stage names are shown");
+  if (program === null) {
+    if (prov.attrs.stage_display_names.state !== "absent") {
+      warningsOut?.push(`${ix.path}: INFO/PROVENANCE@stage_display_names has no usable stage_names to bind the stages by; the file's own stage names are shown`);
+    }
     return own;
   }
-  const renamed = new Map(hosts.map((h, k) => [h.id, { from: h.name, to: prov.stageNames![k]! }]));
+  const names = stamped("stage_display_names", prov.stageDisplayNames, "the stamped stage_names are shown") ?? program;
+  const renamed = new Map(hosts.map((h, k) => [h.id, { from: h.name, to: names[k]! }]));
   const hostOf = new Map(ix.modes.map((m) => [m.stageId, m.hostStageId]));
   return ix.stages.map((s) => {
     const r = renamed.get(s.id);
