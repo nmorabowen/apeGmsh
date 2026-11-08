@@ -79,27 +79,20 @@ def _miss(message: str) -> Exception:
 class TagMode(NamedTuple):
     """The emit mode a plan is keyed by."""
 
-    split: bool
     partitioned: bool
     staged: bool
 
 
-def emit_mode(
-    bm: BuiltModel, *, split: bool, supports_partitions: bool,
-) -> TagMode:
-    """The :class:`TagMode` that ``bm.emit(emitter, split=split)`` takes.
+def emit_mode(bm: BuiltModel, *, supports_partitions: bool) -> TagMode:
+    """The :class:`TagMode` that ``bm.emit(emitter)`` takes.
 
     ``supports_partitions`` is the emitter's own flag (an emitter that
     cannot drive OpenSeesMP brackets emits a partitioned mesh flat).
-    ``split`` wins over partitioning, as in the emit dispatch.
     """
     from .build.ownership import is_partitioned
 
     return TagMode(
-        split=bool(split),
-        partitioned=(
-            not split and supports_partitions and is_partitioned(bm.fem)
-        ),
+        partitioned=supports_partitions and is_partitioned(bm.fem),
         staged=bool(bm.stage_records),
     )
 
@@ -563,7 +556,7 @@ class RegionTagPlan(FamilyTagPlan):
         ``site``, in first-seen order; the plan must hold exactly them,
         in that order. Each comes with its planned members and tag.
 
-        A flat or split emit writes the names that have members in
+        A flat emit writes the names that have members in
         first-seen order. A partitioned emit writes them rank by rank,
         each first on its first holder rank, in first-seen order within a
         rank; its writers check each first rank
