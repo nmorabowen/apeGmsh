@@ -77,7 +77,7 @@ program name kept as an alias (`r.stage("pushover")` still works). It
 raises `ValueError` at write time when the program's names cannot be
 determined (and no `recorded_stages=`), or when a shown name is one
 another stage answers to (another program stage, id or `MODEL_STAGE[k]`,
-or a repeat).
+or a repeat). The desktop viewer shows the same display names.
 (`tests/results/test_ladruno_stamped_stage_names.py`)
 
 A `.ladruno` that Python writes (`from_recorders`, `EigenResult.to_ladruno`,

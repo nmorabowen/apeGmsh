@@ -27,8 +27,13 @@ any plan that was not a program prefix in a native file.
   each file stage recorded, checked against the program.
   `stamp_provenance(..., stage_names=[...])` now renames for display only:
   the program's names still bind, the rename is stamped as
-  `stage_display_names` and read back as the stages' names, and it raises
-  `ValueError` when the program's names cannot be determined.
+  `stage_display_names` and read back as the stages' names, with the
+  program name kept as an alias (`r.stage("pushover")` still reads it). It
+  raises `ValueError` when the program's names cannot be determined, or
+  when a shown name is one another stage answers to (so
+  `stage_names=["pushover", "gravity"]` can no longer swap two stages).
+  The desktop viewer shows the display names too; it still pairs by the
+  lineage hashes.
 - **The `.out` transcode writes a `.ladruno` for every nodal plan** whose
   stages are program stages of their kind, in any order or subset, stamped
   with the plan's names. A prefix plan no longer warns
