@@ -303,6 +303,13 @@ class _RecordedSource:
             return hits[0]
         if len(hits) > 1:
             raise self._refuse("unresolved", f"{len(hits)} stages are named {source!r}")
+        # A stage shown by its stage_display_names keeps its program
+        # name as an alias; a term by that name reads the same stage. A
+        # recorder's MODEL_STAGE[<k>] alias is no stamped name (A3).
+        aliased = [s for s in hosts
+                   if source in s.aliases and not _UNSTAMPED.match(source)]
+        if len(aliased) == 1:
+            return aliased[0]
         stamped = [s for s in hosts if s.id == source]
         if stamped:
             raise self._refuse(

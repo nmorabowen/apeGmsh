@@ -92,6 +92,16 @@ The file is written and stamped in a staging directory under its final
 name, then moved into place: either a stamped file is at ``path`` or
 nothing new is. ``path`` may not be the model archive, nor any ``.h5``.
 
+Every writer here stamps ``INFO/PROVENANCE@stage_names`` (ADR 0122 D3,
+#2823), because a reader never pairs unnamed stages with the program by
+position alone: :func:`write_modes` names its ``eigen`` stage by its own
+``MODEL_STAGE[1]`` (modes are no program stage); :func:`write_nodal_history`
+and :func:`write_nodal_stages` take the program stage each of their stages
+recorded (``recorded_stages=``) and, without it, stamp the program's names
+when the file's stages are the program's one to one and kind for kind (else
+:class:`StageNamesOmittedWarning`); :func:`write_transcode` stamps its
+stages' own names until :func:`open_transcode` stamps the plan's.
+
 ``opensees_backend`` defaults to ``"unknown"``: a file Python writes is
 never stamped with the engine of the fork's recorder unless its caller
 proves that engine solved the values (:func:`solved_backend`).
@@ -123,7 +133,7 @@ if TYPE_CHECKING:
 __all__ = [
     "NODE_COMPONENTS", "NodalStage", "check_target", "is_transcode_target",
     "merge_node_records", "nodal_history_misfits", "open_transcode",
-    "solved_backend", "transcode_target", "write_modes",
+    "solved_backend", "stamp_transcode", "transcode_target", "write_modes",
     "write_nodal_history", "write_nodal_stages", "write_transcode",
 ]
 
@@ -137,6 +147,8 @@ _MODAL = 1                  # the recorder's ResultType::Modal
 _INT32_MAX = 2**31 - 1
 #: What this writer leaves out of the file (``PROVENANCE@unsupported``).
 UNSUPPORTED: tuple[str, ...] = ("elements",)
+#: ``PROVENANCE@writer``'s source for a recorder transcode.
+_TRANSCODE_SOURCE = "recorders"
 
 
 class MPCOConversionRefused(RuntimeError):
@@ -202,6 +214,11 @@ def write_modes(
         Of every warning this raises, the stamp's
         ``StageNamesOmittedWarning`` included, counted from this function.
 
+    The stage is stamped ``stage_names=["MODEL_STAGE[1]"]``, its own name:
+    the modes are no program stage, so a reader with a staged ``model_h5``
+    never names the stage after one (#2824: it was labelled with the
+    program's first stage). A program with no stages stamps none.
+
     Raises
     ------
     ValueError
@@ -257,7 +274,7 @@ def write_modes(
         lambda staged: _write_file(staged, nids, xyz[:, :ndm], rids, ndm,
                                    lams, scalars, shapes, rot),
         source=source, opensees_backend=opensees_backend,
-        stacklevel=stacklevel + 1,
+        recorded_stages=[None], stacklevel=stacklevel + 1,
     )
     return out
 
@@ -343,6 +360,7 @@ def write_nodal_history(
     results: "Mapping[str, np.ndarray]",
     source: str,
     opensees_backend: str = UNKNOWN_BACKEND,
+    recorded_stages: "Optional[Sequence[Optional[str]]]" = None,
     stacklevel: int = 2,
 ) -> Path:
     """Write nodal results as one stage of a ``.ladruno``; stamp it.
@@ -362,6 +380,12 @@ def write_nodal_history(
         ``PROVENANCE@opensees_backend``, as
         :func:`~apeGmsh.results.readers._ladruno_provenance.stamp_provenance`
         takes it; ``"unknown"`` unless the caller proves the engine.
+    recorded_stages
+        ``[name]``: the program stage the one stage recorded, stamped as
+        ``stage_names`` and checked against the program (``ValueError``).
+        ``None`` stamps the program's name when the program has exactly one
+        stage, of ``kind``; with more, ``StageNamesOmittedWarning`` and no
+        names (a reader then pairs the stage only on a proven kind match).
 
     Raises
     ------
@@ -417,7 +441,7 @@ def write_nodal_history(
         lambda staged: _write_nodal_file(staged, nids, xyz[:, :ndm], ndm,
                                          [stage]),
         source=source, opensees_backend=opensees_backend,
-        stacklevel=stacklevel + 1,
+        recorded_stages=recorded_stages, stacklevel=stacklevel + 1,
     )
     return out
 
@@ -433,6 +457,7 @@ def write_nodal_stages(
     source: str,
     opensees_backend: str = UNKNOWN_BACKEND,
     stage_names: "Optional[Sequence[str]]" = None,
+    recorded_stages: "Optional[Sequence[Optional[str]]]" = None,
     stacklevel: int = 2,
 ) -> Path:
     """Write ``stages`` as ``MODEL_STAGE[1..k]`` of a ``.ladruno``; stamp it.
@@ -452,6 +477,11 @@ def write_nodal_stages(
         :func:`~apeGmsh.results.readers._ladruno_provenance.stamp_provenance`:
         ``None`` pairs the program's stage names with the file's stages;
         ``()`` stamps none, for stages that are not the program's.
+    recorded_stages
+        Passed to ``stamp_provenance`` (it excludes ``stage_names``): per
+        stage, the program stage it recorded (in any order), or ``None``
+        for a stage that is no program stage, stamped with its own
+        ``MODEL_STAGE[<k>]`` name. A reader binds the stages by these names.
 
     Raises
     ------
@@ -514,7 +544,8 @@ def write_nodal_stages(
         lambda staged: _write_nodal_file(staged, nids, xyz[:, :ndm], ndm,
                                          checked),
         source=source, opensees_backend=opensees_backend,
-        stage_names=stage_names, stacklevel=stacklevel + 1,
+        stage_names=stage_names, recorded_stages=recorded_stages,
+        stacklevel=stacklevel + 1,
     )
     return out
 
@@ -555,30 +586,29 @@ def transcode_target(
 ) -> Path:
     """Where a recorder transcode of ``spec`` is cached (ADR 0131 D6).
 
-    ``native`` with this format's suffix only when the format holds every
-    record (:func:`nodal_history_misfits` is empty) and the transcode's
-    stages, ``plan``'s ``(name, kind)`` in order, are the first
-    ``len(plan)`` of ``model``'s program stages, names and kinds. The file
-    stores no stage names: a reader binds the program's onto its stages by
-    position, so any other plan (reordered, a subset that is not a prefix,
-    a program with no stages or with a stage of unknown kind) would reopen
-    under the wrong names, and keeps ``native``, a native file that stores
-    them. ``model_h5`` names the archive in a refusal.
+    ``native`` with this format's suffix when the format holds every record
+    (:func:`nodal_history_misfits` is empty) and every stage of ``plan``,
+    ``(name, kind)``, is a stage of ``model``'s program with that kind, in
+    any order and any subset (#2823): the file is stamped with the stage
+    names (:func:`open_transcode`) and a reader binds them by name. A plan
+    naming a stage the program does not declare, or of another kind, or a
+    program stage whose kind is not on record, keeps ``native``, a native
+    file that stores the names: a ``.ladruno`` binds only the program's.
+    ``model_h5`` names the archive in a refusal.
     """
     from .._bind import _stage_kind
     from ._ladruno_live import FORK_SUFFIX
 
-    if nodal_history_misfits(spec):
+    if nodal_history_misfits(spec) or not plan:
         return native
-    program = list(model.stages())
-    if not 0 < len(plan) <= len(program):
-        return native
+    declared: "dict[str, set[str]]" = {}
     try:
-        kinds = [_stage_kind(s, model_path=Path(os.fspath(model_h5))) for s in program[:len(plan)]]
+        for s in model.stages():
+            declared.setdefault(str(s.name), set()).add(
+                _stage_kind(s, model_path=Path(os.fspath(model_h5))))
     except ValueError:
         return native   # a stage whose kind is not on record pairs nothing
-    pairs = [(str(s.name), k) for s, k in zip(program, kinds)]
-    if [(str(n), str(k)) for n, k, _ in plan] != pairs:
+    if any(str(k) not in declared.get(str(n), set()) for n, k, _ in plan):
         return native
     return native.with_suffix(FORK_SUFFIX)
 
@@ -637,11 +667,12 @@ def write_transcode(
     """Write a recorder transcode's parsed stages, ``(kind, time, node
     records)`` each, as :func:`write_nodal_stages` stages over ``fem``'s
     nodes; stamp it against ``archive`` with ``opensees_backend="unknown"``
-    (the ``.out`` files do not say which engine wrote them) and no
-    ``stage_names``: a reader binds the program's names from the archive,
-    and :func:`transcode_target` sends a file here only when those are the
-    transcode's. ``model`` (an ``OpenSeesModel`` or the live pairing)
-    gives the ndm."""
+    (the ``.out`` files do not say which engine wrote them). The stages
+    arrive without their names, so each is stamped with its own
+    ``MODEL_STAGE[<k>]`` name, which pairs it with no program stage: a
+    reopen never names them by position (#2824). :func:`open_transcode`
+    stamps the plan's names before the first read. ``model`` (an
+    ``OpenSeesModel`` or the live pairing) gives the ndm."""
     ndm = 0 if model is None else int(model.ndm)
     if ndm < 1 or archive is None:
         raise ValueError(
@@ -657,8 +688,25 @@ def write_transcode(
         path, model_h5=archive,
         node_ids=np.asarray(fem.nodes.ids, dtype=np.int64),
         coords=np.asarray(fem.nodes.coords, dtype=np.float64), ndm=ndm,
-        stages=nodal, source="recorders", opensees_backend=UNKNOWN_BACKEND,
-        stage_names=(), stacklevel=3)
+        stages=nodal, source=_TRANSCODE_SOURCE,
+        opensees_backend=UNKNOWN_BACKEND,
+        recorded_stages=[None] * len(nodal), stacklevel=3)
+
+
+def stamp_transcode(
+    path: "str | os.PathLike[str]", model_h5: "str | os.PathLike[str]",
+    names: "Sequence[str]",
+) -> None:
+    """Stamp a :func:`write_transcode` file with the program stage each of
+    its stages recorded, ``names`` in file order; every other attribute is
+    the one :func:`write_transcode` stamped, so a second call writes
+    nothing. ``ValueError`` when a name is not a program stage of that
+    kind."""
+    stamp_provenance(Path(os.fspath(path)), Path(os.fspath(model_h5)),
+                     recorded_stages=list(names),
+                     unsupported=list(UNSUPPORTED),
+                     writer=_writer(_TRANSCODE_SOURCE),
+                     opensees_backend=UNKNOWN_BACKEND)
 
 
 def open_transcode(
@@ -669,21 +717,46 @@ def open_transcode(
     model_h5: "str | os.PathLike[str]",
 ) -> "Results":
     """Open a recorder transcode that :func:`write_transcode` wrote, the way
-    every reopen opens it (``Results.from_ladruno(model_h5=)``), and check
-    that the stages it binds are ``plan``'s names and kinds in order, as
-    :func:`transcode_target` requires. A mismatch closes the file and
-    raises: nothing is relabelled."""
+    every reopen opens it (``Results.from_ladruno(model_h5=)``), after
+    stamping ``plan``'s stage names on it (:func:`stamp_transcode`; a
+    cached file already carries them, so nothing is written), and check
+    that the stages it binds are ``plan``'s names and kinds in order. A
+    refused stamp or a mismatch closes the file, removes it from the cache
+    and raises: nothing is relabelled, and the next read transcodes
+    again."""
     from ..Results import Results
+    from ._ladruno import read_stage_stamp
 
-    res = Results.from_ladruno(Path(os.fspath(path)), fem=fem, model_h5=Path(os.fspath(model_h5)))
-    got = [(s.name, s.kind) for s in res.stages if s.kind != "mode"]
+    target = Path(os.fspath(path))
     want = [(str(n), str(k)) for n, k, _ in plan]
+    names = [n for n, _ in want]
+    try:
+        # A cached file already carries the names: it is not opened for
+        # writing, so a Results still reading it does not refuse the read.
+        if read_stage_stamp([target]).names != tuple(names):
+            stamp_transcode(target, model_h5, names)
+        res = Results.from_ladruno(target, fem=fem, model_h5=Path(os.fspath(model_h5)))
+    except BaseException:
+        _discard(target)
+        raise
+    got = [(s.name, s.kind) for s in res.stages if s.kind != "mode"]
     if got != want:
         res.close()
+        _discard(target)
         raise RuntimeError(
             f"open_transcode: {path} binds the stages {got} from "
-            f"model_h5={str(model_h5)!r}, not the transcode's {want}.")
+            f"model_h5={str(model_h5)!r}, not the transcode's {want}; the "
+            "cached file was removed.")
     return res
+
+
+def _discard(path: Path) -> None:
+    """Remove a cached transcode that did not bind; a file another reader
+    holds stays, and the caller's own error is the one raised."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _place_stamped(
@@ -691,6 +764,7 @@ def _place_stamped(
     write: Callable[[Path], None], *, source: str,
     opensees_backend: str, stacklevel: int,
     stage_names: "Optional[Sequence[str]]" = None,
+    recorded_stages: "Optional[Sequence[Optional[str]]]" = None,
 ) -> None:
     """Write with ``write`` and stamp in a staging directory, then move the
     file to ``out``. ``stacklevel`` counts from this function."""
@@ -707,6 +781,7 @@ def _place_stamped(
             warnings.simplefilter("always")
             stamp_provenance(staged, Path(os.fspath(model_h5)),
                              stage_names=stage_names,
+                             recorded_stages=recorded_stages,
                              unsupported=list(UNSUPPORTED),
                              writer=_writer(source),
                              opensees_backend=opensees_backend)

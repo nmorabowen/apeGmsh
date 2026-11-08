@@ -589,10 +589,18 @@ def test_stage_names_take_the_program_names(parts, model_dir) -> None:
 
 
 def test_stage_names_override_replaces_the_names(parts, model_dir) -> None:
+    """The override is the name shown; the stamp still binds by the
+    program's name (``load``), so a reader names the stage ``präload`` and
+    never refuses the file (#2823 amendment 3)."""
+    from apeGmsh.results import Results
+
     stamp_provenance(parts[0], model_dir / "one_static.h5",
                      stage_names=["präload"])
-    raw = _provenance(parts[0])["stage_names"]
-    assert raw == '["präload"]'  # compact UTF-8 JSON, not \\u escapes
+    prov = _provenance(parts[0])
+    assert prov["stage_display_names"] == '["präload"]'  # compact UTF-8 JSON, not \\u escapes
+    assert prov["stage_names"] == '["load"]'
+    with Results.from_ladruno(parts[0], model_h5=model_dir / "one_static.h5") as r:
+        assert [s.name for s in r.stages if s.kind != "mode"] == ["präload"]
 
 
 def test_stage_names_override_with_the_wrong_count_is_omitted(parts, model_dir) -> None:

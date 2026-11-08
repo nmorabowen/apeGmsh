@@ -294,40 +294,45 @@ def test_named_stages_of_the_program_read_as_the_native_file_and_reload(tmp_path
                           "base": [202.5, 203.5]}
 
 
-def test_a_reordered_plan_keeps_the_native_file(tmp_path: Path) -> None:
+def test_a_reordered_plan_is_a_ladruno_bound_by_name(tmp_path: Path) -> None:
     """F1 (the review's reproducer): stages ``[base, load]`` over a program
-    ``[load, base]``. A ``.ladruno`` stores no names, so a reopen would pair
-    ``load`` onto the ``base`` values; the run stays native and every name
-    reads its own values, here and on reopen."""
+    ``[load, base]``. A positional reopen would pair ``load`` onto the
+    ``base`` values; the ``.ladruno`` is stamped ``["base", "load"]`` (#2823)
+    and every name reads its own values, here and on reopen."""
+    import json
+
+    import h5py
+
     program = (("load", "static"), ("base", "static"))
     r = _named_read(tmp_path, (_NAMED[2], _NAMED[0]), program)
-    assert r.path is not None and r.path.suffix == ".h5"
+    assert r.path is not None and r.path.suffix == ".ladruno"
+    with h5py.File(r.path, "r") as f:
+        assert json.loads(f["INFO/PROVENANCE"].attrs["stage_names"]) == ["base", "load"]
     assert _reopen(r) == {"base": [202.5, 203.5], "load": [1.5, 2.5]}
 
 
 def test_one_stage_of_a_staged_program_keeps_its_own_name(tmp_path: Path) -> None:
-    """``stage_id="base"`` read alone is not a prefix of the program: native,
-    named ``base`` here and on reopen (F1: as a ``.ladruno`` it reopened as
-    ``load``)."""
+    """``stage_id="base"`` read alone is not a prefix of the program: a
+    ``.ladruno`` stamped ``["base"]``, named ``base`` here and on reopen (F1:
+    unstamped, it reopened as ``load``)."""
     program = (("load", "static"), ("base", "static"))
     r = _named_read(tmp_path, None, program, stage_id="base", stage_kind="static")
-    assert r.path is not None and r.path.suffix == ".h5"
+    assert r.path is not None and r.path.suffix == ".ladruno"
     assert _reopen(r) == {"base": [202.5, 203.5]}
 
 
 def test_a_prefix_of_the_program_is_a_ladruno(tmp_path: Path) -> None:
     """``stage_id="load"`` is the program's first stage (a partial run): a
     ``.ladruno`` that reopens with the same name and values, and whose
-    stage terms resolve (F2)."""
+    stage terms resolve (F2). Its stamp names the stage, so the open warns
+    nothing (#2823 amendment 1: no count warning on every open)."""
     import warnings
-
-    from apeGmsh.results._bind import StageCountMismatchWarning
 
     program = (("load", "static"), ("base", "static"))
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         r = _named_read(tmp_path, None, program, stage_id="load", stage_kind="static")
-    assert [w.category for w in caught] == [StageCountMismatchWarning]
+    assert [w.category for w in caught] == []
     assert r.path is not None and r.path.suffix == ".ladruno"
     assert r._unbound_stage_names(r._model_path) is None
     assert _reopen(r) == {"load": [1.5, 2.5]}
