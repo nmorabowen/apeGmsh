@@ -57,7 +57,16 @@ export const BASE_EVENTS: readonly Event[] = [
   { type: "setLineDiagram", on: false },
   // A plane's gizmo is a handle for the hand; a still shows the cut, not the handle.
   { type: "setShowGizmos", on: false },
+  // VU10: no difference unless the shot compares (the compare set itself stays open for the next shot that names it).
+  { type: "setDifference", on: false },
 ];
+
+/**
+ * VU10: the row of the open study labelled `label` (state/selectors.ts over
+ * `variants.study`), whether it is already the compare set, or why a shot
+ * cannot compare with it.
+ */
+export type VariantOf = (label: string) => { ok: true; row: { index: number; label: string }; open: boolean } | { ok: false; reason: string };
 
 const list = (xs: readonly string[]): string => (xs.length ? xs.join(", ") : "none");
 
@@ -140,7 +149,7 @@ function combinationFieldOf(c: NonNullable<SpecShot["contour"]>, name: string, o
  * D5 and D6 share). VU7b-2: `combinationFields` finds a combination shot's
  * component; without it, a combination shot is refused.
  */
-export function compileShot(shot: SpecShot, d: SetDescription, combinationFields?: CombinationFields): Compiled {
+export function compileShot(shot: SpecShot, d: SetDescription, combinationFields?: CombinationFields, variantOf?: VariantOf): Compiled {
   const events: Event[] = [...BASE_EVENTS];
   let phase: PhaseKey = { kind: "mesh" };
   let stage: ShotPlan["stage"] = null;
@@ -188,6 +197,15 @@ export function compileShot(shot: SpecShot, d: SetDescription, combinationFields
   } else if (shot.contour) {
     // No stage: the render mode refuses with the app's reason (a contour colours a results step).
     contour = { field: shot.contour.field, component: shot.contour.component, label: shot.contour.component, source: shot.contour.source ?? "nodal" };
+  }
+  // VU10: the window variant minus the compare variant (the spec validator held it to a nodal contour of a stage).
+  const compare = shot.compare ?? null;
+  if (compare !== null) {
+    if (!variantOf) return { ok: false, reason: `this view has no variants manifest to find variant ${JSON.stringify(compare)} in` };
+    const v = variantOf(compare);
+    if (!v.ok) return v;
+    if (!v.open) events.push({ type: "variantCompare", row: v.row });
+    events.push({ type: "setDifference", on: true });
   }
   if (shot.deform) {
     events.push({ type: "setDeform", on: true }, { type: "setDeformScale", scale: shot.deform.scale }, { type: "setReferenceGhost", on: shot.deform.ghost });

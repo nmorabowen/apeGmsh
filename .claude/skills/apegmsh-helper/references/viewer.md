@@ -36,6 +36,7 @@ them opens the whole set:
   `.user.h5` appearing, being replaced or being deleted re-reads it, and so
   does a rewrite of the model or the results, because its staleness depends
   on them.
+- **A study of variants** opens from its `<study>.variants.json`; to switch, compare and show a difference, see `variants.md`.
 
 ### What the app will open
 

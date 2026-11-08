@@ -53,6 +53,7 @@ What each file contains (do not read them all):
 - `fem-broker.md` — `FEMData`, `model.h5`
 - `opensees-bridge.md` — `apeSees`, stages, emit, ndf, remote
 - `assess.md` — verdict + stills after mesh/solve (not Qt); apeGmshViewer stills (`render_stills`)
+- `variants.md` — studies
 - `results.md` — `from_ladruno`, `convert_mpco`, `.user.h5`, plot, render
 - `compose.md` — Assembly, compose readers, `from_h5`
 - `rebar.md` — `g.rebar` cages
