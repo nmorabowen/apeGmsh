@@ -18,7 +18,7 @@ import { nodeJTranslations, openLadruno } from "../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../src/reader/results.ts";
 import { basePositions } from "../src/renderer/deform.ts";
 import { SpringsLayer } from "../src/renderer/springs.ts";
-import { ARROW, ARROW_STRIDE, BAR } from "../src/state/loads.ts";
+import { ANCHOR, ARROW, ARROW_STRIDE, BAR } from "../src/state/loads.ts";
 import { spotlightViewOf } from "../src/state/spotlight.ts";
 import { buildSprings3D, springCountOf } from "../src/state/springs.ts";
 import { reduce } from "../src/state/store.ts";
@@ -151,6 +151,7 @@ test("one arrow per spring, its tip on the spring, along node j's force, no mark
       assert.ok(Math.abs(r.arrows[o + ARROW.dir + c]! - LOAD[k]![c]! / mags[k]!) < 1e-6, `spring ${k + 1}: along its force`);
     }
     assert.equal(r.arrows[o + ARROW.bar], BAR.none);
+    assert.equal(r.arrows[o + ARROW.anchor], ANCHOR.tip, "the tip, not the tail, on the spring");
     assert.equal(r.arrows[o + ARROW.heads], 1);
     lens.push(r.arrows[o + ARROW.len]!);
   }

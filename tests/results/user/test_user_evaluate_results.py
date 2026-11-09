@@ -420,9 +420,23 @@ def _program(path: Path, *kinds: str) -> Path:
     return _model_h5(path, *zip(("gravity", "live", "modal"), kinds))
 
 
-def _program_set(tmp_path: Path, *kinds: str) -> tuple[Path, Path]:
+def _stamp_stages(path: Path, model: Path) -> None:
+    """Stamp the set with the program stage each of its stages recorded
+    (ADR 0122 D3, #2823): a reopen binds stage names by the stamp, never by
+    position, and ``MODEL_STAGE[3]`` holds modes only, which is no evidence
+    of a static stage. The modal stage is the program's ``modal``."""
+    from apeGmsh.results.writers import stamp_provenance
+
+    stamp_provenance(path, model, recorded_stages=["gravity", "live", "modal"])
+
+
+def _program_set(tmp_path: Path, *kinds: str, stamp: bool = True) -> tuple[Path, Path]:
+    """The set beside a program of ``kinds``, stamped with its stages unless
+    ``stamp`` is False (a stamp must agree with the recorded KINDs)."""
     path = _build_set(tmp_path)
     model = _program(tmp_path / "run.h5", *kinds)
+    if stamp:
+        _stamp_stages(path, model)
     write_user_file(tmp_path / "run.user.h5", model, results_file=path, combinations=[
         Combination("ULS", "linear", (_stage("gravity", 1.2), _stage("live", 1.6))),
         Combination("ULS_ids", "linear", (_stage("stage_0", 1.2), _stage("stage_1", 1.6))),
@@ -487,10 +501,12 @@ def test_without_names_from_either_source_stage_i_stays(run, tmp_path: Path) -> 
 
 
 def test_a_reader_that_declines_the_names_keeps_stage_i(tmp_path: Path) -> None:
-    """The .ladruno records KIND static; a program calling live transient is misaligned."""
+    """The .ladruno records KIND static; a program calling live transient is
+    misaligned. The set is unstamped: a stamp naming ``live`` would contradict
+    the KIND and refuse at write time."""
     from apeGmsh.results.readers._ladruno import StageKindMismatchWarning
 
-    path, model = _program_set(tmp_path, "static", "transient", "static")
+    path, model = _program_set(tmp_path, "static", "transient", "static", stamp=False)
     with pytest.warns(StageKindMismatchWarning):
         run = Results.from_ladruno(path, model_h5=model)
     combos = run.combinations()
@@ -560,6 +576,7 @@ def test_a_partial_run_is_its_models_binding(tmp_path: Path) -> None:
     """Four stages declared, three ran: the three stamped names are a prefix of the four."""
     path = _build_set(tmp_path)
     model = _named(tmp_path / "run.h5", "gravity", "live", "modal", "wind")
+    _stamp_stages(path, model)
     write_user_file(tmp_path / "run.user.h5", model, results_file=path, combinations=[
         Combination("ULS", "linear", (_stage("gravity", 1.2), _stage("live", 1.6)))])
     with warnings.catch_warnings():

@@ -32,7 +32,7 @@
 // Only `timing` varies between two runs of one spec on one machine: paths of
 // stills are relative to the manifest, and every number comes from the files.
 
-import type { CombinationColumnOf, StepValues } from "../renderer/contour.ts";
+import type { CombinationColumnOf, DifferenceColumnOf, StepValues } from "../renderer/contour.ts";
 import { elementMaskOf, visibleMaps } from "../renderer/visible.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { columnOf, gaussCellValues, isNodeTopology, meshFemIds, vertexValues } from "../state/contour.ts";
@@ -74,9 +74,11 @@ export type ManifestContour =
       /** what the legend shows for the component */
       label: string;
       /** VU7b-2: `combination` is a User Combination's nodal value (`combination` names it) */
-      source: "nodal" | "element" | "combination";
+      source: "nodal" | "element" | "combination" | "difference";
       /** VU7b-2, a combination's contour only: which, and whether it may draw as a deformed shape */
       combination?: { name: string; signed: boolean };
+      /** VU10, a difference's contour only: the window variant minus the compare variant, by label */
+      difference?: { window: string; compare: string };
       /** element fields: how the values reach the screen (`element_mean`, `gauss_node`, ...); nodal: `nodal` */
       topology: string;
       cmap: string;
@@ -165,6 +167,8 @@ export interface EntryInput {
   step: StepValues | null;
   /** VU7b-2: the User Combination column on screen (renderer/contour.ts `CombinationFeed.held`); a combination contour without it cannot be stated */
   combination?: CombinationColumnOf | null;
+  /** VU10: the difference column on screen (renderer/contour.ts `differenceHeld`); a difference contour without it cannot be stated */
+  difference?: DifferenceColumnOf | null;
 }
 
 function filesOf(s: State): ManifestFiles {
@@ -372,21 +376,31 @@ function elementEvidence(s: State, v: Extract<ContourView, { state: "element" }>
   };
 }
 
-function contourOf(s: State, blobs: BlobStore, step: StepValues | null, combination: CombinationColumnOf | null): ManifestContour | null {
+function contourOf(s: State, blobs: BlobStore, step: StepValues | null, combination: CombinationColumnOf | null, difference: DifferenceColumnOf | null): ManifestContour | null {
   const v = contourView(s);
   if (v.state === "off") return null;
   if (v.state === "unavailable" || v.state === "refused" || v.state === "not-yet") return { drawn: false, reason: v.reason };
   if (v.state === "combination") return combinationContour(s, v, blobs, combination);
+  if (v.state === "difference") {
+    // VU10: the window variant minus the compare variant at the step shown, from the column on screen.
+    if (!difference || difference.key !== v.key) throw new Error(`manifest: the difference column on hand is not the read the view shows (${difference ? difference.key : "none"})`);
+    const c = columnContour(s, v, blobs, difference.ids, difference.values);
+    return c.drawn ? { ...c, source: "difference", difference: { window: v.window, compare: v.compare }, range: { ...c.range, mode: v.clim.mode === "fixed" ? "fixed" : "step" } } : c;
+  }
   return drawnContour(s, v, blobs, step);
 }
 
 /** VU7b-2: a User Combination's contour, from the column on screen (one state: no step, no history scan). */
 function combinationContour(s: State, v: Extract<ContourView, { state: "combination" }>, blobs: BlobStore, held: CombinationColumnOf | null): ManifestContour {
   if (!held || held.key !== v.key) throw new Error(`manifest: the combination column on hand is not the read the view shows (${held ? held.key : "none"})`);
+  return columnContour(s, v, blobs, held.column.ids, held.column.values);
+}
+
+/** A contour from a column of node values on screen (a User Combination's, VU10's difference): no step data and no history scan. */
+function columnContour(s: State, v: Extract<ContourView, { state: "combination" | "difference" }>, blobs: BlobStore, ids: Float64Array, values: Float64Array): ManifestContour {
   const mesh = s.mesh;
   if (!mesh) throw new Error("manifest: a contour is drawn with no mesh");
   const seen = visibleOf(s, mesh, blobs);
-  const { ids, values } = held.column;
   const column = columnOf(ids);
   const c: Candidates = { count: ids.length, value: (i) => values[i]!, node: (i) => ids[i]!, element: () => null, visible: (i) => seen.nodes.has(ids[i]!) };
   const at = nodePosition(mesh, blobs);
@@ -403,7 +417,7 @@ function combinationContour(s: State, v: Extract<ContourView, { state: "combinat
     component: v.component.key,
     label: v.component.label,
     source: "combination",
-    combination: { name: v.name, signed: v.signed },
+    ...(v.state === "combination" ? { combination: { name: v.name, signed: v.signed } } : {}),
     topology: "nodal",
     cmap: v.cmap,
     // One state: the range is the user's (fixed) or the combination's own, never a step's or a history's.
@@ -503,7 +517,7 @@ export function manifestEntry(s: State, input: EntryInput): ManifestEntry {
     files: filesOf(s),
     pairing: describeSet(s, []).pairing,
     ...placeOf(s),
-    contour: contourOf(s, input.blobs, input.step, input.combination ?? null),
+    contour: contourOf(s, input.blobs, input.step, input.combination ?? null, input.difference ?? null),
     deform: deformOf(s),
     banner: bannerLines(s),
     layout: input.layout,

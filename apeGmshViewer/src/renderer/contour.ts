@@ -8,12 +8,12 @@
 
 import type { CombinationTable } from "../combination/evaluate.ts";
 import type { BlobStore } from "../state/blobs.ts";
-import { cellVertexValues, columnOf, elementCellValues, gaussCellValues, isNodeTopology, joinElements, meshFemIds, NO_DATA_RGB, primitiveColours, vertexValues, type CombinedColumn } from "../state/contour.ts";
+import { cellVertexValues, columnOf, differenceColumn, elementCellValues, gaussCellValues, isNodeTopology, joinElements, meshFemIds, NO_DATA_RGB, primitiveColours, vertexValues, type CombinedColumn } from "../state/contour.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners, type NodeTopology } from "../state/extrapolation.ts";
-import { combinationRequestOf, combinationTableOf, type ContourView } from "../state/selectors.ts";
+import { combinationRequestOf, combinationTableOf, differencePlanOf, type ContourView } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { SpringStepData } from "../state/springs.ts";
-import type { CombinationRead, MeshInfo, State } from "../state/types.ts";
+import type { CombinationRead, CompareIn, DifferenceRead, MeshInfo, State } from "../state/types.ts";
 
 /** One step's nodal values, as the effects hold them (effects.ts `StepData`). */
 export interface StepValues {
@@ -23,6 +23,8 @@ export interface StepValues {
   /** V4c2a: the element component fetched with the step (null: none), and its values by gauss group, (E * G,) */
   element?: string | null;
   gauss?: Record<string, Float64Array>;
+  /** the Principal card's tensor components, by component then group */
+  tensor?: Record<string, Record<string, Float64Array>>;
   /** The zero-length springs' force, fetched while the Springs card is on; null when its read failed */
   springs?: SpringStepData | null;
 }
@@ -99,6 +101,8 @@ export function contourShownKey(v: ContourView): string | null {
       return elementContourKey(v);
     case "combination":
       return combinationContourKey(v);
+    case "difference":
+      return differenceContourKey(v);
     case "unavailable":
     case "refused":
     case "not-yet":
@@ -225,6 +229,192 @@ export class CombinationFeed {
       },
       // What the evaluator raised (a case that repeats a node id raises in Python too) is stated, never a blank view.
       (err: unknown) => answered({ key: want.key, status: "failed", error: err instanceof Error ? err.message : String(err) }, null),
+    );
+  }
+}
+
+// -- VU10: the difference of two variants (ADR 0132 D9.5) ---------------------------
+
+/** What a set of difference colours shows: the read (both results, the compare row, the stage, the step, the dataset), the range and the colormap. */
+export const differenceContourKey = (view: Extract<ContourView, { state: "difference" }>): string => `difference ${view.key}|${view.clim.min}|${view.clim.max}|${view.cmap}`;
+
+/** The difference column on hand, under the key of its read (selectors `differencePlanOf`). */
+export interface DifferenceColumnOf {
+  key: string;
+  ids: Float64Array;
+  values: Float64Array;
+}
+
+/**
+ * The difference column the runner read last (`VariantRunner`), read by the
+ * viewport, the caps and the manifest, as a step's values stay in the effects:
+ * one window, one runner, so one holder.
+ */
+export const differenceHeld: { current: DifferenceColumnOf | null } = { current: null };
+
+/**
+ * The linear vertex colours of the drawn lines and triangles for the
+ * difference on screen: each vertex takes its node's value (by node id), and a
+ * node either variant lacks is no data. Null while the column on hand is not
+ * the read the view names (the viewport keeps what it shows).
+ */
+export function differenceColours(
+  view: Extract<ContourView, { state: "difference" }>,
+  mesh: MeshInfo,
+  blobs: BlobStore,
+  lineMap: Int32Array,
+  triMap: Int32Array,
+): { line: Float32Array; tri: Float32Array; key: string } | null {
+  const held = differenceHeld.current;
+  if (!held || held.key !== view.key) return null;
+  const column = columnOf(held.ids);
+  const vn = mesh.vertexNodes;
+  const clim = { min: view.clim.min, max: view.clim.max };
+  const line = primitiveColours(vertexValues(blobs.get(vn.line) as Float64Array, column, [held.values], false), lineMap, 2, clim, view.cmap).rgb;
+  const tri = primitiveColours(vertexValues(blobs.get(vn.tri) as Float64Array, column, [held.values], false), triMap, 3, clim, view.cmap).rgb;
+  return { line: linearise(line), tri: linearise(tri), key: differenceContourKey(view) };
+}
+
+/** Main's variant doors, as the preload exposes them (main.ts `variants:*`, `compare:*`): a row by index and label, never a path. */
+export interface VariantDoor {
+  variantsSwitch(index: number, label: string): Promise<{ ok: true } | { ok: false; reason: string }>;
+  variantsCompare(index: number, label: string): Promise<{ ok: true; compare: CompareIn; nodeIds: Record<string, Float64Array> } | { ok: false; reason: string }>;
+  compareClose(): Promise<unknown>;
+  readCompareStep(req: { stage: string; step: number; seq: number }): Promise<{ ok: true; seq: number; nodal: Record<string, Float64Array> } | { ok: false; seq: number; error: string }>;
+}
+
+/**
+ * VU10: the variants panel's side effects. A switch the state asks for goes
+ * to main (`variants:switch`), which opens that row's set as the window set
+ * and tells the page as any open does. A compare goes to main's compare door
+ * (`variants:compare`), which reads the row's set into its own slot and never
+ * adopts it; closing it empties the slot (`compare:close`). The difference
+ * shown is read from main's compare host one step at a time, subtracted from
+ * the window's step by node id (state/contour.ts `differenceColumn`), held in
+ * `differenceHeld` and reported (`differenceRead`). An answer for a request no
+ * longer wanted is dropped. Each check runs in a microtask, so a dispatch
+ * never happens inside another's listeners.
+ */
+export class VariantRunner {
+  private readonly store: Store;
+  private readonly blobs: BlobStore;
+  private readonly door: VariantDoor;
+  private readonly windowStep: () => StepValues | null;
+  private queued = false;
+  private switchAsked: string | null = null;
+  private compareAsked: string | null = null;
+  /** the compare row main holds for this page, and its stages' node ids */
+  private slot: { index: number; label: string; nodeIds: Record<string, Float64Array> } | null = null;
+  private seq = 0;
+  private asked: string | null = null;
+
+  constructor(store: Store, blobs: BlobStore, door: VariantDoor, windowStep: () => StepValues | null) {
+    this.store = store;
+    this.blobs = blobs;
+    this.door = door;
+    this.windowStep = windowStep;
+  }
+
+  /** Follow the store; returns the unsubscribe. */
+  start(): () => void {
+    const off = this.store.subscribe(() => this.schedule());
+    this.schedule();
+    return off;
+  }
+
+  private schedule(): void {
+    if (this.queued) return;
+    this.queued = true;
+    queueMicrotask(() => {
+      this.queued = false;
+      this.check();
+    });
+  }
+
+  /** Start what the state asks for; exposed for the tests, which await the reads it started. */
+  check(): Promise<void>[] {
+    const s = this.store.get();
+    const running: Promise<void>[] = [];
+    const sw = s.variants.switching;
+    const swKey = sw ? `${sw.index}|${sw.label}` : null;
+    if (sw && this.switchAsked !== swKey) {
+      this.switchAsked = swKey;
+      running.push(
+        this.door.variantsSwitch(sw.index, sw.label).then(
+          (r) => this.store.dispatch({ type: "variantSwitched", reason: r.ok ? null : r.reason }),
+          (err: unknown) => this.store.dispatch({ type: "variantSwitched", reason: err instanceof Error ? err.message : String(err) }),
+        ),
+      );
+    } else if (!sw) this.switchAsked = null;
+    const c = s.variants.compare;
+    if (c?.status === "opening" && this.compareAsked !== `${c.index}|${c.label}`) {
+      const want = { index: c.index, label: c.label };
+      this.compareAsked = `${c.index}|${c.label}`;
+      this.slot = null;
+      running.push(
+        this.door.variantsCompare(want.index, want.label).then(
+          (r) => {
+            if (r.ok) this.slot = { ...want, nodeIds: r.nodeIds };
+            this.store.dispatch({ type: "compareOpened", result: r.ok ? r.compare : { ...want, reason: r.reason } });
+          },
+          (err: unknown) => this.store.dispatch({ type: "compareOpened", result: { ...want, reason: err instanceof Error ? err.message : String(err) } }),
+        ),
+      );
+    } else if (c === null && (this.slot !== null || this.compareAsked !== null)) {
+      this.slot = null;
+      this.compareAsked = null;
+      differenceHeld.current = null;
+      running.push(this.door.compareClose().then(() => undefined));
+    }
+    const d = this.difference(s);
+    if (d) running.push(d);
+    return running;
+  }
+
+  private difference(s: ReturnType<Store["get"]>): Promise<void> | null {
+    const plan = differencePlanOf(s);
+    if (plan === null || !plan.ok) {
+      if (this.asked !== null) this.seq++;
+      this.asked = null;
+      return null;
+    }
+    if (this.asked === plan.key && s.variants.read?.key === plan.key) return null;
+    const at = s.phase.at;
+    const step = this.windowStep();
+    // The window's own step first: it is the one the effects read for the phase shown.
+    if (at?.kind !== "results" || !step || step.stage !== at.stage || step.step !== at.step || !(step.nodal[plan.dataset] instanceof Float64Array)) return null;
+    const slot = this.slot;
+    if (!slot || slot.index !== plan.row.index || slot.label !== plan.row.label) return null;
+    const cmpIds = slot.nodeIds[plan.stageId];
+    const mine = ++this.seq;
+    this.asked = plan.key;
+    const key = plan.key;
+    const answered = (read: DifferenceRead, column: DifferenceColumnOf | null) => {
+      if (mine !== this.seq) return;
+      if (column) differenceHeld.current = column;
+      this.store.dispatch({ type: "differenceRead", read });
+    };
+    if (!(cmpIds instanceof Float64Array)) {
+      answered({ key, status: "refused", reason: `main sent no node ids of stage ${plan.stageId} of the compare set` }, null);
+      return null;
+    }
+    this.store.dispatch({ type: "differenceRead", read: { key, status: "loading" } });
+    const winIds = this.blobs.get(plan.nodeIds);
+    if (!(winIds instanceof Float64Array)) throw new TypeError(`difference: ${plan.nodeIds.id} is not f64`);
+    const winValues = step.nodal[plan.dataset]!;
+    return this.door.readCompareStep({ stage: plan.stageId, step: plan.step, seq: mine }).then(
+      (r) => {
+        if (!r.ok) return answered({ key, status: "refused", reason: `the compare variant's step could not be read: ${r.error}` }, null);
+        const values = r.nodal[plan.dataset];
+        if (!(values instanceof Float64Array)) return answered({ key, status: "refused", reason: `the compare variant's step holds no ${plan.dataset}` }, null);
+        try {
+          const col = differenceColumn(winIds, winValues, cmpIds, values);
+          answered({ key, status: "ready", range: col.range, nodes: col.ids.length, missing: col.missing }, { key, ids: col.ids, values: col.values });
+        } catch (err) {
+          answered({ key, status: "refused", reason: err instanceof Error ? err.message : String(err) }, null);
+        }
+      },
+      (err: unknown) => answered({ key, status: "refused", reason: err instanceof Error ? err.message : String(err) }, null),
     );
   }
 }

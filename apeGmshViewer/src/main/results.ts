@@ -158,6 +158,8 @@ export interface StepRequest {
   element?: string;
   /** .ladruno: one 1-D beam line-station component to read for this step */
   lineDiagram?: LineStationComponent;
+  /** the components of one tensor field (state/principal.ts), each read from every group that has it; verified files only */
+  tensor?: string[];
   /** .ladruno: the zero-length springs' force at this step too */
   springs?: boolean;
 }
@@ -171,6 +173,8 @@ export type StepAnswer =
       step: number;
       nodal: Record<string, Float64Array>;
       gauss: Record<string, Float64Array>;
+      /** `tensor`: each requested component by group id, (E * G,) element-major; absent with no `tensor` */
+      tensor?: Record<string, Record<string, Float64Array>>;
       lineDiagram?: LadrunoLineStationStep | null;
       lineDiagramError?: string;
       /** the springs' step when asked for (null: the read failed, `springsError` says why) */
@@ -487,6 +491,19 @@ export class ResultsHost {
         for (const g of st.gauss) if (g.components.includes(req.element)) gauss[g.id] = rf.readGaussStep(s.id, g.id, req.element, req.step);
         if (!Object.keys(gauss).length) throw new Error(`stage ${s.id} has no gauss group with component ${JSON.stringify(req.element)}`);
       }
+      let tensor: Record<string, Record<string, Float64Array>> | undefined;
+      if (req.tensor !== undefined) {
+        const st = s as StageInfo;
+        const v = rf.elementIndexVerdict();
+        if (!v.verified) throw new Error(`element results of ${req.path} are refused: ${v.reason}`);
+        tensor = {};
+        for (const c of req.tensor) {
+          const byGroup: Record<string, Float64Array> = {};
+          for (const g of st.gauss) if (g.components.includes(c)) byGroup[g.id] = rf.readGaussStep(s.id, g.id, c, req.step);
+          if (!Object.keys(byGroup).length) throw new Error(`stage ${s.id} has no gauss group with component ${JSON.stringify(c)}`);
+          tensor[c] = byGroup;
+        }
+      }
       let lineDiagram: LadrunoLineStationStep | null | undefined;
       let lineDiagramError: string | undefined;
       if (req.lineDiagram !== undefined) {
@@ -524,6 +541,7 @@ export class ResultsHost {
         step: req.step,
         nodal,
         gauss,
+        ...(tensor !== undefined ? { tensor } : {}),
         ...(lineDiagram !== undefined ? { lineDiagram } : {}),
         ...(lineDiagramError !== undefined ? { lineDiagramError } : {}),
         ...(springs !== undefined ? { springs } : {}),

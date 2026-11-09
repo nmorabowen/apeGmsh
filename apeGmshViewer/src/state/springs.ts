@@ -16,7 +16,7 @@
 
 import type { BlobStore } from "./blobs.ts";
 import { sampleCmap } from "./contour.ts";
-import { ARROW, ARROW_STRIDE, BAR, buildNodeCoordsMap, loadsColourPalette, loadsUnitsOf, thinningLevels, type BuildLoads3DOptions } from "./loads.ts";
+import { ANCHOR, ARROW, ARROW_STRIDE, BAR, buildNodeCoordsMap, loadsColourPalette, loadsUnitsOf, thinningLevels, type BuildLoads3DOptions } from "./loads.ts";
 import type { State } from "./types.ts";
 
 /** One step of the springs, as main sends it (reader/ladruno.ts `LadrunoSpringStep`). */
@@ -105,6 +105,7 @@ export function buildSprings3D(s: State, blobs: BlobStore, step: SpringStepData,
     arrows[o + ARROW.heads] = 1;
     arrows[o + ARROW.bar] = BAR.none;
     arrows[o + ARROW.priority] = ratio;
+    arrows[o + ARROW.anchor] = ANCHOR.tip;
   });
   // Thinning per spring: its strongest arrow decides, and its components take that level.
   const first = new Map<number, number>();

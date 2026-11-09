@@ -35,7 +35,7 @@ from apeGmsh.results.readers._mpco import (
     MPCOGaussDimensionMixed,
     MPCOReader,
 )
-from apeGmsh.results.readers._mpco_refusals import MPCOElementInTwoBuckets
+from apeGmsh.results.readers._buckets import MPCOElementInTwoBuckets
 from apeGmsh.results.readers._tag_translation import ElementTagTranslator
 from tests.conftest import _stub_model_h5_path
 from tests.test_results_mpco_element_mock import (

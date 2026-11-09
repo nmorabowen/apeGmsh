@@ -11,11 +11,20 @@ and apeGmsh owns only these attributes.
 ==========================  ===============================================
 Attribute                   Value (scalar, variable-length UTF-8 string)
 ==========================  ===============================================
-``model_hash``              ``<model_h5>/meta/lineage@model_hash``, byte-equal
+``model_hash``              ``<model_h5>/meta/lineage@model_hash``, byte-equal;
+                            absent for a bare FEMData archive (ADR 0133)
 ``fem_hash``                ``<model_h5>/meta/lineage@fem_hash``, byte-equal
-``stage_names``             JSON array: the program's stage names, written
-                            only when the file's ``MODEL_STAGE`` count and
-                            ``KIND`` s match the program's stages
+``stage_names``             JSON array, one per ``MODEL_STAGE``: the program
+                            stage it recorded, or its own ``MODEL_STAGE[<k>]``
+                            name for a stage that is no program stage
+                            (modes). Written when the writer names the
+                            stages (``recorded_stages=``), or when the file's
+                            ``MODEL_STAGE`` count and ``KIND`` s match the
+                            program's stages
+``stage_display_names``     JSON array, one per ``MODEL_STAGE``: the names a
+                            reader shows for the stages, written only with a
+                            ``stage_names=`` override; binding stays by
+                            ``stage_names``
 ``element_index_space``     ``"fem"``, or absent (unverified)
 ``unsupported``             JSON array of the lossy categories; ``"[]"``
 ``writer``                  the apeGmsh component and version
@@ -23,6 +32,11 @@ Attribute                   Value (scalar, variable-length UTF-8 string)
 ``opensees_build_sha``      the 40-hex ``ladrunoBuild`` hash, or
                             ``"unknown"``
 ==========================  ===============================================
+
+A bare FEMData archive (``fem.to_h5``) carries ``fem_hash`` and no
+``model_hash``: it holds no OpenSees model to hash. Its stamp carries
+``fem_hash`` alone and pairs by it (ADR 0133 D1, D2); it never writes an
+empty or invented ``model_hash``.
 
 The last two say which engine solved the file (§7b.1, fork doc PR
 nmorabowen/OpenSees #997). The fork records no build hash of its own in the
@@ -65,7 +79,7 @@ PROVENANCE_ATTRS: tuple[str, ...] = (
     "model_hash", "fem_hash", "stage_names", "element_index_space",
     "unsupported", "writer", "opensees_backend", "opensees_build_sha",
 )
-_OWNED_ATTRS: tuple[str, ...] = (*PROVENANCE_ATTRS, "units")
+_OWNED_ATTRS: tuple[str, ...] = (*PROVENANCE_ATTRS, "units", "stage_display_names")
 
 #: §7b.1 ``opensees_backend`` values. The fork's recorder writes only
 #: ``"ladruno"`` files; ``"stock"`` is possible only on a converted file.
@@ -74,6 +88,8 @@ _RECORDER_BACKEND = "ladruno"
 _UNKNOWN = "unknown"
 #: §7b.1 ``opensees_build_sha``: 40 lowercase hex, as ``ladrunoBuild`` answers.
 _BUILD_SHA = re.compile(r"[0-9a-f]{40}")
+#: A reader's stage id, ``stage_<i>``.
+_STAGE_ID = re.compile(r"stage_\d+")
 #: §7b.1: ``writer`` is what marks a converted file (``apeGmsh mpco->ladruno``).
 _CONVERTED_MARK = "mpco->ladruno"
 
@@ -89,10 +105,12 @@ class ProvenanceStampRefused(RuntimeError):
     detected; when a part file is open in this process or locked by
     another (OpenSees, a viewer, an ``h5py`` session), is not a file this
     reader supports, or lacks ``INFO/PROVENANCE``; when the partition set
-    is incomplete or mixed; when the model archive has no complete
-    ``/meta/lineage``; when the parts disagree on their MODEL; or, unless
-    ``overwrite`` is True, when a different ``model_hash`` is already
-    stamped or an owned attribute is not a string.
+    is incomplete or mixed; when the model archive has no
+    ``/meta/lineage``, no ``fem_hash`` or an empty hash there; when the
+    parts disagree on their MODEL; or, unless ``overwrite`` is True, when
+    the part is already stamped with another ``model_hash`` or
+    ``fem_hash`` (or with a ``model_hash`` the archive does not carry), or
+    an owned attribute is not a string.
 
     §7b.1 rule 3 has a consumer that cannot open the file for writing
     *skip and warn*. That policy belongs to the caller: the resolver
@@ -116,6 +134,7 @@ def stamp_provenance(
     model_h5: "str | Path",
     *,
     stage_names: "Optional[Sequence[str]]" = None,
+    recorded_stages: "Optional[Sequence[Optional[str]]]" = None,
     unsupported: "Sequence[str]" = (),
     writer: "Optional[str]" = None,
     opensees_backend: "Optional[str]" = None,
@@ -126,23 +145,54 @@ def stamp_provenance(
 
     ``path`` is one ``.ladruno``, or any ``<stem>.part-<N>.ladruno`` of a
     partitioned run: every part of the set is stamped (§7b.1, partitioned
-    sets). ``model_h5`` is the bridge-written model archive the run was
-    emitted from; ``model_hash`` and ``fem_hash`` are copied from its
-    ``/meta/lineage`` byte for byte.
+    sets). ``model_h5`` is the model archive the run was emitted from: the
+    bridge's (``ops.h5``), or a bare FEMData archive (``fem.to_h5``) for a
+    deck the bridge did not build. ``model_hash`` and ``fem_hash`` are
+    copied from its ``/meta/lineage`` byte for byte; a FEMData archive has
+    no ``model_hash``, so its stamp carries ``fem_hash`` alone (ADR 0133
+    D1). An archive with no ``fem_hash``, or an empty hash, refuses.
 
-    ``stage_names`` defaults to the archive's ``ops.stage(name=...)``
-    names; passing it replaces the names, never the kinds, which always
-    come from each program stage's ``analysis`` record. A part whose
+    ``INFO/PROVENANCE@stage_names`` is always the program's
+    ``ops.stage(name=...)`` names: a reader binds by them. A part whose
     ``MODEL_STAGE`` count or ``KIND`` s differ from the program's gets no
     ``stage_names`` and :class:`StageNamesOmittedWarning`; a program with
-    no stages has nothing to name and stays silent.
+    no stages has nothing to name and stays silent. The ``KIND`` of a stage
+    is decided over the whole set, from the parts where it is not an
+    ``EMPTY_PARTITION`` (an empty part may record none), so every part of a
+    set gets one decision.
+
+    ``stage_names`` passed here renames the stages for display only (any
+    text, one per ``MODEL_STAGE`` in file order): it is stamped as
+    ``stage_display_names`` beside the program's names, and a reader shows
+    it in their place. Binding never comes from it, so the program's names
+    must be known: the stages are the program's one to one and kind for
+    kind, or ``recorded_stages=`` says which program stage each recorded.
+    When they cannot be determined, ``ValueError`` names the reason before
+    any write. An override of the wrong length is omitted with
+    :class:`StageNamesOmittedWarning`, with no names at all.
+
+    ``recorded_stages`` is the writer's own account of the stages, which
+    a reader binds by name (#2823): one entry per ``MODEL_STAGE`` in file
+    order, the program stage that stage recorded, in any order, or
+    ``None`` for a stage that is no program stage (a modes stage), which
+    is stamped with its own ``MODEL_STAGE[<k>]`` name. Each name must be a
+    stage of the archive's program, and a stage whose ``KIND`` is
+    ``static`` or ``transient`` must record that program stage's kind;
+    otherwise ``ValueError`` is raised before any write. A ``None`` stage
+    whose own name the program declares cannot be told from that program
+    stage, so ``stage_names`` is then omitted with
+    :class:`StageNamesOmittedWarning`. It excludes ``stage_names``.
 
     ``element_index_space`` is ``"fem"`` only when the part records at
-    least one element and every element id it records (``MODEL/ELEMENTS``
-    connectivity and ``ON_ELEMENTS`` bucket ids) is an element the archive
-    pairs with a FEM id equal to that id. An element the bridge minted
-    without a FEM id (``fem_eid`` -1), or one the archive does not know,
-    leaves it absent, which a reader treats as unverified (#2079).
+    least one element the archive pairs with a FEM id equal to its own id,
+    every result row (an ``ON_ELEMENTS`` bucket ``ID``) is such an element,
+    and every other element its ``MODEL/ELEMENTS`` lists is either such an
+    element or one the archive records as bridge-minted (``fem_eid`` -1:
+    an RBE3 coupling, say) whose id no FEM element carries. A minted
+    element with result rows, an id the archive does not know, or a
+    minted id equal to a FEM id leaves it absent, which a reader treats
+    as unverified (#2079). The stamp speaks for the result rows (h5-schema
+    §``element_index_space``); a model-only minted element carries none.
 
     ``unsupported`` lists the lossy categories the producer could not carry
     (``"[]"`` when none). ``writer`` defaults to ``"apeGmsh <version>"``.
@@ -175,10 +225,12 @@ def stamp_provenance(
       it.
 
     Re-stamping with identical values writes nothing. A part already
-    stamped with another ``model_hash``, or carrying an owned attribute
-    that is not a string, refuses unless ``overwrite=True``, which
-    replaces it; a re-stamp removes an owned attribute the new stamp
-    leaves out.
+    stamped with another ``model_hash`` or ``fem_hash``, stamped with a
+    ``model_hash`` the archive does not carry, or carrying an owned
+    attribute that is not a string, refuses unless ``overwrite=True``,
+    which replaces it; a re-stamp removes an owned attribute the new stamp
+    leaves out. A ``fem_hash``-only stamp re-stamped against a bridge
+    archive of the same mesh gains its ``model_hash``.
 
     What it cannot see: the fork writes no close marker, so a file whose
     recorder was killed before closing it is indistinguishable here from a
@@ -195,6 +247,7 @@ def stamp_provenance(
     Returns the part paths, in partition order.
     """
     names_override = _string_list(stage_names, "stage_names")
+    recorded = _recorded_list(recorded_stages)
     lossy = _string_list(unsupported, "unsupported") or []
     writer_text = _writer_text(writer)
     backend_arg, build_arg = _engine_args(opensees_backend, opensees_build_sha)
@@ -206,11 +259,11 @@ def stamp_provenance(
     program_names, program_kinds, kind_error, pairing, model_units = _program_facts(
         Path(model_h5),
     )
-    if names_override is not None:
-        program_names = names_override
     _check_part_set(parts)
 
     all_facts = [_read_part(part) for part in parts]
+    set_kinds = _set_kinds(all_facts)
+    modes = _mode_stage_names(parts) if names_override is not None else set()
     writer_text, converted = _conversion(writer, writer_text, all_facts)
     if backend_arg == "stock" and not converted:
         raise ValueError(
@@ -225,9 +278,10 @@ def stamp_provenance(
             facts, backend_arg, build_arg, converted=converted,
             overwrite=overwrite,
         )
-        wanted: dict[str, str] = {
-            "model_hash": model_hash,
-            "fem_hash": fem_hash,
+        wanted: dict[str, str] = {"fem_hash": fem_hash}
+        if model_hash is not None:
+            wanted["model_hash"] = model_hash
+        wanted |= {
             "unsupported": _json(lossy),
             "writer": writer_text,
             "opensees_backend": backend,
@@ -235,12 +289,21 @@ def stamp_provenance(
         }
         if model_units is not None:
             wanted["units"] = str(model_units)
-        names = _stage_names_for(
-            part, facts.kinds, program_names, program_kinds, kind_error,
-        )
+        if names_override is not None:
+            names, display = _displayed_names(
+                part, facts.groups, set_kinds, names_override, recorded,
+                program_names, program_kinds, kind_error, modes)
+            if display is not None:
+                wanted["stage_display_names"] = _json(display)
+        elif recorded is None:
+            names = _stage_names_for(part, set_kinds, program_names,
+                                     program_kinds, kind_error)
+        else:
+            names = _recorded_names(part, facts.groups, set_kinds, recorded,
+                                    program_names, program_kinds, kind_error)
         if names is not None:
             wanted["stage_names"] = _json(names)
-        if _is_fem_index_space(facts.element_tags, pairing):
+        if _is_fem_index_space(facts.model_tags, facts.result_tags, pairing):
             wanted["element_index_space"] = "fem"
         if facts.malformed and not overwrite:
             raise ProvenanceStampRefused(
@@ -249,10 +312,14 @@ def stamp_provenance(
                 "replace them."
             )
         stamped = facts.owned.get("model_hash")
-        if stamped is not None and stamped != model_hash and not overwrite:
+        stamped_fem = facts.owned.get("fem_hash")
+        if not overwrite and (
+                (stamped is not None and stamped != model_hash)
+                or (stamped_fem is not None and stamped_fem != fem_hash)):
             raise ProvenanceStampRefused(
                 f"{part}: INFO/PROVENANCE is already stamped with "
-                f"model_hash={stamped!r}, not {model_hash!r} from "
+                f"model_hash={stamped!r}, fem_hash={stamped_fem!r}, not "
+                f"model_hash={model_hash!r}, fem_hash={fem_hash!r} from "
                 f"{model_h5}. Pass overwrite=True to re-pair the file."
             )
         if facts.owned != wanted or not facts.all_vlen_utf8 \
@@ -289,6 +356,22 @@ def _string_list(
     if bad:
         raise TypeError(f"stamp_provenance: {name} holds non-str items "
                         f"{bad[:5]!r}.")
+    return out
+
+
+def _recorded_list(
+    value: "Optional[Sequence[Optional[str]]]",
+) -> "Optional[list[Optional[str]]]":
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)):
+        raise TypeError("stamp_provenance: recorded_stages must be a sequence "
+                        f"of str or None, not one {type(value).__name__}.")
+    out = list(value)
+    bad = [v for v in out if v is not None and not isinstance(v, str)]
+    if bad:
+        raise TypeError("stamp_provenance: recorded_stages holds items that "
+                        f"are neither str nor None: {bad[:5]!r}.")
     return out
 
 
@@ -409,8 +492,14 @@ def _refuse_if_open_here(parts: list[Path]) -> None:
             )
 
 
-def _lineage_hashes(model_h5: Path) -> tuple[str, str]:
-    """``(model_hash, fem_hash)`` from ``/meta/lineage``, exactly as stored."""
+def _lineage_hashes(model_h5: Path) -> "tuple[Optional[str], str]":
+    """``(model_hash, fem_hash)`` from ``/meta/lineage``, exactly as stored.
+
+    ``model_hash`` is ``None`` when the archive carries none: a bare
+    FEMData archive (``fem.to_h5``) has no OpenSees model to hash (ADR 0133
+    D1). ``fem_hash`` is always required. A hash that is present but empty
+    refuses by name: the stamp never writes ``""``.
+    """
     import h5py
 
     if not model_h5.is_file():
@@ -418,22 +507,31 @@ def _lineage_hashes(model_h5: Path) -> tuple[str, str]:
     with h5py.File(model_h5, "r") as f:
         if "meta" not in f or "lineage" not in f["meta"]:
             raise ProvenanceStampRefused(
-                f"{model_h5} has no /meta/lineage: it was not written by "
-                "the bridge (ops.h5) or predates the lineage chain, so "
-                "there is no model_hash to pair with."
+                f"{model_h5} has no /meta/lineage: it was written by "
+                "neither the bridge (ops.h5) nor fem.to_h5, or predates the "
+                "lineage chain, so there is no fem_hash to pair with."
             )
         lin = f["meta/lineage"].attrs
-        out = []
+        texts: dict[str, Optional[str]] = {}
         for key in ("model_hash", "fem_hash"):
-            raw = lin[key] if key in lin else None
-            text = _as_text(raw, f"{model_h5}:/meta/lineage@{key}")
+            if key not in lin:
+                texts[key] = None
+                continue
+            text = _as_text(lin[key], f"{model_h5}:/meta/lineage@{key}")
             if not text:
                 raise ProvenanceStampRefused(
-                    f"{model_h5}: /meta/lineage carries no {key}; a pairing "
-                    "needs both model_hash and fem_hash."
+                    f"{model_h5}: /meta/lineage@{key} is an empty string; "
+                    "the stamp copies a hash byte-equal and never writes an "
+                    "empty one."
                 )
-            out.append(text)
-    return out[0], out[1]
+            texts[key] = text
+    fem_hash = texts["fem_hash"]
+    if fem_hash is None:
+        raise ProvenanceStampRefused(
+            f"{model_h5}: /meta/lineage carries no fem_hash; a pairing "
+            "needs fem_hash (and model_hash too, for a bridge archive)."
+        )
+    return texts["model_hash"], fem_hash
 
 
 def _as_text(raw: Any, where: str) -> str:
@@ -484,16 +582,20 @@ def _program_facts(
 
 
 class _PartFacts:
-    __slots__ = ("kinds", "element_tags", "owned", "all_vlen_utf8",
-                 "malformed")
+    __slots__ = ("groups", "kinds", "empty", "model_tags", "result_tags",
+                 "owned", "all_vlen_utf8", "malformed")
 
     def __init__(
-        self, kinds: "list[Optional[str]]", element_tags: "np.ndarray",
-        owned: "dict[str, str]", all_vlen_utf8: bool,
-        malformed: "list[str]",
+        self, groups: "list[str]", kinds: "list[Optional[str]]",
+        empty: "list[bool]", model_tags: "np.ndarray",
+        result_tags: "np.ndarray", owned: "dict[str, str]",
+        all_vlen_utf8: bool, malformed: "list[str]",
     ) -> None:
+        self.groups = groups
         self.kinds = kinds
-        self.element_tags = element_tags
+        self.empty = empty
+        self.model_tags = model_tags
+        self.result_tags = result_tags
         self.owned = owned
         self.all_vlen_utf8 = all_vlen_utf8
         self.malformed = malformed
@@ -551,23 +653,47 @@ def _read_part(path: Path) -> _PartFacts:
                 all_vlen = False
             owned[name] = _as_text(prov.attrs[name], f"{path}:{_PROVENANCE}@{name}")
         kinds: "list[Optional[str]]" = []
-        tags = [np.empty(0, dtype=np.int64)]
-        for gname in _stage_groups(h5):
+        empty: "list[bool]" = []
+        model_tags = [np.empty(0, dtype=np.int64)]
+        result_tags = [np.empty(0, dtype=np.int64)]
+        groups = _stage_groups(h5)
+        for gname in groups:
             grp = h5[gname]
             kinds.append(
                 _as_text(grp.attrs["KIND"], f"{path}:{gname}@KIND")
                 if "KIND" in grp.attrs else None
             )
-            tags.extend(_stage_element_tags(grp))
-    return _PartFacts(kinds, np.unique(np.concatenate(tags)), owned, all_vlen,
+            empty.append("EMPTY_PARTITION" in grp.attrs and int(
+                np.asarray(grp.attrs["EMPTY_PARTITION"]).ravel()[0]) == 1)
+            in_model, in_results = _stage_element_tags(grp)
+            model_tags.extend(in_model)
+            result_tags.extend(in_results)
+    return _PartFacts(groups, kinds, empty,
+                      np.unique(np.concatenate(model_tags)),
+                      np.unique(np.concatenate(result_tags)), owned, all_vlen,
                       malformed)
 
 
-def _stage_element_tags(stage: "h5py.Group") -> "list[np.ndarray]":
-    """Element ids one stage records: ``MODEL/ELEMENTS`` and bucket ``ID`` s."""
+def _set_kinds(all_facts: "list[_PartFacts]") -> "list[Optional[str]]":
+    """Each stage's ``KIND`` over the set: the first part's where the stage
+    is not an ``EMPTY_PARTITION`` (which has no say, as in the readers'
+    stage pairing), else the first part's."""
+    out: "list[Optional[str]]" = []
+    for k in range(len(all_facts[0].kinds)):
+        live = [f.kinds[k] for f in all_facts
+                if k < len(f.kinds) and not f.empty[k]]
+        out.append(live[0] if live else all_facts[0].kinds[k])
+    return out
+
+
+def _stage_element_tags(
+    stage: "h5py.Group",
+) -> "tuple[list[np.ndarray], list[np.ndarray]]":
+    """Element ids one stage records: ``(MODEL/ELEMENTS, bucket ID s)``."""
     import h5py
 
     out: list[np.ndarray] = []
+    rows: list[np.ndarray] = []
     if "MODEL" in stage and "ELEMENTS" in stage["MODEL"]:
         for grp in stage["MODEL/ELEMENTS"].values():
             if isinstance(grp, h5py.Group) and "CONNECTIVITY" in grp:
@@ -580,9 +706,9 @@ def _stage_element_tags(stage: "h5py.Group") -> "list[np.ndarray]":
                 continue
             for bucket in token.values():
                 if isinstance(bucket, h5py.Group) and "ID" in bucket:
-                    out.append(np.asarray(bucket["ID"][...],
-                                          dtype=np.int64).ravel())
-    return out
+                    rows.append(np.asarray(bucket["ID"][...],
+                                           dtype=np.int64).ravel())
+    return out, rows
 
 
 def _check_part_set(parts: list[Path]) -> None:
@@ -779,6 +905,160 @@ def _stage_names_for(
     return list(names)
 
 
+def _displayed_names(
+    part: Path, groups: "list[str]", file_kinds: "list[Optional[str]]",
+    override: "list[str]", recorded: "Optional[list[Optional[str]]]",
+    names: "list[str]", kinds: "list[str]", kind_error: "Optional[str]",
+    modes: "set[str]",
+) -> "tuple[Optional[list[str]], Optional[list[str]]]":
+    """``(stage_names, stage_display_names)`` for a ``stage_names=``
+    override: the program's names to bind by, and the override to show.
+    Refuses (``ValueError``) when the program's names cannot be determined,
+    since binding never comes from the override."""
+    if len(override) != len(groups):
+        warnings.warn(StageNamesOmittedWarning(
+            f"{part.name}: stage_names not stamped: {len(override)} stage "
+            f"names for {len(groups)} MODEL_STAGE groups {groups}."),
+            stacklevel=4)
+        return None, None
+    if recorded is not None:
+        binding = _recorded_names(part, groups, file_kinds, recorded, names,
+                                  kinds, kind_error)
+        reason = "a modes stage is named like a program stage"
+    else:
+        binding, reason = _program_names(file_kinds, names, kinds, kind_error)
+    if binding is None:
+        if not names:
+            reason = "the program declares no ops.stage block"
+        raise ValueError(
+            f"stamp_provenance: stage_names {override} cannot be stamped on "
+            f"{part.name}: a reader binds by the program's stage names, and "
+            f"they cannot be determined ({reason}). Pass recorded_stages= "
+            "with the program stage each MODEL_STAGE recorded. Nothing was "
+            "stamped.")
+    _refuse_confusable(part, override, binding, groups, names, modes)
+    return binding, list(override)
+
+
+def _mode_stage_names(parts: list[Path]) -> "set[str]":
+    """Every name and id the file's (or set's) mode stages answer to, as
+    the reader lists them (``mode_1``, ``stage_0_mode_1``, ...)."""
+    from ._ladruno import LadrunoReader
+    from ._ladruno_multi import LadrunoMultiPartitionReader
+
+    reader: Any = (LadrunoMultiPartitionReader(parts) if len(parts) > 1
+                   else LadrunoReader(parts[0]))
+    try:
+        return {n for s in reader.stages() if s.kind == "mode"
+                for n in (s.id, s.name, *s.aliases)}
+    finally:
+        reader.close()
+
+
+def _refuse_confusable(
+    part: Path, shown: "list[str]", bound: "list[str]", groups: "list[str]",
+    names: "list[str]", modes: "set[str]",
+) -> None:
+    """Refuse display names a reader could resolve to another stage.
+
+    A reader resolves a stage by its shown name, its program name, its id
+    ``stage_<i>`` and its ``MODEL_STAGE[<k>]`` alias, so a shown name may
+    be its own stage's program name and nothing else any stage answers to:
+    no other program stage's name, no stage's id or group (its own group
+    too: shown as its group, a stage is not renamed and loses its program
+    name), no mode stage's name or id, and no two stages shown alike
+    (``stage_names=["pushover", "gravity"]`` on a ``[gravity, pushover]``
+    file would swap them).
+    """
+    repeated = sorted({n for n in shown if shown.count(n) > 1})
+    if repeated:
+        raise ValueError(
+            f"stamp_provenance: stage_names shows {repeated} for more than "
+            f"one stage of {part.name}; each stage needs its own name. "
+            "Nothing was stamped.")
+    for i, (name, own) in enumerate(zip(shown, bound)):
+        if name == own:
+            continue
+        clash = (
+            f"the program stage {name!r}" if name in names else
+            f"the MODEL_STAGE group {name!r}" if name in groups else
+            f"the mode stage {name!r}" if name in modes else
+            f"the stage id {name!r}" if _STAGE_ID.fullmatch(name) and name != f"stage_{i}"
+            else None)
+        if clash is not None:
+            raise ValueError(
+                f"stamp_provenance: stage_names shows {groups[i]} (program "
+                f"stage {own!r}) as {name!r}, which is {clash}: a reader "
+                "would resolve it to another stage, or not rename the stage "
+                "and lose its program name. Nothing was stamped.")
+
+
+def _program_names(
+    file_kinds: "list[Optional[str]]", names: "list[str]", kinds: "list[str]",
+    kind_error: "Optional[str]",
+) -> "tuple[Optional[list[str]], str]":
+    """The program's names when the stages are its own one to one and kind
+    for kind, else ``None`` and why (:func:`_stage_names_for`'s rule)."""
+    if not names:
+        return None, "the program declares no ops.stage block"
+    if kind_error is not None:
+        return None, f"the program's stage kinds are unknown ({kind_error})"
+    if len(file_kinds) != len(names):
+        return None, (f"the file holds {len(file_kinds)} MODEL_STAGE groups "
+                      f"and the program {len(names)} stages ({names})")
+    if list(file_kinds) != list(kinds):
+        return None, (f"the file's stage KINDs {file_kinds} differ from the "
+                      f"program's {kinds}")
+    return list(names), ""
+
+
+def _recorded_names(
+    part: Path, groups: "list[str]", file_kinds: "list[Optional[str]]",
+    recorded: "list[Optional[str]]",
+    names: "list[str]", kinds: "list[str]", kind_error: "Optional[str]",
+) -> "Optional[list[str]]":
+    """``stage_names`` from the writer's ``recorded_stages``, checked
+    against the program and the file; ``None`` (omitted) only for a
+    program with no stages, or a modes stage named like a program stage."""
+    if not names:
+        return None
+    if len(recorded) != len(groups):
+        raise ValueError(
+            f"stamp_provenance: recorded_stages names {len(recorded)} "
+            f"stage(s) {recorded} but {part.name} holds {len(groups)} "
+            f"MODEL_STAGE group(s) {groups}. Nothing was stamped.")
+    unknown = sorted({r for r in recorded if r is not None} - set(names))
+    if unknown:
+        raise ValueError(
+            f"stamp_provenance: recorded_stages {unknown} are not stages of "
+            f"the program ({names}). Nothing was stamped.")
+    if kind_error is not None and any(r is not None for r in recorded):
+        raise ValueError(
+            "stamp_provenance: recorded_stages cannot be checked: the "
+            f"program's stage kinds are unknown ({kind_error}). Nothing was "
+            "stamped.")
+    out: list[str] = []
+    for group, raw, name in zip(groups, file_kinds, recorded):
+        if name is None:
+            if group in names:
+                warnings.warn(StageNamesOmittedWarning(
+                    f"{part.name}: stage_names not stamped: {group} is no "
+                    "program stage, and the program names a stage "
+                    f"{group!r} too, so its own name would bind it."),
+                    stacklevel=4)
+                return None
+            out.append(group)
+            continue
+        declared = {k for n, k in zip(names, kinds) if n == name}
+        if raw in ("static", "transient") and raw not in declared:
+            raise ValueError(
+                f"stamp_provenance: {part.name} {group} records KIND {raw!r} "
+                f"but recorded_stages names it {name!r}, which the program "
+                f"declares {sorted(declared)}. Nothing was stamped.")
+        out.append(name)
+    return out
+
+
 def _conversion(
     writer: "Optional[str]", writer_text: str, all_facts: "list[_PartFacts]",
 ) -> "tuple[str, bool]":
@@ -835,10 +1115,31 @@ def _engine_for(
     return backend, build
 
 
-def _is_fem_index_space(tags: "np.ndarray", pairing: "dict[int, int]") -> bool:
-    if tags.size == 0:
+def _is_fem_index_space(
+    model_tags: "np.ndarray", result_tags: "np.ndarray",
+    pairing: "dict[int, int]",
+) -> bool:
+    """Whether the part's element ids are provably FEM ids (#2079).
+
+    Every result row must be an element the archive pairs with itself.
+    A model-only element may instead be bridge-minted (``fem_eid`` -1),
+    provided no FEM element carries its id: a minted id that equals a FEM
+    id could be joined to the wrong element.
+    """
+    def self_paired(t: int) -> bool:
+        return pairing.get(t) == t
+
+    if not all(self_paired(int(t)) for t in result_tags):
         return False
-    return all(int(t) in pairing and pairing[int(t)] == int(t) for t in tags)
+    fem_ids = {v for v in pairing.values() if v != -1}
+    seen_fem = result_tags.size > 0
+    for raw in np.setdiff1d(model_tags, result_tags):
+        tag = int(raw)
+        if self_paired(tag):
+            seen_fem = True
+        elif pairing.get(tag) != -1 or tag in fem_ids:
+            return False
+    return seen_fem
 
 
 # ---------------------------------------------------------------------------
@@ -869,6 +1170,9 @@ def _write(prov: "h5py.Group", wanted: "dict[str, str]") -> None:
     import h5py
 
     vlen = h5py.string_dtype("utf-8")
+    # model_hash before fem_hash (_OWNED_ATTRS order): a two-hash stamp cut
+    # short is model_hash alone, which pairs with nothing, never a
+    # fem_hash-only stamp (ADR 0133 D2), which pairs by the mesh.
     for name in _OWNED_ATTRS:
         if name in wanted:
             prov.attrs.create(name, data=wanted[name], dtype=vlen)

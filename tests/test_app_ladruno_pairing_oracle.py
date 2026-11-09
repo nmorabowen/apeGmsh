@@ -21,7 +21,12 @@ D3 rule itself:
 * unstamped (the recorder's file as written): ``unpairable``, the reason
   naming ``stamp_provenance``;
 * stamped against another model on the same mesh (``fem_hash`` equal,
-  ``model_hash`` not): ``mismatch``, never a ``fem_hash`` pairing.
+  ``model_hash`` not): ``mismatch``, never a ``fem_hash`` pairing;
+* stamped against a bare FEMData archive (``fem.to_h5``, no
+  ``model_hash``), and the modes ``capture_live_modes`` writes from one:
+  ``paired`` by ``fem_hash`` with that archive, the app's ``modelHash``
+  null; against another mesh's archive, ``mismatch`` (ADR 0133 D2, W1b
+  #2768).
 
 Nothing crosses the wall: this file imports nothing from the app, and the
 node side imports nothing from ``src/apeGmsh``. It needs node >= 22.18
@@ -88,10 +93,10 @@ def _node_present() -> None:
         pytest.skip(SKIP_REASON or "")
 
 
-def _truss_fem() -> FEMData:
+def _truss_fem(x3: float = 2.0) -> FEMData:
     """Two bars on nodes 1-2-3 along x, as ``truss2d.ladruno`` records them."""
     node_ids = np.array([1, 2, 3], dtype=np.int64)
-    coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [x3, 0.0, 0.0]])
     info = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=2)
     group = ElementGroup(
         element_type=info,
@@ -208,3 +213,86 @@ def test_a_stamp_from_another_model_on_the_same_mesh_is_a_mismatch(models, tmp_p
         "model_hash differs: the results were written from another model "
         f"(results {other[:8]}…, model {this[:8]}…)"
     )
+
+
+# ---------------------------------------------------------------------------
+# A bare FEMData archive: fem_hash only (ADR 0133)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def fem_archives(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
+    d = tmp_path_factory.mktemp("pairing_oracle_fem")
+    this, other = d / "fem.h5", d / "other_fem.h5"
+    _truss_fem().to_h5(str(this))
+    _truss_fem(x3=2.5).to_h5(str(other))     # another mesh: another fem_hash
+    with h5py.File(this, "r") as a, h5py.File(other, "r") as b:
+        assert "model_hash" not in a["meta/lineage"].attrs, "precondition: no model_hash"
+        assert a["meta/lineage"].attrs["fem_hash"] != b["meta/lineage"].attrs["fem_hash"]
+    return {"this": this, "other": other}
+
+
+def _fem_hash(archive: Path) -> str:
+    with h5py.File(archive, "r") as f:
+        return str(f["meta/lineage"].attrs["fem_hash"])
+
+
+def test_a_stamp_against_a_femdata_archive_pairs_by_fem_hash(fem_archives, tmp_path) -> None:
+    run = _ladruno(tmp_path, "truss.ladruno", fem_archives["this"])
+    got = _app_pairing(fem_archives["this"], run)
+    assert got["pairing"] == {"state": "paired", "by": "fem_hash"}, got
+    results = got["results"]
+    assert isinstance(results, dict)
+    assert results["lineage"] == {"modelHash": None, "femHash": _fem_hash(fem_archives["this"]),
+                                  "resultsHash": None}
+    assert results["lineageReason"] is None
+    other = _app_pairing(fem_archives["other"], run)["pairing"]
+    assert isinstance(other, dict) and other["state"] == "mismatch", other
+
+
+class _TrussOps:
+    """The live domain of the three-node truss (ndm 2, ndf 2), two modes."""
+
+    coords = {1: [0.0, 0.0], 2: [1.0, 0.0], 3: [2.0, 0.0]}
+
+    def getNDM(self) -> "list[int]":
+        return [2]
+
+    def getNodeTags(self) -> "list[int]":
+        return list(self.coords)
+
+    def getNDF(self, n: int) -> "list[int]":
+        return [2]
+
+    def nodeCoord(self, n: int) -> "list[float]":
+        return list(self.coords[n])
+
+    def getEleTags(self) -> "list[int]":
+        return [1, 2]
+
+    def eleType(self, tag: int) -> str:
+        return "Truss"
+
+    def eleNodes(self, tag: int) -> "list[int]":
+        return [tag, tag + 1]
+
+    def eigen(self, *args: object) -> "list[float]":
+        return [4.0, 9.0][: int(args[-1])]  # type: ignore[call-overload]
+
+    def nodeEigenvector(self, n: int, k: int) -> "list[float]":
+        return [0.1 * n * k, -0.2 * n]
+
+
+def test_capture_live_modes_on_a_femdata_archive_pairs_by_fem_hash(fem_archives, tmp_path) -> None:
+    """W1b (#2768): the #2342 plain-openseespy route writes a .ladruno that
+    the app pairs with the FEMData archive it was captured against."""
+    from apeGmsh.results.live import capture_live_modes
+
+    run = capture_live_modes(fem_archives["this"], 2, tmp_path / "modes.ladruno", ops=_TrussOps())
+    got = _app_pairing(fem_archives["this"], run)
+    assert got["pairing"] == {"state": "paired", "by": "fem_hash"}, got
+    results = got["results"]
+    assert isinstance(results, dict)
+    assert results["sourceType"] == "ladruno"
+    assert results["lineage"] == {"modelHash": None, "femHash": _fem_hash(fem_archives["this"]),
+                                  "resultsHash": None}

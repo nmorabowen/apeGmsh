@@ -134,9 +134,13 @@ export type LadrunoProvenance =
       other: string[];
     };
 
-/** The pairing hashes, copied byte-equal from a model.h5's /meta/lineage by the stamp. */
+/**
+ * The pairing hashes, copied byte-equal from a model.h5's /meta/lineage by the stamp.
+ * `modelHash` is null for a stamp against a bare FEMData archive (`fem.to_h5`), which
+ * has no OpenSees model to hash: it pairs by `fem_hash` alone (ADR 0133 D1, D2).
+ */
 export interface LadrunoLineage {
-  modelHash: string;
+  modelHash: string | null;
   femHash: string;
 }
 
@@ -169,7 +173,7 @@ export interface LadrunoIndex {
   fileKinds: Record<string, string>;
   modes: LadrunoMode[];
   provenance: LadrunoProvenance;
-  /** both hashes present and well formed, else null with `lineageReason` */
+  /** a well-formed `fem_hash`, with `model_hash` when stamped (well formed or the file is unpaired), else null with `lineageReason` */
   lineage: LadrunoLineage | null;
   lineageReason: string | null;
   /** Consistent unit system stamped on `INFO/PROVENANCE@units`, or null when absent/malformed */
@@ -1718,12 +1722,17 @@ function provenanceFact(attr: LAttr | undefined, name: string): ProvenanceFact {
   return { state: "present", value: attr.value };
 }
 
-/** Lineage only when both hashes are present and well formed; otherwise why not. */
+/**
+ * Lineage from a well-formed `fem_hash`, with `model_hash` when that is present and well
+ * formed; otherwise why not. An absent `model_hash` is a stamp against a bare FEMData
+ * archive, paired by `fem_hash` alone (ADR 0133 D2); a malformed one is never read as absent.
+ */
 function lineageOf(p: LadrunoProvenance): { lineage: LadrunoLineage | null; reason: string | null } {
   if (p.state === "absent") return { lineage: null, reason: p.reason };
   const m = p.attrs.model_hash;
   const f = p.attrs.fem_hash;
-  if (m.state === "present" && f.state === "present") return { lineage: { modelHash: m.value, femHash: f.value }, reason: null };
+  if (f.state === "present" && m.state === "present") return { lineage: { modelHash: m.value, femHash: f.value }, reason: null };
+  if (f.state === "present" && m.state === "absent") return { lineage: { modelHash: null, femHash: f.value }, reason: null };
   const why = (key: string, x: ProvenanceFact) => (x.state === "absent" ? `INFO/PROVENANCE has no @${key}` : x.state === "malformed" ? x.reason : null);
   const reasons = [why("model_hash", m), why("fem_hash", f)].filter((r): r is string => r !== null);
   return { lineage: null, reason: `${reasons.join("; ")}: the file is not stamped for pairing (schema §7b.1)` };

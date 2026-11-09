@@ -504,7 +504,7 @@ res.to_dataframe()            # per node: f_dom frf_max a_p_lf a_espa_hf a_p reg
 res.frf(j)                    # (freq, |A_ij|) acceleration per unit force, i defaults to exc_node[j]
 res.mode_table(j)             # (f_n, phi_i, phi_j, a_p,m) — the Eq 7-4 rows of the impulse branch
 res.modes.f_n, res.modes.beta # the basis and its per-mode damping
-res.to_results(fem, path)     # one-frame nodal map → Results.from_fem(fem, path, kind="native")
+res.to_results(fem, "bay.user.h5", model_h5="model.h5")   # state-free "footfall" user result → UserFile(path).read_result("footfall")
 ```
 
 What it computes, per response node: the FRF between walker and occupant
@@ -1101,14 +1101,34 @@ not co-presence.
    (`apeGmsh.opensees.emitter.live`) inside the `with` block. The
    single read-back is `run.results()` after the block closes. The route
    follows the build (`run.route`): the fork records `.ladruno`
-   (`Results.from_ladruno`), a stock build with MPCO records `.mpco`
-   (`Results.from_mpco`), and pip openseespy records classic `.out`
-   files (`Results.from_recorders`); the two stock routes warn once
-   with `DefaultRouteWarning`. Modal records refuse there: modes come
+   (`Results.from_ladruno`); a stock build with MPCO records `.mpco`
+   and `run.results()` converts it to `<stem>.ladruno` beside it, never
+   reading it with `Results.from_mpco`; pip openseespy records classic
+   `.out` files (`Results.from_recorders`) after one
+   `DefaultRouteWarning`. The stock MPCO route converts only when the
+   stage kinds are facts (ADR 0131 D5): `model_h5` declares
+   `ops.stage(...)` blocks, each with an analysis of known kind.
+   Otherwise it refuses by name at `__enter__` with `StageKindRefused`
+   (an `MPCOConversionRefused`; the recorder is removed and nothing is
+   recorded), naming the remedies:
+   declare the stages with `ops.stage(...)`, or run the program as a
+   deck emitted with `analyze_steps=`. No stage kind is defaulted, and
+   `ops.run()` refuses a staged program until #2181, so in process this
+   route refuses today. A deck's `.mpco` is read with `ops.results(path)`
+   (below), or `read_deck_mpco(path, model_h5=)` from
+   `apeGmsh.results.live`: it converts a staged deck, or an unstaged one
+   emitted with `analyze_steps=` (its run record `<file>.run.json`), and
+   otherwise refuses by name. Modal records refuse there: modes come
    from `ops.eigen(n)`, whose `EigenResult.results()` /
-   `.to_native(path)` / `.to_ladruno(path)` write and open them; a
-   plain openseespy deck's modes come from
-   `apeGmsh.results.live.capture_live_modes`. The old in-process
+   `.to_ladruno(path)` write a stamped `.ladruno` (with the bridge
+   archive beside it as `<stem>.h5`) and open it; a plain openseespy
+   deck's modes come from
+   `apeGmsh.results.live.capture_live_modes(model_h5_or_fem, n, path)`,
+   which also writes a `.ladruno` (an `.h5` path refuses). Over a bare
+   FEMData archive (`fem.to_h5`, no `model_hash`) the stamp carries
+   `fem_hash` alone and the file pairs by the mesh: the viewer pairs it
+   by `fem_hash`, and the fork route's `run.results()` reads it with no
+   warning (ADR 0133). The old in-process
    capture route was deleted (#2191).
 
 The canonical component vocabulary is the neutral top-level
@@ -1201,6 +1221,18 @@ deck: `OpenSees.exe` exits 0 after a Tcl `error`, so the deck's completion line 
 `ops.wipe()` closes the live domain and flushes every recorder file, so a recorder file or an
 `.mpco` is complete in the same script; it also closes the bridge's read session. Node and
 Element recorders take `precision=<positive int>`, the significant digits written per value.
+
+**`ops.results(path)` reads the deck run back (ADR 0115 D3, ADR 0131 D11).** Pass the path the
+finished `py`/`tcl(run=True)` wrote; it returns a `Results`. One `recorder.Ladruno` is read with
+`Results.from_ladruno`. One `recorder.MPCO` is converted to `<stem>.ladruno` beside the `.mpco`
+and that file is read; it is never read with `Results.from_mpco`. The conversion needs the stage
+kinds to be facts: declare `ops.stage(...)` blocks, or run the unstaged deck with
+`analyze_steps=`, which writes `<file>.run.json` for the converter's checks. Otherwise the read
+refuses by name, and it never replaces a `.ladruno` the converter did not write.
+`recorder.declare(nodes=...)` and typed `recorder.Node` text records (`time_format="dt"`) are
+read with `Results.from_recorders`. Every other record refuses the whole read, and so do a
+staged or partitioned run with text records, two history recorders, and a history recorder
+beside text ones.
 
 **Per-rank Tcl decks — `ops.tcl(path, per_rank=True)` (ADR 0061).** For a
 **partitioned** model, write the driver deck at `path` plus one guard-free

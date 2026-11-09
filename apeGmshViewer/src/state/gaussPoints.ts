@@ -64,6 +64,11 @@ export class GaussLayoutBuilder {
     this.shown = shown;
   }
 
+  /** The points placed so far. */
+  get count(): number {
+    return this.offsets.length - 1;
+  }
+
   refuse(reason: string, elements: number): void {
     if (elements > 0) this.refusals.set(reason, (this.refusals.get(reason) ?? 0) + elements);
   }
@@ -148,13 +153,7 @@ export function gaussLayoutOf(s: State, blobs: BlobStore, stations: StationPoint
   const at = s.phase.at;
   const stage = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
   if (!stage || !s.mesh) return null;
-  const hidden = hiddenElementsOf(s);
-  // By the activation's own tags, so an interior element (no drawn face, absent from `mesh.elements`) is judged too.
-  const a = activationNow(s);
-  const inactiveTags = a && a.activation.state === "filtered" ? a.activation.inactiveTags : null;
-  const inactive = (p: DeclPath) => (inactiveTags ? (s.decls[p]?.element?.metas ?? []).some((m) => inactiveTags.has(m.tag)) : false);
-  const shown = (p: DeclPath) => !hidden.has(p) && !inactive(p);
-  const b = new GaussLayoutBuilder(cellOfDecl(s.decls, s.blocks, blobs), shown);
+  const b = new GaussLayoutBuilder(cellOfDecl(s.decls, s.blocks, blobs), shownElementOf(s));
   for (const g of stage.gauss) {
     if (!g.elementIds) b.refuse("element ids not verified as the model's (the file's index space is not stamped)", g.nElements);
     else if (!g.naturalCoords) b.refuse("no Gauss point coordinates in the file", g.nElements);
@@ -167,6 +166,16 @@ export function gaussLayoutOf(s: State, blobs: BlobStore, stations: StationPoint
   if (stations?.error) b.note(`Beam stations not read: ${stations.error}`);
   else if (stations && s.results) addStations(s, blobs, b, stations);
   return b.build();
+}
+
+/** Whether an element's points are drawn: neither hidden nor inactive at the stage on screen. */
+export function shownElementOf(s: State): (path: DeclPath) => boolean {
+  const hidden = hiddenElementsOf(s);
+  // By the activation's own tags, so an interior element (no drawn face, absent from `mesh.elements`) is judged too.
+  const a = activationNow(s);
+  const inactiveTags = a && a.activation.state === "filtered" ? a.activation.inactiveTags : null;
+  const inactive = (p: DeclPath) => (inactiveTags ? (s.decls[p]?.element?.metas ?? []).some((m) => inactiveTags.has(m.tag)) : false);
+  return (p) => !hidden.has(p) && !inactive(p);
 }
 
 function addStations(s: State, blobs: BlobStore, b: GaussLayoutBuilder, stations: StationPoints): void {

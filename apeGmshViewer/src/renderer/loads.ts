@@ -12,7 +12,12 @@
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
 import { ARROW, ARROW_STRIDE, buildLoads3D, buildReactions3D, buildSupports3D, COMB_STRIDE, THIN_LEVELS } from "../state/loads.ts";
+import { deformedPositions } from "../state/deform.ts";
+import { gaussBasePositions, gaussDisplacements } from "../state/gaussPoints.ts";
+import { buildPrincipal3D, principalPointsOf, principalTensors, type PrincipalPoints } from "../state/principal.ts";
+import { principalFieldOf } from "../state/selectors.ts";
 import type { State } from "../state/types.ts";
+import { buildVectors3D, vectorFieldOf } from "../state/vectors.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
 import { toLinear, type StepValues } from "./contour.ts";
 import type { FullPositions } from "./deform.ts";
@@ -83,14 +88,17 @@ float shaftLength(float len, float wpp) {
 /**
  * Arrow instances: `aShape` = (×shaft length, ×head length, ×head length across), `aPart` 0 shaft or
  * first head, 1 SP bar, 2 second head, 3 reaction tick (2/3 of a head long, at 45° to the shaft's
- * perpendicular, a fifth of the shaft in from its tail).
+ * perpendicular, a fifth of the shaft in from its tail). `aAnchor` (`ANCHOR`) says whether `aTip` is the
+ * tip (0) or the tail (1): a tail-anchored arrow's tip is its drawn shaft length `L` along `aDir`, so
+ * the sizing, and thinning by the anchor point, are the same either way.
  */
 const ARROW_VERTEX = `
-vec4 mvTip = modelViewMatrix * vec4( aTip, 1.0 );
-float wpp = worldPerPixel( mvTip );
+vec4 mvAt = modelViewMatrix * vec4( aTip, 1.0 );
+float wpp = worldPerPixel( mvAt );
 float L = shaftLength( aLen, wpp );
 float H = ${SIZING_EXPR.head};
 vec3 dV = normalize( mat3( modelViewMatrix ) * aDir );
+vec4 mvTip = vec4( mvAt.xyz + dV * ( aAnchor * L ), 1.0 );
 vec3 toEye = projectionMatrix[ 3 ][ 3 ] == 1.0 ? vec3( 0.0, 0.0, 1.0 ) : normalize( -mvTip.xyz );
 vec3 across = cross( dV, toEye );
 if ( length( across ) < 1e-3 ) across = cross( dV, vec3( 0.0, 1.0, 0.0 ) );
@@ -189,7 +197,7 @@ export class ArrowLayer {
   protected theme: ThemeMode = "dark";
 
   constructor() {
-    const arrowAttrs = "attribute vec3 aTip;\nattribute vec3 aDir;\nattribute float aLen;\nattribute float aHeads;\nattribute float aBar;\nattribute float aLevel;\nattribute vec3 aShape;\nattribute float aPart;";
+    const arrowAttrs = "attribute vec3 aTip;\nattribute vec3 aDir;\nattribute float aLen;\nattribute float aHeads;\nattribute float aBar;\nattribute float aLevel;\nattribute float aAnchor;\nattribute vec3 aShape;\nattribute float aPart;";
     instanced(this.lineMaterial, arrowAttrs, ARROW_VERTEX, this.uniforms);
     instanced(this.coneMaterial, arrowAttrs, ARROW_VERTEX, this.uniforms);
     instanced(
@@ -264,6 +272,7 @@ export class ArrowLayer {
       g.setAttribute("aHeads", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.heads));
       g.setAttribute("aBar", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.bar));
       g.setAttribute("aLevel", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.level));
+      g.setAttribute("aAnchor", new THREE.InterleavedBufferAttribute(arrowBuf, 1, ARROW.anchor));
       g.setAttribute("color", new THREE.InstancedBufferAttribute(arrowColours, 3));
       g.instanceCount = nArrows;
     }
@@ -472,14 +481,25 @@ class ArcGlyphs {
     this.headMaterial.dispose();
   }
 }
-/** The Reactions card's glyphs (`s.reactions`): the reaction forces and moments of the results step on screen. */
-export class ReactionsLayer extends ArrowLayer {
-  /** The moment arcs, on this card's uniforms. */
+/** What a step card's builder hands its layer: arrow and half-circle records, `ARROW_STRIDE` floats each. */
+interface StepGlyphs {
+  readonly arrows: Float32Array;
+  readonly arcs: Float32Array;
+}
+
+/**
+ * A card drawing one results step's nodal data: its arrows and its half
+ * circles on the card's own uniforms, rebuilt when the step's data or the
+ * card's settings change. Until the step on screen is read (a scrub) the last
+ * step's glyphs stay; another stage's, or a step whose read failed, hide.
+ */
+abstract class StepGlyphLayer extends ArrowLayer {
+  /** The half circles, on this card's uniforms. */
   readonly arcs = new ArcGlyphs(this.uniforms);
   private appliedKey: string | null = null;
-  /** The step data drawn: a re-read of the same step rebuilds the arrows. */
+  /** The step data drawn: a re-read of the same step rebuilds the glyphs. */
   private drawnStep: StepValues | null = null;
-  /** The results stage the arrows on screen were built for. */
+  /** The results stage the glyphs on screen were built for. */
   private drawnStage: number | null = null;
 
   constructor() {
@@ -487,22 +507,29 @@ export class ReactionsLayer extends ArrowLayer {
     this.root.add(this.arcs.root);
   }
 
+  /** The card's switch and pixel sizing. */
+  protected abstract card(s: State): ArrowSizing & { readonly on: boolean };
+  /** The card's settings a rebuild depends on (the step, mesh, deformed shape and theme are keyed here). */
+  protected abstract settingsKey(s: State): string;
+  protected abstract build(s: State, blobs: BlobStore, nodal: Readonly<Record<string, Float64Array>>, nodeIds: Float64Array, opts: ReturnType<typeof drawnOpts>): StepGlyphs;
+
   sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
     const at = s.phase.at;
-    if (!s.reactions.on || !s.mesh || at?.kind !== "results") {
+    const card = this.card(s);
+    if (!card.on || !s.mesh || at?.kind !== "results") {
       this.appliedKey = null;
       this.drawnStep = null;
       this.drawnStage = null;
       return this.hide();
     }
-    const sized = this.size(s.reactions);
+    const sized = this.size(card);
     const ids = s.results?.stages[at.stage]?.nodeIds;
-    // Until the step's data is here (a scrub), the last step's arrows stay.
+    // Until the step's data is here (a scrub), the last step's glyphs stay.
     const here = step && step.stage === at.stage && step.step === at.step && ids && blobs.has(ids) ? step : null;
-    const nextKey = [s.mesh.linePositions.id, full ? full.key : "base", s.reactions.scale, s.reactions.colorBy, s.reactions.component, s.reactions.allNodes, s.reactions.forces, s.reactions.moments, s.contour.sourceUnits ?? "", s.contour.targetUnits ?? "", this.theme].join("|");
+    const nextKey = [s.mesh.linePositions.id, full ? full.key : "base", this.settingsKey(s), this.theme].join("|");
     if (!here) {
-      // A scrub within the stage keeps the last arrows until the step arrives; another stage's, or a
-      // step whose read failed, are not this step's reactions.
+      // A scrub within the stage keeps the last glyphs until the step arrives; another stage's, or a
+      // step whose read failed, are not this step's.
       const failed = s.resultStep?.stage === at.stage && s.resultStep.step === at.step && s.resultStep.status === "failed";
       if (this.drawnStage !== at.stage || failed) {
         this.appliedKey = null;
@@ -513,7 +540,7 @@ export class ReactionsLayer extends ArrowLayer {
       return sized;
     }
     if (this.appliedKey === nextKey && here === this.drawnStep) return sized;
-    const r = buildReactions3D(s, blobs, here.nodal, blobs.get(ids!) as Float64Array, drawnOpts(this.theme, full));
+    const r = this.build(s, blobs, here.nodal, blobs.get(ids!) as Float64Array, drawnOpts(this.theme, full));
     this.drawnStep = here;
     this.drawnStage = at.stage;
     this.appliedKey = nextKey;
@@ -531,6 +558,42 @@ export class ReactionsLayer extends ArrowLayer {
   override dispose(): void {
     super.dispose();
     this.arcs.dispose();
+  }
+}
+
+/** The Reactions card's glyphs (`s.reactions`): the reaction forces and moments of the results step on screen. */
+export class ReactionsLayer extends StepGlyphLayer {
+  protected card(s: State) {
+    return s.reactions;
+  }
+
+  protected settingsKey(s: State): string {
+    const r = s.reactions;
+    return [r.scale, r.colorBy, r.component, r.allNodes, r.forces, r.moments, s.contour.sourceUnits ?? "", s.contour.targetUnits ?? ""].join("|");
+  }
+
+  protected build(s: State, blobs: BlobStore, nodal: Readonly<Record<string, Float64Array>>, nodeIds: Float64Array, opts: ReturnType<typeof drawnOpts>): StepGlyphs {
+    return buildReactions3D(s, blobs, nodal, nodeIds, opts);
+  }
+}
+
+/**
+ * The Vectors card's glyphs (`s.vectors`): a nodal vector field of the results
+ * step on screen, arrows starting at the nodes (tail-anchored records) or, for
+ * a rotational field, half circles about each node's axis.
+ */
+export class VectorsLayer extends StepGlyphLayer {
+  protected card(s: State) {
+    return s.vectors;
+  }
+
+  protected settingsKey(s: State): string {
+    const v = s.vectors;
+    return [vectorFieldOf(s)?.name ?? "", v.scale, v.colorBy, v.component].join("|");
+  }
+
+  protected build(s: State, blobs: BlobStore, nodal: Readonly<Record<string, Float64Array>>, nodeIds: Float64Array, opts: ReturnType<typeof drawnOpts>): StepGlyphs {
+    return buildVectors3D(s, blobs, nodal, nodeIds, opts);
   }
 }
 
@@ -574,5 +637,72 @@ export class SupportsLayer extends ArrowLayer {
   override dispose(): void {
     super.dispose();
     this.arcs.dispose();
+  }
+}
+
+/**
+ * The Principal card's arrows (`s.principal`): from each Gauss point of the
+ * field on screen, an arrow along each principal direction shown
+ * (`buildPrincipal3D`), tail-anchored, following the deformed shape as the
+ * Gauss markers do.
+ */
+export class PrincipalLayer extends ArrowLayer {
+  private appliedKey: string | null = null;
+  private drawnStep: StepValues | null = null;
+  private drawnStage: number | null = null;
+  /** The field's points, placed once per stage, field and visibility. */
+  private points: { deps: unknown[]; gen: number; points: PrincipalPoints | null; base: Float32Array | null } | null = null;
+  /** the points the last build drew */
+  drawnPoints = 0;
+
+  sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
+    const at = s.phase.at;
+    const field = s.principal.on ? principalFieldOf(s) : null;
+    // A field that cannot draw (every group refused) shows nothing: no step will ever carry its tensor.
+    if (!field || field.groups.length === 0 || !s.mesh?.nodes || at?.kind !== "results") {
+      this.appliedKey = null;
+      this.drawnStep = null;
+      this.drawnStage = null;
+      this.drawnPoints = 0;
+      return this.hide();
+    }
+    const sized = this.size(s.principal);
+    const tensor = step?.tensor;
+    const here = step && step.stage === at.stage && step.step === at.step && tensor && field.components.every((c) => tensor[c]) ? step : null;
+    if (!here) {
+      // A scrub within the stage keeps the last arrows until the step arrives; another stage's, or a failed read, do not.
+      const failed = s.resultStep?.stage === at.stage && s.resultStep.step === at.step && s.resultStep.status === "failed";
+      if (this.drawnStage !== at.stage || failed) {
+        this.appliedKey = null;
+        this.drawnStep = null;
+        this.drawnStage = null;
+        return this.hide() || sized;
+      }
+      return sized;
+    }
+    const deps = [s.results, at.stage, s.visibility.hidden, s.mesh, s.decls, s.stageElements, s.sequence, field.name];
+    if (!this.points || this.points.deps.some((d, i) => d !== deps[i])) {
+      const points = principalPointsOf(s, blobs, field);
+      const nodes = s.mesh.nodes;
+      const base = points ? gaussBasePositions(points.layout, blobs.get(nodes.ids) as Float64Array, blobs.get(nodes.xyz) as Float64Array) : null;
+      this.points = { deps, gen: (this.points?.gen ?? 0) + 1, points, base };
+    }
+    const { points, base } = this.points;
+    const disp = full && full.key !== "base" && full.disp?.nodal ? full.disp : null;
+    const p = s.principal;
+    const nextKey = [this.points.gen, disp ? full!.key : "base", p.show.join(","), p.head, p.cmap, p.scale, field.name].join("|");
+    if (this.appliedKey === nextKey && here === this.drawnStep) return sized;
+    this.drawnStep = here;
+    this.drawnStage = at.stage;
+    this.appliedKey = nextKey;
+    if (!points || !base) {
+      this.drawnPoints = 0;
+      return this.hide() || sized;
+    }
+    const at3 = disp ? deformedPositions(base, gaussDisplacements(points.layout, disp.nodal!.column, disp.nodal!.rows), s.deform.scale) : base;
+    const r = buildPrincipal3D(at3, principalTensors(points, field, here.tensor!), { show: p.show, head: p.head, cmap: p.cmap, scale: p.scale, radius: s.mesh.radius });
+    this.drawnPoints = r.points;
+    this.upload(r.arrows, NO_RECORDS, s.mesh.radius);
+    return true;
   }
 }

@@ -11,8 +11,10 @@ import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountLineDiagram } from "../panels/lineDiagram.ts";
 import { mountLoads } from "../panels/loads.ts";
+import { mountPrincipal } from "../panels/principal.ts";
 import { mountReactions } from "../panels/reactions.ts";
 import { mountSprings } from "../panels/springs.ts";
+import { mountVectors } from "../panels/vectors.ts";
 import { mountModalTable } from "../panels/modalTable.ts";
 import { mountOfferBadge, mountOffers } from "../panels/offers.ts";
 import { mountPhase } from "../panels/phase.ts";
@@ -26,13 +28,14 @@ import { contourKeysOf, gaussFields } from "../state/contour.ts";
 import { chainOf, contourFieldsOf, contourView, deformOf, deformView, elementVerdictOf } from "../state/selectors.ts";
 import { userEventOf, userPathOf, userReadable } from "../state/reduce.ts";
 import { Store } from "../state/store.ts";
-import { WINDOW_KINDS, type DeclPath, type GaussMode, type UserReadIn } from "../state/types.ts";
+import { WINDOW_KINDS, type DeclPath, type GaussMode, type UserReadIn, type VariantsIn } from "../state/types.ts";
 import { DEFAULT_PANEL_IDS, mountCollapsibleChrome } from "../ui/collapse.ts";
 import { OfferRunner, snapshotManifest } from "../spec/snapshot.ts";
 import { APP_LAYERS, type AppLayer } from "../spec/spec.ts";
 import type { OfferIn } from "../state/types.ts";
 import { onScreenOf, runAgentMode, type Layout, type RenderBridge } from "./agentRender.ts";
-import { CombinationFeed, contourKey, contourShownKey, elementContourKey } from "./contour.ts";
+import { CombinationFeed, contourKey, contourShownKey, elementContourKey, VariantRunner, type VariantDoor } from "./contour.ts";
+import { mountVariants } from "../panels/variants.ts";
 import { tipPoint } from "./gizmo.ts";
 import { zoomToward } from "./navigation.ts";
 import { mountViewCube } from "./viewcube.ts";
@@ -58,10 +61,20 @@ viewport.setStationsSource(() => effects.stationsOfStep());
 // evaluator (effects.ts `userCombinationColumn`); its values stay in the feed, as a step's stay in the effects.
 const combinations = new CombinationFeed(store, (req) => userCombinationColumn(bridge, req));
 viewport.setCombinationSource(() => combinations.held);
+// VU10 (ADR 0132 D9): main's study, a switch, the compare set and the difference, through main's variant doors
+// (preload.ts): a variant is named by row index and label, never a path. The difference is subtracted from the
+// window's own step (the effects'), and its column stays in renderer/contour.ts `differenceHeld`.
+const variantBridge = (window as unknown as { viewer: Partial<VariantDoor & StudyFeed> }).viewer;
+// Fail closed: the preload of this build has every variant door, so a missing one is a broken build, never "no study".
+if (!isVariantDoor(variantBridge)) throw new Error("apeGmshViewer: the preload has no variant doors (variants, onVariants, variantsSwitch, variantsCompare, readCompareStep, compareClose)");
+const variantRunner = new VariantRunner(store, blobs, variantBridge, () => effects.currentStep());
 const panels = [
   combinations.start(),
+  variantRunner.start(),
   // VA5 (ADR 0128 D5): first, so its box opens the right rail above the inspector.
   mountOffers(store),
+  // VU10: below the offers, above the inspector.
+  mountVariants(store),
   // ADR 0130 D6 (VU7a): the .user.h5 modal table, below the offers, while a mode is shown.
   mountModalTable(store),
   mountHeader(store),
@@ -69,6 +82,8 @@ const panels = [
   mountLineDiagram(store, (fn) => viewport.onViewChange(fn)),
   mountLoads(store, (fn) => viewport.onViewChange(fn)),
   mountReactions(store, (fn) => viewport.onViewChange(fn)),
+  mountPrincipal(store),
+  mountVectors(store, (fn) => viewport.onViewChange(fn)),
   mountSprings(store, (fn) => viewport.onViewChange(fn)),
   mountLegend(store, (fn) => viewport.onViewChange(fn)),
   mountInspector(store),
@@ -103,7 +118,7 @@ panels.push(
   }),
 );
 const chrome = mountCollapsibleChrome({
-  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram", "loads", "reactions", "springs", "offers", "modal-table"],
+  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram", "loads", "reactions", "vectors", "principal", "springs", "offers", "modal-table"],
   visible: () => {
     const s = store.get();
     return s.mesh !== null || s.provenance.length > 0;
@@ -1540,8 +1555,27 @@ function snapshotReplyOf(runner: OfferRunner, image: [number, number]) {
   }
 }
 
+/** VU10: main's study feed (preload.ts `variants`, `onVariants`). */
+interface StudyFeed {
+  variants(): Promise<VariantsIn | null>;
+  onVariants(cb: (study: VariantsIn | null) => void): () => void;
+}
+
+/** Whether the preload has every variant door. */
+function isVariantDoor(b: Partial<VariantDoor & StudyFeed>): b is VariantDoor & StudyFeed {
+  return ["variants", "onVariants", "variantsSwitch", "variantsCompare", "readCompareStep", "compareClose"].every((k) => typeof (b as Record<string, unknown>)[k] === "function");
+}
+
+/** VU10: the study main holds now, then each change; awaited before any shot compiles (a spec's `compare` names a row of it). */
+async function followStudy(): Promise<void> {
+  if (!isVariantDoor(variantBridge)) throw new Error("apeGmshViewer: the preload has no variant doors");
+  variantBridge.onVariants((study) => store.dispatch({ type: "variantsRead", study }));
+  store.dispatch({ type: "variantsRead", study: await variantBridge.variants() });
+}
+
 async function main() {
   const cfg = await bridge.config();
+  await followStudy();
   // ADR 0128 D4: the agent modes (render, describe) run their own flow; the config's mode union predates them.
   const mode: string = cfg.mode;
   if (mode === "render" || mode === "describe") {

@@ -12,21 +12,34 @@ fork            the fork's own results      stamps ``INFO/PROVENANCE`` with
                                             build that solved it (a refusal
                                             warns and is skipped), then opens
                                             it with ``Results.from_ladruno``
-stock with      ``<stem>.mpco``             ``Results.from_mpco``, after one
-MPCO                                        :class:`DefaultRouteWarning`
+stock with      ``<stem>.mpco``             converts it to ``<stem>.ladruno``
+MPCO                                        beside it and opens that with
+                                            ``Results.from_ladruno``; only a
+                                            staged program reaches it (below)
 stock without   classic recorder files in   ``Results.from_recorders``, after
 MPCO (pip)      ``<stem>_out/``             one :class:`DefaultRouteWarning`
 ==============  ==========================  =================================
 
-Why the stock MPCO run is not converted: a program with no ``ops.stage``
-block would have to map to one stage whose kind is a fact, and in process
-it never is. The loop inside the ``with`` block drives the module directly
+The stock MPCO route converts only when the stage kinds are facts (ADR
+0131 D5): ``model_h5``'s program declares ``ops.stage`` blocks, each with
+an analysis of known kind. Otherwise it refuses by name at ``__enter__``,
+right after the probe has registered the recorder: the recorder is
+removed, the probe's new ``.mpco`` deleted, and nothing is converted. No
+stage kind is ever defaulted. An unstaged in-process program has no kind
+as fact: the loop inside the ``with`` block drives the module directly
 (``opspy.loadConst``, ``opspy.analysis("Transient")``), those calls never
-reach the model archive, and MPCO opens a new stage on a domain change
-only. :func:`read_deck_mpco` converts the ``.mpco`` of the bridge's own
-exported deck when the program is staged (each stage records its kind);
-an unstaged deck's kind is not archived either, so it reads the ``.mpco``
-after one warning (coordinator ruling (iii) on #1950).
+reach the model archive, and an in-process run writes no deck-run record.
+The refusal names the remedies that work: declare the stages with
+``ops.stage(...)``, or run the program as a deck emitted with
+``analyze_steps``. ``ops.run()`` refuses a staged program today, so the
+converting branch is reached in process only once live staged emission
+lands (#2181). The conversion itself pairs the ``.mpco``'s stages with the
+declared ones after the run and refuses a count that does not pair.
+
+:func:`read_deck_mpco` converts the ``.mpco`` of the bridge's own exported
+deck: a staged program by its declared kinds, an unstaged one by the deck's
+run record (``<recorder file>.run.json``). When neither makes the kind a
+fact it refuses by name; it never falls back to reading the ``.mpco``.
 
 The pip route probes the MPCO recorder first: the probe call is the real
 recorder when it works, and it works when it returns a recorder tag. When
@@ -76,7 +89,8 @@ from ...opensees._response_catalog import (
 from ...opensees._target import backend_info_of
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
-from ..readers._ladruno_from_mpco import StageKindRefused
+from .._bind import _stage_kind
+from ..readers._ladruno_from_mpco import StageKindRefused, convert_mpco
 from ..readers._ladruno_live import (
     FORK_SUFFIX,
     convert_and_open,
@@ -116,11 +130,20 @@ class DefaultRouteWarning(UserWarning):
     """The default route recorded less than the fork's file, or skipped a step.
 
     Raised once per run, with the reason: the build has no MPCO recorder
-    (the classic-recorder fallback), the run is a stock in-process MPCO run
-    (read with ``from_mpco``, not converted), a deck's ``.mpco`` refused
-    conversion (read with ``from_mpco``), or the fork's file refused its
-    provenance stamp (read unstamped).
+    (the classic-recorder fallback), or the fork's file refused its
+    provenance stamp (read unstamped). A stock MPCO run whose stage kinds
+    are not facts never reads with a warning: it refuses
+    (:class:`~apeGmsh.results.readers._ladruno_from_mpco.StageKindRefused`).
     """
+
+
+#: What makes a stage kind a fact, as every stage-kind refusal names it.
+_REMEDY = (
+    "Declare the stages with ops.stage(...), each with its analysis, or "
+    "run the program as a deck emitted with analyze_steps "
+    "(ops.py(path, analyze_steps=N) or ops.tcl(path, analyze_steps=N)), "
+    "which writes the run record read_deck_mpco converts by."
+)
 
 
 def read_deck_mpco(
@@ -134,24 +157,30 @@ def read_deck_mpco(
     ``path`` is the ``.mpco`` written by running the bridge's own exported
     deck (``ops.py`` / ``ops.tcl``) out of process, as it was emitted, and
     ``model_h5`` the archive of that bridge. An in-process run (``ops.run()``
-    then your own ``opspy.analyze`` loop) is not a deck: read its ``.mpco``
-    with :meth:`Results.from_mpco`, or record it with
-    :meth:`ResolvedRecorderSpec.emit_default`.
+    then your own ``opspy.analyze`` loop) is not a deck and writes no run
+    record: record it with :meth:`ResolvedRecorderSpec.emit_default`,
+    whose stock MPCO route converts the same way when ``model_h5``
+    declares its stages and otherwise refuses by name (ADR 0131 D5).
 
     The ``.mpco`` (or any part of a partitioned set) converts to the fork's
     format beside it, which is then opened; the ``.mpco`` is always kept.
     A staged program converts: each ``ops.stage`` records its kind. An
-    unstaged program does not (its kind is not archived as fact, and the
-    archive does not record the deck's ``analyze`` call; #2210 will), so
-    it refuses through ``convert_mpco``'s private
-    ``_implicit_stage`` path, which only this function passes. A refusal
-    about stage kinds
+    unstaged program converts only through ``convert_mpco``'s private
+    ``_implicit_stage`` path, which only this function passes, when the
+    deck's run record (``<recorder file>.run.json``, written by a deck
+    emitted with ``analyze_steps``) passes the checks in the converter's
+    module docstring. Otherwise it refuses by name: a refusal about stage
+    kinds
     (:class:`~apeGmsh.results.readers._ladruno_from_mpco.StageKindRefused`)
-    reads the ``.mpco`` with :meth:`Results.from_mpco` after one
-    :class:`DefaultRouteWarning` that quotes it. Every other refusal (the
-    archive is another model's, an incomplete partition set, a staging
-    directory in the way) raises. A converted file from an earlier run
-    refuses unless ``overwrite=True``.
+    raises again as one, quoting it, naming the remedies (declare the
+    stages with ``ops.stage(...)``, or emit the deck with
+    ``analyze_steps``), and chained from the converter's refusal
+    (``__cause__``), which ``ops.results`` quotes under its own
+    remedies. No kind is defaulted, the ``.mpco`` is never read in its
+    place, and nothing is written. Every other
+    refusal (the archive is another model's, an incomplete partition set,
+    a staging directory in the way) raises as it is. A converted file from
+    an earlier run refuses unless ``overwrite=True``.
     """
     mpco, model = Path(path), Path(model_h5)
     existing = existing_fork_files(fork_target_of(mpco))
@@ -163,10 +192,10 @@ def read_deck_mpco(
     try:
         return convert_and_open(mpco, model, overwrite=overwrite)
     except StageKindRefused as e:
-        warnings.warn(DefaultRouteWarning(
-            f"read_deck_mpco: {mpco} was not converted and is read with "
-            f"Results.from_mpco: {e}"), stacklevel=2)
-    return Results.from_mpco(str(mpco), model_h5=str(model))
+        raise StageKindRefused(
+            f"read_deck_mpco: {mpco} cannot be read, because its stage kinds "
+            f"are not facts and no kind is defaulted: {e} {_REMEDY}"
+        ) from e
 
 
 class LiveDefault:
@@ -199,8 +228,12 @@ class LiveDefault:
         The OpenSees module, or a stand-in for testing. Defaults to the
         module the bridge drives.
     overwrite
-        Replace the fork's file of an earlier run. Without it a rerun onto
-        an existing file refuses at ``__enter__``.
+        Replace the fork's file of an earlier run (on a stock MPCO build,
+        the ``.ladruno`` the run converts to). Without it a rerun onto an
+        existing file refuses at ``__enter__``. With it, both routes
+        remove that file at ``__enter__``, once the run will record: a
+        stock read that then refuses leaves no earlier ``.ladruno``
+        beside the new ``.mpco``.
     """
 
     def __init__(
@@ -347,19 +380,23 @@ class LiveDefault:
             reason = f"ops.recorder('mpco', ...) returned {tag!r}, not a tag"
             tag = None
         if tag is not None:
-            self._route, self._target, self._tag = "mpco", target, int(tag)
             try:
-                warnings.warn(DefaultRouteWarning(
-                    f"emit_default: a stock in-process run is recorded to "
-                    f"{target} and read with Results.from_mpco, not "
-                    "converted: its analysis kind is not a fact (the loop's "
-                    "own analysis calls never reach the model archive). "
-                    "read_deck_mpco converts the .mpco of the bridge's own "
-                    "staged deck run out of process."), stacklevel=3)
+                # Refused before the run, not after it: the probe has
+                # registered the recorder, so it is removed and its new
+                # file deleted, and nothing is converted.
+                self._refuse_unless_kinds_are_facts(target)
+                # Reached only with overwrite=True or with nothing there.
+                # The run rewrites the .mpco, so an earlier run's .ladruno
+                # would stand beside it as its conversion if the read then
+                # refused: remove it now, as the fork route does. Inside
+                # the try, so a failed removal removes the probe too.
+                _remove_earlier(fork_target_of(target))
             except BaseException:
                 self._remove(int(tag))
-                self._tag = None
+                if target.exists() and not existed:
+                    target.unlink()
                 raise
+            self._route, self._target, self._tag = "mpco", target, int(tag)
             return
         if target.exists() and not existed:
             target.unlink()
@@ -399,6 +436,43 @@ class LiveDefault:
             raise
         self._route, self._target = "recorders", out
 
+    def _refuse_unless_kinds_are_facts(self, target: Path) -> None:
+        """Refuse a stock MPCO run whose stage kinds are not facts, or
+        whose converted file would overwrite an earlier run's.
+
+        A kind is a fact when ``model_h5``'s program declares it in an
+        ``ops.stage`` block (ADR 0131 D5). An in-process run writes no
+        deck-run record, so an unstaged program has none; a stage whose
+        analysis names no known kind has none either.
+        """
+        stages = (list(OpenSeesModel.from_h5(self._model_h5).stages())
+                  if _has_bridge_zone(self._model_h5) else [])
+        if not stages:
+            raise StageKindRefused(
+                f"emit_default: a stock in-process run would record "
+                f"{target}, but {self._model_h5} declares no ops.stage "
+                "block, so its stage kind is not a fact (the loop's own "
+                "analysis calls never reach the model archive, and an "
+                "in-process run writes no run record) and none is "
+                "defaulted. Nothing was recorded or converted. "
+                f"{_REMEDY} In process, ops.run() refuses a staged program "
+                "until live staged emission lands (#2181).")
+        try:
+            for s in stages:
+                _stage_kind(s, model_path=self._model_h5)
+        except ValueError as e:
+            raise StageKindRefused(
+                f"emit_default: a stock in-process run would record "
+                f"{target}, but a declared stage has no kind as fact: {e} "
+                "No kind is defaulted; nothing was recorded or converted. "
+                f"{_REMEDY}") from e
+        existing = existing_fork_files(fork_target_of(target))
+        if existing and not self._overwrite:
+            raise FileExistsError(
+                f"emit_default would overwrite {[str(p) for p in existing]} "
+                "from an earlier run; pass overwrite=True to replace them."
+            )
+
     def __exit__(self, exc_type, exc, tb) -> None:
         # Removing the recorder flushes the file. Cleanup never raises, so
         # an exception in flight is never masked.
@@ -426,6 +500,12 @@ class LiveDefault:
         ``cache_root`` is where the classic-recorder route caches its
         transcoded file (:meth:`Results.from_recorders`); the other routes
         read their file in place and ignore it.
+
+        The stock MPCO route converts its ``.mpco`` to the ``.ladruno``
+        beside it (atomically; the ``.mpco`` is kept) and opens that. When
+        the file's stages do not pair with the declared ones, it refuses
+        with :class:`~apeGmsh.results.readers._ladruno_from_mpco.StageKindRefused`
+        and writes nothing; the ``.mpco`` is never read in its place.
         """
         if not self._exited:
             raise RuntimeError(
@@ -442,7 +522,7 @@ class LiveDefault:
                     f"without its provenance: {refused}"), stacklevel=2)
             return open_fork_results(target, self._model_h5)
         if self._route == "mpco":
-            return Results.from_mpco(str(target), model_h5=str(self._model_h5))
+            return self._convert_and_open(target)
         if self._route == "recorders":
             assert self._live is not None and self._model is not None
             if self._neutral:
@@ -457,6 +537,23 @@ class LiveDefault:
             )
         raise RuntimeError(f"LiveDefault has no route {self._route!r}; "
                            f"expected one of {ROUTES}.")
+
+    def _convert_and_open(self, mpco: Path) -> Results:
+        """Convert the stock run's ``.mpco`` by its declared stage kinds
+        (never the deck's ``_implicit_stage`` path: an in-process run has
+        no run record), then open the ``.ladruno``."""
+        try:
+            targets = convert_mpco(mpco, fork_target_of(mpco),
+                                   model_h5=self._model_h5,
+                                   overwrite=self._overwrite)
+        except StageKindRefused as e:
+            raise StageKindRefused(
+                f"emit_default: {mpco} cannot be read, because its stages "
+                "do not pair with the declared ones and no kind is "
+                f"defaulted: {e} {_REMEDY}") from e
+        return Results.from_ladruno(
+            str(targets[0]) if len(targets) == 1 else list(targets),
+            model_h5=str(self._model_h5))
 
     # ------------------------------------------------------------------
     # Inspection
@@ -476,6 +573,22 @@ class LiveDefault:
     def tag(self) -> Optional[int]:
         """The recorder tag of the fork or MPCO route."""
         return self._tag
+
+
+def _remove_earlier(target: Path) -> None:
+    """Remove the earlier run's ``.ladruno`` file(s) at ``target``, or
+    refuse by name: a removal that fails (on Windows, a :class:`Results`
+    still open on the file) re-raises as its own ``OSError`` class."""
+    for old in existing_fork_files(target):
+        try:
+            old.unlink()
+        except OSError as e:
+            raise type(e)(
+                e.errno,
+                f"emit_default could not remove the earlier run's {old} "
+                f"({type(e).__name__}: {e}); nothing was recorded. If a "
+                "Results is still open on it, close it (results.close()) "
+                "and run again.") from e
 
 
 def _begin_quietly(live: LiveRecorders) -> None:

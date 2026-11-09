@@ -230,7 +230,7 @@ def _mixed_ops(fem, *, fix_wire: "tuple[int, int, int] | None" = None):
     """2-dof continuum master vs 3-dof beam slave (the campaign's
     primary case) under an ndf=2 envelope — per-node ndf is LIVE."""
     ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
-    ops.model(ndm=2, ndf=2)
+    ops.model(ndm=2, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     ops.element.FourNodeQuad(
         pg="rock", thickness=THICKNESS, material=mat,
@@ -318,10 +318,11 @@ def test_two_rank_owner_block_matches_the_flat_deck_byte_for_byte(tmp_path):
 def test_mixed_ndf_owner_block_matches_flat_modulo_ghost_decls(tmp_path):
     # The ADR 0027 INV-1 phrasing, applied verbatim by the locked
     # helper: the owner block's RAW interface portion and the flat
-    # deck's differ only by node-decl-with--ndf lines. Every mixed-ndf
-    # ghost decl carries the home ndf (-ndf 3) and every phantom decl
-    # its own (-ndf 2), so assert_partition_blocks_equivalent strips
-    # them on both sides itself — no pre-filtering, no tautology —
+    # deck's differ only by node-decl lines. Under the frame envelope
+    # (ndf=3) a beam ghost's home ndf equals the envelope, so it is
+    # declared bare, and every phantom decl carries its own (-ndf 2);
+    # assert_partition_blocks_equivalent strips both on both sides
+    # itself — no pre-filtering, no tautology —
     # and what remains (comments, equalDOF, materials, zeroLength,
     # tags and all) must match byte-for-byte.
     fem = _fem(slave_ndf=3, cut="split")
@@ -337,6 +338,7 @@ def test_mixed_ndf_owner_block_matches_flat_modulo_ghost_decls(tmp_path):
             [ln.strip() for ln in flat_text.splitlines()],
         )),
         label="iface-mixed-2rank",
+        envelope_ndf_decls=True,
     )
 
 
@@ -480,11 +482,11 @@ def test_foreign_slave_ghosts_with_sp_replay_and_no_mass_or_elements(
 
 
 def test_mixed_ndf_foreign_beam_slave_ghosts_with_home_ndf(tmp_path):
-    # INV-5's ghost ndf parity clause, verbatim: the beam slave's home
-    # rank declares it ndf=3 (inferred, envelope is 2); the ghost decl
-    # in the owner's block must carry the SAME explicit -ndf 3 — a
-    # ghost defaulting to the envelope would silently disagree on
-    # shared-DOF counts exactly where per-node ndf is live.
+    # INV-5's ghost ndf parity clause: the beam slave's home rank
+    # declares it with its inferred ndf=3; the ghost decl in the
+    # owner's block must be byte-identical to that native decl. Under
+    # the frame envelope (ndf=3) both are bare (the envelope applies);
+    # a ghost with any other -ndf would disagree on shared-DOF counts.
     fem = _fem(slave_ndf=3, cut="split")
     recs = list(fem.elements.interfaces)
     assert all(r.phantom_node is not None for r in recs)
@@ -501,7 +503,7 @@ def test_mixed_ndf_foreign_beam_slave_ghosts_with_home_ndf(tmp_path):
         ghost = [ln for ln in owner_lines
                  if ln.split()[0] == "node" and int(ln.split()[1]) == nid]
         assert len(ghost) == 1
-        assert ghost[0].endswith("-ndf 3"), (
+        assert "-ndf" not in ghost[0] or ghost[0].endswith("-ndf 3"), (
             f"ghost decl {ghost[0]!r} must carry the HOME ndf "
             "(ADR 0093 INV-5 ghost ndf parity)"
         )

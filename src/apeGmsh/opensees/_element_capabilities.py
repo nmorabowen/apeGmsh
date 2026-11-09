@@ -975,6 +975,45 @@ _BUILDER_NDF_GATED: "dict[str, int | dict[int, int]]" = {
 }
 
 
+#: Frame element tokens whose parser demands the FRAME builder ndf (2-D: 3,
+#: 3-D: 6) and refuses otherwise — on both interpreters, never consulting
+#: the nodes' per-node ``-ndf``.  Unlike :data:`_BUILDER_NDF_GATED` these
+#: are NOT bracketed: a bracket would purge the ``geomTransf`` /
+#: ``beamIntegration`` / ``damping`` they reference (ADR 0099 INV-1/INV-3),
+#: so the envelope itself must be the frame ndf, and the emit refuses
+#: otherwise (``validate_frame_builder_ndf``).
+#:
+#: Audited against the fork source 2026-11-07: ``ElasticBeam2d.cpp:80`` /
+#: ``ElasticBeam3d.cpp:128`` (py) and ``TclElasticBeamCommand.cpp:63-65,
+#: 181-183`` (Tcl); ``ForceBeamColumn2d.cpp:100`` / ``3d.cpp:104`` and
+#: ``DispBeamColumn2d.cpp:156`` / ``3d.cpp:147`` (py; the Tcl
+#: ``TclForceBeamColumnCommand.cpp:103-110`` also takes 2-D ndf 4, outside
+#: the intersection); ``ElasticTimoshenkoBeam2d.cpp:85`` /
+#: ``3d.cpp:81``; ``OPS_LadrunoDispBeamColumn.cpp:72-78``;
+#: ``OPS_LadrunoIMKBeam.cpp:99-107``.  ``LadrunoForceBeamColumn`` has no
+#: source in the audited tree; it is listed by analogy with its Disp twin.
+_FRAME_BUILDER_NDF: "dict[str, dict[int, int]]" = {
+    token: {2: 3, 3: 6}
+    for token in (
+        "elasticBeamColumn",
+        "forceBeamColumn",
+        "dispBeamColumn",
+        "ElasticTimoshenkoBeam",
+        "LadrunoDispBeamColumn",
+        "LadrunoForceBeamColumn",
+        "LadrunoIMKBeam",
+    )
+}
+
+
+def element_frame_builder_ndf(class_name: str, ndm: int) -> "int | None":
+    """Return the builder ``ndf`` a frame element's parser demands at
+    ``ndm`` (see :data:`_FRAME_BUILDER_NDF`), or ``None`` when the class
+    has no frame gate."""
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    return _FRAME_BUILDER_NDF.get(token, {}).get(int(ndm))
+
+
 def element_builder_ndf(
     class_name: str, ndm: "int | None" = None,
 ) -> "int | None":

@@ -103,7 +103,7 @@ export const LADRUNO_AXIS_MAP: Readonly<Record<string, (typeof AXES)[number]>> =
  * its own component, labelled as the file names it (`Rz`, `RMz`, ...), never
  * as the z of a rotation vector.
  */
-const LADRUNO_ROTATION = new Set([
+export const LADRUNO_ROTATION = new Set([
   // §7.1.1
   "ROTATION",
   "MODES_OF_VIBRATION(R)",
@@ -610,6 +610,33 @@ export function combinedColumn(c: Combined): CombinedColumn {
   });
   const values = Float64Array.from(f.values);
   return { name: c.name, label: f.components[0]!, ids, values, range: finiteRange([values], false), signed: c.signed };
+}
+
+/**
+ * VU10 (ADR 0132 D9.5): the window variant minus the compare variant for one
+ * nodal dataset, joined by node id, as the column a nodal contour colours by
+ * (`columnOf(ids)` then joins it to the vertices). One value per window node:
+ * a node the compare rows lack, or a value that is not finite on either side,
+ * is NaN (no data), never 0. `missing` counts those window nodes.
+ */
+export function differenceColumn(
+  windowIds: Float64Array,
+  windowValues: Float64Array,
+  compareIds: Float64Array,
+  compareValues: Float64Array,
+): { ids: Float64Array; values: Float64Array; range: { min: number; max: number } | null; missing: number } {
+  if (windowIds.length !== windowValues.length) throw new RangeError(`difference: the window has ${windowIds.length} node ids and ${windowValues.length} values`);
+  if (compareIds.length !== compareValues.length) throw new RangeError(`difference: the compare set has ${compareIds.length} node ids and ${compareValues.length} values`);
+  const other = columnOf(compareIds);
+  const values = new Float64Array(windowIds.length);
+  let missing = 0;
+  for (let i = 0; i < windowIds.length; i++) {
+    const j = other.get(windowIds[i]!);
+    const d = j === undefined ? NaN : windowValues[i]! - compareValues[j]!;
+    values[i] = Number.isFinite(d) ? d : NaN;
+    if (Number.isNaN(values[i]!)) missing++;
+  }
+  return { ids: Float64Array.from(windowIds), values, range: finiteRange([values], false), missing };
 }
 
 /**

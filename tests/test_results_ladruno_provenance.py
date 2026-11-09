@@ -6,6 +6,8 @@ The oracles here are the contract itself:
 
 * six lowercase attributes, each a scalar variable-length UTF-8 string;
 * ``model_hash`` / ``fem_hash`` byte-equal to ``<model_h5>/meta/lineage``;
+  a bare FEMData archive (``fem.to_h5``) stamps ``fem_hash`` alone, and a
+  missing ``fem_hash`` or an empty hash refuses by name (ADR 0133 D1);
 * every part of a partitioned set stamped;
 * every refusal raises :class:`ProvenanceStampRefused` and leaves every
   part file byte-identical (a SHA-256 of each file before and after);
@@ -174,6 +176,9 @@ def model_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     _write_model(d / "transient.h5", (("shake", "Transient"),))
     _write_model(d / "vanilla.h5", ())
     _write_model(d / "offset_ids.h5", element_ids=(11, 12))
+    # Bare FEMData archives (fem.to_h5): fem_hash and no model_hash.
+    _truss_fem().to_h5(str(d / "fem_only.h5"))
+    _truss_fem((11, 12)).to_h5(str(d / "fem_only_other.h5"))
     return d
 
 
@@ -371,6 +376,111 @@ def test_a_different_model_hash_needs_overwrite(parts, model_dir) -> None:
 
 
 # ---------------------------------------------------------------------------
+# A bare FEMData archive: fem_hash only (ADR 0133 D1)
+# ---------------------------------------------------------------------------
+
+
+def _raw_lineage(model_h5: Path) -> "dict[str, bytes]":
+    """``/meta/lineage`` hashes as stored, encoded, for a byte-equal check."""
+    with h5py.File(model_h5, "r") as f:
+        attrs = f["meta/lineage"].attrs
+        out = {}
+        for k in ("model_hash", "fem_hash"):
+            if k in attrs:
+                v = attrs[k]
+                out[k] = v.encode("utf-8") if isinstance(v, str) else bytes(v)
+        return out
+
+
+def test_a_femdata_archive_stamps_fem_hash_only(parts, model_dir) -> None:
+    model = model_dir / "fem_only.h5"
+    lineage = _raw_lineage(model)
+    assert set(lineage) == {"fem_hash"}, "precondition: fem.to_h5 has no model_hash"
+    assert stamp_provenance(parts[0], model, writer="apeGmsh test 0.0") == parts
+    for part in parts:
+        prov = _provenance(part)
+        assert "model_hash" not in prov
+        assert prov["fem_hash"].encode("utf-8") == lineage["fem_hash"]
+        # Every other D3 attribute is written as for a bridge archive.
+        assert {"unsupported", "writer", "opensees_backend",
+                "opensees_build_sha"} <= set(prov)
+
+
+def test_a_bridge_archive_still_stamps_both_hashes(parts, model_dir) -> None:
+    model = model_dir / "one_static.h5"
+    lineage = _raw_lineage(model)
+    assert set(lineage) == {"model_hash", "fem_hash"}
+    stamp_provenance(parts[0], model)
+    for part in parts:
+        prov = _provenance(part)
+        assert {k: prov[k].encode("utf-8") for k in lineage} == lineage
+
+
+@pytest.mark.parametrize("edit, match", [
+    ({"fem_hash": None}, r"/meta/lineage carries no fem_hash"),
+    ({"fem_hash": ""}, r"/meta/lineage@fem_hash is an empty string"),
+    ({"model_hash": ""}, r"/meta/lineage@model_hash is an empty string"),
+])
+@pytest.mark.parametrize("source", ["fem_only.h5", "one_static.h5"])
+def test_a_missing_or_empty_hash_refuses_by_name(
+        parts, model_dir, tmp_path, edit, match, source) -> None:
+    """An empty hash never becomes ``""`` in the stamp; a missing
+    ``fem_hash`` refuses even beside a ``model_hash``."""
+    model = tmp_path / "edited.h5"
+    shutil.copy(model_dir / source, model)
+    with h5py.File(model, "r+") as f:
+        attrs = f["meta/lineage"].attrs
+        for key, value in edit.items():
+            if key in attrs:
+                del attrs[key]
+            if value is not None:
+                attrs[key] = value
+    _refuses(parts, model, match)
+
+
+def test_a_two_hash_stamp_does_not_drop_its_model_hash(parts, model_dir) -> None:
+    """Re-stamping against a FEMData archive would drop the model_hash: a
+    re-pair, so only ``overwrite`` does it."""
+    stamp_provenance(parts[0], model_dir / "one_static.h5")
+    _refuses(parts, model_dir / "fem_only.h5", r"already stamped with model_hash='")
+    stamp_provenance(parts[0], model_dir / "fem_only.h5", overwrite=True)
+    for part in parts:
+        assert "model_hash" not in _provenance(part)
+
+
+def test_a_fem_hash_only_stamp_refuses_another_mesh(parts, model_dir) -> None:
+    other = model_dir / "fem_only_other.h5"
+    assert _raw_lineage(other) != _raw_lineage(model_dir / "fem_only.h5")
+    stamp_provenance(parts[0], model_dir / "fem_only.h5")
+    _refuses(parts, other, r"already stamped with model_hash=None, fem_hash='")
+    stamp_provenance(parts[0], other, overwrite=True)
+    assert _provenance(parts[0])["fem_hash"].encode("utf-8") == \
+        _raw_lineage(other)["fem_hash"]
+
+
+def test_a_fem_hash_only_stamp_gains_the_model_hash_of_its_mesh(
+        parts, model_dir) -> None:
+    bridge = model_dir / "one_static.h5"
+    fem_only = model_dir / "fem_only.h5"
+    assert _raw_lineage(bridge)["fem_hash"] == _raw_lineage(fem_only)["fem_hash"], \
+        "precondition: the bridge archive is of the same mesh"
+    stamp_provenance(parts[0], fem_only)
+    stamp_provenance(parts[0], bridge)
+    for part in parts:
+        prov = _provenance(part)
+        assert {k: prov[k].encode("utf-8") for k in ("model_hash", "fem_hash")} \
+            == _raw_lineage(bridge)
+
+
+def test_a_fem_hash_only_restamp_is_byte_identical(parts, model_dir) -> None:
+    model = model_dir / "fem_only.h5"
+    stamp_provenance(parts[0], model)
+    before = _sha(parts)
+    stamp_provenance(parts[1], model)
+    assert _sha(parts) == before
+
+
+# ---------------------------------------------------------------------------
 # Refusals: raise before any write, every part byte-identical
 # ---------------------------------------------------------------------------
 
@@ -479,10 +589,18 @@ def test_stage_names_take_the_program_names(parts, model_dir) -> None:
 
 
 def test_stage_names_override_replaces_the_names(parts, model_dir) -> None:
+    """The override is the name shown; the stamp still binds by the
+    program's name (``load``), so a reader names the stage ``präload`` and
+    never refuses the file (#2823 amendment 3)."""
+    from apeGmsh.results import Results
+
     stamp_provenance(parts[0], model_dir / "one_static.h5",
                      stage_names=["präload"])
-    raw = _provenance(parts[0])["stage_names"]
-    assert raw == '["präload"]'  # compact UTF-8 JSON, not \\u escapes
+    prov = _provenance(parts[0])
+    assert prov["stage_display_names"] == '["präload"]'  # compact UTF-8 JSON, not \\u escapes
+    assert prov["stage_names"] == '["load"]'
+    with Results.from_ladruno(parts[0], model_h5=model_dir / "one_static.h5") as r:
+        assert [s.name for s in r.stages if s.kind != "mode"] == ["präload"]
 
 
 def test_stage_names_override_with_the_wrong_count_is_omitted(parts, model_dir) -> None:
@@ -521,6 +639,56 @@ def test_element_index_space_absent_for_a_bridge_minted_element(
     stamp_provenance(parts[0], model)
     assert "element_index_space" not in _provenance(parts[1])  # holds element 3
     assert _provenance(parts[0])["element_index_space"] == "fem"  # element 2 only
+
+
+def _mint_element_3(src: Path, dst: Path) -> Path:
+    """A copy of a bridge archive whose element 3 carries ``fem_eid`` -1."""
+    shutil.copy(src, dst)
+    with h5py.File(dst, "r+") as f:
+        for g in f["opensees/element_meta"].values():
+            if "fem_eids" not in g:
+                continue
+            ids = np.asarray(g["ids"][...]).ravel()
+            fem = np.asarray(g["fem_eids"][...]).copy()
+            fem.reshape(-1)[ids == 3] = -1
+            g["fem_eids"][...] = fem
+    return dst
+
+
+def test_element_index_space_fem_with_a_model_only_minted_element(
+    tmp_path, model_dir,
+) -> None:
+    """YOO T2_solid: RBE3 couplings the bridge minted sit in MODEL/ELEMENTS
+    with no result rows; every result row is a FEM id, so the file is "fem".
+    """
+    path = tmp_path / "truss2d.ladruno"
+    shutil.copy(FIXTURES / "truss2d.ladruno", path)
+    _renumber(path)  # elements 2, 3: the bars' ops tags
+    with h5py.File(path, "r+") as f:  # results for element 2 only
+        b = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/basicForce/12-Truss[1:0:0]"]
+        ids, data = b["ID"][...], b["DATA"][...]
+        keep = ids[:, 0] == 2
+        del b["ID"], b["DATA"]
+        b.create_dataset("ID", data=ids[keep])
+        b.create_dataset("DATA", data=data[:, keep, :])
+    model = _mint_element_3(model_dir / "one_static.h5", tmp_path / "minted.h5")
+    stamp_provenance(path, model)
+    assert _provenance(path)["element_index_space"] == "fem"
+
+
+def test_fem_index_space_rule() -> None:
+    from apeGmsh.results.readers._ladruno_provenance import _is_fem_index_space
+
+    a = np.asarray
+    pairing = {2: 2, 3: -1, 4: 3}  # 3 minted; tag 4 is FEM element 3
+    # A minted model-only id that equals a FEM id could join the wrong element.
+    assert not _is_fem_index_space(a([2, 3]), a([2]), pairing)
+    assert _is_fem_index_space(a([2, 3]), a([2]), {2: 2, 3: -1})
+    # A minted element with result rows, or an unknown id, is never "fem".
+    assert not _is_fem_index_space(a([2, 3]), a([2, 3]), {2: 2, 3: -1})
+    assert not _is_fem_index_space(a([2, 9]), a([2]), {2: 2})
+    # Only minted elements: nothing proves a FEM id.
+    assert not _is_fem_index_space(a([3]), a([], dtype=int), {3: -1})
 
 
 def test_inputs_are_type_checked(parts, model_dir) -> None:

@@ -850,6 +850,9 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "truss2d.part-1.ladruno": "refused: part 1 of truss2d",
   "tet.ladruno": "-",
   "tri.ladruno": "-",
+  // VU10 (#2694): the synthetic variant pair.
+  "plate_uncracked.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "plate_cracked.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
 };
 
 /** The repository root, and the directories the golden below scans for `.ladruno` files. */
@@ -858,6 +861,8 @@ const CONTOUR_GOLDEN_DIRS: readonly URL[] = [
   new URL("apeGmshViewer/fixtures/", REPO_ROOT),
   new URL("tests/fixtures/ladruno/", REPO_ROOT),
   new URL("tests/fixtures/simplex_gp/", REPO_ROOT),
+  new URL("apeGmshViewer/test/fixtures/vu10/", REPO_ROOT),
+  new URL("apeGmshViewer/test/fixtures/vu10/cracked/", REPO_ROOT),
 ];
 
 /** `git ls-files '*.ladruno'` at the repo root (sorted, `/`-separated), or the reason git could not answer. */

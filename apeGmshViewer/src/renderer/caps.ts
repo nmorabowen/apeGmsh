@@ -35,7 +35,7 @@ import { activationNow, contourView, deformView, hiddenElementsOf, NO_SOLID_CELL
 import { SOLID_CORNERS, SOLID_SHAPES, sliceSolids, sliceExtent, solidShapeOf, type Slice, type Solids } from "../state/slice.ts";
 import type { Decl, DeclPath, State } from "../state/types.ts";
 import { DARK_ROLE } from "../theme/tokens.ts";
-import { elementJoinAt, toLinear, type CombinationColumnOf, type StepValues } from "./contour.ts";
+import { differenceHeld, elementJoinAt, toLinear, type CombinationColumnOf, type StepValues } from "./contour.ts";
 
 /** How far a cap steps into the discarded half: a fraction of its own extent (the Qt S3 measurement: less speckles against the gizmo quad). */
 export const CAP_STEP = 1e-3;
@@ -220,6 +220,10 @@ export function capKeys(s: State): { cuts: string; slice: string; colour: string
       values = `combination ${v.key}`;
       colour = `${v.clim.min}|${v.clim.max}|${v.cmap}`;
       break;
+    case "difference":
+      values = `difference ${v.key}`;
+      colour = `${v.clim.min}|${v.clim.max}|${v.cmap}`;
+      break;
     default:
       values = `no-data:${v.reason}`;
       colour = "no-data";
@@ -257,6 +261,7 @@ export function capInputs(s: State, blobs: BlobStore, step: StepValues | null, c
   const deformed = d.state === "loading" || d.state === "ready" || d.state === "partial";
   const v = contourView(s);
   if (v.state === "combination" && combination?.key !== v.key) return { wait: true };
+  if (v.state === "difference" && differenceHeld.current?.key !== v.key) return { wait: true };
   if ((deformed || v.state === "ready" || v.state === "element") && !stepIsShown(s, step)) return { wait: true };
   if ((v.state === "ready" || v.state === "element") && !v.stepMeasured) return { wait: true };
   if (v.state === "element" && (step!.element !== v.component.key || !step!.gauss)) return { wait: true };
@@ -310,6 +315,12 @@ export function capInputs(s: State, blobs: BlobStore, step: StepValues | null, c
       values = vertexValues(sub.cornerNodes, columnOf(held.ids), [held.values], false);
       break;
     }
+    case "difference": {
+      // Checked above: the column on hand is the read shown.
+      const held = differenceHeld.current!;
+      values = vertexValues(sub.cornerNodes, columnOf(held.ids), [held.values], false);
+      break;
+    }
     default:
       values = new Float64Array(sub.solids.slot.length).fill(NaN);
   }
@@ -323,7 +334,7 @@ export function capColours(slice: Slice, view: ContourView): Float32Array {
   if (view.state === "off") {
     rgb = new Float32Array(9 * n);
     for (let i = 0; i < rgb.length; i += 3) rgb.set(CAP_FILL, i);
-  } else if (view.state === "ready" || view.state === "element" || view.state === "combination") {
+  } else if (view.state === "ready" || view.state === "element" || view.state === "combination" || view.state === "difference") {
     rgb = primitiveColours(slice.values!, Int32Array.from({ length: n }, (_, i) => i), 3, view.clim, view.cmap).rgb;
   } else {
     rgb = new Float32Array(9 * n);

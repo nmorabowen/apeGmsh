@@ -28,6 +28,8 @@
 //                          reader/userSpectra.ts `CaseRead`); never raises
 //   renderJob() ... renderDone(result)  the ADR 0128 agent modes (below)
 //   onOffers(cb) onSnapshotRequest(cb) snapshotReply(id, reply)  ADR 0128 D5, D6 (below)
+//   variants() onVariants(cb) variantsSwitch(i, label) variantsCompare(i, label)
+//   readCompareStep(req) compareClose()  VU10: the study, a switch and the compare set (below)
 // onOpen and onFileChanged return a function that removes the listener.
 // Until the page subscribes to a channel, main reloads the page instead of
 // sending on it, so the P0 page (which reads the model from config) follows.
@@ -111,7 +113,7 @@ contextBridge.exposeInMainWorld("viewer", {
   openGeometry: (path: string) => ipcRenderer.invoke("geometry:open", path),
   // V4b (#1728): a results file's metadata, then one step at a time (./results.ts).
   openResults: (path: string) => ipcRenderer.invoke("results:open", path),
-  readResultsStep: (req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: string; springs?: boolean }) => ipcRenderer.invoke("results:readStep", req),
+  readResultsStep: (req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: string; tensor?: string[]; springs?: boolean }) => ipcRenderer.invoke("results:readStep", req),
   // V4c1 (#1756): the history-range scan of a contour field, its cancel, and its progress.
   // V4c2b: an element scan may carry a node-located topology's extrapolation plan (main checks it).
   scanResults: (req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element" | "line"; plan?: unknown }) => ipcRenderer.invoke("results:scan", req),
@@ -158,5 +160,19 @@ contextBridge.exposeInMainWorld("viewer", {
   },
   // ADR 0128 D5: a click on an offer opens its set; refused with the reason, never with a dialog.
   offerOpen: (path: string, needs: readonly string[]) => ipcRenderer.invoke("viewer:offerOpen", path, needs),
+  // VU10 (ADR 0132 D9): the study main holds, and its changes. A variant is named by its row index and label,
+  // never by a path: main resolves the row. The compare set's step names a stage, a step and a request number only.
+  variants: () => ipcRenderer.invoke("variants:current"),
+  onVariants: (cb: (study: unknown) => void) => {
+    const handler = (_e: IpcRendererEvent, study: unknown) => cb(study);
+    ipcRenderer.on("viewer:variants", handler);
+    return () => {
+      ipcRenderer.removeListener("viewer:variants", handler);
+    };
+  },
+  variantsSwitch: (index: number, label: string) => ipcRenderer.invoke("variants:switch", index, label),
+  variantsCompare: (index: number, label: string) => ipcRenderer.invoke("variants:compare", index, label),
+  readCompareStep: (req: { stage: string; step: number; seq: number }) => ipcRenderer.invoke("compare:readStep", { stage: req.stage, step: req.step, seq: req.seq }),
+  compareClose: () => ipcRenderer.invoke("compare:close"),
   snapshotReply: (id: number, reply: unknown) => ipcRenderer.invoke("viewer:snapshotReply", id, reply),
 });

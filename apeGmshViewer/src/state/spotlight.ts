@@ -14,6 +14,8 @@
 import { gaussUnavailable } from "./gaussNotes.ts";
 import { reactionComponentsOf } from "./loads.ts";
 import { springCountOf } from "./springs.ts";
+import { tensorFields } from "./tensor.ts";
+import { vectorFieldOf } from "./vectors.ts";
 import { CMAP_NAMES, fieldsOf, gaussFields, RANGE_MODES } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
 import {
@@ -71,6 +73,14 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   userOpened: { kind: "system", reason: "dispatched by the app's user-file feed when the set's .user.h5 is read" },
   userRead: { kind: "system", reason: "dispatched by the app's user-file feed with the user:read answer" },
   combinationRead: { kind: "system", reason: "dispatched by the app's combination feed with the evaluator's answer for the User Combination shown" },
+  // VU10 (ADR 0132 D9): the variants panel and its runner
+  variantsRead: { kind: "system", reason: "dispatched by the variant runner with main's study: the manifest the user opened, its rows and main's compare slot" },
+  variantSwitch: { kind: "gesture", reason: "a row of the variants panel; it names a manifest row by index and label, which only the panel lists" },
+  variantSwitched: { kind: "system", reason: "dispatched by the variant runner when main answered a switch" },
+  variantCompare: { kind: "gesture", reason: "the Compare control of a row of the variants panel, or its close" },
+  compareOpened: { kind: "system", reason: "dispatched by the variant runner when main's compare door answered" },
+  setDifference: { kind: "gesture", reason: "the Difference toggle of the variants panel, offered only while a compare set is open" },
+  differenceRead: { kind: "system", reason: "dispatched by the variant runner with the read of the difference shown" },
   userClosed: { kind: "system", reason: "dispatched by the app's user-file feed when the set has no .user.h5" },
   resultStep: { kind: "system", reason: "dispatched by effects to report step fetch status" },
   contourElementJoin: { kind: "system", reason: "dispatched by effects after verifying element contour join" },
@@ -152,8 +162,10 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramFlipSign: { kind: "expose", command: "toggle-line-diagram-flip-sign", description: "Toggle 3-D line diagram tension-side / sign convention" },
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
   setSupports: { kind: "expose", command: "toggle-supports", description: "Toggle the restraint glyphs at the supports (the Display card's BC)" },
+  setPrincipal: { kind: "expose", command: "toggle-principal", description: "Toggle or configure the principal stress or strain arrows at the Gauss points" },
   setReactions: { kind: "expose", command: "toggle-reactions", description: "Toggle or configure the reaction-force arrows of the results step" },
   setSprings: { kind: "expose", command: "toggle-springs", description: "Toggle or configure the zero-length spring force arrows of the results step" },
+  setVectors: { kind: "expose", command: "toggle-vectors", description: "Toggle or configure the nodal vector arrows of the results step" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
   toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },
   toggleShowOffsets: { kind: "expose", command: "toggle-show-offsets", description: "Toggle rigid joint-offset links and markers on or off" },
@@ -714,6 +726,39 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
         [{ type: "setSprings", on: !s.springs.on }],
       ),
       keywords: "springs spring zerolength zero-length interface forces arrows toggle results",
+    });
+  }
+
+  // selectors.principalFieldsOf, restated: the selectors import this module.
+  const shownStage = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage] : undefined;
+  if (s.mesh && shownStage && s.results?.elementIndex?.verified && tensorFields(shownStage.gauss).some((f) => f.groups.length > 0)) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-principal",
+        "loads",
+        s.principal.on ? "Turn Off Principal Arrows" : "Turn On Principal Arrows",
+        `Principal stress or strain directions at the Gauss points are currently ${s.principal.on ? "ON" : "OFF"}`,
+        [{ type: "setPrincipal", on: !s.principal.on }],
+        s.principal.on,
+        [{ type: "setPrincipal", on: !s.principal.on }],
+      ),
+      keywords: "principal stress strain directions gauss tension compression arrows toggle results",
+    });
+  }
+
+  const vectorField = vectorFieldOf(s);
+  if (vectorField) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-vectors",
+        "loads",
+        s.vectors.on ? "Turn Off Vector Arrows" : "Turn On Vector Arrows",
+        `${vectorField.name} of the step on screen, arrows starting at the nodes, is currently ${s.vectors.on ? "ON" : "OFF"}`,
+        [{ type: "setVectors", on: !s.vectors.on }],
+        s.vectors.on,
+        [{ type: "setVectors", on: !s.vectors.on }],
+      ),
+      keywords: "vectors vector field displacement velocity acceleration rotation arrows glyphs toggle results",
     });
   }
 
