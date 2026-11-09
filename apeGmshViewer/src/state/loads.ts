@@ -1451,11 +1451,12 @@ export function loadsSummaryOf(s: State): LoadsSummary {
  * thinning level (1, `thinningLevels`), and anchor (1: `ANCHOR`, whether the
  * point is the arrow's tip or its tail). The renderer draws each record as an
  * instance (renderer/loads.ts): a line shaft and flat 2:1 heads sized in
- * pixels, with the shaft's length capped to a pixel band.
+ * pixels, with the shaft's length capped to a pixel band, so only the shader
+ * knows where a tail-anchored arrow's tip lands.
  */
 export const ARROW_STRIDE = 15;
 export const ARROW = { tip: 0, dir: 3, len: 6, rgb: 7, heads: 10, bar: 11, priority: 12, level: 13, anchor: 14 } as const;
-/** The `anchor` field: the record's point is the tip (a load or reaction, pointing at the node) or the tail (a nodal vector, starting at it). */
+/** The `anchor` field: the record's point is the tip (a load or reaction, pointing at the node) or the tail (a nodal vector or a principal direction, starting at its node or Gauss point). */
 export const ANCHOR = { tip: 0, tail: 1 } as const;
 /** The `bar` field: no mark, an SP bar across the tip, or a reaction's 45° tick across the tail. */
 export const BAR = { none: 0, sp: 1, tick: 2 } as const;

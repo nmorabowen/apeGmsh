@@ -26,7 +26,7 @@ import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
 import { EntitiesLayer } from "./entities.ts";
-import { LoadsLayer, ReactionsLayer, SupportsLayer, VectorsLayer } from "./loads.ts";
+import { LoadsLayer, PrincipalLayer, ReactionsLayer, SupportsLayer, VectorsLayer } from "./loads.ts";
 import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
 import { deformedPositions } from "../state/deform.ts";
 import { dropUnplaced, gaussBasePositions, gaussDisplacements, gaussLayoutOf, type GaussLayout, type StationPoints } from "../state/gaussPoints.ts";
@@ -151,6 +151,7 @@ export class Viewport {
   readonly loads = new LoadsLayer();
   readonly reactions = new ReactionsLayer();
   readonly vectors = new VectorsLayer();
+  readonly principal = new PrincipalLayer();
   /** The Display card's BC toggle: restraint glyphs at the supports. */
   readonly supports = new SupportsLayer();
   /** VU8: the `/entities` of the set's `.user.h5` (renderer/entities.ts). */
@@ -208,7 +209,7 @@ export class Viewport {
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
     this.lineDiagram = new LineDiagramLayer(this.camera);
-    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.vectors.root, this.supports.root, this.entities.root);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.vectors.root, this.principal.root, this.supports.root, this.entities.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers, this.gaussGroup);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
@@ -279,6 +280,7 @@ export class Viewport {
     this.loads.setTheme(mode);
     this.reactions.setTheme(mode);
     this.vectors.setTheme(mode);
+    this.principal.setTheme(mode);
     this.supports.setTheme(mode);
     this.entities.setTheme(mode);
     const s = this.store.get();
@@ -521,6 +523,7 @@ export class Viewport {
     this.loads.dispose();
     this.reactions.dispose();
     this.vectors.dispose();
+    this.principal.dispose();
     this.supports.dispose();
     this.entities.dispose();
     this.halo.dispose();
@@ -551,6 +554,7 @@ export class Viewport {
         this.loads.setClippingPlanes(this.clip.planes);
         this.reactions.setClippingPlanes(this.clip.planes);
         this.vectors.setClippingPlanes(this.clip.planes);
+        this.principal.setClippingPlanes(this.clip.planes);
         this.supports.setClippingPlanes(this.clip.planes);
         this.requestRender();
       }
@@ -724,7 +728,8 @@ export class Viewport {
     const loads = this.loads.sync(s, this.blobs, this.full);
     const supports = this.supports.sync(s, this.blobs, this.full);
     const vectors = this.vectors.sync(s, this.blobs, this.full, this.stepSource());
-    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || vectors) {
+    const principal = this.principal.sync(s, this.blobs, this.full, this.stepSource());
+    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || vectors || principal) {
       this.requestRender();
     }
   }

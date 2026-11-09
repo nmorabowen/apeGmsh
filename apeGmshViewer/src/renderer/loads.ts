@@ -12,6 +12,10 @@
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
 import { ARROW, ARROW_STRIDE, buildLoads3D, buildReactions3D, buildSupports3D, COMB_STRIDE, THIN_LEVELS } from "../state/loads.ts";
+import { deformedPositions } from "../state/deform.ts";
+import { gaussBasePositions, gaussDisplacements } from "../state/gaussPoints.ts";
+import { buildPrincipal3D, principalPointsOf, principalTensors, type PrincipalPoints } from "../state/principal.ts";
+import { principalFieldOf } from "../state/selectors.ts";
 import type { State } from "../state/types.ts";
 import { buildVectors3D, vectorFieldOf } from "../state/vectors.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
@@ -633,5 +637,72 @@ export class SupportsLayer extends ArrowLayer {
   override dispose(): void {
     super.dispose();
     this.arcs.dispose();
+  }
+}
+
+/**
+ * The Principal card's arrows (`s.principal`): from each Gauss point of the
+ * field on screen, an arrow along each principal direction shown
+ * (`buildPrincipal3D`), tail-anchored, following the deformed shape as the
+ * Gauss markers do.
+ */
+export class PrincipalLayer extends ArrowLayer {
+  private appliedKey: string | null = null;
+  private drawnStep: StepValues | null = null;
+  private drawnStage: number | null = null;
+  /** The field's points, placed once per stage, field and visibility. */
+  private points: { deps: unknown[]; gen: number; points: PrincipalPoints | null; base: Float32Array | null } | null = null;
+  /** the points the last build drew */
+  drawnPoints = 0;
+
+  sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
+    const at = s.phase.at;
+    const field = s.principal.on ? principalFieldOf(s) : null;
+    // A field that cannot draw (every group refused) shows nothing: no step will ever carry its tensor.
+    if (!field || field.groups.length === 0 || !s.mesh?.nodes || at?.kind !== "results") {
+      this.appliedKey = null;
+      this.drawnStep = null;
+      this.drawnStage = null;
+      this.drawnPoints = 0;
+      return this.hide();
+    }
+    const sized = this.size(s.principal);
+    const tensor = step?.tensor;
+    const here = step && step.stage === at.stage && step.step === at.step && tensor && field.components.every((c) => tensor[c]) ? step : null;
+    if (!here) {
+      // A scrub within the stage keeps the last arrows until the step arrives; another stage's, or a failed read, do not.
+      const failed = s.resultStep?.stage === at.stage && s.resultStep.step === at.step && s.resultStep.status === "failed";
+      if (this.drawnStage !== at.stage || failed) {
+        this.appliedKey = null;
+        this.drawnStep = null;
+        this.drawnStage = null;
+        return this.hide() || sized;
+      }
+      return sized;
+    }
+    const deps = [s.results, at.stage, s.visibility.hidden, s.mesh, s.decls, s.stageElements, s.sequence, field.name];
+    if (!this.points || this.points.deps.some((d, i) => d !== deps[i])) {
+      const points = principalPointsOf(s, blobs, field);
+      const nodes = s.mesh.nodes;
+      const base = points ? gaussBasePositions(points.layout, blobs.get(nodes.ids) as Float64Array, blobs.get(nodes.xyz) as Float64Array) : null;
+      this.points = { deps, gen: (this.points?.gen ?? 0) + 1, points, base };
+    }
+    const { points, base } = this.points;
+    const disp = full && full.key !== "base" && full.disp?.nodal ? full.disp : null;
+    const p = s.principal;
+    const nextKey = [this.points.gen, disp ? full!.key : "base", p.show.join(","), p.head, p.cmap, p.scale, field.name].join("|");
+    if (this.appliedKey === nextKey && here === this.drawnStep) return sized;
+    this.drawnStep = here;
+    this.drawnStage = at.stage;
+    this.appliedKey = nextKey;
+    if (!points || !base) {
+      this.drawnPoints = 0;
+      return this.hide() || sized;
+    }
+    const at3 = disp ? deformedPositions(base, gaussDisplacements(points.layout, disp.nodal!.column, disp.nodal!.rows), s.deform.scale) : base;
+    const r = buildPrincipal3D(at3, principalTensors(points, field, here.tensor!), { show: p.show, head: p.head, cmap: p.cmap, scale: p.scale, radius: s.mesh.radius });
+    this.drawnPoints = r.points;
+    this.upload(r.arrows, NO_RECORDS, s.mesh.radius);
+    return true;
   }
 }

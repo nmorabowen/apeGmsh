@@ -22,6 +22,8 @@ export interface StepValues {
   /** V4c2a: the element component fetched with the step (null: none), and its values by gauss group, (E * G,) */
   element?: string | null;
   gauss?: Record<string, Float64Array>;
+  /** the Principal card's tensor components, by component then group */
+  tensor?: Record<string, Record<string, Float64Array>>;
 }
 
 /** sRGB (0..1) to linear, per channel (the sRGB transfer function). */

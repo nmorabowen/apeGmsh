@@ -1062,6 +1062,30 @@ export interface ReactionsState {
 }
 
 /**
+ * The Principal card: at each Gauss point an arrow along each principal
+ * direction of a stress or strain tensor (state/principal.ts), the length from
+ * |p|, the colour from the signed p on a diverging map.
+ */
+export interface PrincipalState {
+  readonly on: boolean;
+  /** the tensor field drawn (a `.ladruno` RESULT, `stress` or `strain`); null: the stage's first */
+  readonly field: string | null;
+  /** which of p1 >= p2 >= p3 are drawn (default all three) */
+  readonly show: readonly [boolean, boolean, boolean];
+  readonly head: PrincipalHead;
+  /** the map of the signed value, over -max..max (default RdBu_r: compression blue, tension red) */
+  readonly cmap: ContourCmap;
+  /** Shaft multiplier (default 1, > 0). */
+  readonly scale: number;
+  /** Arrowhead length on screen, in CSS pixels (default 10, > 0). */
+  readonly headSize: number;
+  readonly thin: boolean;
+}
+
+/** `axis`: two heads, one each way from the point (a direction is an axis); `arrow`: one along the sign-canonical direction (Qt). */
+export type PrincipalHead = "axis" | "arrow";
+
+/**
  * The Vectors card: a nodal vector field of the results step on screen as
  * arrows starting at the nodes (state/vectors.ts `buildVectors3D`), or half
  * circles about their axes for a rotational field; sized, coloured and
@@ -1330,6 +1354,7 @@ export interface State {
   /** 3-D structural loading and prescribed-SP visualization state */
   loads: LoadsState;
   reactions: ReactionsState;
+  principal: PrincipalState;
   vectors: VectorsState;
   supports: SupportsState;
   /** Spotlight (`Ctrl+K`) command and search palette */
@@ -1651,6 +1676,8 @@ export type Event =
   | { type: "lineDiagramScan"; scan: ContourScan }
   /** The Display card's BC toggle */
   | { type: "setSupports"; on?: boolean; scale?: number }
+  /** The Principal card's controls */
+  | { type: "setPrincipal"; on?: boolean; field?: string | null; show?: readonly [boolean, boolean, boolean]; head?: PrincipalHead; cmap?: ContourCmap; scale?: number; headSize?: number; thin?: boolean }
   /** The Reactions card's controls */
   | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean; forces?: boolean; moments?: boolean }
   /** The Vectors card's controls (`field` null: the stage's first vector field) */
