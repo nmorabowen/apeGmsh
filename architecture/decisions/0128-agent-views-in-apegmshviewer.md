@@ -389,3 +389,14 @@ and it imports nothing from `apeGmshViewer/`.
 D7's original wording stays as written and is read through this amendment:
 where it implies a `viewers` location, the module path is `apeGmsh.agent_view`.
 
+## Pointer (2026-11-10): ADR 0132
+
+[ADR 0132](0132-workspace-file-and-variants-manifest.md) (Accepted 2026-11-03)
+supersedes INV-1 in part, by narrowing it to the agent modes (`--render`,
+`--describe`, `--snapshot`, `--present`). In those modes INV-1 holds as
+written: no mode writes outside its `--out` directory or edits an open file.
+The human's window is not an agent mode, and it writes `<stem>.workspace.h5`
+when the human saves. ADR 0132 now governs `<stem>.workspace.h5` and the
+variants manifest `<study>.variants.json`. The decision text above is
+unchanged.
+
