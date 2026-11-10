@@ -31,7 +31,10 @@ export interface DescribedField {
 export interface DescribedStage {
   index: number;
   id: string;
+  /** the name shown: a `.ladruno`'s display name, else the program name */
   name: string;
+  /** the program's stage name (W4d #2843); a spec names a stage by either, see compile.ts `stageOf` */
+  programName: string;
   kind: "static" | "transient" | "mode";
   steps: number;
   times: number[];
@@ -102,6 +105,7 @@ export function describeSet(s: State, positions: readonly ArrayLike<number>[]): 
           index,
           id: st.id,
           name: st.name,
+          programName: st.programName,
           kind: st.kind,
           steps: st.time.length,
           times: [...st.time],

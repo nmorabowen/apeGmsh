@@ -74,13 +74,24 @@ function stageOf(shot: SpecShot, d: SetDescription): { ok: true; stage: Describe
   const want = shot.stage!;
   if (!d.files.results) return { ok: false, reason: `the set has no results file, so it has no stage ${JSON.stringify(want)}` };
   if (d.pairing.state !== "paired") return { ok: false, reason: `the results are not drawn on this model: ${d.pairing.reason ?? d.pairing.state}` };
-  const names = d.stages.map((s) => JSON.stringify(s.name));
+  const names = d.stages.map((s) => (s.name === s.programName ? JSON.stringify(s.name) : `${JSON.stringify(s.name)} (program stage ${JSON.stringify(s.programName)})`));
   if (typeof want === "number") {
     const st = d.stages[want];
     return st ? { ok: true, stage: st } : { ok: false, reason: `the results have ${d.stages.length} stages (indices 0 to ${d.stages.length - 1}); stage ${want} is not one of them` };
   }
-  const hits = d.stages.filter((s) => s.name === want);
+  // W4d #2843: a stage answers to its program name and to its shown (display) name, so a
+  // spec keeps resolving after a `.ladruno` is renamed for display.
+  const byProgram = d.stages.filter((s) => s.programName === want);
+  const byShown = d.stages.filter((s) => s.name === want);
+  const hits = [...new Set([...byProgram, ...byShown])];
   if (hits.length === 0) return { ok: false, reason: `the results have no stage named ${JSON.stringify(want)}; their stages are ${list(names)}` };
+  const shownElsewhere = byProgram.length === 1 ? byShown.find((s) => s !== byProgram[0]) : undefined;
+  if (shownElsewhere) {
+    return {
+      ok: false,
+      reason: `${JSON.stringify(want)} is the program name of stage ${byProgram[0]!.index} and the shown name of stage ${shownElsewhere.index}; name the stage by its index`,
+    };
+  }
   if (hits.length > 1) return { ok: false, reason: `${hits.length} stages are named ${JSON.stringify(want)} (indices ${hits.map((s) => s.index).join(", ")}); name the stage by its index` };
   return { ok: true, stage: hits[0]! };
 }

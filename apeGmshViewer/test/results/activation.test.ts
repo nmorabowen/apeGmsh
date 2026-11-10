@@ -9,6 +9,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { compileShot } from "../../src/spec/compile.ts";
+import { describeSet } from "../../src/spec/describe.ts";
+import { viewShotOf } from "../../src/spec/snapshot.ts";
+import { validateSpec } from "../../src/spec/spec.ts";
 import { activationOf } from "../../src/state/activation.ts";
 import { activationNow, inactiveElements, noticesOf, resultsPairing } from "../../src/state/selectors.ts";
 import { reduce, type State } from "../../src/state/store.ts";
@@ -221,4 +225,39 @@ test("W4d: a display name never takes part in matching, even when it is another 
   assert.equal(a.state, "absent");
   assert.match((a as { reason: string }).reason, /no \/sequence stage is named "nope"/);
   assert.equal(inactiveElements(t), null);
+});
+
+// W4d #2843, the spec side (Amendment 1): a spec names a stage by either of its names,
+// so one written against the program name keeps resolving after a display rename;
+// the two names hitting different stages refuses. A snapshot writes the program name.
+const specShot = (stage: string | number) => {
+  const v = validateSpec({ spec: "apegmsh-view/1", files: { model: "m.h5" }, shots: [{ name: "s", stage }] });
+  if (!v.ok) throw new Error(`${v.key}: ${v.reason}`);
+  return v.spec.shots[0]!;
+};
+const resolved = (s: State, stage: string) => {
+  const c = compileShot(specShot(stage), describeSet(s, []));
+  return c.ok ? c.plan.stage!.index : c.reason;
+};
+
+test("W4d: a spec resolves a renamed stage by its program name or its display name; the two names on different stages refuse", () => {
+  const d = describeSet(renamed(base, 0, "Base load"), []);
+  assert.deepEqual(
+    d.stages.map((st) => [st.name, st.programName]),
+    [["Base load", "base"], ["erect", "erect"], ["unprop", "unprop"], ["mode_1", "mode_1"]],
+  );
+  assert.equal(resolved(renamed(base, 0, "Base load"), "base"), 0, "the program name still resolves");
+  assert.equal(resolved(renamed(base, 0, "Base load"), "Base load"), 0, "and so does the display name");
+  assert.equal(resolved(base, "base"), 0);
+  // Stage 0 shown as "erect" while stage 1's program name is "erect": refused, never a guess.
+  assert.match(String(resolved(renamed(base, 0, "erect"), "erect")), /"erect" is the program name of stage 1 and the shown name of stage 0; name the stage by its index/);
+  assert.match(String(resolved(renamed(base, 0, "Base load"), "gravity")), /no stage named "gravity"; their stages are "Base load" \(program stage "base"\), "erect"/);
+});
+
+test("W4d: a snapshot names a renamed stage by its program name, or by its index when that name is ambiguous", () => {
+  const pose = { eye: [1, 1, 1] as [number, number, number], target: [0, 0, 0] as [number, number, number], up: [0, 0, 1] as [number, number, number] };
+  assert.equal(viewShotOf(atStage(renamed(base, 0, "Base load"), 0), pose).shot.stage, "base");
+  assert.equal(viewShotOf(atStage(base, 1), pose).shot.stage, "erect");
+  // Stage 1 shown as "base": "base" would hit two stages, so the snapshot names stage 0 by its index.
+  assert.equal(viewShotOf(atStage(renamed(base, 1, "base"), 0), pose).shot.stage, 0);
 });

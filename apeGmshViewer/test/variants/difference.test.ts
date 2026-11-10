@@ -55,7 +55,7 @@ function compareDoor(path = CRACKED.results) {
     variantsCompare: async (index, label) => {
       const a = await host.open(path);
       if (!a.ok) return { ok: false, reason: a.error };
-      const compare: CompareIn = { index, label, results: path, femHash: a.meta.lineage?.femHash ?? null, stages: a.meta.stages.map((s) => ({ id: s.id, name: s.name, nodal: s.nodal, time: s.time })) };
+      const compare: CompareIn = { index, label, results: path, femHash: a.meta.lineage?.femHash ?? null, stages: a.meta.stages.map((s) => ({ id: s.id, name: s.name, programName: s.programName, nodal: s.nodal, time: s.time })) };
       return { ok: true, compare, nodeIds: a.nodeIds };
     },
     compareClose: async () => host.close(),
@@ -152,6 +152,28 @@ test("another mesh, a magnitude and an element field are refused, each with its 
   assert.match((differencePlanOf(magnitude) as { reason: string }).reason, /a magnitude is not subtracted/);
   const element: State = { ...base, contour: { ...base.contour, source: "element" } };
   assert.match((differencePlanOf(element) as { reason: string }).reason, /an element field is not subtracted/);
+  off();
+});
+
+test("W4d #2843: the two variants' stages are one stage by their program names; a display name is a label only", async () => {
+  const { h, off } = await compared();
+  h.store.dispatch({ type: "setDifference", on: true });
+  const base = h.store.get();
+  const c = base.variants.compare as Extract<NonNullable<State["variants"]["compare"]>, { status: "open" }>;
+  assert.equal(c.status, "open");
+  assert.equal(differencePlanOf(base)?.ok, true, "precondition: the pair subtracts");
+  // The window's stage shown by a display name ("Base load"), same program name: still subtracted.
+  const shownAs = (name: string, programName: string): State => ({
+    ...base,
+    results: { ...base.results!, stages: base.results!.stages.map((st, i) => (i === 0 ? { ...st, name, programName } : st)) },
+  });
+  const prog = base.results!.stages[0]!.programName;
+  const renamed = differencePlanOf(shownAs("Base load", prog));
+  assert.equal(renamed?.ok, true, JSON.stringify(renamed));
+  // Another program name is refused, even when the display name equals the compare stage's name.
+  const other = differencePlanOf(shownAs(c.stages[0]!.name, "another stage"));
+  assert.equal(other?.ok, false);
+  assert.match(other && !other.ok ? other.reason : "", /is program stage "another stage" here and ".*" in "Cracked"/);
   off();
 });
 

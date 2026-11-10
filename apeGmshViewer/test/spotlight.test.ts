@@ -486,6 +486,7 @@ test("spotlightViewOf exposes contour, unit, deform, and step drill-downs when p
         {
           id: "stage_000",
           name: "gravity",
+          programName: "gravity",
           kind: "static",
           time: [0, 0.5, 1.0],
           nodal: ["displacement_x", "displacement_y", "displacement_z"],
