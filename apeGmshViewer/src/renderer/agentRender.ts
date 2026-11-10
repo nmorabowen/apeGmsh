@@ -25,10 +25,10 @@ import type { SpecShot, ViewSpec } from "../spec/spec.ts";
 import { applyClip, shownView } from "../spec/snapshot.ts";
 import type { OnScreen } from "../spec/verdict.ts";
 import type { BlobStore } from "../state/blobs.ts";
-import { combinationFieldsOf, contourView, deformView, variantRowOf } from "../state/selectors.ts";
+import { combinationFieldsOf, contourView, deformView, userResultPickOf, variantRowOf } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { State } from "../state/types.ts";
-import { combinationContourKey, contourKey, differenceContourKey, differenceHeld, elementContourKey, type CombinationColumnOf } from "./contour.ts";
+import { combinationContourKey, contourKey, differenceContourKey, differenceHeld, elementContourKey, userResultContourKey, type CombinationColumnOf } from "./contour.ts";
 import { composeStill, loadStillFonts, type ScaleBar } from "./stillLayers.ts";
 import type { Viewport } from "./viewport.ts";
 
@@ -81,6 +81,8 @@ function contourOnScreen(s: State, viewport: Viewport, effects: Effects): boolea
   if (v.state === "combination") return viewport.contourApplied === combinationContourKey(v);
   // VU10: a difference is drawn from its own read, which waited for the window's step.
   if (v.state === "difference") return viewport.contourApplied === differenceContourKey(v);
+  // VU16: a user result is one state, read on its own, at whatever phase is shown.
+  if (v.state === "user") return viewport.contourApplied === userResultContourKey(v);
   // A shot may repeat the last shot's view: the applied key already matches while its step is read again, and the manifest needs that step's values.
   const at = s.phase.at;
   const step = effects.currentStep();
@@ -115,8 +117,9 @@ function screenAxes(viewport: Viewport): { x: [number, number]; y: [number, numb
 
 function scaleBarOf(s: State, plan: ShotPlan): ScaleBar | null {
   const v = contourView(s);
-  if ((v.state !== "ready" && v.state !== "element" && v.state !== "combination" && v.state !== "difference") || !plan.contour) return null;
+  if ((v.state !== "ready" && v.state !== "element" && v.state !== "combination" && v.state !== "difference" && v.state !== "user") || !plan.contour) return null;
   // VU7b-2: a combination's scale names the combination, as the app's does; VU10: a difference names its two variants.
+  // VU16: a user result's field is its name, so the title already names it.
   const what = v.state === "combination" ? `${v.name} · ` : v.state === "difference" ? `${v.window} − ${v.compare} · ` : "";
   return { title: `${what}${plan.contour.field} ${plan.contour.label}`, min: v.clim.min, max: v.clim.max, rangeLabel: v.clim.label, cmap: v.cmap };
 }
@@ -130,7 +133,16 @@ async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
 async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: SetDescription): Promise<ShotResult> {
   const { store, viewport, bridge, layout, blobs, effects } = deps;
   const t0 = performance.now();
-  const compiled = compileShot(shot, d, (name) => combinationFieldsOf(store.get(), name), (label) => variantRowOf(store.get(), label));
+  const compiled = compileShot(
+    shot,
+    d,
+    (name) => combinationFieldsOf(store.get(), name),
+    (label) => variantRowOf(store.get(), label),
+    (name) => {
+      const p = userResultPickOf(store.get(), name);
+      return p.ok ? { ok: true, components: p.entry.components } : p;
+    },
+  );
   // Nothing was applied: this shot has no view to report, only the reason.
   if (!compiled.ok) return { entry: refusedEntry(store.get(), shot, compiled.reason, null), ms: performance.now() - t0, shownMs: null };
   const plan = compiled.plan;

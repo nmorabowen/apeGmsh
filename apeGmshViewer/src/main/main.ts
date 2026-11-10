@@ -67,7 +67,7 @@ import { openModel } from "../reader/node.ts";
 import { openH5, type H5Openable } from "../reader/h5open.ts";
 import { LadrunoFile, openLadruno } from "../reader/ladruno.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
-import { readUserFile, readUserSet, type UserH5 } from "../reader/userFile.ts";
+import { readUserFile, readUserResultColumn, readUserSet, type UserColumnRead, type UserH5 } from "../reader/userFile.ts";
 import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } from "../reader/userSpectra.ts";
 import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
 import { compareStagesOf, ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
@@ -1144,6 +1144,24 @@ ipcMain.handle("user:readCase", async (_e, req: unknown): Promise<CaseRead> => {
   } catch (err) {
     return { ok: false, reason: "refused", detail: `${p.user}: ${err instanceof Error ? err.message : String(err)}` };
   }
+});
+
+// VU16 (#2800): one component of a state-free `ON_NODES` user result of the
+// `.user.h5`, as a contour column (reader/userFile.ts `UserColumnRead`). The
+// path must be the window's set's user file (`confined`, VU11), and the entry
+// is judged against the set's own model and results (A6) before its DATA is
+// read: a stale entry answers `stale` with its reason. A refused, absent,
+// per-state or non-nodal entry, a component it does not list, and a file that
+// cannot be read answer `ok: false` with the reason; nothing raises.
+ipcMain.handle("user:readResult", async (_e, req: unknown): Promise<UserColumnRead> => {
+  const r = req as { path?: unknown; name?: unknown; component?: unknown } | null;
+  if (!r || typeof r.path !== "string" || typeof r.name !== "string" || typeof r.component !== "string") {
+    return { ok: false, reason: "refused", detail: `user:readResult needs { path, name, component }; got ${shown(req)}` };
+  }
+  const p = confined("user:readResult", { path: r.path });
+  if (!p.ok) return { ok: false, reason: "refused", detail: p.reason };
+  await h5wasm.ready;
+  return readUserResultColumn(h5wasm as unknown as UserH5, p.user, p.model, p.results, listDir, r.name, r.component);
 });
 
 for (const verb of ["subscribe", "unsubscribe"] as const) {

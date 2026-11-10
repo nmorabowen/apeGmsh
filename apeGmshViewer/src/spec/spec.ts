@@ -39,7 +39,8 @@ export const BACKGROUNDS = ["theme", "transparent"] as const;
 export type Background = (typeof BACKGROUNDS)[number];
 
 export const GAUSS_MODES: readonly GaussMode[] = ["cell", "cell_averaged", "node", "node_discrete"];
-export const CONTOUR_SOURCES = ["nodal", "element"] as const;
+/** VU16: `user` is a state-free ON_NODES user result of the set's `.user.h5` (`field` its name, `component` one of its columns). */
+export const CONTOUR_SOURCES = ["nodal", "element", "user"] as const;
 
 /** The size bounds of a still, in CSS pixels (the render window is at device scale 1). */
 export const MIN_SIZE = 64;
@@ -58,8 +59,13 @@ export type SpecRange = { mode: "history" } | { mode: "step" } | { mode: "fixed"
 export interface SpecContour {
   field: string;
   component: string;
-  /** null: the field's own kind (a nodal field, else an element field); ./compile.ts refuses a name both kinds have */
-  source: "nodal" | "element" | null;
+  /**
+   * null: the field's own kind (a nodal field, else an element field);
+   * ./compile.ts refuses a name both kinds have. VU16: `user` names a
+   * state-free user result of the set's `.user.h5`; it is never inferred, and
+   * the shot shows no stage, step, combination, compare or deformed shape.
+   */
+  source: "nodal" | "element" | "user" | null;
   range: SpecRange;
   cmap: ContourCmap;
   gauss: GaussMode;
@@ -303,6 +309,14 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
     if (!c) throw new SpecError(`${key}.compare`, "needs a contour: a difference is shown as a contour");
     if (c.source === "element") throw new SpecError(`${key}.compare`, "a difference is of a nodal component; contour.source is \"element\"");
     if (o["deform"] !== undefined) throw new SpecError(`${key}.deform`, "a difference is never a deformed shape");
+  }
+  // VU16: a user result is one state of its own file: it is shown at no stage or step, over no combination, never subtracted, never a shape.
+  if (c?.source === "user") {
+    if (st !== null) throw new SpecError(`${key}.stage`, "a user result has no state: a shot of one names no stage");
+    if (o["step"] !== undefined) throw new SpecError(`${key}.step`, "a user result has no state: it has no step");
+    if (comb !== null) throw new SpecError(`${key}.combination`, "a shot shows a User Combination or a user result, not both");
+    if (cmp !== null) throw new SpecError(`${key}.compare`, "a user result is not subtracted across variants");
+    if (o["deform"] !== undefined) throw new SpecError(`${key}.deform`, "a user result is shown as a contour only, never as a deformed shape");
   }
   const caption = o["caption"] === undefined ? null : text(o["caption"], `${key}.caption`);
   const chrome = o["chrome"] === undefined ? d.chrome : oneOf(o["chrome"], `${key}.chrome`, CHROMES);

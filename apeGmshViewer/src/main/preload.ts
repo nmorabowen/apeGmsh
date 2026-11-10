@@ -26,6 +26,10 @@
 //   readUserCase(req)       VU7b-2: one result of one `/spectra` case of that
 //                          file, with its values (`user:readCase`,
 //                          reader/userSpectra.ts `CaseRead`); never raises
+//   readUserResult(req)     VU16: one component of a state-free ON_NODES user
+//                          result of that file, as a contour column
+//                          (`user:readResult`, reader/userFile.ts
+//                          `UserColumnRead`); a stale entry is refused (A6)
 //   renderJob() ... renderDone(result)  the ADR 0128 agent modes (below)
 //   onOffers(cb) onSnapshotRequest(cb) snapshotReply(id, reply)  ADR 0128 D5, D6 (below)
 //   variants() onVariants(cb) variantsSwitch(i, label) variantsCompare(i, label)
@@ -124,6 +128,9 @@ contextBridge.exposeInMainWorld("viewer", {
   // one `readUser` named, which main gave the page; main reads only the open set's user file (VU11), so this door
   // opens nothing else.
   readUserCase: (req: { path: string; case: string; target: string; label: string }) => ipcRenderer.invoke("user:readCase", req),
+  // VU16 (#2800): one component of a state-free ON_NODES user result, as a contour column (`user:readResult`). As
+  // readUserCase, the path is the one `readUser` named; main reads only the open set's user file, and refuses a stale entry.
+  readUserResult: (req: { path: string; name: string; component: string }) => ipcRenderer.invoke("user:readResult", req),
   onScanProgress: (cb: (p: { scanId: number; done: number; total: number }) => void) => {
     const handler = (_e: IpcRendererEvent, p: { scanId: number; done: number; total: number }) => cb(p);
     ipcRenderer.on("results:scanProgress", handler);

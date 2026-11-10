@@ -14,7 +14,20 @@ import {
 } from "./lineDiagram.ts";
 import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
 import { elementsOfDecl, selectedElementsOf } from "./search.ts";
-import { combinationFieldsOf, combinationRequestOf, deformOf, differencePlanOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
+import {
+  combinationFieldsOf,
+  combinationRequestOf,
+  deformOf,
+  differencePlanOf,
+  elementJoinKey,
+  geometryPairing,
+  resultsPairing,
+  stageCount,
+  stageIdentity,
+  syncLineDiagramDerived,
+  userResultPickOf,
+  userResultRequestOf,
+} from "./selectors.ts";
 import { initialSearch, initialSpotlight } from "./spotlight.ts";
 import { THEME_MODES } from "../theme/tokens.ts";
 import {
@@ -265,6 +278,7 @@ export const initialState: State = {
   resultStep: null,
   user: null,
   combination: null,
+  userResult: null,
   variants: initialVariants,
   contour: initialContour,
   ndm: NO_NDM,
@@ -533,6 +547,12 @@ function oneOf<T extends string>(v: string, allowed: readonly T[], who: string):
 
 const refusalsOf = (rows: readonly UserRefusalIn[]): UserRefusal[] => rows.map((r) => ({ name: r.name, reason: r.reason, detail: r.detail }));
 
+/** VU16: a user result's columns, copied; anything but a list of names raises, so the caller refuses the answer. */
+function componentsOf(v: unknown, name: string): string[] {
+  if (!Array.isArray(v) || !v.every((c) => typeof c === "string" && c !== "")) throw new RangeError(`userRead: the components of ${name} are ${JSON.stringify(v)}, not a list of names`);
+  return [...(v as string[])];
+}
+
 /** The targets a 1.0.0 spectrum case holds (h5-schema.md `/spectra`: ON_NODES and ON_DOMAIN only). */
 const SPECTRUM_TARGETS = ["nodes", "domain"] as const;
 
@@ -574,6 +594,7 @@ export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): User
         basis: oneOf(x.basis, USER_RESULT_BASES, `the basis of ${x.name}`),
         perState: x.perState,
         linear: x.linear,
+        components: componentsOf(x.components, x.name),
         stale: markOf(staleness.results, x.name),
       })),
       refused: refusalsOf(r.value.refused),
@@ -663,7 +684,8 @@ export const NO_USER_FILE = (path: string): string => `no such file: ${path}`;
  * is not touched.
  */
 function withUser(s: State, user: State["user"]): State {
-  const next = { ...s, user, combination: null };
+  // VU16: so is a user result's: it is read again from the new answer.
+  const next = { ...s, user, combination: null, userResult: null };
   return s.phase.at?.kind === "combination" ? withPhase(next) : next;
 }
 
@@ -1081,7 +1103,8 @@ export function reduce(s: State, e: Event): State {
         lineSwitchNotice !== null,
       );
       const c = next.contour;
-      if (c.field === null || c.component === null) return next;
+      // VU16: a user result is the user file's, not the results'; a re-read of the results keeps it.
+      if (c.field === null || c.component === null || c.source === "user") return next;
       const field = c.field, component = c.component;
       const stage = shownStage(next);
       const has = stage ? hasPick(stage, c.source, field, component) : e.info.stages.some((st) => hasPick(st, c.source, field, component));
@@ -1093,8 +1116,21 @@ export function reduce(s: State, e: Event): State {
     }
     case "setContourField": {
       const source = e.source ?? "nodal";
-      if (source !== "nodal" && source !== "element") throw new RangeError(`setContourField: source ${JSON.stringify(source)}`);
+      if (source !== "nodal" && source !== "element" && source !== "user") throw new RangeError(`setContourField: source ${JSON.stringify(source)}`);
       const at = s.phase.at;
+      if (source === "user") {
+        // VU16: a state-free ON_NODES user result the set's .user.h5 lists, and one of its columns. A stale one is
+        // picked, and the contour refuses it with A6's reason (selectors `userResultContour`).
+        if (at?.kind === "combination") throw new RangeError(`setContourField: User Combination ${JSON.stringify(at.name)} is shown; a user result is not drawn over it`);
+        const p = userResultPickOf(s, e.field);
+        if (!p.ok) throw new RangeError(`setContourField: ${p.reason}`);
+        if (!p.entry.components.includes(e.component)) {
+          throw new RangeError(`setContourField: user result ${JSON.stringify(e.field)} has no component ${JSON.stringify(e.component)}; its components are ${p.entry.components.join(", ")}`);
+        }
+        const c = s.contour;
+        if (c.source === source && c.field === e.field && c.component === e.component && c.notice === null) return s;
+        return { ...s, contour: { ...c, source, field: e.field, component: e.component, join: null, notice: null } };
+      }
       if (at?.kind === "combination") {
         // VU7b-2: what the combination offers: one nodal component of the cases it reaches.
         const f = combinationFieldsOf(s, at.name);
@@ -1689,6 +1725,16 @@ export function reduce(s: State, e: Event): State {
       // Only for the combination and quantity shown now: a late answer for another is dropped.
       if (combinationRequestOf(s)?.key !== r.key) return s;
       return { ...s, combination: r };
+    }
+    case "userResultRead": {
+      const r = e.read;
+      if (r === null || typeof r !== "object" || typeof r.key !== "string" || !["loading", "ready", "refused", "failed"].includes(r.status)) {
+        throw new RangeError(`userResultRead: ${JSON.stringify(r)} is not a user result read`);
+      }
+      if (r.status === "refused" && r.reason !== "refused" && r.reason !== "stale") throw new RangeError(`userResultRead: refusal reason ${JSON.stringify(r.reason)} is not refused or stale`);
+      // Only for the user result and component picked now: a late answer for another is dropped.
+      if (userResultRequestOf(s)?.key !== r.key) return s;
+      return { ...s, userResult: r };
     }
     case "variantsRead":
       return withStudy(s, e.study);

@@ -319,7 +319,7 @@ const IDX: UserReadIn & { ok: true } = {
     zones: ["results"],
     warnings: [],
     combinations: { ok: true, value: { rows: [], modelRows: [], refused: [] } },
-    results: { ok: true, value: { entries: [{ name: "constructor", target: "nodes", basis: "model", perState: false, linear: true }], refused: [] } },
+    results: { ok: true, value: { entries: [{ name: "constructor", target: "nodes", basis: "model", perState: false, linear: true, components: ["x"] }], refused: [] } },
     modes: null,
     spectra: null,
   },

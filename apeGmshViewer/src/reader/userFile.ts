@@ -81,6 +81,12 @@ export interface ResultEntry {
   link: string;
   /** one per row of `DATA` axis 0; empty for a state-free entry */
   states: StateAddress[];
+  /**
+   * VU16: the `@COMPONENTS` of a nodes, entities or domain entry, in `DATA`
+   * column order; [] for an elements entry, whose columns its buckets'
+   * `COLUMN_MAP` names.
+   */
+  components: string[];
 }
 export interface ResultIndex {
   entries: ResultEntry[];
@@ -579,7 +585,9 @@ function readEntryMeta(t: Tree, link: string, g: FpGroup): ResultEntry {
     checkHolder(t, holder, tg, s);
     if (tg === "elements") checkPlacement(t, g, bucket);
   }
-  return { name: name!, target: tg, basis: basis as ResultEntry["basis"], perState: perState === 1, linear: linear === 1, link, states };
+  // checkHolder held @COMPONENTS to one name per DATA column.
+  const components = tg === "elements" ? [] : textAttr(vals, "COMPONENTS")!.split(",");
+  return { name: name!, target: tg, basis: basis as ResultEntry["basis"], perState: perState === 1, linear: linear === 1, link, states, components };
 }
 
 /** The shapes of one holder; `DATA` is never read, only its shape (Python's `_check_holder`). */
@@ -1006,6 +1014,93 @@ export function readEntityValues(h5: UserH5, path: string, name: string): Entity
     };
   } finally {
     f.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// VU16: one component of a state-free ON_NODES user result, as a contour column
+// ---------------------------------------------------------------------------
+
+/** One component of a state-free `ON_NODES` user result: the node ids and their values, in `DATA` row order. */
+export interface UserNodalColumn {
+  name: string;
+  component: string;
+  /** every component of the entry, in `DATA` column order */
+  components: string[];
+  /** the entry's `ID` column (FEM node ids) */
+  ids: Float64Array;
+  /** `DATA[0, :, column]`; NaN is no value at that node (drawn as no data) */
+  values: Float64Array;
+}
+
+/** What `user:readResult` answers: the column, or why it is not given (`stale`: A6; `refused`: anything else). */
+export type UserColumnRead = { ok: true; value: UserNodalColumn } | { ok: false; reason: "refused" | "stale"; detail: string };
+
+/** A user result whose column cannot be given: absent, refused, on another target, or per state. */
+export class UserColumnRefused extends Error {}
+
+/**
+ * The column of `component` of the state-free `ON_NODES` user result `name`,
+ * read on request (never by the index). It must stand in `results` (the index
+ * `readUserFile` read from the same file), so its `DATA` and `ID` shapes are
+ * already checked; an id listed twice refuses, because a node takes one value.
+ */
+export function readUserNodalColumn(h5: UserH5, path: string, results: ZoneRead<ResultIndex>, name: string, component: string): UserNodalColumn {
+  if (!results.ok) throw new UserColumnRefused(`${path}: /results ${results.reason}`);
+  const entry = results.value.entries.find((e) => e.name === name);
+  if (entry === undefined) {
+    const why = results.value.refused.find((r) => r.name === name);
+    throw new UserColumnRefused(why ? `user result ${pyStr(name)} is refused: ${why.reason}: ${why.detail}` : `${path} holds no user result ${pyStr(name)}`);
+  }
+  if (entry.target !== "nodes") throw new UserColumnRefused(`user result ${pyStr(name)} is on ${entry.target}; this app draws a user result on nodes only`);
+  if (entry.perState) throw new UserColumnRefused(`user result ${pyStr(name)} is per state (${entry.states.length} states); this app draws a state-free one only`);
+  const column = entry.components.indexOf(component);
+  if (column < 0) throw new UserColumnRefused(`user result ${pyStr(name)} has no component ${pyStr(component)}; its components are ${entry.components.join(", ")}`);
+  const t = new Tree(h5);
+  const f = openH5(h5, path);
+  try {
+    const v = t.group(f, `results/${entry.link}/RESULTS/ON_NODES/values`)!;
+    const data = t.dataset(v, "DATA")!;
+    const [, n, c] = shape(data) as [number, number, number];
+    const raw = data.value as Float64Array;
+    const ids = Float64Array.from(columnValues(t.dataset(v, "ID")!) as number[]);
+    const values = new Float64Array(n);
+    for (let k = 0; k < n; k++) values[k] = raw[k * c + column]!;
+    const seen = new Set<number>();
+    for (const id of ids) {
+      if (seen.has(id)) throw new UserColumnRefused(`user result ${pyStr(name)} lists node ${id} twice in its ID column`);
+      seen.add(id);
+    }
+    return { name, component, components: [...entry.components], ids, values };
+  } finally {
+    f.close();
+  }
+}
+
+/**
+ * `user:readResult`'s answer for the `.user.h5` at `path` judged against the
+ * set's `model` and `results` (A6): a stale entry is refused with its reason
+ * before its `DATA` is read; then `readUserNodalColumn`. Never raises.
+ */
+export function readUserResultColumn(
+  h5: UserH5,
+  path: string,
+  model: string | null,
+  results: string | null,
+  list: (dir: string) => readonly string[],
+  name: string,
+  component: string,
+): UserColumnRead {
+  const set = readUserSet(h5, path, model, results, list);
+  if (!set.ok) return { ok: false, reason: "refused", detail: set.error };
+  if (Object.hasOwn(set.staleness.results, name)) {
+    const mark = set.staleness.results[name]!;
+    if (mark.stale) return { ok: false, reason: "stale", detail: `user result ${pyStr(name)} is stale (A6): ${mark.reason}` };
+  }
+  try {
+    return { ok: true, value: readUserNodalColumn(h5, path, set.user.results, name, component) };
+  } catch (err) {
+    return { ok: false, reason: "refused", detail: message(err) };
   }
 }
 

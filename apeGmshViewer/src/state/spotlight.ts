@@ -73,6 +73,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   userOpened: { kind: "system", reason: "dispatched by the app's user-file feed when the set's .user.h5 is read" },
   userRead: { kind: "system", reason: "dispatched by the app's user-file feed with the user:read answer" },
   combinationRead: { kind: "system", reason: "dispatched by the app's combination feed with the evaluator's answer for the User Combination shown" },
+  userResultRead: { kind: "system", reason: "dispatched by the app's user-result feed with main's user:readResult answer for the user result picked" },
   // VU10 (ADR 0132 D9): the variants panel and its runner
   variantsRead: { kind: "system", reason: "dispatched by the variant runner with main's study: the manifest the user opened, its rows and main's compare slot" },
   variantSwitch: { kind: "gesture", reason: "a row of the variants panel; it names a manifest row by index and label, which only the panel lists" },
