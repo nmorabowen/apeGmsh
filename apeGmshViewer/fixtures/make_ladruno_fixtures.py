@@ -4,6 +4,7 @@
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --modes  # + the fork run
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --portal3d  # + the 3-D fork run
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --quad2d    # + the Gauss-point fork run
+    python apeGmshViewer/fixtures/make_ladruno_fixtures.py --springs   # + the zeroLength fork run
 
 run from the repository root. The first form needs h5py and numpy only; the
 second also needs a Ladruno fork build of OpenSees behind ``openseespy`` (the
@@ -65,6 +66,26 @@ this file:
   build ``79e0623670`` (the opensees venv, 2026-10-19), FORMAT_MINOR_VERSION 0.
   ``ladruno_quad2d.oracle.json`` is written by ``tests/fixtures/ladruno/make_viewer_gauss_oracle.py``
   (outside the app: it imports apeGmsh, ADR 0112 D4).
+* ``ladruno_springs3d.ladruno`` and ``ladruno_springs3d.h5`` (``--springs``): a
+  fork run and the model it pairs with. Two 3-D ``zeroLength`` springs on
+  ``Elastic`` materials (k = 100, 200, 300), each from a fixed ground node to a
+  coincident free node. Spring 1 (nodes 1-2 at the origin) acts along
+  ``-dir 1 2 3`` on the global axes; spring 2 (nodes 3-4 at (2, 0, 0)) acts along
+  ``-dir 1 2`` with ``-orient 1 1 0 -1 1 0``, so its local x is (1, 1, 0) / sqrt 2
+  and its local y (-1, 1, 0) / sqrt 2, and node 4 is fixed in z. Loads (10, -5, 4)
+  at node 2 and (10, -5, 0) at node 4, two LoadControl 0.5 steps, with ``-N
+  displacement -E force basicForce localForce deformation basicDeformation
+  material.stress material.strain``. At load factor t the global ``force`` of
+  each spring is t times its load at node j (its negative at node i), and
+  ``basicForce`` is (10, -5, 4) t on spring 1 and (5, -15) t / sqrt 2 on spring 2.
+  ``force`` (``P1_1 .. P2_3``, global) holds both springs in one bucket; the
+  per-direction tokens split by slot count, spring 1 (``P1,P2,P3``) in
+  ``19-ZeroLength[1:0:0]`` and spring 2 (``P1,P2``) in ``[1:0:1]``. The fork
+  writes no ``-dir`` code and no ``LOCAL_AXES`` for a zeroLength: those
+  columns are slots by position. The script stamps
+  ``INFO/PROVENANCE`` with ``STAMP`` and writes the model.h5 by hand (nodes and
+  two ``line2`` elements). Fork build ``79e0623670`` (the opensees venv),
+  FORMAT_MINOR_VERSION 0.
 * ``ladruno_parts2d.part-0.ladruno``, ``ladruno_parts2d.part-1.ladruno`` and
   ``ladruno_parts2d.h5`` (``--parts``, #2188): a 2-rank OpenSeesMP run and the
   model it pairs with. Two trusses (EA = 1000) meet at node 2 (1, 1), which is
@@ -326,6 +347,106 @@ def quad2d() -> None:
         plate.attrs["dim"] = np.int64(2)
         plate.attrs["tag"] = np.int64(1)
         plate["element_ids"] = np.arange(1, 7, dtype=np.int64)
+
+
+_SPRINGS_RUN = r"""
+import sys
+import openseespy.opensees as ops
+
+path = sys.argv[1]
+ops.wipe()
+ops.model("basic", "-ndm", 3, "-ndf", 3)
+ops.node(1, 0.0, 0.0, 0.0)
+ops.node(2, 0.0, 0.0, 0.0)
+ops.node(3, 2.0, 0.0, 0.0)
+ops.node(4, 2.0, 0.0, 0.0)
+ops.fix(1, 1, 1, 1)
+ops.fix(3, 1, 1, 1)
+ops.fix(4, 0, 0, 1)
+ops.uniaxialMaterial("Elastic", 1, 100.0)
+ops.uniaxialMaterial("Elastic", 2, 200.0)
+ops.uniaxialMaterial("Elastic", 3, 300.0)
+ops.element("zeroLength", 1, 1, 2, "-mat", 1, 2, 3, "-dir", 1, 2, 3)
+ops.element("zeroLength", 2, 3, 4, "-mat", 1, 2, "-dir", 1, 2, "-orient", 1.0, 1.0, 0.0, -1.0, 1.0, 0.0)
+ops.timeSeries("Linear", 1)
+ops.pattern("Plain", 1, 1)
+ops.load(2, 10.0, -5.0, 4.0)
+ops.load(4, 10.0, -5.0, 0.0)
+ops.recorder("ladruno", path, "-N", "displacement", "-E", "force", "basicForce", "localForce",
+             "deformation", "basicDeformation", "material.stress", "material.strain")
+ops.system("BandGen")
+ops.numberer("Plain")
+ops.constraints("Plain")
+ops.integrator("LoadControl", 0.5)
+ops.algorithm("Linear")
+ops.analysis("Static")
+ops.analyze(2)
+ops.wipe()
+"""
+
+#: The springs3d model, as _SPRINGS_RUN builds it: two coincident node pairs.
+SPRINGS3D_NODES = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float64)
+SPRINGS3D_CONN = np.array([[1, 2], [3, 4]], dtype=np.int64)
+
+
+def springs3d() -> None:
+    """Write ``ladruno_springs3d.ladruno`` (a fork run, stamped) and ``ladruno_springs3d.h5`` (its model, by hand)."""
+    out = HERE / "ladruno_springs3d.ladruno"
+    if out.exists():
+        out.unlink()
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
+    subprocess.run([sys.executable, "-c", _SPRINGS_RUN, str(out)], check=True, env=env)
+    r2 = np.sqrt(2.0)
+    with h5py.File(out, "r+") as f:
+        st = f["MODEL_STAGE[1]"]
+        elems = st["MODEL/ELEMENTS"]
+        assert list(elems) == ["19-ZeroLength[1:0]"], list(elems)
+        conn = elems["19-ZeroLength[1:0]/CONNECTIVITY"][()]
+        assert (conn[:, 0] == [1, 2]).all() and (conn[:, 1:] == SPRINGS3D_CONN).all(), conn
+        assert np.allclose(st["MODEL/NODES/COORDINATES"][()], SPRINGS3D_NODES)
+        assert "LOCAL_AXES" not in st["MODEL"]
+        on_el = st["RESULTS/ON_ELEMENTS"]
+        t = np.array([0.5, 1.0])[:, None]
+        load = np.array([[10.0, -5.0, 4.0], [10.0, -5.0, 0.0]])
+        # `force` holds both springs in one bucket (ndf1 + ndf2 = 6 columns, global frame).
+        force = on_el["force/19-ZeroLength[1:0:0]"]
+        assert force["COLUMN_MAP"].attrs["COMP_NAMES"].reshape(-1)[0].decode() == "P1_1,P1_2,P1_3,P2_1,P2_2,P2_3"
+        assert force["ID"][()].reshape(-1).tolist() == [1, 2]
+        fdata = force["DATA"][()]
+        for e in range(2):
+            assert np.allclose(fdata[:, e, 3:], t * load[e]) and np.allclose(fdata[:, e, :3], -t * load[e]), fdata
+        # The per-direction tokens split by slot count: spring 1 (three -dir slots) in [1:0:0], spring 2 (two) in [1:0:1].
+        basic = {key: on_el[f"basicForce/19-ZeroLength[1:0:{key}]"] for key in (0, 1)}
+        assert basic[0]["COLUMN_MAP"].attrs["COMP_NAMES"].reshape(-1)[0].decode() == "P1,P2,P3"
+        assert basic[1]["COLUMN_MAP"].attrs["COMP_NAMES"].reshape(-1)[0].decode() == "P1,P2"
+        assert basic[0]["ID"][()].reshape(-1).tolist() == [1] and basic[1]["ID"][()].reshape(-1).tolist() == [2]
+        assert np.allclose(basic[0]["DATA"][:, 0, :], t * load[0])
+        assert np.allclose(basic[1]["DATA"][:, 0, :], t * np.array([5.0, -15.0]) / r2)
+        prov = f["INFO/PROVENANCE"]
+        for name, value in STAMP.items():
+            prov.attrs.create(name, data=value, dtype=VLEN_UTF8)
+    with h5py.File(HERE / "ladruno_springs3d.h5", "w") as f:
+        meta = f.create_group("meta")
+        meta.attrs["neutral_schema_version"] = "2.35.0"
+        meta.attrs["opensees_schema_version"] = "2.24.0"
+        meta.attrs["ndm"] = np.int64(3)
+        meta.attrs["ndf"] = np.int64(3)
+        lin = meta.create_group("lineage")
+        lin.attrs["model_hash"] = STAMP["model_hash"]
+        lin.attrs["fem_hash"] = STAMP["fem_hash"]
+        nodes = f.create_group("nodes")
+        nodes["ids"] = np.arange(1, 5, dtype=np.int64)
+        nodes["coords"] = SPRINGS3D_NODES
+        line2 = f.create_group("elements").create_group("line2")
+        line2.attrs["code"] = np.int64(1)
+        line2.attrs["dim"] = np.int64(1)
+        line2.attrs["npe"] = np.int64(2)
+        line2["ids"] = np.arange(1, 3, dtype=np.int64)
+        line2["connectivity"] = SPRINGS3D_CONN
+        springs = f.create_group("physical_groups").create_group("element_side").create_group("Springs")
+        springs.attrs["dim"] = np.int64(1)
+        springs.attrs["tag"] = np.int64(1)
+        springs["element_ids"] = np.arange(1, 3, dtype=np.int64)
 
 
 _PARTS_TCL = r"""
@@ -684,6 +805,7 @@ def main() -> None:
     ap.add_argument("--portal3d", action="store_true", help="also run the fork to write ladruno_portal3d.ladruno")
     ap.add_argument("--quad2d", action="store_true", help="also run the fork to write ladruno_quad2d.ladruno and its model")
     ap.add_argument("--parts", action="store_true", help="also run OpenSeesMP (2 ranks) to write the ladruno_parts2d part set and its model")
+    ap.add_argument("--springs", action="store_true", help="also run the fork to write ladruno_springs3d.ladruno and its model")
     args = ap.parse_args()
     truss2d()
     stamped()
@@ -697,6 +819,8 @@ def main() -> None:
         quad2d()
     if args.parts:
         parts()
+    if args.springs:
+        springs3d()
 
 
 if __name__ == "__main__":

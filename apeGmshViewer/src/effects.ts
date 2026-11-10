@@ -11,7 +11,7 @@
 import { CombinationRefused, evaluate, type CombinationTable } from "./combination/evaluate.ts";
 import type { ModelFile } from "./model/types.ts";
 import type { GeometryZone } from "./reader/geometry.ts";
-import type { LadrunoLineStationStep } from "./reader/ladruno.ts";
+import type { LadrunoLineStationStep, LadrunoSpringStep } from "./reader/ladruno.ts";
 import type { ProvenanceZone } from "./reader/provenance.ts";
 import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZONE_FLOOR } from "./reader/read.ts";
 import { spectrumSource, type CaseQuantityName, type CaseRead, type SpectraStaleness, type SpectrumTarget } from "./reader/userSpectra.ts";
@@ -95,8 +95,20 @@ export interface Bridge {
   /** V4c1: the progress of the running scans; returns the unsubscribe. */
   onScanProgress?(cb: (p: { scanId: number; done: number; total: number }) => void): (() => void) | void;
   /** V4b: one step of the open results file; the reply echoes `seq`. V4c2a: `element` reads one Gauss component too (`gauss`, by group); `tensor` several (by component, then group). */
-  readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: LineStationComponent; tensor?: string[] }): Promise<
-    | { ok: true; seq: number; stage: string; step: number; nodal: Record<string, Float64Array>; gauss?: Record<string, Float64Array>; tensor?: Record<string, Record<string, Float64Array>>; lineDiagram?: LadrunoLineStationStep | null; lineDiagramError?: string }
+  readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: LineStationComponent; tensor?: string[]; springs?: boolean }): Promise<
+    | {
+        ok: true;
+        seq: number;
+        stage: string;
+        step: number;
+        nodal: Record<string, Float64Array>;
+        gauss?: Record<string, Float64Array>;
+        tensor?: Record<string, Record<string, Float64Array>>;
+        lineDiagram?: LadrunoLineStationStep | null;
+        lineDiagramError?: string;
+        springs?: LadrunoSpringStep | null;
+        springsError?: string;
+      }
     | { ok: false; seq: number; error: string; changed?: true }
   >;
   /** V2f: read a /geometry sibling (null: the file has no such zone). */
@@ -294,6 +306,10 @@ export interface StepData {
   lineDiagram?: LadrunoLineStationStep | null;
   /** Refusal message when the step's line-station read failed while nodal/gauss succeeded */
   lineDiagramError?: string | null;
+  /** The zero-length springs' force, fetched while the Springs card is on (absent: not asked; null: the read failed) */
+  springs?: LadrunoSpringStep | null;
+  /** Why the springs' read failed */
+  springsError?: string | null;
 }
 
 export class Effects {
@@ -1036,13 +1052,16 @@ export class Effects {
     // The Principal card reads the components of its tensor field (a verified file's only: `principalFieldOf`).
     const components = s.principal.on ? principalFieldOf(s)?.components : undefined;
     const tensor = components?.length ? components : null;
-    const key = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
-    if (key === this.stepKey) return;
+    const springs = s.springs.on && (st.springs ?? 0) > 0;
+    const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
+    const key = `${base}|${springs ? "springs" : ""}`;
+    // The card turned off keeps the step fetched with its springs: they are only not drawn, and nothing is re-read.
+    if (key === this.stepKey || (!springs && this.stepKey === `${base}|springs`)) return;
     this.stepKey = key;
     const seq = ++this.stepSeq;
     this.step = null;
     // Not from inside this listener: the other listeners have not seen `s` yet.
-    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor));
+    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor, springs));
   }
 
   private async fetchStep(
@@ -1054,6 +1073,7 @@ export class Effects {
     element: string | null = null,
     lineDiagram: LineStationComponent | null = null,
     tensor: string[] | null = null,
+    springs = false,
   ): Promise<void> {
     if (seq !== this.stepSeq) return;
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "loading", error: null } });
@@ -1070,6 +1090,7 @@ export class Effects {
         ...(element !== null ? { element } : {}),
         ...(lineDiagram !== null ? { lineDiagram } : {}),
         ...(tensor !== null ? { tensor } : {}),
+        ...(springs ? { springs } : {}),
       })
       .catch((err: unknown) => ({ ok: false as const, seq, error: err instanceof Error ? err.message : String(err) }));
     // Latest wins: a slow reply for an older request never paints over a newer step.
@@ -1089,8 +1110,14 @@ export class Effects {
       ...(res.tensor ? { tensor: res.tensor } : {}),
       lineDiagram: res.lineDiagram ?? null,
       lineDiagramError: res.lineDiagramError ?? null,
+      ...(springs ? { springs: res.springs ?? null, springsError: res.springsError ?? null } : {}),
     };
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "ready", error: null } });
+    // A failed springs read says why on the card; the next good one clears it.
+    if (springs) {
+      const notice = res.springs ? null : (res.springsError ?? "the step's spring forces were not read");
+      if (this.store.get().springs.notice !== notice) this.store.dispatch({ type: "setSprings", notice });
+    }
   }
 
   /** A loaded model with a loaded geometry sibling: their rewrites reload as one set. */

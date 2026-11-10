@@ -259,6 +259,32 @@ export interface LadrunoLocalAxes {
   /** (nElements,) provenance of each element's recorded frame (`"step_local_axes"`, `"model_local_axes"`, or `null` when unrecorded). */
   sources: (LocalAxesSource | null)[];
 }
+
+/**
+ * One step of a stage's zero-length springs: the 2-node elements whose ends
+ * coincide in `MODEL/NODES`, read from their global `force` bucket
+ * (`P<node>_<dof>`, node-major). The force is node j's translational
+ * resisting force, so it needs no spring frame: a skewed (`-orient`) or an
+ * interface spring reads the same as an axis-aligned one.
+ */
+export interface LadrunoSpringStep {
+  /** (n,) element ids */
+  elementIds: Float64Array;
+  /** (n * 2,) end nodes `[iNode, jNode]` per spring, from `MODEL/ELEMENTS/<group>/CONNECTIVITY` */
+  nodes: Float64Array;
+  /** (n * 3,) node j's force along global x, y, z (0 past the spatial dimension) */
+  force: Float64Array;
+  time: number;
+}
+
+/** A `force` bucket's springs: its DATA, the bucket rows that are springs, and node j's translation columns (-1: none). */
+interface SpringBucket {
+  dataDs: LDataset;
+  rows: number[];
+  cols: [number, number, number];
+  ids: Float64Array;
+  nodes: Float64Array;
+}
 /** Where one component of one stage lives: a 3-D DATA[T, n, c] or a 2-D MODE_<k>[n, c]. */
 interface Column {
   path: string;
@@ -298,6 +324,8 @@ export class LadrunoFile {
   private readonly columns = new Map<string, Map<string, Column>>();
   private readonly nodeColumn = new Map<string, Map<number, number>>();
   private readonly gauss: LadrunoGauss;
+  /** Each stage's spring buckets, found once (`springBuckets`). */
+  private readonly springs = new Map<string, SpringBucket[]>();
 
   constructor(h5: ResultsH5, f: LFile, path: string, part = false) {
     this.h5 = h5;
@@ -820,6 +848,114 @@ export class LadrunoFile {
       elementNodes: slab.elementNodes ?? null,
       ...(companionStep !== undefined ? { companionStep } : {}),
     };
+  }
+
+  // -- zero-length springs --------------------------------------------------
+
+  /** How many zero-length springs `stageId` records a global `force` for (`readSpringStep`); 0 on a mode stage. */
+  springCount(stageId: string, warningsOut?: string[]): number {
+    return this.springBuckets(stageId, warningsOut).reduce((n, b) => n + b.rows.length, 0);
+  }
+
+  /** The springs' node-j force at `step` of `stageId`, bucket by bucket in file order. */
+  readSpringStep(stageId: string, step: number): LadrunoSpringStep {
+    const s = this.stage(stageId);
+    if (!Number.isInteger(step) || step < 0 || step >= s.nSteps) {
+      throw new LadrunoError("argument", `step ${step} is outside stage ${stageId} (0..${s.nSteps - 1})`);
+    }
+    const buckets = this.springBuckets(stageId);
+    const n = buckets.reduce((k, b) => k + b.rows.length, 0);
+    const out: LadrunoSpringStep = { elementIds: new Float64Array(n), nodes: new Float64Array(n * 2), force: new Float64Array(n * 3), time: s.time[step]! };
+    let k = 0;
+    for (const b of buckets) {
+      const width = b.dataDs.shape![2]!;
+      const raw = toFloat64(b.dataDs.slice([[step, step + 1], [], []]), b.dataDs.path);
+      for (const r of b.rows) {
+        out.elementIds[k] = b.ids[r]!;
+        out.nodes[k * 2] = b.nodes[r * 2]!;
+        out.nodes[k * 2 + 1] = b.nodes[r * 2 + 1]!;
+        for (let c = 0; c < 3; c++) out.force[k * 3 + c] = b.cols[c]! >= 0 ? raw[r * width + b.cols[c]!]! : 0;
+        k++;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The stage's `force` buckets that hold zero-length springs: a bucket of 2-node
+   * elements (`CONNECTIVITY` rows `[eid, iNode, jNode]`) whose columns name node j's
+   * translations, keeping the rows whose two nodes coincide in `MODEL/NODES` (a truss
+   * shares the spelling, never the zero length). A bucket the rule cannot read warns
+   * once, at open, and is left out.
+   */
+  private springBuckets(stageId: string, warningsOut?: string[]): SpringBucket[] {
+    const memo = this.springs.get(stageId);
+    if (memo) return memo;
+    const found: SpringBucket[] = [];
+    this.springs.set(stageId, found);
+    const s = this.stage(stageId);
+    if (s.kind === "mode") return found;
+    const hostGrp = this.group(this.f, s.name);
+    const forceGrp = this.optionalSubgroup(hostGrp, ["RESULTS", "ON_ELEMENTS", "force"]);
+    const modelElements = this.optionalSubgroup(hostGrp, ["MODEL", "ELEMENTS"]);
+    const nodesGrp = this.optionalSubgroup(hostGrp, ["MODEL", "NODES"]);
+    const nodeIdDs = nodesGrp ? this.optionalDataset(nodesGrp, "ID") : null;
+    const coordDs = nodesGrp ? this.optionalDataset(nodesGrp, "COORDINATES") : null;
+    if (!forceGrp || !modelElements || !nodeIdDs || !coordDs) return found;
+    const ndm = this.inferSpatialDim();
+    const cshape = coordDs.shape ?? [];
+    if (ndm === null || cshape.length !== 2 || cshape[1]! < 1) return found;
+    const nodeIds = intsAsNumbers(nodeIdDs);
+    const coords = toFloat64(coordDs.value, coordDs.path);
+    const cw = cshape[1]!;
+    const at = new Map<number, number>();
+    let span = 0;
+    nodeIds.forEach((id, i) => at.set(id, i));
+    for (const v of coords) if (Number.isFinite(v)) span = Math.max(span, Math.abs(v));
+    // Coincident within a part in 1e9 of the model's extent: a zeroLength's two nodes are one point.
+    const tol = 1e-9 * Math.max(span, 1);
+    const coincide = (a: number, b: number): boolean => {
+      const ia = at.get(a), ib = at.get(b);
+      if (ia === undefined || ib === undefined) return false;
+      for (let c = 0; c < cw; c++) if (!(Math.abs(coords[ia * cw + c]! - coords[ib * cw + c]!) <= tol)) return false;
+      return true;
+    };
+    for (const key of forceGrp.keys()) {
+      const bucket = this.optionalGroup(forceGrp, key);
+      const grp = modelGroupFor(modelElements, key, (n) => this.optionalGroup(modelElements, n));
+      const conn = grp ? this.optionalDataset(grp, "CONNECTIVITY") : null;
+      const shape = conn?.shape ?? [];
+      // Only 2-node element groups can hold a spring; any other (a quad's `force`) is no concern here.
+      if (!bucket || !conn || shape.length !== 2 || shape[1] !== 3 || conn.metadata.type !== H5T_INTEGER) continue;
+      const raw = intsAsNumbers(conn);
+      const ends = new Map<number, [number, number]>();
+      for (let r = 0; r < shape[0]!; r++) ends.set(raw[r * 3]!, [raw[r * 3 + 1]!, raw[r * 3 + 2]!]);
+      const parsed = this.parseBucketBlocks(bucket);
+      if ("reason" in parsed) {
+        warningsOut?.push(`force bucket ${JSON.stringify(key)} is unreadable: ${parsed.reason} Its springs are left out.`);
+        continue;
+      }
+      const nodes = new Float64Array(parsed.ids.length * 2).fill(Number.NaN);
+      const rows: number[] = [];
+      parsed.ids.forEach((eid, r) => {
+        const e = ends.get(eid);
+        if (!e) return;
+        nodes[r * 2] = e[0];
+        nodes[r * 2 + 1] = e[1];
+        if (coincide(e[0], e[1])) rows.push(r);
+      });
+      if (rows.length === 0) continue;
+      const block = parsed.blocks.length === 1 && parsed.blocks[0]!.level === 0 && parsed.blocks[0]!.multiplicity === 1 ? parsed.blocks[0]! : null;
+      const cols = block ? nodeJTranslations(block.compNames, ndm) : null;
+      if (!block || !cols) {
+        warningsOut?.push(
+          `force bucket ${JSON.stringify(key)} holds ${rows.length} zero-length element(s), but its columns (${block ? block.compNames.join(",") : "not one element-level block"}) do not name node j's translations as P<node>_<dof>: its spring arrows are left out.`,
+        );
+        continue;
+      }
+      found.push({ dataDs: parsed.dataDs, rows, cols: cols.map((c) => (c < 0 ? -1 : block.colStart + c)) as [number, number, number], ids: parsed.ids, nodes });
+    }
+    return found;
   }
 
   /**
@@ -1691,6 +1827,43 @@ function intsAsNumbers(ds: LDataset): Float64Array {
   }
   if (v instanceof Int32Array || v instanceof Uint32Array || v instanceof Int16Array || v instanceof Int8Array) return Float64Array.from(v);
   throw new LadrunoError("dtype", `${ds.path} is not an integer dataset`);
+}
+
+// -- spring helpers -----------------------------------------------------------
+
+/**
+ * The columns of node j's translations 1..`ndm` (then -1 up to 3) in a 2-node
+ * element's `force` names, or null when they cannot be told apart. OpenSees
+ * spells the columns `P<node>_<dof>` (trusses, zeroLength) or `P<dof>_<node>`
+ * (continua); the vector is node-major either way, so the index that runs
+ * 1, 1, ..., 2, 2 while the other restarts at 1 is the node.
+ */
+export function nodeJTranslations(names: readonly string[], ndm: number): [number, number, number] | null {
+  const pairs = names.map((n) => /^P(\d+)_(\d+)$/.exec(n));
+  if (pairs.length === 0 || pairs.some((m) => m === null)) return null;
+  const idx = pairs.map((m) => [Number(m![1]), Number(m![2])] as const);
+  const nodeAt = [0, 1].filter((p) => {
+    const q = 1 - p;
+    let seen2 = false;
+    for (let i = 0; i < idx.length; i++) {
+      const node = idx[i]![p]!, dof = idx[i]![q]!;
+      const prev = i > 0 ? idx[i - 1]! : null;
+      if (node !== 1 && node !== 2) return false;
+      if (node === 2) seen2 = true;
+      if (prev && node < prev[p]!) return false;
+      if (dof !== (prev && prev[p] === node ? prev[q]! + 1 : 1)) return false;
+    }
+    return seen2;
+  });
+  if (nodeAt.length !== 1) return null;
+  const p = nodeAt[0]!;
+  const out: [number, number, number] = [-1, -1, -1];
+  for (let d = 1; d <= Math.min(ndm, 3); d++) {
+    const i = idx.findIndex((x) => x[p] === 2 && x[1 - p] === d);
+    if (i < 0) return null;
+    out[d - 1] = i;
+  }
+  return out;
 }
 
 // -- line-station & local-axes helpers ----------------------------------------

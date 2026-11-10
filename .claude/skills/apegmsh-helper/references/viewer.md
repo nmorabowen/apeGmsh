@@ -167,9 +167,9 @@ screen (not on the geometry phase). Refused rows never draw. A storey
 naming a node the model does not hold is not drawn; the reason is a warning
 in the developer console (DevTools), not in the window.
 
-## 8. Loads & SPs, Reactions, Vectors, Principal and supports
+## 8. Loads & SPs, Reactions, Vectors, Principal, Springs and supports
 
-On the Loads & SPs, Reactions, Vectors and Principal cards every arrow is sized on screen: the
+On the Loads & SPs, Reactions, Vectors, Principal and Springs cards every arrow is sized on screen: the
 head is twice as long as it is wide and
 `head` pixels long (12 by default; 10 on Principal, where a Gauss point carries up to six arrows), and a shaft stays between 15 and 80
 pixels times the card's `scale`. Zooming rebuilds nothing. **thin out** (on
@@ -228,6 +228,21 @@ under 1e-6 of the largest are not drawn, so a 2-D element's zz draws
 nothing. A field the card cannot draw is listed as "(not drawn)", with its
 reasons. Like the Vectors card it shows direction and relative size, not
 values, and `--render` cannot draw it.
+
+**Springs** shows when the stage on screen is one `.ladruno` that records
+the `force` of zero-length springs: 2-node elements whose two nodes
+coincide, such as `zeroLength` and the springs `g.constraints.interface()`
+emits (record `-E force`). **3D spring forces** (off by default) draws one
+arrow per spring, its tip on the spring, along the force node j applies to
+the spring: tension-positive, as the Qt diagram's basic force, so a spring
+stretched along +x draws +x. The force is read in the global frame, so a
+skewed (`-orient`) or an interface spring draws exactly; at a spring's
+ground node the Reactions card draws the opposite arrow. The menu picks the
+resultant, the X, Y, Z components, or one axis. Forces under 1e-6 of the
+step's largest are not drawn; a failed read says why on the card. Lengths
+are relative, as on Vectors. Per-direction arrows (`basicForce`), rotational
+springs and a partitioned `.ladruno` set are not drawn yet, and `--render`
+cannot draw the card.
 
 **Supports**: the **BC** switch in the Display card (off by default) draws
 the restraints from the model alone: an arrow into the node per restrained

@@ -316,6 +316,8 @@ export interface ResultsStage {
   elementIndexSpace?: string | null;
   /** 1-D beam line-station components recorded in this stage (.ladruno) */
   lineStations?: LineStationComponent[];
+  /** zero-length springs this stage records a global `force` for (.ladruno); absent or 0 for none */
+  springs?: number;
   /** a `.ladruno` mode stage's eigen scalars, as the file records them (its LAMBDA); absent elsewhere */
   mode?: ModeFacts;
 }
@@ -1105,6 +1107,26 @@ export interface VectorsState {
   readonly component: ReactionComponent;
 }
 
+/**
+ * The Springs card: the results step's zero-length spring forces, one arrow per
+ * spring at its node along node j's global force (state/springs.ts
+ * `buildSprings3D`); sized, coloured and thinned like the reaction arrows.
+ */
+export interface SpringsState {
+  readonly on: boolean;
+  /** Shaft multiplier (default 1, > 0). */
+  readonly scale: number;
+  /** Arrowhead length on screen, in CSS pixels (default 12, > 0). */
+  readonly headSize: number;
+  /** One colour, or by magnitude (the type colour is the reactions' and loads' own). */
+  readonly colorBy: "mono" | "magnitude";
+  readonly thin: boolean;
+  /** What each spring draws: the resultant, its global-axis components, or one of them (default resultant). */
+  readonly component: ReactionComponent;
+  /** Why the step on screen draws no spring arrows (its springs' read failed), or null */
+  readonly notice: string | null;
+}
+
 /** The Display card's BC toggle: restraint glyphs at the supports (state/loads.ts `buildSupports3D`). */
 export interface SupportsState {
   readonly on: boolean;
@@ -1356,6 +1378,7 @@ export interface State {
   reactions: ReactionsState;
   principal: PrincipalState;
   vectors: VectorsState;
+  springs: SpringsState;
   supports: SupportsState;
   /** Spotlight (`Ctrl+K`) command and search palette */
   spotlight: SpotlightState;
@@ -1680,6 +1703,8 @@ export type Event =
   | { type: "setPrincipal"; on?: boolean; field?: string | null; show?: readonly [boolean, boolean, boolean]; head?: PrincipalHead; cmap?: ContourCmap; scale?: number; headSize?: number; thin?: boolean }
   /** The Reactions card's controls */
   | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean; forces?: boolean; moments?: boolean }
+  /** The Springs card's controls; `notice` is set by the effects when the step's springs' read fails */
+  | { type: "setSprings"; on?: boolean; scale?: number; headSize?: number; colorBy?: SpringsState["colorBy"]; thin?: boolean; component?: ReactionComponent; notice?: string | null }
   /** The Vectors card's controls (`field` null: the stage's first vector field) */
   | { type: "setVectors"; on?: boolean; field?: string | null; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent }
   /** 3-D structural loading and prescribed-SP visualization controls */
