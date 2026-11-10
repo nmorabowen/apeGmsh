@@ -146,3 +146,61 @@ class TestNamespace:
         assert isinstance(el, SSPquadUP)
         assert el.material is mat
         assert el.body == (0.0, -9.81)
+
+
+class TestAlphaPerArea:
+    """``alpha_per_area``: alpha_e = alpha_per_area * A_e, per FEM element."""
+
+    AREAS = ((3, 0.25), (8, 4.0))
+
+    def _per_area(self, m: ElasticIsotropic, **kw: object) -> SSPquadUP:
+        return _el(m, alpha=None, alpha_per_area=2e-6,
+                   element_areas=self.AREAS, **kw)
+
+    def test_emits_the_area_of_the_current_element(self) -> None:
+        from apeGmsh.opensees._internal.tag_resolution import (
+            set_current_fem_element_id,
+        )
+        m = _mat()
+        el = self._per_area(m)
+        for eid, area in self.AREAS:
+            e = RecordingEmitter()
+            set_tag_resolver(e, lambda prim: 9)
+            set_element_nodes(e, (1, 2, 3, 4))
+            set_current_fem_element_id(e, eid)
+            el._emit(e, tag=7)
+            args = e.calls[-1][1]
+            # type tag n1..n4 matTag t fBulk fDen k1 k2 e alpha: no body, so
+            # alpha is the last argument.
+            assert len(args) == 1 + 13
+            assert args[-1] == pytest.approx(2e-6 * area)
+
+    def test_unmeasured_element_raises(self) -> None:
+        from apeGmsh.opensees._internal.tag_resolution import (
+            set_current_fem_element_id,
+        )
+        m = _mat()
+        el = self._per_area(m)
+        e = RecordingEmitter()
+        set_tag_resolver(e, lambda prim: 9)
+        set_element_nodes(e, (1, 2, 3, 4))
+        set_current_fem_element_id(e, 5)
+        with pytest.raises(ValueError, match="no area for FEM element 5"):
+            el._emit(e, tag=7)
+
+    @pytest.mark.parametrize("kw", [
+        {"alpha": 1e-6},                                  # both given
+        {"alpha_per_area": None},                         # neither given
+        {"alpha_per_area": -1.0},
+        {"element_areas": None},
+        {"element_areas": ((8, 4.0), (3, 0.25))},         # not sorted
+        {"element_areas": ((3, 0.25), (3, 0.5))},         # duplicate id
+        {"element_areas": ((3, 0.0),)},                   # collapsed cell
+    ])
+    def test_refusals(self, kw: dict) -> None:
+        m = _mat()
+        base: dict[str, object] = dict(
+            alpha=None, alpha_per_area=2e-6, element_areas=self.AREAS)
+        base.update(kw)
+        with pytest.raises(ValueError):
+            _el(m, **base)

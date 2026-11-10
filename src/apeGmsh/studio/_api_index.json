@@ -3571,8 +3571,8 @@
       "symbol": "ops.element.LadrunoUP"
     },
     "ops.element.SSPquadUP": {
-      "doc": "",
-      "signature": "SSPquadUP(*, pg: 'str', material: 'NDMaterial | str', thickness: 'float', fluid_bulk: 'float', fluid_density: 'float', perm: 'tuple[float, float]', void_ratio: 'float', alpha: 'float', body: 'tuple[float, float] | None' = None) -> 'SSPquadUP'",
+      "doc": "``alpha=`` is one value for the group; ``alpha_per_area=``",
+      "signature": "SSPquadUP(*, pg: 'str', material: 'NDMaterial | str', thickness: 'float', fluid_bulk: 'float', fluid_density: 'float', perm: 'tuple[float, float]', void_ratio: 'float', alpha: 'float | None' = None, body: 'tuple[float, float] | None' = None, alpha_per_area: 'float | None' = None) -> 'SSPquadUP'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.SSPquadUP"
     },

@@ -229,6 +229,13 @@ Run it transient (Newmark γ ≥ 0.5, the C0 rung used γ=0.6, β=0.3025, with
 `UmfPack`), and change the permeability between stages with
 `s.update_parameter("hPerm" | "vPerm", k, pg="soil")`.
 
+On a graded mesh pass `alpha_per_area=0.25/(K + 4*G/3)` instead of `alpha=`:
+each element gets `alpha_e = alpha_per_area * A_e` from its own area (the
+namespace measures the areas from the FEM snapshot). alpha scales with h², so
+one value per group is wrong for most cells of a graded block; a graded u-p
+strip diverged in its geostatic stage with the group's mean, largest and
+smallest cell alike, and converged only per element.
+
 ### Springs, hinges, dashpots (ZeroLength family)
 
 `ops.uniaxialMaterial` springs ride 2-node (typically coincident) PGs.
