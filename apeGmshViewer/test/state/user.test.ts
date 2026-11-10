@@ -361,7 +361,7 @@ test("the user slot: opened, read, re-read, failed, closed; it survives the mode
 
 // ---- the phase bar's families (D1) ------------------------------------------
 
-const stage = (id: string, name: string, kind: ResultsStage["kind"]): ResultsStage => ({ id, name, kind, time: [0, 1], nodal: [], refusedNodal: [], gauss: [], unread: [] });
+const stage = (id: string, name: string, kind: ResultsStage["kind"]): ResultsStage => ({ id, name, programName: name, kind, time: [0, 1], nodal: [], refusedNodal: [], gauss: [], unread: [] });
 
 /** A results file of two stages and two modes, paired: the axis holds all four. */
 function withResults(s: State): State {

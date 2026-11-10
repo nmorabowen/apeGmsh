@@ -1019,11 +1019,13 @@ export function reduce(s: State, e: Event): State {
         warnings: [...e.warnings, ...(e.info.partial ? [`${e.info.path.split(/[\\/]/).pop()}: ${e.info.partial}; it is read as it stands`] : [])],
       };
       // A re-read keeps the results position only while that index still
-      // names the same stage (its id and name); otherwise the phase leaves it.
+      // names the same stage (its id and program name; W4d #2843: a display
+      // rename re-stamped onto the file is a label, not another stage);
+      // otherwise the phase leaves it.
       const at = s.phase.at;
       const old = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
       const now = at?.kind === "results" ? e.info.stages[at.stage] : undefined;
-      const keep = !old || (now !== undefined && now.id === old.id && now.name === old.name);
+      const keep = !old || (now !== undefined && now.id === old.id && now.programName === old.programName);
       const declaredUnits = s.units ?? e.info.units ?? null;
       const rereadResults = prev.status === "ready";
       const firstLineStage = e.info.stages.find((st) => (st.lineStations?.length ?? 0) > 0);

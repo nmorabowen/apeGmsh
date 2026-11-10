@@ -956,14 +956,15 @@ export function activationNow(s: State): { activation: Activation; stageName: st
   // stage names to these results would be a guess, so it is not made.
   const p = resultsPairing(s);
   const byFem = p.state === "paired" && p.by === "fem_hash";
-  const key = [s.sequence, s.stageElements, s.definitions, st.name, byFem];
+  // W4d #2843: matched by the program name; `stageName` is the label shown (a display name may differ).
+  const key = [s.sequence, s.stageElements, s.definitions, st.programName, st.name, byFem];
   if (activationMemo && activationMemo.key.every((k, i) => k === key[i])) return activationMemo.value;
   const activation: Activation = byFem
     ? {
         state: "unbound",
         reason: "the results pair with this model by fem_hash only (the mesh matches; they carry no model_hash), so they are not tied to this model's /sequence program",
       }
-    : activationOf(s.sequence, s.stageElements, s.definitions, st.name);
+    : activationOf(s.sequence, s.stageElements, s.definitions, st.programName);
   const value = { activation, stageName: st.name };
   activationMemo = { key, value };
   return value;
@@ -1563,7 +1564,10 @@ export function differencePlanOf(s: State): DifferencePlan | null {
   const label = st.name || st.id;
   const other = c.stages.find((x) => x.id === st.id);
   if (!other) return { ok: false, reason: `the compare variant ${quoted(c.label)} has no stage ${quoted(st.id)}` };
-  if (other.name !== st.name) return { ok: false, reason: `stage ${quoted(st.id)} is ${quoted(st.name)} here and ${quoted(other.name)} in ${quoted(c.label)}` };
+  // W4d #2843: the two stages are one program stage by their program names; a display name is a label only.
+  if (other.programName !== st.programName) {
+    return { ok: false, reason: `stage ${quoted(st.id)} is program stage ${quoted(st.programName)} here and ${quoted(other.programName)} in ${quoted(c.label)}` };
+  }
   const k = at.step;
   const t = st.time[k];
   const u = other.time[k];

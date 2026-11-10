@@ -180,6 +180,7 @@ test("displacementAxes respects stage.refusedNodal for .ladruno DISPLACEMENT dat
   const stage: ResultsStage = {
     id: "MODEL_STAGE[1]",
     name: "gravity",
+    programName: "gravity",
     kind: "static",
     time: [0, 1],
     nodal: [],

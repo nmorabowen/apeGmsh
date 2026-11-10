@@ -705,7 +705,7 @@ test("D6: a stage name two stages share reads back as its index", async () => {
   const r = await rig();
   r.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 1, step: 0 } });
   const s = r.store.get();
-  const stages = s.results!.stages.map((st) => ({ ...st, name: "same" }));
+  const stages = s.results!.stages.map((st) => ({ ...st, name: "same", programName: "same" }));
   const dup: State = { ...s, results: { ...s.results!, stages } };
   assert.equal(viewShotOf(dup, POSES["start"]!).shot.stage, 1);
   assert.equal(viewShotOf(s, POSES["start"]!).shot.stage, "erect");

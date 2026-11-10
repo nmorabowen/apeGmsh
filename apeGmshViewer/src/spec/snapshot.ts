@@ -347,11 +347,15 @@ function shotDocument(s: SpecShot): Record<string, unknown> {
 /** D9: a snapshot writes the window as it is. */
 const WINDOW_LAYERS: Record<string, boolean> = Object.fromEntries(APP_LAYERS.map((k) => [k, true]));
 
-/** The stage as a spec names it: its name when that names one stage, else its index. */
+/**
+ * The stage as a spec names it: its program name (W4d #2843: it survives a
+ * display rename) when that names this one stage by either of a stage's names
+ * (compile.ts `stageOf` resolves both), else its index.
+ */
 function stageName(s: State, index: number): string | number {
   const stages = s.results?.stages ?? [];
-  const name = stages[index]?.name;
-  return name && stages.filter((x) => x.name === name).length === 1 ? name : index;
+  const name = stages[index]?.programName;
+  return name && stages.every((x, i) => i === index || (x.programName !== name && x.name !== name)) ? name : index;
 }
 
 function groupPaths(s: State): DeclPath[] {

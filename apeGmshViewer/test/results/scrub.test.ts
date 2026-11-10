@@ -37,8 +37,8 @@ test("reload: a re-read keeps the stage and clamps a step past its end; a stage 
   const shorter = { ...r.info, stages: r.info.stages.map((st, i) => (i === 2 ? { ...st, time: st.time.slice(0, 2) } : st)) };
   const clamped = reduce(s, { type: "resultsLoaded", ...r, info: shorter });
   assert.deepEqual(clamped.phase.at, { kind: "results", stage: 2, step: 1 });
-  // Re-read with index 2 now another stage (renamed): the phase leaves it for the mesh.
-  const renamed = { ...r.info, stages: r.info.stages.map((st, i) => (i === 2 ? { ...st, name: "other" } : st)) };
+  // Re-read with index 2 now another stage (another program name; W4d #2843): the phase leaves it for the mesh.
+  const renamed = { ...r.info, stages: r.info.stages.map((st, i) => (i === 2 ? { ...st, name: "other", programName: "other" } : st)) };
   assert.deepEqual(reduce(s, { type: "resultsLoaded", ...r, info: renamed }).phase.at, { kind: "mesh" });
   // Re-read with fewer stages: the same.
   const fewer = { ...r.info, stages: r.info.stages.slice(0, 2) };
