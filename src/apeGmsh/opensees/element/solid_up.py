@@ -6,6 +6,8 @@ pure move; the public path ``apeGmsh.opensees.element.LadrunoUP`` is unchanged.
 """
 from __future__ import annotations
 
+import bisect
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -14,7 +16,10 @@ from .._element_capabilities import (
     LADRUNO_UP_TH_NODE_COUNTS,
 )
 from .._internal.tag_resolution import (
+    MISSING_FEM_ELEMENT_ID,
     current_element_nodes,
+    current_fem_element_id,
+    is_slot_type_probe,
     resolve_tag,
 )
 from .._internal.types import Element, NDMaterial, Primitive
@@ -479,9 +484,25 @@ class SSPquadUP(Element):
         Void ratio ``e`` (> 0); the element takes porosity
         ``n = e / (1 + e)``.
     alpha
-        Pressure-stabilization parameter (NOT Biot's α), >= 0.  McGann et
-        al. recommend ``alpha = 0.25 * h**2 / (K + 4G/3)`` with ``h`` the
-        element size and ``K``, ``G`` the skeleton moduli.
+        Pressure-stabilization parameter (NOT Biot's α), >= 0, one value
+        for every element of ``pg``.  McGann et al. recommend
+        ``alpha = 0.25 * h**2 / (K + 4G/3)`` with ``h`` the element size
+        and ``K``, ``G`` the skeleton moduli.  Exactly one of ``alpha`` /
+        ``alpha_per_area``.
+    alpha_per_area
+        Per-element stabilization: each element gets
+        ``alpha_e = alpha_per_area * A_e`` from its own area ``A_e``, i.e.
+        McGann's rule with ``alpha_per_area = 0.25 / (K + 4G/3)``.  Use it
+        on a graded mesh: alpha scales with h**2, so one value per group
+        over-stabilizes the small cells and under-stabilizes the large
+        ones, and a graded u-p strip diverged with every single value
+        tried (the group's mean, largest and smallest cell) while the
+        per-element rule converged.  ``ops.element.SSPquadUP`` measures
+        the areas from the FEM snapshot into ``element_areas``.
+    element_areas
+        ``((fem_element_id, area), ...)`` for ``alpha_per_area``; filled
+        by the bridge namespace, not by hand.  An element emitted with no
+        entry raises.
     body
         Optional ``(b1, b2)`` body **acceleration** (e.g. ``(0, -9.81)``),
         multiplied by the material density for the solid and by
@@ -496,8 +517,10 @@ class SSPquadUP(Element):
     fluid_density: float
     perm: tuple[float, float]
     void_ratio: float
-    alpha: float
+    alpha: float | None = None
     body: tuple[float, float] | None = None
+    alpha_per_area: float | None = None
+    element_areas: tuple[tuple[int, float], ...] | None = None
 
     def __post_init__(self) -> None:
         from .solid import _check_soil_dimension
@@ -528,11 +551,41 @@ class SSPquadUP(Element):
                 f"SSPquadUP: void_ratio must be > 0, got "
                 f"{self.void_ratio!r}."
             )
-        if self.alpha < 0:
+        if (self.alpha is None) == (self.alpha_per_area is None):
+            raise ValueError(
+                "SSPquadUP: pass exactly one of alpha= (one value for the "
+                "group) or alpha_per_area= (alpha_e = alpha_per_area * A_e "
+                f"per element); got alpha={self.alpha!r}, "
+                f"alpha_per_area={self.alpha_per_area!r}."
+            )
+        if self.alpha is not None and self.alpha < 0:
             raise ValueError(
                 f"SSPquadUP: alpha (the stabilization parameter) must be "
                 f">= 0, got {self.alpha!r}."
             )
+        if self.alpha_per_area is not None:
+            if self.alpha_per_area < 0:
+                raise ValueError(
+                    f"SSPquadUP: alpha_per_area must be >= 0, got "
+                    f"{self.alpha_per_area!r}."
+                )
+            if self.element_areas is None:
+                raise ValueError(
+                    "SSPquadUP: alpha_per_area needs element_areas; "
+                    "declare it through ops.element.SSPquadUP, which "
+                    "measures them from the FEM snapshot."
+                )
+            ids = [eid for eid, _ in self.element_areas]
+            if ids != sorted(set(ids)):
+                raise ValueError(
+                    "SSPquadUP: element_areas must be sorted by element "
+                    "id, one entry per element."
+                )
+            if any(area <= 0 for _, area in self.element_areas):
+                raise ValueError(
+                    "SSPquadUP: every element area must be > 0 (a zero "
+                    "or negative area is a collapsed cell)."
+                )
         if self.body is not None and len(self.body) != 2:
             raise ValueError(
                 f"SSPquadUP: body must be (b1, b2), got {self.body!r}."
@@ -540,6 +593,29 @@ class SSPquadUP(Element):
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)
+
+    def _alpha_for(self, emitter: "Emitter") -> float:
+        """The stabilization value of the element being emitted."""
+        if self.alpha is not None:
+            return self.alpha
+        assert self.alpha_per_area is not None
+        assert self.element_areas is not None
+        eid = current_fem_element_id(emitter)
+        if eid == MISSING_FEM_ELEMENT_ID and is_slot_type_probe(emitter):
+            # The replay's type dry run: any element's value has the type.
+            return self.alpha_per_area * self.element_areas[0][1]
+        # element_areas is sorted by id (the namespace builds it so):
+        # a binary search keeps a large group's emit linear-log.
+        i = bisect.bisect_left(self.element_areas, (eid, -math.inf))
+        found = (i < len(self.element_areas)
+                 and self.element_areas[i][0] == eid)
+        if eid == MISSING_FEM_ELEMENT_ID or not found:
+            raise ValueError(
+                f"SSPquadUP on pg={self.pg!r}: alpha_per_area has no area for "
+                f"FEM element {eid}; the group's elements were measured "
+                "when the element was declared."
+            )
+        return self.alpha_per_area * self.element_areas[i][1]
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         nodes = current_element_nodes(emitter)
@@ -550,7 +626,8 @@ class SSPquadUP(Element):
         mat_tag = resolve_tag(emitter, self.material)
         args: list[int | float | str] = [
             *nodes, mat_tag, self.thickness, self.fluid_bulk,
-            self.fluid_density, *self.perm, self.void_ratio, self.alpha,
+            self.fluid_density, *self.perm, self.void_ratio,
+            self._alpha_for(emitter),
         ]
         if self.body is not None:
             args += [*self.body]

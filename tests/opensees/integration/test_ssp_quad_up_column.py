@@ -243,3 +243,105 @@ def test_staged_perm_update_takes_effect(
     else:
         # k = 1e-9 stays undrained: p near the saturated overburden.
         assert p_base > 1.5 * hydro
+
+
+# ---------------------------------------------------------------------------
+# alpha_per_area: per-element stabilization on a graded column
+# ---------------------------------------------------------------------------
+
+M_SKEL = K_SKEL + 4.0 * G_SKEL / 3.0
+ALPHA_PER_AREA = 0.25 / M_SKEL           # McGann: alpha_e = 0.25 A_e / M
+
+
+def _graded_column_fem(g: apeGmsh):
+    """A 1 x H column of 10 cells graded by 1.3 along its sides: areas differ."""
+    g.model.geometry.add_rectangle(0.0, 0.0, 0.0, 1.0, H, label="soil")
+    g.physical.add_surface("soil", name="Soil")
+    g.model.select(dim=1).on_plane(
+        (0, 0, 0), (0, 1, 0), tol=1e-6).to_physical("Base")
+    g.model.select(dim=1).on_plane(
+        (0, H, 0), (0, 1, 0), tol=1e-6).to_physical("Top")
+    g.model.select(dim=1).on_plane(
+        (0, 0, 0), (1, 0, 0), tol=1e-6).to_physical("Left")
+    g.model.select(dim=1).on_plane(
+        (1, 0, 0), (1, 0, 0), tol=1e-6).to_physical("Right")
+    g.mesh.structured.set_transfinite_curve(["Base", "Top"], 2)
+    g.mesh.structured.set_transfinite_curve(["Left", "Right"], 11, coef=1.3)
+    g.mesh.structured.set_transfinite_surface("soil")
+    g.mesh.structured.set_recombine("soil")
+    g.mesh.generation.generate(2)
+    g.mesh.partitioning.renumber(base=1)
+    return g.mesh.queries.get_fem_data(dim=2)
+
+
+def _graded_column(fem) -> apeSees:
+    ops = apeSees(fem)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=E, nu=NU, rho=2.0)
+    ops.element.SSPquadUP(
+        pg="Soil", material=mat, thickness=1.0, fluid_bulk=2.2e6,
+        fluid_density=1.0, perm=(1e-3, 1e-3), void_ratio=0.7,
+        alpha_per_area=ALPHA_PER_AREA, body=(0.0, -9.81),
+    )
+    ops.fix(pg="Soil", dofs=(1, 0, 0))
+    ops.fix(pg="Base", dofs=(1, 1, 0))
+    ops.fix(pg="Top", dofs=(1, 0, 1))
+    _declare_chain(ops)
+    return ops
+
+
+def _tcl_alphas_vs_areas(tcl: str) -> tuple[list[float], list[float]]:
+    """(emitted alpha, shoelace area) per ``element SSPquadUP`` line."""
+    xy: dict[int, tuple[float, float]] = {}
+    for ln in _lines(tcl, "node "):
+        tok = ln.split()
+        xy[int(tok[1])] = (float(tok[2]), float(tok[3]))
+    alphas, areas = [], []
+    for ln in _lines(tcl, "element SSPquadUP"):
+        tok = ln.split()
+        quad = [xy[int(t)] for t in tok[3:7]]
+        area = 0.5 * abs(sum(
+            quad[i][0] * quad[(i + 1) % 4][1]
+            - quad[(i + 1) % 4][0] * quad[i][1] for i in range(4)))
+        alphas.append(float(tok[14]))
+        areas.append(area)
+    return alphas, areas
+
+
+class TestAlphaPerArea:
+    def test_each_line_carries_its_own_area(self, tmp_path: Path) -> None:
+        with apeGmsh(model_name="sspup_alpha_area") as g:
+            ops = _graded_column(_graded_column_fem(g))
+            ops.tcl(str(tmp_path / "a.tcl"))
+            ops.h5(str(tmp_path / "a.h5"))
+        tcl = (tmp_path / "a.tcl").read_text(encoding="utf-8")
+        alphas, areas = _tcl_alphas_vs_areas(tcl)
+        assert len(alphas) == 10
+        # graded: the cells really differ (the two sides grade in opposite
+        # directions, so the cells are trapezoids, about 1.8x apart)
+        assert max(areas) / min(areas) > 1.5
+        for alpha, area in zip(alphas, areas):
+            assert alpha == pytest.approx(ALPHA_PER_AREA * area, rel=1e-9)
+
+        from apeGmsh.opensees import OpenSeesModel
+        replay = OpenSeesModel.from_h5(str(tmp_path / "a.h5")).build("tcl")
+        assert isinstance(replay, str)
+        assert _lines(replay, "element SSPquadUP") == _lines(
+            tcl, "element SSPquadUP")
+
+
+@pytest.mark.live
+def test_graded_column_alpha_per_area_reaches_hydrostatic() -> None:
+    pytest.importorskip("openseespy.opensees")
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    with apeGmsh(model_name="sspup_alpha_live") as g:
+        fem = _graded_column_fem(g)
+        ops = _graded_column(fem)
+        assert ops.analyze(steps=50, dt=0.1) == 0
+        live = get_ops()
+        pts = _base_and_depths(live, fem.nodes.ids)
+    assert len(pts) == 11
+    for n, depth in pts:
+        assert float(live.nodeVel(n, 3)) == pytest.approx(
+            GAMMA_W * depth, rel=1e-4, abs=1e-6)
