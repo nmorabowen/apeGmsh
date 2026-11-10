@@ -1019,7 +1019,7 @@ ipcMain.handle("variants:compare", async (_e, index: unknown, label: unknown) =>
       label: row.label,
       results: set.results,
       femHash: lin.femHash,
-      stages: a.meta.stages.map((s) => ({ id: s.id, name: s.name, nodal: [...s.nodal], time: [...s.time] })),
+      stages: a.meta.stages.map((s) => ({ id: s.id, name: s.name, programName: s.programName, nodal: [...s.nodal], time: [...s.time] })),
     },
     nodeIds: a.nodeIds,
   };

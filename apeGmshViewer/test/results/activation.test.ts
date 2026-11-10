@@ -191,3 +191,34 @@ test("the ambiguous and absent states are a visible banner; filtered and unstage
   assert.equal(inactiveElements(atStage(base, 3)), null, "absent hides nothing");
   assert.deepEqual(notices(base), [], "off the results phases there is no activation notice");
 });
+
+// W4d #2843 (the W4c delta review's reproducer): a stage shown by a display name
+// ("Base load", a .ladruno `stage_display_names` rename) still matches /sequence by
+// its program name. Matched on `name`, the stage reads `absent` ("no /sequence
+// stage is named \"Base load\"") and every element is drawn.
+const renamed = (s: State, k: number, name: string, programName = s.results!.stages[k]!.programName): State => ({
+  ...s,
+  results: { ...s.results!, stages: s.results!.stages.map((st, i) => (i === k ? { ...st, name, programName } : st)) },
+});
+
+test('W4d: a stage renamed for display ("Base load") is still filtered by its program name, and labelled by its display name', () => {
+  assert.equal(base.results!.stages[0]!.programName, "base", "a native file's program name is its stage name");
+  const t = atStage(renamed(base, 0, "Base load"), 0);
+  const now = activationNow(t)!;
+  assert.equal(now.activation.state, "filtered", JSON.stringify(now.activation));
+  if (now.activation.state !== "filtered") return;
+  assert.deepEqual(femIdsOf(base, now.activation.inactiveTags), oracle.hidden_fem_ids["base"], "the same elements as the un-renamed stage");
+  assert.equal(now.stageName, "Base load", "the banner and labels name the stage by its display name");
+  assert.ok(inactiveElements(t), "the inactive elements are hidden");
+  // The un-renamed stage again: the memo keys on both names, so nothing stale is served.
+  assert.equal(activationNow(atStage(base, 0))!.stageName, "base");
+});
+
+test("W4d: a display name never takes part in matching, even when it is another stage's program name", () => {
+  // Shown as "erect", but program stage "nope": absent by the program name, never erect's activation.
+  const t = atStage(renamed(base, 0, "erect", "nope"), 0);
+  const a = activationNow(t)!.activation;
+  assert.equal(a.state, "absent");
+  assert.match((a as { reason: string }).reason, /no \/sequence stage is named "nope"/);
+  assert.equal(inactiveElements(t), null);
+});

@@ -606,6 +606,89 @@ test("INFO/PROVENANCE@units reads a known UnitSystemId into index.units and mark
   });
 });
 
+// -- W4d #2843: display stage names (INFO/PROVENANCE@stage_display_names) ---------
+//
+// W4c's `stage_names=` rename stamps the shown names as stage_display_names beside
+// the program's stage_names. The viewer labels a stage by its display name (`name`)
+// and matches the model by its program name (`programName`). A display list that is
+// malformed, miscounted, or has no stage_names to bind by shows the program names, and warns.
+
+const stampedWith = (src: string, attrs: Record<string, string | null>) =>
+  edited(src, (f) => {
+    const g = f.get("INFO/PROVENANCE") as h5wasm.Group;
+    for (const [k, v] of Object.entries(attrs)) setAttr(g, k, v);
+  });
+
+async function stagesOf(path: string): Promise<{ names: string[]; programs: string[]; warnings: string[] }> {
+  const host = new ResultsHost(H5, h5wasm.ready);
+  try {
+    const a = await host.open(path);
+    assert.ok(a.ok, JSON.stringify(a));
+    if (!a.ok) return { names: [], programs: [], warnings: [] };
+    return { names: a.meta.stages.map((s) => s.name), programs: a.meta.stages.map((s) => s.programName), warnings: a.warnings };
+  } finally {
+    host.close();
+  }
+}
+
+const displayWarnings = (w: string[]) => w.filter((x) => /stage_display_names/.test(x));
+
+test("W4d: a renamed .ladruno is labelled with its display names, and keeps its program names to match by", async () => {
+  const p = stampedWith(STAMPED, { stage_display_names: '["Push over"]' });
+  withFile(p, (r) => {
+    const prov = r.index.provenance;
+    assert.equal(prov.state, "present");
+    if (prov.state !== "present") return;
+    assert.deepEqual(prov.attrs.stage_display_names, { state: "present", value: '["Push over"]' });
+    assert.deepEqual(prov.stageDisplayNames, ["Push over"]);
+    assert.deepEqual(prov.stageNames, ["push"]);
+    assert.deepEqual(prov.other, [], "a known attribute, not an unknown one");
+  });
+  const got = await stagesOf(p);
+  assert.deepEqual(got.names, ["Push over"]);
+  assert.deepEqual(got.programs, ["push"]);
+  assert.deepEqual(displayWarnings(got.warnings), []);
+  // Without display names, the program names are both.
+  const plain = await stagesOf(STAMPED);
+  assert.deepEqual(plain.names, ["push"]);
+  assert.deepEqual(plain.programs, ["push"]);
+});
+
+test("W4d: display names rename the MODEL_STAGE groups only; a mode stage keeps its name, and its program name", async () => {
+  const p = stampedWith(MODES, { stage_names: '["G"]', stage_display_names: '["Gravity"]' });
+  const got = await stagesOf(p);
+  assert.deepEqual(got.names, ["Gravity", "mode_1", "mode_2"]);
+  assert.deepEqual(got.programs, ["G", "mode_1", "mode_2"]);
+  assert.deepEqual(displayWarnings(got.warnings), []);
+});
+
+test("W4d: a malformed or miscounted display list shows the program names, and warns", async () => {
+  for (const [bad, why] of [
+    ['"Push over"', /@stage_display_names = .* is not a JSON array of strings; the program's stage names are shown$/],
+    ["[1]", /@stage_display_names = .* is not a JSON array of strings; the program's stage names are shown$/],
+    ['["a","b"]', /INFO\/PROVENANCE@stage_display_names names 2 stage\(s\), the file has 1 MODEL_STAGE group\(s\); the program's stage names are shown$/],
+  ] as const) {
+    const got = await stagesOf(stampedWith(STAMPED, { stage_display_names: bad }));
+    assert.deepEqual(got.names, ["push"], bad);
+    assert.deepEqual(got.programs, ["push"], bad);
+    const w = displayWarnings(got.warnings);
+    assert.equal(w.length, 1, w.join("\n"));
+    assert.match(w[0]!, why);
+  }
+});
+
+test("W4d: display names with no stage_names to bind by (absent, malformed or miscounted) rename nothing, and warn", async () => {
+  for (const names of [null, "not json", '["a","b"]']) {
+    const got = await stagesOf(stampedWith(STAMPED, { stage_names: names, stage_display_names: '["Push over"]' }));
+    const own = (await stagesOf(TRUSS)).names;
+    assert.deepEqual(got.names, own, String(names));
+    assert.deepEqual(got.programs, own, String(names));
+    const w = displayWarnings(got.warnings);
+    assert.equal(w.length, 1, w.join("\n"));
+    assert.match(w[0]!, /INFO\/PROVENANCE@stage_display_names has no INFO\/PROVENANCE@stage_names to bind the stages by; the file's own stage names are shown$/);
+  }
+});
+
 // -- line stations & local axes ------------------------------------------------
 
 test("TRUSS basicForce reads single-station axial force N across steps", () => {

@@ -297,8 +297,20 @@ export interface Lineage {
 /** One `/stages/{id}` of a results file, as the store holds it: metadata only, never a component array. */
 export interface ResultsStage {
   id: string;
-  /** the user's stage name (`begin_stage(name=)`), `mode_<k>` for a mode stage; "" is a name too (and pairs with nothing) */
+  /**
+   * The label every site shows: the user's stage name (`begin_stage(name=)`),
+   * `mode_<k>` for a mode stage, or a `.ladruno`'s display name
+   * (`INFO/PROVENANCE@stage_display_names`, a `stage_names=` rename). Never
+   * matched against the model: `programName` is.
+   */
   name: string;
+  /**
+   * The program's stage name (W4d #2843): what every match against the model
+   * uses (`/sequence` activation, the loads overlay, span loads, a compare
+   * set). Equal to `name` unless a `.ladruno` carries display names. "" is a
+   * name too (and pairs with nothing).
+   */
+  programName: string;
   kind: "static" | "transient" | "mode";
   /** the stage's `time` vector: step k is time[k] */
   time: number[];
@@ -680,10 +692,13 @@ export interface VariantsIn {
   compare: { index: number; label: string } | null;
 }
 
-/** A stage of the compare set's results file, as the difference needs it: its id, name, nodal datasets and times. */
+/** A stage of the compare set's results file, as the difference needs it: its id, names, nodal datasets and times. */
 export interface CompareStageIn {
   id: string;
+  /** shown only */
   name: string;
+  /** what the difference matches the window's stage by (`ResultsStage.programName`) */
+  programName: string;
   nodal: readonly string[];
   time: readonly number[];
 }

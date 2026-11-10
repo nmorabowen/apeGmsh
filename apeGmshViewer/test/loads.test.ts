@@ -625,6 +625,7 @@ test("timeSeries scaling λ(t): Constant, Linear, Path, Trig, and scaleBySeries 
         {
           id: "stage_000",
           name: "gravity",
+          programName: "gravity",
           kind: "static",
           time: [0.25, 0.75],
           nodal: ["displacement_x"],
@@ -992,6 +993,33 @@ test("stage-ordered remove_sp: stage 1 remove_sp removes earlier stage SP but pr
   const geom1 = nominal3D(sStage1, shoeBlobs);
   assert.equal(geom1.spArrows, 1);
   assert.ok(Math.abs(geom1.maxSpTranslationMag - 0.035) < 1e-9);
+
+  // W4d #2843: a results stage shown as "Base load" (a .ladruno display name) whose program
+  // name is stage_1 draws stage 1's loads, matched by the program name, and is labelled by
+  // its display name. Matched on `name`, it would match no stage and draw the global SP.
+  const onResults = (name: string, programName: string): State => ({
+    ...sWithStagedReplace,
+    results: {
+      path: "staged.ladruno",
+      version: "1.0.0",
+      sourceType: "ladruno",
+      lineage: null,
+      partial: null,
+      stages: [{ id: "stage_0", name, programName, kind: "static", time: [1], nodal: [], refusedNodal: [], gauss: [], unread: [] }],
+      unavailableZones: [],
+      openseesVersion: null,
+      programDecl: null,
+    },
+    phase: { axis: [{ kind: "mesh" }, { kind: "results", stage: 0, step: 0 }], at: { kind: "results", stage: 0, step: 0 } },
+  });
+  const sumR = loadsSummaryOf(onResults("Base load", "stage_1"));
+  assert.equal(sumR.activeStageIndex, 1, "matched to /opensees stage 1 by the program name");
+  assert.equal(sumR.activeStageLabel, "stage 1 · Base load");
+  assert.ok(Math.abs(sumR.peaks.spTranslation - 0.035) < 1e-9, "stage 1's SP, as on the stage-1 phase");
+  // A display name never matches: shown as "stage_1", program stage "other", it matches no stage.
+  const sumN = loadsSummaryOf(onResults("stage_1", "other"));
+  assert.equal(sumN.activeStageIndex, null);
+  assert.ok(Math.abs(sumN.peaks.spTranslation - 0.01) < 1e-9, "the global SP only, as with no stage picked");
 });
 
 test("3-D beam with nearly-parallel vecxz (||vecxz - (vecxz · xLocal) xLocal|| < 1e-6) fails closed with notice", () => {

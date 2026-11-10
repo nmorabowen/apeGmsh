@@ -1262,10 +1262,14 @@ export interface ResolveStageSpanLoadsOptions {
   readonly definitions: Definitions | null | undefined;
   readonly sequence?: SequenceZone | null;
   readonly ndm: 2 | 3 | null | undefined | SpatialNdm;
-  readonly resultsStage?: Pick<ResultsStage, "id" | "name" | "kind"> | null;
+  /** `programName` is what matches /opensees/stages; a stage given without one is refused (state/lineDiagram.ts passes the store's stage, typed by its Pick) */
+  readonly resultsStage?: ResultsStageRef | null;
   readonly stageIndex?: number;
   readonly time: number;
 }
+
+/** The results stage span loads are resolved for: `programName` matches /opensees/stages, `name` and `id` label it. */
+export type ResultsStageRef = Pick<ResultsStage, "id" | "name" | "kind"> & Partial<Pick<ResultsStage, "programName">>;
 
 /** Resolve all active patterns and their scaled `-beamUniform` element loads at step `time` for a results stage. */
 export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): ResolvedStageSpanLoads {
@@ -1302,9 +1306,14 @@ export function resolveStageSpanLoads(opts: ResolveStageSpanLoadsOptions): Resol
   };
 
   if (defs.stages.length > 0) {
+    // W4d #2843: matched by the program name, never the display name (`name`). A stage that carries none is refused.
+    const rs = opts.resultsStage;
+    if (rs && typeof rs.programName !== "string") {
+      return { ok: false, reason: `results stage '${rs.name || rs.id}' carries no program name, so it is not matched to /opensees/stages` };
+    }
     const stageIdx =
-      opts.resultsStage?.name
-        ? defs.stages.findIndex((s) => s.name === opts.resultsStage!.name)
+      rs?.programName
+        ? defs.stages.findIndex((s) => s.name === rs.programName)
         : (opts.stageIndex ?? 0);
     const resolvedIdx = stageIdx >= 0 ? stageIdx : (opts.stageIndex ?? -1);
     const stage = defs.stages[resolvedIdx];
@@ -1534,7 +1543,7 @@ export interface ReconstructStepSpanDiagramsOptions {
   readonly definitions?: Definitions | null;
   readonly sequence?: SequenceZone | null;
   readonly ndm: 2 | 3 | null | undefined | SpatialNdm;
-  readonly resultsStage?: Pick<ResultsStage, "id" | "name" | "kind"> | null;
+  readonly resultsStage?: ResultsStageRef | null;
   readonly stageIndex?: number;
   readonly time: number;
   readonly nSub?: number;
