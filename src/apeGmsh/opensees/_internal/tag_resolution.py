@@ -54,6 +54,8 @@ __all__ = [
     "is_stage_owned_node",
     "resolve_tag",
     "set_current_fem_element_id",
+    "set_slot_type_probe",
+    "is_slot_type_probe",
     "set_element_nodes",
     "set_membrane_context",
     "set_phantom_node_tags",
@@ -368,3 +370,22 @@ def current_membrane_context(
     """Return the pre-resolved ``(frames, support_nodes, holes,
     diaphragm_nodes)`` context if set."""
     return getattr(emitter, ATTR_MEMBRANE_CONTEXT, None)
+
+
+#: Name of the private attribute the H5 replay sets on the recording
+#: emitter of its slot-type dry run (``replay_types``): one emit per
+#: declaration, with stub tags, stub nodes and no FEM element id.  A
+#: primitive whose value comes from the current FEM element reads it to
+#: emit a representative value of the right type instead of refusing.
+ATTR_SLOT_TYPE_PROBE = "_slot_type_probe"
+
+
+def set_slot_type_probe(emitter: object) -> None:
+    """Mark ``emitter`` as the replay's slot-type dry run."""
+    setattr(emitter, ATTR_SLOT_TYPE_PROBE, True)
+
+
+def is_slot_type_probe(emitter: object) -> bool:
+    """``True`` on the replay's slot-type dry run (values are discarded,
+    only each slot's type is kept)."""
+    return bool(getattr(emitter, ATTR_SLOT_TYPE_PROBE, False))

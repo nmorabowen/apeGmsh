@@ -1183,10 +1183,17 @@ class _ElementNS(_BridgeNamespace):
         fluid_density: float,
         perm: tuple[float, float],
         void_ratio: float,
-        alpha: float,
+        alpha: float | None = None,
         body: tuple[float, float] | None = None,
+        alpha_per_area: float | None = None,
     ) -> SSPquadUP:
+        """``alpha=`` is one value for the group; ``alpha_per_area=``
+        gives each element ``alpha_per_area * A_e`` from its own area,
+        measured here from the FEM snapshot (see :class:`SSPquadUP`)."""
         material = self._bridge._resolve(material, base=NDMaterial)
+        element_areas = None
+        if alpha_per_area is not None:
+            element_areas = _quad_areas(self._bridge.fem, pg)
         return self._bridge._register(
             SSPquadUP(
                 pg=pg,
@@ -1198,6 +1205,8 @@ class _ElementNS(_BridgeNamespace):
                 void_ratio=void_ratio,
                 alpha=alpha,
                 body=body,
+                alpha_per_area=alpha_per_area,
+                element_areas=element_areas,
             )
         )
 
@@ -1547,3 +1556,35 @@ class _ElementNS(_BridgeNamespace):
                 fbar=fbar,
             )
         )
+
+
+def _quad_areas(fem: object, pg: str) -> tuple[tuple[int, float], ...]:
+    """``((fem_element_id, area), ...)`` of the quad4 cells of ``pg``,
+    sorted by id: the shoelace area in the x-y plane, as a magnitude
+    (a clockwise cell is a node-order problem, not a size)."""
+    import numpy as np
+
+    sel = fem.elements.select(pg=pg)  # type: ignore[attr-defined]
+    ids = [int(e) for e in sel.ids]
+    if not ids:
+        raise ValueError(
+            f"SSPquadUP: pg={pg!r} holds no elements to measure for "
+            "alpha_per_area."
+        )
+    conn = np.asarray(sel.connectivity, dtype=np.int64)
+    if conn.ndim != 2 or conn.shape[1] != 4:
+        raise ValueError(
+            f"SSPquadUP: pg={pg!r} must hold quad4 cells only for "
+            f"alpha_per_area; got connectivity of shape {conn.shape}."
+        )
+    nodes = fem.nodes  # type: ignore[attr-defined]
+    coords = np.asarray(nodes.coords, dtype=float)
+    row = {int(n): i for i, n in enumerate(nodes.ids)}
+    out: list[tuple[int, float]] = []
+    for eid, quad in zip(ids, conn):
+        xy = coords[[row[int(n)] for n in quad], :2]
+        x, y = xy[:, 0], xy[:, 1]
+        area = 0.5 * abs(float(
+            np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y)))
+        out.append((eid, area))
+    return tuple(sorted(out))

@@ -67,7 +67,11 @@ from ..emitter.recording import RecordingEmitter
 from ..section.beam import ElasticSection
 from ..section.computed import ComputedSection
 from ..section.fiber import Fiber, FiberPoint
-from .tag_resolution import set_element_nodes, set_tag_resolver
+from .tag_resolution import (
+    set_element_nodes,
+    set_slot_type_probe,
+    set_tag_resolver,
+)
 from .types import (
     BeamIntegration, Damping, Element, GeomTransf, NDMaterial, Pattern,
     Primitive, Recorder, Section, TimeSeries, UniaxialMaterial,
@@ -311,6 +315,7 @@ class SlotTypes:
             prim = self._rebuild(decl, tag)
             rec = RecordingEmitter()
             set_tag_resolver(rec, lambda _p: _STUB_TAG)
+            set_slot_type_probe(rec)
             if kind == "element":
                 set_element_nodes(rec, tuple(range(1, nodes + 1)))
             prim._emit(rec, tag)
