@@ -548,6 +548,46 @@ function opsElementLoadsState(base: State, ndm: 2 | 3, args: readonly (string | 
   );
 }
 
+test("W4d #2843: the loads overlay hides an inactive element's load by the results stage's program name, never its display name", () => {
+  const tag = shoeState.decls[shoeState.mesh!.elements[0]!]!.element!.metas[0]!.tag;
+  const OWNED = "/opensees/stages/stage_001/owned_element_ids";
+  const loaded = opsElementLoadsState(shoeState, 2, [["-ele", tag, "-type", "-beamUniform", "-10.0", "0.0"]]);
+  // /sequence: the element is activated by stage "b", so it is inactive at stage "a".
+  const staged: State = {
+    ...loaded,
+    sequence: {
+      status: "ready",
+      version: "1.0.0",
+      attrs: { staged: 1 },
+      stages: { path: "/sequence/stages", columns: ["order", "name", "source"], rows: [[0, "a", "/opensees/stages/stage_000"], [1, "b", "/opensees/stages/stage_001"]] },
+      changes: { path: "/sequence/changes", columns: ["stage", "op", "what", "name", "count", "source"], rows: [[1, "activate", "element", "", 1, OWNED]] },
+    },
+    stageElements: { status: "ready", sets: { [OWNED]: [tag] } },
+  };
+  const onResults = (name: string, programName: string): State => ({
+    ...staged,
+    results: {
+      path: "staged.ladruno",
+      version: "1.0.0",
+      sourceType: "ladruno",
+      lineage: null,
+      partial: null,
+      stages: [{ id: "stage_0", name, programName, kind: "static", time: [1], nodal: [], refusedNodal: [], gauss: [], unread: [] }],
+      unavailableZones: [],
+      openseesVersion: null,
+      programDecl: null,
+    },
+    phase: { axis: [{ kind: "mesh" }, { kind: "results", stage: 0, step: 0 }], at: { kind: "results", stage: 0, step: 0 } },
+  });
+  assert.equal(nominal3D(staged, shoeBlobs).maxElementLoadMag, 10, "precondition: the load is drawn off the results phases");
+  // Shown as "Base load", program stage "a": the element is inactive, so its load is not drawn.
+  // Matched on the display name, "Base load" pairs with no /sequence stage and the load would be drawn.
+  assert.equal(nominal3D(onResults("Base load", "a"), shoeBlobs).maxElementLoadMag, 0);
+  assert.equal(nominal3D(onResults("Base load", "b"), shoeBlobs).maxElementLoadMag, 10, "active at stage b");
+  // Shown as "a" but program stage "b": active, never the display name's stage.
+  assert.equal(nominal3D(onResults("a", "b"), shoeBlobs).maxElementLoadMag, 10);
+});
+
 test("OpenSees-pattern beamUniform: the emitter's aL/bL and end values are decoded, not read as wz/wx (#2385 review 2)", () => {
   const decl = shoeState.decls[shoeState.mesh!.elements[0]!]!;
   const tag = decl.element!.metas[0]!.tag;

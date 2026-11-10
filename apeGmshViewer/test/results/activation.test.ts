@@ -227,6 +227,20 @@ test("W4d: a display name never takes part in matching, even when it is another 
   assert.equal(inactiveElements(t), null);
 });
 
+test("W4d (review finding 2): a re-read that only stamps display names keeps the results position; another program name drops it", async () => {
+  const r = await stagedResults();
+  const at = { kind: "results" as const, stage: 1, step: 0 };
+  const s = reduce(base, { type: "setPhase", at });
+  assert.deepEqual(s.phase.at, at);
+  const reread = (name: string, programName: string): State =>
+    reduce(s, { type: "resultsLoaded", ...r, info: { ...r.info, stages: r.info.stages.map((st, i) => (i === 1 ? { ...st, name, programName } : st)) } });
+  const shown = reread("Erection", "erect");
+  assert.deepEqual(shown.phase.at, at, "a display rename is a label: the position is kept");
+  assert.equal(shown.results!.stages[1]!.name, "Erection");
+  assert.equal(reread("erect", "erect").phase.at?.kind, "results", "an unchanged re-read keeps it too");
+  assert.deepEqual(reread("erect", "lift").phase.at, { kind: "mesh" }, "another program stage under the same label: the phase leaves it for the mesh");
+});
+
 // W4d #2843, the spec side (Amendment 1): a spec names a stage by either of its names,
 // so one written against the program name keeps resolving after a display rename;
 // the two names hitting different stages refuses. A snapshot writes the program name.

@@ -70,7 +70,7 @@ import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results
 import { readUserFile, readUserSet, type UserH5 } from "../reader/userFile.ts";
 import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } from "../reader/userSpectra.ts";
 import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
-import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
+import { compareStagesOf, ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
 import { OpenSession, Study } from "./session.ts";
 import { confinedToStudy, isManifestPath, readVariants, resolveRow, type VariantsFs } from "../reader/variants.ts";
@@ -1019,7 +1019,7 @@ ipcMain.handle("variants:compare", async (_e, index: unknown, label: unknown) =>
       label: row.label,
       results: set.results,
       femHash: lin.femHash,
-      stages: a.meta.stages.map((s) => ({ id: s.id, name: s.name, programName: s.programName, nodal: [...s.nodal], time: [...s.time] })),
+      stages: compareStagesOf(a.meta),
     },
     nodeIds: a.nodeIds,
   };

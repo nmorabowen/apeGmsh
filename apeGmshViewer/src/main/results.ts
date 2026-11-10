@@ -45,7 +45,7 @@ import { unopenedSibling } from "./pairing.ts";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
 import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
-import type { ModeFacts, UnitSystemId } from "../state/types.ts";
+import type { CompareStageIn, ModeFacts, UnitSystemId } from "../state/types.ts";
 import type { ProgramDecls } from "../model/types.ts";
 
 /** A `.ladruno` as main reads it: one file, or a part set read as one (#2188). */
@@ -261,8 +261,8 @@ const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
  * Display names: a well-formed INFO/PROVENANCE@stage_display_names (a
  * `stage_names=` rename, W4c #2823) renames the host stages the same way,
  * on top of the program names. It binds by stage_names, so one that is
- * malformed, miscounted, or has no bound stage_names to go with shows the
- * program names, and warns. They label the stage and are never matched.
+ * malformed, miscounted, holds an empty or whitespace-only name, or has no
+ * bound stage_names to go with shows the program names, and warns. They label the stage and are never matched.
  */
 function ladrunoStageNames(rf: AnyLadruno, warningsOut?: string[]): { program: string[]; display: string[] } {
   const ix = rf.index;
@@ -309,6 +309,14 @@ function ladrunoStageNames(rf: AnyLadruno, warningsOut?: string[]): { program: s
     return { program, display: program };
   }
   const shown = listOf("stage_display_names", prov.stageDisplayNames, "the program's stage names are shown");
+  // A display name that is empty or only whitespace labels nothing: degenerate, like a malformed list.
+  const blank = shown ? shown.findIndex((n) => n.trim() === "") : -1;
+  if (shown && blank >= 0) {
+    warningsOut?.push(
+      `${ix.path}: INFO/PROVENANCE@stage_display_names[${blank}] = ${JSON.stringify(shown[blank])} is empty or only whitespace; the program's stage names are shown`,
+    );
+    return { program, display: program };
+  }
   return { program, display: shown ? rename(program, shown) : program };
 }
 
@@ -399,6 +407,15 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
     units: i.units,
     elementIndexSpace: i.elementIndexSpace,
   };
+}
+
+/**
+ * The compare set's stages as `variants:compare` answers them (state/types.ts
+ * `CompareStageIn`): the difference matches the window's stage by
+ * `programName`, so it is carried (W4d #2843). main.ts and the tests share it.
+ */
+export function compareStagesOf(meta: Pick<ResultsMeta, "stages">): CompareStageIn[] {
+  return meta.stages.map((s) => ({ id: s.id, name: s.name, programName: s.programName, nodal: [...s.nodal], time: [...s.time] }));
 }
 
 export class ResultsHost {

@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
-import { ResultsHost } from "../../src/main/results.ts";
+import { compareStagesOf, ResultsHost } from "../../src/main/results.ts";
 import { openModel } from "../../src/reader/node.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { differenceHeld, VariantRunner, type VariantDoor } from "../../src/renderer/contour.ts";
@@ -55,7 +55,7 @@ function compareDoor(path = CRACKED.results) {
     variantsCompare: async (index, label) => {
       const a = await host.open(path);
       if (!a.ok) return { ok: false, reason: a.error };
-      const compare: CompareIn = { index, label, results: path, femHash: a.meta.lineage?.femHash ?? null, stages: a.meta.stages.map((s) => ({ id: s.id, name: s.name, programName: s.programName, nodal: s.nodal, time: s.time })) };
+      const compare: CompareIn = { index, label, results: path, femHash: a.meta.lineage?.femHash ?? null, stages: compareStagesOf(a.meta) };
       return { ok: true, compare, nodeIds: a.nodeIds };
     },
     compareClose: async () => host.close(),

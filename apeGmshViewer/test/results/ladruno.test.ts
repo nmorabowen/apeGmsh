@@ -667,6 +667,9 @@ test("W4d: a malformed or miscounted display list shows the program names, and w
     ['"Push over"', /@stage_display_names = .* is not a JSON array of strings; the program's stage names are shown$/],
     ["[1]", /@stage_display_names = .* is not a JSON array of strings; the program's stage names are shown$/],
     ['["a","b"]', /INFO\/PROVENANCE@stage_display_names names 2 stage\(s\), the file has 1 MODEL_STAGE group\(s\); the program's stage names are shown$/],
+    // Review finding 3: an empty or whitespace-only display name is degenerate, never an "(unnamed)" stage.
+    ['[""]', /INFO\/PROVENANCE@stage_display_names\[0\] = "" is empty or only whitespace; the program's stage names are shown$/],
+    ['[" \\t"]', /INFO\/PROVENANCE@stage_display_names\[0\] = " \\t" is empty or only whitespace; the program's stage names are shown$/],
   ] as const) {
     const got = await stagesOf(stampedWith(STAMPED, { stage_display_names: bad }));
     assert.deepEqual(got.names, ["push"], bad);
