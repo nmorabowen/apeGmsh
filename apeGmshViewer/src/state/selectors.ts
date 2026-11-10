@@ -1661,6 +1661,8 @@ export function differencePlanOf(s: State): DifferencePlan | null {
   if (at?.kind === "combination") {
     return { ok: false, reason: `a User Combination is of the window variant's own states, so a combination across variants is refused: ${quoted(at.name)} is not subtracted from ${quoted(c.label)}` };
   }
+  // VU16: so is a user result, of the window variant's own .user.h5.
+  if (s.contour.source === "user") return { ok: false, reason: "a user result is of the window variant's own file, so it is not subtracted across variants" };
   if (!s.results || resultsPairing(s).state !== "paired") return { ok: false, reason: "no results file pairs with this model, so there is nothing to subtract from" };
   if (at?.kind !== "results") return { ok: false, reason: "a difference is of a results step: choose results in the phase bar" };
   const st = s.results.stages[at.stage];
@@ -1682,7 +1684,6 @@ export function differencePlanOf(s: State): DifferencePlan | null {
   if (t === undefined || u === undefined) return { ok: false, reason: `the compare variant ${quoted(c.label)} has no step ${k} of stage ${quoted(label)}` };
   if (!sameTime(t, u)) return { ok: false, reason: `step ${k} of stage ${quoted(label)} is at time ${t} here and ${u} in ${quoted(c.label)}` };
   const pick = s.contour;
-  if (pick.source === "user") return { ok: false, reason: "a user result is of the window variant's own file, so it is not subtracted across variants" };
   if (pick.source !== "nodal") return { ok: false, reason: "a difference is of a nodal component; an element field is not subtracted" };
   if (pick.field === null || pick.component === null) return { ok: false, reason: "pick a field" };
   const hit = componentOf(st, pick.field, pick.component);

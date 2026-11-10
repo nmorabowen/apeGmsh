@@ -353,12 +353,11 @@ export class UserResultFeed {
     // Through a promise, so a fetch that throws at once (a bridge with no door) is stated as a failed read too.
     return Promise.resolve()
       .then(() => this.fetch({ path: want.path, name: want.name, component: want.component }))
-      .then(
-      (r) => {
+      .then((r) => {
         if (!r.ok) return answered({ key: want.key, status: "refused", reason: r.reason, detail: r.detail }, null);
         const { ids, values } = r.value;
         if (!(ids instanceof Float64Array) || !(values instanceof Float64Array) || ids.length !== values.length) {
-          throw new Error(`user:readResult answered ids and values that are not two f64 columns of one length`);
+          throw new Error("user:readResult answered ids and values that are not two f64 columns of one length");
         }
         let min = Infinity, max = -Infinity, finite = 0;
         for (const v of values) {
@@ -368,9 +367,9 @@ export class UserResultFeed {
           if (v > max) max = v;
         }
         answered({ key: want.key, status: "ready", read: mine, range: finite ? { min, max } : null, nodes: ids.length, finite }, { ids, values });
-      },
+      })
       // What the read raised (a broken door, a malformed answer) is stated, never a blank view.
-    ).catch((err: unknown) => answered({ key: want.key, status: "failed", error: err instanceof Error ? err.message : String(err) }, null));
+      .catch((err: unknown) => answered({ key: want.key, status: "failed", error: err instanceof Error ? err.message : String(err) }, null));
   }
 }
 

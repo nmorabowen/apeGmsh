@@ -504,7 +504,11 @@ test("the contour picker's User Results group: each entry, what it is, and what 
     ["base shear (whole model, state-free, stale)", true, false],
   ]);
   assert.match(g.rows[1]!.title, /on the results basis; stale: .*results_hash/);
-  assert.equal(g.note, "Listed only: this app does not draw a user result yet.");
+  // VU16: neither is a state-free nodal entry, so neither is offered; each title says why, and the note names what is drawn.
+  assert.deepEqual(g.rows.map((r) => r.pick), [null, null]);
+  assert.match(g.rows[0]!.title, /not drawn: user result "Delta_after \(L\/480\)" is per state; this app draws a state-free one only$/);
+  assert.match(g.rows[1]!.title, /not drawn: user result "base shear" is on domain; this app draws a user result on nodes only$/);
+  assert.equal(g.note, "A state-free nodal user result is drawn as a contour; a per-state or non-nodal one is listed only.");
   assert.equal(userResultsGroup(initialState), null);
   assert.equal(userResultsGroup(reduce(initialState, { type: "userOpened", path: "u.user.h5" })), null, "nothing listed while reading");
 });
