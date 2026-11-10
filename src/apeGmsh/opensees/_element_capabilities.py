@@ -525,8 +525,8 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={3: (0,1,2,3)},
         slots=("nodes", "matTag"),
         has_gauss=True,
-        # DISCARD per fork PR #838 roster (LEDGER_quirks.md): update()
-        # calls setTrialStrain and returns 0 regardless.
+        # DISCARD: update() calls setTrialStrain and returns 0
+        # regardless of the material's return code.
         propagates_material_refusal=False,
     ),
     # Ladruno-fork unified 4-node plane continuum (tag 33007), 2D sibling of
