@@ -217,11 +217,14 @@ void_ratio=e, alpha=0.25*h**2/(K + 4*G/3), body=(0.0, -9.81))` emits
 `perm` is `k_hydraulic / gamma_w`; `body` is an acceleration (times the
 material `rho` = saturated density); `alpha` is pressure stabilization, not
 Biot's. ndf 3 is inferred per node. Its pore pressure is the **velocity**
-of DOF 3 (`nodeVel(n, 3)`, `recorder Node -dof 3 vel`); `nodeDisp(n, 3)` is
-the time integral. Drain a face with `ops.fix(pg="Top", dofs=(0, 0, 1))`.
-The coupling Q·p lives in the damping matrix, so support reactions need
-`reactions -dynamic` / `reactionIncInertia`; the bridge's
-`.read("reaction_force_*")` uses a plain `reactions` (skeleton share only).
+of DOF 3 (`nodeVel(n, 3)`); `nodeDisp(n, 3)` is the time integral. Ask for
+the canonical `pore_pressure`: `.read("pore_pressure")` and
+`ops.recorder.declare(nodes=("pore_pressure",), ...)` +`ops.results` read
+it from the right slot (SSPquadUP: vel DOF 3; LadrunoUP: disp DOF ndm+1).
+Drain a face with `ops.fix(pg="Top", dofs=(0, 0, 1))`. The coupling Q·p
+lives in the damping matrix, so in a model holding an SSPquadUP the bridge
+forms `reactions -dynamic` for `.read("reaction_force_*")` and records
+`reactionIncInertia` for declared reactions (both include M·a).
 Run it transient (Newmark γ ≥ 0.5, the C0 rung used γ=0.6, β=0.3025, with
 `UmfPack`), and change the permeability between stages with
 `s.update_parameter("hPerm" | "vPerm", k, pg="soil")`.

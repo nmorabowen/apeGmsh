@@ -442,9 +442,10 @@ class SSPquadUP(Element):
     * the coupling term Q·p sits in the element's DAMPING matrix, so a
       plain ``reactions`` misses the fluid share of a support reaction:
       form them with ``reactions -dynamic`` or record
-      ``reactionIncInertia``.  The bridge's live ``.read("reaction_force_*")``
-      calls a plain ``reactions``, so on an SSPquadUP model it reports
-      the skeleton share only;
+      ``reactionIncInertia``.  The bridge does both for you in a model
+      holding an SSPquadUP: the live ``.read("reaction_force_*")`` forms
+      ``reactions -dynamic`` and ``recorder.declare`` writes
+      ``reactionIncInertia`` (both also carry the inertia M·a);
     * the analysis must be transient (Newmark with γ ≥ 0.5; p is a rate
       variable), and a geostatic step is usually run at a high
       permeability and then dropped with ``s.update_parameter("hPerm",
@@ -453,7 +454,16 @@ class SSPquadUP(Element):
 
     Because DOF 3 of a 2-D node is the slot a frame node calls
     ``rotation_z``, the results route never reads it as a rotation on an
-    SSPquadUP node (it joins the u-p families of ``_readback``).
+    SSPquadUP node (it joins the u-p families of ``_readback``).  Ask for
+    the canonical ``pore_pressure`` instead: ``ops.nodes.get(pg=...)
+    .read("pore_pressure")`` reads ``nodeVel(n, 3)``,
+    ``ops.recorder.declare(nodes=("pore_pressure",), ...)`` writes
+    ``recorder Node ... -dof 3 vel``, and ``ops.results`` reads it back
+    as ``pore_pressure``.
+
+    It forwards ``materialState`` to its material, so a staged
+    ``updateMaterialStage`` sweep reaches every element (measured, the
+    census in ``test_md_stage_route_elements.py``).
 
     Parameters
     ----------
