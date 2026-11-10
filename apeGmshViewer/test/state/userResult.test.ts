@@ -15,7 +15,9 @@
 // - ADR 0130 D7. A user result is a contour only: never a deformed shape.
 
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
@@ -85,6 +87,31 @@ test("A6: against another fem's archive, or none, the entry is stale and refused
   assert.match(other.detail, /^user result 'footfall' is stale \(A6\): fem_hash differs: \S+ here, \S+ in the model$/);
   const none = readUserResultColumn(H5, at("w3_bay.user.h5"), null, null, list, "footfall", RATIO);
   assert.deepEqual(none, { ok: false, reason: "stale", detail: "user result 'footfall' is stale (A6): no model file to compare with" });
+});
+
+test("A6: an entry with no own staleness verdict (a result named __proto__) is stale, never read as current (#2863 review)", () => {
+  // W3's file with its one entry renamed `__proto__` (A2 allows it): in staleness()'s plain record the
+  // verdict assignment sets the prototype, not an own key, so there is no verdict to call it current.
+  const dir = mkdtempSync(join(tmpdir(), "vu16-proto-"));
+  const path = join(dir, "proto.user.h5");
+  copyFileSync(at("w3_bay.user.h5"), path);
+  const f = new h5wasm.File(path, "a");
+  const r0 = f.get("results/r0") as h5wasm.Group;
+  r0.delete_attribute("name");
+  r0.create_attribute("name", "__proto__");
+  f.close();
+  const set = readUserSet(H5, path, at("w3_bay.h5"), null, list);
+  assert.ok(set.ok && set.user.results.ok);
+  assert.deepEqual(set.user.results.value.entries.map((e) => e.name), ["__proto__"], "the entry stands");
+  assert.equal(Object.hasOwn(set.staleness.results, "__proto__"), false, "and has no own verdict");
+  // Against its own archive (current for any other name) and against another fem's: stale either way.
+  for (const model of [at("w3_bay.h5"), at("plate.h5")]) {
+    assert.deepEqual(readUserResultColumn(H5, path, model, null, list, "__proto__", RATIO), {
+      ok: false,
+      reason: "stale",
+      detail: "user result '__proto__' is stale (A6): the reader gave no staleness verdict for it",
+    });
+  }
 });
 
 test("a name the file does not list, a component it does not have, or a refused zone is refused by name", () => {

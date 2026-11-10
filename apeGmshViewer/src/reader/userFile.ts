@@ -1093,10 +1093,13 @@ export function readUserResultColumn(
 ): UserColumnRead {
   const set = readUserSet(h5, path, model, results, list);
   if (!set.ok) return { ok: false, reason: "refused", detail: set.error };
-  if (Object.hasOwn(set.staleness.results, name)) {
-    const mark = set.staleness.results[name]!;
-    if (mark.stale) return { ok: false, reason: "stale", detail: `user result ${pyStr(name)} is stale (A6): ${mark.reason}` };
-  }
+  // A standing entry with no own verdict is stale (A6: nothing is read as current on no proof), as reduce.ts
+  // `NO_VERDICT` holds; a name `__proto__` sets the record's prototype, never an own key. An entry that does not
+  // stand is refused by `readUserNodalColumn`, with why.
+  const standing = set.user.results.ok && set.user.results.value.entries.some((e) => e.name === name);
+  const mark = Object.hasOwn(set.staleness.results, name) ? set.staleness.results[name]! : null;
+  if (standing && mark === null) return { ok: false, reason: "stale", detail: `user result ${pyStr(name)} is stale (A6): the reader gave no staleness verdict for it` };
+  if (mark?.stale) return { ok: false, reason: "stale", detail: `user result ${pyStr(name)} is stale (A6): ${mark.reason}` };
   try {
     return { ok: true, value: readUserNodalColumn(h5, path, set.user.results, name, component) };
   } catch (err) {
