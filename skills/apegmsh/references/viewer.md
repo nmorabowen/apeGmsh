@@ -149,7 +149,27 @@ The Contour card's field picker lists **Results** (what the recorder
 wrote, by source), then **User Results** (the `/results` entries of the
 `.user.h5`). Each row gives the entry's target (nodal, element, entity,
 whole model), whether it is per state or state-free, and whether it is
-stale. User results are listed only: the app does not draw them yet.
+stale.
+
+A **state-free nodal** user result (footfall's `footfall`, for one) is
+picked there, with one of its columns, and drawn as a contour over the
+model at whatever phase is on screen: it belongs to no stage. Its values
+are joined by node id, and a node the file leaves out or holds as `NaN`
+is drawn as no data. The colour range is its own values unless you fix
+it. It is a contour only: the Deformed card is refused while it is shown,
+and it is never subtracted across variants or drawn over a User
+Combination. A stale entry (A6: another `fem_hash`, or a re-run for an
+`@basis="results"` entry) can be picked; the contour is refused with that
+reason, and its values are never read. A per-state user result, or one on
+elements, entities or the whole model, is listed only; its tooltip says
+why.
+
+A `--render` shot names one with `"source": "user"`, the entry as `field`
+and the column as `component`, and no `stage`, `step`, `combination`,
+`compare` or `deform` (the spec refuses each):
+`{"name": "ratio", "contour": {"field": "footfall", "component": "footfall_ratio", "source": "user"}}`.
+The manifest's contour says `"source": "user"` and names the entry and its
+basis.
 
 ## 7. Entities
 

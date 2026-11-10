@@ -139,18 +139,47 @@ import matplotlib  # noqa: E402
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-xyz = np.asarray(fem.nodes.coords)[on_slab]   # footfall.ids follow fem.nodes.ids
-fig0, ax0 = plt.subplots(figsize=(9, 4.6))
-cf = ax0.tricontourf(xyz[:, 0], xyz[:, 1], ratio_map[on_slab], levels=20, cmap="jet")
-fig0.colorbar(cf, ax=ax0, label="a_p / limit")
-ax0.set_aspect("equal")
-ax0.set_xlabel("x [m]")
-ax0.set_ylabel("y [m]")
-ax0.set_title("Footfall ratio, self excitation at every slab node (fails above 1)")
-fig0.tight_layout()
+# The ratio map is drawn by apeGmshViewer from the user file: its --render pairs
+# footfall_two_bay.user.h5 with the model beside it and colours the state-free
+# "footfall" result's footfall_ratio column (contour source "user"); nodes off
+# the slab hold NaN and are drawn as no data. Only when no viewer is installed
+# (or $APEGMSH_VIEWER is unset and names none) is the map drawn with matplotlib.
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+
+from apeGmsh.agent_view import render_stills  # noqa: E402
+
 png = OUT / "footfall_ratio.png"
-fig0.savefig(png, dpi=130)
-print(f"map: {png}")
+ratio_spec = {
+    "spec": "apegmsh-view/1",
+    "files": {"model": str(model_h5)},
+    "size": [1400, 800],
+    "shots": [{
+        "name": "footfall_ratio", "camera": "top", "chrome": "model",
+        "contour": {"field": "footfall", "component": "footfall_ratio", "source": "user", "cmap": "jet"},
+    }],
+}
+try:
+    with tempfile.TemporaryDirectory(prefix="footfall-stills-") as tmp:
+        manifest = render_stills(ratio_spec, Path(tmp) / "stills")
+        shutil.copyfile(Path(tmp) / "stills" / "footfall_ratio.png", png)
+    drawn = manifest["shots"][0]["contour"]
+    print(f"map (apeGmshViewer --render): {png}; range {drawn['range']['min']:.3f} to "
+          f"{drawn['range']['max']:.3f}, {drawn['no_data']['count']} of {drawn['no_data']['of']} "
+          "drawn nodes are no data (off the slab)")
+except FileNotFoundError as err:
+    print(f"apeGmshViewer was not found ({err}); the ratio map falls back to matplotlib")
+    xyz = np.asarray(fem.nodes.coords)[on_slab]   # footfall.ids follow fem.nodes.ids
+    fig0, ax0 = plt.subplots(figsize=(9, 4.6))
+    cf = ax0.tricontourf(xyz[:, 0], xyz[:, 1], ratio_map[on_slab], levels=20, cmap="jet")
+    fig0.colorbar(cf, ax=ax0, label="a_p / limit")
+    ax0.set_aspect("equal")
+    ax0.set_xlabel("x [m]")
+    ax0.set_ylabel("y [m]")
+    ax0.set_title("Footfall ratio, self excitation at every slab node (fails above 1)")
+    fig0.tight_layout()
+    fig0.savefig(png, dpi=130)
+    print(f"map (matplotlib fallback): {png}")
 
 from apeGmsh.opensees.analysis.footfall import (  # noqa: E402
     dynamic_coefficient, resonant_buildup_factor, tolerance_limit, walking_high_frequency,
