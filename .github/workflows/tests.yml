@@ -618,6 +618,10 @@ jobs:
         # that skips or goes unselected here fails the job.
         env:
           APEGMSH_WARRANT_LANE: stock
+          # #2849: unbuffered stdout plus -v below put each test's nodeid in
+          # the log before its body runs, so a native exit(0) mid-run leaves
+          # the dying test as the last line instead of an unnamed 66%.
+          PYTHONUNBUFFERED: "1"
         run: |
           # `not qt` must be repeated: -m is single-valued, so this
           # REPLACES pyproject's addopts -m rather than anding with it
@@ -632,7 +636,7 @@ jobs:
           # end, so the step requires that report, with at least one
           # passed test and no failure or error in it.
           rm -f live-stock-junit.xml
-          pytest tests -q -p no:cacheprovider -rs \
+          pytest tests -v -p no:cacheprovider -rs \
             -m "live and not qt and not subprocess and not bench" \
             --junitxml=live-stock-junit.xml
           python - <<'EOF'
