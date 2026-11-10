@@ -108,6 +108,7 @@ ELE_TAG_SSPbrick = 121
 ELE_TAG_FourNodeQuad = 31
 ELE_TAG_Tri31 = 33
 ELE_TAG_SSPquad = 119
+ELE_TAG_SSPquadUP = 120
 ELE_TAG_Twenty_Node_Brick = 49
 ELE_TAG_EightNodeQuad = 208
 ELE_TAG_SixNodeTri = 209
@@ -1172,6 +1173,24 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         coord_system="isoparametric",
         component_names=STRAIN_2D,
         class_tag=ELE_TAG_SSPquad,
+    ),
+
+    # ── SSPquadUP (4-node u-p, 1 GP Quad_GL_1) ───────────────────────
+    # C++ class: SSPquadUP (stock UWelements). setResponse keeps only
+    # ``stress2D3`` / ``strain2D3`` for itself and hands every other
+    # keyword to its PlaneStrain material copy, whose ``stress`` /
+    # ``strain`` are the same Vector(3) (effective stress).
+    ("SSPquadUP", IntRule.Quad_GL_1, "stress"): _continuum_layout(
+        n_gp=1, natural_coords=_QUAD_GL_1_COORDS,
+        coord_system="isoparametric",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_SSPquadUP,
+    ),
+    ("SSPquadUP", IntRule.Quad_GL_1, "strain"): _continuum_layout(
+        n_gp=1, natural_coords=_QUAD_GL_1_COORDS,
+        coord_system="isoparametric",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_SSPquadUP,
     ),
 
     # ── Twenty_Node_Brick (20-node, 27 GPs Hex_GL_3) ─────────────────

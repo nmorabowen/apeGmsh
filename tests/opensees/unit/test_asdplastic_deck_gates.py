@@ -115,6 +115,7 @@ class TestCapabilityFlag:
             "FourNodeTetrahedron": False,
             "SSPbrick": False,
             "SSPquad": False,
+            "SSPquadUP": False,
             "bbarBrick": False,        # roster row "BbarBrick"
             "stdBrick": False,         # roster row "Brick"
         }

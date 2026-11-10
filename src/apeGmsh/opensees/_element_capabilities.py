@@ -511,6 +511,24 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         has_gauss=True,
         propagates_material_refusal=False,
     ),
+    # Stock UWelements 4-node u-p plane quad (tag 120, SSPquadUP.cpp). Token
+    # == C++ class name == registry key. Every node carries (ux, uy, p), so
+    # ndf_ok={3} is the inference floor; the parser reads per-node ndf (no
+    # builder gate). p is the VELOCITY of DOF 3 (the upstream integral-p
+    # trick); see element/solid_up.py. Its setResponse hands stress /
+    # strain to the PlaneStrain material copy. The positional tail is
+    # emitted from the dataclass, NOT slots.
+    "SSPquadUP": _ElemSpec(
+        mat_family="nd", needs_transf=False,
+        ndm_ok=frozenset({2}), ndf_ok=frozenset({3}),
+        gmsh_etypes=frozenset({3}),
+        node_reorder={3: (0,1,2,3)},
+        slots=("nodes", "matTag"),
+        has_gauss=True,
+        # DISCARD: update() calls setTrialStrain and returns 0
+        # regardless of the material's return code.
+        propagates_material_refusal=False,
+    ),
     # Ladruno-fork unified 4-node plane continuum (tag 33007), 2D sibling of
     # LadrunoBrick. Token == C++ class name == registry key ("LadrunoQuad"),
     # so no cpp_class_name / alias. Standard CCW quad order, byte-identical to
