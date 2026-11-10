@@ -47,7 +47,7 @@ from ...element.solid import (
     Tri31,
     stdBrick,
 )
-from ...element.solid_up import LadrunoUP
+from ...element.solid_up import LadrunoUP, SSPquadUP
 from ...element.truss import CorotTruss, InertiaTruss, Truss
 from ...element.two_node_link import TwoNodeLink
 from ...element.zero_length import (
@@ -1170,6 +1170,34 @@ class _ElementNS(_BridgeNamespace):
                 stab=stab,
                 dynSeepage=dynSeepage,
                 geom=geom,
+            )
+        )
+
+    def SSPquadUP(
+        self,
+        *,
+        pg: str,
+        material: NDMaterial | str,
+        thickness: float,
+        fluid_bulk: float,
+        fluid_density: float,
+        perm: tuple[float, float],
+        void_ratio: float,
+        alpha: float,
+        body: tuple[float, float] | None = None,
+    ) -> SSPquadUP:
+        material = self._bridge._resolve(material, base=NDMaterial)
+        return self._bridge._register(
+            SSPquadUP(
+                pg=pg,
+                material=material,
+                thickness=thickness,
+                fluid_bulk=fluid_bulk,
+                fluid_density=fluid_density,
+                perm=perm,
+                void_ratio=void_ratio,
+                alpha=alpha,
+                body=body,
             )
         )
 

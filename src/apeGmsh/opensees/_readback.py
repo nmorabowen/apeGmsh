@@ -79,7 +79,7 @@ from .element.solid import (
     Tri31,
     stdBrick,
 )
-from .element.solid_up import LadrunoUP
+from .element.solid_up import LadrunoUP, SSPquadUP
 from .element.truss import CorotTruss, InertiaTruss, Truss
 from .element.two_node_link import TwoNodeLink
 from .element.zero_length import (
@@ -127,7 +127,7 @@ _TRANSLATIONAL_ONLY: tuple[type, ...] = (
 #: layout calls a rotation, so a constraint could tie the two. A model
 #: holding one refuses rotations on element-less nodes.
 # Any element class added later that carries a pressure DOF must join this tuple.
-_UP_FAMILIES: tuple[type, ...] = (LadrunoUP,)
+_UP_FAMILIES: tuple[type, ...] = (LadrunoUP, SSPquadUP)
 
 
 @dataclass(frozen=True)
@@ -305,6 +305,7 @@ _CLASS_FOR_TOKEN: "dict[str, type]" = _TokenTable({
     "LadrunoBrick": LadrunoBrick,
     "LadrunoBrick20": LadrunoBrick20,
     "LadrunoUP": LadrunoUP,
+    "SSPquadUP": SSPquadUP,
     "ASDAbsorbingBoundary2D": ASDAbsorbingBoundary2D,
     "ASDAbsorbingBoundary3D": ASDAbsorbingBoundary3D,
 })

@@ -36,6 +36,7 @@ from apeGmsh.opensees.element.solid import (
     Tri31,
     stdBrick,
 )
+from apeGmsh.opensees.element.solid_up import SSPquadUP
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.material.nd import ElasticIsotropic
 
@@ -47,6 +48,7 @@ ALL_SOLID_ELEMENTS: list[type[Element]] = [
     FourNodeQuad,
     Tri31,
     SixNodeTri,
+    SSPquadUP,
 ]
 
 
@@ -63,6 +65,7 @@ _NODE_COUNT: dict[type[Element], int] = {
     FourNodeQuad: 4,
     Tri31: 3,
     SixNodeTri: 6,
+    SSPquadUP: 4,
 }
 
 
@@ -76,6 +79,7 @@ _TYPE_TOKEN: dict[type[Element], str] = {
     FourNodeQuad:        "quad",
     Tri31:               "tri31",
     SixNodeTri:          "tri6n",
+    SSPquadUP:           "SSPquadUP",
 }
 
 
@@ -86,6 +90,12 @@ def _make_minimal(cls: type[Element]) -> Element:
         return cls(pg="Body", material=m)  # type: ignore[call-arg]
     if cls in (FourNodeQuad, Tri31, SixNodeTri):
         return cls(pg="Plate", thickness=0.1, material=m)  # type: ignore[call-arg]
+    if cls is SSPquadUP:
+        return cls(  # type: ignore[call-arg]
+            pg="Soil", material=m, thickness=1.0, fluid_bulk=2.2e6,
+            fluid_density=1.0, perm=(1e-7, 1e-7), void_ratio=0.7,
+            alpha=1e-6,
+        )
     raise NotImplementedError(
         f"Contract test needs a minimal-instance factory for {cls!r}."
     )

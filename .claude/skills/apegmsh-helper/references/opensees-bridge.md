@@ -203,11 +203,28 @@ The bridge is agnostic; pick by mechanics. One-clause defaults (for the
 |---|---|---|
 | 3-D solid (hex/tet) | `stdBrick` / `FourNodeTetrahedron` | fork: `LadrunoBrick(formulation="ssp")` or `"bbar"` (stabilized hourglass / near-incompressible); stock: no anti-locking hex yet (`SSPbrick` / `bbarBrick` are deferred) |
 | 2-D solid | `FourNodeQuad` (fork: `LadrunoQuad(formulation="ssp")` stabilized; `SSPquad` is deferred) | `Tri31` only where a quad mesh won't form |
+| 2-D saturated soil (u-p) | stock `SSPquadUP` (quad4, every node ndf 3: ux, uy, p) | fork `LadrunoUP` (honest p in the disp slot, tri/quad/TH shapes; `ladruno.md`) |
 | Shell | `ShellMITC4` (general 4-node) | `ASDShellQ4` (drilling DOF, large-disp), `ShellDKGQ` (thin, no shear) |
 | Beam/column | `forceBeamColumn` (force-based, fewer elems for spread plasticity) | `dispBeamColumn` (displacement-based, stiff/short members or when force-based won't converge) |
 
 Fiber sections (`ops.section.Fiber`) make beams/shells nonlinear; `elasticBeamColumn`
 stays linear. Fork-only continuum (`LadrunoBrick` etc.) is in `ladruno.md`.
+
+**Stock u-p: `SSPquadUP`.** `ops.element.SSPquadUP(pg="soil", material=dp,
+thickness=1.0, fluid_bulk=Kf, fluid_density=rho_w, perm=(k1, k2),
+void_ratio=e, alpha=0.25*h**2/(K + 4*G/3), body=(0.0, -9.81))` emits
+`element SSPquadUP tag n1..n4 matTag t fBulk fDen k1 k2 e alpha b1 b2`.
+`perm` is `k_hydraulic / gamma_w`; `body` is an acceleration (times the
+material `rho` = saturated density); `alpha` is pressure stabilization, not
+Biot's. ndf 3 is inferred per node. Its pore pressure is the **velocity**
+of DOF 3 (`nodeVel(n, 3)`, `recorder Node -dof 3 vel`); `nodeDisp(n, 3)` is
+the time integral. Drain a face with `ops.fix(pg="Top", dofs=(0, 0, 1))`.
+The coupling Q·p lives in the damping matrix, so support reactions need
+`reactions -dynamic` / `reactionIncInertia`; the bridge's
+`.read("reaction_force_*")` uses a plain `reactions` (skeleton share only).
+Run it transient (Newmark γ ≥ 0.5, the C0 rung used γ=0.6, β=0.3025, with
+`UmfPack`), and change the permeability between stages with
+`s.update_parameter("hPerm" | "vPerm", k, pg="soil")`.
 
 ### Springs, hinges, dashpots (ZeroLength family)
 

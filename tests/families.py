@@ -85,7 +85,7 @@ FAMILIES: tuple[Family, ...] = (
            (_ELEMENT + "shell",)),
     Family("solid element", Element,
            _CONTRACT + "test_element_solid_contract:ALL_SOLID_ELEMENTS",
-           (_ELEMENT + "solid",)),
+           (_ELEMENT + "solid", _ELEMENT + "solid_up")),
     Family("constraint handler", ConstraintHandler,
            _CONTRACT + "test_analysis_contract:ALL_CONSTRAINT_HANDLERS"),
     Family("numberer", Numberer,
