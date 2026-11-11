@@ -8,9 +8,13 @@ ids. When a hand-written deck numbered its elements differently, every
 physical group still bound, and `gauss.get(pg=...)` returned the wrong
 elements with no warning.
 
-Now, when the archive has no element tag map, the capture's elements must
-be the fem's: the same id on the same nodes. This is the check the
-`model_h5=` route already makes. A mismatch warns
+Now, when the archive has no element tag map, the capture's tags are
+checked against the fem's elements. It is a mismatch when a shared id sits
+on other nodes, when a tag the fem lacks sits on the nodes of a fem element
+the capture does not hold under that element's own id (a renumbering), or
+when no capture element is a fem element. Any other tag the fem lacks is
+an element the deck added, such as a spring or a link, and is not a
+mismatch. A mismatch warns
 `ModelFemMismatchWarning`, naming the missing element ids, and binds the
 capture's own FEMData, so no physical groups are bound and a `pg=` read
 raises `KeyError`. A matching fem binds silently, as before. A fem with no
