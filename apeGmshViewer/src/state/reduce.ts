@@ -7,9 +7,11 @@
 // A slice whose events write only its own part of the state has its own
 // sub-reducer under reduce/, the way the clip events call `reduceClip`: each
 // takes its sub-state, and what it reads of the rest as explicit inputs, and
-// returns the same object when nothing changed. The cases that read or write
-// several slices (the files, the selection, the phase, the results, the
-// contour and the deformed shape) stay here.
+// returns the same object when nothing changed. The model's events and the
+// cases that read or write several slices (the files, the selection, the
+// phase, the results, the contour and the deformed shape) stay here, as do
+// the follow-ups a delegated event needs from another slice (`withPhase`,
+// `withLineDiagramPick`, `syncLineDiagramDerived`).
 
 import { reduceClip } from "./clip.ts";
 import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";

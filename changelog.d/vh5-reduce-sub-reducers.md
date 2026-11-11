@@ -1,6 +1,6 @@
 ### CHANGED — apeGmshViewer: `state/reduce.ts` delegates to one sub-reducer per slice (VH5 #2869)
 
-`apeGmshViewer/src/state/reduce.ts` (1,786 lines) is now 860. The overlay,
+`apeGmshViewer/src/state/reduce.ts` (1,786 lines) is now 862. The overlay,
 line-diagram, windows (open windows, spotlight and search), offers, camera,
 user-file and variants events each go to a pure sub-reducer under
 `state/reduce/<slice>.ts`, the way the clip events already went to
