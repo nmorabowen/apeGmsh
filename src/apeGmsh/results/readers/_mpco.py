@@ -60,6 +60,7 @@ from ._buckets import (
     read_mode_shape,
 )
 from ...opensees._response_catalog import (
+    PER_MATERIAL_STRAIN_CLASSES,
     needs_per_material_strain,
     parse_mpco_element_key,
 )
@@ -1513,24 +1514,39 @@ class MPCOReader:
         import h5py
 
         mapping = _melem.canonical_to_gauss_token(component)
-        elements = _child(stage, "MODEL/ELEMENTS")
-        if mapping is None or elements is None:
+        if mapping is None:
             return
         catalog_token = mapping[1]
+        # Not a strain read for any such class (a stress read): no listing
+        # is looked at.
+        if not any(needs_per_material_strain(cls, catalog_token)
+                   for cls in PER_MATERIAL_STRAIN_CLASSES):
+            return
+        elements = _child(stage, "MODEL/ELEMENTS")
+        if elements is None:
+            return
         in_scope: dict[str, list[ndarray]] = {}
         for ds_name in elements:
             ds = elements[ds_name]
             if not (isinstance(ds, h5py.Dataset) and ds.ndim == 2
                     and ds.shape[0] and ds.shape[1]):
                 continue
+            tags = np.asarray(ds[:, 0], dtype=np.int64)
+            if element_ids is not None:
+                tags = tags[np.isin(tags, np.asarray(element_ids, np.int64))]
+            if not tags.size:
+                continue
             try:
                 key = parse_mpco_element_key(ds_name)
             except ValueError as exc:
+                # Only a listing the read covers can hide such a class.
                 raise ValueError(
                     f"MPCO gauss read of {component!r} in {self._path.name}: "
                     f"the element listing {ds.name} names no class ({exc}), "
-                    f"so the read cannot tell whether its elements answer "
-                    f"element-level strain."
+                    f"and the read covers its element(s) "
+                    f"{np.asarray(index_to_fem(tags), np.int64).tolist()}, "
+                    f"so it cannot tell whether they answer element-level "
+                    f"strain."
                 ) from exc
             if not needs_per_material_strain(key.class_name, catalog_token):
                 continue
@@ -1545,11 +1561,7 @@ class MPCOReader:
             )
             if not answers:
                 continue
-            tags = np.asarray(ds[:, 0], dtype=np.int64)
-            if element_ids is not None:
-                tags = tags[np.isin(tags, np.asarray(element_ids, np.int64))]
-            if tags.size:
-                in_scope.setdefault(key.class_name, []).append(tags)
+            in_scope.setdefault(key.class_name, []).append(tags)
         if not in_scope:
             return
         recorded = np.concatenate([np.empty(0, dtype=np.int64)] + [

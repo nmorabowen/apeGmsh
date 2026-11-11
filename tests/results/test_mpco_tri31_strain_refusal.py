@@ -151,6 +151,40 @@ def test_file_listing_no_elements_is_silent(tmp_path: Path) -> None:
         assert _ids(_read(r, "strain_xx")) == [2, 3, 4, 5]
 
 
+@pytest.fixture
+def unparseable_listing(tmp_path: Path) -> Path:
+    """``tri.mpco`` plus a listing whose name names no class, element 99."""
+    path = _copy(tmp_path, "tri_weird_listing.mpco")
+    with h5py.File(path, "r+") as f:
+        f[ELEMENTS].create_dataset(
+            "weird_listing", data=np.array([[99, 1, 2, 3]], dtype=np.int64),
+        )
+    return path
+
+
+def test_unparseable_listing_leaves_a_stress_read_silent(
+    unparseable_listing: Path,
+) -> None:
+    with MPCOReader(unparseable_listing) as r:
+        assert _ids(_read(r, "stress_xx")) == [1, 2, 3, 4, 5]
+
+
+def test_unparseable_listing_out_of_scope_leaves_strain_silent(
+    unparseable_listing: Path,
+) -> None:
+    with MPCOReader(unparseable_listing) as r:
+        assert _ids(_read(r, "strain_xx", [2])) == [2]
+
+
+def test_unparseable_listing_in_scope_refuses(
+    unparseable_listing: Path,
+) -> None:
+    """Its class cannot be told, so its elements could be Tri31."""
+    with MPCOReader(unparseable_listing) as r:
+        with pytest.raises(ValueError, match=r"names no class.*\[99\]"):
+            _read(r, "strain_xx", [99])
+
+
 def test_refusal_names_fem_ids_under_a_tag_map() -> None:
     fem_to_ops = {100 + t: t for t in range(1, 6)}
     with MPCOReader(TRI) as r:
