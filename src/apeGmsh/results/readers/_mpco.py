@@ -59,6 +59,10 @@ from ._buckets import (
     partition_reduction_from_name,
     read_mode_shape,
 )
+from ...opensees._response_catalog import (
+    needs_per_material_strain,
+    parse_mpco_element_key,
+)
 from ._gauss_refusals import GaussDimensionMixed
 from ._buckets import MPCOElementInTwoBuckets
 from ._protocol import ResultLevel, StageInfo, TimeSlice
@@ -109,6 +113,22 @@ class MPCOGaussDimensionMixed(GaussDimensionMixed):
     dropping the 3-D one would place Gauss points wrongly. The read
     refuses, naming one bucket of each width; a read narrowed to one
     class's elements answers (#2165).
+    """
+
+
+class MPCOStrainNotRecorded(ValueError):
+    """A gauss strain read covers elements of a class that answers no
+    element-level strain, and the file holds no strain rows for them
+    (#2893).
+
+    The classes are :data:`~apeGmsh.opensees._response_catalog.PER_MATERIAL_STRAIN_CLASSES`
+    (Tri31): ``ops.eleResponse(eid, "strains")`` is empty on them, so an
+    MPCO ``-E strains`` record leaves their elements out of every strain
+    bucket. Returning the other classes' rows would drop them in silence,
+    so the read refuses, naming the elements and the way out: a recorder
+    declared with ``element_class_name="Tri31"`` records strain per Gauss
+    point (``material.strain``), and those rows read as usual. A read that
+    leaves those elements out of scope answers.
     """
 
 
@@ -1313,6 +1333,12 @@ class MPCOReader:
         _melem.warn_skipped_buckets(
             scan_skipped, element_ids=element_ids, stacklevel=2,
         )
+        self._refuse_unrecorded_strain(
+            self._h5[mpco_name], component,
+            [on_elements[b.mpco_group_name][b.bracket_key] for b in buckets]
+            + [skip.group for skip in scan_skipped],
+            element_ids=element_ids, index_to_fem=index_to_fem,
+        )
         if not buckets:
             return _empty_gauss_slab(component, time, t_idx)
 
@@ -1460,6 +1486,100 @@ class MPCOReader:
         self._refuse_repeated_elements(
             row_parts, what=f"gauss read of {component!r}",
             index_to_fem=index_to_fem,
+        )
+
+    def _refuse_unrecorded_strain(
+        self,
+        stage: "h5py.Group",
+        component: str,
+        strain_buckets: "list[h5py.Group]",
+        *,
+        element_ids: Optional[ndarray],
+        index_to_fem: Any,
+    ) -> None:
+        """Raise :class:`MPCOStrainNotRecorded` when a strain read covers
+        elements of a class with no element-level strain response and no
+        bucket of the read holds their rows (#2893).
+
+        The elements in scope are those of ``stage``'s ``MODEL/ELEMENTS``
+        listing whose class is in ``PER_MATERIAL_STRAIN_CLASSES`` and
+        whose catalog strain row carries ``component``, narrowed to
+        ``element_ids`` (OpenSees tags; ``None`` asks for every element).
+        ``strain_buckets`` is every bucket the scan found for the read,
+        read or skipped: an element with a row in one of them is recorded
+        (a skipped bucket is already named by its own warning). A file
+        whose stage lists no elements has none in scope.
+        """
+        import h5py
+
+        mapping = _melem.canonical_to_gauss_token(component)
+        elements = _child(stage, "MODEL/ELEMENTS")
+        if mapping is None or elements is None:
+            return
+        catalog_token = mapping[1]
+        in_scope: dict[str, list[ndarray]] = {}
+        for ds_name in elements:
+            ds = elements[ds_name]
+            if not (isinstance(ds, h5py.Dataset) and ds.ndim == 2
+                    and ds.shape[0] and ds.shape[1]):
+                continue
+            try:
+                key = parse_mpco_element_key(ds_name)
+            except ValueError as exc:
+                raise ValueError(
+                    f"MPCO gauss read of {component!r} in {self._path.name}: "
+                    f"the element listing {ds.name} names no class ({exc}), "
+                    f"so the read cannot tell whether its elements answer "
+                    f"element-level strain."
+                ) from exc
+            if not needs_per_material_strain(key.class_name, catalog_token):
+                continue
+            # A class whose strain row lacks the component would not answer
+            # it from any record; one with no row is kept in scope.
+            layout = _melem.catalog_layout(
+                key, catalog_token, where=ds.name,
+            )
+            answers = layout is None or component in (
+                layout.component_layout
+                + (_melem._PLANE_OUT_OF_PLANE.get(layout.component_layout),)
+            )
+            if not answers:
+                continue
+            tags = np.asarray(ds[:, 0], dtype=np.int64)
+            if element_ids is not None:
+                tags = tags[np.isin(tags, np.asarray(element_ids, np.int64))]
+            if tags.size:
+                in_scope.setdefault(key.class_name, []).append(tags)
+        if not in_scope:
+            return
+        recorded = np.concatenate([np.empty(0, dtype=np.int64)] + [
+            np.asarray(grp["ID"][...], dtype=np.int64).ravel()
+            for grp in strain_buckets if "ID" in grp
+        ])
+        missing = {
+            cls: np.setdiff1d(np.concatenate(parts), recorded)
+            for cls, parts in in_scope.items()
+        }
+        missing = {cls: ids for cls, ids in missing.items() if ids.size}
+        if not missing:
+            return
+        listing = "; ".join(
+            f"{cls} element(s) "
+            f"{np.asarray(index_to_fem(ids), dtype=np.int64).tolist()}"
+            for cls, ids in sorted(missing.items())
+        )
+        classes = sorted(missing)
+        raise MPCOStrainNotRecorded(
+            f"MPCO gauss read of {component!r} in {self._path.name} covers "
+            f"{listing}, and the file holds no strain rows for them. "
+            f"{', '.join(classes)} answers no element-level strain "
+            f"(ops.eleResponse(eid, 'strains') is empty), so a strains "
+            f"record leaves those elements out, and the read would drop "
+            f"them in silence. Record the strain with "
+            f"element_class_name={classes[0]!r} on the recorder "
+            f"declaration, which records it per Gauss point "
+            f"(material.strain), or read only elements of other classes "
+            f"(element_ids, or a physical group without them)."
         )
 
     def _refuse_repeated_elements(
