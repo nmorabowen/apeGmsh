@@ -164,9 +164,11 @@ stands can be saved.
   moved; it never opens the live file for writing. A killed save leaves the
   old file byte-identical, and the next open sweeps the dead partial. No
   other zone changes.
-- **Revert last save** puts `@current` back to the generation before it, by
-  the same copy-then-replace. There is one revert: a second is refused. The
-  earlier generations stay in the file.
+- **Revert last save** undoes the save made last in this window, once: it
+  puts `@current` back to the generation that was in force when that save
+  was made, by the same copy-then-replace. It is offered only right after
+  such a save, and refused (`stale`) when the file changed since. A window
+  opened later has nothing to revert. Earlier generations stay in the file.
 - Saving needs free disk space of at least the file's size (a second copy
   sits beside it while it runs), and refuses with a message otherwise.
 - **Another program holding the file** (a Python session) blocks the

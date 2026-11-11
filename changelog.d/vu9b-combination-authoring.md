@@ -13,7 +13,8 @@
   appended to, read back, and replaces the original only if `/meta@revision`
   has not moved. The live file is never opened for writing; a killed save
   leaves it byte-identical, and the next open sweeps the dead partial. No
-  other zone changes. **Revert last save** puts `@current` back once.
+  other zone changes. **Revert last save** undoes the save made last in the
+  window, once, while the file is as that save left it.
 - A file another program holds is a refusal naming it, never a retry. A
   disk without a second file's worth of free space refuses before the copy.
   The app never creates a `.user.h5`, and only the human's window saves.
