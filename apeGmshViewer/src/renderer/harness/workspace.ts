@@ -46,6 +46,8 @@ export async function captureWorkspace(ctx: HarnessContext, settle: (ms?: number
   if (!input) throw new Error("capture: the sets panel has no name field");
   input.value = "picked nodes";
   input.dispatchEvent(new Event("input"));
+  // The effects compute the preview a task after the selection changes.
+  await settle(50);
   const preview = store.get().workspace.preview;
   if (!preview || !("ids" in preview) || preview.kind !== "nodes") throw new Error(`capture: the selection previews no node tags: ${JSON.stringify(preview)}`);
   await shot("workspace-named");
