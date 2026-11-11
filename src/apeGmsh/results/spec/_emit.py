@@ -1414,6 +1414,29 @@ def _warn_line_stations_class_unknown(rec) -> None:
     )
 
 
+def _refuse_strain_class_unknown(record_name: str, canonical: str) -> None:
+    """Raise: a gauss strain record names no class, so its MPCO token is unknown.
+
+    ``-E strains`` records the classes with an element-level strain
+    branch; the classes in ``PER_MATERIAL_STRAIN_CLASSES`` have none and
+    answer only ``material.strain``. Which one the record needs depends on
+    its elements' class, and a resolved record carries no physical group
+    or bridge to look it up from, so the caller names it.
+    """
+    from apeGmsh.opensees._response_catalog import PER_MATERIAL_STRAIN_CLASSES
+    per_material = sorted(PER_MATERIAL_STRAIN_CLASSES)
+    raise ValueError(
+        f"Record {record_name!r} (category=gauss): component {canonical!r} "
+        f"records strain, and the record names no element_class_name, so "
+        f"the MPCO emit cannot tell which token its elements answer. "
+        f"{per_material} answer only 'material.strain'; with '-E strains' "
+        f"their elements read back no rows and no warning. Pass "
+        f"element_class_name=<the elements' C++ class> on the record (for "
+        f"example element_class_name='Tri31'); a record whose elements span "
+        f"several classes is split into one record per class."
+    )
+
+
 def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
     """Return ``(node_tokens, element_tokens)`` deduplicated, in stable order.
 
@@ -1453,7 +1476,16 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
     per-token element filter (``-R`` scopes the whole recorder), so in a
     mixed mesh ``material.strain`` also records the other classes that
     answer it; the reader prefers their ``strains`` bucket when one exists.
+
+    A gauss record that names no ``element_class_name`` and has a
+    continuum strain component (anything but a shell generalized strain)
+    raises ``ValueError`` naming ``element_class_name=``
+    (:func:`_refuse_strain_class_unknown`): the token depends on the
+    class, the record carries no physical group or bridge to resolve it
+    from, and ``strains`` over Tri31 read back no rows and no warning
+    before #2083.
     """
+    from apeGmsh._vocabulary import SHELL_GENERALIZED_STRAINS
     from apeGmsh.opensees._response_catalog import (
         PER_MATERIAL_STRAIN_CLASSES,
         gauss_keyword_for_canonical,
@@ -1493,6 +1525,9 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
             per_material = rec.element_class_name in PER_MATERIAL_STRAIN_CLASSES
             for c in rec.components:
                 token = _canonical_to_mpco_gauss_token(c, rec.name)
+                if (token == "strains" and rec.element_class_name is None
+                        and c not in SHELL_GENERALIZED_STRAINS):
+                    _refuse_strain_class_unknown(rec.name, c)
                 if per_material and token == "strains":
                     token = per_material_strain
                 _add(elem_tokens, seen_e, token)
