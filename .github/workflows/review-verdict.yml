@@ -1,0 +1,52 @@
+name: Review verdict
+
+# Lesson #2637: a web merge never runs land_pr, so the T review policy is posted
+# as the `review-verdict` commit status on the PR head; marked required, it makes
+# the merge button refuse a head no Review-verdict approved.
+#
+# Trust boundary: both triggers run in the base repository's context with a
+# write token, so this job never executes PR code. It checks out the default
+# branch only (pull_request_target already takes this file from there), never
+# persists the token in .git, and reads the PR through the API. The token can
+# write commit statuses and nothing else. A fork PR runs the same way.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review, edited]
+  issue_comment:
+    types: [created, edited, deleted]
+
+# One evaluation per PR at a time, newest last: a later run reads later state.
+concurrency:
+  group: review-verdict-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  status:
+    # issue_comment also fires on plain issues; only PR comments matter.
+    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read   # the PR, its labels and changed files
+      issues: read          # the PR's comments (Review-verdict lines)
+      statuses: write       # the review-verdict status, and nothing else
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Post the review-verdict status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: python scripts/check_review_verdict.py --pr "$PR_NUMBER"
