@@ -173,7 +173,7 @@ The page is not trusted to name a path (owner ruling "option A", #2753). Read th
       `"<f8"` writes **f4** (use `"<d"`), `"<i4"` is i4 by luck of `i`. An empty array needs
       an explicit dtype (it guesses integer). `"x"` on an existing name returns a negative
       `file_id` instead of throwing (`createH5` throws). Prove a new layout with h5py reading
-      it back (`test/fixtures/vu9a/README.md` has the round trip).
+      it back (`apeGmshViewer/test/fixtures/vu9a/README.md` has the round trip).
 
 ## Before the PR
 
