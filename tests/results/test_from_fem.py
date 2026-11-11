@@ -219,7 +219,7 @@ def test_from_fem_mpco_renumbered_elements_warn_and_bind_no_groups(
                        elements=[(7, [1, 2, 3, 4])])
     with pytest.warns(
         ModelFemMismatchWarning,
-        match=r"fem= does not match.*1 absent from its elements \(e\.g\. 7\)",
+        match=r"fem= does not match.*1 renumbered \(e\.g\. 7 is fem element 1\)",
     ):
         r = Results.from_fem(fem, mpco, cache_root=tmp_path)
     with r:
@@ -293,7 +293,8 @@ def test_from_fem_ladruno_renumbered_elements_warn_and_bind_no_groups(
     fem = _truss_fem(eids=(13, 14))
     with pytest.warns(
         ModelFemMismatchWarning,
-        match=r"fem= does not match.*2 absent from its elements \(e\.g\. 1, 2\)",
+        match=(r"fem= does not match.*2 renumbered "
+               r"\(e\.g\. 1 is fem element 13, 2 is fem element 14\)"),
     ):
         r = Results.from_fem(fem, path, cache_root=tmp_path)
     with r:
@@ -320,6 +321,130 @@ def test_from_fem_ladruno_matching_elements_bind_silently(
         slab = r.stage("stage_0").elements.get(pg="Right",
                                                component="basicForce")
         assert [int(e) for e in slab.element_ids] == [2]
+
+
+def _strip_conn(n: int) -> np.ndarray:
+    """A row of ``n`` unit quads: bottom nodes ``1..n+1``, top ``n+2..2n+2``."""
+    return np.array([[k, k + 1, n + 2 + k, n + 1 + k]
+                     for k in range(1, n + 1)], dtype=np.int64)
+
+
+def _strip_nodes(n: int) -> "tuple[np.ndarray, np.ndarray]":
+    ids = np.arange(1, 2 * n + 3, dtype=np.int64)
+    xyz = np.array([[float(i), 0.0, 0.0] for i in range(n + 1)]
+                   + [[float(i), 1.0, 0.0] for i in range(n + 1)])
+    return ids, xyz
+
+
+def _strip_fem(eids: "list[int]") -> FEMData:
+    """The strip of ``len(eids)`` quads numbered ``eids``; PG ``Strip``."""
+    n = len(eids)
+    ids, xyz = _strip_nodes(n)
+    info = make_type_info(code=3, gmsh_name="Quadrangle 4", dim=2, order=1,
+                          npe=4, count=n)
+    quads = ElementGroup(element_type=info,
+                         ids=np.asarray(eids, dtype=np.int64),
+                         connectivity=_strip_conn(n))
+    pgs = PhysicalGroupSet({(2, 1): {
+        "name": "Strip", "node_ids": ids, "node_coords": xyz,
+        "element_ids": np.asarray(eids, dtype=np.int64)}})
+    return FEMData(
+        nodes=NodeComposite(node_ids=ids, node_coords=xyz, physical=pgs,
+                            labels=LabelSet({})),
+        elements=ElementComposite(groups={3: quads}, physical=pgs,
+                                  labels=LabelSet({})),
+        info=MeshInfo(n_nodes=ids.size, n_elems=n, bandwidth=n + 2,
+                      types=[info]),
+    )
+
+
+def _strip_mpco(
+    tmp_path: Path, n: int, parts: "list[list[tuple[int, int]]]",
+) -> Path:
+    """One ``.mpco`` per part; a part is ``(ops_tag, element k)`` rows.
+
+    Element ``k`` (1-based) is the ``k``-th quad of the strip; each part
+    holds the nodes its elements use.  Returns the first part.
+    """
+    ids, xyz = _strip_nodes(n)
+    conn = _strip_conn(n)
+    paths = []
+    for p, rows in enumerate(parts):
+        nodes = np.unique(np.concatenate([conn[k - 1] for _, k in rows]))
+        name = f"r.part-{p}.mpco" if len(parts) > 1 else "r.mpco"
+        paths.append(_write_mpco(
+            tmp_path / name, n_stages=1, node_ids=nodes,
+            coords=xyz[np.searchsorted(ids, nodes)],
+            elements=[(tag, [int(c) for c in conn[k - 1]]) for tag, k in rows],
+        ))
+    return paths[0]
+
+
+_MISMATCHES = {
+    # #1393's b0 at full size: fem 13..81 against the bridge's tags 2..70.
+    "dense-renumbering": (list(range(13, 82)),
+                          [[(t, t - 1) for t in range(2, 71)]],
+                          r"11 renumbered \(e\.g\. 2 is fem element 13.*"
+                          r"58 on other nodes"),
+    "partial-id-overlap": ([1, 2, 3, 4],
+                           [[(k + 2, k) for k in range(1, 5)]],
+                           r"2 renumbered.*2 on other nodes"),
+    "permuted-connectivity": ([1, 2, 3, 4],
+                              [[(2, 1), (1, 2), (3, 3), (4, 4)]],
+                              r"2 on other nodes than the fem element"),
+    "one-renumbered-partition": ([1, 2, 3, 4],
+                                 [[(1, 1), (2, 2)], [(13, 3), (14, 4)]],
+                                 r"2 renumbered \(e\.g\. 13 is fem element 3"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_MISMATCHES))
+def test_from_fem_element_mismatch_warns_and_binds_no_groups(
+    tmp_path: Path, case: str,
+) -> None:
+    """Every pairing that would read the wrong elements by tag warns."""
+    eids, parts, match = _MISMATCHES[case]
+    fem = _strip_fem(eids)
+    path = _strip_mpco(tmp_path, len(eids), parts)
+    with pytest.warns(ModelFemMismatchWarning, match=match):
+        r = Results.from_fem(fem, path, cache_root=tmp_path)
+    with r:
+        assert r.fem is not fem
+        assert r.fem.elements.physical.names() == []
+
+
+def test_an_extra_deck_element_is_not_a_mismatch(tmp_path: Path) -> None:
+    """A deck element under a new tag (a spring, a link) is extra.
+
+    MPCO ``MODEL/ELEMENTS`` lists the whole domain, so the capture holds
+    the fem's element 1 under its own tag plus the deck's tag 99.  The
+    PG reads are right: silent, the fem binds.
+    """
+    fem = _plate_fem()
+    mpco = _write_mpco(tmp_path / "r.mpco", n_stages=1,
+                       elements=[(1, [1, 2, 3, 4]), (99, [1, 2, 3, 4])])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ModelFemMismatchWarning)
+        r = Results.from_fem(fem, mpco, cache_root=tmp_path)
+    with r:
+        assert r.fem is fem
+        assert [int(e) for e in
+                r.fem.elements.physical.element_ids("Plate")] == [1]
+
+
+def test_a_matching_strip_binds_silently(tmp_path: Path) -> None:
+    """The strip helpers pair when the tags are the fem's ids: silent.
+
+    The control for the mismatch cases above: what warns there is the
+    numbering, not the fixture.
+    """
+    fem = _strip_fem([1, 2, 3, 4])
+    path = _strip_mpco(tmp_path, 4, [[(1, 1), (2, 2), (3, 3), (4, 4)]])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ModelFemMismatchWarning)
+        r = Results.from_fem(fem, path, cache_root=tmp_path)
+    with r:
+        assert r.fem is fem
 
 
 @pytest.mark.parametrize("route", ["mpco", "ladruno"])
