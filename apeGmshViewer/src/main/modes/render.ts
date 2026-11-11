@@ -8,6 +8,10 @@
 // through `agentStartup`), so this module never imports main.ts. main.ts's
 // `headlessEnd` asks it where a run stopped (`whereStopped`) and leaves a
 // render's `--out` true to INV-6 (`abandonRender`).
+//
+// VU18 (#2856): a shot may name a variant row of the spec's `files.variants`;
+// `render:variant` resolves it and makes its set the one main.ts's window doors
+// read (`drawnSet`).
 
 import { app, BrowserWindow, ipcMain } from "electron";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
