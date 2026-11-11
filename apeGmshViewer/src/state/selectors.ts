@@ -1590,11 +1590,13 @@ export function combineCannotSave(s: State, c: CombineState, op: "add" | "revert
     if (c.check.status === "refused") return `the draft is refused (${c.check.reason}): ${c.check.detail}`;
     return null;
   }
+  // A7.3, one revert: it undoes the save made last in this window, while the file is as that save left it.
+  const last = c.last;
+  if (last === null || last.file !== u.path) return "Revert undoes a save made in this window, and none was made on this file";
+  if (last.op === "revert") return "the last save was reverted already: the app gives one revert";
+  if (last.target === null) return "the last save created /combinations: there is no generation before it";
   const g = u.info.generations ?? null;
-  if (g === null) return "the file holds no /combinations to revert";
-  const top = g.held[g.held.length - 1];
-  if (top !== g.current) return `the last save was reverted already (g${g.current} is in force, below g${top}); the app gives one revert`;
-  if (!g.held.some((n) => n < g.current)) return `/combinations holds no generation before g${g.current}`;
+  if (u.token !== last.token || g?.current !== last.generation) return "the file changed since the last save made here, so that save is not undone";
   return null;
 }
 

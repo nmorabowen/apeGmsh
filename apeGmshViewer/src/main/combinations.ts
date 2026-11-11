@@ -51,6 +51,8 @@ export { combinationHeldRefusal };
 /** The disk as a save sees it; the tests pass one that fails where they choose. */
 export interface CombinationDisk {
   isFile(path: string): boolean;
+  /** open `path` for reading and close it at once; throws as the OS refuses (a holder that shares nothing: EBUSY / EPERM) */
+  probe(path: string): void;
   size(path: string): number;
   /** free bytes this process may write in `dir` */
   free(dir: string): number;
@@ -75,6 +77,7 @@ export const nodeCombinationDisk: CombinationDisk = {
       return false;
     }
   },
+  probe: (path) => closeSync(openSync(path, "r")),
   size: (path) => statSync(path).size,
   free: (dir) => {
     const s = statfsSync(dir);
@@ -148,6 +151,13 @@ export interface CombinationDeps {
   release(file: string): number;
   /** a directory listing for A6's staleness read after the save */
   listDir(dir: string): readonly string[];
+  /**
+   * The last save this window made (one per app session, never on disk): the
+   * token it answered with, the generation it put in force, and the generation
+   * that was `@current` when it was read. A revert undoes that save and nothing
+   * else, once (A7.3); a revert, or a fresh session, leaves nothing to revert.
+   */
+  session: { last: { token: string; generation: number; target: number | null } | null };
   /** a test's hook between the steps of a save (`copying`, `copied`, `appending`, `appended`, `verified`, `before-replace`); never set in the app */
   step?(name: string): void;
 }
@@ -164,6 +174,7 @@ export function nodeCombinationDeps(h5: CombinationH5, ready: Promise<unknown>, 
     writer,
     release: closeHandlesOn,
     listDir,
+    session: { last: null },
   };
 }
 
@@ -185,7 +196,7 @@ const shown = (x: unknown): string => {
 
 const ROW_KEYS = ["damping", "envelope", "fraction", "name", "rule", "terms"];
 const TERM_KEYS = ["factor", "kind", "mode", "source", "step"];
-const EDIT_KEYS: Record<CombinationEdit["op"], readonly string[]> = { add: ["expect", "op", "row"], revert: ["expect", "op"] };
+const EDIT_KEYS: Record<CombinationEdit["op"], readonly string[]> = { add: ["expect", "op", "row"], revert: ["expect", "op", "target"] };
 const closed = (o: unknown, want: readonly string[]): o is Record<string, unknown> => {
   if (typeof o !== "object" || o === null || Array.isArray(o)) return false;
   const keys = Object.keys(o).sort();
@@ -195,12 +206,16 @@ const numOrNull = (x: unknown) => x === null || typeof x === "number";
 
 /** The edit the page sent, or why it is refused. Closed keys at every level: a `path` (or any key the op does not name) refuses. */
 export function parseCombinationEdit(raw: unknown): CombinationEdit | string {
-  const form = "combinations:save takes one edit, { op: add, row, expect } or { op: revert, expect }, and never a path or a file";
+  const form = "combinations:save takes one edit, { op: add, row, expect } or { op: revert, target, expect }, and never a path or a file";
   const op = (raw as { op?: unknown } | null)?.op;
   if (typeof op !== "string" || !Object.hasOwn(EDIT_KEYS, op)) return `${form}; refused ${shown(raw)}`;
   if (!closed(raw, EDIT_KEYS[op as CombinationEdit["op"]])) return `${form}; ${op} takes { ${EDIT_KEYS[op as CombinationEdit["op"]].join(", ")} }; refused ${shown(raw)}`;
   if (typeof raw["expect"] !== "string") return `${form}; expect is the token of the read the edit was made on; refused ${shown(raw)}`;
-  if (op === "revert") return { op: "revert", expect: raw["expect"] };
+  if (op === "revert") {
+    const target = raw["target"];
+    if (typeof target !== "number" || !Number.isInteger(target) || target < 0) return `${form}; a revert's target is the generation it goes back to, g<N> with N >= 0; refused ${shown(raw)}`;
+    return { op: "revert", target, expect: raw["expect"] };
+  }
   const row = raw["row"];
   if (!closed(row, ROW_KEYS)) return `${form}; a row is { ${ROW_KEYS.join(", ")} }; refused ${shown(raw)}`;
   const terms = row["terms"];
@@ -238,15 +253,23 @@ const isHeld = (err: unknown) => HELD_CODES.has(code(err) ?? "");
 /** What a save writes: the rows of the new generation (an add), or the generation `@current` goes back to (a revert). */
 type Plan = { op: "add"; generation: number; rows: Combination[]; name: string } | { op: "revert"; generation: number; rows: Combination[] };
 
-/** The plan of `edit` on `base`, or a refusal: a row the readers refuse never reaches disk. */
-function planOf(edit: CombinationEdit, base: UserWriteBase, modelRows: Combination[], file: string): Plan {
+/**
+ * The plan of `edit` on `base`, or a refusal: a row the readers refuse never reaches disk. A revert
+ * undoes the save this session made last (`last`), once, and only while the file is as that save left it.
+ */
+function planOf(edit: CombinationEdit, base: UserWriteBase, modelRows: Combination[], file: string, last: CombinationDeps["session"]["last"]): Plan {
   if (edit.op === "revert") {
-    // A7.3: one revert. `@current` goes back to the generation before it, once: a revert of a revert is refused.
-    if (base.current === null) throw new SaveRefused("nothing-to-revert", `${file} holds no /combinations to revert`);
-    const top = base.held[base.held.length - 1]!;
-    if (base.current !== top) throw new SaveRefused("nothing-to-revert", `${file}: the last save was reverted already (@current is g${base.current}, below g${top}); the app gives one revert (ADR 0130 A7.3)`);
-    if (base.previous === null) throw new SaveRefused("nothing-to-revert", `${file}: /combinations holds no generation before g${base.current}`);
-    return { op: "revert", generation: base.previous.generation, rows: base.previous.rows };
+    if (last === null) {
+      throw new SaveRefused("nothing-to-revert", `${file}: a revert undoes the save made last in this window, once (ADR 0130 A7.3), and there is none to undo (none was made in this session, or it was reverted already)`);
+    }
+    if (combinationToken(file, base.revision) !== last.token || base.current !== last.generation || edit.expect !== last.token) {
+      throw new SaveRefused("stale", `${file} changed since the save this window made (its revision or @current moved), so that save is not undone: it is read again. Nothing was replaced.`);
+    }
+    if (last.target === null || edit.target !== last.target) {
+      throw new SaveRefused("nothing-to-revert", `${file}: the save this window made ${last.target === null ? "created /combinations, so there is no generation before it" : `was made on g${last.target}, not g${edit.target}`}`);
+    }
+    if (base.also === null) throw new SaveRefused("nothing-to-revert", `${file}: /combinations no longer holds g${edit.target}`);
+    return { op: "revert", generation: base.also.generation, rows: base.also.rows };
   }
   const row: Combination = { ...edit.row, terms: edit.row.terms.map((t) => ({ ...t })) };
   const rows = [...base.rows, row];
@@ -370,9 +393,12 @@ export async function saveCombination(deps: CombinationDeps, target: Combination
   sweepDeadPartials(deps, file);
   let partial: string | null = null;
   try {
+    // Rule 3: a holder that shares nothing (a share-mode-None handle) refuses even a read. It is the typed
+    // refusal naming the file, never the HDF5 library's error from the open below.
+    deps.disk.probe(file);
     let base: UserWriteBase;
     try {
-      base = readForWrite(deps.h5, file);
+      base = readForWrite(deps.h5, file, edit.op === "revert" ? edit.target : null);
     } catch (err) {
       if (err instanceof UserWriteRefused) throw new SaveRefused(err.reason, err.detail);
       throw err;
@@ -389,7 +415,7 @@ export async function saveCombination(deps: CombinationDeps, target: Combination
         throw err;
       }
     }
-    const plan = planOf(edit, base, modelRows, file);
+    const plan = planOf(edit, base, modelRows, file, deps.session.last);
     // Rule 5: the copy needs a second file's worth of disk.
     const size = deps.disk.size(file);
     const free = deps.disk.free(dirname(file));
@@ -421,6 +447,8 @@ export async function saveCombination(deps: CombinationDeps, target: Combination
     deps.step?.("before-replace");
     deps.disk.rename(partial, file);
     partial = null;
+    // The save this session can undo, once: an add, with the generation that was in force when it was read. A revert leaves none.
+    deps.session.last = plan.op === "add" ? { token: combinationToken(file, base.revision + 1), generation: plan.generation, target: base.current } : null;
   } catch (err) {
     if (partial !== null) {
       try {

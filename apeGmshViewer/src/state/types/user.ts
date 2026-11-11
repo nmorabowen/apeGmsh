@@ -336,11 +336,12 @@ export type DraftCheck =
   | { key: string; status: "refused"; reason: string; detail: string };
 /**
  * What `combinations:save` takes: one edit, never a path (main writes the open
- * set's own `.user.h5`). `add` saves `row` as a new generation, `revert` puts
- * `@current` back to the generation before it (A7.3: one revert). `expect` is
- * the token of the read the edit was made on.
+ * set's own `.user.h5`). `add` saves `row` as a new generation. `revert` undoes
+ * the save this window made last, once (A7.3): `target` is the generation that
+ * was `@current` when that save was read, and `expect` the token that save
+ * answered with. `expect` is always the token of the read the edit was made on.
  */
-export type CombinationEdit = { op: "add"; row: UserCombinationIn; expect: string } | { op: "revert"; expect: string };
+export type CombinationEdit = { op: "add"; row: UserCombinationIn; expect: string } | { op: "revert"; target: number; expect: string };
 /**
  * Main's answer to a combination save: the file read again after the replace
  * (with its new token), or a refusal that replaced nothing. `held` is the typed
@@ -361,6 +362,11 @@ export interface CombineState {
   saving: "add" | "revert" | null;
   /** the last refusal, shown until the next save */
   notice: { reason: string; detail: string; file: string | null; held: boolean } | null;
-  /** the last save that landed: what it did, and the generation now in force */
-  last: { op: "add" | "revert"; name: string | null; generation: number; file: string } | null;
+  /**
+   * the last save that landed in this window: what it did, the generation now in
+   * force, the generation a revert of it goes back to (`@current` when the save
+   * was read; null when the save created the zone, or for a revert), and the
+   * token it answered with (a revert is offered only while the file still has it)
+   */
+  last: { op: "add" | "revert"; name: string | null; generation: number; file: string; target: number | null; token: string | null } | null;
 }

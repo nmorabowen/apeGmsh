@@ -7,10 +7,14 @@
 //
 // `--kill-at` names a step of the save (`copying`, `copied`, `appending`,
 // `appended`, `verified`, `before-replace`) where the process kills itself,
-// hard. `--block=<bytes>` makes the copy take several blocks, so `copying` lands
+// hard. `--op=revert` first saves the row (unarmed), then reverts that save:
+// a revert undoes a save of the same session (A7.3).
+// `--block=<bytes>` makes the copy take several blocks, so `copying` lands
 // inside it. `--loop` saves and reverts until its parent kills it. Otherwise it
 // prints the answer as JSON on one line.
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as h5wasm from "h5wasm/node";
 import { combinationToken, nodeCombinationDeps, nodeCombinationDisk, saveCombination, type CombinationDeps, type CombinationH5 } from "../../src/main/combinations.ts";
@@ -35,9 +39,11 @@ const deps: CombinationDeps = {
       }
     : nodeCombinationDisk,
   step: (name: string) => {
-    if (name === killAt) process.kill(process.pid, "SIGKILL");
+    if (armed && name === killAt) process.kill(process.pid, "SIGKILL");
   },
 };
+/** The kill applies to the save under test only, never to the add a revert undoes. */
+let armed = true;
 const file = join(dir, "plate.user.h5");
 const target = { user: file, model: join(dir, "plate.h5"), results: null };
 const expect = () => combinationToken(file, readRevision(H5 as unknown as UserH5, file));
@@ -46,7 +52,7 @@ const ROW = { name: "SRSS Ex modes 1-2", rule: "srss", envelope: "", fraction: n
 if (process.argv.includes("--loop")) {
   process.stdout.write("LOOPING\n");
   for (let i = 0; ; i++) {
-    const edit = i % 2 ? { op: "revert", expect: expect() } : { op: "add", row: { ...ROW, name: `churn ${process.pid} ${i}` }, expect: expect() };
+    const edit = i % 2 ? { op: "revert", target: deps.session.last?.target, expect: expect() } : { op: "add", row: { ...ROW, name: `churn ${process.pid} ${i}` }, expect: expect() };
     const r = await saveCombination(deps, target, edit);
     if (!r.ok) throw new Error(`save ${i} refused: ${r.reason}: ${r.detail}`);
   }
@@ -60,7 +66,16 @@ const PRESETS: Record<string, unknown> = {
 const preset = arg("preset");
 if (preset !== undefined && !Object.hasOwn(PRESETS, preset)) throw new Error(`no preset ${preset}`);
 const row = preset !== undefined ? PRESETS[preset] : { ...ROW, name: arg("name") ?? ROW.name };
-const r = await saveCombination(deps, target, op === "revert" ? { op, expect: expect() } : { op: "add", row, expect: expect() });
+if (op === "revert") {
+  // A revert undoes a save of this session (A7.3): the save is made here first, with no kill armed.
+  armed = false;
+  const first = await saveCombination(deps, target, { op: "add", row, expect: expect() });
+  if (!first.ok) throw new Error(`the save to revert was refused: ${first.reason}: ${first.detail}`);
+  // The file the revert starts from, for a crash test to compare with.
+  process.stdout.write(`ADDED ${createHash("sha256").update(readFileSync(file)).digest("hex")}\n`);
+  armed = true;
+}
+const r = await saveCombination(deps, target, op === "revert" ? { op, target: deps.session.last?.target, expect: expect() } : { op: "add", row, expect: expect() });
 process.stdout.write(`${killAt ? "NOT KILLED " : ""}${JSON.stringify(r.ok ? { ok: true, op: r.op, generation: r.generation, revision: r.revision } : r)}\n`);
 
 function copyInBlocks(from: string, to: string, size: number, chunk: () => void): void {

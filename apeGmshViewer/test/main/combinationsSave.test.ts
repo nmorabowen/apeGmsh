@@ -69,7 +69,9 @@ const deps = (over: Partial<CombinationDeps> = {}): CombinationDeps => ({ ...nod
 const tokenNow = (file: string) => combinationToken(file, readRevision(UH5, file));
 const ROW: UserCombinationIn = { name: "SRSS Ex modes 1-2", rule: "srss", envelope: "", fraction: null, damping: null, terms: [1, 2].map((k) => ({ kind: "spectrum", source: "Ex (synthetic)", step: -1, mode: k, factor: 1 })) };
 const add = (d: CombinationDeps, f: ReturnType<typeof folder>, row: UserCombinationIn = ROW) => saveCombination(d, f.target, { op: "add", row, expect: tokenNow(f.file) });
-const revert = (d: CombinationDeps, f: ReturnType<typeof folder>) => saveCombination(d, f.target, { op: "revert", expect: tokenNow(f.file) });
+/** A revert of the save `d`'s session made last (its target), or of `target` when given, on a read of the file as it is now. */
+const revert = (d: CombinationDeps, f: ReturnType<typeof folder>, target?: number) =>
+  saveCombination(d, f.target, { op: "revert", target: target ?? d.session.last?.target ?? 0, expect: tokenNow(f.file) });
 const partials = (dir: string) => readdirSync(dir).filter((x) => x.endsWith(".partial"));
 const saved = (r: CombinationSaveIn) => {
   assert.ok(r.ok, JSON.stringify(r));
@@ -140,10 +142,11 @@ test("zone digests: a save and a revert change /combinations and /meta, and no o
   const f = folder();
   const d0 = zoneDigests(f.file);
   assert.deepEqual(Object.keys(d0).sort(), ["combinations", "meta", "spectra"]);
-  saved(await add(deps(), f));
+  const d = deps();
+  saved(await add(d, f));
   const d1 = zoneDigests(f.file);
   assert.deepEqual(changed(d0, d1), ["combinations", "meta"]);
-  saved(await revert(deps(), f));
+  saved(await revert(d, f));
   const d2 = zoneDigests(f.file);
   assert.deepEqual(changed(d1, d2), ["combinations", "meta"]);
   assert.equal(d2["spectra"], d0["spectra"], "/spectra is the bytes Python wrote, through a save and a revert");
@@ -151,9 +154,10 @@ test("zone digests: a save and a revert change /combinations and /meta, and no o
 
 test("one revert: @current goes back to g0 by copy-then-replace, a second revert is refused, and a save after it adds g2 on g0's rows", async () => {
   const f = folder();
+  const d = deps();
   const g0 = combos(f.file, f.model).rows;
-  saved(await add(deps(), f));
-  const r = saved(await revert(deps(), f));
+  saved(await add(d, f));
+  const r = saved(await revert(d, f));
   assert.equal(r.op, "revert");
   assert.equal(r.generation, 0);
   assert.equal(r.revision, 3);
@@ -162,20 +166,63 @@ test("one revert: @current goes back to g0 by copy-then-replace, a second revert
   assert.deepEqual(back.generations, [0, 1], "g1 stays in the file: earlier generations are the backup (A4)");
   assert.deepEqual(back.rows, g0);
   const bytes = readFileSync(f.file);
-  const again = refused(await revert(deps(), f));
+  const again = refused(await revert(d, f, 0));
   assert.equal(again.reason, "nothing-to-revert");
-  assert.match(again.detail, /one revert/);
+  assert.match(again.detail, /once/);
   assert.deepEqual(readFileSync(f.file), bytes, "a refused revert writes nothing");
-  saved(await add(deps(), f, { ...ROW, name: "after the revert" }));
+  saved(await add(d, f, { ...ROW, name: "after the revert" }));
   const g2 = combos(f.file, f.model);
   assert.equal(g2.generation, 2);
   assert.deepEqual(g2.rows.map((x) => x.name), [...g0.map((x) => x.name), "after the revert"]);
 });
 
+test("F1 repro: g0, add A, revert, add B, revert ends with g0 in force (never A's g1)", async () => {
+  const f = folder();
+  const d = deps();
+  const g0 = combos(f.file, f.model).rows;
+  saved(await add(d, f, { ...ROW, name: "A" }));
+  assert.equal(saved(await revert(d, f)).generation, 0);
+  assert.equal(saved(await add(d, f, { ...ROW, name: "B" })).generation, 2);
+  const r = saved(await revert(d, f));
+  assert.equal(r.generation, 0, "B was saved on g0, so its revert goes back to g0");
+  const now = combos(f.file, f.model);
+  assert.equal(now.generation, 0);
+  assert.deepEqual(now.rows, g0);
+  assert.ok(!now.rows.some((x) => x.name === "A" || x.name === "B"));
+  assert.equal(refused(await revert(d, f, 0)).reason, "nothing-to-revert", "one revert per save");
+});
+
+test("a fresh open has nothing to revert, whatever the file's generations", async () => {
+  const f = folder();
+  saved(await add(deps(), f));
+  const bytes = readFileSync(f.file);
+  // Another session (a window opened later) on the same file, its newest generation in force.
+  const r = refused(await revert(deps(), f, 0));
+  assert.equal(r.reason, "nothing-to-revert");
+  assert.match(r.detail, /none was made in this session/);
+  assert.deepEqual(readFileSync(f.file), bytes);
+});
+
+test("a revert after an outside write is stale, and writes nothing", async () => {
+  const f = folder();
+  const d = deps();
+  saved(await add(d, f));
+  // Another writer (another window's session) saves after this window's save.
+  saved(await add(deps(), f, { ...ROW, name: "outside" }));
+  const bytes = readFileSync(f.file);
+  const r = refused(await revert(d, f));
+  assert.equal(r.reason, "stale");
+  assert.deepEqual(readFileSync(f.file), bytes);
+  assert.equal(combos(f.file, f.model).rows.at(-1)!.name, "outside", "the outside save stands");
+  // A revert made on this window's post-save read, after the outside write, is stale too.
+  const old = refused(await saveCombination(d, f.target, { op: "revert", target: 0, expect: combinationToken(f.file, 2) }));
+  assert.equal(old.reason, "stale");
+});
+
 test("a file with nothing to revert, and a set with no user file, are refused and nothing is written", async () => {
   const f = folder();
   const bytes = readFileSync(f.file);
-  assert.equal(refused(await revert(deps(), f)).reason, "nothing-to-revert");
+  assert.equal(refused(await revert(deps(), f, 0)).reason, "nothing-to-revert");
   assert.deepEqual(readFileSync(f.file), bytes);
   rmSync(f.file);
   const r = refused(await saveCombination(deps(), f.target, { op: "add", row: ROW, expect: "x" }));
@@ -256,8 +303,9 @@ test("rule 1: a save opens the live file read-only only; every write goes to thi
       });
     },
   }) as CombinationH5;
-  saved(await add(deps({ h5: spy }), f));
-  saved(await revert(deps({ h5: spy }), f));
+  const d = deps({ h5: spy });
+  saved(await add(d, f));
+  saved(await revert(d, f));
   const writes = opens.filter(([, m]) => m !== "r");
   assert.ok(writes.length >= 2, `the save opened its partials for writing: ${JSON.stringify(opens)}`);
   for (const [p, m] of writes) assert.ok(p.endsWith(".partial") && p !== f.file, `${p} was opened "${m}"`);
@@ -332,6 +380,45 @@ test("rule 3, Windows: another process holding the file open gets held at once (
   saved(await add(deps(), f));
 });
 
+test("rule 3: a holder that refuses even a read (EBUSY on open) is the typed refusal, never the HDF5 library's error", async () => {
+  const f = folder();
+  const bytes = readFileSync(f.file);
+  const busy: CombinationDisk = {
+    ...nodeCombinationDisk,
+    probe: () => {
+      throw Object.assign(new Error("EBUSY: resource busy or locked, open"), { code: "EBUSY" });
+    },
+  };
+  assert.deepEqual(await add(deps({ disk: busy }), f), combinationHeldRefusal(f.file));
+  assert.deepEqual(readFileSync(f.file), bytes);
+  assert.deepEqual(partials(f.dir), []);
+});
+
+test("rule 3, Windows: a share-mode-None holder in another process gets held, naming the file", { skip: process.platform !== "win32" && "share modes are Windows'" }, async () => {
+  const f = folder();
+  const bytes = readFileSync(f.file);
+  const expect = tokenNow(f.file);
+  // A holder that shares nothing, as PowerShell's [IO.File]::Open(path, 'Open', 'Read', 'None') holds it.
+  const ps = `$f = [IO.File]::Open('${f.file.replace(/'/g, "''")}', 'Open', 'Read', 'None'); Write-Output HOLDING; Start-Sleep -Seconds 60`;
+  const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], { stdio: ["ignore", "pipe", "inherit"] });
+  try {
+    await new Promise<void>((res, rej) => {
+      holder.stdout.once("data", () => res());
+      holder.once("exit", () => rej(new Error("the holder exited")));
+    });
+    const t = Date.now();
+    const r = await saveCombination(deps(), f.target, { op: "add", row: ROW, expect });
+    assert.deepEqual(r, combinationHeldRefusal(f.file));
+    assert.ok(Date.now() - t < 5000, "no retry loop");
+    assert.deepEqual(partials(f.dir), []);
+  } finally {
+    holder.kill();
+    await new Promise((res) => holder.once("exit", res));
+  }
+  assert.deepEqual(readFileSync(f.file), bytes);
+  saved(await add(deps(), f));
+});
+
 // -- HG9 rule 4: sweep this writer's dead partials ----------------------------------------------
 
 /** A pid that ran and has exited. */
@@ -398,19 +485,27 @@ test("crash: a save killed during the copy, during the append, or before the rep
     ["before-replace", "revert"],
   ] as const) {
     const f = folder();
-    if (op === "revert") saved(await add(deps(), f));
+    // A revert undoes a save of its own session: the driver makes that save itself (unarmed), then reverts it.
     const old = readFileSync(f.file);
     let died = false;
+    let out = "";
     try {
       execFileSync(process.execPath, [DRIVER, `--dir=${f.dir}`, `--op=${op}`, `--kill-at=${step}`, "--block=4096"], { stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
     } catch (err) {
       const e = err as { stdout?: Buffer; stderr?: Buffer };
+      out = String(e.stdout ?? "");
       // Killed, not failed: it printed nothing, and no error of its own.
-      assert.ok(!String(e.stdout ?? "").includes("NOT KILLED") && !/Error:/.test(String(e.stderr ?? "").replace(/HDF5-DIAG: Error/g, "")), `the driver failed rather than died at ${step}: ${String(e.stderr ?? "")}`);
+      assert.ok(!out.includes("NOT KILLED") && !/Error:/.test(String(e.stderr ?? "").replace(/HDF5-DIAG: Error/g, "")), `the driver failed rather than died at ${step}: ${String(e.stderr ?? "")}`);
       died = true;
     }
     assert.ok(died, `the driver was not killed at ${op} ${step}`);
-    assert.deepEqual(readFileSync(f.file), old, `${op} ${step}: the target is the old bytes`);
+    if (op === "add") assert.deepEqual(readFileSync(f.file), old, `${op} ${step}: the target is the old bytes`);
+    else {
+      // The revert starts from the file the driver's own save left (it printed that file's sha256).
+      const added = /ADDED ([0-9a-f]{64})/.exec(out)?.[1];
+      assert.ok(added, `the driver printed no ADDED line: ${out}`);
+      assert.equal(createHash("sha256").update(readFileSync(f.file)).digest("hex"), added, `${op} ${step}: the target is the bytes before the revert`);
+    }
     assert.ok(readUserFile(UH5, f.file, f.model).combinations.ok, `${op} ${step}: the file reads whole`);
     assert.equal(partials(f.dir).length, 1, `${op} ${step}: one dead partial`);
     if (step === "copying") assert.ok(readFileSync(join(f.dir, partials(f.dir)[0]!)).length < old.length, "killed inside the copy: the partial is short");

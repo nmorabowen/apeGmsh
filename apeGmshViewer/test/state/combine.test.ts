@@ -117,9 +117,21 @@ test("Save is offered only on a standing draft checked against the read on scree
   assert.equal(combineCannotSave(S, panel({ draft: SRSS12, check, saving: "add" }), "add"), "a save is running");
   assert.match(combineCannotSave(withUser(FIX("plate.user.h5"), null), panel({ draft: SRSS12, check }), "add")!, /only the human's window/);
   assert.match(combineCannotSave(initialState, panel(), "add")!, /no \.user\.h5/);
-  // Revert: g0 alone has nothing before it; after three saves, g3 goes back to g2.
-  assert.match(combineCannotSave(S, panel(), "revert")!, /no generation before g0/);
-  assert.equal(combineCannotSave(SAVED, panel(), "revert"), null);
+});
+
+test("Revert is offered only right after a save made in this window, while the file is as that save left it, once", () => {
+  const u = SAVED.user;
+  assert.ok(u?.status === "ready");
+  // A fresh open: g3 is the newest and in force, and still nothing to revert (no save was made here).
+  assert.match(combineCannotSave(SAVED, panel(), "revert")!, /none was made on this file/);
+  assert.match(combineCannotSave(S, panel(), "revert")!, /none was made on this file/);
+  const last = { op: "add" as const, name: "1.3 SRSS Ex", generation: 3, file: u.path, target: 2, token: u.token ?? null };
+  assert.equal(combineCannotSave(SAVED, panel({ last }), "revert"), null, "right after this window's save");
+  assert.match(combineCannotSave(SAVED, panel({ last: { ...last, op: "revert", target: null } }), "revert")!, /reverted already/);
+  assert.match(combineCannotSave(SAVED, panel({ last: { ...last, token: "an earlier read" } }), "revert")!, /changed since the last save/);
+  assert.match(combineCannotSave(SAVED, panel({ last: { ...last, generation: 2 } }), "revert")!, /changed since the last save/);
+  assert.match(combineCannotSave(SAVED, panel({ last: { ...last, target: null } }), "revert")!, /created \/combinations/);
+  assert.match(combineCannotSave(SAVED, panel({ last: { ...last, file: "elsewhere.user.h5" } }), "revert")!, /none was made on this file/);
 });
 
 test("the panel's lines: the file, the generation in force, the check, and a held refusal in its own words", async () => {

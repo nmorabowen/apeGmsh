@@ -175,26 +175,36 @@ export function mountCombine(store: Store, door: CombineDoor): { open(): void; r
     const s = store.get();
     if (combineCannotSave(s, c, op) !== null || s.user?.status !== "ready" || !s.user.token) return;
     const expect = s.user.token;
+    if (op === "revert" && (c.last === null || c.last.target === null)) return;
     const edit: CombinationEdit =
       op === "add"
         ? { op, row: { name: c.draft.name, rule: c.draft.rule, envelope: c.draft.envelope, fraction: c.draft.fraction, damping: c.draft.damping, terms: c.draft.terms.map((t) => ({ ...t })) }, expect }
-        : { op, expect };
+        : { op, target: c.last!.target!, expect };
     const path = s.user.path;
+    // The generation in force when this save is read: what a revert of it goes back to.
+    const target = s.user.info.generations?.current ?? null;
     set({ saving: op, notice: null });
     door.save(edit).then(
-      (a) => take(a, edit, path),
+      (a) => take(a, edit, path, target),
       (err: unknown) => set({ saving: null, notice: { reason: "failed", detail: `the save failed: ${err instanceof Error ? err.message : String(err)}`, file: path, held: false } }),
     );
   };
   /** Main's answer to a save made on the file at `path`. */
-  const take = (a: CombinationSaveIn, edit: CombinationEdit, path: string) => {
+  const take = (a: CombinationSaveIn, edit: CombinationEdit, path: string, target: number | null) => {
     // An answer about another file than the one on screen now is never shown as this set's.
     const now = store.get().user?.path ?? null;
     if (now !== path || (a.file !== null && a.file !== path)) return set({ saving: null });
     if (!a.ok) return set({ saving: null, notice: { reason: a.reason, detail: a.detail, file: a.file, held: a.held } });
     // The file as main read it after the replace: the phase bar lists what the save wrote at once.
     store.dispatch({ type: "userRead", path: a.file, read: a.read });
-    set({ saving: null, notice: null, check: null, last: { op: a.op, name: edit.op === "add" ? edit.row.name : null, generation: a.generation, file: a.file }, draft: a.op === "add" ? EMPTY_DRAFT : c.draft });
+    const token = a.read.ok ? (a.read.token ?? null) : null;
+    set({
+      saving: null,
+      notice: null,
+      check: null,
+      last: { op: a.op, name: edit.op === "add" ? edit.row.name : null, generation: a.generation, file: a.file, target: a.op === "add" ? target : null, token },
+      draft: a.op === "add" ? EMPTY_DRAFT : c.draft,
+    });
     schedule();
   };
 
@@ -335,7 +345,7 @@ export function mountCombine(store: Store, door: CombineDoor): { open(): void; r
     receive(answer: CombinationSaveIn) {
       const u = store.get().user;
       if (u?.status !== "ready") return;
-      take(answer, { op: "add", row: { ...c.draft, terms: c.draft.terms.map((t) => ({ ...t })) }, expect: u.token ?? "" }, u.path);
+      take(answer, { op: "add", row: { ...c.draft, terms: c.draft.terms.map((t) => ({ ...t })) }, expect: u.token ?? "" }, u.path, u.info.generations?.current ?? null);
     },
     dispose() {
       if (timer !== null) clearTimeout(timer);

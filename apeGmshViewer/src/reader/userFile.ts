@@ -407,7 +407,7 @@ export class UserWriteRefused extends Error {
   }
 }
 
-/** What a save needs of the file it copies: `/meta@revision`, the root zones, and the generations with the rows of `@current` and of the one before it. */
+/** What a save needs of the file it copies: `/meta@revision`, the root zones, and the generations with the rows of `@current` (and of the one a revert asks for). */
 export interface UserWriteBase {
   revision: number;
   zones: string[];
@@ -417,8 +417,8 @@ export interface UserWriteBase {
   held: number[];
   /** the rows of `@current` as stored, refused ones included */
   rows: Combination[];
-  /** the highest generation below `@current` and its rows, or null */
-  previous: { generation: number; rows: Combination[] } | null;
+  /** generation `also` and its rows, when the caller asked for one and the zone holds it; else null */
+  also: { generation: number; rows: Combination[] } | null;
 }
 
 /** The root zones a `.user.h5` writer must understand, and their `/meta` keys (Python's `_check_known_versions`). */
@@ -437,7 +437,7 @@ const WRITE_ZONES: readonly [string, string][] = [
  * is written too), a zone group with no version key, and a `/combinations`
  * this reader refuses: the save would otherwise carry it forward unread.
  */
-export function readForWrite(h5: UserH5, path: string): UserWriteBase {
+export function readForWrite(h5: UserH5, path: string, also: number | null = null): UserWriteBase {
   let f: FpFile;
   try {
     f = openH5(h5, path);
@@ -466,7 +466,7 @@ export function readForWrite(h5: UserH5, path: string): UserWriteBase {
     }
     if (warnings.length) throw new UserWriteRefused("newer", `${path}: ${warnings.join("; ")}; this app does not write a zone newer than it knows (ADR 0130 A4)`);
     const base = { revision: meta.revision, zones: meta.zones };
-    if (!present) return { ...base, current: null, held: [], rows: [], previous: null };
+    if (!present) return { ...base, current: null, held: [], rows: [], also: null };
     try {
       const zone = t.group(f, "combinations");
       const current = zone === null ? null : intAttr(zone, "current", false);
@@ -474,14 +474,13 @@ export function readForWrite(h5: UserH5, path: string): UserWriteBase {
       const g = t.group(zone, `g${current}`);
       if (g === null) throw new ZoneRefused("/combinations", `@current names g${current}, which it does not hold`);
       const held = generationsOf(t, zone);
-      const below = held.filter((n) => n < current);
-      const prev = below.length ? below[below.length - 1]! : null;
+      const other = also === null ? null : t.group(zone, `g${also}`);
       return {
         ...base,
         current,
         held,
         rows: readGeneration(t, g, "/combinations"),
-        previous: prev === null ? null : { generation: prev, rows: readGeneration(t, t.group(zone, `g${prev}`)!, "/combinations") },
+        also: also === null || other === null ? null : { generation: also, rows: readGeneration(t, other, "/combinations") },
       };
     } catch (err) {
       throw new UserWriteRefused("refused", `${path}: /combinations cannot be read, so it is not written over: ${message(err)}`);
