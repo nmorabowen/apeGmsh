@@ -46,6 +46,11 @@ class ModelFemMismatchWarning(UserWarning):
     FEMData instead (no physical groups, no labels).  Either the
     ``model_h5`` belongs to another model, or the run added nodes the
     archive does not know; pass ``fem=`` to bind a FEMData regardless.
+
+    ``fem=`` (and so ``Results.from_fem``) warns too when the archive
+    declares no element tag map and the capture's elements are not the
+    fem's (#1408): the reader would read the capture's ops tags as fem
+    element ids, so ``pg=`` would answer with the wrong elements.
     """
 
 
@@ -220,8 +225,18 @@ def _resolve_fem_via_model(
 
     Resolution rules (#1325):
 
-    1. ``candidate`` provided: return it, unchecked — same contract as
-       :func:`_resolve_fem`.
+    1. ``candidate`` provided: return it, unless the archive declares no
+       ops<->fem element tag map and the capture's elements are not the
+       candidate's (:func:`_elements_reason` against the candidate).
+       Without a tag map the reader reads ops tags as fem element ids, so
+       a deck that numbered its elements otherwise would answer ``pg=``
+       with the wrong elements and no error; that warns
+       :class:`ModelFemMismatchWarning` and binds the capture's own
+       FEMData, as rule 2 does (#1408).  ``Results.from_fem`` lands
+       here with ``model_h5`` its own ``fem.to_h5`` cache.  A candidate
+       with no elements, or a capture with none, has nothing to mislabel
+       and passes.  A bridge archive (``ops.h5``) relabels through its
+       tag map, so the candidate binds unchecked there.
     2. Otherwise the neutral FEMData archived in ``model_h5`` — the one
        the bridge emitted the run from, with its physical groups and
        labels — provided its node ids cover every node id the capture
@@ -243,7 +258,9 @@ def _resolve_fem_via_model(
     ``reader.spatial_dim()`` (the MPCO readers).
     """
     if candidate is not None:
-        return candidate
+        return _checked_candidate(
+            reader, candidate, model, model_path=model_path,
+        )
     embedded = reader.fem()
     model_fem = model.fem
     if embedded is None:
@@ -293,6 +310,45 @@ def _resolve_fem_via_model(
             f"groups; pass fem= to bind a FEMData explicitly."
         ),
         stacklevel=3,
+    )
+    return embedded
+
+
+def _checked_candidate(
+    reader: "ResultsReader",
+    candidate: "FEMData",
+    model: "OpenSeesModel",
+    *,
+    model_path: "str | Path",
+) -> "FEMData":
+    """Rule 1 of :func:`_resolve_fem_via_model`: ``fem=`` against the capture.
+
+    Only the elements are checked: with no tag map they are what the
+    reader pairs by id, and a wrong pairing reads the wrong elements
+    with no error (#1408).  The caller asserted the node pairing.
+    """
+    from .readers._tag_translation import ElementTagTranslator
+
+    if not ElementTagTranslator.from_model(model).is_empty:
+        return candidate
+    if not any(len(group.ids) for group in candidate.elements):
+        return candidate
+    embedded = reader.fem()
+    if embedded is None:
+        return candidate
+    reason = _elements_reason(embedded, candidate, model)
+    if reason is None:
+        return candidate
+    warnings.warn(
+        ModelFemMismatchWarning(
+            f"fem= does not match the capture's elements: "
+            f"model_h5={str(model_path)!r} {reason}; the capture's elements "
+            f"were checked against fem='s. Number the deck's element tags "
+            f"as the fem's element ids, or bind a model.h5 written by "
+            f"ops.h5(...). Binding the capture's own MODEL group instead, "
+            f"which has no physical groups."
+        ),
+        stacklevel=4,
     )
     return embedded
 
