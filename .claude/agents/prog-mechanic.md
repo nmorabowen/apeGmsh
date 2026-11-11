@@ -17,6 +17,8 @@ issue the orchestrator names, is your contract.
 Follow `internal_docs/program/PROGRAM.md` §7 (Worker protocol) exactly.
 Survive the watchdog (PROGRAM.md §7 item 5): skeleton first, WIP commits, push the branch before any long step, scratch files in a per-slice directory outside the worktree (`<system temp>/prog-<slice>/`, never a shared scratchpad), and `git status --porcelain` empty before you report.
 
+Never end your turn to wait for a go-ahead (PROGRAM.md §7 item 11, #2767): finish, or commit and push a WIP branch before any stop and name the branch and head SHA in your report.
+
 "Mechanical" means the change preserves behaviour:
 
 - **A move PR changes no def or class body.**
