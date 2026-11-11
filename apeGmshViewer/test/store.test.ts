@@ -229,7 +229,7 @@ const EVERY: Record<EventType, Event> = {
   setDifference: { type: "setDifference", on: false },
   differenceRead: { type: "differenceRead", read: { key: "[]", status: "loading" } },
   workspaceReading: { type: "workspaceReading" },
-  workspaceRead: { type: "workspaceRead", read: { status: "absent", file: "x.workspace.h5" } },
+  workspaceRead: { type: "workspaceRead", read: { status: "absent", file: "x.workspace.h5", token: "absent" } },
   setWorkspaceKind: { type: "setWorkspaceKind", kind: "elements" },
   workspaceSave: { type: "workspaceSave", edit: { op: "create", name: "roof" } },
   workspaceSaved: { type: "workspaceSaved", seq: 1, answer: { ok: false, reason: "held", detail: "held", file: "x.workspace.h5", held: true } },

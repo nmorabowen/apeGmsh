@@ -72,15 +72,21 @@ export interface RowRefusalIn {
  * - `ready`: the tables, each set's verdict, and the rows that refuse alone.
  *   `readOnly` is the banner of a same-major newer file (ADR 0113 D7): it is
  *   shown and never written over (D2).
+ *
+ * `token` names the file's bytes as main read them (`absent` with no file).
+ * A save sends it back as `expect`, and main refuses the save (`stale`) when
+ * the window set's file is no longer those bytes: another set opened since
+ * the read, or another writer saved. It is not a path.
  */
 export type WorkspaceIn =
   | { status: "none"; reason: string }
-  | { status: "absent"; file: string }
-  | { status: "unreadable"; file: string; reason: string; detail: string }
+  | { status: "absent"; file: string; token: string }
+  | { status: "unreadable"; file: string; reason: string; detail: string; token: string }
   | { status: "refused"; file: string; reason: string; detail: string }
   | {
       status: "ready";
       file: string;
+      token: string;
       version: string;
       revision: number;
       writer: string | null;
@@ -99,12 +105,16 @@ export type WorkspaceIn =
  * never a path. A `create` names the members by their OpenSees tags; main
  * takes their coordinates and the identity hashes from the model itself.
  */
-export type WorkspaceEdit =
+export type WorkspaceEdit = (
   | { op: "create"; name: string; kind: SetKind; ids: readonly number[] }
   | { op: "rename"; table: "sets" | "plots" | "views"; from: string; to: string }
   | { op: "delete"; table: "sets" | "plots" | "views"; name: string }
   /** a `partial` set keeps its matching members, in order, with the model's hashes */
-  | { op: "accept"; name: string };
+  | { op: "accept"; name: string }
+) & {
+  /** the `token` of the read the edit was made on: main refuses the save when the file is no longer those bytes */
+  expect: string;
+};
 
 /**
  * Main's answer to a save. A refusal replaced nothing: the old file is whole.
@@ -117,7 +127,11 @@ export type WorkspaceSaveIn =
   | { ok: false; reason: string; detail: string; file: string | null; held: boolean };
 
 /** What the page asks for: a `create` takes its members from the selection when the effects carry it. */
-export type WorkspacePageEdit = { op: "create"; name: string } | Exclude<WorkspaceEdit, { op: "create" }>;
+export type WorkspacePageEdit =
+  | { op: "create"; name: string }
+  | { op: "rename"; table: "sets" | "plots" | "views"; from: string; to: string }
+  | { op: "delete"; table: "sets" | "plots" | "views"; name: string }
+  | { op: "accept"; name: string };
 
 export interface WorkspaceState {
   /** main's last read; null before the first, and with no window set */
@@ -128,7 +142,8 @@ export interface WorkspaceState {
   kind: SetKind;
   /** the latest save asked for (the effects act on a new `seq`); `seq` counts for the session */
   seq: number;
-  request: { seq: number; edit: WorkspacePageEdit } | null;
+  /** `expect` is the token of the read on screen when the save was asked */
+  request: { seq: number; edit: WorkspacePageEdit; expect: string } | null;
   /** the seq of a save in flight, or null */
   saving: number | null;
   /** the last save's refusal, for the panel; null after a save that landed */

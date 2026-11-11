@@ -61,6 +61,15 @@ test("workspace:save refuses any edit that names a path, a second argument, or n
   assert.equal(resolved("read:before").status, "absent", "the refused saves wrote no workspace into the set either");
 });
 
+test("a save whose token is not the window set's file now refuses stale, naming main's file; nothing is written", () => {
+  const stale = resolved("save:staleToken") as { ok: boolean; reason?: string; file?: string };
+  assert.equal(stale.ok, false);
+  assert.equal(stale.reason, "stale");
+  assert.equal(stale.file?.toLowerCase(), join(root, "set", "frame.workspace.h5").toLowerCase());
+  const again = resolved("save:afterOwnSave") as { ok: boolean; reason?: string };
+  assert.equal(again.reason, "stale", "an edit made on the read before a save is refused once the file changed");
+});
+
 test("the one well-formed save writes the set's own <stem>.workspace.h5, at the path main chose", () => {
   const r = resolved("save:good");
   assert.equal(r.ok, true, JSON.stringify(r));

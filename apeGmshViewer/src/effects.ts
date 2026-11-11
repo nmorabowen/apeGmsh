@@ -1395,21 +1395,21 @@ export class Effects {
   }
 
   /** The edit main is sent for a page edit: a create takes its members from the selection now (state/workspace.ts). */
-  private workspaceEditOf(s: State, edit: WorkspacePageEdit): WorkspaceEdit | string {
-    if (edit.op !== "create") return edit;
+  private workspaceEditOf(s: State, edit: WorkspacePageEdit, expect: string): WorkspaceEdit | string {
+    if (edit.op !== "create") return { ...edit, expect };
     const kind = s.workspace.kind;
     const nodes = s.mesh?.nodes ? { ids: this.blobs.get(s.mesh.nodes.ids) as ArrayLike<number>, xyz: this.blobs.get(s.mesh.nodes.xyz) as ArrayLike<number> } : null;
     const m = membersOf(s, kind, nodes);
     if (!m.ok) return m.reason;
     for (const n of m.notes) console.warn(`apeGmshViewer: ${n}`);
-    return { op: "create", name: edit.name, kind, ids: m.ids };
+    return { op: "create", name: edit.name, kind, ids: m.ids, expect };
   }
 
   /** VU9a: carry a `workspaceSave` to main and land its answer. */
-  private async saveWorkspace(seq: number, edit: WorkspacePageEdit): Promise<void> {
+  private async saveWorkspace(seq: number, edit: WorkspacePageEdit, expect: string): Promise<void> {
     const s = this.store.get();
     const answer = (detail: string, reason: string): WorkspaceSaveIn => ({ ok: false, reason, detail, file: null, held: false });
-    const out = this.workspaceEditOf(s, edit);
+    const out = this.workspaceEditOf(s, edit, expect);
     let result: WorkspaceSaveIn;
     if (typeof out === "string") result = answer(out, "no-members");
     else if (typeof this.bridge.workspaceSave !== "function") result = answer("this build has no workspace door (main's workspace:save)", "unavailable");
@@ -1421,6 +1421,8 @@ export class Effects {
       }
     }
     this.store.dispatch({ type: "workspaceSaved", seq, answer: result });
+    // The file on disk is not the read the edit was made on: read it again, so the panel shows what is there.
+    if (!result.ok && result.reason === "stale") void this.readWorkspace();
   }
 
   /**
@@ -1435,6 +1437,8 @@ export class Effects {
       this.store.subscribe((s, prev) => {
         const m = s.artifacts.model;
         if (m === prev.artifacts.model) return;
+        // Another model: a read still on its way for the last one is dropped (#2890 review 1).
+        if (m?.path !== prev.artifacts.model?.path) this.workspaceSeq++;
         if (m === null) {
           this.workspaceSeq++;
           if (s.workspace.read !== null) this.store.dispatch({ type: "workspaceRead", read: null });
@@ -1456,7 +1460,7 @@ export class Effects {
         const r = s.workspace.request;
         if (!r || r.seq === this.workspaceRequest) return;
         this.workspaceRequest = r.seq;
-        void this.saveWorkspace(r.seq, r.edit);
+        void this.saveWorkspace(r.seq, r.edit, r.expect);
       }),
     );
   }

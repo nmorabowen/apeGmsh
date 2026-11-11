@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
-import { bodyProblem, ModelSide, readWorkspaceFile, strictJson, verdictsOf, versionProblem, WorkspaceRefusal, type WorkspaceH5 } from "../../src/reader/workspace.ts";
+import { bodyProblem, ModelSide, readWorkspaceFile, strictJson, UNREADABLE, verdictsOf, versionProblem, WorkspaceRefusal, type WorkspaceH5 } from "../../src/reader/workspace.ts";
 
 await h5wasm.ready;
 const H5 = h5wasm as unknown as WorkspaceH5;
@@ -92,6 +92,14 @@ test("file-level refusals: not HDF5, the version floor, a newer minor opens read
   assert.equal(versionProblem("01.0.0"), "bad-version");
   assert.throws(() => readWorkspaceFile(H5, FIX("verdicts.golden.json")), (e: unknown) => e instanceof WorkspaceRefusal && e.reason === "not-hdf5");
   assert.throws(() => readWorkspaceFile(H5, FIX("frame.h5")), (e: unknown) => e instanceof WorkspaceRefusal && e.reason === "no-version");
+});
+
+test("a truncated workspace (the first half of a real one) reads as Python reads it: not-hdf5, which D6 renames aside", () => {
+  const want = golden("truncated.golden.json") as { read: string; write_renamed_aside: boolean; bytes: number };
+  assert.equal(readFileSync(FIX("truncated.workspace.h5")).length, want.bytes);
+  assert.equal(want.write_renamed_aside, true, "Python's writer renamed it aside");
+  assert.throws(() => readWorkspaceFile(H5, FIX("truncated.workspace.h5")), (e: unknown) => e instanceof WorkspaceRefusal && e.reason === want.read);
+  assert.ok(UNREADABLE.has(want.read), "the app's writer treats that reason as unreadable, as Python's does");
 });
 
 test("strict JSON: Python's json with no NaN, no key twice, no overflowing float, and int tokens kept apart from float tokens", () => {

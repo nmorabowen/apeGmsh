@@ -23,7 +23,7 @@ const { handlers } = (await import(STUB)) as typeof import("./electronStub.ts");
 await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "main.ts")).href);
 
 const elsewhere = join(root, "elsewhere", "frame.workspace.h5");
-const good = { op: "create", name: "roof", kind: "nodes", ids: [31, 32, 33] };
+const good = { op: "create", name: "roof", kind: "nodes", ids: [31, 32, 33], expect: "absent" };
 
 /** [channel, args] by name, in order. */
 const battery: [string, string, unknown[]][] = [
@@ -35,9 +35,12 @@ const battery: [string, string, unknown[]][] = [
   ["save:second", "workspace:save", [good, elsewhere]],
   ["save:none", "workspace:save", []],
   ["save:bigint", "workspace:save", [{ ...good, ids: [31n] }]],
+  ["save:staleToken", "workspace:save", [{ ...good, expect: "0".repeat(64) }]],
   ["read:before", "workspace:read", []],
   ["save:good", "workspace:save", [good]],
   ["read:after", "workspace:read", []],
+  // The same edit again on the token of the first read: the file the page read is no longer what is there.
+  ["save:afterOwnSave", "workspace:save", [{ ...good, name: "roof again" }]],
 ];
 
 const out: Record<string, unknown> = {};

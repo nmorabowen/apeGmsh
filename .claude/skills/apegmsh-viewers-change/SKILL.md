@@ -164,7 +164,11 @@ The page is not trusted to name a path (owner ruling "option A", #2753). Read th
       `cannotWrite` refuses every mode but view. The owner's HG9 rules are code there: read
       the target whole and close it (a Node or h5wasm handle on the target blocks the replace
       on Windows, `EPERM`), map a blocked replace to `heldRefusal` (never a retry), and never
-      move a held file aside. A new write follows `saveWorkspace`'s order (partial created
+      move a held readable file aside (an unreadable one, a truncated HDF5 file included, is
+      renamed aside as Python's writer does). Every edit carries `expect`, the `token` of the
+      read it was made on (the bytes' sha256, or `absent`); main refuses `stale` when the
+      window set's file is not those bytes, so a set switch or another writer never takes an
+      edit made on the old read (#2890 review). A new write follows `saveWorkspace`'s order (partial created
       `"x"` through `reader/h5open.ts` `createH5`, verify, fsync, revision check, replace) and
       its tests: `test/main/workspaceSave.test.ts` kills a child mid-save
       (`workspaceKillDriver.ts`) and injects `EPERM` through `WorkspaceDisk`, because a real

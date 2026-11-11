@@ -300,12 +300,16 @@ file the app writes, and only from the human's window: the agent modes
   writes a new file beside it as `<stem>.workspace.h5.<host>-<pid>-<random>.partial`,
   reads that back, and replaces the old file in one rename only if no one
   else changed it meanwhile (`revision-moved` otherwise: save again). A
-  save that dies leaves the old file whole.
+  save that dies leaves the old file whole. An edit made on a read the
+  file no longer matches (another writer saved, or another set opened
+  meanwhile) is refused, `stale`, and the panel reads the file again.
 - **Another program holding the file** (a Python session with it open)
   blocks the replace on Windows. The panel then says so, naming the file:
   close it there and save again. Nothing was replaced, and the app does
   not retry on its own.
-- **An unreadable file** (not HDF5, no version key) is never written over:
+- **An unreadable file** (not HDF5, a truncated one included, or no
+  version key; the same files Python's `write_workspace` moves aside) is
+  never written over:
   the save moves it aside to `<stem>.workspace.h5.unreadable-<UTC time>`
   first, and the banner names that file once, until closed.
 - **A newer file** (workspace 1.1 and up, written by a later apeGmsh) is

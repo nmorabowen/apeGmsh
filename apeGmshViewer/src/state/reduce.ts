@@ -25,7 +25,7 @@ import { reduceOverlays } from "./reduce/overlays.ts";
 import { reduceUser } from "./reduce/user.ts";
 import { reduceVariants } from "./reduce/variants.ts";
 import { reduceWindows } from "./reduce/windows.ts";
-import { reduceWorkspace } from "./reduce/workspace.ts";
+import { reduceWorkspace, workspaceForAnotherModel } from "./reduce/workspace.ts";
 import { elementsOfDecl, selectedElementsOf } from "./search.ts";
 import {
   combinationFieldsOf,
@@ -243,8 +243,11 @@ export function reduce(s: State, e: Event): State {
         ? { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null }
         : s.lineDiagram;
       // VA1: opening another model drops the camera of the one shown; the same path again (a reload, a retry after a failed read) keeps it.
-      const camera = e.artifact === "model" && !(prev && prev.path === e.path) ? { ...initialCamera, seq: s.camera.seq } : s.camera;
-      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera });
+      const anotherModel = e.artifact === "model" && !(prev && prev.path === e.path);
+      const camera = anotherModel ? { ...initialCamera, seq: s.camera.seq } : s.camera;
+      // VU9a: another model's set has another workspace; the last one's read is never edited against it.
+      const workspace = anotherModel ? workspaceForAnotherModel(s.workspace) : s.workspace;
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera, workspace });
     }
     case "fileLoaded": {
       // A fileChanged that arrived while this read ran keeps the artifact
@@ -359,6 +362,8 @@ export function reduce(s: State, e: Event): State {
         offers: s.offers,
         // VU10: the study and the compare set are the window's, not the model's (a switch loads another model).
         variants: s.variants,
+        // VU9a: a failed read of the model leaves no workspace edited against it; a read that lands reads it again.
+        workspace: workspaceForAnotherModel(s.workspace),
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -398,6 +403,8 @@ export function reduce(s: State, e: Event): State {
         offers: s.offers,
         // VU10: the study and the compare set are the window's, not the model's (a switch loads another model).
         variants: s.variants,
+        // VU9a: the closed set's workspace leaves; the pick kind and the request count are the window's.
+        workspace: workspaceForAnotherModel(s.workspace),
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });

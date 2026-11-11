@@ -15,6 +15,22 @@ function fileOf(r: WorkspaceIn | null): string | null {
   return r !== null && "file" in r ? r.file : null;
 }
 
+/**
+ * Another model on screen (a set switch, a drop, a close): the last set's
+ * read, its save in flight and its notices leave at once, so nothing is edited
+ * against the old file while the new one is read (#2890 review 1). The pick
+ * kind and the request count stay with the window.
+ */
+export function workspaceForAnotherModel(w: WorkspaceState): WorkspaceState {
+  if (w.read === null && w.request === null && w.saving === null && w.notice === null && w.aside === null && !w.reading) return w;
+  return { ...w, read: null, reading: false, request: null, saving: null, notice: null, aside: null, ownSaveId: null };
+}
+
+/** The token of the read on screen, which a save sends back as `expect`; null when there is no file state to save against. */
+function tokenOf(r: WorkspaceIn | null): string | null {
+  return r !== null && "token" in r ? r.token : null;
+}
+
 /** Why the page may not ask for a save now, or null: no file to write, or one this app must not write over. */
 export function cannotSave(w: WorkspaceState): string | null {
   const r = w.read;
@@ -49,13 +65,18 @@ export function reduceWorkspace(w: WorkspaceState, e: WorkspaceEvent): Workspace
     case "workspaceSave": {
       const why = cannotSave(w);
       if (why !== null) throw new Error(`workspaceSave: ${why}`);
+      const expect = tokenOf(w.read);
+      if (expect === null) throw new Error("workspaceSave: the read on screen has no token to save against");
       const seq = w.seq + 1;
-      return { ...w, seq, request: { seq, edit: e.edit }, saving: seq, notice: null };
+      return { ...w, seq, request: { seq, edit: e.edit, expect }, saving: seq, notice: null };
     }
     case "workspaceSaved": {
       // Only the save in flight: a late answer for another is dropped.
       if (w.saving !== e.seq) return w;
       const a = e.answer;
+      // An answer about another file than the one on screen is never shown as this set's (#2890 review 1).
+      const about = a.ok ? fileOf(a.read) : a.file;
+      if (about !== null && about !== fileOf(w.read)) return { ...w, saving: null };
       if (!a.ok) return { ...w, saving: null, notice: { reason: a.reason, detail: a.detail, file: a.file, held: a.held } };
       return { ...w, saving: null, notice: null, read: a.read, ownSaveId: a.read.status === "ready" ? a.read.saveId : null, aside: a.aside ?? w.aside };
     }

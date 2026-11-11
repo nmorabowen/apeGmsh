@@ -12,6 +12,7 @@ Every `.workspace.h5` here except `rows.workspace.h5` and `app_written/` was wri
 | `cases/<case>.h5`, `verdicts.golden.json` | the frame re-written as each case of `tests/results/user/test_workspace_verdict.py` describes, and Python's verdict of every set against each |
 | `rows.workspace.h5`, `rows.golden.json` | rows that refuse alone, written with h5py (the writer never writes one), and Python's refusals |
 | `plate/plate.h5`, `plate/remeshed.h5`, `plate/plate.workspace.h5`, `remesh.golden.json` | a real gmsh re-mesh of a 12 m x 6 m plate (h = 1.5, then 1.0); node sets saved against the first, judged against the second: the corners survive, so `corners and inside` reads `partial` |
+| `truncated.workspace.h5`, `truncated.golden.json` | the first half of `frame.workspace.h5`: Python reads it `not-hdf5`, and its writer renames it aside (D6); the app must do both |
 | `app_written/frame.workspace.h5`, `app_written.golden.json` | a file the app's own `saveWorkspace` wrote against `frame.h5` (four creates and a rename), and what Python read and judged in it |
 
 The generators import apeGmsh (and the app's main code), so they are kept here as text and
@@ -23,6 +24,7 @@ first again with `--read-app-written`:
     python make_vu9a.py <this directory> <checkout>/src <checkout>
     node app_write.mts <checkout>/apeGmshViewer
     python make_vu9a.py <this directory> <checkout>/src <checkout> --read-app-written
+    python make_vu9a.py <this directory> <checkout>/src <checkout> --truncated
 
 ```python
 """Write the VU9a fixtures: workspaces and models whose verdicts Python states.
@@ -96,6 +98,30 @@ if "--read-app-written" in sys.argv:
         "verdicts": verdict_json(ws.verdicts(OUT / "frame.h5")),
     })
     print("app_written.golden.json written")
+    sys.exit(0)
+
+if "--truncated" in sys.argv:
+    # The first half of a real workspace: what Python reads it as, and what its writer does with it (D6).
+    import tempfile
+    import warnings
+    from apeGmsh.results.user import WorkspaceRefused, WorkspaceRenamedAside
+    whole = (OUT / "frame.workspace.h5").read_bytes()
+    (OUT / "truncated.workspace.h5").write_bytes(whole[: len(whole) // 2])
+    try:
+        WorkspaceFile(OUT / "truncated.workspace.h5")
+        read = "read"
+    except WorkspaceRefused as exc:
+        read = exc.reason
+    with tempfile.TemporaryDirectory() as tmp:
+        shutil.copy(OUT / "frame.h5", Path(tmp) / "frame.h5")
+        shutil.copy(OUT / "truncated.workspace.h5", Path(tmp) / "frame.workspace.h5")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            write_workspace(Path(tmp) / "frame.workspace.h5", sets=[SetDef("roof", "nodes", [31])])
+        aside = sorted(p.name.split(".unreadable-")[0] for p in Path(tmp).iterdir() if ".unreadable-" in p.name)
+        renamed = any(issubclass(w.category, WorkspaceRenamedAside) for w in caught)
+    dump(OUT / "truncated.golden.json", {"bytes": len(whole) // 2, "read": read, "write_renamed_aside": renamed, "aside": aside})
+    print("truncated.golden.json written")
     sys.exit(0)
 
 # -- the worked case ------------------------------------------------------------

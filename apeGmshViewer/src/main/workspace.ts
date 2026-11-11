@@ -18,9 +18,14 @@
 //      Python session holds open) is a typed refusal, `held`, naming the file
 //      and asking the user to close it there: never a raw error, never a retry.
 //   3. No rename-aside-then-move-in to get past a holder. The rename aside is
-//      only D6's, for a file that is not a readable workspace; it is made as a
-//      hard link and an unlink, and a holder that blocks the unlink takes the
-//      link back and refuses `held` the same way.
+//      only D6's, for a file that is not a readable workspace (as Python's
+//      `write_workspace` judges it: a file h5wasm cannot open, a truncated one
+//      included, is `not-hdf5`); it is made as a hard link and an unlink, and a
+//      holder that blocks the unlink takes the link back and refuses `held`.
+// Every edit carries `expect`, the `token` of the read it was made on (the
+// sha256 of the bytes main read, or `absent`). Main refuses the save, `stale`,
+// when the window set's file is not those bytes now: another set opened since
+// the page read its workspace, or another writer saved (#2890 review 1).
 // Every refusal replaces nothing: the old file is whole and this writer's
 // partial is gone.
 //
@@ -160,16 +165,10 @@ export function workspaceOf(set: OpenSet | { reason: string }): { file: string; 
   return { file: set.workspace ?? candidates(set.model).workspace, model: set.model };
 }
 
-/** The HDF5 signature, at 0 or at a user block of 512 * 2^k bytes. */
-const SIGNATURE = [0x89, 0x48, 0x44, 0x46, 0x0d, 0x0a, 0x1a, 0x0a];
-function looksLikeHdf5(bytes: Uint8Array): boolean {
-  for (let at = 0; at + 8 <= bytes.length; at = at === 0 ? 512 : at * 2) {
-    if (SIGNATURE.every((b, i) => bytes[at + i] === b)) return true;
-  }
-  return false;
-}
-
 const digestOf = (bytes: Uint8Array | null): string | null => (bytes === null ? null : createHash("sha256").update(bytes).digest("hex"));
+/** The token a read hands the page and a save expects back: the bytes' digest, or `absent`. */
+export const ABSENT = "absent";
+const tokenOf = (digest: string | null): string => digest ?? ABSENT;
 
 
 const HELD_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
@@ -190,9 +189,6 @@ function readPrevious(deps: WorkspaceDeps, file: string): Previous {
     data = readWorkspaceFile(deps.h5, file);
   } catch (err) {
     if (!(err instanceof WorkspaceRefusal)) throw err;
-    // A file whose bytes are HDF5 but which HDF5 would not open now (another program's lock) is no proof it is
-    // unreadable: it is never renamed aside on that.
-    if (err.reason === "not-hdf5" && looksLikeHdf5(bytes)) throw new WriteRefusal("cannot-open", `${file} is HDF5 but could not be opened now (${err.detail}); nothing was replaced`);
     if (!UNREADABLE.has(err.reason)) throw new WriteRefusal(err.reason, `${err.detail}; nothing was replaced`);
     unreadable = { reason: err.reason, detail: err.detail };
   }
@@ -212,14 +208,14 @@ export async function readWorkspace(deps: WorkspaceDeps, set: OpenSet | { reason
   } catch (err) {
     return { status: "refused", file, reason: isHeld(err) ? "held" : "cannot-read", detail: `${file} cannot be read: ${err instanceof Error ? err.message : String(err)}` };
   }
-  if (bytes === null) return { status: "absent", file };
+  if (bytes === null) return { status: "absent", file, token: ABSENT };
+  const token = tokenOf(digestOf(bytes));
   let data: WorkspaceData;
   try {
     data = readWorkspaceFile(deps.h5, file);
   } catch (err) {
     if (!(err instanceof WorkspaceRefusal)) throw err;
-    if (err.reason === "not-hdf5" && looksLikeHdf5(bytes)) return { status: "refused", file, reason: "cannot-open", detail: `${file} is HDF5 but could not be opened now: ${err.detail}` };
-    return UNREADABLE.has(err.reason) ? { status: "unreadable", file, reason: err.reason, detail: err.detail } : { status: "refused", file, reason: err.reason, detail: err.detail };
+    return UNREADABLE.has(err.reason) ? { status: "unreadable", file, reason: err.reason, detail: err.detail, token } : { status: "refused", file, reason: err.reason, detail: err.detail };
   }
   if (!deps.disk.isFile(model)) return { status: "refused", file, reason: "unpaired", detail: `${file}: no model archive ${model} beside it` };
   let side: ModelSide;
@@ -233,6 +229,7 @@ export async function readWorkspace(deps: WorkspaceDeps, set: OpenSet | { reason
   return {
     status: "ready",
     file,
+    token,
     version: data.version,
     revision: data.revision,
     writer: data.writer,
@@ -247,10 +244,10 @@ export async function readWorkspace(deps: WorkspaceDeps, set: OpenSet | { reason
 }
 
 const EDIT_KEYS: Record<WorkspaceEdit["op"], readonly string[]> = {
-  create: ["ids", "kind", "name", "op"],
-  rename: ["from", "op", "table", "to"],
-  delete: ["name", "op", "table"],
-  accept: ["name", "op"],
+  create: ["expect", "ids", "kind", "name", "op"],
+  rename: ["expect", "from", "op", "table", "to"],
+  delete: ["expect", "name", "op", "table"],
+  accept: ["expect", "name", "op"],
 };
 const TABLE_NAMES = ["sets", "plots", "views"];
 
@@ -265,19 +262,21 @@ export function parseEdit(raw: unknown): WorkspaceEdit | string {
   const want = EDIT_KEYS[op as WorkspaceEdit["op"]];
   if (keys.length !== want.length || keys.some((k, i) => k !== want[i])) return `${form}; ${op} takes { ${want.join(", ")} }; refused ${shown(raw)}`;
   const str = (k: string) => typeof e[k] === "string";
+  if (!str("expect")) return `${form}; expect is the token of the read the edit was made on; refused ${shown(raw)}`;
+  const expect = e["expect"] as string;
   switch (op) {
     case "create":
       if (!str("name") || !(SET_KINDS as readonly unknown[]).includes(e["kind"]) || !Array.isArray(e["ids"])) return `${form}; create takes a name, a kind (nodes or elements) and ids; refused ${shown(raw)}`;
-      return { op, name: e["name"] as string, kind: e["kind"] as "nodes" | "elements", ids: [...(e["ids"] as unknown[])] as number[] };
+      return { op, name: e["name"] as string, kind: e["kind"] as "nodes" | "elements", ids: [...(e["ids"] as unknown[])] as number[], expect };
     case "rename":
       if (!TABLE_NAMES.includes(e["table"] as string) || !str("from") || !str("to")) return `${form}; rename takes a table and two names; refused ${shown(raw)}`;
-      return { op, table: e["table"] as "sets", from: e["from"] as string, to: e["to"] as string };
+      return { op, table: e["table"] as "sets", from: e["from"] as string, to: e["to"] as string, expect };
     case "delete":
       if (!TABLE_NAMES.includes(e["table"] as string) || !str("name")) return `${form}; delete takes a table and a name; refused ${shown(raw)}`;
-      return { op, table: e["table"] as "sets", name: e["name"] as string };
+      return { op, table: e["table"] as "sets", name: e["name"] as string, expect };
     default:
       if (!str("name")) return `${form}; accept takes a set's name; refused ${shown(raw)}`;
-      return { op: "accept", name: e["name"] as string };
+      return { op: "accept", name: e["name"] as string, expect };
   }
 }
 
@@ -371,6 +370,9 @@ export async function saveWorkspace(deps: WorkspaceDeps, set: OpenSet | { reason
   let replaced = false;
   try {
     const previous = readPrevious(deps, file);
+    if (tokenOf(previous.digest) !== edit.expect) {
+      throw new WriteRefusal("stale", `${file} is not the file the edit was made on (another set is open now, or another writer saved since it was read); it is read again: check it and save again. Nothing was replaced.`);
+    }
     const side = new ModelSide(deps.h5, model);
     const planned = buildWrite(previous.data, side, changeOf(edit, previous.data, side, file), file);
     const meta = { revision: planned.revision, saveId: deps.saveId(), writer: deps.writer };
