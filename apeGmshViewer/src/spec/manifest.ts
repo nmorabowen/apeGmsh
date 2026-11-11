@@ -32,7 +32,7 @@
 // Only `timing` varies between two runs of one spec on one machine: paths of
 // stills are relative to the manifest, and every number comes from the files.
 
-import type { CombinationColumnOf, DifferenceColumnOf, StepValues } from "../renderer/contour.ts";
+import { userResultOnHand, type CombinationColumnOf, type DifferenceColumnOf, type StepValues } from "../renderer/contour.ts";
 import { elementMaskOf, visibleMaps } from "../renderer/visible.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { columnOf, gaussCellValues, isNodeTopology, meshFemIds, vertexValues } from "../state/contour.ts";
@@ -74,11 +74,13 @@ export type ManifestContour =
       /** what the legend shows for the component */
       label: string;
       /** VU7b-2: `combination` is a User Combination's nodal value (`combination` names it) */
-      source: "nodal" | "element" | "combination" | "difference";
+      source: "nodal" | "element" | "combination" | "difference" | "user";
       /** VU7b-2, a combination's contour only: which, and whether it may draw as a deformed shape */
       combination?: { name: string; signed: boolean };
       /** VU10, a difference's contour only: the window variant minus the compare variant, by label */
       difference?: { window: string; compare: string };
+      /** VU16, a user result's contour only: the `.user.h5` entry (`field` too) and its basis (A6 judged it current) */
+      user?: { name: string; basis: string };
       /** element fields: how the values reach the screen (`element_mean`, `gauss_node`, ...); nodal: `nodal` */
       topology: string;
       cmap: string;
@@ -387,6 +389,13 @@ function contourOf(s: State, blobs: BlobStore, step: StepValues | null, combinat
     const c = columnContour(s, v, blobs, difference.ids, difference.values);
     return c.drawn ? { ...c, source: "difference", difference: { window: v.window, compare: v.compare }, range: { ...c.range, mode: v.clim.mode === "fixed" ? "fixed" : "step" } } : c;
   }
+  if (v.state === "user") {
+    // VU16: a state-free user result, from the column on screen (renderer/contour.ts `userResultHeld`).
+    const held = userResultOnHand(v);
+    if (!held) throw new Error(`manifest: the user-result column on hand is not the read the view shows (${v.key}, read ${v.read})`);
+    const c = columnContour(s, v, blobs, held.ids, held.values);
+    return c.drawn ? { ...c, source: "user", user: { name: v.name, basis: v.basis } } : c;
+  }
   return drawnContour(s, v, blobs, step);
 }
 
@@ -397,7 +406,7 @@ function combinationContour(s: State, v: Extract<ContourView, { state: "combinat
 }
 
 /** A contour from a column of node values on screen (a User Combination's, VU10's difference): no step data and no history scan. */
-function columnContour(s: State, v: Extract<ContourView, { state: "combination" | "difference" }>, blobs: BlobStore, ids: Float64Array, values: Float64Array): ManifestContour {
+function columnContour(s: State, v: Extract<ContourView, { state: "combination" | "difference" | "user" }>, blobs: BlobStore, ids: Float64Array, values: Float64Array): ManifestContour {
   const mesh = s.mesh;
   if (!mesh) throw new Error("manifest: a contour is drawn with no mesh");
   const seen = visibleOf(s, mesh, blobs);

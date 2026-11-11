@@ -238,8 +238,9 @@ export function defaultPick(stage: ResultsStage | undefined): { field: string; c
   return e && ec ? { field: e.name, component: ec.key, source: "element" } : null;
 }
 
-/** Whether a stage has the pick (`componentOf` for nodal, `elementComponentOf` for element). */
+/** Whether a stage has the pick (`componentOf` for nodal, `elementComponentOf` for element); VU16: a user result is no stage's. */
 export function hasPick(stage: ResultsStage, source: ContourSource, field: string, component: string): boolean {
+  if (source === "user") return false;
   return source === "element" ? elementComponentOf(stage, field, component) !== null : componentOf(stage, field, component) !== null;
 }
 
@@ -259,7 +260,8 @@ export function contourKeys(path: string, stageId: string, step: number, field: 
 export function contourKeysOf(s: State): { step: string; scan: string } | null {
   const at = s.phase.at;
   const c = s.contour;
-  if (at?.kind !== "results" || !s.results || c.field === null || c.component === null) return null;
+  // VU16: a user result is no results step's, so it has no step or scan key.
+  if (at?.kind !== "results" || !s.results || c.field === null || c.component === null || c.source === "user") return null;
   const st = s.results.stages[at.stage];
   // V4c2b: a node-located mode names itself too (its range is not the flat cells' range).
   const field = c.source !== "element" ? c.field : c.gauss === "cell" ? `elem:${c.field}` : `elem:${c.field}@${c.gauss}`;

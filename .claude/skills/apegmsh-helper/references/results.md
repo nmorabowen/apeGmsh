@@ -552,7 +552,12 @@ ratio = ff.data[0, :, ff.components.index("footfall_ratio")]   # per fem.nodes.i
 ```
 
 Evaluate `response_nodes=ops.nodes.get(pg="Slab")` (self excitation at
-every slab node) when the map is the point. The driver, its rules and the figure accessors
+every slab node) when the map is the point. apeGmshViewer draws the map:
+the Contour card's User Results group offers `footfall` and its three
+columns, `NaN` nodes are no data, and it is never a deformed shape. A
+still is a `--render` shot with `"contour": {"field": "footfall",
+"component": "footfall_ratio", "source": "user"}` and no stage
+([viewer.md](viewer.md) §6). The driver, its rules and the figure accessors
 (`frf`, `mode_table`, `to_dataframe`) are in
 [opensees-bridge.md](opensees-bridge.md) §Footfall; worked floor
 `examples/footfall_two_bay_shell.py`; how-to

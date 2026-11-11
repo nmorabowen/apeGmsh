@@ -3,7 +3,7 @@
 // capture; ADR 0128's render and describe run in ./agentRender.ts).
 
 import * as THREE from "three";
-import { Effects, userCombinationColumn, type Bridge } from "../effects.ts";
+import { Effects, userCombinationColumn, userResultColumn, type Bridge } from "../effects.ts";
 import { mountBanner } from "../panels/banner.ts";
 import { mountEmpty } from "../panels/empty.ts";
 import { mountHeader } from "../panels/header.ts";
@@ -34,7 +34,7 @@ import { OfferRunner, snapshotManifest } from "../spec/snapshot.ts";
 import { APP_LAYERS, type AppLayer } from "../spec/spec.ts";
 import type { OfferIn } from "../state/types.ts";
 import { onScreenOf, runAgentMode, type Layout, type RenderBridge } from "./agentRender.ts";
-import { CombinationFeed, contourKey, contourShownKey, elementContourKey, VariantRunner, type VariantDoor } from "./contour.ts";
+import { CombinationFeed, contourKey, contourShownKey, elementContourKey, UserResultFeed, VariantRunner, type VariantDoor } from "./contour.ts";
 import { mountVariants } from "../panels/variants.ts";
 import { tipPoint } from "./gizmo.ts";
 import { zoomToward } from "./navigation.ts";
@@ -61,6 +61,9 @@ viewport.setStationsSource(() => effects.stationsOfStep());
 // evaluator (effects.ts `userCombinationColumn`); its values stay in the feed, as a step's stay in the effects.
 const combinations = new CombinationFeed(store, (req) => userCombinationColumn(bridge, req));
 viewport.setCombinationSource(() => combinations.held);
+// VU16 (ADR 0130 D7): the user result picked, read through main's `user:readResult` (which refuses a stale entry);
+// its column stays in renderer/contour.ts `userResultHeld`, which the viewport, the caps and the manifest read.
+const userResults = new UserResultFeed(store, (req) => userResultColumn(bridge, req));
 // VU10 (ADR 0132 D9): main's study, a switch, the compare set and the difference, through main's variant doors
 // (preload.ts): a variant is named by row index and label, never a path. The difference is subtracted from the
 // window's own step (the effects'), and its column stays in renderer/contour.ts `differenceHeld`.
@@ -70,6 +73,7 @@ if (!isVariantDoor(variantBridge)) throw new Error("apeGmshViewer: the preload h
 const variantRunner = new VariantRunner(store, blobs, variantBridge, () => effects.currentStep());
 const panels = [
   combinations.start(),
+  userResults.start(),
   variantRunner.start(),
   // VA5 (ADR 0128 D5): first, so its box opens the right rail above the inspector.
   mountOffers(store),

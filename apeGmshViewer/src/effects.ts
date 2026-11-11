@@ -14,6 +14,7 @@ import type { GeometryZone } from "./reader/geometry.ts";
 import type { LadrunoLineStationStep, LadrunoSpringStep } from "./reader/ladruno.ts";
 import type { ProvenanceZone } from "./reader/provenance.ts";
 import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZONE_FLOOR } from "./reader/read.ts";
+import type { UserColumnRead } from "./reader/userFile.ts";
 import { spectrumSource, type CaseQuantityName, type CaseRead, type SpectraStaleness, type SpectrumTarget } from "./reader/userSpectra.ts";
 import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
@@ -129,6 +130,19 @@ export interface Bridge {
   goToSource?(file: string, line: number): Promise<{ ok: boolean; reason?: string }>;
   /** VU7b-1 (ADR 0130 D5): one result of one `/spectra` case, with its values (main's `user:readCase`); VU7b-2 exposes it in preload.ts. */
   readUserCase?(req: { path: string; case: string; target: SpectrumTarget; label: string }): Promise<CaseRead>;
+  /** VU16 (ADR 0130 D7): one component of a state-free ON_NODES user result, as a contour column (main's `user:readResult`). */
+  readUserResult?(req: { path: string; name: string; component: string }): Promise<UserColumnRead>;
+}
+
+/**
+ * VU16: the column of user result `name`'s `component` in the `.user.h5` at
+ * `path`, through main's `user:readResult` (which refuses a stale entry with
+ * A6's reason). A bridge with no `readUserResult` throws: this build's
+ * preload always has it, so its absence is a broken build, never "no result".
+ */
+export function userResultColumn(bridge: Pick<Bridge, "readUserResult">, req: { path: string; name: string; component: string }): Promise<UserColumnRead> {
+  if (typeof bridge.readUserResult !== "function") throw new Error("this build's bridge has no readUserResult (main's user:readResult)");
+  return bridge.readUserResult(req);
 }
 
 /** What `userCombinationColumn` answers: the contour column, or the evaluator's refusal. */

@@ -10,10 +10,11 @@ import type { CombinationTable } from "../combination/evaluate.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { cellVertexValues, columnOf, differenceColumn, elementCellValues, gaussCellValues, isNodeTopology, joinElements, meshFemIds, NO_DATA_RGB, primitiveColours, vertexValues, type CombinedColumn } from "../state/contour.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners, type NodeTopology } from "../state/extrapolation.ts";
-import { combinationRequestOf, combinationTableOf, differencePlanOf, type ContourView } from "../state/selectors.ts";
+import type { UserColumnRead } from "../reader/userFile.ts";
+import { combinationRequestOf, combinationTableOf, differencePlanOf, userResultRequestOf, type ContourView } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { SpringStepData } from "../state/springs.ts";
-import type { CombinationRead, CompareIn, DifferenceRead, MeshInfo, State } from "../state/types.ts";
+import type { CombinationRead, CompareIn, DifferenceRead, MeshInfo, State, UserResultRead } from "../state/types.ts";
 
 /** One step's nodal values, as the effects hold them (effects.ts `StepData`). */
 export interface StepValues {
@@ -103,6 +104,8 @@ export function contourShownKey(v: ContourView): string | null {
       return combinationContourKey(v);
     case "difference":
       return differenceContourKey(v);
+    case "user":
+      return userResultContourKey(v);
     case "unavailable":
     case "refused":
     case "not-yet":
@@ -230,6 +233,143 @@ export class CombinationFeed {
       // What the evaluator raised (a case that repeats a node id raises in Python too) is stated, never a blank view.
       (err: unknown) => answered({ key: want.key, status: "failed", error: err instanceof Error ? err.message : String(err) }, null),
     );
+  }
+}
+
+// -- VU16: a state-free user result's nodal value (ADR 0130 D7) --------------------
+
+/** What a set of user-result colours shows: the read (the file, the entry, the component, the feed's read), the range and the colormap. */
+export const userResultContourKey = (view: Extract<ContourView, { state: "user" }>): string => `user ${view.key}|read ${view.read}|${view.clim.min}|${view.clim.max}|${view.cmap}`;
+
+/** The user-result column on hand, under the key of its request and the feed's read (selectors `userResultRequestOf`). */
+export interface UserResultColumnOf {
+  key: string;
+  read: number;
+  /** FEM node ids, in the file's row order */
+  ids: Float64Array;
+  /** one value per id; NaN is no value (drawn as no data) */
+  values: Float64Array;
+}
+
+/**
+ * The column the user-result feed read last (`UserResultFeed`), read by the
+ * viewport, the caps and the manifest, as a step's values stay in the effects:
+ * one window, one feed, so one holder (as `differenceHeld`).
+ */
+export const userResultHeld: { current: UserResultColumnOf | null } = { current: null };
+
+/** Whether the column on hand is the one the view names. */
+export const userResultOnHand = (view: Extract<ContourView, { state: "user" }>): UserResultColumnOf | null => {
+  const held = userResultHeld.current;
+  return held && held.key === view.key && held.read === view.read ? held : null;
+};
+
+/**
+ * The linear vertex colours of the drawn lines and triangles for the user
+ * result on screen: each vertex takes its node's value by node id
+ * (state/contour.ts `vertexValues`), and a node the file gives no finite value
+ * (absent from its `ID`, or NaN) is no data. Null while the column on hand is
+ * not the read the view names (the viewport keeps what it shows).
+ */
+export function userResultColours(
+  view: Extract<ContourView, { state: "user" }>,
+  mesh: MeshInfo,
+  blobs: BlobStore,
+  lineMap: Int32Array,
+  triMap: Int32Array,
+): { line: Float32Array; tri: Float32Array; key: string } | null {
+  const held = userResultOnHand(view);
+  if (!held) return null;
+  const column = columnOf(held.ids);
+  const vn = mesh.vertexNodes;
+  const clim = { min: view.clim.min, max: view.clim.max };
+  const rows = [held.values];
+  const line = primitiveColours(vertexValues(blobs.get(vn.line) as Float64Array, column, rows, false), lineMap, 2, clim, view.cmap).rgb;
+  const tri = primitiveColours(vertexValues(blobs.get(vn.tri) as Float64Array, column, rows, false), triMap, 3, clim, view.cmap).rgb;
+  return { line: linearise(line), tri: linearise(tri), key: userResultContourKey(view) };
+}
+
+/** What the feed asks main for one read (`user:readResult`, effects.ts `userResultColumn`). */
+export interface UserResultFetch {
+  (req: { path: string; name: string; component: string }): Promise<UserColumnRead>;
+}
+
+/**
+ * VU16: the feed of the user result picked. It reads the column whenever the
+ * state asks for one it does not hold (selectors `userResultRequestOf`), keeps
+ * the values in `userResultHeld`, and reports each read to the store
+ * (`userResultRead`): loading, then the column's range, main's refusal (a
+ * stale entry is refused there with A6's reason), or what the read raised. An
+ * answer for a request no longer wanted is dropped. Each check runs in a
+ * microtask, so a dispatch never happens inside another's listeners.
+ */
+export class UserResultFeed {
+  private seq = 0;
+  private asked: string | null = null;
+  private queued = false;
+  private readonly store: Store;
+  private readonly fetch: UserResultFetch;
+
+  constructor(store: Store, fetch: UserResultFetch) {
+    this.store = store;
+    this.fetch = fetch;
+  }
+
+  /** Follow the store; returns the unsubscribe. */
+  start(): () => void {
+    const off = this.store.subscribe(() => this.schedule());
+    this.schedule();
+    return off;
+  }
+
+  private schedule(): void {
+    if (this.queued) return;
+    this.queued = true;
+    queueMicrotask(() => {
+      this.queued = false;
+      this.check();
+    });
+  }
+
+  /** Start the read the state asks for, if it is not running or answered; exposed for the tests. */
+  check(): Promise<void> | null {
+    const s = this.store.get();
+    const want = userResultRequestOf(s);
+    if (want === null) {
+      // Nothing is asked for: a read still on its way answers nothing.
+      if (this.asked !== null) this.seq++;
+      this.asked = null;
+      return null;
+    }
+    if (this.asked === want.key && s.userResult?.key === want.key) return null;
+    const mine = ++this.seq;
+    this.asked = want.key;
+    this.store.dispatch({ type: "userResultRead", read: { key: want.key, status: "loading" } });
+    const answered = (read: UserResultRead, column: { ids: Float64Array; values: Float64Array } | null) => {
+      if (mine !== this.seq) return;
+      if (column) userResultHeld.current = { key: want.key, read: mine, ...column };
+      this.store.dispatch({ type: "userResultRead", read });
+    };
+    // Through a promise, so a fetch that throws at once (a bridge with no door) is stated as a failed read too.
+    return Promise.resolve()
+      .then(() => this.fetch({ path: want.path, name: want.name, component: want.component }))
+      .then((r) => {
+        if (!r.ok) return answered({ key: want.key, status: "refused", reason: r.reason, detail: r.detail }, null);
+        const { ids, values } = r.value;
+        if (!(ids instanceof Float64Array) || !(values instanceof Float64Array) || ids.length !== values.length) {
+          throw new Error("user:readResult answered ids and values that are not two f64 columns of one length");
+        }
+        let min = Infinity, max = -Infinity, finite = 0;
+        for (const v of values) {
+          if (!Number.isFinite(v)) continue;
+          finite++;
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
+        answered({ key: want.key, status: "ready", read: mine, range: finite ? { min, max } : null, nodes: ids.length, finite }, { ids, values });
+      })
+      // What the read raised (a broken door, a malformed answer) is stated, never a blank view.
+      .catch((err: unknown) => answered({ key: want.key, status: "failed", error: err instanceof Error ? err.message : String(err) }, null));
   }
 }
 

@@ -1,6 +1,7 @@
 // Loads main.ts in plain Node, with `electron` resolved to ./electronStub.ts, and
-// calls its `user:read` and `user:readCase` handlers with a fixed battery of
-// requests over the set in `--dir=` (test/main/userDoors.test.ts, VU11 #2750).
+// calls its `user:read`, `user:readCase` and (VU16) `user:readResult` handlers
+// with a fixed battery of requests over the set in `--dir=`
+// (test/main/userDoors.test.ts, VU11 #2750).
 // It runs in a child process, because main.ts watches the set it opens and
 // keeps the process alive; it prints one JSON line and exits.
 //
@@ -27,6 +28,8 @@ const set = join(root, "set");
 const paired = join(set, "s.user.h5");
 const model = join(set, "s.h5");
 const CASE = { case: "NEC-15 Ex (synthetic nodal)", target: "nodes", label: "DISPLACEMENT" };
+// VU16: footfall's ratio map, W3's state-free user result (a set without it refuses it by name)
+const RESULT = { name: "footfall", component: "footfall_ratio" };
 
 /** The paths a renderer could send, each with the set's model and results. */
 const PATHS: Record<string, string> = {
@@ -45,7 +48,11 @@ const battery: Record<string, [string, unknown]> = {};
 for (const [name, path] of Object.entries(PATHS)) {
   battery[`read:${name}`] = ["user:read", { path, model, results: null }];
   battery[`readCase:${name}`] = ["user:readCase", { path, ...CASE }];
+  battery[`readResult:${name}`] = ["user:readResult", { path, ...RESULT }];
 }
+battery["readResult:bigint"] = ["user:readResult", { ...RESULT, path: 5n }];
+battery["readResult:circular"] = ["user:readResult", circular];
+battery["readResult:otherComponent"] = ["user:readResult", { path: paired, name: "footfall", component: "footfall_nope" }];
 battery["read:otherModel"] = ["user:read", { path: paired, model: join(set, "t.h5"), results: null }];
 battery["read:otherResults"] = ["user:read", { path: paired, model, results: join(set, "s.results.h5") }];
 battery["read:bigint"] = ["user:read", { path: 5n, model, results: null }];
@@ -58,8 +65,12 @@ for (const [name, [channel, req]] of Object.entries(battery)) {
   const handle = handlers.get(channel);
   if (!handle) throw new Error(`main.ts registered no ${channel}`);
   try {
-    const r = (await handle({}, req)) as { ok: boolean; error?: string; reason?: string; detail?: string; value?: { data: Float64Array } };
-    out[name] = { resolved: { ok: r.ok, error: r.error, reason: r.reason, detail: r.detail, values: r.value?.data.length } };
+    // `user:readCase` answers `data`, `user:readResult` answers `values` (and the ids it is joined by).
+    const r = (await handle({}, req)) as { ok: boolean; error?: string; reason?: string; detail?: string; value?: { data?: Float64Array; values?: Float64Array; ids?: Float64Array } };
+    const v = r.value;
+    out[name] = {
+      resolved: { ok: r.ok, error: r.error, reason: r.reason, detail: r.detail, values: v?.data?.length ?? v?.values?.length, ...(v?.values ? { column: { ids: [...v.ids!], values: [...v.values].map((x) => (Number.isNaN(x) ? null : x)) } } : {}) },
+    };
   } catch (err) {
     out[name] = { rejected: err instanceof Error ? err.message : String(err) };
   }

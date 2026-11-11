@@ -32,7 +32,7 @@ import {
 } from "./contour.ts";
 import { usesMatrix } from "./extrapolation.ts";
 import { tensorFields, type TensorField } from "./tensor.ts";
-import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn } from "./types.ts";
+import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 import {
   beamLocalAxes,
@@ -527,7 +527,7 @@ export function noticesOf(s: State): string[] {
   // V4c2a: element components refused one by one on the stage shown, and why a picked element field is not drawn.
   for (const g of st?.gauss ?? []) for (const r of g.refused) out.push(`Element component ${r.component} of group ${g.id} not read: ${r.reason}.`);
   const ev = contourView(s);
-  if (ev.state === "refused") out.push(ev.code === "combination" || ev.code === "difference" ? `Contour not drawn: ${ev.reason}.` : `Element contour refused: ${ev.reason}.`);
+  if (ev.state === "refused") out.push(ev.code === "combination" || ev.code === "difference" || ev.code === "user" ? `Contour not drawn: ${ev.reason}.` : `Element contour refused: ${ev.reason}.`);
   // VU10: a newer manifest's banner (ADR 0132 D2), and the nodes a difference cannot give a value.
   if (s.variants.study?.newer) out.push(s.variants.study.newer);
   if (ev.state === "difference" && ev.missing > 0) {
@@ -569,7 +569,7 @@ export type ContourView =
    * components, or rows that do not join the mesh. Drawn as no data, never
    * "with a warning"; the banner says why.
    */
-  | { state: "refused"; code: ElementRefusal | "combination" | "difference"; reason: string }
+  | { state: "refused"; code: ElementRefusal | "combination" | "difference" | "user"; reason: string }
   /**
    * V4c2a: an element topology whose drawing was not built yet. V4c2b draws
    * every topology, so no view is in this state any more; the variant stays
@@ -627,6 +627,29 @@ export type ContourView =
       cmap: ContourCmap;
       /** whether it may draw as a deformed shape (an unsigned one is a contour only) */
       signed: boolean;
+    }
+  /**
+   * VU16 (ADR 0130 D7): one component of a state-free `ON_NODES` user result of
+   * the set's `.user.h5`, by node id; it has no state, so it is shown at any
+   * phase. The colours come from the read under `key` and `read`
+   * (renderer/contour.ts `userResultColours`); a node it gives no finite value
+   * is no data. Never a deformed shape.
+   */
+  | {
+      state: "user";
+      /** the user result (`field` too: the legend names it as a field) */
+      name: string;
+      field: string;
+      component: FieldComponent;
+      /** `userResultRequestOf(s).key`, and the feed's read under it */
+      key: string;
+      read: number;
+      basis: UserResult["basis"];
+      clim: Clim;
+      cmap: ContourCmap;
+      /** the node ids the column lists, and how many hold a finite value */
+      nodes: number;
+      finite: number;
     }
   /**
    * VU10 (ADR 0132 D9.5): the window variant minus the compare variant for one
@@ -744,6 +767,8 @@ export function contourView(s: State): ContourView {
   if (s.visibility.colourBy !== "contour") return { state: "off" };
   if (s.variants.difference) return differenceContour(s);
   if (s.phase.at?.kind === "combination") return combinationContour(s, s.phase.at.name);
+  // VU16: a user result has no state, so it is shown whatever phase is on screen, with or without results.
+  if (s.contour.source === "user") return userResultContour(s);
   const p = resultsPairing(s);
   if (!s.results || p.state !== "paired") return { state: "unavailable", reason: "no results file pairs with this model, so there is no field to colour by" };
   const at = s.phase.at;
@@ -841,6 +866,10 @@ export function deformOf(s: State): { ok: true; draw: DeformDraw } | { ok: false
   // VU10: a difference of two variants is a contour only; it is never offered as a shape, nor is either variant's under it.
   if (s.variants.difference) return { ok: false, state: "refused", reason: "the difference of two variants is shown as a contour only, never as a deformed shape" };
   if (s.phase.at?.kind === "combination") return combinationDeform(s, s.phase.at.name);
+  // VU16: a user result is a contour only; it is never offered as a shape, nor is a results step's under it.
+  if (s.visibility.colourBy === "contour" && s.contour.source === "user") {
+    return { ok: false, state: "refused", reason: "a user result is shown as a contour only, never as a deformed shape" };
+  }
   const p = resultsPairing(s);
   if (!s.results || p.state !== "paired") return { ok: false, state: "unavailable", reason: "no results file pairs with this model, so there is no displacement" };
   const at = s.phase.at;
@@ -1509,6 +1538,85 @@ function combinationDeform(s: State, name: string): { ok: false; state: "unavail
   return { ok: false, state: "unavailable", reason: `User Combination ${quoted(name)} is signed; this app draws the deformed shape of a results step only` };
 }
 
+// -- VU16: a state-free user result as a contour (ADR 0130 D7) ---------------------
+
+/**
+ * Whether user result `name` of the set's `.user.h5` can be drawn as a
+ * contour: its entry, or why not. Only a state-free `ON_NODES` entry the file
+ * lists (a refused one never) can; staleness (A6) is judged by the caller, so a
+ * stale entry is picked and refused with its reason, never silently dropped.
+ */
+export function userResultPickOf(s: State, name: string): { ok: true; entry: UserResult } | { ok: false; reason: string } {
+  const u = s.user;
+  if (u === null) return { ok: false, reason: "the set has no .user.h5" };
+  if (u.status === "reading") return { ok: false, reason: `${baseName(u.path)} is being read` };
+  if (u.status === "failed") return { ok: false, reason: `the user file is refused: ${u.error}` };
+  const file = baseName(u.path);
+  const r = u.info.results;
+  if (r === null) return { ok: false, reason: `${file} holds no /results entry, so it has no user result ${quoted(name)}` };
+  if (!r.ok) return { ok: false, reason: `/results of ${file} is refused: ${r.reason}` };
+  const entry = r.items.find((x) => x.name === name);
+  if (!entry) {
+    const why = r.refused.find((x) => x.name === name);
+    return { ok: false, reason: why ? `user result ${quoted(name)} is refused: ${why.reason} (${why.detail})` : `${file} lists no user result ${quoted(name)}` };
+  }
+  if (entry.target !== "nodes") return { ok: false, reason: `user result ${quoted(name)} is on ${entry.target}; this app draws a user result on nodes only` };
+  if (entry.perState) return { ok: false, reason: `user result ${quoted(name)} is per state; this app draws a state-free one only` };
+  return { ok: true, entry };
+}
+
+/**
+ * What the app reads for the user result picked, or null when nothing is to
+ * be read: not colouring by a user result, a difference or a User Combination
+ * shown instead, a pick the file cannot give, or a stale entry (A6: refused,
+ * never read). `key` names the read: the user file, the entry, the component.
+ */
+export function userResultRequestOf(s: State): { key: string; path: string; name: string; component: string } | null {
+  const c = s.contour;
+  if (s.visibility.colourBy !== "contour" || c.source !== "user" || c.field === null || c.component === null) return null;
+  if (s.variants.difference || s.phase.at?.kind === "combination") return null;
+  const p = userResultPickOf(s, c.field);
+  if (!p.ok || p.entry.stale.stale || !p.entry.components.includes(c.component)) return null;
+  const path = s.user!.path;
+  return { key: JSON.stringify([path, c.field, c.component]), path, name: c.field, component: c.component };
+}
+
+/** `contourView` on a user result: what its read gave, or why it draws nothing. */
+function userResultContour(s: State): ContourView {
+  if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
+  const c = s.contour;
+  if (c.field === null || c.component === null) return { state: "unavailable", reason: "pick a field" };
+  const label = `user result ${quoted(c.field)}`;
+  if (s.user?.status === "reading") return { state: "unavailable", reason: `${label}: ${baseName(s.user.path)} is being read` };
+  const p = userResultPickOf(s, c.field);
+  if (!p.ok) return { state: "refused", code: "user", reason: p.reason };
+  if (p.entry.stale.stale) return { state: "refused", code: "user", reason: `${label} is stale (A6): ${p.entry.stale.reason || "no reason given"}` };
+  if (!p.entry.components.includes(c.component)) {
+    return { state: "refused", code: "user", reason: `${label} has no component ${quoted(c.component)}; its components are ${p.entry.components.join(", ")}` };
+  }
+  const want = userResultRequestOf(s)!;
+  const r = s.userResult;
+  if (!r || r.key !== want.key || r.status === "loading") return { state: "unavailable", reason: `${label} is being read` };
+  if (r.status === "refused") return { state: "refused", code: "user", reason: `${label} is refused: ${r.detail}` };
+  if (r.status === "failed") return { state: "refused", code: "user", reason: `${label} could not be read: ${r.error}` };
+  // One state: the user's range when fixed, else the column's own (there is no history to scan).
+  const clim: Clim =
+    c.range === "fixed" ? climOf(c, null, null, "") : { min: r.range?.min ?? null, max: r.range?.max ?? null, mode: c.range, label: "range: this user result (one state, no history)" };
+  return {
+    state: "user",
+    name: c.field,
+    field: c.field,
+    component: { key: c.component, label: c.component, datasets: [c.component], magnitude: false },
+    key: r.key,
+    read: r.read,
+    basis: p.entry.basis,
+    clim,
+    cmap: c.cmap,
+    nodes: r.nodes,
+    finite: r.finite,
+  };
+}
+
 // -- VU10: the difference of two variants (ADR 0132 D9.5) -------------------------
 
 /** What the difference shown reads, or why there is none to read (a refusal); null when no difference is asked for. */
@@ -1553,6 +1661,8 @@ export function differencePlanOf(s: State): DifferencePlan | null {
   if (at?.kind === "combination") {
     return { ok: false, reason: `a User Combination is of the window variant's own states, so a combination across variants is refused: ${quoted(at.name)} is not subtracted from ${quoted(c.label)}` };
   }
+  // VU16: so is a user result, of the window variant's own .user.h5.
+  if (s.contour.source === "user") return { ok: false, reason: "a user result is of the window variant's own file, so it is not subtracted across variants" };
   if (!s.results || resultsPairing(s).state !== "paired") return { ok: false, reason: "no results file pairs with this model, so there is nothing to subtract from" };
   if (at?.kind !== "results") return { ok: false, reason: "a difference is of a results step: choose results in the phase bar" };
   const st = s.results.stages[at.stage];

@@ -3,7 +3,8 @@
 // hides or shows it (`setHidden`); "show all" clears the hidden set. It
 // dispatches events and reads selectors, nothing else. ADR 0130 D1 (VU3b):
 // the field picker lists two groups, Results (what the recorder wrote) and
-// User Results (the set's `.user.h5` entries, listed and not yet drawn).
+// User Results (the set's `.user.h5` entries). VU16: a state-free nodal user
+// result is picked there and drawn as a contour; any other is listed only.
 //
 // This module also fills the Display card (what is drawn, and the contour
 // colormap), the Deformed card, the Contour card (V4c1: the switch, the field
@@ -33,6 +34,7 @@ import {
   resolveFieldUnits,
   roleLegendOf,
   scaleLabel,
+  userResultPickOf,
   type ContourView,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
@@ -59,12 +61,16 @@ const css = (rgb: readonly number[]): string => `rgb(${rgb.map((c) => Math.round
  */
 export function contourLines(
   s: State,
-  v: Extract<ContourView, { state: "ready" | "element" | "combination" | "difference" }>,
+  v: Extract<ContourView, { state: "ready" | "element" | "combination" | "difference" | "user" }>,
 ): { title: string; min: string; max: string; ticks: string[]; range: string; units: string; state: string | null; topology: string | null; axes: string | null } {
   const c = v.clim;
   const constant = c.min !== null && c.max !== null && c.min === c.max;
   const stageKind = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage]?.kind : undefined;
-  const u = resolveFieldUnits(v.field, s.contour.source, s.contour.sourceUnits, s.contour.targetUnits, stageKind, s.contour.declaredUnits);
+  // VU16: a user result's columns are named by its writer (footfall's `footfall_ratio`), so no unit is inferred from a name.
+  const u =
+    v.state === "user"
+      ? { factor: 1, unit: null, note: "as the user file stores it: its writer names the columns, so no unit is converted" }
+      : resolveFieldUnits(v.field, s.contour.source, s.contour.sourceUnits, s.contour.targetUnits, stageKind, s.contour.declaredUnits);
   const unitSuffix = u.unit ? ` [${u.unit}]` : "";
   // VU7b-2: a User Combination's scale names the combination, and says when it can be no deformed shape.
   // VU10: a difference's scale names the window variant and the compare variant it subtracts.
@@ -78,7 +84,9 @@ export function contourLines(
     range: c.label,
     units: u.note,
     state:
-      v.state === "difference"
+      v.state === "user"
+        ? `User result, one state: ${v.finite.toLocaleString()} of ${v.nodes.toLocaleString()} nodes hold a value; contour only, never a deformed shape`
+        : v.state === "difference"
         ? "Difference: window minus compare (read-only)"
         : v.state === "combination"
         ? v.signed
@@ -407,6 +415,11 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     ];
     const valueOf = (source: ContourSource, name: string) => `${source}:${name}`;
     const user = userResultsGroup(s);
+    // VU16: a user result that can be drawn is an option too; it is never offered over a User Combination.
+    const onCombination = s.phase.at?.kind === "combination";
+    for (const r of user?.rows ?? []) {
+      if (r.pick && !onCombination) options.push({ source: "user", name: r.pick.name, components: r.pick.components.map((k) => ({ key: k, label: k })) });
+    }
     if (options.length || user) {
       const row = el("div", "contour-pick");
       const field = el("select", "contour-field");
@@ -440,13 +453,19 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         field.append(group);
       }
       if (user) {
-        // Listed, never picked: nothing draws a user result yet, so each option is disabled and says why.
+        // VU16: a state-free nodal user result is picked here; any other row is disabled and says why.
         const group = el("optgroup");
         group.label = user.label;
         for (const r of user.rows) {
           const o = el("option", undefined, r.text);
-          o.disabled = true;
           o.title = r.title;
+          if (r.pick && !onCombination) {
+            o.value = valueOf("user", r.pick.name);
+            o.selected = s.contour.source === "user" && s.contour.field === r.pick.name;
+          } else {
+            o.disabled = true;
+            if (r.pick) o.title = `${r.title}; not drawn over User Combination ${s.phase.at?.kind === "combination" ? s.phase.at.name : ""}`;
+          }
           group.append(o);
         }
         field.append(group);
@@ -468,7 +487,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       contourUnlisten.push(
         listen(field, "change", () => {
           const f = options.find((x) => valueOf(x.source, x.name) === field.value);
-          if (!f) throw new Error(`contour picker: ${JSON.stringify(field.value)} is not a Results field`);
+          if (!f) throw new Error(`contour picker: ${JSON.stringify(field.value)} is not a Results field or a user result`);
           store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: f.source });
         }),
       );
@@ -514,7 +533,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       }
       contourCard.append(modes);
     }
-    if (v.state !== "ready" && v.state !== "element" && v.state !== "combination" && v.state !== "difference") {
+    if (v.state !== "ready" && v.state !== "element" && v.state !== "combination" && v.state !== "difference" && v.state !== "user") {
       const note =
         v.state === "unavailable"
           ? `Nothing to colour: ${v.reason}.`
@@ -550,7 +569,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
           if (m.range !== "fixed") return store.dispatch({ type: "setContourRange", range: m.range });
           // A fixed range starts from the range shown, when it has one.
           const c = contourView(store.get());
-          const from = store.get().contour.fixed ?? ((c.state === "ready" || c.state === "element" || c.state === "combination" || c.state === "difference") && c.clim.min !== null && c.clim.max !== null && c.clim.min < c.clim.max ? { min: c.clim.min, max: c.clim.max } : null);
+          const from = store.get().contour.fixed ?? ((c.state === "ready" || c.state === "element" || c.state === "combination" || c.state === "difference" || c.state === "user") && c.clim.min !== null && c.clim.max !== null && c.clim.min < c.clim.max ? { min: c.clim.min, max: c.clim.max } : null);
           if (from) store.dispatch({ type: "setContourRange", range: "fixed", fixed: from });
         }),
       );
@@ -655,29 +674,46 @@ function deformSignature(s: State): string {
 
 const TARGET_WORD: Readonly<Record<UserResult["target"], string>> = { nodes: "nodal", elements: "element", entities: "entity", domain: "whole model" };
 
+/** One row of the User Results group; `pick` is set when the row can be drawn as a contour (VU16). */
+export interface UserResultRow {
+  text: string;
+  title: string;
+  stale: boolean;
+  refused: boolean;
+  pick: { name: string; components: string[] } | null;
+}
+
 /**
  * ADR 0130 D1, D7: the contour picker's User Results group, from the set's
  * `.user.h5`: one row per entry (its target, per state or state-free, and
  * stale with the reason, A6) and one per refused entry, or the zone's refusal.
- * Listed only: nothing draws a user result yet. Null when the file has none.
+ * VU16: a state-free nodal entry can be picked (`pick`; a stale one is picked
+ * and refused with its reason); any other is listed only, and the title says
+ * why (selectors `userResultPickOf`). Null when the file has none.
  */
-export function userResultsGroup(s: State): { label: string; rows: { text: string; title: string; stale: boolean; refused: boolean }[]; note: string | null } | null {
+export function userResultsGroup(s: State): { label: string; rows: UserResultRow[]; note: string | null } | null {
   const u = s.user;
   if (u?.status !== "ready" || u.info.results === null) return null;
   const r = u.info.results;
   const file = u.path.split(/[\\/]/).pop() ?? u.path;
-  if (!r.ok) return { label: "User Results", rows: [{ text: "refused", title: `/results of ${file}: ${r.reason}`, stale: false, refused: true }], note: null };
-  const rows = r.items.map((x) => {
+  if (!r.ok) return { label: "User Results", rows: [{ text: "refused", title: `/results of ${file}: ${r.reason}`, stale: false, refused: true, pick: null }], note: null };
+  let listed = 0;
+  const rows: UserResultRow[] = r.items.map((x) => {
     const what = `${TARGET_WORD[x.target]}, ${x.perState ? "per state" : "state-free"}`;
+    const p = userResultPickOf(s, x.name);
+    if (!p.ok) listed++;
     return {
       text: `${x.name} (${what}${x.stale.stale ? ", stale" : ""})`,
-      title: `${x.name}: a ${what} user result of ${file}${x.linear ? ", linear" : ""}, on the ${x.basis === "results" ? "results" : "model"} basis${x.stale.stale ? `; stale: ${x.stale.reason || "no reason given"}` : ""}`,
+      title:
+        `${x.name}: a ${what} user result of ${file}${x.linear ? ", linear" : ""}, on the ${x.basis === "results" ? "results" : "model"} basis` +
+        `${x.stale.stale ? `; stale: ${x.stale.reason || "no reason given"}` : ""}${p.ok ? "" : `; not drawn: ${p.reason}`}`,
       stale: x.stale.stale,
       refused: false,
+      pick: p.ok ? { name: x.name, components: [...x.components] } : null,
     };
   });
-  for (const x of r.refused) rows.push({ text: `${x.name || "(no name)"} (refused, ${x.reason})`, title: `${x.name}: refused, ${x.reason}: ${x.detail}`, stale: false, refused: true });
-  return { label: "User Results", rows, note: r.items.length ? "Listed only: this app does not draw a user result yet." : null };
+  for (const x of r.refused) rows.push({ text: `${x.name || "(no name)"} (refused, ${x.reason})`, title: `${x.name}: refused, ${x.reason}: ${x.detail}`, stale: false, refused: true, pick: null });
+  return { label: "User Results", rows, note: listed ? "A state-free nodal user result is drawn as a contour; a per-state or non-nodal one is listed only." : null };
 }
 
 /** What the contour legend shows, as one string: it is rebuilt only when this changes. */
@@ -686,8 +722,8 @@ function contourSignature(s: State): string {
   const picker = contourFieldsOf(s);
   return JSON.stringify([
     userResultsGroup(s),
-    v.state === "ready" || v.state === "element" || v.state === "combination" || v.state === "difference" ? contourLines(s, v) : v,
-    v.state === "ready" || v.state === "element" || v.state === "combination" || v.state === "difference" ? v.cmap : null,
+    v.state === "ready" || v.state === "element" || v.state === "combination" || v.state === "difference" || v.state === "user" ? contourLines(s, v) : v,
+    v.state === "ready" || v.state === "element" || v.state === "combination" || v.state === "difference" || v.state === "user" ? v.cmap : null,
     picker,
     s.contour.source,
     s.contour.gauss,

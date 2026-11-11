@@ -446,6 +446,8 @@ export interface UserResultEntryIn {
   basis: string;
   perState: boolean;
   linear: boolean;
+  /** VU16: its columns in `DATA` order (`@COMPONENTS`); [] for an elements entry */
+  components: string[];
 }
 export interface UserIndexIn {
   path: string;
@@ -517,13 +519,19 @@ export interface UserCombination {
   /** A6: a source of it is stale, directly or through another combination */
   stale: boolean;
 }
-/** One User Result (D7), judged without its DATA. Listed only: nothing draws it yet. */
+/**
+ * One User Result (D7), judged without its DATA. VU16: a state-free one on the
+ * nodes is picked in the Contour card (`ContourSource` `user`) and drawn as a
+ * contour; any other is listed only, with why (selectors `userResultPickOf`).
+ */
 export interface UserResult {
   name: string;
   target: (typeof USER_RESULT_TARGETS)[number];
   basis: (typeof USER_RESULT_BASES)[number];
   perState: boolean;
   linear: boolean;
+  /** VU16: its columns in `DATA` order; [] for an elements entry */
+  components: string[];
   stale: StaleMark;
 }
 /** One `/modes` row (D6) and its A6 verdict against the paired `.ladruno`. */
@@ -657,6 +665,29 @@ export type CombinationRead =
       signed: boolean;
     }
   | { key: string; status: "refused"; reason: string; detail: string }
+  | { key: string; status: "failed"; error: string };
+
+/**
+ * VU16 (ADR 0130 D7): what the app read for the user result picked
+ * (`ContourSource` `user`), under `key` (selectors `userResultRequestOf`):
+ * being read, its column's range, main's refusal (`stale` carries A6's
+ * reason), or what the read raised. The values stay in renderer/contour.ts
+ * `userResultHeld`, as a results step's stay in the effects. `read` counts the
+ * feed's reads, so a re-read under the same key recolours.
+ */
+export type UserResultRead =
+  | { key: string; status: "loading" }
+  | {
+      key: string;
+      status: "ready";
+      read: number;
+      /** the finite min and max, null when no value is finite */
+      range: { min: number; max: number } | null;
+      /** how many node ids the column lists, and how many of them hold a finite value */
+      nodes: number;
+      finite: number;
+    }
+  | { key: string; status: "refused"; reason: "refused" | "stale"; detail: string }
   | { key: string; status: "failed"; error: string };
 
 // -- VU10 (ADR 0132 D8, D9): a study's variants, the compare set, the difference ----
@@ -797,8 +828,13 @@ export interface ContourScan {
   error: string | null;
 }
 
-/** What a contour colours by (V4c2a): a nodal field, or an element (Gauss) field. */
-export type ContourSource = "nodal" | "element";
+/**
+ * What a contour colours by (V4c2a): a nodal field, or an element (Gauss)
+ * field. VU16: or a state-free `ON_NODES` user result of the set's `.user.h5`;
+ * then `field` names the entry and `component` one of its columns, and it is
+ * shown at whatever phase is on screen (it has no state).
+ */
+export type ContourSource = "nodal" | "element" | "user";
 
 /**
  * How an element (Gauss) field is drawn (V4c2a). `cell` is flat per cell: the
@@ -1374,6 +1410,8 @@ export interface State {
   user: UserFileState | null;
   /** VU7b-2: the read of the User Combination shown, for the quantity picked; null off a combination, and after the user file is read again */
   combination: CombinationRead | null;
+  /** VU16: the read of the user result picked (`contour.source` `user`); null with none, and after the user file is read again */
+  userResult: UserResultRead | null;
   /** VU10 (ADR 0132 D9): the study's variants, the compare set and the difference; it lasts across the window set's loads */
   variants: VariantsState;
   /** V4c1: the nodal contour (shown when `visibility.colourBy` is `contour`) */
@@ -1774,6 +1812,8 @@ export type Event =
   | { type: "userClosed" }
   /** VU7b-2 (renderer/app.ts): the User Combination shown is being read, or its read answered; one for another key is dropped */
   | { type: "combinationRead"; read: CombinationRead }
+  /** VU16 (renderer/app.ts): the user result picked is being read, or its read answered; one for another key is dropped */
+  | { type: "userResultRead"; read: UserResultRead }
   /** VU10 (renderer/contour.ts `VariantRunner`): main's study, at start and after every change; null with no manifest */
   | { type: "variantsRead"; study: VariantsIn | null }
   /** VU10: the variants panel asks main to open row `index` as the window set (D9.6) */
