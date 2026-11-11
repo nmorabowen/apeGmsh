@@ -5,6 +5,7 @@ import type { HarnessConfig, HarnessContext } from "./context.ts";
 import { demoTarget } from "./pointer.ts";
 import { captureContours, captureDeform, captureElements, captureExtrudeResults, captureLineDiagrams, captureResults } from "./results.ts";
 import { captureCaps, captureClip, captureGizmo } from "./sections.ts";
+import { captureWorkspace } from "./workspace.ts";
 
 /**
  * VA1 (D7): `<out>.camera-plus-x.png`, the `+x` named view through the store;
@@ -152,5 +153,7 @@ export async function runCapture(ctx: HarnessContext, cfg: HarnessConfig, file: 
     // V4e2 (D7): the plane-gizmo stills, at the capture window's own width.
     await captureGizmo(ctx, settle, width, height);
   }
+  // VU9a (D7): the sets panel and the workspace's notices, only for a set with a <stem>.workspace.h5 (./workspace.ts).
+  await captureWorkspace(ctx, settle);
   await bridge.captureDone();
 }

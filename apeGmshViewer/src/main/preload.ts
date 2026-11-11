@@ -34,6 +34,11 @@
 //   onOffers(cb) onSnapshotRequest(cb) snapshotReply(id, reply)  ADR 0128 D5, D6 (below)
 //   variants() onVariants(cb) variantsSwitch(i, label) variantsCompare(i, label)
 //   readCompareStep(req) compareClose()  VU10: the study, a switch and the compare set (below)
+//   workspaceRead()         VU9a (ADR 0132): the open set's `<stem>.workspace.h5`,
+//                          its tables and each set's verdict (main/workspace.ts);
+//                          it takes no argument, main names the file
+//   workspaceSave(edit)     VU9a: one edit (`{op, ...}`) into that file; never a
+//                          path (option A, #2753). A refusal replaced nothing
 // onOpen and onFileChanged return a function that removes the listener.
 // Until the page subscribes to a channel, main reloads the page instead of
 // sending on it, so the P0 page (which reads the model from config) follows.
@@ -46,6 +51,8 @@ interface OpenSet {
   results: string | null;
   /** ADR 0130: the `<stem>.user.h5` beside the model, or null */
   user: string | null;
+  /** ADR 0132 D1: the `<stem>.workspace.h5` beside the model, or null */
+  workspace: string | null;
 }
 
 /**
@@ -182,4 +189,8 @@ contextBridge.exposeInMainWorld("viewer", {
   readCompareStep: (req: { stage: string; step: number; seq: number }) => ipcRenderer.invoke("compare:readStep", { stage: req.stage, step: req.step, seq: req.seq }),
   compareClose: () => ipcRenderer.invoke("compare:close"),
   snapshotReply: (id: number, reply: unknown) => ipcRenderer.invoke("viewer:snapshotReply", id, reply),
+  // VU9a (ADR 0132 D6, D7; HG9 on #2803): the window set's workspace. Neither door names a file: main reads and writes
+  // the set's own `<stem>.workspace.h5`, and refuses an edit with any key its op does not name (a path included).
+  workspaceRead: () => ipcRenderer.invoke("workspace:read"),
+  workspaceSave: (edit: unknown) => ipcRenderer.invoke("workspace:save", edit),
 });

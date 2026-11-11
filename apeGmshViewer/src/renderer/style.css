@@ -307,6 +307,17 @@ code { font-family: var(--mono); }
 .offer-note { margin-top: 2px; font-size: 12px; color: var(--muted); }
 .offer-reason { margin-top: 2px; font-size: 12px; color: var(--error); overflow-wrap: anywhere; }
 
+/* VU9a (ADR 0132 D3): the sets panel's verdict chips, beside the offers' and variants' rows in #rail.
+   current reads as settled (the accent), moved as interpreted (the warn tag), partial and lost as refusals. */
+.set-verdict { padding: 0 5px; border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.set-verdict[data-verdict="current"] { color: var(--accent); background: var(--accent-wash); border-color: transparent; }
+.set-verdict[data-verdict="moved"] { color: var(--interp-text); background: var(--interp-wash); border-color: var(--interp); }
+.set-verdict[data-verdict="partial"], .set-verdict[data-verdict="lost"], .set-verdict[data-verdict="refused"] { color: var(--error); background: var(--error-wash); border-color: var(--error-line); }
+.sets-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin: 6px 0; }
+.sets-form input { min-width: 0; padding: 2px 6px; border-radius: 5px; font: 13px var(--font); color: var(--text); background: var(--faint); border: 1px solid var(--line); }
+.sets-kind { display: flex; gap: 4px; margin: 4px 0; }
+.sets-held { margin-top: 4px; padding: 6px 8px; border-radius: 6px; font-size: 12px; color: var(--text); background: var(--error-wash); border: 1px solid var(--error-line); overflow-wrap: anywhere; }
+
 /* V2g: the sources listing, below the inspector in #rail (design brief on
    #1426). Capped at 40% of the rail while the inspector shows. */
 #sources {

@@ -25,6 +25,7 @@ import { reduceOverlays } from "./reduce/overlays.ts";
 import { reduceUser } from "./reduce/user.ts";
 import { reduceVariants } from "./reduce/variants.ts";
 import { reduceWindows } from "./reduce/windows.ts";
+import { reduceWorkspace, workspaceForAnotherModel } from "./reduce/workspace.ts";
 import { elementsOfDecl, selectedElementsOf } from "./search.ts";
 import {
   combinationFieldsOf,
@@ -51,6 +52,7 @@ export { initialOffers, MAX_OFFERS } from "./reduce/offers.ts";
 export { initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./reduce/overlays.ts";
 export { NO_USER_FILE, userEventOf, userInfoOf, userPathOf, userReadable } from "./reduce/user.ts";
 export { initialVariants } from "./reduce/variants.ts";
+export { initialWorkspace } from "./reduce/workspace.ts";
 
 type Markers = { on: boolean; size: number | null; auto: boolean };
 
@@ -228,6 +230,22 @@ function withLineDiagramPick(s: State, preserveNotice = false): State {
 }
 
 export function reduce(s: State, e: Event): State {
+  return withPickFrame(s, e, reduceEvent(s, e));
+}
+
+/**
+ * VU9a (#2890 delta review): whether the selection holds a click made while
+ * the deformed shape showed (`WorkspaceState.deformedPicks`). A click's point is
+ * where the cell was drawn; Nodes compares it with undeformed node positions,
+ * so such a selection is refused for a node set until it is clicked again.
+ */
+function withPickFrame(s: State, e: Event, next: State): State {
+  if (next.selection === s.selection || !["select", "selectAdd", "selectDecls", "clearSelection"].includes(e.type)) return next;
+  const deformed = next.selection.picks.length === 0 ? false : e.type === "select" ? s.deform.on : s.workspace.deformedPicks || (e.type === "selectAdd" && s.deform.on);
+  return deformed === next.workspace.deformedPicks ? next : { ...next, workspace: { ...next.workspace, deformedPicks: deformed } };
+}
+
+function reduceEvent(s: State, e: Event): State {
   switch (e.type) {
     case "fileOpened": {
       const prev = s.artifacts[e.artifact];
@@ -241,8 +259,11 @@ export function reduce(s: State, e: Event): State {
         ? { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null }
         : s.lineDiagram;
       // VA1: opening another model drops the camera of the one shown; the same path again (a reload, a retry after a failed read) keeps it.
-      const camera = e.artifact === "model" && !(prev && prev.path === e.path) ? { ...initialCamera, seq: s.camera.seq } : s.camera;
-      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera });
+      const anotherModel = e.artifact === "model" && !(prev && prev.path === e.path);
+      const camera = anotherModel ? { ...initialCamera, seq: s.camera.seq } : s.camera;
+      // VU9a: another model's set has another workspace; the last one's read is never edited against it.
+      const workspace = anotherModel ? workspaceForAnotherModel(s.workspace) : s.workspace;
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera, workspace });
     }
     case "fileLoaded": {
       // A fileChanged that arrived while this read ran keeps the artifact
@@ -357,6 +378,8 @@ export function reduce(s: State, e: Event): State {
         offers: s.offers,
         // VU10: the study and the compare set are the window's, not the model's (a switch loads another model).
         variants: s.variants,
+        // VU9a: a failed read of the model leaves no workspace edited against it; a read that lands reads it again.
+        workspace: workspaceForAnotherModel(s.workspace),
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -396,6 +419,8 @@ export function reduce(s: State, e: Event): State {
         offers: s.offers,
         // VU10: the study and the compare set are the window's, not the model's (a switch loads another model).
         variants: s.variants,
+        // VU9a: the closed set's workspace leaves; the pick kind and the request count are the window's.
+        workspace: workspaceForAnotherModel(s.workspace),
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -853,6 +878,17 @@ export function reduce(s: State, e: Event): State {
       };
       const variants = reduceVariants(s.variants, e, { differenceKey });
       return variants === s.variants ? s : { ...s, variants };
+    }
+    case "workspaceReading":
+    case "workspaceRead":
+    case "setWorkspaceKind":
+    case "workspaceSave":
+    case "workspaceSaved":
+    case "workspacePreview":
+    case "dismissWorkspaceAside": {
+      // VU9a: a workspace event touches the workspace slice and nothing else.
+      const workspace = reduceWorkspace(s.workspace, e);
+      return workspace === s.workspace ? s : { ...s, workspace };
     }
     default: {
       const unknown: never = e;

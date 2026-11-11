@@ -228,6 +228,13 @@ const EVERY: Record<EventType, Event> = {
   compareOpened: { type: "compareOpened", result: { index: 1, label: "B", reason: "refused" } },
   setDifference: { type: "setDifference", on: false },
   differenceRead: { type: "differenceRead", read: { key: "[]", status: "loading" } },
+  workspaceReading: { type: "workspaceReading" },
+  workspaceRead: { type: "workspaceRead", read: { status: "absent", file: "x.workspace.h5", token: "absent" } },
+  setWorkspaceKind: { type: "setWorkspaceKind", kind: "elements" },
+  workspaceSave: { type: "workspaceSave", edit: { op: "create", name: "roof" } },
+  workspaceSaved: { type: "workspaceSaved", seq: 1, answer: { ok: false, reason: "held", detail: "held", file: "x.workspace.h5", held: true } },
+  workspacePreview: { type: "workspacePreview", preview: { kind: "nodes", ids: [1], notes: [] } },
+  dismissWorkspaceAside: { type: "dismissWorkspaceAside" },
 };
 
 test("reducer purity: every event leaves a frozen state untouched and returns plain data", () => {
@@ -245,8 +252,8 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    109,
-    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, the 12 Spotlight/Search/selectDecls events, setLoads, setReactions (the Reactions card), setVectors (the Vectors card), setSprings (the Springs card), setSupports (the Display card's BC), toggleExtrudeFrames, toggleShowOffsets, setCamera, cameraMoved and setTheme (VA1), and the seven offer events (VA5), setNodes and setNodeSize (node markers), and setGaussPoints, setGaussSize and gaussMeasured (Gauss markers), and userOpened, userRead and userClosed (ADR 0130, the .user.h5), and combinationRead (VU7b-2, the User Combination shown), and userResultRead (VU16, the user result picked), and setPrincipal (the Principal card), and the seven variant events (VU10: variantsRead, variantSwitch, variantSwitched, variantCompare, compareOpened, setDifference, differenceRead)",
+    116,
+    "decision 17's 20 events plus selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, the 12 Spotlight/Search/selectDecls events, setLoads, setReactions (the Reactions card), setVectors (the Vectors card), setSprings (the Springs card), setSupports (the Display card's BC), toggleExtrudeFrames, toggleShowOffsets, setCamera, cameraMoved and setTheme (VA1), and the seven offer events (VA5), setNodes and setNodeSize (node markers), and setGaussPoints, setGaussSize and gaussMeasured (Gauss markers), and userOpened, userRead and userClosed (ADR 0130, the .user.h5), and combinationRead (VU7b-2, the User Combination shown), and userResultRead (VU16, the user result picked), and setPrincipal (the Principal card), and the seven variant events (VU10: variantsRead, variantSwitch, variantSwitched, variantCompare, compareOpened, setDifference, differenceRead), and the seven workspace events (VU9a: workspaceReading, workspaceRead, setWorkspaceKind, workspaceSave, workspaceSaved, workspacePreview, dismissWorkspaceAside)",
   );
 });
 

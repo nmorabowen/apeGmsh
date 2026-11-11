@@ -1,7 +1,8 @@
-// Electron main process. It reads files and nothing else (ADR 0112 D4):
-// no network, no writes except the measurement / capture outputs a script
-// asked for, and no child process except the user's editor for go-to-source
-// (D3, ./source.ts). The one socket is a local pipe, private to one agent call:
+// Electron main process. It reads files and writes one (ADR 0112 D4, as ADR
+// 0132 D6 narrowed it): no network, no writes except the open set's
+// `<stem>.workspace.h5` when the human saves in the window (./workspace.ts,
+// HG9 on #2803) and the measurement / capture outputs a script asked for, and
+// no child process except the user's editor for go-to-source (D3, ./source.ts). The one socket is a local pipe, private to one agent call:
 // the running window's acknowledgement of `--present` or `--snapshot`.
 //
 // Modes (argv, set by scripts/launch.mjs):
@@ -72,6 +73,8 @@ import { confinedToStudy, isManifestPath, readVariants, resolveRow, type Variant
 import { goToSource, provenanceSources, type SourceScope } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
+import { nodeDeps, registerWorkspace } from "./workspace.ts";
+import type { WorkspaceH5 } from "../reader/workspace.ts";
 import { agentMode, arg, argvSkip, badArgs, file, headless, mode, out, reachMode, t0 } from "./args.ts";
 import { measureResultsMode, registerMeasure } from "./modes/measure.ts";
 import { heardFromAgent, listedOffers, offersPageLoading, pageCommitted, reachWindow, registerReach, type Reach } from "./modes/reach.ts";
@@ -250,7 +253,7 @@ function rowSet(open: string): { ok: true; set: OpenSet } | { ok: false; reason:
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
-  for (const p of [set.results, set.geometry, set.user]) {
+  for (const p of [set.results, set.geometry, set.user, set.workspace]) {
     const why = study.confine(p);
     if (why !== null) return { ok: false, reason: `a file of the variant's set leaves the study: ${why}` };
   }
@@ -487,9 +490,10 @@ ipcMain.handle("model:open", async (_e, path: unknown) => {
  * `app:config` hand the page. No other mode's page reads these doors. The
  * reason when there is no set.
  */
-function windowSet(): { model: string | null; geometry: string | null; results: string | null } | { reason: string } {
+function windowSet(): OpenSet | { reason: string } {
   if (mode === "view") return currentSet() ?? { reason: "no set is open" };
-  if (mode === "render") return renderJob ?? { reason: "the render job was refused" };
+  // The job names no user or workspace file; the workspace doors take `<stem>.workspace.h5` beside its model (./workspace.ts `workspaceOf`).
+  if (mode === "render") return renderJob ? { model: renderJob.model, geometry: renderJob.geometry, results: renderJob.results, user: null, workspace: null } : { reason: "the render job was refused" };
   if ((mode === "describe" || mode === "capture" || mode === "measure") && file) {
     try {
       return pairSet(resolve(file), existsSync);
@@ -704,10 +708,10 @@ function shown(req: unknown): string {
   }
 }
 
-/** The set on screen in view mode: the open set, with the user slot only the watcher knows (a user file that appears is a `changed`, not a reopen). */
+/** The set on screen in view mode: the open set, with the user and workspace slots only the watcher knows (a file that appears there is a `changed`, not a reopen). */
 function currentSet(): OpenSet | null {
   if (mode !== "view" || session.set === null) return null;
-  return liveWatcher === null ? session.set : { ...session.set, user: liveWatcher.set.user };
+  return liveWatcher === null ? session.set : { ...session.set, user: liveWatcher.set.user, workspace: liveWatcher.set.workspace };
 }
 
 /**
@@ -807,6 +811,16 @@ ipcMain.handle("user:readResult", async (_e, req: unknown): Promise<UserColumnRe
   if (!p.ok) return { ok: false, reason: "refused", detail: p.reason };
   await h5wasm.ready;
   return readUserResultColumn(h5wasm as unknown as UserH5, p.user, p.model, p.results, listDir, r.name, r.component);
+});
+
+// VU9a (ADR 0132 D6, D7; HG9 on #2803): the window set's `<stem>.workspace.h5`,
+// read and written only as main names it (`windowSet`): the page never names
+// its path (option A, #2753). Only the human's window saves (ADR 0128 INV-1 as
+// ADR 0132 narrowed it); an agent mode reads it, and its save door refuses.
+registerWorkspace(ipcMain, {
+  set: windowSet,
+  cannotWrite: () => (mode === "view" ? null : `--mode=${mode} never writes the workspace: only the human's window saves (ADR 0128 INV-1, ADR 0132)`),
+  deps: nodeDeps(h5wasm as unknown as WorkspaceH5, h5wasm.ready, `apeGmshViewer ${app.getVersion()}`),
 });
 
 for (const verb of ["subscribe", "unsubscribe"] as const) {

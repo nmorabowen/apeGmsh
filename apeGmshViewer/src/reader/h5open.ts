@@ -17,6 +17,11 @@
 //
 // scripts/check_app_wall.py W5 keeps every `new <h5wasm>.File(` in src/ and
 // scripts/ inside this file.
+//
+// `createH5` (ADR 0132 D6, VU9a #2803) is the one write: a new file created
+// exclusively, `"x"`, so a writer's partial never truncates a file another
+// writer made. h5wasm answers an existing name with a negative file id, not a
+// throw; `createH5` turns that into a throw.
 
 /** The emscripten FS that h5wasm exports as `FS` once `ready` resolves (NODERAWFS). */
 export interface H5FS {
@@ -62,4 +67,18 @@ function exactInodes(fs: H5FS | null): void {
 export function openH5<F>(h5: H5Openable<F>, path: string): F {
   exactInodes(h5.FS);
   return new h5.File(path, "r");
+}
+
+/** What `createH5` needs of the h5wasm module. */
+export interface H5Creatable<F> {
+  File: new (filename: string, mode: "x") => F;
+  readonly FS: H5FS | null;
+}
+
+/** Create `path` for writing, exclusively (`"x"`: refused when the name exists), with HDF5 comparing exact file ids. */
+export function createH5<F extends { file_id: bigint | number }>(h5: H5Creatable<F>, path: string): F {
+  exactInodes(h5.FS);
+  const f = new h5.File(path, "x");
+  if (Number(f.file_id) < 0) throw new Error(`HDF5 could not create ${path} (it exists, or its folder refuses a new file)`);
+  return f;
 }
