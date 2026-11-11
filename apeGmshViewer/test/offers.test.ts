@@ -244,7 +244,7 @@ test("INV-5: an offer reaching the window changes nothing but the list; every ke
 test("INV-5: only the panel's click dispatches Apply or Back; main and the spec side never do", () => {
   const root = fileURLToPath(new URL("../src/", import.meta.url));
   const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(join(dir, d.name)) : d.name.endsWith(".ts") ? [join(dir, d.name)] : []));
-  const senders = walk(root).filter((f) => /type: "(applyOffer|backOffer)"/.test(readFileSync(f, "utf8")) && !/state[\\/]types\.ts$/.test(f));
+  const senders = walk(root).filter((f) => /type: "(applyOffer|backOffer)"/.test(readFileSync(f, "utf8")) && !/state[\\/]types(\.ts$|[\\/])/.test(f));
   assert.deepEqual(senders.map((f) => f.slice(root.length).replace(/\\/g, "/")), ["panels/offers.ts"]);
 });
 
