@@ -173,6 +173,15 @@ The page is not trusted to name a path (owner ruling "option A", #2753). Read th
       its tests: `test/main/workspaceSave.test.ts` kills a child mid-save
       (`workspaceKillDriver.ts`) and injects `EPERM` through `WorkspaceDisk`, because a real
       hold blocks only on Windows and CI's `app-tests` runs on Linux.
+- [ ] **The second write door is `combinations:save`** (VU9b, #2693; `main/combinations.ts`):
+      ADR 0130 A4 into the window set's `.user.h5`, which can be gigabytes. It copies the file
+      to its own partial and appends there (`reader/h5open.ts` `appendH5` opens only a
+      `.partial` for writing: `a` on the live file corrupts it when killed, the probe on
+      #2693). Before the replace it closes the app's own `openH5` handles on the file
+      (`closeHandlesOn`; one blocks the rename on Windows as `held`), and it checks free
+      space before the copy. The save token is the path and `/meta@revision`, never a
+      whole-file digest. `test/main/combinationsSave.test.ts` holds one test per HG9 rule, the
+      kill at each step (`combinationsDriver.ts`) and a zone digest of every root group.
 - [ ] **h5wasm 0.10.3 write traps.** A dtype's width comes from its letter, not its digits:
       `"<f8"` writes **f4** (use `"<d"`), `"<i4"` is i4 by luck of `i`. An empty array needs
       an explicit dtype (it guesses integer). `"x"` on an existing name returns a negative

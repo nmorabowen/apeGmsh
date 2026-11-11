@@ -1,5 +1,5 @@
 {
-"about": "Python UserFile + UserCombinations.evaluate on the app-written file",
+"about": "Python UserFile, and apeGmsh.results.user.evaluate over UserSpectra, on the app-written file",
 "revision": 4,
 "writer": "apeGmshViewer driver",
 "current": 3,
