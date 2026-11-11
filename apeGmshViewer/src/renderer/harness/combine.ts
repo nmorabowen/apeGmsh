@@ -32,7 +32,7 @@ export async function captureCombine(ctx: HarnessContext, settle: (ms?: number) 
   // The last User Combination of the file, shown from the phase bar (as its picker shows one).
   const last = u.info.table?.rows.at(-1)?.name ?? null;
   const entry = document.querySelector<HTMLButtonElement>('#phase [data-role="new-combination"]');
-  if (!entry) throw new Error("capture: the phase bar has no + Combination with a user file read");
+  if (!entry) throw new Error("capture: the phase bar has no New combination (+) with a user file read");
   entry.click();
   await settle(300);
   await shot("combine-empty");

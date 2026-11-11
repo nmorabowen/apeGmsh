@@ -20,6 +20,8 @@
 // on User Combinations shows the first combination as a contour (VU4's
 // evaluator, in the app), and a picker in the bar chooses another; a
 // combination is one state, so the bar shows no step scrubber for it.
+// VU9b: a `+` beside the families opens the authoring panel (panels/combine.ts)
+// while the set's `.user.h5` is read and its `/combinations` is not refused.
 
 import { combinationShownOf, combineEntryOf, inactiveElements, SCRUBBER_TOP_PX, scrubberRow, timelineOf, type Timeline } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
@@ -277,9 +279,11 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
     const shown = at?.kind === "results" ? familyOfStage(s, at.stage) : at?.kind === "combination" ? "combinations" : null;
     for (const f of families) buttons.push(familyButton(f, shown === f.key));
     if (entry !== null) {
-      const b = el("button", "phase new-combination", "+ Combination");
+      // One glyph beside User Combinations: the bar shares the header row, so a word here would run under the ViewCube.
+      const b = el("button", "phase new-combination", "+");
       b.dataset["role"] = "new-combination";
-      b.title = entry.title;
+      b.title = `New combination. ${entry.title}`;
+      b.setAttribute("aria-label", "New combination");
       unlisten.push(listen(b, "click", () => opts.newCombination?.()));
       buttons.push(b);
     }
