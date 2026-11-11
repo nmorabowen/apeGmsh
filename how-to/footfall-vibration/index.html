@@ -3962,8 +3962,28 @@ so footfall sits beside the set's combinations and design checks.
 ran on.</p>
 <p>On a real floor with many response nodes, this file turns a table of
 per-node ratios into a map: red where the floor fails, green where it
-does not. <a href="https://github.com/nmorabowen/apeGmsh/blob/main/examples/footfall_two_bay_shell.py">The worked two-bay slab</a>
-draws its map from this file.</p>
+does not. apeGmshViewer draws it. Open the model; the Contour card lists
+<code>footfall</code> under <strong>User Results</strong>, and picking it colours the mesh by one
+of its three columns. Nodes outside the response set are drawn as no data
+(grey). The map is a contour only: the Deformed card is refused while it
+is shown. If the user file no longer pairs with the model (another
+<code>fem_hash</code>), the contour is refused with that reason.</p>
+<p>A still of the map comes from the app's <code>--render</code>, with
+<code>apeGmsh.agent_view.render_stills</code>. A user result belongs to no stage, so
+the shot names none:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.agent_view</span><span class="w"> </span><span class="kn">import</span> <span class="n">render_stills</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">render_stills</span><span class="p">({</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="s2">"spec"</span><span class="p">:</span> <span class="s2">"apegmsh-view/1"</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="s2">"files"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"model"</span><span class="p">:</span> <span class="s2">"footfall_bay.h5"</span><span class="p">},</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="s2">"shots"</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"name"</span><span class="p">:</span> <span class="s2">"footfall_ratio"</span><span class="p">,</span> <span class="s2">"camera"</span><span class="p">:</span> <span class="s2">"top"</span><span class="p">,</span> <span class="s2">"chrome"</span><span class="p">:</span> <span class="s2">"model"</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>               <span class="s2">"contour"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"field"</span><span class="p">:</span> <span class="s2">"footfall"</span><span class="p">,</span> <span class="s2">"component"</span><span class="p">:</span> <span class="s2">"footfall_ratio"</span><span class="p">,</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>                           <span class="s2">"source"</span><span class="p">:</span> <span class="s2">"user"</span><span class="p">}}],</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="p">},</span> <span class="s2">"stills"</span><span class="p">)</span>
+</span></code></pre></div>
+<p><a href="https://github.com/nmorabowen/apeGmsh/blob/main/examples/footfall_two_bay_shell.py">The worked two-bay slab</a>
+writes its <code>footfall_ratio.png</code> this way. It falls back to matplotlib only
+when no viewer is installed.</p>
 <h2 id="why-the-2nd-edition-not-robot">Why the 2nd edition, not Robot<a class="headerlink" href="#why-the-2nd-edition-not-robot" title="Permanent link">&para;</a></h2>
 <p>Robot's own <em>Footfall</em> case is built on the Design Guide's <strong>1st</strong>
 edition — resonant-only under its AISC option, with no equivalent to the
