@@ -243,17 +243,21 @@ class FootfallResult:
         Its ``model_hash`` must also be the model this evaluation
         solved: two archives of one fem (a cracked and an uncracked
         stiffness variant) share the ``fem_hash`` and differ only there.
-        The driver keeps its bridge's lineage key, and an archive that
-        bridge wrote in this process (``ops.h5(...)`` or the automatic
-        write, before or after the driver) names the solved
-        ``model_hash``; a different one in ``model_h5`` refuses. The
-        check runs only when both sides carry a ``model_hash``: an
-        archive with only a ``fem_hash`` (``fem.to_h5``) passes, and so
-        does a result whose model archive this process never wrote (one
-        written in another process, after a reload, or under declarations
-        changed since the driver ran), a stub-snapshot run, or a result
-        built without the driver — there is no solved ``model_hash`` to
-        compare.
+        The driver keeps the lineage key of the declarations it ran
+        under. Any archive of those declarations composed in this process
+        records the solved ``model_hash`` under that key: the live
+        emit's automatic ``model.h5`` write, or ``ops.h5(...)`` before or
+        after the driver. A ``model_h5`` with a different ``model_hash``
+        refuses, including an archive of declarations added after the
+        driver ran. The check runs only when both sides carry a
+        ``model_hash``. An archive with only a ``fem_hash``
+        (``fem.to_h5``) passes. The check is skipped when no archive of
+        the solved declarations was composed in this process (the
+        automatic write was off or skipped, e.g. ``_artifacts=False``, a
+        snapshot with no name, a partitioned model, and no ``ops.h5``
+        followed), and when the result carries no lineage key (a
+        stub-snapshot run, or a result built without the driver): there
+        is then no solved ``model_hash`` to compare.
 
         ``/meta@writer`` carries the provenance: this driver, the
         apeGmsh version, and the OpenSees backend (and fork build) the
@@ -311,8 +315,9 @@ class FootfallResult:
                 f"FootfallResult.to_results: {model_h5} is another model of "
                 f"this fem (its model_hash {model_hash} is not model_hash "
                 f"{solved}, the model footfall_walking solved). Pass that "
-                "model's archive (ops.h5(path) on the bridge that ran the "
-                "evaluation). Nothing was written."
+                "model's archive: the archive of the declarations "
+                "footfall_walking ran under, not of declarations added "
+                "since. Nothing was written."
             )
 
         data = np.full((1, all_ids.size, 3), np.nan, dtype=np.float64)
