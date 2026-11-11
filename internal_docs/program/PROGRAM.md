@@ -218,7 +218,7 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 |---|---|
 | Strict fix-prefixed PR share above 25% for 4 weeks (baseline 22%) | Stop splits, keep the gates. |
 | A split PR needs more than 2 fixes within 7 days | Revert the split. |
-| Non-program PRs below 50% of the trailing monthly mean for 2 months | The program is starving the product. |
+| Non-program PRs below 50% of the trailing monthly mean for 2 months | The program is starving the product. Chain V PRs count as product (non-program) for this measure, and the weekly triage reports V separately (maintainer, 2026-11-10). |
 | A phase runs past 2× its estimate | Cancel the next phase. |
 | A shadow registry or path reaches 30 days without a flip | Delete it. S3's families list is exempt: it is gate configuration. |
 | The fork lane is not green within 30 days of the pin | Make an explicit C-or-D decision. |
@@ -289,6 +289,6 @@ Ledger: chain issue #<n>; board #1203; charter internal_docs/program/PROGRAM.md.
 
 ## 11. Program end and expiries
 
-The program closes when chains A, B, C, N, X, S1–S3 and K0–K2 are done, the KPIs are on target (the close-target column of §8; maintainer, 2026-10-19), and the structural targets in §8 are met. F3 and later, K3 and K4 then continue as normal gated work.
+The program closes when chains A, B, C, N, X, S1–S3 and K0–K2 are done, the KPIs are on target (the close-target column of §8; maintainer, 2026-10-19), and the structural targets in §8 are met. F3 and later, K3 and K4 then continue as normal gated work. Chain V (apeGmshViewer: V0–V5 and its VA, VU and VH links) is product work, not a close criterion; it uses T's landing machinery (hub locks, review, the landing token) and continues as normal gated work (maintainer, 2026-11-10).
 
 `internal_docs/program/prototypes/` **expires on 2026-11-30**. Delete each prototype when the link that productionizes it lands; X4's retirement ledger tracks this.
