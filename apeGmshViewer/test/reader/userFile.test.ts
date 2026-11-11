@@ -391,7 +391,8 @@ test("a zone outside its range, or a key and a group that disagree, refuses that
   stamped.close();
   const ghost = readUserFile(H5, join(d, "e.user.h5"), null);
   assert.ok(!ghost.results.ok && /stamps zone 'user_results' but the file has no \/results/.test(ghost.results.reason));
-  assert.deepEqual(ok(ghost.combinations), { generation: null, rows: [], modelRows: [], refused: [] }, "an absent zone is empty, not refused");
+  // VU9b: the read also lists the zone's generations (none here), for the authoring panel's revert.
+  assert.deepEqual(ok(ghost.combinations), { generation: null, generations: [], rows: [], modelRows: [], refused: [] }, "an absent zone is empty, not refused");
   // A newer minor opens, with one banner.
   const newer = readUserFile(H5, writeUser(join(d, "f.user.h5"), { versions: { combinations_schema_version: "1.4.0" } }), null);
   assert.ok(newer.combinations.ok);
