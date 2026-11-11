@@ -682,11 +682,75 @@ def _translate_fem_eids_for_ele_load(
     return out
 
 
+def _macro_owner_filter(
+    fem: "FEMData", partition_rank: "int | None",
+) -> "Callable[[Element], bool]":
+    """Whether this rank declares a spec's macro-element row (the plan row
+    with ``MISSING_FEM_ELEMENT_ID``: a LadrunoMembrane, or a node-pair
+    element).
+
+    A macro row has no FEM element id, so the per-element owner map
+    cannot place it. Its rank is the one ``BuiltModel._emit_partitioned``
+    declares it on, derived the same way: ``macro_element_rank`` over the
+    membrane's outer loop and named nodes, ``node_pair_rank`` over a
+    node-pair element's two endpoints (#2535). Unpartitioned
+    (``partition_rank is None``) every row is owned. Ranks are computed
+    lazily, once per spec, so a model with no loaded macro-element pays
+    nothing.
+    """
+    if partition_rank is None:
+        return lambda _spec: True
+
+    from ...element.shell import LadrunoMembrane
+    from .ownership import (
+        build_node_partition_owners,
+        macro_element_rank,
+        node_pair_rank,
+    )
+    from .pg_expand import (
+        expand_spec_to_elements,
+        ladruno_membrane_named_nodes,
+        resolve_element_node_pair,
+    )
+
+    node_owners: list[Any] = []
+    rank_of: dict[int, int] = {}
+
+    def owns(spec: Element) -> bool:
+        key = id(spec)
+        if key not in rank_of:
+            if not node_owners:
+                node_owners.append(build_node_partition_owners(fem))
+            if isinstance(spec, LadrunoMembrane):
+                fan = expand_spec_to_elements(fem, spec)
+                rank_of[key] = macro_element_rank(
+                    spec,
+                    [*(int(n) for n in fan.conn[0]),
+                     *ladruno_membrane_named_nodes(fem, spec)],
+                    node_owners[0],
+                )
+            elif (pg := getattr(spec, "pg", None)) is None:
+                i_tag, j_tag = resolve_element_node_pair(fem, spec)
+                rank_of[key] = node_pair_rank(
+                    spec, i_tag, j_tag, node_owners[0])
+            else:
+                raise BridgeError(
+                    f"{type(spec).__name__}(pg={pg!r}) has a "
+                    "macro-element plan row, but only a LadrunoMembrane or "
+                    "a node-pair element has one; its partition rank is "
+                    "unknown."
+                )
+        return rank_of[key] == partition_rank
+
+    return owns
+
+
 def _membrane_pressure_tags(
     erec: Any,
     element_plan: "Sequence[tuple[Element, ElementPlanRows]] | None",
     element_owner: "SortedIntToInt | Mapping[int, int] | None",
     partition_rank: "int | None",
+    owns_macro: "Callable[[Element], bool]",
 ) -> list[int]:
     """OpenSees tags of the LadrunoMembranes a ``surface_load(pressure=)``
     targets: its ``ele=`` handles, or every membrane declared with its
@@ -722,13 +786,15 @@ def _membrane_pressure_tags(
                 )
             specs.append(hit)
     tags: list[int] = []
-    for _s, sub in specs:
+    for s, sub in specs:
         for i in range(len(sub)):
             eid_i = int(sub.eids[i])
-            if (
+            if eid_i == MISSING_FEM_ELEMENT_ID:
+                if not owns_macro(s):
+                    continue
+            elif (
                 partition_rank is not None
                 and element_owner is not None
-                and eid_i != MISSING_FEM_ELEMENT_ID
                 and element_owner.get(eid_i) != partition_rank
             ):
                 continue
@@ -759,6 +825,8 @@ def resolve_ele_load_commands(
     ``(Fx, Fy, Fz, Mx, My, Mz)`` in 3-D.
     """
     cmds: list[tuple[int | float | str, ...]] = []
+    # A macro-element row is declared on one rank only (#2535).
+    owns_macro = _macro_owner_filter(fem, partition_rank)
 
     # 1. Explicit Plain.ele_loads (beam_uniform / surface_load / self_weight).
     for erec in spec.ele_loads:
@@ -767,18 +835,25 @@ def resolve_ele_load_commands(
             # surface_load(pressure=q): LadrunoMembrane macro-elements only
             # (the record refused label= and non-membrane handles).
             ops_tags = _membrane_pressure_tags(
-                erec, element_plan, element_owner, partition_rank)
+                erec, element_plan, element_owner, partition_rank,
+                owns_macro)
         elif erec.target_kind == "pg":
             pg_name = str(erec.target)
+            # ``has_macro`` keeps the route choice below rank-independent:
+            # a rank that owns none of the pg's macro rows still takes the
+            # macro route, with nothing to load.
+            has_macro = False
             macro_tags: list[int] = []
             if element_plan is not None:
                 for el_spec, sub in element_plan:
                     if getattr(el_spec, "pg", None) == pg_name:
                         for i in range(len(sub)):
                             if int(sub.eids[i]) == MISSING_FEM_ELEMENT_ID:
-                                macro_tags.append(int(sub._tag(i)))
+                                has_macro = True
+                                if owns_macro(el_spec):
+                                    macro_tags.append(int(sub._tag(i)))
             fem_eids_list = [eid for eid, _conn in expand_pg_to_elements(fem, pg_name)]
-            if macro_tags and (
+            if has_macro and (
                 fem_eid_to_ops_tag is None
                 or not any(int(e) in fem_eid_to_ops_tag for e in fem_eids_list)
             ):
@@ -818,10 +893,12 @@ def resolve_ele_load_commands(
                             for i in range(len(sub)):
                                 eid_i = int(sub.eids[i])
                                 otag_i = int(sub._tag(i))
-                                if (
+                                if eid_i == MISSING_FEM_ELEMENT_ID:
+                                    if not owns_macro(el_spec):
+                                        continue
+                                elif (
                                     partition_rank is not None
                                     and element_owner is not None
-                                    and eid_i != MISSING_FEM_ELEMENT_ID
                                     and element_owner.get(eid_i) != partition_rank
                                 ):
                                     continue
@@ -840,13 +917,14 @@ def resolve_ele_load_commands(
                         and fem_eid_to_ops_tag is not None
                         and item_int not in fem_eid_to_ops_tag
                     ):
-                        for _el_spec, sub in element_plan:
+                        for el_spec, sub in element_plan:
                             for i in range(len(sub)):
                                 if (
                                     int(sub.eids[i]) == MISSING_FEM_ELEMENT_ID
                                     and int(sub._tag(i)) == item_int
                                 ):
-                                    ops_tags.append(item_int)
+                                    if owns_macro(el_spec):
+                                        ops_tags.append(item_int)
                                     macro_hit = True
                                     break
                             if macro_hit:
