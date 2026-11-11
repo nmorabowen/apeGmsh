@@ -7,7 +7,9 @@
     python scripts/land_pr.py <number> --owned-only   # only check 9 (Owned files), on any PR
 
 The checks run in order and the first failure refuses, naming the check and
-the lesson. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
+the lesson. Check 6 requires the five required checks green on the head, and
+``app-tests`` too when the PR changes ``apeGmshViewer/`` (#2864): that lane is
+path-filtered, so it is not in the ruleset. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
 ADR's Status to Accepted is refused outright, and an edit to a baseline file
 (the freeze census, the retirement ledger) needs the ``human-gate`` label. The maintainer's web merge is the
 exception path for both, by design. Check 9 (lesson #1788) refuses a ``program``
@@ -72,6 +74,12 @@ Real = Callable[[str], bool]
 #: reported is a refusal: zero checks visible means a conflict or a stalled
 #: Actions, not green (#630).
 REQUIRED_CHECKS = ("lock-tests", "emit-cost-gate", "static-gates", "suite", "live-stock")
+#: VH0 (#2864): a PR that changes the app (ADR 0112) also needs its own lane, tests.yml's
+#: `app-tests` job (the name must equal the job key there). The job's first step skips the
+#: app checks unless the PR changes `apeGmshViewer/`, so its green proves nothing on any
+#: other PR: it stays out of REQUIRED_CHECKS and the ruleset, and check 6 adds it per PR.
+APP_CHECK = "app-tests"
+APP_DIR = "apeGmshViewer/"
 PR_FIELDS = (
     "state,isDraft,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,"
     "labels,body,closingIssuesReferences"
@@ -918,6 +926,17 @@ def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Run
     print(f"check 12: {PIN_FILE} changed; live-fork dispatch run {latest.get('url')} is green on {head[:12]}.")
 
 
+def _required_checks(number: int, rows: list[FileRow]) -> tuple[str, ...]:
+    """Check 6's list: REQUIRED_CHECKS, plus APP_CHECK when a changed file is under
+    APP_DIR. Both names of a rename count, and a deletion is a changed file (#2864)."""
+    app = sorted({name for row in rows for name in (row[0], row[2]) if name and name.startswith(APP_DIR)})
+    if not app:
+        return REQUIRED_CHECKS
+    more = f" and {len(app) - 1} more" if len(app) > 1 else ""
+    print(f"check 6: #{number} changes {app[0]}{more} under {APP_DIR}; {APP_CHECK!r} is required too.")
+    return (*REQUIRED_CHECKS, APP_CHECK)
+
+
 def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
     """Checks 1-12, in order. Returns the PR record, or raises LandError."""
     pr = json.loads(gh(["pr", "view", str(number), "--json", PR_FIELDS]))
@@ -956,11 +975,13 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
     runs: dict[str, list[dict[str, Any]]] = {}
     for run in pr["statusCheckRollup"]:  # every run per name: a rerun does not hide a failure
         runs.setdefault(run.get("name") or run.get("context"), []).append(run)
-    for name in REQUIRED_CHECKS:
+    for name in _required_checks(number, rows):
         if name not in runs:
+            why = (f" #{number} changes {APP_DIR}, so the app's own lane must be green on its head (#2864)."
+                   if name == APP_CHECK else "")
             raise LandError(
                 f"check 6: required check {name!r} has not reported on {head[:12]}. Zero "
-                f"checks visible means a conflict or a stalled Actions, not green (#630)."
+                f"checks visible means a conflict or a stalled Actions, not green (#630).{why}"
             )
         for run in runs[name]:
             if not _green(run):
