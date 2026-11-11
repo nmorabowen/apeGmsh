@@ -52,7 +52,7 @@ export function setsLines(s: State): {
   canSave: boolean;
   why: string | null;
   kind: WorkspaceState["kind"];
-  pick: { count: number; reason: string | null };
+  pick: { count: number; reason: string | null; ids: readonly number[] | null };
   sets: { name: string; kind: string; members: number; chip: string; verdict: string; reason: string; canAccept: boolean }[];
   refused: string[];
   plots: string[];
@@ -62,6 +62,25 @@ export function setsLines(s: State): {
 } | null {
   const w = s.workspace;
   const r = w.read;
+  if (r === null && s.artifacts.model !== null) {
+    // A set is opening (a switch, a drop): the last set's sets are gone, and nothing is saved until this one's file is read.
+    const model = s.artifacts.model.path.split(/[\\/]/).pop() ?? s.artifacts.model.path;
+    return {
+      title: model.replace(/\.h5$/i, ".workspace.h5"),
+      status: `Reading the workspace of ${model}, the set now open: nothing can be saved until it is read.`,
+      readOnly: null,
+      canSave: false,
+      why: workspaceCannotSave(w),
+      kind: w.kind,
+      pick: pickSummaryOf(s),
+      sets: [],
+      refused: [],
+      plots: [],
+      views: [],
+      notice: null,
+      saving: false,
+    };
+  }
   if (r === null || r.status === "none") return null;
   const why = workspaceCannotSave(w);
   const base = {
@@ -126,7 +145,7 @@ export function mountSets(store: Store): () => void {
   let renaming: { from: string; to: string } | null = null;
   const save = (edit: Parameters<typeof dispatchSave>[1]) => dispatchSave(store, edit);
   const render = (s: State, prev: State | null) => {
-    if (prev && s.workspace === prev.workspace && s.selection === prev.selection && s.decls === prev.decls) return;
+    if (prev && s.workspace === prev.workspace && s.selection === prev.selection && s.decls === prev.decls && s.artifacts.model === prev.artifacts.model) return;
     for (const u of unlisten) u();
     unlisten = [];
     const lines = setsLines(s);
@@ -151,7 +170,12 @@ export function mountSets(store: Store): () => void {
       kinds.append(b);
     }
     parts.push(kinds);
-    parts.push(el("div", "offer-note", lines.pick.reason ?? `${lines.pick.count} ${lines.kind === "nodes" ? (lines.pick.count === 1 ? "node" : "nodes") : lines.pick.count === 1 ? "element" : "elements"} selected`));
+    const noun = lines.kind === "nodes" ? (lines.pick.count === 1 ? "node" : "nodes") : lines.pick.count === 1 ? "element" : "elements";
+    // The tags a save would take, as the effects computed them: in Nodes the viewport still highlights the clicked cells.
+    const picked = lines.pick.ids ? `${noun} ${lines.pick.ids.join(", ")}${lines.kind === "nodes" ? " (the node of each clicked cell nearest the click)" : ""}` : `${lines.pick.count} ${noun} selected`;
+    const note = el("div", "offer-note", lines.pick.reason ?? picked);
+    note.dataset["role"] = "set-members";
+    parts.push(note);
     const form = el("div", "sets-form");
     const input = el("input");
     input.type = "text";

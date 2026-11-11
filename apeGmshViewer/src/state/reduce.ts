@@ -868,6 +868,7 @@ export function reduce(s: State, e: Event): State {
     case "setWorkspaceKind":
     case "workspaceSave":
     case "workspaceSaved":
+    case "workspacePreview":
     case "dismissWorkspaceAside": {
       // VU9a: a workspace event touches the workspace slice and nothing else.
       const workspace = reduceWorkspace(s.workspace, e);

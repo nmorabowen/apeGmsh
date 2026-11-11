@@ -87,6 +87,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setWorkspaceKind: { kind: "gesture", reason: "the Nodes / Elements toggle of the sets panel, which says what a click picks into a new set" },
   workspaceSave: { kind: "gesture", reason: "a control of the sets panel (save, rename, delete, accept); a save names a set the selection fills, which only the panel holds" },
   workspaceSaved: { kind: "system", reason: "dispatched by the effects when main's workspace:save door answered" },
+  workspacePreview: { kind: "system", reason: "dispatched by the effects with the members a save would take from the selection now" },
   dismissWorkspaceAside: { kind: "gesture", reason: "the close control of the banner that names an unreadable workspace's aside file" },
   userClosed: { kind: "system", reason: "dispatched by the app's user-file feed when the set has no .user.h5" },
   resultStep: { kind: "system", reason: "dispatched by effects to report step fetch status" },

@@ -31,8 +31,11 @@ export async function captureWorkspace(ctx: HarnessContext, settle: (ms?: number
   };
   await shot("workspace-sets");
   if (read.status !== "ready" || read.readOnly !== null) return;
-  // A human's selection: three drawn elements, each clicked at its projected midpoint, Shift held.
+  // A human's selection: three drawn elements, each clicked at its projected midpoint, Shift held. In Nodes the
+  // viewport highlights each clicked cell; the node markers are turned on, and the panel lists the node tags a save
+  // takes (the node of each cell nearest the click), as the effects computed them.
   store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setNodes", on: true });
   const drawn = store.get().mesh?.elements ?? [];
   for (const decl of [drawn[0], drawn[Math.floor(drawn.length / 2)], drawn[drawn.length - 1]]) {
     const pt = decl === undefined ? null : viewport.screenPointOf(decl);
@@ -43,6 +46,8 @@ export async function captureWorkspace(ctx: HarnessContext, settle: (ms?: number
   if (!input) throw new Error("capture: the sets panel has no name field");
   input.value = "picked nodes";
   input.dispatchEvent(new Event("input"));
+  const preview = store.get().workspace.preview;
+  if (!preview || !("ids" in preview) || preview.kind !== "nodes") throw new Error(`capture: the selection previews no node tags: ${JSON.stringify(preview)}`);
   await shot("workspace-named");
   const save = [...document.querySelectorAll<HTMLButtonElement>("#sets .sets-form button")].find((b) => !b.disabled);
   if (!save) throw new Error("capture: the sets panel's Save is disabled with three elements selected and a name typed");
@@ -63,4 +68,9 @@ export async function captureWorkspace(ctx: HarnessContext, settle: (ms?: number
   if (summary) document.querySelector<HTMLButtonElement>("#banner .banner-summary")?.click();
   store.dispatch({ type: "dismissWorkspaceAside" });
   store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setNodes", on: false });
+  // A set switch: another model opens, and the last set's workspace leaves the panel at once (nothing is saved against it).
+  const model = store.get().artifacts.model?.path ?? "";
+  store.dispatch({ type: "fileOpened", artifact: "model", path: model.replace(/(\.h5)$/i, "-other$1") });
+  await shot("workspace-switch");
 }

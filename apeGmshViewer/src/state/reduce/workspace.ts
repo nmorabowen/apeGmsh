@@ -6,7 +6,7 @@ import type { WorkspaceEvent } from "../types/events/workspace.ts";
 import { SET_KINDS, type WorkspaceIn, type WorkspaceState } from "../types/workspace.ts";
 
 /** VU9a: nothing read, node picks, no save asked. */
-export const initialWorkspace: WorkspaceState = { read: null, reading: false, kind: "nodes", seq: 0, request: null, saving: null, notice: null, aside: null, ownSaveId: null };
+export const initialWorkspace: WorkspaceState = { read: null, reading: false, kind: "nodes", preview: null, seq: 0, request: null, saving: null, notice: null, aside: null, ownSaveId: null };
 
 const STATUSES = ["none", "absent", "unreadable", "refused", "ready"];
 
@@ -79,6 +79,11 @@ export function reduceWorkspace(w: WorkspaceState, e: WorkspaceEvent): Workspace
       if (about !== null && about !== fileOf(w.read)) return { ...w, saving: null };
       if (!a.ok) return { ...w, saving: null, notice: { reason: a.reason, detail: a.detail, file: a.file, held: a.held } };
       return { ...w, saving: null, notice: null, read: a.read, ownSaveId: a.read.status === "ready" ? a.read.saveId : null, aside: a.aside ?? w.aside };
+    }
+    case "workspacePreview": {
+      const p = e.preview;
+      if (p === null || typeof p !== "object" || !(SET_KINDS as readonly string[]).includes(p.kind)) throw new RangeError(`workspacePreview: ${JSON.stringify(p)} is not a preview`);
+      return JSON.stringify(p) === JSON.stringify(w.preview) ? w : { ...w, preview: p };
     }
     case "dismissWorkspaceAside":
       return w.aside === null ? w : { ...w, aside: null };

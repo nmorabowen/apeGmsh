@@ -428,6 +428,7 @@ export class Effects {
     this.setWindowMs = opts.setWindowMs ?? 1000;
     // VU9a: the sets panel's saves reach main in every mode; main writes only from the human's window and refuses the rest.
     this.carryWorkspaceSaves();
+    this.previewWorkspace();
     // A file rewritten on disk (D1 rewrites on every run) is read again; one
     // that changes mid-read is re-read when that read ends (see `open`).
     this.off.push(
@@ -1398,8 +1399,7 @@ export class Effects {
   private workspaceEditOf(s: State, edit: WorkspacePageEdit, expect: string): WorkspaceEdit | string {
     if (edit.op !== "create") return { ...edit, expect };
     const kind = s.workspace.kind;
-    const nodes = s.mesh?.nodes ? { ids: this.blobs.get(s.mesh.nodes.ids) as ArrayLike<number>, xyz: this.blobs.get(s.mesh.nodes.xyz) as ArrayLike<number> } : null;
-    const m = membersOf(s, kind, nodes);
+    const m = membersOf(s, kind, this.nodeTable(s));
     if (!m.ok) return m.reason;
     for (const n of m.notes) console.warn(`apeGmshViewer: ${n}`);
     return { op: "create", name: edit.name, kind, ids: m.ids, expect };
@@ -1451,6 +1451,26 @@ export class Effects {
       });
       if (typeof off === "function") this.off.push(off);
     }
+  }
+
+  /** The node table of the model on screen, from the BlobStore; null when the mesh was built without it. */
+  private nodeTable(s: State): { ids: ArrayLike<number>; xyz: ArrayLike<number> } | null {
+    return s.mesh?.nodes ? { ids: this.blobs.get(s.mesh.nodes.ids) as ArrayLike<number>, xyz: this.blobs.get(s.mesh.nodes.xyz) as ArrayLike<number> } : null;
+  }
+
+  /** VU9a: the members a save would take, recomputed when the selection, the kind or the mesh changes, so the panel lists them. */
+  private previewWorkspace(): void {
+    this.off.push(
+      this.store.subscribe((s, prev) => {
+        if (s.selection === prev.selection && s.workspace.kind === prev.workspace.kind && s.mesh === prev.mesh && s.decls === prev.decls) return;
+        queueMicrotask(() => {
+          const now = this.store.get();
+          const kind = now.workspace.kind;
+          const m = membersOf(now, kind, this.nodeTable(now));
+          this.store.dispatch({ type: "workspacePreview", preview: m.ok ? { kind, ids: m.ids, notes: m.notes } : { kind, reason: m.reason } });
+        });
+      }),
+    );
   }
 
   /** VU9a: a `workspaceSave` request the effects have not carried yet goes to main (every mode: main refuses where only the human's window writes). */

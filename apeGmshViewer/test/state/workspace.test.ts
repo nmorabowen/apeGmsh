@@ -141,7 +141,9 @@ test("a set switch: the last set's read leaves at once, nothing is editable unti
   assert.equal(s.workspace.read, null);
   assert.equal(s.workspace.saving, null);
   assert.equal(s.workspace.seq, 1);
-  assert.equal(setsLines(s), null);
+  const opening = setsLines(s)!;
+  assert.match(opening.status ?? "", /Reading the workspace of other\.h5, the set now open: nothing can be saved/);
+  assert.deepEqual([opening.canSave, opening.sets.length], [false, 0], "the last set's sets are gone and nothing is saveable");
   assert.throws(() => reduce(s, { type: "workspaceSave", edit: { op: "delete", table: "sets", name: "roof" } }), /no set is open/);
   // The last set's save answers late: dropped.
   assert.equal(reduce(s, { type: "workspaceSaved", seq: 1, answer: { ok: true, read: { ...READY, revision: 5 }, aside: null } }), s);

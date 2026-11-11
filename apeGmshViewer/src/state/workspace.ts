@@ -81,12 +81,14 @@ export function membersOf(s: State, kind: SetKind, nodes: NodeTable | null): Mem
   return kind === "elements" ? elementMembersOf(s) : nodeMembersOf(s, nodes);
 }
 
-/** What the sets panel says the selection would give, without the node table: a count, or why nothing. */
-export function pickSummaryOf(s: State): { count: number; reason: string | null } {
+/** What the sets panel says the selection gives: the effects' preview of the members (tags), else a count of the clicks, or why nothing. */
+export function pickSummaryOf(s: State): { count: number; reason: string | null; ids: readonly number[] | null } {
+  const p = s.workspace.preview;
+  if (p !== null && p.kind === s.workspace.kind) return "ids" in p ? { count: p.ids.length, reason: null, ids: p.ids } : { count: 0, reason: p.reason, ids: null };
   if (s.workspace.kind === "elements") {
     const m = elementMembersOf(s);
-    return m.ok ? { count: m.ids.length, reason: null } : { count: 0, reason: m.reason };
+    return m.ok ? { count: m.ids.length, reason: null, ids: m.ids } : { count: 0, reason: m.reason, ids: null };
   }
   const n = s.selection.picks.filter((p) => p.at !== null && p.nodes !== null && p.nodes.length > 0).length;
-  return n ? { count: n, reason: null } : { count: 0, reason: "click the model near each node (Shift+click adds)" };
+  return n ? { count: n, reason: null, ids: null } : { count: 0, reason: "click the model near each node (Shift+click adds)", ids: null };
 }

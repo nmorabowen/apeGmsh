@@ -140,6 +140,14 @@ export interface WorkspaceState {
   reading: boolean;
   /** what a new set takes from the selection: the clicked elements, or the node nearest each click */
   kind: SetKind;
+  /**
+   * The members a save would take from the selection now, in that kind, as
+   * the effects compute them (the node table is in the BlobStore): the tags, or
+   * why there are none. The panel lists them, so what is saved is what is shown
+   * (the viewport highlights the clicked cells, also in Nodes). Null before the
+   * first computation.
+   */
+  preview: { kind: SetKind; ids: readonly number[]; notes: readonly string[] } | { kind: SetKind; reason: string } | null;
   /** the latest save asked for (the effects act on a new `seq`); `seq` counts for the session */
   seq: number;
   /** `expect` is the token of the read on screen when the save was asked */
