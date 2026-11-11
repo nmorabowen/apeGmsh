@@ -257,3 +257,54 @@ def test_multi_partition_refuses_only_where_tri31_lives(
         assert _ids(_read(r, "strain_xx", [2, 3, 4, 5])) == [2, 3, 4, 5]
     with LadrunoReader(part1) as r:
         assert _ids(_read(r, "strain_xx")) == [2, 3, 4]
+
+
+@pytest.fixture
+def tri31_part_without_element_results(tmp_path: Path) -> "list[Path]":
+    """Part 0 lists only Tri31 1 and records no element results at all
+    (no ``ON_ELEMENTS``; its time axis is on a node record); part 1 holds
+    elements 2 to 5. The partitioned reader drops a part that raises
+    ``MissingElementResults`` (#2895 F1)."""
+    part0 = _copy(tmp_path, "tri.part-0.ladruno")
+    part1 = _copy(tmp_path, "tri.part-1.ladruno")
+    _keep_only(part0, {1}, part=0)
+    _keep_only(part1, {2, 3, 4, 5}, part=1)
+    with h5py.File(part0, "r+") as f:
+        del f[ON_ELEMENTS]
+        disp = f[f"{STAGE}/RESULTS/ON_NODES"].create_group("DISPLACEMENT")
+        disp.create_dataset("TIME", data=np.array([1.0]))
+    return [part0, part1]
+
+
+@pytest.mark.parametrize("eids", [None, [1], [1, 2]])
+def test_tri31_in_a_part_without_element_results_refuses(
+    tri31_part_without_element_results: "list[Path]", eids,
+) -> None:
+    with LadrunoMultiPartitionReader(tri31_part_without_element_results) as r:
+        with pytest.raises(MPCOStrainNotRecorded,
+                           match=r"Tri31 element\(s\) \[1\]"):
+            _read(r, "strain_xx", eids)
+
+
+def test_part_without_element_results_still_reads_other_classes(
+    tri31_part_without_element_results: "list[Path]",
+) -> None:
+    with LadrunoMultiPartitionReader(tri31_part_without_element_results) as r:
+        assert _ids(_read(r, "strain_xx", [2, 3, 4, 5])) == [2, 3, 4, 5]
+        assert _ids(_read(r, "stress_xx")) == [2, 3, 4, 5]
+
+
+def test_material_strain_bucket_without_the_component_reads_silently(
+    tmp_path: Path,
+) -> None:
+    """#2895 F2: Tri31 1 is recorded per Gauss point under
+    ``material.strain`` with its three plane columns, so ``strain_zz``
+    finds no column for it. That is the answer a stress read gives for a
+    missing column, not a drop: the element is recorded, and the read
+    must not tell the user to record what they already recorded."""
+    path = _with_material_strain(tmp_path)
+    with LadrunoReader(path) as r, warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        slab = r.read_gauss(r.stages()[0].id, "strain_zz")
+        stress = r.read_gauss(r.stages()[0].id, "stress_zz")
+    assert _ids(slab) == _ids(stress) == []

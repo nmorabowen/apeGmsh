@@ -38,7 +38,9 @@ from numpy import ndarray
 from ..._vocabulary import PER_ELEMENT_NODAL_FORCES
 from ...opensees._response_catalog import (
     PER_MATERIAL_STRAIN_CLASSES,
+    catalog_token_for_keyword,
     gauss_routing_for_canonical,
+    mpco_gauss_group_aliases,
     needs_per_material_strain,
     parse_mpco_element_key,
 )
@@ -524,6 +526,48 @@ def _child(group: "h5py.Group", path: str):
             return None
         cur = cur[seg]
     return cur
+
+
+def _per_material_strain_token(component: str) -> Optional[str]:
+    """The catalog token of ``component`` when it is a strain that a
+    :data:`PER_MATERIAL_STRAIN_CLASSES` class could answer, else ``None``
+    (a stress, or a component with no Gauss routing)."""
+    routing = gauss_routing_for_canonical(component)
+    if routing is None:
+        return None
+    if not any(needs_per_material_strain(cls, routing[1])
+               for cls in PER_MATERIAL_STRAIN_CLASSES):
+        return None
+    return routing[1]
+
+
+def _strain_bucket_ids(
+    stage: "h5py.Group", component: str, catalog_token: str,
+) -> "list[ndarray]":
+    """The ``ID`` rows of every bucket under a strain token of
+    ``stage``'s ``RESULTS/ON_ELEMENTS``: the group aliases the MPCO
+    reader scans for ``component`` (``strains``, ``material.strain``),
+    or a token the catalog reads as ``catalog_token``."""
+    import h5py
+
+    on_elements = _child(stage, "RESULTS/ON_ELEMENTS")
+    if on_elements is None:
+        return []
+    routing = gauss_routing_for_canonical(component)
+    aliases = mpco_gauss_group_aliases(routing[0]) if routing else ()
+    out: "list[ndarray]" = []
+    for token in on_elements:
+        if not (token in aliases or token == catalog_token
+                or catalog_token_for_keyword(token) == catalog_token):
+            continue
+        token_grp = on_elements[token]
+        if not isinstance(token_grp, h5py.Group):
+            continue
+        for bucket in token_grp.values():
+            if isinstance(bucket, h5py.Group) and "ID" in bucket:
+                out.append(np.asarray(bucket["ID"][...],
+                                      dtype=np.int64).ravel())
+    return out
 
 
 class LadrunoReader:
@@ -1654,8 +1698,21 @@ class LadrunoReader:
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
+        on_elements = _child(grp, "RESULTS/ON_ELEMENTS")
+        if ((on_elements is None or not len(on_elements))
+                and _per_material_strain_token(component) is not None):
+            # A part with no element results can still list a Tri31
+            # element the read covers. The partitioned reader drops such a
+            # part (MissingElementResults), so the listing is checked
+            # first (#2895 F1).
+            bucket_ids, index_to_fem = self._element_read_translation(
+                element_ids)
+            self._refuse_unrecorded_strain(
+                grp, component, np.empty(0, dtype=np.int64),
+                element_ids=bucket_ids, index_to_fem=index_to_fem,
+            )
         on_e = self._require_element_results(
-            _child(grp, "RESULTS/ON_ELEMENTS"),
+            on_elements,
             family="gauss (stress / strain)", component=component,
             stage_id=stage_id,
         )
@@ -1690,28 +1747,27 @@ class LadrunoReader:
     ) -> None:
         """Raise :class:`MPCOStrainNotRecorded` when a strain read covers
         elements of a class with no element-level strain response and the
-        read returns no row for them (#2895, the ``.ladruno`` side of
+        file holds no strain row for them (#2895, the ``.ladruno`` side of
         #2893).
 
         The elements in scope are those of ``stage``'s ``MODEL/ELEMENTS``
         listing (column 0 of each class group's ``CONNECTIVITY``) whose
         class is in ``PER_MATERIAL_STRAIN_CLASSES`` and whose catalog
         strain row carries ``component``, narrowed to ``element_ids``
-        (OpenSees tags; ``None`` asks for every element). ``returned`` is
-        the element tag of every column the read gives back: an element
-        in scope with none was dropped. A stage that lists no elements
-        has none in scope.
+        (OpenSees tags; ``None`` asks for every element). An element is
+        recorded when the read returns a column for it (``returned``) or
+        its ID is in any strain-token bucket of the stage (``strains``,
+        ``material.strain``), as on the MPCO side: a bucket that holds
+        the element but not ``component`` answers like a stress read of
+        a missing column, so it is not refused. A stage that lists no
+        elements has none in scope.
         """
         import h5py
 
-        routing = gauss_routing_for_canonical(component)
-        if routing is None:
-            return
-        catalog_token = routing[1]
+        catalog_token = _per_material_strain_token(component)
         # Not a strain read for any such class (a stress read): no listing
         # is looked at.
-        if not any(needs_per_material_strain(cls, catalog_token)
-                   for cls in PER_MATERIAL_STRAIN_CLASSES):
+        if catalog_token is None:
             return
         elements = _child(stage, "MODEL/ELEMENTS")
         if elements is None:
@@ -1760,7 +1816,10 @@ class LadrunoReader:
             in_scope.setdefault(key.class_name, []).append(tags)
         if not in_scope:
             return
-        recorded = np.asarray(returned, dtype=np.int64).ravel()
+        recorded = np.concatenate(
+            [np.asarray(returned, dtype=np.int64).ravel()]
+            + _strain_bucket_ids(stage, component, catalog_token),
+        )
         missing = {
             cls: np.setdiff1d(np.concatenate(parts), recorded)
             for cls, parts in in_scope.items()
