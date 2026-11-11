@@ -31,7 +31,8 @@ jobs:
       sha: ${{ steps.head.outputs.sha }}
     steps:
       # The commit the status job decides and posts on. A PR event names it, so
-      # a later failed read still posts `error` there; a comment event reads it.
+      # a later failed read still posts `error` there; a comment event reads it,
+      # three tries with backoff so a transient API error does not skip the run.
       - id: head
         env:
           GH_TOKEN: ${{ github.token }}
@@ -39,7 +40,12 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           EVENT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          sha="${EVENT_SHA:-$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)}"
+          sha="$EVENT_SHA"
+          for delay in 0 5 15; do
+            if [[ -n "$sha" ]]; then break; fi
+            sleep "$delay"
+            sha="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)" || sha=""
+          done
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no head sha for #$PR_NUMBER"; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 

@@ -18,7 +18,12 @@ parser), loaded read-only, so the detector and this check cannot disagree.
 A status belongs to the commit, not to the PR: every open PR whose head is that
 commit is decided, and ``success`` is posted only when all of them pass. A
 second PR on the same head that needs no verdict cannot overwrite the first
-one's ``pending`` (#2879 review, finding 1).
+one's ``pending`` (#2879 review, finding 1). The open PRs are listed from
+``pulls?state=open`` and filtered on ``head.sha``: ``commits/{sha}/pulls`` omits
+PRs from forks (#2879 second review, finding 1).
+
+A failed read or status post is retried (``RETRY_DELAYS``) before the check
+fails closed, so a transient API error does not leave an older status standing.
 
     python scripts/check_review_verdict.py --pr 2879 --sha <40-hex head>
     python scripts/check_review_verdict.py --pr 2628 --dry-run
@@ -29,7 +34,7 @@ read still posts ``error`` there and an earlier ``success`` cannot stand.
 ``--dry-run`` prints the status it would post and posts nothing; a dry run of a
 closed PR, ``--head`` and ``--at-merge`` replay that PR alone. Exit 0 when the
 status was decided and posted (or nothing was to be posted), 2 when a read, the
-decision or the post failed.
+decision or the post failed (after its retries).
 Stdlib only; all network access goes through ``fetch`` and ``post``.
 """
 
@@ -42,6 +47,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -64,9 +70,33 @@ Post = Callable[[str, dict], Any]
 CONTEXT = "review-verdict"
 #: GitHub truncates nothing; it rejects a description over 140 characters.
 MAX_DESCRIPTION = 140
-#: One page of ``commits/{sha}/pulls``; a full page means PRs may be unread.
+#: The open-PR listing is read in pages of ``PULLS_PAGE``, at most
+#: ``PULLS_MAX_PAGES`` of them; a full last page means PRs may be unread.
 PULLS_PAGE = 100
+PULLS_MAX_PAGES = 10
+#: Seconds to wait before the second and the third try of a failed read or post.
+RETRY_DELAYS = (2.0, 6.0)
+#: What a failed ``gh api`` call raises (a non-zero exit, no ``gh``, cut JSON).
+_TRANSIENT = (RuntimeError, OSError, ValueError)
 _SHA = re.compile(r"[0-9a-f]{40}")
+_sleep = time.sleep  # the tests replace it, so retries cost no wall time
+
+
+def retrying(call: Callable[..., Any], sleep: Callable[[float], Any]) -> Callable[..., Any]:
+    """``call``, tried again after each of ``RETRY_DELAYS`` when it fails.
+
+    The last failure propagates, and the caller fails closed as before. A 404
+    (``None`` from ``gh_fetch``) is an answer, not a failure: it is not retried.
+    """
+    def wrapped(*args: Any) -> Any:
+        for delay in RETRY_DELAYS:
+            try:
+                return call(*args)
+            except _TRANSIENT as exc:
+                print(f"WARNING: {exc}; retrying in {delay:g}s", file=sys.stderr)
+                sleep(delay)
+        return call(*args)
+    return wrapped
 
 
 def read_pr(fetch: Fetch, repo: str, number: int, head: str | None = None) -> dict:
@@ -97,17 +127,24 @@ def decide(fetch: Fetch, repo: str, pr: dict) -> dict:
 def open_prs_at(fetch: Fetch, repo: str, sha: str, pr: dict) -> list[dict]:
     """Every open PR whose head is ``sha``, ``pr`` included when it is one.
 
-    ``pr`` (the full PR the event named) is added even if the commit's PR list
-    lags behind it. Raises when the list cannot be read whole, so the caller
-    posts ``error`` rather than decide over a partial set.
+    The repository's open PRs are listed and kept when ``head.sha`` is ``sha``.
+    Not ``commits/{sha}/pulls``: it never lists a PR from a fork (checked on the
+    live API, #2879), so a fork PR waiting at the head would go unseen. ``pr``
+    (the full PR the event named) is added even if the listing lags behind it.
+    Raises when the listing cannot be read whole, so the caller posts ``error``
+    rather than decide over a partial set.
     """
-    rows = fetch(f"repos/{repo}/commits/{sha}/pulls?per_page={PULLS_PAGE}")
-    if rows is None:
-        raise RuntimeError(f"commit {sha} not found in {repo}")
-    if len(rows) >= PULLS_PAGE:
-        raise RuntimeError(f"{len(rows)} PRs list commit {sha}: the page may be cut")
-    found = {p["number"]: p for p in rows
-             if p["state"] == "open" and p["head"]["sha"] == sha}
+    found: dict[int, dict] = {}
+    for page in range(1, PULLS_MAX_PAGES + 1):
+        rows = fetch(f"repos/{repo}/pulls?state=open&per_page={PULLS_PAGE}&page={page}")
+        if rows is None:
+            raise RuntimeError(f"the open PRs of {repo} could not be listed")
+        found.update((p["number"], p) for p in rows if p["head"]["sha"] == sha)
+        if len(rows) < PULLS_PAGE:
+            break
+    else:
+        raise RuntimeError(f"over {PULLS_PAGE * PULLS_MAX_PAGES} open PRs in {repo}: "
+                           "the listing may be cut")
     if pr["state"] == "open" and pr["head"]["sha"] == sha:
         found[pr["number"]] = pr
     return [found[n] for n in sorted(found)]
@@ -191,7 +228,8 @@ def _run_url() -> str | None:
 
 
 def main(argv: list[str] | None = None, fetch: Fetch | None = None,
-         post: Post | None = None) -> int:
+         post: Post | None = None,
+         sleep: Callable[[float], Any] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--pr", type=int, required=True, help="pull request number")
     ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO))
@@ -211,8 +249,9 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None,
         ap.error("--sha pins the live head; --head and --at-merge replay a past one")
     if args.sha and not _SHA.fullmatch(args.sha):
         ap.error(f"--sha must be a 40-digit lowercase hex commit, not {args.sha!r}")
-    fetch = fetch or gh_fetch
-    post = post or gh_post
+    sleep = sleep or _sleep
+    fetch = retrying(fetch or gh_fetch, sleep)
+    post = retrying(post or gh_post, sleep)
     sha: str | None = args.sha
     prs: list[dict] = []
     try:

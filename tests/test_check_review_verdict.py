@@ -7,7 +7,10 @@ of ``scripts/check_review_verdict.py``. No network.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,6 +29,12 @@ def _load(name):
 
 crv = _load("check_review_verdict")
 fo = _load("find_orphans")
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_wait(monkeypatch):
+    # A retried failure must not cost the suite wall time.
+    monkeypatch.setattr(crv, "_sleep", lambda _seconds: None)
 
 OLD = "e2c3099a" + "1" * 32   # the head a review approved
 NEW = "5a5b5c5d" + "2" * 32   # the head after a later push (#2628)
@@ -50,6 +59,12 @@ def _c(body, at="2026-11-09T10:00:00Z", assoc="OWNER"):
 
 
 def make_fetch(prs, comments=None, files=None):
+    """GitHub's REST answers for ``prs``, as the live API gives them.
+
+    Checked read-only on cli/cli (2026-11-11): ``commits/{sha}/pulls`` returned
+    ``[]`` for a fork PR's head and the PR itself for a same-repo head, while
+    ``pulls?state=open`` listed the fork PR with that ``head.sha``.
+    """
     prs = {pr["number"]: pr for pr in prs}
     comments = comments or {}
     files = files or {}
@@ -58,11 +73,18 @@ def make_fetch(prs, comments=None, files=None):
         m = re.fullmatch(rf"repos/{REPO}/pulls/(\d+)", path)
         if m:
             return prs.get(int(m[1]))
-        if path.startswith(f"repos/{REPO}/pulls?"):  # find_orphans' merged list
-            return list(prs.values()) if "page=1" in path else []
+        if path.startswith(f"repos/{REPO}/pulls?state=closed&"):  # find_orphans' merged list
+            return list(prs.values()) if path.endswith("&page=1") else []
+        m = re.fullmatch(rf"repos/{REPO}/pulls\?state=open&per_page=100&page=(\d+)", path)
+        if m:  # every open PR, forks included, newest first
+            rows = sorted((p for p in prs.values() if p["state"] == "open"),
+                          key=lambda p: -p["number"])
+            page = int(m[1])
+            return rows[100 * (page - 1):100 * page]
         m = re.fullmatch(rf"repos/{REPO}/commits/([0-9a-f]{{40}})/pulls\?per_page=100", path)
-        if m:  # every PR (any state) whose commits include it; here, its head
-            return [p for p in prs.values() if p["head"]["sha"] == m[1]]
+        if m:  # PRs (any state) at that head, but never one from a fork
+            return [p for p in prs.values() if p["head"]["sha"] == m[1]
+                    and p["head"]["repo"]["full_name"] == REPO]
         m = re.fullmatch(rf"repos/{REPO}/pulls/(\d+)/files\?per_page=100&page=(\d+)", path)
         if m:
             names = files.get(int(m[1]), [])
@@ -344,6 +366,57 @@ def test_workflow_serialises_status_runs_per_head_commit():
     assert not re.search(r": write", head_job)
 
 
+def _head_step_script():
+    m = re.search(r"^      - id: head\n(?:        [^\n]*\n)*?        run: \|\n"
+                  r"((?:          [^\n]*\n)+)", WF, re.MULTILINE)
+    assert m, "head step not found"
+    script = "\n".join(line[10:] for line in m.group(1).splitlines())
+    assert script.endswith('echo "sha=$sha" >> "$GITHUB_OUTPUT"')
+    return script
+
+
+def _run_head_step(tmp_path, failures, event_sha=""):
+    """The head step under ``bash -eo pipefail`` (GitHub's shell); ``gh`` fails
+    ``failures`` times and then prints NEW, ``sleep`` only records."""
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash not available")
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    out, log = tmp_path / "gh_output", tmp_path / "log"
+    out.write_text("")
+    log.write_text("")
+    # `gh` runs inside $(...), a subshell: it counts its calls in the log file.
+    prelude = (
+        f'gh() {{ echo "gh $*" >> log; '
+        f'if [[ $(grep -c "^gh " log) -le {failures} ]]; then echo "HTTP 502" >&2; return 1; fi; '
+        f'echo {NEW}; }}\n'
+        f'sleep() {{ echo "sleep $1" >> log; }}\n'
+    )
+    env = dict(os.environ, GITHUB_OUTPUT="gh_output", REPO=REPO, PR_NUMBER="7",
+               EVENT_SHA=event_sha, GH_TOKEN="x")
+    proc = subprocess.run([bash, "-eo", "pipefail", "-c", prelude + _head_step_script()],
+                          cwd=tmp_path, env=env, capture_output=True, text=True,
+                          check=False)
+    return proc.returncode, out.read_text().strip(), log.read_text().split("\n")[:-1]
+
+
+def test_workflow_head_read_is_retried_with_backoff(tmp_path):
+    # #2879 second review, finding 2: a comment event's head read fails twice
+    # and then succeeds; the job still pins the head.
+    code, output, log = _run_head_step(tmp_path / "a", failures=2)
+    assert code == 0 and output == f"sha={NEW}"
+    assert [line for line in log if line.startswith("sleep")] == [
+        "sleep 0", "sleep 5", "sleep 15"]
+    assert sum(line.startswith("gh api repos/") for line in log) == 3
+    # Always failing: three tries, then the job fails red as before.
+    code, output, log = _run_head_step(tmp_path / "b", failures=99)
+    assert code == 1 and output == ""
+    assert sum(line.startswith("gh api") for line in log) == 3
+    # A PR event names its head: no read at all.
+    code, output, log = _run_head_step(tmp_path / "c", failures=99, event_sha=OLD)
+    assert code == 0 and output == f"sha={OLD}" and log == []
+
+
 def test_workflow_reruns_when_a_pr_leaves_a_shared_head():
     types = re.search(r"pull_request_target:\n(?:    #.*\n)*    types: \[([^\]]*)\]",
                       _on_block())[1]
@@ -469,19 +542,22 @@ def _failing(fetch, fragment):
 
 @pytest.mark.parametrize("fragment", [
     "pulls/7",                         # the PR itself
-    f"commits/{NEW}/pulls",            # the PRs at the head
+    "pulls?state=open",                # the PRs at the head
     "issues/7/comments",               # the verdicts
     "pulls/8/files",                   # a sibling's changed files
 ])
 def test_a_failed_read_posts_error_on_the_pinned_head(fragment):
+    # Always failing: every retry fails too, and the check fails closed.
     prs = [_pr(7), _pr(8, labels=("program",))]
     fetch = _failing(make_fetch(prs, {7: [_c(APPROVE_NEW)]}), fragment)
-    posted = []
+    posted, slept = [], []
     code = crv.main(["--pr", "7", "--repo", REPO, "--sha", NEW], fetch=fetch,
-                    post=lambda path, fields: posted.append((path, fields)))
+                    post=lambda path, fields: posted.append((path, fields)),
+                    sleep=slept.append)
     assert code == 2
     (path, fields), = posted
     assert path == f"repos/{REPO}/statuses/{NEW}" and fields["state"] == "error"
+    assert slept == list(crv.RETRY_DELAYS)  # three tries, then the error
 
 
 def test_a_failed_read_without_a_pinned_head_posts_nothing_and_fails():
@@ -492,25 +568,115 @@ def test_a_failed_read_without_a_pinned_head_posts_nothing_and_fails():
     assert code == 2 and posted == []
 
 
-def test_an_unknown_commit_or_a_full_pr_page_fails_closed():
-    def no_commit(path):
-        return None if "/commits/" in path else make_fetch([_pr()])(path)
+def test_a_missing_or_cut_open_pr_listing_fails_closed():
+    def no_listing(path):
+        return None if "pulls?state=open" in path else make_fetch([_pr()])(path)
     posted = []
-    assert crv.main(["--pr", "7", "--repo", REPO], fetch=no_commit,
+    assert crv.main(["--pr", "7", "--repo", REPO], fetch=no_listing,
                     post=lambda p, f: posted.append(f)) == 2
     assert [f["state"] for f in posted] == ["error"]
-    many = [_pr(n, labels=()) for n in range(100, 200)] + [_pr(7)]
+    # Every page up to the cap is full: PRs past it are unread.
+    cap = crv.PULLS_PAGE * crv.PULLS_MAX_PAGES
+    many = [_pr(n, labels=(), head=OLD) for n in range(100, 100 + cap - 1)] + [_pr(7)]
     posted.clear()
     assert crv.main(["--pr", "7", "--repo", REPO], fetch=make_fetch(many),
                     post=lambda p, f: posted.append(f)) == 2
     assert [f["state"] for f in posted] == ["error"]
+    # One PR fewer is read whole: #7 alone is at NEW, and it waits.
+    posted.clear()
+    assert crv.main(["--pr", "7", "--repo", REPO], fetch=make_fetch(many[1:]),
+                    post=lambda p, f: posted.append(f)) == 0
+    assert [f["state"] for f in posted] == ["pending"]
 
 
 def test_a_failed_post_with_a_pinned_head_exits_2():
+    calls = []
+
     def post(_path, _fields):
+        calls.append(1)
         raise RuntimeError("HTTP 403")
     assert crv.main(["--pr", "7", "--repo", REPO, "--sha", NEW],
                     fetch=make_fetch([_pr()]), post=post) == 2
+    assert len(calls) == 1 + len(crv.RETRY_DELAYS)
+
+
+# --- a transient failure is retried (#2879 second review, finding 2) ----------
+
+def _flaky(call, fragment, failures=2):
+    """``call``, failing its first ``failures`` calls whose path holds ``fragment``."""
+    left = [failures]
+
+    def wrapped(path, *rest):
+        if fragment in path and left[0]:
+            left[0] -= 1
+            raise RuntimeError(f"HTTP 502 on {path}")
+        return call(path, *rest)
+    return wrapped
+
+
+@pytest.mark.parametrize("fragment", [
+    "pulls/7", "pulls?state=open", "issues/7/comments", "pulls/8/files"])
+def test_a_read_that_fails_twice_then_succeeds_decides_normally(fragment):
+    # #7 is approved at NEW and #8 is a program PR off the policy paths, so the
+    # head passes; a read that recovers on its third try must not post error.
+    prs = [_pr(7), _pr(8, labels=("program",))]
+    fetch = _flaky(make_fetch(prs, {7: [_c(APPROVE_NEW)]}, {8: ["docs/x.md"]}), fragment)
+    posted, slept = [], []
+    code = crv.main(["--pr", "7", "--repo", REPO, "--sha", NEW], fetch=fetch,
+                    post=lambda path, fields: posted.append((path, fields)),
+                    sleep=slept.append)
+    assert code == 0
+    (path, fields), = posted
+    assert path == f"repos/{REPO}/statuses/{NEW}" and fields["state"] == "success"
+    assert slept == list(crv.RETRY_DELAYS)
+
+
+def test_a_post_that_fails_twice_then_succeeds_posts_once():
+    posted, slept = [], []
+    post = _flaky(lambda path, fields: posted.append((path, fields)), "statuses/")
+    code = crv.main(["--pr", "7", "--repo", REPO, "--sha", NEW],
+                    fetch=make_fetch([_pr()]), post=post, sleep=slept.append)
+    assert code == 0 and slept == list(crv.RETRY_DELAYS)
+    (path, fields), = posted
+    assert path.endswith(NEW) and fields["state"] == "pending"
+
+
+def test_a_404_is_an_answer_not_retried():
+    slept = []
+    assert crv.main(["--pr", "7", "--repo", REPO], fetch=make_fetch([]),
+                    post=lambda *_: None, sleep=slept.append) == 2
+    assert slept == []
+
+
+# --- fork PRs share heads too (#2879 second review, findings 1 and 4) ---------
+
+@pytest.mark.parametrize("pinned", [True, False])
+def test_a_waiting_fork_pr_on_the_head_keeps_it_pending(pinned):
+    # The refuting probe: fork PR A (#7, semantic, no approval) and same-repo
+    # PR B (#8, no `program` label) share head NEW. B's event decides NEW: the
+    # stub, like GitHub, leaves A out of commits/NEW/pulls, so a check that
+    # reads that endpoint posts success over A. Fails with the fix reverted.
+    prs = [_pr(7, fork=True), _pr(8, labels=())]
+    posted = []
+    code = crv.main(["--pr", "8", "--repo", REPO] + (["--sha", NEW] if pinned else []),
+                    fetch=make_fetch(prs),
+                    post=lambda path, fields: posted.append((path, fields)))
+    assert code == 0
+    (path, fields), = posted
+    assert path == f"repos/{REPO}/statuses/{NEW}"
+    assert fields["state"] == "pending" and fields["description"].startswith("#7: ")
+
+
+def test_an_open_pr_on_another_head_is_not_decided_here(capsys):
+    # Kills the mutant "drop the head.sha == sha filter": #9 waits at OLD, and
+    # its verdict has nothing to do with commit NEW, where #7 needs none.
+    prs = [_pr(7, labels=()), _pr(9, head=OLD)]
+    posted = []
+    assert crv.main(["--pr", "7", "--repo", REPO, "--sha", NEW], fetch=make_fetch(prs),
+                    post=lambda path, fields: posted.append((path, fields))) == 0
+    (path, fields), = posted
+    assert path.endswith(NEW) and fields["state"] == "success"
+    assert '"prs": [\n    7\n  ]' in capsys.readouterr().out
 
 
 # --- a cut file listing fails closed (#2879 review, finding 5) ---------------
