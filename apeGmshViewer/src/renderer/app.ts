@@ -33,6 +33,7 @@ import type { OfferIn } from "../state/types.ts";
 import { onScreenOf, runAgentMode, type Layout, type RenderBridge } from "./agentRender.ts";
 import { CombinationFeed, UserResultFeed, VariantRunner, type VariantDoor } from "./contour.ts";
 import { mountVariants } from "../panels/variants.ts";
+import { mountSets } from "../panels/sets.ts";
 import { runCapture } from "./harness/capture.ts";
 import { painted, type HarnessContext } from "./harness/context.ts";
 import { runMeasure } from "./harness/measure.ts";
@@ -77,6 +78,8 @@ const panels = [
   mountOffers(store),
   // VU10: below the offers, above the inspector.
   mountVariants(store),
+  // VU9a (ADR 0132): the window set's named sets, below the variants; the effects carry its saves to main's workspace door.
+  mountSets(store),
   // ADR 0130 D6 (VU7a): the .user.h5 modal table, below the offers, while a mode is shown.
   mountModalTable(store),
   mountHeader(store),
@@ -367,6 +370,8 @@ async function main() {
       const job = await renderBridge.renderJob();
       const path = job.mode === "render" ? userPathOf(job) : null;
       if (job.mode === "render" && path !== null) await readUser({ path, model: job.model, results: job.results, known: false });
+      // VU9a: the job's `<stem>.workspace.h5`, read (never written) before the shots, so a still shows its sets and verdicts.
+      if (job.mode === "render") await effects.readWorkspace();
     }
     await runAgentMode({ store, blobs, effects, viewport, bridge: renderBridge, layout: stillLayout, combination: () => combinations.held });
     return;

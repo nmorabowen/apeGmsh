@@ -170,6 +170,9 @@ export {
   type LoadsUnitLabels,
 } from "./loads.ts";
 export { springCountOf } from "./springs.ts";
+// VU9a (ADR 0132): what the sets panel reads of the workspace slice.
+export { pickSummaryOf } from "./workspace.ts";
+export { cannotSave as workspaceCannotSave } from "./reduce/workspace.ts";
 export { vectorComponentOf, vectorFieldOf, vectorFieldsOf, type VectorField } from "./vectors.ts";
 import type {
   AnalysisDef,
@@ -506,6 +509,13 @@ export function stageIdentity(seq: SequenceZone, index: number): string | null {
 }
 
 /** Notices that are not warnings: the stale-geometry notice, and (V4b) why results or their stage activation are not drawn. */
+/** VU9a (ADR 0132 D6, OQ5): the banner line naming the file an unreadable workspace was renamed aside to. */
+export function workspaceAsideNotice(aside: string): string {
+  const name = aside.split(/[\\/]/).pop() ?? aside;
+  const file = name.replace(/\.unreadable-[0-9TZ-]+$/, "");
+  return `${file} was not a readable workspace: it was moved aside to ${name}, unchanged, before the save wrote a new ${file}. Nothing was overwritten.`;
+}
+
 export function noticesOf(s: State): string[] {
   const out: string[] = [];
   const n = geometryPairing(s).notice;
@@ -530,6 +540,10 @@ export function noticesOf(s: State): string[] {
   if (ev.state === "refused") out.push(ev.code === "combination" || ev.code === "difference" || ev.code === "user" ? `Contour not drawn: ${ev.reason}.` : `Element contour refused: ${ev.reason}.`);
   // VU10: a newer manifest's banner (ADR 0132 D2), and the nodes a difference cannot give a value.
   if (s.variants.study?.newer) out.push(s.variants.study.newer);
+  // VU9a (ADR 0132 D2, D6): a newer workspace is shown read-only, and an unreadable one moved aside is named, once per rename.
+  const ws = s.workspace;
+  if (ws.read?.status === "ready" && ws.read.readOnly) out.push(ws.read.readOnly);
+  if (ws.aside !== null) out.push(workspaceAsideNotice(ws.aside));
   if (ev.state === "difference" && ev.missing > 0) {
     out.push(`Difference: ${ev.missing.toLocaleString()} of ${ev.nodes.toLocaleString()} nodes have no value in one of the two variants; they are drawn as no data.`);
   }

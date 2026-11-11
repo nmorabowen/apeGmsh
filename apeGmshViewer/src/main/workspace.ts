@@ -34,6 +34,9 @@ import { inspect } from "node:util";
 import { buildWrite, ModelSide, readWorkspaceFile, setsIn, UNREADABLE, verdictsOf, verifyPartial, WorkspaceRefusal, writePartial, WriteRefusal, type Change, type WorkspaceData, type WorkspaceH5 } from "../reader/workspace.ts";
 import { SET_KINDS, type WorkspaceEdit, type WorkspaceIn, type WorkspaceSaveIn } from "../state/types/workspace.ts";
 import { candidates, type OpenSet } from "./pairing.ts";
+import { heldRefusal } from "../state/workspace.ts";
+
+export { heldRefusal };
 
 /** The disk as a save sees it; the tests pass one that fails where they choose. */
 export interface WorkspaceDisk {
@@ -168,16 +171,6 @@ function looksLikeHdf5(bytes: Uint8Array): boolean {
 
 const digestOf = (bytes: Uint8Array | null): string | null => (bytes === null ? null : createHash("sha256").update(bytes).digest("hex"));
 
-/** A write another program blocked: the typed refusal of HG9 rule 2. */
-export function heldRefusal(file: string, detail?: string): Extract<WorkspaceSaveIn, { ok: false }> {
-  return {
-    ok: false,
-    reason: "held",
-    detail: detail ?? `${file} is open in another program (for example a Python session), which keeps this app from replacing it. Close it there and save again. Nothing was replaced.`,
-    file,
-    held: true,
-  };
-}
 
 const HELD_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
 const isHeld = (err: unknown) => HELD_CODES.has(code(err) ?? "");
