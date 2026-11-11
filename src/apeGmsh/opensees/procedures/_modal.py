@@ -570,6 +570,11 @@ class _ModalMixin(_ProcedureHost):
                 out_limit[row] = limit_value
                 out_ratio[row] = best[0] / limit_value
 
+        # The key the lineage memo holds this model's archive under, taken
+        # after the solve: ``ops.h5()`` usually runs after this driver, so
+        # the model_hash is resolved from it in ``to_results`` (#2801).
+        from .._internal.artifact_write import lineage_key
+
         return FootfallResult(
             nodes=resp_tags,
             f_dom=out_f_dom,
@@ -594,6 +599,7 @@ class _ModalMixin(_ProcedureHost):
             _matrix=matrix,
             _phi=phi,
             _f_dom_hf=out_f_dom_hf,
+            _lineage_key=lineage_key(self),
         )
 
     def _footfall_tags(

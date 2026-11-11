@@ -163,6 +163,11 @@ class FootfallResult:
     _matrix: FRFMatrix
     _phi: Mapping[int, np.ndarray]
     _f_dom_hf: np.ndarray
+    _lineage_key: "str | None" = None
+    """The bridge's :func:`~apeGmsh.opensees._internal.artifact_write.lineage_key`
+    when the driver solved: the lineage memo resolves it to the
+    ``model_hash`` of that model's archive (#2801). ``None`` for a stub
+    snapshot or a result built without the driver."""
 
     # -- inspection -------------------------------------------------------
 
@@ -235,6 +240,21 @@ class FootfallResult:
         ``fem.snapshot_id``. There is no default — a guessed archive
         would pair the map with another model.
 
+        Its ``model_hash`` must also be the model this evaluation
+        solved: two archives of one fem (a cracked and an uncracked
+        stiffness variant) share the ``fem_hash`` and differ only there.
+        The driver keeps its bridge's lineage key, and an archive that
+        bridge wrote in this process (``ops.h5(...)`` or the automatic
+        write, before or after the driver) names the solved
+        ``model_hash``; a different one in ``model_h5`` refuses. The
+        check runs only when both sides carry a ``model_hash``: an
+        archive with only a ``fem_hash`` (``fem.to_h5``) passes, and so
+        does a result whose model archive this process never wrote (one
+        written in another process, after a reload, or under declarations
+        changed since the driver ran), a stub-snapshot run, or a result
+        built without the driver — there is no solved ``model_hash`` to
+        compare.
+
         ``/meta@writer`` carries the provenance: this driver, the
         apeGmsh version, and the OpenSees backend (and fork build) the
         live modal basis ran on.
@@ -246,9 +266,9 @@ class FootfallResult:
         Returns the path written, as a :class:`pathlib.Path`.
 
         Raises :class:`~apeGmsh.results.user.UserWriteRefused` when
-        ``model_h5`` is missing or belongs to another fem, when ``fem``
-        has no nodes, or when a response node is not in ``fem``; nothing
-        is written then.
+        ``model_h5`` is missing, belongs to another fem or to another
+        model of this fem, when ``fem`` has no nodes, or when a response
+        node is not in ``fem``; nothing is written then.
         """
         from pathlib import Path as _Path
 
@@ -277,13 +297,22 @@ class FootfallResult:
                 f"FootfallResult.to_results: response nodes {missing} are not "
                 "in fem.nodes.ids — the evaluation was run on another model."
             )
-        fem_hash, _ = model_hashes(model_h5)
+        fem_hash, model_hash = model_hashes(model_h5)
         snapshot = str(fem.snapshot_id)
         if fem_hash != snapshot:
             raise UserWriteRefused(
                 f"FootfallResult.to_results: {model_h5} is not this fem's "
                 f"archive (its fem_hash {fem_hash} is not fem.snapshot_id "
                 f"{snapshot})."
+            )
+        solved = self._solved_model_hash()
+        if model_hash is not None and solved is not None and model_hash != solved:
+            raise UserWriteRefused(
+                f"FootfallResult.to_results: {model_h5} is another model of "
+                f"this fem (its model_hash {model_hash} is not model_hash "
+                f"{solved}, the model footfall_walking solved). Pass that "
+                "model's archive (ops.h5(path) on the bridge that ran the "
+                "evaluation). Nothing was written."
             )
 
         data = np.full((1, all_ids.size, 3), np.nan, dtype=np.float64)
@@ -322,6 +351,19 @@ class FootfallResult:
         )
 
     # -- internals --------------------------------------------------------
+
+    def _solved_model_hash(self) -> "str | None":
+        """``model_hash`` of the model the driver solved, from the lineage
+        memo; ``None`` when this process holds no archive of it."""
+        from .._internal import artifact_write
+
+        # A result made with ``object.__new__`` (the unit tests) never set
+        # the slot: it was not built by the driver, so it has no lineage.
+        key = getattr(self, "_lineage_key", None)
+        if key is None:
+            return None
+        hit = artifact_write._LINEAGE_BY_DIGEST.get(key)
+        return None if hit is None else hit[0]
 
     def _row(self, node: "int | Node") -> int:
         tag = _node_tag(node)
