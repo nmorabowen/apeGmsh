@@ -6,14 +6,15 @@
 //
 // What it needs of main.ts comes through `registerMeasure` alone, so this
 // module never imports main.ts: the run's end on failure (`headlessEnd`),
-// main's error text (`errText`), and the window set's results host
-// (`resultsHost`, closed before the .ladruno read row).
+// main's error text (`errText`), the window set's results host
+// (`resultsHost`, closed before the .ladruno read row), and the preload
+// script's path (`preload`: main.ts names it from its own folder; this file's
+// folder is another one when it runs unbundled, VH3 #2868).
 
 import { app, BrowserWindow, ipcMain } from "electron";
 import { existsSync, statSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import * as h5wasm from "h5wasm/node";
 import { openH5, type H5Openable } from "../../reader/h5open.ts";
 import { LadrunoFile, openLadruno } from "../../reader/ladruno.ts";
@@ -21,10 +22,6 @@ import { openResults, type ResultsFile, type ResultsH5 } from "../../reader/resu
 import { arg, file, mode, out } from "../args.ts";
 import { pairSet } from "../pairing.ts";
 import type { ResultsHost } from "../results.ts";
-
-// scripts/build.mjs bundles main/ into the one dist/main.mjs, so this is the
-// folder main.ts's `here` names too: the one that holds preload.cjs.
-const here = dirname(fileURLToPath(import.meta.url));
 
 /** What the measurement harness takes from main.ts, handed over once (`registerMeasure`). */
 export interface MeasureHost {
@@ -34,11 +31,17 @@ export interface MeasureHost {
   errText: (err: unknown) => string;
   /** The window set's results host, closed before the .ladruno read row. */
   resultsHost: ResultsHost;
+  /** The preload script every window of the app loads (main.ts's, beside dist/main.mjs). */
+  preload: string;
 }
+
+/** The preload path `registerMeasure` was handed; `measureResultsMode` refuses to run without it. */
+let preloadPath: string | null = null;
 
 /** Register the `measure:*` handlers, each once. */
 export function registerMeasure(host: MeasureHost): void {
-  const { headlessEnd, errText, resultsHost } = host;
+  const { headlessEnd, errText, resultsHost, preload } = host;
+  preloadPath = preload;
 
   ipcMain.handle("measure:metrics", async () => {
     const metrics = app.getAppMetrics();
@@ -290,6 +293,8 @@ async function measureMpco(path: string, dataset: string) {
 
 /** `--mode=measure-results`, once the app is ready: time the read path of `path`, write the JSON to `outPath`, print the row, quit. */
 export async function measureResultsMode(path: string, outPath: string): Promise<void> {
+  if (preloadPath === null) throw new Error("measure-results: registerMeasure has not run, so the preload path is unknown");
+  const preload = preloadPath;
   const mem = memorySampler();
   mem.sample();
   if (/\.mpco$/i.test(path)) {
@@ -308,7 +313,7 @@ export async function measureResultsMode(path: string, outPath: string): Promise
   const sizeBytes = statSync(path).size;
   const [rf, openMs] = timed(() => openResults(h5wasm as unknown as ResultsH5, path));
   try {
-    const result = await measureOpen(rf, path, sizeBytes, openMs, mem);
+    const result = await measureOpen(rf, path, sizeBytes, openMs, mem, preload);
     writeFileSync(outPath, JSON.stringify(result, null, 2));
     printResultsRow(result);
   } finally {
@@ -318,7 +323,7 @@ export async function measureResultsMode(path: string, outPath: string): Promise
   }
 }
 
-async function measureOpen(rf: ResultsFile, path: string, sizeBytes: number, openMs: number, mem: ReturnType<typeof memorySampler>) {
+async function measureOpen(rf: ResultsFile, path: string, sizeBytes: number, openMs: number, mem: ReturnType<typeof memorySampler>, preload: string) {
   const s = rf.index.stages[0];
   if (!s?.nodes || s.gauss.length === 0) throw new Error(`${path}: the measurement needs a stage with nodal results and a gauss group`);
   const nodes = s.nodes;
@@ -354,7 +359,7 @@ async function measureOpen(rf: ResultsFile, path: string, sizeBytes: number, ope
     width: 1600,
     height: 1000,
     show: false,
-    webPreferences: { preload: join(here, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false },
+    webPreferences: { preload, contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false },
   });
   await w.loadURL("data:text/html,<!doctype html><title>measure-results</title><body></body>");
   mem.sample();
