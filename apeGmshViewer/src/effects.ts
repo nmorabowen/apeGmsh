@@ -1462,7 +1462,7 @@ export class Effects {
   private previewWorkspace(): void {
     this.off.push(
       this.store.subscribe((s, prev) => {
-        if (s.selection === prev.selection && s.workspace.kind === prev.workspace.kind && s.mesh === prev.mesh && s.decls === prev.decls) return;
+        if (s.selection === prev.selection && s.workspace.kind === prev.workspace.kind && s.mesh === prev.mesh && s.decls === prev.decls && s.deform.on === prev.deform.on && s.workspace.deformedPicks === prev.workspace.deformedPicks) return;
         queueMicrotask(() => {
           const now = this.store.get();
           const kind = now.workspace.kind;

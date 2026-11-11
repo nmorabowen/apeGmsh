@@ -130,6 +130,26 @@ test("a node set takes, per click, the node of the clicked element nearest the p
   assert.equal(membersOf(s, "nodes", null).ok, false, "no node table: refused, never guessed");
 });
 
+test("a deformed frame: a click lands on the displaced cell, so Nodes refuses it with a reason, and again after the shape is turned off, until the nodes are clicked again", () => {
+  // The review's reproducer: a unit quad [1, 2, 3, 4] drawn shifted +100 in y, clicked on node 1's drawn corner.
+  const nodes = { ids: [1, 2, 3, 4], xyz: [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0] };
+  const onCorner = (s: State) => reduce(s, { type: "select", pick: { decl: "mesh/element/1", at: [0, 100, 0], nodes: [1, 2, 3, 4] } });
+  const deformed = onCorner({ ...withCells(), deform: { ...withCells().deform, on: true } });
+  const m = membersOf(deformed, "nodes", nodes);
+  assert.equal(m.ok, false, `the drawn corner of node 1 must not be read as ${JSON.stringify(m)}`);
+  assert.match((m as { reason: string }).reason, /deformed shape shows: a click lands on the displaced cell/);
+  // Turned off, the click made on the deformed shape is still refused.
+  const off = reduce(deformed, { type: "setDeform", on: false });
+  assert.equal(off.workspace.deformedPicks, true);
+  assert.match((membersOf(off, "nodes", nodes) as { reason: string }).reason, /a click was made on the deformed shape/);
+  // Clicked again on the undeformed frame: node 1, as on any undeformed view.
+  const again = reduce(off, { type: "select", pick: { decl: "mesh/element/1", at: [0.05, 0.02, 0], nodes: [1, 2, 3, 4] } });
+  assert.equal(again.workspace.deformedPicks, false);
+  assert.deepEqual(membersOf(again, "nodes", nodes), { ok: true, ids: [1], notes: [] });
+  // Elements are tags, not positions: the deformed shape does not touch them.
+  assert.ok(membersOf(deformed, "elements", nodes).ok);
+});
+
 test("a set switch: the last set's read leaves at once, nothing is editable until the new read lands, and a late answer about the last file is never shown", () => {
   const model = (path: string): Event => ({ type: "fileOpened", artifact: "model", path });
   let s = run([model("C:/runs/frame.h5"), { type: "workspaceRead", read: READY }, { type: "workspaceSave", edit: { op: "delete", table: "sets", name: "roof" } }]);

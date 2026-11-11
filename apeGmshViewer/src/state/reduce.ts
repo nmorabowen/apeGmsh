@@ -230,6 +230,22 @@ function withLineDiagramPick(s: State, preserveNotice = false): State {
 }
 
 export function reduce(s: State, e: Event): State {
+  return withPickFrame(s, e, reduceEvent(s, e));
+}
+
+/**
+ * VU9a (#2890 delta review): whether the selection holds a click made while
+ * the deformed shape showed (`WorkspaceState.deformedPicks`). A click's point is
+ * where the cell was drawn; Nodes compares it with undeformed node positions,
+ * so such a selection is refused for a node set until it is clicked again.
+ */
+function withPickFrame(s: State, e: Event, next: State): State {
+  if (next.selection === s.selection || !["select", "selectAdd", "selectDecls", "clearSelection"].includes(e.type)) return next;
+  const deformed = next.selection.picks.length === 0 ? false : e.type === "select" ? s.deform.on : s.workspace.deformedPicks || (e.type === "selectAdd" && s.deform.on);
+  return deformed === next.workspace.deformedPicks ? next : { ...next, workspace: { ...next.workspace, deformedPicks: deformed } };
+}
+
+function reduceEvent(s: State, e: Event): State {
   switch (e.type) {
     case "fileOpened": {
       const prev = s.artifacts[e.artifact];

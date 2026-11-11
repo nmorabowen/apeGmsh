@@ -6,7 +6,7 @@ import type { WorkspaceEvent } from "../types/events/workspace.ts";
 import { SET_KINDS, type WorkspaceIn, type WorkspaceState } from "../types/workspace.ts";
 
 /** VU9a: nothing read, node picks, no save asked. */
-export const initialWorkspace: WorkspaceState = { read: null, reading: false, kind: "nodes", preview: null, seq: 0, request: null, saving: null, notice: null, aside: null, ownSaveId: null };
+export const initialWorkspace: WorkspaceState = { read: null, reading: false, kind: "nodes", preview: null, deformedPicks: false, seq: 0, request: null, saving: null, notice: null, aside: null, ownSaveId: null };
 
 const STATUSES = ["none", "absent", "unreadable", "refused", "ready"];
 

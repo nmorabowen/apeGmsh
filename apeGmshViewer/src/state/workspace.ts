@@ -57,6 +57,15 @@ export function nodeMembersOf(s: State, nodes: NodeTable | null): Members {
   const picks = s.selection.picks.filter((p) => p.at !== null && p.nodes !== null && p.nodes.length > 0);
   if (picks.length === 0) return { ok: false, reason: "click the model near each node first (Shift+click adds): each click takes the nearest node of the element clicked" };
   if (nodes === null) return { ok: false, reason: "the model was read without its node table, so no node can be placed" };
+  // A click lands where the cell is drawn; with the deformed shape that is not where the node table puts the nodes.
+  if (s.deform.on || s.workspace.deformedPicks) {
+    return {
+      ok: false,
+      reason: s.deform.on
+        ? "the deformed shape shows: a click lands on the displaced cell, not where its nodes are, so Nodes picks nothing; turn the deformed shape off and click again"
+        : "a click was made on the deformed shape: turn it off and click the nodes again",
+    };
+  }
   const index = new Map<number, number>();
   for (let i = 0; i < nodes.ids.length; i++) if (!index.has(nodes.ids[i]!)) index.set(nodes.ids[i]!, i);
   const ids: number[] = [];
@@ -88,6 +97,10 @@ export function pickSummaryOf(s: State): { count: number; reason: string | null;
   if (s.workspace.kind === "elements") {
     const m = elementMembersOf(s);
     return m.ok ? { count: m.ids.length, reason: null, ids: m.ids } : { count: 0, reason: m.reason, ids: null };
+  }
+  if (s.deform.on || s.workspace.deformedPicks) {
+    const m = nodeMembersOf(s, { ids: [], xyz: [] });
+    if (!m.ok && /deformed/.test(m.reason)) return { count: 0, reason: m.reason, ids: null };
   }
   const n = s.selection.picks.filter((p) => p.at !== null && p.nodes !== null && p.nodes.length > 0).length;
   return n ? { count: n, reason: null, ids: null } : { count: 0, reason: "click the model near each node (Shift+click adds)", ids: null };
