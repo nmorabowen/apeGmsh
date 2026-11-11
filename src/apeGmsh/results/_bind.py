@@ -46,6 +46,11 @@ class ModelFemMismatchWarning(UserWarning):
     FEMData instead (no physical groups, no labels).  Either the
     ``model_h5`` belongs to another model, or the run added nodes the
     archive does not know; pass ``fem=`` to bind a FEMData regardless.
+
+    ``fem=`` (and so ``Results.from_fem``) warns too when the archive
+    declares no element tag map and the capture's elements are not the
+    fem's (#1408): the reader would read the capture's ops tags as fem
+    element ids, so ``pg=`` would answer with the wrong elements.
     """
 
 
@@ -220,8 +225,19 @@ def _resolve_fem_via_model(
 
     Resolution rules (#1325):
 
-    1. ``candidate`` provided: return it, unchecked — same contract as
-       :func:`_resolve_fem`.
+    1. ``candidate`` provided: return it, unless the archive declares no
+       ops<->fem element tag map and the capture's elements are not the
+       candidate's (:func:`_candidate_elements_reason`: elements the deck
+       added under new tags are extra, not a mismatch).
+       Without a tag map the reader reads ops tags as fem element ids, so
+       a deck that numbered its elements otherwise would answer ``pg=``
+       with the wrong elements and no error; that warns
+       :class:`ModelFemMismatchWarning` and binds the capture's own
+       FEMData, as rule 2 does (#1408).  ``Results.from_fem`` lands
+       here with ``model_h5`` its own ``fem.to_h5`` cache.  A candidate
+       with no elements, or a capture with none, has nothing to mislabel
+       and passes.  A bridge archive (``ops.h5``) relabels through its
+       tag map, so the candidate binds unchecked there.
     2. Otherwise the neutral FEMData archived in ``model_h5`` — the one
        the bridge emitted the run from, with its physical groups and
        labels — provided its node ids cover every node id the capture
@@ -243,7 +259,9 @@ def _resolve_fem_via_model(
     ``reader.spatial_dim()`` (the MPCO readers).
     """
     if candidate is not None:
-        return candidate
+        return _checked_candidate(
+            reader, candidate, model, model_path=model_path,
+        )
     embedded = reader.fem()
     model_fem = model.fem
     if embedded is None:
@@ -295,6 +313,112 @@ def _resolve_fem_via_model(
         stacklevel=3,
     )
     return embedded
+
+
+def _checked_candidate(
+    reader: "ResultsReader",
+    candidate: "FEMData",
+    model: "OpenSeesModel",
+    *,
+    model_path: "str | Path",
+) -> "FEMData":
+    """Rule 1 of :func:`_resolve_fem_via_model`: ``fem=`` against the capture.
+
+    Only the elements are checked: with no tag map they are what the
+    reader pairs by id, and a wrong pairing reads the wrong elements
+    with no error (#1408).  The caller asserted the node pairing.
+    """
+    from .readers._tag_translation import ElementTagTranslator
+
+    if not ElementTagTranslator.from_model(model).is_empty:
+        return candidate
+    if not any(len(group.ids) for group in candidate.elements):
+        return candidate
+    embedded = reader.fem()
+    if embedded is None:
+        return candidate
+    reason = _candidate_elements_reason(embedded, candidate)
+    if reason is None:
+        return candidate
+    warnings.warn(
+        ModelFemMismatchWarning(
+            f"fem= does not match the capture's elements: "
+            f"model_h5={str(model_path)!r} declares no element tag map "
+            f"(/opensees/element_meta), so the capture's element tags are "
+            f"read as fem element ids, and {reason}. Number the deck's "
+            f"element tags as the fem's element ids, or bind a model.h5 "
+            f"written by ops.h5(...). Binding the capture's own MODEL group "
+            f"instead, which has no physical groups."
+        ),
+        stacklevel=4,
+    )
+    return embedded
+
+
+def _candidate_elements_reason(
+    embedded: "FEMData", candidate: "FEMData",
+) -> "Optional[str]":
+    """Why ``fem=``'s elements cannot be read by the capture's tags.
+
+    ``None`` when they can.  Unlike :func:`_elements_reason` (the
+    ``model_h5=`` route, where the archive must hold the whole capture),
+    a capture element whose tag is not a fem id is an element the deck
+    added (a zeroLength spring, a link): extra, not a mismatch.  A
+    mismatch is any of:
+
+    * a shared id on another node set (permuted or shifted numbering);
+    * a capture tag the fem lacks, on the node set of a fem element the
+      capture does not hold under its own id (the fem's element 1 is
+      the capture's tag 7: renumbered);
+    * no capture element is a fem element at all.
+    """
+    def _rows(fem: "FEMData") -> "dict[int, tuple[int, ...]]":
+        rows: dict[int, tuple[int, ...]] = {}
+        for group in fem.elements:
+            ids = np.asarray(group.ids, dtype=np.int64)
+            conn = np.asarray(group.connectivity, dtype=np.int64)
+            for eid, row in zip(ids, conn):
+                rows[int(eid)] = tuple(sorted(int(n) for n in row))
+        return rows
+
+    fem_rows = _rows(candidate)
+    capture_rows = _rows(embedded)
+    if not capture_rows:
+        return None
+    held = {eid for eid, nodes in capture_rows.items()
+            if fem_rows.get(eid) == nodes}
+    unheld_by_nodes: dict[tuple[int, ...], int] = {}
+    for eid, nodes in fem_rows.items():
+        if eid not in held:
+            unheld_by_nodes.setdefault(nodes, eid)
+    differing: list[int] = []
+    renumbered: list[str] = []
+    for eid, nodes in capture_rows.items():
+        known = fem_rows.get(eid)
+        if known is not None:
+            if known != nodes:
+                differing.append(eid)
+        elif nodes in unheld_by_nodes:
+            renumbered.append(f"{eid} is fem element {unheld_by_nodes[nodes]}")
+    if not differing and not renumbered and held:
+        return None
+
+    def _some(items: "list[Any]") -> str:
+        shown = ", ".join(str(i) for i in items[:5])
+        more = f", ... ({len(items)} in all)" if len(items) > 5 else ""
+        return f"{shown}{more}"
+
+    parts = []
+    if renumbered:
+        parts.append(f"{len(renumbered)} renumbered (e.g. {_some(renumbered)})")
+    if differing:
+        parts.append(
+            f"{len(differing)} on other nodes than the fem element of that "
+            f"id (e.g. {_some(differing)})"
+        )
+    if not held:
+        parts.append("none is a fem element")
+    return f"of the capture's {len(capture_rows)} elements {'; '.join(parts)}"
 
 
 def _bind_stage_names(
