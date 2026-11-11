@@ -494,8 +494,11 @@ write_workspace("frame.workspace.h5", remove={"views": ["roof iso"]})
 - A given row replaces the row of the same name; every other row is
   copied verbatim. Like `.user.h5`, the write is atomic and refuses when
   another writer got there first. A tag the model lacks refuses the
-  write (`WorkspaceWriteRefused`). An unreadable old file is renamed
-  aside with a `WorkspaceRenamedAside` warning, never overwritten.
+  write (`WorkspaceWriteRefused`). On Windows, a workspace another
+  program holds open (the app, h5py, a viewer) refuses the write too,
+  with reason `held-open`: close it there and write again. The old file
+  stays whole. An unreadable old file is renamed aside with a
+  `WorkspaceRenamedAside` warning, never overwritten.
 - **Verdicts.** Each member's coordinates are stored with the set (a
   node's position, an element's centroid). When the model is re-meshed
   or re-declared, `verdicts()` looks for each member where it was:

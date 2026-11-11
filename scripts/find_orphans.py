@@ -174,7 +174,10 @@ def verdict_required(fetch: Fetch, repo: str, pr: dict) -> bool:
     if "semantic" in labels:
         return True
     exempt = bool(_MOVE_EVIDENCE.search(pr.get("body") or ""))
-    for row in _paged(fetch, f"repos/{repo}/pulls/{pr['number']}/files"):
+    rows = _paged(fetch, f"repos/{repo}/pulls/{pr['number']}/files")
+    if len(rows) >= PER_PAGE * MAX_PAGES:
+        return True  # the listing hit the page cap: an unread path may need one
+    for row in rows:
         names = [n for n in (row.get("filename"), row.get("previous_filename")) if n]
         if any(_always_verdict(n) for n in names):
             return True
@@ -186,7 +189,8 @@ def verdict_required(fetch: Fetch, repo: str, pr: dict) -> bool:
 def has_head_approval(fetch: Fetch, repo: str, pr: dict) -> bool:
     """An approve bound to the merged head; the latest verdict at it decides."""
     comments = [
-        {"body": c.get("body"), "createdAt": c["created_at"]}
+        {"body": c.get("body"), "createdAt": c["created_at"],
+         "authorAssociation": c.get("author_association")}
         for c in _paged(fetch, f"repos/{repo}/issues/{pr['number']}/comments")
     ]
     probe_pr = {"headRefOid": pr["head"]["sha"], "comments": comments}

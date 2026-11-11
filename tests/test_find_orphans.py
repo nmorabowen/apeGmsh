@@ -160,8 +160,8 @@ def _vpr(number, labels, head=HEAD, merged_at=None, body=""):
     return pr
 
 
-def _comment(body, at="2026-11-01T00:30:00Z"):
-    return {"body": body, "created_at": at}
+def _comment(body, at="2026-11-01T00:30:00Z", assoc="OWNER"):
+    return {"body": body, "created_at": at, "author_association": assoc}
 
 
 def make_vfetch(prs, files=None, comments=None):
@@ -197,6 +197,14 @@ def test_semantic_pr_without_verdict_is_flagged():
 def test_approve_at_merged_head_clears_it():
     c = {1: [_comment(f"Review-verdict: Opus 5.5 approve {HEAD[:12]}")]}
     assert not _unreviewed([_vpr(1, ["program", "semantic"])], comments=c)
+
+
+def test_approve_by_a_non_collaborator_does_not_clear_it():
+    # #2878: the REST author_association reaches the parser; a stranger's approve
+    # at the merged head leaves the merge flagged.
+    for assoc in ("NONE", "CONTRIBUTOR", None):
+        c = {1: [_comment(f"Review-verdict: Opus 5.5 approve {HEAD[:12]}", assoc=assoc)]}
+        assert len(_unreviewed([_vpr(1, ["program", "semantic"])], comments=c)) == 1, assoc
 
 
 def test_approve_at_older_sha_does_not_count():
