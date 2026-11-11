@@ -5,6 +5,11 @@ Footfall is a state-free user result (ADR 0130 D7), written through
 ``NaN`` off the response set. The oracle is the reader: the file reads back
 through ``UserFile`` and its ``DATA`` equals, bit for bit, the arrays scattered
 here by hand from the in-memory result. No native ``results.h5`` is written.
+
+#2801: the archive must also be the *model* the evaluation solved. The live
+test at the bottom is the reproducer: one fem, a cracked and an uncracked
+bridge, and the cracked evaluation refuses the uncracked archive by both
+``model_hash`` values.
 """
 from __future__ import annotations
 
