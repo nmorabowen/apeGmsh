@@ -10,18 +10,23 @@ empty slab.
 
 The read now raises `MPCOStrainNotRecorded`, the `ValueError` the MPCO
 reader raises for the same case (#2893), when a Tri31 element in scope
-gets no row back. The message names the elements (fem ids under a tag
+is in no strain bucket (`strains`, `material.strain`) and the read returns
+no row for it. The message names the elements (fem ids under a tag
 map) and says how to get the rows: declare the recorder with
 `element_class_name="Tri31"`, which records strain per Gauss point under
 `material.strain`. Elements in scope are the stage's own `MODEL/ELEMENTS`
 listing, narrowed to the requested ids or physical group, and only for a
 strain component Tri31 could answer. The read is unchanged when:
 
-- the file holds the Tri31 rows (for example under `material.strain`);
+- the file holds the Tri31 rows (for example under `material.strain`),
+  even when they lack the requested column (`strain_zz` from a
+  three-column record reads as empty, as `stress_zz` does);
 - the read leaves the Tri31 elements out, as `element_ids=[]` does;
 - the component is a stress, or a strain Tri31 cannot answer
   (`curvature_xx`);
 - the stage lists no elements.
 
-On a partitioned set only the partition that holds Tri31 refuses, and a
-gauss read of a mode stage still refuses as a mode stage first.
+On a partitioned set only the partition that holds Tri31 refuses, even
+when that partition records no element results at all (no
+`RESULTS/ON_ELEMENTS`, which the set otherwise drops as an empty rank).
+A gauss read of a mode stage still refuses as a mode stage first.

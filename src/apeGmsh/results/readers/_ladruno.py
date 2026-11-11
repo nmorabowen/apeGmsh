@@ -1704,7 +1704,7 @@ class LadrunoReader:
             # A part with no element results can still list a Tri31
             # element the read covers. The partitioned reader drops such a
             # part (MissingElementResults), so the listing is checked
-            # first (#2895 F1).
+            # first.
             bucket_ids, index_to_fem = self._element_read_translation(
                 element_ids)
             self._refuse_unrecorded_strain(
