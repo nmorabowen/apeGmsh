@@ -71,6 +71,7 @@ jobs:
           cat out.log
           junit=no; [ -f j.xml ] && junit=yes
           echo "FANOUT i=${{ matrix.i }} rc=$rc junit=$junit strcon=$(grep -c STRCON out.log) sdm=$(grep -c 'Stop in S-D model' out.log)"
+          echo "FANOUT-OUTCOMES switched=$(grep -c 'the swept leg switched' out.log) stop=$(grep -c 'the swept leg stop-after-flip' out.log)"
           echo "FANOUT-LAST $(grep -E '::' out.log | tail -n 1)"
           echo "FANOUT-TEXT-BEGIN"
           grep -n -E 'STRCON|Stop in S-D|cnjpnt|STOP' out.log | head -n 20
