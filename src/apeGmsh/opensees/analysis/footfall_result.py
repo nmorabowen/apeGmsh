@@ -163,6 +163,11 @@ class FootfallResult:
     _matrix: FRFMatrix
     _phi: Mapping[int, np.ndarray]
     _f_dom_hf: np.ndarray
+    _lineage_key: "str | None" = None
+    """The bridge's :func:`~apeGmsh.opensees._internal.artifact_write.lineage_key`
+    when the driver solved: the lineage memo resolves it to the
+    ``model_hash`` of that model's archive. ``None`` for a stub
+    snapshot or a result built without the driver."""
 
     # -- inspection -------------------------------------------------------
 
@@ -235,6 +240,25 @@ class FootfallResult:
         ``fem.snapshot_id``. There is no default — a guessed archive
         would pair the map with another model.
 
+        Its ``model_hash`` must also be the model this evaluation
+        solved: two archives of one fem (a cracked and an uncracked
+        stiffness variant) share the ``fem_hash`` and differ only there.
+        The driver keeps the lineage key of the declarations it ran
+        under. Any archive of those declarations composed in this process
+        records the solved ``model_hash`` under that key: the live
+        emit's automatic ``model.h5`` write, or ``ops.h5(...)`` before or
+        after the driver. A ``model_h5`` with a different ``model_hash``
+        refuses, including an archive of declarations added after the
+        driver ran. The check runs only when both sides carry a
+        ``model_hash``. An archive with only a ``fem_hash``
+        (``fem.to_h5``) passes. The check is skipped when no archive of
+        the solved declarations was composed in this process (the
+        automatic write was off or skipped, e.g. ``_artifacts=False``, a
+        snapshot with no name, a partitioned model, and no ``ops.h5``
+        followed), and when the result carries no lineage key (a
+        stub-snapshot run, or a result built without the driver): there
+        is then no solved ``model_hash`` to compare.
+
         ``/meta@writer`` carries the provenance: this driver, the
         apeGmsh version, and the OpenSees backend (and fork build) the
         live modal basis ran on.
@@ -246,9 +270,9 @@ class FootfallResult:
         Returns the path written, as a :class:`pathlib.Path`.
 
         Raises :class:`~apeGmsh.results.user.UserWriteRefused` when
-        ``model_h5`` is missing or belongs to another fem, when ``fem``
-        has no nodes, or when a response node is not in ``fem``; nothing
-        is written then.
+        ``model_h5`` is missing, belongs to another fem or to another
+        model of this fem, when ``fem`` has no nodes, or when a response
+        node is not in ``fem``; nothing is written then.
         """
         from pathlib import Path as _Path
 
@@ -277,13 +301,23 @@ class FootfallResult:
                 f"FootfallResult.to_results: response nodes {missing} are not "
                 "in fem.nodes.ids — the evaluation was run on another model."
             )
-        fem_hash, _ = model_hashes(model_h5)
+        fem_hash, model_hash = model_hashes(model_h5)
         snapshot = str(fem.snapshot_id)
         if fem_hash != snapshot:
             raise UserWriteRefused(
                 f"FootfallResult.to_results: {model_h5} is not this fem's "
                 f"archive (its fem_hash {fem_hash} is not fem.snapshot_id "
                 f"{snapshot})."
+            )
+        solved = self._solved_model_hash()
+        if model_hash is not None and solved is not None and model_hash != solved:
+            raise UserWriteRefused(
+                f"FootfallResult.to_results: {model_h5} is another model of "
+                f"this fem (its model_hash {model_hash} is not model_hash "
+                f"{solved}, the model footfall_walking solved). Pass that "
+                "model's archive: the archive of the declarations "
+                "footfall_walking ran under, not of declarations added "
+                "since. Nothing was written."
             )
 
         data = np.full((1, all_ids.size, 3), np.nan, dtype=np.float64)
@@ -322,6 +356,19 @@ class FootfallResult:
         )
 
     # -- internals --------------------------------------------------------
+
+    def _solved_model_hash(self) -> "str | None":
+        """``model_hash`` of the model the driver solved, from the lineage
+        memo; ``None`` when this process holds no archive of it."""
+        from .._internal import artifact_write
+
+        # A result made with ``object.__new__`` (the unit tests) never set
+        # the slot: it was not built by the driver, so it has no lineage.
+        key = getattr(self, "_lineage_key", None)
+        if key is None:
+            return None
+        hit = artifact_write._LINEAGE_BY_DIGEST.get(key)
+        return None if hit is None else hit[0]
 
     def _row(self, node: "int | Node") -> int:
         tag = _node_tag(node)
