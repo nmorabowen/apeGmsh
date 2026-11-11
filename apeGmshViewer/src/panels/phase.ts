@@ -21,7 +21,7 @@
 // evaluator, in the app), and a picker in the bar chooses another; a
 // combination is one state, so the bar shows no step scrubber for it.
 
-import { combinationShownOf, inactiveElements, SCRUBBER_TOP_PX, scrubberRow, timelineOf, type Timeline } from "../state/selectors.ts";
+import { combinationShownOf, combineEntryOf, inactiveElements, SCRUBBER_TOP_PX, scrubberRow, timelineOf, type Timeline } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { PhaseKey, StaleMark } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
@@ -224,7 +224,12 @@ function rigid(e: HTMLElement): void {
   e.style.whiteSpace = "nowrap";
 }
 
-export function mountPhase(store: Store): () => void {
+/**
+ * VU9b (ADR 0130 A4): the bar's entry point to the authoring panel
+ * (panels/combine.ts), beside the families, whenever the set's `.user.h5` is
+ * read and its `/combinations` is not refused: `newCombination` opens it.
+ */
+export function mountPhase(store: Store, opts: { newCombination?: () => void } = {}): () => void {
   const bar = byId("phase");
   let unlisten: (() => void)[] = [];
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -248,8 +253,10 @@ export function mountPhase(store: Store): () => void {
     if (!t) stop();
     const families = familiesOf(s);
     const badge = userBadgeOf(s);
-    // The `.user.h5` families are worth the bar even beside a single phase.
-    const userSays = badge !== null || families.some((f) => !f.drawable);
+    // VU9b: the entry to the authoring panel, while there is a user file to add to.
+    const entry = opts.newCombination ? combineEntryOf(s) : null;
+    // The `.user.h5` families are worth the bar even beside a single phase, and so is the entry (a reachable door).
+    const userSays = badge !== null || families.some((f) => !f.drawable) || entry !== null;
     bar.hidden = s.phase.axis.length < 2 && !(s.phase.axis.length === 1 && userSays);
     // With the scrubber, the bar takes its own row under the header (style.css centres it on the header row).
     // Capped as #header is, and wrapping: the scrubber takes a line of its own rather than run under the ViewCube.
@@ -269,6 +276,13 @@ export function mountPhase(store: Store): () => void {
     const at = s.phase.at;
     const shown = at?.kind === "results" ? familyOfStage(s, at.stage) : at?.kind === "combination" ? "combinations" : null;
     for (const f of families) buttons.push(familyButton(f, shown === f.key));
+    if (entry !== null) {
+      const b = el("button", "phase new-combination", "+ Combination");
+      b.dataset["role"] = "new-combination";
+      b.title = entry.title;
+      unlisten.push(listen(b, "click", () => opts.newCombination?.()));
+      buttons.push(b);
+    }
     if (badge) {
       const b = el("span", "phase user-badge", badge.text);
       b.title = badge.title;

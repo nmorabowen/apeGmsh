@@ -6,6 +6,7 @@ import { demoTarget } from "./pointer.ts";
 import { captureContours, captureDeform, captureElements, captureExtrudeResults, captureLineDiagrams, captureResults } from "./results.ts";
 import { captureCaps, captureClip, captureGizmo } from "./sections.ts";
 import { captureWorkspace } from "./workspace.ts";
+import { captureCombine } from "./combine.ts";
 
 /**
  * VA1 (D7): `<out>.camera-plus-x.png`, the `+x` named view through the store;
@@ -155,5 +156,7 @@ export async function runCapture(ctx: HarnessContext, cfg: HarnessConfig, file: 
   }
   // VU9a (D7): the sets panel and the workspace's notices, only for a set with a <stem>.workspace.h5 (./workspace.ts).
   await captureWorkspace(ctx, settle);
+  // VU9b (D7): the combination authoring panel, only for a set whose <stem>.user.h5 main read (./combine.ts).
+  await captureCombine(ctx, settle);
   await bridge.captureDone();
 }

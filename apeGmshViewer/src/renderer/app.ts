@@ -3,7 +3,8 @@
 // capture in ./harness/; ADR 0128's render and describe in ./agentRender.ts).
 
 import * as THREE from "three";
-import { Effects, userCombinationColumn, userResultColumn, type Bridge } from "../effects.ts";
+import { checkCombinationDraft, Effects, saveCombinationEdit, userCombinationColumn, userResultColumn, type Bridge } from "../effects.ts";
+import { mountCombine } from "../panels/combine.ts";
 import { mountBanner } from "../panels/banner.ts";
 import { mountEmpty } from "../panels/empty.ts";
 import { mountHeader } from "../panels/header.ts";
@@ -70,6 +71,9 @@ const variantBridge = (window as unknown as { viewer: Partial<VariantDoor & Stud
 // Fail closed: the preload of this build has every variant door, so a missing one is a broken build, never "no study".
 if (!isVariantDoor(variantBridge)) throw new Error("apeGmshViewer: the preload has no variant doors (variants, onVariants, variantsSwitch, variantsCompare, readCompareStep, compareClose)");
 const variantRunner = new VariantRunner(store, blobs, variantBridge, () => effects.currentStep());
+// VU9b (ADR 0130 A4): the combination authoring panel, below the sets; the phase bar's + Combination opens it.
+// Its check is the effects' (the readers' rules, then VU4's evaluator), its save main's `combinations:save`.
+let combine: ReturnType<typeof mountCombine> | null = null;
 const panels = [
   combinations.start(),
   userResults.start(),
@@ -80,6 +84,7 @@ const panels = [
   mountVariants(store),
   // VU9a (ADR 0132): the window set's named sets, below the variants; the effects carry its saves to main's workspace door.
   mountSets(store),
+  (combine = mountCombine(store, { check: (draft) => checkCombinationDraft(bridge, store.get(), draft), save: (edit) => saveCombinationEdit(bridge, edit) })).dispose,
   // ADR 0130 D6 (VU7a): the .user.h5 modal table, below the offers, while a mode is shown.
   mountModalTable(store),
   mountHeader(store),
@@ -93,7 +98,7 @@ const panels = [
   mountLegend(store, (fn) => viewport.onViewChange(fn)),
   mountInspector(store),
   mountEmpty(store),
-  mountPhase(store),
+  mountPhase(store, { newCombination: () => combine?.open() }),
   mountSources(store),
   mountWindows(store),
   mountSpotlight(store),
@@ -391,9 +396,14 @@ async function main() {
     return;
   }
   // The measure and capture harness (renderer/harness/): a throw inside it reaches the catch below.
-  const harness: HarnessContext = { store, blobs, effects, viewport, bridge };
+  const harness: HarnessContext = { store, blobs, effects, viewport, bridge, ...(combine ? { combine } : {}) };
   if (cfg.mode === "measure") await runMeasure(harness, cfg);
-  else await runCapture(harness, cfg, cfg.file);
+  else {
+    // VU9b: a capture reads the set's `.user.h5` (main reads it for capture too, and never writes it), so its stills state it.
+    const user = userPathOf({ model: cfg.file, results: cfg.results ?? null });
+    if (user !== null) await readUser({ path: user, model: cfg.file, results: cfg.results ?? null, known: false });
+    await runCapture(harness, cfg, cfg.file);
+  }
 }
 
 main().catch((err) => {

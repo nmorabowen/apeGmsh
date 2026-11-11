@@ -8,7 +8,8 @@
 // `goToSource` to the bridge; each is feature-detected here, so this module
 // works before and after that PR.
 
-import { CombinationRefused, evaluate, type CombinationTable } from "./combination/evaluate.ts";
+import { evaluateDraft } from "./combination/author.ts";
+import { CombinationRefused, evaluate, type CombinationTable, type Source } from "./combination/evaluate.ts";
 import type { ModelFile } from "./model/types.ts";
 import type { GeometryZone } from "./reader/geometry.ts";
 import type { LadrunoLineStationStep, LadrunoSpringStep } from "./reader/ladruno.ts";
@@ -25,12 +26,13 @@ import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplace
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
 import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
-import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
+import { contourView, deformView, draftJudgedOf, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
 import { applyTheme } from "./theme/tokens.ts";
 import { membersOf } from "./state/workspace.ts";
+import type { CombinationDraft, CombinationEdit, CombinationSaveIn, DraftCheck } from "./state/types.ts";
 import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ResultsInfo, StageElements, State, WorkspaceEdit, WorkspaceIn, WorkspacePageEdit, WorkspaceSaveIn, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
@@ -137,6 +139,55 @@ export interface Bridge {
   workspaceRead?(): Promise<WorkspaceIn>;
   /** VU9a: one edit into that file (main's `workspace:save`; never a path) */
   workspaceSave?(edit: WorkspaceEdit): Promise<WorkspaceSaveIn>;
+  /** VU9b (ADR 0130 A4): one combination edit into the window set's `.user.h5` (main's `combinations:save`; never a path) */
+  combinationsSave?(edit: CombinationEdit): Promise<CombinationSaveIn>;
+}
+
+/**
+ * VU9b (ADR 0130 A3; #2693): the check of a draft User Combination before it is
+ * offered for save. The readers' rules judge it beside the file's rows
+ * (selectors `draftJudgedOf`); then VU4's evaluator evaluates it for the first
+ * nodal quantity of the `/spectra` cases it reaches, read through main's
+ * `user:readCase` (combination/author.ts `evaluateDraft`). A stale `/spectra`
+ * is read for the check, and the preview says so. Null when there is no draft
+ * to check (no user file read). A bridge with no `readUserCase` throws.
+ */
+export async function checkCombinationDraft(bridge: Pick<Bridge, "readUserCase">, s: State, draft: CombinationDraft): Promise<DraftCheck | null> {
+  const j = draftJudgedOf(s, draft);
+  if (j === null) return null;
+  if (!j.ok) return { key: j.key, status: "refused", reason: j.reason, detail: j.detail };
+  let inner: Source | null = null;
+  if (j.cases.length) {
+    if (j.quantity === null) return { key: j.key, status: "ok", preview: null, note: `not evaluated here: the /spectra cases it reaches (${j.cases.join(", ")}) hold no nodal result` };
+    if (typeof bridge.readUserCase !== "function") throw new Error("this build's bridge has no readUserCase (main's user:readCase)");
+    const reads = new Map<string, CaseRead>();
+    for (const name of j.cases) reads.set(name, await bridge.readUserCase({ path: j.path, case: name, target: "nodes", label: j.quantity.label }));
+    inner = spectrumSource(reads, j.quantity, j.staleness, true);
+  }
+  const v = evaluateDraft(j.table, j.name, inner);
+  if (v.ok === "not-here") return { key: j.key, status: "ok", preview: null, note: v.note };
+  if (!v.ok) return { key: j.key, status: "refused", reason: v.refused.reason, detail: v.refused.detail };
+  const values = v.combined.field.values;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const x of values) {
+    if (!Number.isFinite(x)) continue;
+    if (x < min) min = x;
+    if (x > max) max = x;
+  }
+  const q = j.quantity!;
+  return {
+    key: j.key,
+    status: "ok",
+    preview: { label: `${q.label}/${q.component}`, nodes: v.combined.field.keys.length, range: min <= max ? { min, max } : null, signed: v.combined.signed },
+    note: j.staleness.stale ? `/spectra is stale (${j.staleness.reason || "no reason given"}): the value is shown, and the file lists the combination as stale` : null,
+  };
+}
+
+/** VU9b: carry one combination edit to main's door. A bridge with no `combinationsSave` throws: this build's preload has it. */
+export function saveCombinationEdit(bridge: Pick<Bridge, "combinationsSave">, edit: CombinationEdit): Promise<CombinationSaveIn> {
+  if (typeof bridge.combinationsSave !== "function") throw new Error("this build's bridge has no combinationsSave (main's combinations:save)");
+  return bridge.combinationsSave(edit);
 }
 
 /**

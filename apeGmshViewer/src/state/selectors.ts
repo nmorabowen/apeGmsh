@@ -1514,6 +1514,26 @@ export function draftKeyOf(s: State, draft: CombinationDraft): string | null {
   return JSON.stringify([u.path, u.token ?? null, draft]);
 }
 
+/** VU9b: what the authoring panel offers (reader/userRules.ts: the rules, the envelopes and the term kinds A3 names). */
+export { RULES as COMBINATION_RULES, ENVELOPES as COMBINATION_ENVELOPES, KINDS as TERM_KINDS } from "../reader/userRules.ts";
+
+/** VU9b: an empty draft, a linear combination of one stage term at the last step. */
+export const EMPTY_DRAFT: CombinationDraft = { name: "", rule: "linear", envelope: "", fraction: null, damping: null, terms: [{ kind: "stage", source: "", step: -1, mode: 0, factor: 1 }] };
+
+/**
+ * VU9b: the sources a term of each kind can name in this set, for the panel's
+ * suggestions: the results stages (their stamped names, else `stage_<i>`), the
+ * mode hosts, the `/spectra` cases and the combinations in force. A source the
+ * set does not have can still be typed; the readers and the evaluator judge it.
+ */
+export function draftSourcesOf(s: State): Record<string, string[]> {
+  const stages = (s.results?.stages ?? []).map((st, i) => ({ name: st.programName || `stage_${i}`, mode: st.kind === "mode" }));
+  const u = s.user?.status === "ready" ? s.user.info : null;
+  const cases = u?.spectra?.ok ? u.spectra.items.map((c) => c.name) : [];
+  const combos = u?.table ? [...u.table.rows, ...u.table.modelRows].map((r) => r.name) : [];
+  return { stage: stages.filter((x) => !x.mode).map((x) => x.name), mode: stages.filter((x) => x.mode).map((x) => x.name), spectrum: cases, reference: cases, combination: combos };
+}
+
 /** VU9b: the panel's entry in the phase bar, or null when there is no user file to add to (the app never creates one). */
 export function combineEntryOf(s: State): { title: string } | null {
   const u = s.user;
