@@ -186,7 +186,8 @@ def verdict_required(fetch: Fetch, repo: str, pr: dict) -> bool:
 def has_head_approval(fetch: Fetch, repo: str, pr: dict) -> bool:
     """An approve bound to the merged head; the latest verdict at it decides."""
     comments = [
-        {"body": c.get("body"), "createdAt": c["created_at"]}
+        {"body": c.get("body"), "createdAt": c["created_at"],
+         "authorAssociation": c.get("author_association")}
         for c in _paged(fetch, f"repos/{repo}/issues/{pr['number']}/comments")
     ]
     probe_pr = {"headRefOid": pr["head"]["sha"], "comments": comments}

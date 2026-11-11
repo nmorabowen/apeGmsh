@@ -44,8 +44,8 @@ def _pr(number=7, labels=("program", "semantic"), head=NEW, body="", draft=False
     }
 
 
-def _c(body, at="2026-11-09T10:00:00Z"):
-    return {"body": body, "created_at": at}
+def _c(body, at="2026-11-09T10:00:00Z", assoc="OWNER"):
+    return {"body": body, "created_at": at, "author_association": assoc}
 
 
 def make_fetch(prs, comments=None, files=None):
@@ -96,6 +96,8 @@ CASES = [
     (("program", "semantic"), (), (_c(f"Review-verdict: Opus approve {NEW[:12]}"),
                                    _c(f"Review-verdict: Opus changes {NEW[:12]}",
                                       "2026-11-09T11:00:00Z"))),
+    (("program", "semantic"), (), (_c(f"Review-verdict: Opus 5.5 approve {NEW[:12]}",
+                                      assoc="NONE"),)),
     (("program",), ("docs/x.md",), ()),
     (("program",), ("tests/test_x.py",), ()),
     (("program",), (".github/workflows/x.yml",), ()),
@@ -141,6 +143,13 @@ def test_semantic_pr_with_zero_comments_waits_for_its_head():
 def test_approve_at_current_head_is_success():
     got = _status(_pr(), [_c(f"Review-verdict: Opus 5.5 approve {NEW[:12]}")])
     assert got["state"] == "success" and NEW[:12] in got["description"]
+
+
+@pytest.mark.parametrize("assoc", ["NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", None])
+def test_an_approve_from_outside_the_repo_leaves_it_pending(assoc):
+    # #2878 card probe: the repo is public; only OWNER/MEMBER/COLLABORATOR count.
+    got = _status(_pr(), [_c(f"Review-verdict: Opus 5.5 approve {NEW[:12]}", assoc=assoc)])
+    assert got["state"] == "pending"
 
 
 def test_a_push_after_the_approval_does_not_inherit_it():
