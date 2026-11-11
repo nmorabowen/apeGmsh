@@ -572,7 +572,7 @@ class _ModalMixin(_ProcedureHost):
 
         # The key the lineage memo holds this model's archive under, taken
         # after the solve: ``ops.h5()`` usually runs after this driver, so
-        # the model_hash is resolved from it in ``to_results`` (#2801).
+        # the model_hash is resolved from it in ``to_results``.
         from .._internal.artifact_write import lineage_key
 
         return FootfallResult(

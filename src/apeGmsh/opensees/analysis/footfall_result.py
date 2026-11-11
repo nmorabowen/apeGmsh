@@ -166,7 +166,7 @@ class FootfallResult:
     _lineage_key: "str | None" = None
     """The bridge's :func:`~apeGmsh.opensees._internal.artifact_write.lineage_key`
     when the driver solved: the lineage memo resolves it to the
-    ``model_hash`` of that model's archive (#2801). ``None`` for a stub
+    ``model_hash`` of that model's archive. ``None`` for a stub
     snapshot or a result built without the driver."""
 
     # -- inspection -------------------------------------------------------
