@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import type { WorkspaceIn, WorkspaceSaveIn } from "../../src/state/types/workspace.ts";
 
 const FRAME = fileURLToPath(new URL("../fixtures/vu9a/frame.h5", import.meta.url));
+const WORKSPACE = fileURLToPath(new URL("../fixtures/vu9a/frame.workspace.h5", import.meta.url));
 const DRIVER = fileURLToPath(new URL("./workspaceDoorsDriver.ts", import.meta.url));
 
 const root = mkdtempSync(join(tmpdir(), "vu9a-doors-"));
@@ -89,3 +90,34 @@ test("an agent mode reads the workspace and its save door refuses outright", () 
   assert.equal((r as { reason: string }).reason, "read-only");
   assert.equal(((agent["read:after"] as { resolved: WorkspaceIn }).resolved).status, "ready", "it still reads the file the window saved");
 });
+
+/**
+ * #2890 delta review: the token binds the file's path, so an edit made on set
+ * A's read never lands in set B, even when B's workspace is byte-identical to
+ * A's, or when neither has one (both reads would otherwise say "absent").
+ */
+function switched(label: string, withWorkspace: boolean) {
+  const base = join(root, `switch-${label}`);
+  for (const d of ["A", "B"]) {
+    mkdirSync(join(base, d), { recursive: true });
+    copyFileSync(FRAME, join(base, d, "frame.h5"));
+    if (withWorkspace) copyFileSync(WORKSPACE, join(base, d, "frame.workspace.h5"));
+  }
+  const before = withWorkspace ? readFileSync(join(base, "B", "frame.workspace.h5")) : null;
+  const stdout = execFileSync(process.execPath, [DRIVER, `--file=${join(base, "A", "frame.h5")}`, `--dir=${base}`, `--switch-to=${join(base, "B", "frame.h5")}`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
+  const line = stdout.split(/\r?\n/).find((l) => l.startsWith("WORKSPACE_DOORS "));
+  assert.ok(line, `the driver printed no answers:\n${stdout}`);
+  const r = JSON.parse(line.slice("WORKSPACE_DOORS ".length)) as { readA: { token: string }; opened: { ok: boolean }; answers: { ok: boolean; reason?: string }[]; readB: { token: string; status: string } };
+  assert.equal(r.opened.ok, true, "the window set is B now");
+  assert.notEqual(r.readA.token, r.readB.token, "A's and B's tokens differ although their bytes do not");
+  for (const a of r.answers) {
+    assert.equal(a.ok, false);
+    assert.equal(a.reason, "stale");
+  }
+  if (before) assert.deepEqual(readFileSync(join(base, "B", "frame.workspace.h5")), before, "B's file is untouched");
+  else assert.ok(!existsSync(join(base, "B", "frame.workspace.h5")), "no workspace was created in B");
+  for (const d of ["A", "B"]) assert.ok(!readdirSync(join(base, d)).some((n) => n.endsWith(".partial")), `no partial in ${d}`);
+}
+
+test("an edit made on set A's read, sent after a switch to B whose workspace is byte-identical, refuses stale and writes nothing", () => switched("same", true));
+test("an edit made on set A's read, sent after a switch to B, neither with a workspace, refuses stale and creates nothing", () => switched("none", false));

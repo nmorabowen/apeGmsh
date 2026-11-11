@@ -19,7 +19,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
@@ -48,7 +48,11 @@ function folder(withWorkspace = false): { dir: string; set: OpenSet; ws: string 
 
 const deps = (over: Partial<WorkspaceDeps> = {}): WorkspaceDeps => ({ ...nodeDeps(H5, h5wasm.ready, "apeGmshViewer test"), ...over });
 /** The token main hands the page for the file as it is now (the bytes' sha256, or "absent"), computed here on its own. */
-const tokenNow = (file: string) => (existsSync(file) ? createHash("sha256").update(readFileSync(file)).digest("hex") : "absent");
+const tokenNow = (file: string) => {
+  const bytes = existsSync(file) ? createHash("sha256").update(readFileSync(file)).digest("hex") : "absent";
+  const path = resolve(file);
+  return createHash("sha256").update(`${process.platform === "win32" || process.platform === "darwin" ? path.toLowerCase() : path}\0${bytes}`).digest("hex");
+};
 /** A save made on a read of the file as it is now: the edit carries that read's token, as the page sends it. */
 const save = (d: WorkspaceDeps, set: OpenSet, edit: Record<string, unknown>) => saveWorkspace(d, set, { ...edit, expect: tokenNow(join(set.model!, "..", "frame.workspace.h5")) });
 const partials = (dir: string) => readdirSync(dir).filter((f) => f.endsWith(".partial"));
@@ -290,7 +294,7 @@ test("the edit never carries a path: any key the op does not name refuses before
 test("a save made on a read the file no longer matches refuses stale, and replaces nothing", async () => {
   const f = folder(true);
   const read = ready(await readWorkspace(deps(), f.set));
-  assert.equal(read.token, tokenNow(f.ws), "the read's token is the bytes' sha256");
+  assert.equal(read.token, tokenNow(f.ws), "the read's token binds the file's path to its bytes");
   // Another writer saves after the page read the file.
   writeFileSync(f.ws, readFileSync(FIX("plate/plate.workspace.h5")));
   const other = readFileSync(f.ws);
@@ -299,8 +303,11 @@ test("a save made on a read the file no longer matches refuses stale, and replac
   assert.equal(r.file, f.ws);
   assert.deepEqual(readFileSync(f.ws), other);
   assert.deepEqual(partials(f.dir), []);
-  // The page's token for "no file yet" does not stand for a file that appeared.
-  assert.equal(refused(await saveWorkspace(deps(), f.set, { op: "create", name: "x", kind: "nodes", ids: [1], expect: "absent" })).reason, "stale");
+  // The token of "no file yet" does not stand for a file that appeared.
+  const absent = folder();
+  const none = (await readWorkspace(deps(), absent.set)) as { token: string };
+  writeFileSync(absent.ws, readFileSync(FIX("plate/plate.workspace.h5")));
+  assert.equal(refused(await saveWorkspace(deps(), absent.set, { op: "create", name: "x", kind: "nodes", ids: [1], expect: none.token })).reason, "stale");
 });
 
 test("a truncated workspace (half of a real one) is unreadable, as Python reads it, and a save moves it aside (D6)", async () => {

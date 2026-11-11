@@ -8,7 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import * as h5wasm from "h5wasm/node";
 import { nodeDeps, saveWorkspace } from "../../src/main/workspace.ts";
 import type { WorkspaceH5 } from "../../src/reader/workspace.ts";
@@ -28,7 +28,9 @@ const deps = {
 /** The token of the file as it is now, as a read hands it to the page. */
 const expect = () => {
   const ws = join(dir, "frame.workspace.h5");
-  return existsSync(ws) ? createHash("sha256").update(readFileSync(ws)).digest("hex") : "absent";
+  const bytes = existsSync(ws) ? createHash("sha256").update(readFileSync(ws)).digest("hex") : "absent";
+  const path = resolve(ws);
+  return createHash("sha256").update(`${process.platform === "win32" || process.platform === "darwin" ? path.toLowerCase() : path}\0${bytes}`).digest("hex");
 };
 const set: OpenSet = { model: join(dir, "frame.h5"), geometry: null, results: null, user: null, workspace: null };
 if (process.argv.includes("--loop")) {

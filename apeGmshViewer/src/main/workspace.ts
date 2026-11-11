@@ -22,10 +22,13 @@
 //      `write_workspace` judges it: a file h5wasm cannot open, a truncated one
 //      included, is `not-hdf5`); it is made as a hard link and an unlink, and a
 //      holder that blocks the unlink takes the link back and refuses `held`.
-// Every edit carries `expect`, the `token` of the read it was made on (the
-// sha256 of the bytes main read, or `absent`). Main refuses the save, `stale`,
-// when the window set's file is not those bytes now: another set opened since
-// the page read its workspace, or another writer saved (#2890 review 1).
+// Every edit carries `expect`, the `token` of the read it was made on: the
+// sha256 of the workspace path main resolved (case-folded where `samePath`
+// folds), a NUL, and the bytes' sha256 or `absent`. It is opaque to the page.
+// Main refuses the save, `stale`, when the window set's file is not that path
+// with those bytes now: another set opened since the page read its workspace
+// (even one whose file is byte-identical, or absent too), or another writer
+// saved (#2890 reviews).
 // Every refusal replaces nothing: the old file is whole and this writer's
 // partial is gone.
 //
@@ -38,7 +41,8 @@ import { basename, dirname, join } from "node:path";
 import { inspect } from "node:util";
 import { buildWrite, ModelSide, readWorkspaceFile, setsIn, UNREADABLE, verdictsOf, verifyPartial, WorkspaceRefusal, writePartial, WriteRefusal, type Change, type WorkspaceData, type WorkspaceH5 } from "../reader/workspace.ts";
 import { SET_KINDS, type WorkspaceEdit, type WorkspaceIn, type WorkspaceSaveIn } from "../state/types/workspace.ts";
-import { candidates, type OpenSet } from "./pairing.ts";
+import { resolve } from "node:path";
+import { candidates, FOLD_CASE, type OpenSet } from "./pairing.ts";
 import { heldRefusal } from "../state/workspace.ts";
 
 export { heldRefusal };
@@ -168,7 +172,11 @@ export function workspaceOf(set: OpenSet | { reason: string }): { file: string; 
 const digestOf = (bytes: Uint8Array | null): string | null => (bytes === null ? null : createHash("sha256").update(bytes).digest("hex"));
 /** The token a read hands the page and a save expects back: the bytes' digest, or `absent`. */
 export const ABSENT = "absent";
-const tokenOf = (digest: string | null): string => digest ?? ABSENT;
+/** The token of `file` holding bytes of `digest` (null: no file): bound to the path main resolves, so another set's identical file never matches. */
+export function tokenOf(file: string, digest: string | null, fold: boolean = FOLD_CASE): string {
+  const path = resolve(file);
+  return createHash("sha256").update(`${fold ? path.toLowerCase() : path}\0${digest ?? ABSENT}`).digest("hex");
+}
 
 
 const HELD_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
@@ -208,8 +216,8 @@ export async function readWorkspace(deps: WorkspaceDeps, set: OpenSet | { reason
   } catch (err) {
     return { status: "refused", file, reason: isHeld(err) ? "held" : "cannot-read", detail: `${file} cannot be read: ${err instanceof Error ? err.message : String(err)}` };
   }
-  if (bytes === null) return { status: "absent", file, token: ABSENT };
-  const token = tokenOf(digestOf(bytes));
+  if (bytes === null) return { status: "absent", file, token: tokenOf(file, null) };
+  const token = tokenOf(file, digestOf(bytes));
   let data: WorkspaceData;
   try {
     data = readWorkspaceFile(deps.h5, file);
@@ -370,7 +378,7 @@ export async function saveWorkspace(deps: WorkspaceDeps, set: OpenSet | { reason
   let replaced = false;
   try {
     const previous = readPrevious(deps, file);
-    if (tokenOf(previous.digest) !== edit.expect) {
+    if (tokenOf(file, previous.digest) !== edit.expect) {
       throw new WriteRefusal("stale", `${file} is not the file the edit was made on (another set is open now, or another writer saved since it was read); it is read again: check it and save again. Nothing was replaced.`);
     }
     const side = new ModelSide(deps.h5, model);
