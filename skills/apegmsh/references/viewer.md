@@ -300,9 +300,10 @@ file the app writes, and only from the human's window: the agent modes
   writes a new file beside it as `<stem>.workspace.h5.<host>-<pid>-<random>.partial`,
   reads that back, and replaces the old file in one rename only if no one
   else changed it meanwhile (`revision-moved` otherwise: save again). A
-  save that dies leaves the old file whole. An edit made on a read the
-  file no longer matches (another writer saved, or another set opened
-  meanwhile) is refused, `stale`, and the panel reads the file again.
+  save that dies leaves the old file whole. An edit made on an earlier
+  read of the file (another writer saved since, or another set opened
+  meanwhile) is refused with reason `stale`, and the panel reads the
+  file again.
 - **Another program holding the file** (a Python session with it open)
   blocks the replace on Windows. The panel then says so, naming the file:
   close it there and save again. Nothing was replaced, and the app does

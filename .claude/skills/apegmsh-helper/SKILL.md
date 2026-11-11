@@ -63,7 +63,7 @@ What each file contains (do not read them all):
 - `model-scripts.md` — Script English rules + reference scripts (truss, 3-D frame, staged footing)
 - `gotchas.md` — anti-patterns
 - `ladruno.md` — fork-only emit/read
-- `viewer.md` — what apeGmshViewer shows; its Sets panel saves named sets to `<stem>.workspace.h5` (§9)
+- `viewer.md` — what apeGmshViewer shows
 
 Published docs: <https://nmorabowen.github.io/apeGmsh/> (`docs/`, ADR 0079).
 `internal_docs/` is unpublished. Changelog Unreleased is the moving truth.
