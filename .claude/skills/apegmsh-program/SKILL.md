@@ -167,7 +167,9 @@ scheduled lane with 2 or more non-green nights, labelled with its owning chain
 (#2556). Then run `ListAgents`: if another session titled "T coordinator"
 is live, stop. Announce yourself to every live program session
 and ask each to report to you at every landing, blocker, maintainer question,
-lock handover and handoff.
+lock handover and handoff. When no T is live, an orchestrator that lands its
+own PRs says so on #1202, and a T that boots takes the token and the locks over
+from that comment (2026-11-10, c6786353968).
 
 **Locks.**
 - Only the holder carries a `lock:<file>` label. The queue order
@@ -212,6 +214,18 @@ every check, look for (a) approved and green PRs not landed, (b) open PRs with
 no `Review-verdict` after about 6 h, (c) lock holders with no PR activity. Read
 the PR, then nudge the session with the exact next command. Reviewers run long
 checks in the background.
+
+**Landing token.** There is one landing token, and T holds it. Only the PR
+holding it runs `land_pr`. A session asks T for the token once its PR is
+review-approved, green and (for a `human-gate` PR) owner-approved, and gives the
+PR number and the head SHA. T grants it to one PR at a time, only when `main`'s
+latest Tests run is green, oldest ready PR first (T, 2026-11-03). The holder
+runs `land_pr` once, with no background landing loop, and reports the merge SHA;
+T verifies it with `compare` before the token moves. Before moving the token, T
+asks the current holder whether a `land_pr` run is in flight: two PRs held it
+for a moment once, and check 10 absorbed it (2026-11-10). After a landing, the
+next ready PR may merge `main` at once, so its checks run alongside `main`'s own
+run: check 10 allows a PR whose checks ran on a base containing `main`'s head.
 
 **Landing order.** A `main` Tests run takes about 50 minutes, and check 10 waits
 for it, so serial landings can starve a PR that has been ready longest (3a #2111
