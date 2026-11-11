@@ -1,7 +1,9 @@
 // Electron main process. It reads files and writes one (ADR 0112 D4, as ADR
 // 0132 D6 narrowed it): no network, no writes except the open set's
 // `<stem>.workspace.h5` when the human saves in the window (./workspace.ts,
-// HG9 on #2803) and the measurement / capture outputs a script asked for, and
+// HG9 on #2803), the `/combinations` zone of the open set's `<stem>.user.h5`
+// by ADR 0130 A4's copy-then-replace when the human saves a combination
+// (./combinations.ts, HG9 on #2693), and the measurement / capture outputs a script asked for, and
 // no child process except the user's editor for go-to-source (D3, ./source.ts). The one socket is a local pipe, private to one agent call:
 // the running window's acknowledgement of `--present` or `--snapshot`.
 //
@@ -74,6 +76,7 @@ import { goToSource, provenanceSources, type SourceScope } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
 import { nodeDeps, registerWorkspace } from "./workspace.ts";
+import { combinationToken, nodeCombinationDeps, registerCombinations, sweepOnOpen, type CombinationH5 } from "./combinations.ts";
 import type { WorkspaceH5 } from "../reader/workspace.ts";
 import { agentMode, arg, argvSkip, badArgs, file, headless, mode, out, reachMode, t0 } from "./args.ts";
 import { measureResultsMode, registerMeasure } from "./modes/measure.ts";
@@ -723,8 +726,11 @@ function currentSet(): OpenSet | null {
  * (state/reduce.ts `userPathOf`). The reason when there is none.
  */
 function pairedUser(): { ok: true; user: string; model: string | null; results: string | null } | { ok: false; reason: string } {
-  const set = mode === "view" ? currentSet() : mode === "render" && renderJob ? { model: renderJob.model, results: renderJob.results, user: null } : null;
-  if (set === null) return { ok: false, reason: mode === "view" || mode === "render" ? "no set is open" : `--mode=${mode} reads no user file` };
+  // VU9b: capture reads the set of `--file` too, so its stills show the user file (it never writes: the save door refuses it).
+  const captured = mode === "capture" ? windowSet() : null;
+  const set =
+    mode === "view" ? currentSet() : mode === "render" && renderJob ? { model: renderJob.model, results: renderJob.results, user: null } : captured !== null && !("reason" in captured) ? captured : null;
+  if (set === null) return { ok: false, reason: mode === "view" || mode === "render" || mode === "capture" ? "no set is open" : `--mode=${mode} reads no user file` };
   const from = set.model ?? set.results;
   let user = set.user;
   try {
@@ -751,6 +757,19 @@ function confined(door: string, asked: { path: string; model?: string | null; re
   return p;
 }
 
+// VU9b (ADR 0130 A4, A7.3; HG9 on #2693): the combination door writes the
+// window set's `<stem>.user.h5` (`pairedUser`), never a path the page names;
+// only the human's window saves, and every agent mode's save is refused.
+const combinationDeps = nodeCombinationDeps(h5wasm as unknown as CombinationH5, h5wasm.ready, `apeGmshViewer ${app.getVersion()}`, listDir);
+registerCombinations(ipcMain, {
+  target: () => {
+    const p = pairedUser();
+    return p.ok ? { user: p.user, model: p.model, results: p.results } : { reason: p.reason };
+  },
+  cannotWrite: () => (mode === "view" ? null : `--mode=${mode} never writes the user file: only the human's window saves (ADR 0128 INV-1)`),
+  deps: combinationDeps,
+});
+
 // ADR 0130 slice VU3a: the set's `<stem>.user.h5`, read only when the renderer
 // asks, so the first frame reads none of it. The answer is the file's index
 // (reader/userFile.ts `UserIndex`, never a `/results` DATA value) and A6's
@@ -768,7 +787,11 @@ ipcMain.handle("user:read", async (_e, req: unknown) => {
   const p = confined("user:read", { path: r.path, model: r.model as string | null, results: r.results as string | null });
   if (!p.ok) return { ok: false, error: p.reason };
   await h5wasm.ready;
-  return readUserSet(h5wasm as unknown as UserH5, p.user, p.model, p.results, listDir);
+  // VU9b, HG9 rule 4: the human's window sweeps this host's dead combination partials when it opens the file.
+  if (mode === "view") sweepOnOpen(combinationDeps, p.user);
+  const read = readUserSet(h5wasm as unknown as UserH5, p.user, p.model, p.results, listDir);
+  // VU9b: the token a combination save made on this read sends back (`combinations:save` refuses `stale` on another).
+  return read.ok ? { ...read, token: combinationToken(p.user, read.user.revision) } : read;
 });
 
 // ADR 0130 slice VU7b-1 (#2740): one result of one `/spectra` case of the

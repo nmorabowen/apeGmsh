@@ -2,7 +2,9 @@
 // set's `.user.h5` (ADR 0130), a User Combination's read and a user result's
 // read. It writes `user`, `combination` and `userResult` only. A new user
 // file leaves a User Combination shown when the file no longer lists it, and
-// that is the phase's; reduce.ts applies it after this returns.
+// that is the phase's; reduce.ts applies it after this returns. VU9b: a read
+// carries main's save token, and a combination save that landed arrives as a
+// `userRead` of the file main read again after the replace (panels/combine.ts).
 
 import type { UserEvent } from "../types/events/user.ts";
 import {
@@ -79,6 +81,11 @@ export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): User
     const row = (r: UserCombinationIn): UserCombinationIn => ({ ...r, terms: r.terms.map((t) => ({ ...t })) });
     table = { rows: c.value.rows.map(row), modelRows: c.value.modelRows.map(row), refused: c.value.refused.map((r) => ({ ...r })) };
   }
+  // VU9b: the generations, for the authoring panel's revert; a reader before VU9b names none.
+  const held = c.ok ? (c.value.generations ?? []) : [];
+  const current = c.ok ? (c.value.generation ?? null) : null;
+  if (!held.every((g) => Number.isInteger(g) && g >= 0)) throw new RangeError(`userRead: generations ${JSON.stringify(held)} are not g<N> numbers`);
+  const generations: UserInfo["generations"] = current === null ? null : { current, held: [...held].sort((a, b) => a - b) };
   let results: UserInfo["results"] = null;
   const r = index.results;
   if (!r.ok) results = { ok: false, reason: r.reason };
@@ -124,7 +131,7 @@ export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): User
     });
     spectra = { ok: true, items, refused: refusalsOf(sp.value.refused), stale: zoneMark("spectra") };
   }
-  return { warnings, combinations, table, results, spectra, modes, entities: entitiesOf(index.entities ?? null, zoneMark("entities")) };
+  return { warnings, combinations, table, generations, results, spectra, modes, entities: entitiesOf(index.entities ?? null, zoneMark("entities")) };
 }
 
 /** VU8: `/entities` as the renderer draws it: the standing rows, each with its `ENTITY_ROW`, and the refused ones. */
@@ -195,6 +202,14 @@ function withUser(u: UserSlice, user: State["user"]): UserSlice {
   return { ...u, user, combination: null, userResult: null };
 }
 
+/** The user file state a `user:read` answer for `path` makes (VU9b: with its save token, null when main gave none). */
+function readyOf(path: string, read: UserReadIn): State["user"] {
+  if (!read.ok) return { status: "failed", path, error: read.error };
+  if (read.user.path !== path) throw new Error(`userRead: the answer is for ${read.user.path}, not ${path}`);
+  if (read.token !== undefined && typeof read.token !== "string") throw new RangeError(`userRead: token ${JSON.stringify(read.token)} is not a string`);
+  return { status: "ready", path, info: userInfoOf(read.user, read.staleness), token: read.token ?? null };
+}
+
 /** The user-file slice after `e`: the same object when nothing changed. */
 export function reduceUser(u: UserSlice, e: UserEvent, inputs: UserInputs): UserSlice {
   switch (e.type) {
@@ -207,9 +222,7 @@ export function reduceUser(u: UserSlice, e: UserEvent, inputs: UserInputs): User
     }
     case "userRead": {
       if (!u.user || u.user.path !== e.path) throw new Error(`userRead: ${e.path} is not the open .user.h5`);
-      if (!e.read.ok) return withUser(u, { status: "failed", path: e.path, error: e.read.error });
-      if (e.read.user.path !== e.path) throw new Error(`userRead: the answer is for ${e.read.user.path}, not ${e.path}`);
-      return withUser(u, { status: "ready", path: e.path, info: userInfoOf(e.read.user, e.read.staleness) });
+      return withUser(u, readyOf(e.path, e.read));
     }
     case "userClosed":
       return u.user === null ? u : withUser(u, null);

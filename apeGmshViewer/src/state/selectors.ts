@@ -2,6 +2,7 @@
 // from. A panel imports this module and store.ts, nothing else of the app.
 
 import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
+import { judgeDraft } from "../combination/author.ts";
 import { CombinationRefused, CombinationTable, isSigned } from "../combination/evaluate.ts";
 import { REASONS, type Refusal as RuleRefusal } from "../reader/userRules.ts";
 import type { OpsFamily, Param } from "../model/types.ts";
@@ -177,6 +178,8 @@ export { vectorComponentOf, vectorFieldOf, vectorFieldsOf, type VectorField } fr
 import type {
   AnalysisDef,
   ArtifactInfo,
+  CombinationDraft,
+  CombineState,
   Decl,
   DeclPath,
   DeclRecord,
@@ -1422,11 +1425,12 @@ export function combinationTableOf(s: State): CombinationTable | null {
  * mode terms only is read from the results file, which this app does not
  * combine.
  */
-export function combinationFieldsOf(s: State, name: string): { ok: true; fields: NodalField[]; cases: string[] } | { ok: false; reason: string } {
+export function combinationFieldsOf(s: State, name: string, over: CombinationTable | null = null): { ok: true; fields: NodalField[]; cases: string[] } | { ok: false; reason: string } {
   const u = s.user;
   if (u?.status !== "ready") return { ok: false, reason: "the user file is not read" };
   const file = baseName(u.path);
-  const table = combinationTableOf(s);
+  // VU9b: a draft is judged over the table it would make (`over`), not the file's.
+  const table = over ?? combinationTableOf(s);
   if (!table) return { ok: false, reason: `${file} holds no /combinations row` };
   let cases: string[];
   try {
@@ -1499,6 +1503,79 @@ export function combinationShownOf(s: State): { name: string; rule: string; stal
   if (!item) return null;
   const sign = combinationSign(s, at.name);
   return { name: at.name, rule: item.rule, stale: item.stale, signed: sign.signed, why: combinationDeform(s, at.name).reason };
+}
+
+// -- VU9b: authoring a User Combination (ADR 0130 A3, A4; HG9 on #2693) ----------------------
+
+/** The key of a draft's check: the user file, the read's token and the draft. Null with no file read. */
+export function draftKeyOf(s: State, draft: CombinationDraft): string | null {
+  const u = s.user;
+  if (u?.status !== "ready") return null;
+  return JSON.stringify([u.path, u.token ?? null, draft]);
+}
+
+/** VU9b: the panel's entry in the phase bar, or null when there is no user file to add to (the app never creates one). */
+export function combineEntryOf(s: State): { title: string } | null {
+  const u = s.user;
+  if (u?.status !== "ready") return null;
+  const c = u.info.combinations;
+  if (c !== null && !c.ok) return null;
+  return { title: `Write a User Combination and save it into ${baseName(u.path)} (ADR 0130 A4: a copy of the file, then a replace)` };
+}
+
+/**
+ * The draft judged by the readers' rules beside the file's rows (combination/
+ * author.ts `judgeDraft`), and what VU4's evaluator reads for it: the `/spectra`
+ * cases it reaches and the first nodal quantity they hold (null when none).
+ * Null with no draft to judge. The rows on screen are the ones that stand; main
+ * judges again against every stored row before it writes.
+ */
+export function draftJudgedOf(
+  s: State,
+  draft: CombinationDraft,
+): { ok: true; key: string; path: string; table: CombinationTable; name: string; cases: string[]; quantity: { label: string; component: string } | null; staleness: StaleMark } | { ok: false; key: string; reason: string; detail: string } | null {
+  const key = draftKeyOf(s, draft);
+  const u = s.user;
+  if (key === null || u?.status !== "ready") return null;
+  const t = u.info.table;
+  const c = u.info.combinations;
+  if (c !== null && !c.ok) return { ok: false, key, reason: "refused", detail: `/combinations of ${baseName(u.path)} is refused (${c.reason}), so nothing is added to it` };
+  const j = judgeDraft(t?.rows ?? [], t?.modelRows ?? [], draft);
+  if (!j.ok) return { ok: false, key, reason: j.reason, detail: j.detail };
+  let cases: string[];
+  try {
+    cases = spectrumCasesOf(j.table, j.name);
+  } catch (err) {
+    if (err instanceof CombinationRefused) return { ok: false, key, reason: err.reason, detail: err.detail };
+    throw err;
+  }
+  const f = cases.length ? combinationFieldsOf(s, j.name, j.table) : null;
+  const comp = f?.ok ? f.fields[0]?.components[0]?.key ?? null : null;
+  const slash = comp === null ? -1 : comp.indexOf("/");
+  const quantity = comp === null || slash < 0 ? null : { label: comp.slice(0, slash), component: comp.slice(slash + 1) };
+  const sp = u.info.spectra;
+  const staleness = sp === null ? { stale: false, reason: "" } : sp.stale;
+  return { ok: true, key, path: u.path, table: j.table, name: j.name, cases, quantity, staleness };
+}
+
+/** Why the panel may not ask main for `op` now, or null. The save token is the read's: a save is never made on another. */
+export function combineCannotSave(s: State, c: CombineState, op: "add" | "revert"): string | null {
+  const u = s.user;
+  if (u?.status !== "ready") return u === null ? "the set has no .user.h5 (write one with Python first)" : "the user file is not read";
+  if ((u.token ?? null) === null) return "this window does not save: only the human's window writes the user file";
+  if (c.saving !== null) return "a save is running";
+  if (op === "add") {
+    const key = draftKeyOf(s, c.draft);
+    if (c.check === null || c.check.key !== key || c.check.status === "checking") return "the draft is being checked";
+    if (c.check.status === "refused") return `the draft is refused (${c.check.reason}): ${c.check.detail}`;
+    return null;
+  }
+  const g = u.info.generations ?? null;
+  if (g === null) return "the file holds no /combinations to revert";
+  const top = g.held[g.held.length - 1];
+  if (top !== g.current) return `the last save was reverted already (g${g.current} is in force, below g${top}); the app gives one revert`;
+  if (!g.held.some((n) => n < g.current)) return `/combinations holds no generation before g${g.current}`;
+  return null;
 }
 
 /** Whether combination `name` is signed, from the descriptors (A3), or null with why the table cannot say. */

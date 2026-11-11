@@ -63,10 +63,68 @@ function exactInodes(fs: H5FS | null): void {
   exact.add(fs);
 }
 
+/**
+ * VU9b (HG9 rule 2 on #2693): every file `openH5` opened and has not closed,
+ * by its path as the caller named it. A writer that replaces a file closes
+ * this app's own handles on it first (`closeHandlesOn`), so the replace is
+ * never blocked by the app itself and no handle reads the file it replaced.
+ */
+const live = new Map<{ close(): unknown }, string>();
+
+/** The path as the file system compares it: separators unified, and case-folded on Windows and macOS. */
+function pathKey(path: string): string {
+  const p = path.replace(/\\/g, "/");
+  return typeof process !== "undefined" && (process.platform === "win32" || process.platform === "darwin") ? p.toLowerCase() : p;
+}
+
+/** How many `openH5` handles on `path` are open now. */
+export function openHandlesOn(path: string): number {
+  const k = pathKey(path);
+  let n = 0;
+  for (const p of live.values()) if (p === k) n++;
+  return n;
+}
+
+/** Close every `openH5` handle on `path`, and say how many were open. */
+export function closeHandlesOn(path: string): number {
+  const k = pathKey(path);
+  const mine = [...live].filter(([, p]) => p === k).map(([f]) => f);
+  for (const f of mine) f.close();
+  return mine.length;
+}
+
 /** Open `path` read-only with h5wasm, with HDF5 comparing exact file ids. */
 export function openH5<F>(h5: H5Openable<F>, path: string): F {
   exactInodes(h5.FS);
-  return new h5.File(path, "r");
+  const f = new h5.File(path, "r");
+  const handle = f as unknown as { close?: () => unknown; file_id?: bigint | number };
+  // A failed open (negative id) holds nothing; a handle is tracked until its own close.
+  if (typeof handle.close === "function" && !(Number(handle.file_id) < 0)) {
+    const close = handle.close.bind(f);
+    const entry = { close: () => (live.has(entry) ? (live.delete(entry), close()) : undefined) };
+    handle.close = entry.close;
+    live.set(entry, pathKey(path));
+  }
+  return f;
+}
+
+/** What `appendH5` needs of the h5wasm module. */
+export interface H5Appendable<F> {
+  File: new (filename: string, mode: "a") => F;
+  readonly FS: H5FS | null;
+}
+
+/**
+ * VU9b (ADR 0130 A4, HG9 rule 1): open a writer's own partial for appending
+ * (`"a"`). Only a `.partial` is ever opened for writing: the live `.user.h5`
+ * is copied, and the copy is appended to, never the original.
+ */
+export function appendH5<F extends { file_id: bigint | number }>(h5: H5Appendable<F>, path: string): F {
+  if (!path.endsWith(".partial")) throw new Error(`appendH5 opens only a writer's own .partial for writing, never ${path} (HG9 rule 1: the live file is never opened for writing)`);
+  exactInodes(h5.FS);
+  const f = new h5.File(path, "a");
+  if (Number(f.file_id) < 0) throw new Error(`HDF5 could not open ${path} for appending`);
+  return f;
 }
 
 /** What `createH5` needs of the h5wasm module. */

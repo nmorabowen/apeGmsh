@@ -10,7 +10,13 @@ import type { Vec3 } from "./camera.ts";
  * reader/read.ts imports state/results.ts, a cycle); test/state/user.test.ts
  * assigns the reader's type to this one, so the two cannot drift apart.
  */
-export type UserReadIn = { ok: true; user: UserIndexIn; staleness: UserStalenessIn } | { ok: false; error: string };
+export type UserReadIn = {
+  ok: true;
+  user: UserIndexIn;
+  staleness: UserStalenessIn;
+  /** VU9b: what a combination save made on this read sends back as `expect` (main/combinations.ts `combinationToken`: the path main resolved and `/meta@revision`); absent where main gives none (an agent mode) */
+  token?: string;
+} | { ok: false; error: string };
 export type UserZoneIn<T> = { ok: true; value: T } | { ok: false; reason: string };
 /** reader/userRules.ts `Combination`: a resolved row, its terms by source address (A3). VU7b-2 evaluates it, so its terms are typed. */
 export interface UserCombinationIn {
@@ -43,7 +49,8 @@ export interface UserIndexIn {
   /** every root member but `/meta`, by name */
   zones: string[];
   warnings: string[];
-  combinations: UserZoneIn<{ rows: UserCombinationIn[]; modelRows: UserCombinationIn[]; refused: UserRefusalIn[] }>;
+  /** VU9b: `generation` is the `g<N>` read (`@current`) and `generations` every `g<N>` the zone holds, ascending; both absent from an index built before VU9b, and null / [] with no zone */
+  combinations: UserZoneIn<{ rows: UserCombinationIn[]; modelRows: UserCombinationIn[]; refused: UserRefusalIn[]; generation?: number | null; generations?: number[] }>;
   results: UserZoneIn<{ entries: UserResultEntryIn[]; refused: UserRefusalIn[] }>;
   modes: UserZoneIn<UserModeTableIn> | null;
   spectra: UserZoneIn<{ cases: UserSpectrumCaseIn[]; refused: UserRefusalIn[] }> | null;
@@ -213,6 +220,12 @@ export interface UserInfo {
    * `/combinations` is refused or neither file has a row.
    */
   table: { rows: UserCombinationIn[]; modelRows: UserCombinationIn[]; refused: UserRefusalIn[] } | null;
+  /**
+   * VU9b: the `/combinations` generations, for the authoring panel's revert:
+   * `current` is `@current`, `held` every `g<N>` ascending. Null when the zone
+   * is refused or the file holds none (a first save creates it).
+   */
+  generations?: { current: number; held: number[] } | null;
   /** the User Results picker group; null when the file has no `/results` entry */
   results: UserGroup<UserResult> | null;
   /** the Spectra family: its cases and each refused one, or why the zone is refused; null when the file has none */
@@ -283,4 +296,71 @@ export type UserResultRead =
 export type UserFileState =
   | { status: "reading"; path: string }
   | { status: "failed"; path: string; error: string }
-  | { status: "ready"; path: string; info: UserInfo };
+  /** VU9b: `token` is the read's save token (`UserReadIn.token`), null where main gave none, so no save is made on it */
+  | { status: "ready"; path: string; info: UserInfo; token?: string | null };
+
+// -- VU9b (ADR 0130 A4, HG9 on #2693): authoring a User Combination in the app ---------------
+
+/** One term of the draft, as the authoring panel holds it: a source address (A3) and a factor. */
+export interface DraftTerm {
+  kind: string;
+  source: string;
+  step: number;
+  mode: number;
+  factor: number;
+}
+/** The combination the human is writing (A3's row; null `fraction` / `damping` is NaN in the file, "" `envelope` none). */
+export interface CombinationDraft {
+  name: string;
+  rule: string;
+  envelope: string;
+  fraction: number | null;
+  damping: number | null;
+  terms: DraftTerm[];
+}
+/**
+ * The check of the draft under `key` (selectors `draftKeyOf`): running; standing,
+ * with VU4's evaluator's value for one quantity (`preview`) or, with `preview`
+ * null, why the app cannot evaluate it (`note`: a stage or mode term is read
+ * from the results file); or refused, with the reader's or the evaluator's
+ * reason. Only a standing draft is offered for save.
+ */
+export type DraftCheck =
+  | { key: string; status: "checking" }
+  | {
+      key: string;
+      status: "ok";
+      preview: { label: string; nodes: number; range: { min: number; max: number } | null; signed: boolean } | null;
+      note: string | null;
+    }
+  | { key: string; status: "refused"; reason: string; detail: string };
+/**
+ * What `combinations:save` takes: one edit, never a path (main writes the open
+ * set's own `.user.h5`). `add` saves `row` as a new generation, `revert` puts
+ * `@current` back to the generation before it (A7.3: one revert). `expect` is
+ * the token of the read the edit was made on.
+ */
+export type CombinationEdit = { op: "add"; row: UserCombinationIn; expect: string } | { op: "revert"; expect: string };
+/**
+ * Main's answer to a combination save: the file read again after the replace
+ * (with its new token), or a refusal that replaced nothing. `held` is the typed
+ * refusal of a replace another program blocks (HG9 rule 3).
+ */
+export type CombinationSaveIn =
+  | { ok: true; op: "add" | "revert"; file: string; generation: number; revision: number; read: UserReadIn }
+  | { ok: false; reason: string; detail: string; file: string | null; held: boolean };
+/**
+ * VU9b: the authoring panel's own state (panels/combine.ts holds it; the store
+ * holds the file it is made against). New events would need the store's event
+ * ledger (state/spotlight.ts), which this slice does not own.
+ */
+export interface CombineState {
+  draft: CombinationDraft;
+  check: DraftCheck | null;
+  /** the save in flight (its op), or null */
+  saving: "add" | "revert" | null;
+  /** the last refusal, shown until the next save */
+  notice: { reason: string; detail: string; file: string | null; held: boolean } | null;
+  /** the last save that landed: what it did, and the generation now in force */
+  last: { op: "add" | "revert"; name: string | null; generation: number; file: string } | null;
+}
