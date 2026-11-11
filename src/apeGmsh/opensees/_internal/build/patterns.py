@@ -693,7 +693,7 @@ def _macro_owner_filter(
     cannot place it. Its rank is the one ``BuiltModel._emit_partitioned``
     declares it on, derived the same way: ``macro_element_rank`` over the
     membrane's outer loop and named nodes, ``node_pair_rank`` over a
-    node-pair element's two endpoints (#2535). Unpartitioned
+    node-pair element's two endpoints. Unpartitioned
     (``partition_rank is None``) every row is owned. Ranks are computed
     lazily, once per spec, so a model with no loaded macro-element pays
     nothing.
@@ -825,7 +825,7 @@ def resolve_ele_load_commands(
     ``(Fx, Fy, Fz, Mx, My, Mz)`` in 3-D.
     """
     cmds: list[tuple[int | float | str, ...]] = []
-    # A macro-element row is declared on one rank only (#2535).
+    # A macro-element row is declared on one rank only; so is its load.
     owns_macro = _macro_owner_filter(fem, partition_rank)
 
     # 1. Explicit Plain.ele_loads (beam_uniform / surface_load / self_weight).
