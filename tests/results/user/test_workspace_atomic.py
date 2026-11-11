@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import subprocess
 import sys
 import textwrap
@@ -25,6 +26,7 @@ from apeGmsh.results.user import (
     VariantDef,
     ViewDef,
     WorkspaceFile,
+    WorkspaceWriteRefused,
     read_variants,
     write_variants,
     write_workspace,
@@ -149,6 +151,59 @@ def test_a_later_write_survives_and_sweeps_the_dead_writers_partial(saved: Path)
     write_workspace(saved, views=[ViewDef("after", {"camera": "top"})])
     assert [v.name for v in WorkspaceFile(saved).views] == ["iso", "after"]
     assert not _partials(saved), "this host's dead partial was not swept"
+
+
+HOLDERS = {
+    "h5py": "import h5py, sys, time; f = h5py.File(sys.argv[1], 'r')",
+    "handle": "import sys, time; f = open(sys.argv[1], 'rb')",
+}
+ON_WINDOWS = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="only Windows blocks replacing a file another process holds open")
+
+
+@ON_WINDOWS
+@pytest.mark.parametrize("holder", sorted(HOLDERS))
+def test_a_held_workspace_refuses_the_write_and_stays_whole(saved: Path, holder: str) -> None:
+    """#2857: a reader's handle on the old file is a typed refusal, not a raw OSError."""
+    before = _digest(saved)
+    code = HOLDERS[holder] + "; print('ready', flush=True); time.sleep(60)"
+    proc = subprocess.Popen([sys.executable, "-c", code, str(saved)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert proc.stdout is not None
+        line = proc.stdout.readline().strip()
+        assert line == "ready", f"the holder never opened the file: {line!r}"
+        with pytest.raises(WorkspaceWriteRefused) as caught:
+            write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
+    finally:
+        proc.kill()  # only the holder this test started
+        proc.wait(timeout=30)
+        for stream in (proc.stdout, proc.stderr):
+            if stream:
+                stream.close()
+    assert caught.value.reason == "held-open"
+    assert str(saved) in str(caught.value) and "another program holds" in str(caught.value)
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert _digest(saved) == before, "the held file changed"
+    assert not _partials(saved), "the refused write left its partial behind"
+    assert sorted(p.name for p in saved.parent.iterdir()) == ["frame.h5", saved.name]
+    write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])  # released: it goes
+    assert [v.name for v in WorkspaceFile(saved).views] == ["iso", "later"]
+
+
+@ON_WINDOWS
+def test_a_read_only_workspace_keeps_its_own_error(saved: Path) -> None:
+    """A read-only target also answers WinError 5, but nothing holds it: not ``held-open``."""
+    before = _digest(saved)
+    os.chmod(saved, stat.S_IREAD)
+    try:
+        with pytest.raises(PermissionError):
+            write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
+    finally:
+        os.chmod(saved, stat.S_IREAD | stat.S_IWRITE)
+    assert _digest(saved) == before
+    assert not _partials(saved)
 
 
 def test_a_killed_manifest_writer_leaves_the_previous_manifest_whole(saved: Path) -> None:
