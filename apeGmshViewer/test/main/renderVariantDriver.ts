@@ -86,6 +86,14 @@ if (opt("battery") === "no-variants") {
   rewrite((rows) => (rows[1]!.label = "Cracked x2"));
   out["reload:old label"] = seen(await call("render:variant", { index: 1, label: "Cracked" }));
   out["reload:new label"] = seen(await call("render:variant", { index: 1, label: "Cracked x2" }));
+  // Review F1: a rewrite before a rowless shot is read too, so its compare never resolves against a row shot's read.
+  rewrite((rows) => (rows[1]!.label = "Renamed"));
+  out["reload:null"] = seen(await call("render:variant", null));
+  out["reload:compare stale"] = seen(await call("variants:compare", 1, "Cracked x2"));
+  out["reload:compare now"] = seen(await call("variants:compare", 1, "Renamed"));
+  await call("compare:close");
+  rewrite((rows) => (rows[1]!.label = "Cracked x2"));
+  out["reload:row again"] = seen(await call("render:variant", { index: 1, label: "Cracked x2" }));
   // 5. D8: a row whose path leaves the study is refused by the read, with its code.
   rewrite((rows) => (rows[1]!.path = "../outside/plate_cracked.h5"));
   out["confine:row"] = seen(await call("render:variant", { index: 1, label: "Cracked x2" }));

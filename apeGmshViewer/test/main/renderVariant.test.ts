@@ -88,6 +88,14 @@ test("reload: a manifest rewritten between two shots is read again, never the fi
   assert.equal(s("reload:new label").ok, true, s("reload:new label").reason ?? "");
 });
 
+test("reload (review F1): a rewrite before a rowless shot is read too, so its compare is judged against the file now", () => {
+  assert.equal(s("reload:null").ok, true, s("reload:null").reason ?? "");
+  assert.equal(s("reload:compare stale").ok, false, "the label the rewrite removed is refused");
+  assert.match(s("reload:compare stale").reason!, /variant row 1 is "Renamed", not "Cracked x2"/);
+  assert.equal(s("reload:compare now").ok, true, s("reload:compare now").reason ?? "");
+  assert.equal(s("reload:row again").ok, true, s("reload:row again").reason ?? "");
+});
+
 test("D8: a row whose path leaves the study is refused with its code, and nothing of it is drawn", () => {
   assert.equal(s("confine:row").ok, false);
   assert.match(s("confine:row").reason!, /variant row 1 is refused \(bad-path: .*could leave the manifest's folder/);

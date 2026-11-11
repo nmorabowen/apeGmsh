@@ -293,6 +293,9 @@ export function registerRender(host: RenderHost): void {
     const job = renderJob;
     const refuse = (reason: string) => ({ ok: false as const, reason: `render:variant: ${reason}` });
     if (asked === null) {
+      // D9.3: the manifest is read again here too, so a later shot's `compare` resolves against the file as it is
+      // now, never against a row shot's read (review F1). A spec with no row never reaches this door.
+      if (study.manifest !== null) study.reread();
       const own = study.rowOfModel(job.model);
       if (own !== null && study.compare?.row.index === own.index) closeCompare();
       drawn = { model: job.model, geometry: job.geometry, results: job.results };
