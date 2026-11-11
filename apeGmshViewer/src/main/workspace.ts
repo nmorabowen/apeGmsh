@@ -342,8 +342,11 @@ function renameAside(deps: WorkspaceDeps, file: string): string {
   throw new WriteRefusal("not-a-file", `${file}: no free name to rename it aside`);
 }
 
-/** Remove this host's partials whose writer has died; a failure here never fails the save (Python's `_sweep_dead_partials`). */
-function sweepDeadPartials(deps: WorkspaceDeps, file: string): void {
+/**
+ * Remove this host's partials of `file` whose writer has died; a failure here never fails the save (Python's
+ * `_sweep_dead_partials`). VU9b's combination writer (./combinations.ts) sweeps its `.user.h5` partials with it too.
+ */
+export function sweepDeadPartials(deps: Pick<WorkspaceDeps, "host" | "alive"> & { disk: Pick<WorkspaceDisk, "list" | "unlink"> }, file: string): void {
   if (deps.host === UNKNOWN_HOST) return;
   const esc = basename(file).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(`^${esc}\\.([a-z0-9_]+)-(\\d+)-[0-9a-f]+\\.partial$`);

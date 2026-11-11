@@ -357,8 +357,11 @@ what you derive from them:
 ```
 
 You write `<stem>.user.h5` from Python with one call. apeGmshViewer reads
-it and does not write it today. ADR 0130 plans for the app to write the
-`/combinations` zone and nothing else.
+it, and writes the `/combinations` zone and nothing else: a User
+Combination the human saves in the app is a new generation `g<N+1>`
+(copy, add, replace; ADR 0130 A4), and one revert puts `@current` back.
+`UserFile(...).combinations()` reads what the app wrote like any other
+generation. The app never creates the file.
 
 ```python
 import numpy as np

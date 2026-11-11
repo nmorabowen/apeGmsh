@@ -13,6 +13,8 @@ export interface HarnessContext {
   readonly effects: Effects;
   readonly viewport: Viewport;
   readonly bridge: Bridge;
+  /** VU9b: the combination authoring panel (panels/combine.ts), for its stills; absent before it is mounted */
+  readonly combine?: { open(): void; receive(answer: import("../../state/types.ts").CombinationSaveIn): void };
 }
 
 /** What main's `config()` answers. */

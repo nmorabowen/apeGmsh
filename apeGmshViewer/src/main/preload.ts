@@ -39,6 +39,9 @@
 //                          it takes no argument, main names the file
 //   workspaceSave(edit)     VU9a: one edit (`{op, ...}`) into that file; never a
 //                          path (option A, #2753). A refusal replaced nothing
+//   combinationsSave(edit)  VU9b (ADR 0130 A4): add a User Combination to the open
+//                          set's `<stem>.user.h5`, or revert the last save, by
+//                          copy-then-replace (main/combinations.ts); never a path
 // onOpen and onFileChanged return a function that removes the listener.
 // Until the page subscribes to a channel, main reloads the page instead of
 // sending on it, so the P0 page (which reads the model from config) follows.
@@ -193,4 +196,7 @@ contextBridge.exposeInMainWorld("viewer", {
   // the set's own `<stem>.workspace.h5`, and refuses an edit with any key its op does not name (a path included).
   workspaceRead: () => ipcRenderer.invoke("workspace:read"),
   workspaceSave: (edit: unknown) => ipcRenderer.invoke("workspace:save", edit),
+  // VU9b (ADR 0130 A4; HG9 on #2693): one combination edit (`{op: add, row, expect}` or `{op: revert, expect}`) into
+  // the window set's own `<stem>.user.h5`; it never names a file, and main refuses any key the op does not name.
+  combinationsSave: (edit: unknown) => ipcRenderer.invoke("combinations:save", edit),
 });

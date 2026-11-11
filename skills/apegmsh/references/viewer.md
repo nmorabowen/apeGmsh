@@ -145,6 +145,37 @@ colour range is the combination's own values unless you fix it.
 - A row from the model's `/opensees/combinations` says `from model.h5` in
   the tooltip.
 
+**Writing one in the app** (ADR 0130 A4). The `+` beside the families
+opens the **New combination** panel in the right rail: a name, a rule
+(and its envelope, fraction or damping), and terms, each a source address
+(`kind`, `source`, `step`, `mode`) and a factor. While you type, the draft
+is checked by the readers' rules beside the file's rows (a duplicate, a
+cycle, a padded name or a missing fraction is refused with its reason),
+then evaluated by the app's evaluator for one nodal component of the
+`/spectra` cases it reaches, and the panel shows the range. A draft of
+stage or mode terms stands but is not evaluated in the app (it combines
+`/spectra` cases only); Python's `Results` evaluates it. Only a draft that
+stands can be saved.
+
+- **Save** adds a generation `g<N+1>` to `/combinations` of the set's
+  `<stem>.user.h5`: the rows in force plus the new one. The app copies the
+  file to `<stem>.user.h5.<host>-<pid>-<random>.partial`, adds to the copy,
+  reads it back, and replaces the original only if `/meta@revision` has not
+  moved; it never opens the live file for writing. A killed save leaves the
+  old file byte-identical, and the next open sweeps the dead partial. No
+  other zone changes.
+- **Revert last save** undoes the save made last in this window, once: it
+  puts `@current` back to the generation that was in force when that save
+  was made, by the same copy-then-replace. It is offered only right after
+  such a save, and refused (`stale`) when the file changed since. A window
+  opened later has nothing to revert. Earlier generations stay in the file.
+- Saving needs free disk space of at least the file's size (a second copy
+  sits beside it while it runs), and refuses with a message otherwise.
+- **Another program holding the file** (a Python session) blocks the
+  replace: the panel names the file. Close it there and save again.
+- The app adds to a `.user.h5` and never creates one: write it with Python
+  first (`references/results.md` §4). Only the human's window saves.
+
 ## 6. The User Results group
 
 The Contour card's field picker lists **Results** (what the recorder
@@ -273,9 +304,10 @@ translation, a half circle per restrained rotation.
 ## 9. Named sets — the Sets panel and `<stem>.workspace.h5` (ADR 0132)
 
 The **Sets** panel in the right rail keeps what the human makes in the
-window in the set's `<stem>.workspace.h5`, beside the model. It is the one
-file the app writes, and only from the human's window: the agent modes
-(`--render`, `--describe`, capture) read it and never save.
+window in the set's `<stem>.workspace.h5`, beside the model. The app
+writes two things, and only from the human's window: this file, and a User
+Combination into the `.user.h5` (§5). The agent modes (`--render`,
+`--describe`, capture) read both and never save.
 
 - **Naming a set.** Pick **Nodes** or **Elements**, click the model
   (Shift+click adds), type a name and **Save set**. Nodes: each click
