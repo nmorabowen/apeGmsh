@@ -96,7 +96,7 @@ test("file-level refusals: not HDF5, the version floor, a newer minor opens read
 
 test("strict JSON: Python's json with no NaN, no key twice, no overflowing float, and int tokens kept apart from float tokens", () => {
   for (const bad of ["{a: 1}", '{"a": NaN}', '{"a": Infinity}', '{"a": 1, "a": 2}', "[1,]", '{"a": 1e400}', "ï»¿{}", '{"a": "\u0001"}', "{} x"]) {
-    assert.throws(() => strictJson(bad), undefined, bad);
+    assert.throws(() => strictJson(bad), Error, bad);
   }
   const r = strictJson('{"steps": [0, 1.0, 2e0, -1], "__proto__": {"x": 1}}');
   const v = r.value as { steps: number[] } & Record<string, unknown>;
