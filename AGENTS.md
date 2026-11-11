@@ -85,7 +85,7 @@ a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<
   - **No changed file is inside an open `freeze:<file>` label** (a split window, announced on
     the board with its expiry). **A `program` PR changes only its slice card's Owned files** (check 9; `Slice: #<n>` in the body, conventions in [slice_card.md](internal_docs/program/slice_card.md); #1812 changed 52 files against 6 owned); `scope-ok` overrides it, `--owned-only` runs it alone.
   - **Not conflicting, and the required checks** (`lock-tests`, `emit-cost-gate`, `static-gates`,
-    `suite`, `live-stock`, plus `app-tests` when `apeGmshViewer/` changes, #2864) **are green on the
+    `suite`, `live-stock`, plus `app-tests` when a path its filter names changes, #2864) **are green on the
     head SHA.** `main` takes squash merges only and does not require an up-to-date branch. "Zero
     checks visible" means conflicting or a stalled Actions, not green; pending is a refusal. Never
     `--auto`: it ignores the non-required lanes, and #757 merged under it before any check was

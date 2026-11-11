@@ -8,8 +8,8 @@
 
 The checks run in order and the first failure refuses, naming the check and
 the lesson. Check 6 requires the five required checks green on the head, and
-``app-tests`` too when the PR changes ``apeGmshViewer/`` (#2864): that lane is
-path-filtered, so it is not in the ruleset. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
+``app-tests`` too when the PR changes a path that lane's filter names (APP_PATHS:
+``apeGmshViewer/`` and the pairing oracle's inputs, #2864); it is not in the ruleset. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
 ADR's Status to Accepted is refused outright, and an edit to a baseline file
 (the freeze census, the retirement ledger) needs the ``human-gate`` label. The maintainer's web merge is the
 exception path for both, by design. Check 9 (lesson #1788) refuses a ``program``
@@ -74,12 +74,21 @@ Real = Callable[[str], bool]
 #: reported is a refusal: zero checks visible means a conflict or a stalled
 #: Actions, not green (#630).
 REQUIRED_CHECKS = ("lock-tests", "emit-cost-gate", "static-gates", "suite", "live-stock")
-#: VH0 (#2864): a PR that changes the app (ADR 0112) also needs its own lane, tests.yml's
-#: `app-tests` job (the name must equal the job key there). The job's first step skips the
-#: app checks unless the PR changes `apeGmshViewer/`, so its green proves nothing on any
-#: other PR: it stays out of REQUIRED_CHECKS and the ruleset, and check 6 adds it per PR.
+#: VH0 (#2864): a PR that changes what the app lane checks also needs that lane, tests.yml's
+#: `app-tests` job (the name must equal the job key there). The job's first step runs the
+#: checks only when the PR changes a path in its `git diff ... --` pathspec list: the app
+#: (ADR 0112), the workflow itself, and the .ladruno pairing oracle's test, fixture and
+#: stamp_provenance (#2129). On any other PR the job reports green without running them, so
+#: it stays out of REQUIRED_CHECKS and the ruleset, and check 6 adds it per PR. APP_PATHS is
+#: that pathspec list, in its order; tests/test_land_pr.py asserts the two are equal.
 APP_CHECK = "app-tests"
-APP_DIR = "apeGmshViewer/"
+APP_PATHS = (
+    "apeGmshViewer/",
+    ".github/workflows/tests.yml",
+    "tests/test_app_ladruno_pairing_oracle.py",
+    "tests/fixtures/ladruno/truss2d.ladruno",
+    "src/apeGmsh/results/readers/_ladruno_provenance.py",
+)
 PR_FIELDS = (
     "state,isDraft,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,"
     "labels,body,closingIssuesReferences"
@@ -926,14 +935,20 @@ def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Run
     print(f"check 12: {PIN_FILE} changed; live-fork dispatch run {latest.get('url')} is green on {head[:12]}.")
 
 
+def _app_path(name: str) -> bool:
+    """Whether git's pathspec list APP_PATHS matches `name`: a spec matches itself and,
+    as a leading directory, everything under it."""
+    return any(name == spec.rstrip("/") or name.startswith(spec.rstrip("/") + "/") for spec in APP_PATHS)
+
+
 def _required_checks(number: int, rows: list[FileRow]) -> tuple[str, ...]:
-    """Check 6's list: REQUIRED_CHECKS, plus APP_CHECK when a changed file is under
-    APP_DIR. Both names of a rename count, and a deletion is a changed file (#2864)."""
-    app = sorted({name for row in rows for name in (row[0], row[2]) if name and name.startswith(APP_DIR)})
+    """Check 6's list: REQUIRED_CHECKS, plus APP_CHECK when a changed file is in
+    APP_PATHS. Both names of a rename count, and a deletion is a changed file (#2864)."""
+    app = sorted({name for row in rows for name in (row[0], row[2]) if name and _app_path(name)})
     if not app:
         return REQUIRED_CHECKS
     more = f" and {len(app) - 1} more" if len(app) > 1 else ""
-    print(f"check 6: #{number} changes {app[0]}{more} under {APP_DIR}; {APP_CHECK!r} is required too.")
+    print(f"check 6: #{number} changes {app[0]}{more}, which the {APP_CHECK} lane checks; {APP_CHECK!r} is required too.")
     return (*REQUIRED_CHECKS, APP_CHECK)
 
 
@@ -977,8 +992,8 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
         runs.setdefault(run.get("name") or run.get("context"), []).append(run)
     for name in _required_checks(number, rows):
         if name not in runs:
-            why = (f" #{number} changes {APP_DIR}, so the app's own lane must be green on its head (#2864)."
-                   if name == APP_CHECK else "")
+            why = (f" #{number} changes a path the {APP_CHECK} lane checks, so that lane must be green "
+                   f"on its head (#2864)." if name == APP_CHECK else "")
             raise LandError(
                 f"check 6: required check {name!r} has not reported on {head[:12]}. Zero "
                 f"checks visible means a conflict or a stalled Actions, not green (#630).{why}"
