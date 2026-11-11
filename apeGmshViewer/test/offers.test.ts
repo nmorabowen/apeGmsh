@@ -249,14 +249,19 @@ test("INV-5: only the panel's click dispatches Apply or Back; main and the spec 
 });
 
 test("INV-5: an agent's call returns before anything in the window takes focus, restores or opens", () => {
-  const src = readFileSync(fileURLToPath(new URL("../src/main/main.ts", import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+  const src = read("../src/main/main.ts");
   const start = src.indexOf('app.on("second-instance"');
   const heard = src.indexOf("heardFromAgent(data as Reach);\n      return;", start);
   assert.ok(start >= 0 && heard > start, "the handler hands an agent's call over, and returns");
   for (const opener of ["fileFromArgv(argv", "openPath(next", "win.restore()", "win.focus()"]) {
     assert.ok(src.indexOf(opener, start) > heard, `${opener} comes after the agent's return`);
   }
-  const reach = src.slice(src.indexOf("function heardFromAgent"), src.indexOf('ipcMain.on("viewer:offersReady"'));
+  // VH3 (#2868): the agent's path is ./modes/reach.ts, whole; main.ts only hands the call to it.
+  assert.match(src, /^import \{[^}]*\bheardFromAgent\b[^}]*\} from "\.\/modes\/reach\.ts";$/m, "main.ts takes heardFromAgent from the reach module");
+  assert.doesNotMatch(src, /function heardFromAgent|function writeSnapshot/, "main.ts keeps no agent path of its own");
+  const reach = read("../src/main/modes/reach.ts");
+  assert.match(reach, /^export function heardFromAgent\(/m, "the reach module holds the agent's path");
   assert.doesNotMatch(reach, /focus|restore|openPath|show\(|reload/, "the agent's path touches none of them");
 });
 
