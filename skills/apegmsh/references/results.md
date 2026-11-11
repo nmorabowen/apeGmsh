@@ -468,8 +468,10 @@ terms read `/spectra` through `UserSpectra`, the default of
 
 Named sets, plot definitions and saved views live in a fourth file of the
 set, `<stem>.workspace.h5`, never in `.user.h5`. It holds definitions
-only, never a result value. Today you write and read it from Python;
-ADR 0132 plans for the app to write it when the human saves:
+only, never a result value. Python and apeGmshViewer both read and
+write it. The app writes it when the human saves in its Sets panel,
+only from the human's window, through the same atomic write and with
+the same verdicts (`references/viewer.md` §9). From Python:
 
 ```python
 from apeGmsh.results.user import (
