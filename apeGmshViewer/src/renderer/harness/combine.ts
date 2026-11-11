@@ -10,12 +10,13 @@
 // fraction (`combine-refused.png`: the readers refuse it, `bad-param`, and Save
 // is off), switches back and clicks Save (`combine-save-refused.png`: a capture
 // window is no human window, so main's door refuses the save, read-only, and
-// nothing is written). `combine-held.png` is the typed refusal main answers when
+// nothing is written). `combine-listed.png`, with the panel closed, shows the
+// file's last User Combination from the phase bar: on a set the app's writer
+// saved into, the row it added; on one it reverted, the rows of the generation
+// back in force. Last, `combine-held.png` is the typed refusal main answers when
 // another program holds the file (combination/author.ts `combinationHeldRefusal`),
-// which this mode cannot produce on disk. `combine-listed.png` shows the file's
-// last User Combination from the phase bar: on a set the app's writer saved
-// into, the row it added; on one it reverted, the rows of the generation back
-// in force. Their door behaviour is proven by test/main/combinationsSave.test.ts.
+// which this mode cannot produce on disk. Their door behaviour is proven by
+// test/main/combinationsSave.test.ts.
 
 import { combinationHeldRefusal } from "../../combination/author.ts";
 import type { HarnessContext } from "./context.ts";
@@ -76,13 +77,23 @@ export async function captureCombine(ctx: HarnessContext, settle: (ms?: number) 
     save.click();
     for (let t = 0; t < 10000 && !document.querySelector('#combine [data-role="combine-notice"]'); t += 50) await settle(50);
     await shot("combine-save-refused");
-    combine.receive(combinationHeldRefusal(u.path));
-    await shot("combine-held");
   }
+  // Each still shows its own state only: the panel is closed for the listing, and the held refusal comes last.
+  document.querySelector<HTMLButtonElement>("#combine h3 button")?.click();
+  await settle(100);
   if (last !== null && store.get().mesh) {
     store.dispatch({ type: "setPhase", at: { kind: "combination", name: last } });
     if (store.get().visibility.colourBy !== "contour") store.dispatch({ type: "setColourBy", by: "contour" });
     await settle(800);
     await shot("combine-listed");
+  }
+  if (cases.length) {
+    // The bar was drawn again since: its entry is found again, as a human clicks the one on screen.
+    const again = document.querySelector<HTMLButtonElement>('#phase [data-role="new-combination"]');
+    if (!again) throw new Error("capture: the phase bar lost its New combination (+)");
+    again.click();
+    await settle(100);
+    combine.receive(combinationHeldRefusal(u.path));
+    await shot("combine-held");
   }
 }
