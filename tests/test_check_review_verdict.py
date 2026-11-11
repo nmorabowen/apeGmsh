@@ -32,9 +32,10 @@ NEW = "5a5b5c5d" + "2" * 32   # the head after a later push (#2628)
 
 
 def _pr(number=7, labels=("program", "semantic"), head=NEW, body="", draft=False,
-        fork=False):
+        fork=False, state="open"):
     return {
         "number": number, "title": f"pr {number}", "body": body, "draft": draft,
+        "state": state,
         "labels": [{"name": n} for n in labels],
         "head": {"ref": f"b{number}", "sha": head,
                  "repo": {"full_name": "someone/apeGmsh" if fork else REPO}},
@@ -59,9 +60,14 @@ def make_fetch(prs, comments=None, files=None):
             return prs.get(int(m[1]))
         if path.startswith(f"repos/{REPO}/pulls?"):  # find_orphans' merged list
             return list(prs.values()) if "page=1" in path else []
+        m = re.fullmatch(rf"repos/{REPO}/commits/([0-9a-f]{{40}})/pulls\?per_page=100", path)
+        if m:  # every PR (any state) whose commits include it; here, its head
+            return [p for p in prs.values() if p["head"]["sha"] == m[1]]
         m = re.fullmatch(rf"repos/{REPO}/pulls/(\d+)/files\?per_page=100&page=(\d+)", path)
         if m:
-            return [{"filename": f} for f in files.get(int(m[1]), [])] if m[2] == "1" else []
+            names = files.get(int(m[1]), [])
+            page = int(m[2])
+            return [{"filename": f} for f in names[100 * (page - 1):100 * page]]
         m = re.fullmatch(rf"repos/{REPO}/issues/(\d+)/comments\?per_page=100&page=(\d+)", path)
         if m:
             return comments.get(int(m[1]), []) if m[2] == "1" else []
@@ -289,8 +295,8 @@ def _on_block():
 
 def test_workflow_triggers_cover_every_state_change():
     on = _on_block()
-    assert re.search(r"^  pull_request_target:\n    types: \[([^\]]*)\]", on, re.MULTILINE)
-    types = re.search(r"pull_request_target:\n    types: \[([^\]]*)\]", on)[1]
+    types = re.search(r"^  pull_request_target:\n(?:    #.*\n)*    types: \[([^\]]*)\]",
+                      on, re.MULTILINE)[1]
     for t in ("opened", "synchronize", "labeled", "unlabeled", "reopened"):
         assert t in types
     comment_types = re.search(r"issue_comment:\n    types: \[([^\]]*)\]", on)[1]
@@ -305,9 +311,217 @@ def test_workflow_triggers_cover_every_state_change():
 def test_workflow_never_runs_pr_code_and_writes_only_statuses():
     assert "ref: ${{ github.event.repository.default_branch }}" in WF
     assert "persist-credentials: false" in WF
-    # Nothing from the PR head is checked out or interpolated into a command.
-    assert not re.search(r"github\.event\.pull_request\.head|head_ref|head\.sha", WF)
+    # Nothing from the PR head is checked out or interpolated into a command:
+    # the head sha (40 hex, set by GitHub) enters through one env value only,
+    # and the step refuses anything that is not 40 hex.
+    head_refs = re.findall(r"^.*(?:github\.event\.pull_request\.head|head_ref).*$",
+                           WF, re.MULTILINE)
+    assert head_refs == ["          EVENT_SHA: ${{ github.event.pull_request.head.sha }}"]
+    assert '[[ "$sha" =~ ^[0-9a-f]{40}$ ]] ||' in WF
     assert "permissions: {}" in WF
     writes = re.findall(r"^\s+(\w[\w-]*): write", WF, re.MULTILINE)
     assert writes == ["statuses"]
-    assert "python scripts/check_review_verdict.py --pr \"$PR_NUMBER\"" in WF
+    assert ('python scripts/check_review_verdict.py --pr "$PR_NUMBER" --sha "$HEAD_SHA"'
+            in WF)
+
+
+def test_workflow_serialises_status_runs_per_head_commit():
+    # #2879 review, finding 3. A status belongs to the commit, so every run that
+    # can post on commit S must queue in one group: per head sha, not per PR.
+    # Per PR, the runs of two PRs at S could interleave and a stale `success`
+    # land last. `cancel-in-progress: false` lets the newest queued run (which
+    # decides every open PR at S) finish after the earlier ones.
+    assert not re.search(r"^concurrency:", WF, re.MULTILINE), "a workflow-level group"
+    status_job = re.search(r"^  status:\n(.*)", WF, re.MULTILINE | re.DOTALL)[1]
+    assert re.search(r"^    needs: head$", status_job, re.MULTILINE)
+    block = re.search(r"^    concurrency:\n((?:      .*\n)+)", status_job, re.MULTILINE)[1]
+    assert block == ("      group: review-verdict-${{ needs.head.outputs.sha }}\n"
+                     "      cancel-in-progress: false\n")
+    assert "HEAD_SHA: ${{ needs.head.outputs.sha }}" in status_job
+    head_job = re.search(r"^  head:\n(.*?)^  status:", WF, re.MULTILINE | re.DOTALL)[1]
+    assert "sha: ${{ steps.head.outputs.sha }}" in head_job
+    assert re.search(r"^      pull-requests: read", head_job, re.MULTILINE)
+    assert not re.search(r": write", head_job)
+
+
+def test_workflow_reruns_when_a_pr_leaves_a_shared_head():
+    types = re.search(r"pull_request_target:\n(?:    #.*\n)*    types: \[([^\]]*)\]",
+                      _on_block())[1]
+    assert "closed" in [t.strip() for t in types.split(",")]
+
+
+# --- a status belongs to the commit (#2879 review, finding 1) ----------------
+
+APPROVE_NEW = f"Review-verdict: Opus 5.5 approve {NEW[:12]}"
+
+
+def _post_runs(order, prs, comments, close=()):
+    """Run ``main`` once per PR number in ``order``; return the posts on NEW."""
+    posted = []
+    prs = {p["number"]: p for p in prs}
+    for n in close:
+        prs[n] = {**prs[n], "state": "closed"}
+    fetch = make_fetch(list(prs.values()), comments)
+    for number in order:
+        code = crv.main(["--pr", str(number), "--repo", REPO], fetch=fetch,
+                        post=lambda path, fields: posted.append((path, fields)))
+        assert code == 0
+    assert all(path == f"repos/{REPO}/statuses/{NEW}" for path, _ in posted)
+    return [fields for _, fields in posted]
+
+
+@pytest.mark.parametrize("order", [(7, 8), (8, 7)])
+def test_an_unlabelled_pr_on_the_same_head_cannot_post_success_over_a_waiting_one(order):
+    # The refuting probe: PR 7 (semantic, no approval) and PR 8 (no `program`
+    # label) share head NEW. Whichever runs last, the commit reads pending, and
+    # the description names the PR that waits. Fails with finding 1 reverted.
+    prs = [_pr(7), _pr(8, labels=())]
+    posted = _post_runs(order, prs, {})
+    assert [f["state"] for f in posted] == ["pending", "pending"]
+    assert posted[-1]["description"].startswith("#7: ")
+    assert NEW[:12] in posted[-1]["description"]
+
+
+@pytest.mark.parametrize("order", [(7, 8), (8, 7)])
+def test_both_prs_on_the_head_passing_is_success(order):
+    prs = [_pr(7), _pr(8, labels=())]
+    posted = _post_runs(order, prs, {7: [_c(APPROVE_NEW)]})
+    assert [f["state"] for f in posted] == ["success", "success"]
+    assert "#7" in posted[-1]["description"] and "#8" in posted[-1]["description"]
+
+
+def test_an_approval_on_the_other_pr_does_not_count_for_this_one():
+    # Verdicts are read per PR: an approve on #8's thread does not clear #7.
+    prs = [_pr(7), _pr(8, labels=("program", "semantic"))]
+    posted = _post_runs((7, 8), prs, {8: [_c(APPROVE_NEW)]})
+    assert [f["state"] for f in posted] == ["pending", "pending"]
+    assert posted[-1]["description"].startswith("#7: ")
+
+
+def test_closing_the_unlabelled_pr_keeps_the_waiting_one_pending():
+    # The `closed` event of #8 re-decides #7, still open on the same head.
+    posted = _post_runs((8,), [_pr(7), _pr(8, labels=())], {}, close=(8,))
+    assert [f["state"] for f in posted] == ["pending"]
+    assert posted[0]["description"].startswith("#7: ")
+
+
+def test_closing_the_waiting_pr_frees_the_head_for_the_other():
+    posted = _post_runs((7,), [_pr(7), _pr(8, labels=())], {}, close=(7,))
+    assert [f["state"] for f in posted] == ["success"]
+    assert "not required" in posted[0]["description"]
+
+
+def test_a_closed_pr_alone_on_its_head_posts_nothing(capsys):
+    assert _post_runs((7,), [_pr(7)], {}, close=(7,)) == []
+    assert "nothing to post" in capsys.readouterr().out
+
+
+def test_a_pr_whose_head_moved_past_the_pinned_sha_is_not_decided_there():
+    # The event pinned NEW; the PR has since moved to OLD (its synchronize run
+    # decides OLD). No open PR is left at NEW, so nothing is posted on it.
+    posted = []
+    code = crv.main(["--pr", "7", "--repo", REPO, "--sha", NEW],
+                    fetch=make_fetch([_pr(7, head=OLD)]),
+                    post=lambda path, fields: posted.append((path, fields)))
+    assert code == 0 and posted == []
+
+
+def test_the_pinned_sha_is_where_the_status_goes():
+    posted = []
+    code = crv.main(["--pr", "7", "--repo", REPO, "--sha", NEW],
+                    fetch=make_fetch([_pr(7), _pr(8, labels=())]),
+                    post=lambda path, fields: posted.append((path, fields)))
+    assert code == 0
+    (path, fields), = posted
+    assert path == f"repos/{REPO}/statuses/{NEW}" and fields["state"] == "pending"
+
+
+@pytest.mark.parametrize("bad", ["e2c3099a", NEW.upper(), NEW + "0", "x" * 40])
+def test_sha_must_be_a_full_commit(bad):
+    with pytest.raises(SystemExit):
+        crv.main(["--pr", "7", "--repo", REPO, "--sha", bad], fetch=make_fetch([_pr()]),
+                 post=lambda *_: None)
+
+
+def test_sha_is_live_only():
+    with pytest.raises(SystemExit):
+        crv.main(["--pr", "7", "--repo", REPO, "--sha", NEW, "--dry-run", "--head", OLD],
+                 fetch=make_fetch([_pr()]), post=lambda *_: None)
+
+
+def test_a_dry_run_of_a_closed_pr_replays_it_alone(capsys):
+    fetch = make_fetch([_pr(7, state="closed")], {7: [_c(APPROVE_NEW)]})
+    assert crv.main(["--pr", "7", "--repo", REPO, "--dry-run"], fetch=fetch,
+                    post=lambda *_: None) == 0
+    out = capsys.readouterr()
+    assert '"state": "success"' in out.out and "replayed alone" in out.err
+
+
+# --- fail closed on a read failure (#2879 review, finding 2) -----------------
+
+def _failing(fetch, fragment):
+    def wrapped(path):
+        if fragment in path:
+            raise RuntimeError(f"HTTP 502 on {path}")
+        return fetch(path)
+    return wrapped
+
+
+@pytest.mark.parametrize("fragment", [
+    "pulls/7",                         # the PR itself
+    f"commits/{NEW}/pulls",            # the PRs at the head
+    "issues/7/comments",               # the verdicts
+    "pulls/8/files",                   # a sibling's changed files
+])
+def test_a_failed_read_posts_error_on_the_pinned_head(fragment):
+    prs = [_pr(7), _pr(8, labels=("program",))]
+    fetch = _failing(make_fetch(prs, {7: [_c(APPROVE_NEW)]}), fragment)
+    posted = []
+    code = crv.main(["--pr", "7", "--repo", REPO, "--sha", NEW], fetch=fetch,
+                    post=lambda path, fields: posted.append((path, fields)))
+    assert code == 2
+    (path, fields), = posted
+    assert path == f"repos/{REPO}/statuses/{NEW}" and fields["state"] == "error"
+
+
+def test_a_failed_read_without_a_pinned_head_posts_nothing_and_fails():
+    posted = []
+    code = crv.main(["--pr", "7", "--repo", REPO],
+                    fetch=_failing(make_fetch([_pr()]), "pulls/7"),
+                    post=lambda path, fields: posted.append((path, fields)))
+    assert code == 2 and posted == []
+
+
+def test_an_unknown_commit_or_a_full_pr_page_fails_closed():
+    def no_commit(path):
+        return None if "/commits/" in path else make_fetch([_pr()])(path)
+    posted = []
+    assert crv.main(["--pr", "7", "--repo", REPO], fetch=no_commit,
+                    post=lambda p, f: posted.append(f)) == 2
+    assert [f["state"] for f in posted] == ["error"]
+    many = [_pr(n, labels=()) for n in range(100, 200)] + [_pr(7)]
+    posted.clear()
+    assert crv.main(["--pr", "7", "--repo", REPO], fetch=make_fetch(many),
+                    post=lambda p, f: posted.append(f)) == 2
+    assert [f["state"] for f in posted] == ["error"]
+
+
+def test_a_failed_post_with_a_pinned_head_exits_2():
+    def post(_path, _fields):
+        raise RuntimeError("HTTP 403")
+    assert crv.main(["--pr", "7", "--repo", REPO, "--sha", NEW],
+                    fetch=make_fetch([_pr()]), post=post) == 2
+
+
+# --- a cut file listing fails closed (#2879 review, finding 5) ---------------
+
+def test_a_file_listing_cut_at_the_page_cap_requires_a_verdict():
+    # 2,000 prose files fill every page; the path that needs a verdict is not
+    # read. The policy must not read the PR as "not required".
+    cap = fo.PER_PAGE * fo.MAX_PAGES
+    names = [f"docs/p{i}.md" for i in range(cap)] + ["tests/test_late.py"]
+    pr = _pr(labels=("program", "mechanical"))
+    assert _status(pr, files=names)["state"] == "pending"
+    # One page short of the cap is read whole, and prose alone is not required.
+    assert _status(pr, files=names[:cap - 1])["state"] == "success"
+    assert _status(pr, files=names[:cap - 1] + ["tests/t.py"])["state"] == "pending"

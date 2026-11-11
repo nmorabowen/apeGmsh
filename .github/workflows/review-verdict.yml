@@ -5,34 +5,59 @@ name: Review verdict
 # the merge button refuse a head no Review-verdict approved.
 #
 # Trust boundary: both triggers run in the base repository's context with a
-# write token, so this job never executes PR code. It checks out the default
-# branch only (pull_request_target already takes this file from there), never
-# persists the token in .git, and reads the PR through the API. The token can
-# write commit statuses and nothing else. A fork PR runs the same way.
+# write token, so neither job executes PR code. The status job checks out the
+# default branch only (pull_request_target already takes this file from there),
+# never persists the token in .git, and reads the PR through the API. The token
+# can write commit statuses and nothing else. A fork PR runs the same way.
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review, edited]
+    # `closed`: a PR leaving a shared head re-decides the PRs still open on it.
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review, edited, closed]
   issue_comment:
     types: [created, edited, deleted]
-
-# One evaluation per PR at a time, newest last: a later run reads later state.
-concurrency:
-  group: review-verdict-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: false
 
 permissions: {}
 
 jobs:
-  status:
+  head:
     # issue_comment also fires on plain issues; only PR comments matter.
     if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read   # a comment event carries no head: read it
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+    steps:
+      # The commit the status job decides and posts on. A PR event names it, so
+      # a later failed read still posts `error` there; a comment event reads it.
+      - id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          EVENT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          sha="${EVENT_SHA:-$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)}"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no head sha for #$PR_NUMBER"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  status:
+    needs: head
+    # Serialised per head commit, not per PR: a status belongs to the commit,
+    # and two PRs sharing a head each post on it. Per PR, their runs could
+    # interleave and a stale success land last. Per commit, the newest queued
+    # run (whichever PR fired it) decides every open PR at that head, last.
+    concurrency:
+      group: review-verdict-${{ needs.head.outputs.sha }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-      pull-requests: read   # the PR, its labels and changed files
-      issues: read          # the PR's comments (Review-verdict lines)
+      pull-requests: read   # the PRs, their labels and changed files
+      issues: read          # the PRs' comments (Review-verdict lines)
       statuses: write       # the review-verdict status, and nothing else
     steps:
       - uses: actions/checkout@v4
@@ -49,4 +74,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-        run: python scripts/check_review_verdict.py --pr "$PR_NUMBER"
+          HEAD_SHA: ${{ needs.head.outputs.sha }}
+        run: python scripts/check_review_verdict.py --pr "$PR_NUMBER" --sha "$HEAD_SHA"

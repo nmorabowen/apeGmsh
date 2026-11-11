@@ -15,13 +15,21 @@ One policy, one implementation: the decision is ``find_orphans.verdict_required`
 and ``find_orphans.has_head_approval`` (which uses ``program_probe``'s verdict
 parser), loaded read-only, so the detector and this check cannot disagree.
 
+A status belongs to the commit, not to the PR: every open PR whose head is that
+commit is decided, and ``success`` is posted only when all of them pass. A
+second PR on the same head that needs no verdict cannot overwrite the first
+one's ``pending`` (#2879 review, finding 1).
+
+    python scripts/check_review_verdict.py --pr 2879 --sha <40-hex head>
     python scripts/check_review_verdict.py --pr 2628 --dry-run
     python scripts/check_review_verdict.py --pr 2628 --dry-run --at-merge
 
-``--dry-run`` prints the status it would post and posts nothing. Exit 0 when
-the status was decided (and posted), 2 when reading the PR, deciding or posting
-failed. A failed decision posts ``error`` on the head it read, so an earlier
-``success`` on that head cannot stand.
+``--sha`` pins the commit (the workflow takes it from the event), so a failed
+read still posts ``error`` there and an earlier ``success`` cannot stand.
+``--dry-run`` prints the status it would post and posts nothing; a dry run of a
+closed PR, ``--head`` and ``--at-merge`` replay that PR alone. Exit 0 when the
+status was decided and posted (or nothing was to be posted), 2 when a read, the
+decision or the post failed.
 Stdlib only; all network access goes through ``fetch`` and ``post``.
 """
 
@@ -31,6 +39,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -55,6 +64,9 @@ Post = Callable[[str, dict], Any]
 CONTEXT = "review-verdict"
 #: GitHub truncates nothing; it rejects a description over 140 characters.
 MAX_DESCRIPTION = 140
+#: One page of ``commits/{sha}/pulls``; a full page means PRs may be unread.
+PULLS_PAGE = 100
+_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def read_pr(fetch: Fetch, repo: str, number: int, head: str | None = None) -> dict:
@@ -80,6 +92,47 @@ def decide(fetch: Fetch, repo: str, pr: dict) -> dict:
                        "at the current head.")
     return {"sha": sha, "state": state, "context": CONTEXT,
             "description": description[:MAX_DESCRIPTION]}
+
+
+def open_prs_at(fetch: Fetch, repo: str, sha: str, pr: dict) -> list[dict]:
+    """Every open PR whose head is ``sha``, ``pr`` included when it is one.
+
+    ``pr`` (the full PR the event named) is added even if the commit's PR list
+    lags behind it. Raises when the list cannot be read whole, so the caller
+    posts ``error`` rather than decide over a partial set.
+    """
+    rows = fetch(f"repos/{repo}/commits/{sha}/pulls?per_page={PULLS_PAGE}")
+    if rows is None:
+        raise RuntimeError(f"commit {sha} not found in {repo}")
+    if len(rows) >= PULLS_PAGE:
+        raise RuntimeError(f"{len(rows)} PRs list commit {sha}: the page may be cut")
+    found = {p["number"]: p for p in rows
+             if p["state"] == "open" and p["head"]["sha"] == sha}
+    if pr["state"] == "open" and pr["head"]["sha"] == sha:
+        found[pr["number"]] = pr
+    return [found[n] for n in sorted(found)]
+
+
+def decide_head(fetch: Fetch, repo: str, sha: str, prs: list[dict]) -> dict:
+    """One status for commit ``sha``: ``success`` only if every PR in ``prs`` passes.
+
+    A commit status belongs to the commit and the latest one per context wins,
+    so a PR that needs no verdict must not post ``success`` over another PR at
+    the same head that is still waiting.
+    """
+    results = [(p["number"], decide(fetch, repo, p)) for p in prs]
+    waiting = [(n, s) for n, s in results if s["state"] != "success"]
+    if waiting:
+        number, status = waiting[0]
+        more = f" (+{len(waiting) - 1} more)" if len(waiting) > 1 else ""
+        description = f"#{number}{more}: {status['description']}"
+    elif len(results) == 1:
+        status, description = results[0][1], results[0][1]["description"]
+    else:
+        status = results[0][1]
+        description = ("Every open PR at this head passes: "
+                       + ", ".join(f"#{n}" for n, _ in results) + ".")
+    return {**status, "sha": sha, "description": description[:MAX_DESCRIPTION]}
 
 
 def as_of(fetch: Fetch, pr: dict) -> Fetch:
@@ -149,30 +202,46 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None,
     ap.add_argument("--at-merge", action="store_true",
                     help="replay a merged PR as its merge button saw it: only "
                     "comments posted by the merge count (needs --dry-run)")
+    ap.add_argument("--sha", help="the head commit to decide and post on, pinned "
+                    "from the event: a failed read then posts error there")
     args = ap.parse_args(argv)
     if (args.head or args.at_merge) and not args.dry_run:
         ap.error("--head and --at-merge replay the past and post nothing: pass --dry-run")
+    if args.sha and (args.head or args.at_merge):
+        ap.error("--sha pins the live head; --head and --at-merge replay a past one")
+    if args.sha and not _SHA.fullmatch(args.sha):
+        ap.error(f"--sha must be a 40-digit lowercase hex commit, not {args.sha!r}")
     fetch = fetch or gh_fetch
     post = post or gh_post
+    sha: str | None = args.sha
+    prs: list[dict] = []
     try:
         pr = read_pr(fetch, args.repo, args.pr, args.head)
+        sha = sha or pr["head"]["sha"]
         if args.at_merge:
             fetch = as_of(fetch, pr)
-    except Exception as exc:  # noqa: BLE001 - no head known, so nothing to post
-        print(f"ERROR: reading #{args.pr} failed: {exc}", file=sys.stderr)
-        return 2
-    try:
-        status = decide(fetch, args.repo, pr)
-    except Exception as exc:  # noqa: BLE001 - fail closed on the known head
+        if args.head or args.at_merge or (args.dry_run and pr["state"] != "open"):
+            prs = [pr]  # a replay: the PRs open at that head then are not recorded
+            print(f"NOTE: #{args.pr} replayed alone at {sha[:12]}", file=sys.stderr)
+        else:
+            prs = open_prs_at(fetch, args.repo, sha, pr)
+        status = decide_head(fetch, args.repo, sha, prs) if prs else None
+    except Exception as exc:  # noqa: BLE001 - fail closed on the head, if known
         print(f"ERROR: deciding #{args.pr} failed: {exc}", file=sys.stderr)
+        if sha is None:
+            return 2  # no commit known, so there is nothing to post on
         # An earlier success on this head (say, before a `semantic` label) must
         # not stand when the re-evaluation could not finish.
-        status = {"sha": pr["head"]["sha"], "state": "error", "context": CONTEXT,
+        status = {"sha": sha, "state": "error", "context": CONTEXT,
                   "description": "The review-verdict check failed; see the run log."}
         code = 2
     else:
         code = 0
-    print(json.dumps({"pr": args.pr, **status}, indent=2))
+    if status is None:
+        print(f"No open PR has head {sha}; nothing to post.")
+        return 0
+    print(json.dumps({"pr": args.pr, "prs": [p["number"] for p in prs], **status},
+                     indent=2))
     if args.dry_run:
         return code
     try:
