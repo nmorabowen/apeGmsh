@@ -30,7 +30,9 @@
 //                          result of that file, as a contour column
 //                          (`user:readResult`, reader/userFile.ts
 //                          `UserColumnRead`); a stale entry is refused (A6)
-//   renderJob() ... renderDone(result)  the ADR 0128 agent modes (below)
+//   renderJob() ... renderDone(result)  the ADR 0128 agent modes (below);
+//                          renderVariant(row) VU18: the set a shot draws, a
+//                          variant row by index and label, or null (the spec's)
 //   onOffers(cb) onSnapshotRequest(cb) snapshotReply(id, reply)  ADR 0128 D5, D6 (below)
 //   variants() onVariants(cb) variantsSwitch(i, label) variantsCompare(i, label)
 //   readCompareStep(req) compareClose()  VU10: the study, a switch and the compare set (below)
@@ -157,6 +159,8 @@ contextBridge.exposeInMainWorld("viewer", {
   renderPng: (name: string, png: Uint8Array) => ipcRenderer.invoke("render:png", name, png),
   renderCapture: (name: string) => ipcRenderer.invoke("render:capture", name),
   renderDone: (result: unknown) => ipcRenderer.invoke("render:done", result),
+  // VU18 (ADR 0132 D9.2): the set a render shot draws, a variant row by index and label (null: the spec's set), never a path.
+  renderVariant: (row: { index: number; label: string } | null) => ipcRenderer.invoke("render:variant", row === null ? null : { index: row.index, label: row.label }),
   // ADR 0128 D5 (--present): the offers main heard over the second-instance path. Main holds them until
   // this subscribes; it never reloads the page for one (INV-5), which is why they do not use `listen`.
   onOffers: (cb: (offers: unknown[]) => void) => {

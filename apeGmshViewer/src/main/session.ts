@@ -175,6 +175,20 @@ export class Study {
     return { ok: true, row: r.row, open: now.real };
   }
 
+  /**
+   * VU18: `row` as the manifest says it now. An agent run watches nothing, so
+   * the render mode asks this for every shot that names a row: the same path
+   * is read again first (D9.3), never the rows of the first shot's read, and a
+   * file refused on that read refuses the row with its reason.
+   */
+  rowNow(index: unknown, label: unknown): ReturnType<Study["row"]> {
+    if (this.manifest === null) return { ok: false, reason: "no variants manifest is open" };
+    this.reread();
+    const r = this.read;
+    if (r !== null && !r.ok) return { ok: false, reason: `the variants manifest is refused on re-read (${r.code}): ${r.reason}` };
+    return this.row(index, label);
+  }
+
   /** Why a file of an opened row's set lies outside the manifest's folder, or null (D9.4: the paired siblings are confined too). */
   confine(path: string | null): string | null {
     if (path === null || this.manifest === null) return null;

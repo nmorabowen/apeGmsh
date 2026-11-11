@@ -81,7 +81,7 @@ import type { WorkspaceH5 } from "../reader/workspace.ts";
 import { agentMode, arg, argvSkip, badArgs, file, headless, mode, out, reachMode, t0 } from "./args.ts";
 import { measureResultsMode, registerMeasure } from "./modes/measure.ts";
 import { heardFromAgent, listedOffers, offersPageLoading, pageCommitted, reachWindow, registerReach, type Reach } from "./modes/reach.ts";
-import { abandonRender, agentStartup, registerRender, whereStopped } from "./modes/render.ts";
+import { abandonRender, agentStartup, drawnSet, registerRender, whereStopped } from "./modes/render.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** The preload script of every window, beside dist/main.mjs; a module under ./modes/ takes it from here (VH3, #2868). */
@@ -496,7 +496,11 @@ ipcMain.handle("model:open", async (_e, path: unknown) => {
 function windowSet(): OpenSet | { reason: string } {
   if (mode === "view") return currentSet() ?? { reason: "no set is open" };
   // The job names no user or workspace file; the workspace doors take `<stem>.workspace.h5` beside its model (./workspace.ts `workspaceOf`).
-  if (mode === "render") return renderJob ? { model: renderJob.model, geometry: renderJob.geometry, results: renderJob.results, user: null, workspace: null } : { reason: "the render job was refused" };
+  // VU18: the set the shot in progress draws, the spec's or a variant row's (./modes/render.ts `render:variant`).
+  if (mode === "render") {
+    const d = drawnSet();
+    return d ? { ...d, user: null, workspace: null } : { reason: "the render job was refused" };
+  }
   if ((mode === "describe" || mode === "capture" || mode === "measure") && file) {
     try {
       return pairSet(resolve(file), existsSync);
@@ -615,7 +619,8 @@ ipcMain.handle("variants:current", () => studyView());
 ipcMain.handle("variants:switch", (_e, index: unknown, label: unknown) => {
   const r = study.row(index, label);
   if (!r.ok) return { ok: false, reason: `variants:switch: ${r.reason}` };
-  if (mode !== "view") return { ok: false, reason: `variants:switch: --mode=${mode} has no window set to switch` };
+  // VU18: a render draws a variant row only as a shot of its spec names one (`variant`, ./modes/render.ts), never as the page asks.
+  if (mode !== "view") return { ok: false, reason: `variants:switch: --mode=${mode} has no window set to switch${mode === "render" ? "; a shot of the spec names the variant row it draws" : ""}` };
   const s = rowSet(r.open);
   if (!s.ok) return { ok: false, reason: `variants:switch: ${s.reason}` };
   // The window set cannot also be the compare set.
@@ -728,8 +733,8 @@ function currentSet(): OpenSet | null {
 function pairedUser(): { ok: true; user: string; model: string | null; results: string | null } | { ok: false; reason: string } {
   // VU9b: capture reads the set of `--file` too, so its stills show the user file (it never writes: the save door refuses it).
   const captured = mode === "capture" ? windowSet() : null;
-  const set =
-    mode === "view" ? currentSet() : mode === "render" && renderJob ? { model: renderJob.model, results: renderJob.results, user: null } : captured !== null && !("reason" in captured) ? captured : null;
+  const drawn = mode === "render" ? drawnSet() : null;
+  const set = mode === "view" ? currentSet() : drawn ? { model: drawn.model, results: drawn.results, user: null } : captured !== null && !("reason" in captured) ? captured : null;
   if (set === null) return { ok: false, reason: mode === "view" || mode === "render" || mode === "capture" ? "no set is open" : `--mode=${mode} reads no user file` };
   const from = set.model ?? set.results;
   let user = set.user;
@@ -919,6 +924,8 @@ registerMeasure({ headlessEnd, errText, resultsHost, preload });
 
 // The `capture:*` and `render:*` handlers (./modes/render.ts, VH3 #2868).
 registerRender({
+  rowSet,
+  closeCompare,
   headlessEnd,
   errText,
   shown,

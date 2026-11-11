@@ -15,13 +15,27 @@ import { join, resolve } from "node:path";
 import { outRefusal, prepareRender, PROFILE_DIR, type RenderJobFiles } from "../../spec/job.ts";
 import { MANIFEST_FILE, refusedManifest } from "../../spec/manifest.ts";
 import { agentMode, arg, file, mode, out } from "../args.ts";
-import { pairSet } from "../pairing.ts";
+import { pairSet, type OpenSet } from "../pairing.ts";
 import type { ResultsHost } from "../results.ts";
 import type { Study } from "../session.ts";
 import { jobFs, stamped, writeManifestLast } from "./out.ts";
 
+/** VU18: the set a render shot draws, as main hands it to the page: the spec's set, or a variant row's. */
+export interface DrawnSet {
+  model: string;
+  geometry: string | null;
+  results: string | null;
+}
+
 /** What the render path takes from main.ts, handed over once (`registerRender`). */
 export interface RenderHost {
+  /**
+   * VU18: a variant row's set as main opens it (main.ts `rowSet`, D9.4: paired
+   * from the row's resolved model, each sibling confined to the study), or why not.
+   */
+  rowSet: (open: string) => { ok: true; set: OpenSet } | { ok: false; reason: string };
+  /** VU18: empty the compare slot (main.ts `closeCompare`): the set a shot draws is never also its compare set. */
+  closeCompare: () => void;
   /** End a headless run: the reason on stderr, exit 1 (main.ts). */
   headlessEnd: (reason: string) => void;
   /** main.ts's text of a thrown value. */
@@ -44,6 +58,19 @@ const unwritten = new Set<string>();
 const written = new Set<string>();
 /** The last still a capture wrote, to name where a failed capture stopped. */
 let lastCaptured: string | null = null;
+/** The study `agentStartup` opened from the spec's `files.variants` (main.ts's one `Study`). */
+let renderStudy: Study | null = null;
+/**
+ * VU18: the set the shot in progress draws, and the one main.ts's window doors
+ * read in render mode (`drawnSet`): the job's set until a shot names a variant
+ * row (`render:variant`).
+ */
+let drawn: DrawnSet | null = null;
+
+/** VU18: the set the render window's doors read now (main.ts `windowSet`, `pairedUser`); null when no render job was accepted. */
+export function drawnSet(): DrawnSet | null {
+  return drawn;
+}
 
 /**
  * ADR 0128 D2 startup of an agent mode: its arguments, its `--out` (absent
@@ -80,6 +107,8 @@ export function agentStartup(study: Study): { refused: boolean; job: RenderJobFi
     // D2: the whole spec is refused before any shot: no window, no PNG, the key named.
     if (!p.ok) return refuse(`the spec ${specPath} is refused: ${p.key}: ${p.reason}`);
     renderJob = p.job;
+    renderStudy = study;
+    drawn = { model: p.job.model, geometry: p.job.geometry, results: p.job.results };
     for (const s of p.job.spec.shots) unwritten.add(s.name);
     return { refused: false, job: p.job };
   } catch (err) {
@@ -143,7 +172,7 @@ async function settledCapture(w: BrowserWindow): Promise<Electron.NativeImage | 
 
 /** Register the `capture:*` and `render:*` handlers, each once. */
 export function registerRender(host: RenderHost): void {
-  const { headlessEnd, errText, shown, resultsHost, isEnding, markEnding } = host;
+  const { headlessEnd, errText, shown, resultsHost, isEnding, markEnding, rowSet, closeCompare } = host;
 
   function stillPath(name: unknown): string {
     if (mode !== "render" || !renderJob) throw new Error("render: only in --mode=render");
@@ -235,12 +264,48 @@ export function registerRender(host: RenderHost): void {
   // -------------------------------------------------------------------------
 
   ipcMain.handle("render:job", () => {
+    // The job names the spec's own set; a shot's variant row is asked for with `render:variant`.
     if (mode === "render" && renderJob) return { mode, ...renderJob };
     if (mode === "describe") {
       const set = pairSet(resolve(file!), existsSync);
       return { mode, model: set.model, geometry: set.geometry, results: set.results };
     }
     throw new Error(`render:job: not an agent mode (--mode=${mode})`);
+  });
+
+  /**
+   * VU18 (ADR 0132 D9): the set the next shot draws. `null` is the spec's own
+   * set. A row `{ index, label }` (never a path, D9.2) is resolved as the switch
+   * door resolves one: the manifest read again now (D9.3, `Study.rowNow`), the
+   * row matched by index and label and resolved and confined again
+   * (`Study.row`), its set paired with each sibling confined (`rowSet`, D9.4).
+   * It then becomes the set the window's doors read (`drawnSet`), and the page
+   * is told which files to open. A row that does not answer leaves the drawn
+   * set as it was and answers why, for the shot's refusal.
+   */
+  ipcMain.handle("render:variant", (_e, asked: unknown) => {
+    if (mode !== "render" || !renderJob || !renderStudy) throw new Error("render:variant: only in --mode=render");
+    const study = renderStudy;
+    const job = renderJob;
+    const refuse = (reason: string) => ({ ok: false as const, reason: `render:variant: ${reason}` });
+    if (asked === null) {
+      const own = study.rowOfModel(job.model);
+      if (own !== null && study.compare?.row.index === own.index) closeCompare();
+      drawn = { model: job.model, geometry: job.geometry, results: job.results };
+      return { ok: true as const, row: null, set: drawn };
+    }
+    if (job.variants === null) return refuse("the spec names no files.variants, so a shot names no variant row");
+    const keys = typeof asked === "object" && !Array.isArray(asked) ? Object.keys(asked).sort().join(",") : "";
+    if (keys !== "index,label") return refuse(`a variant row is named by { index, label } and never a path; got ${shown(asked)}`);
+    const { index, label } = asked as { index: unknown; label: unknown };
+    const r = study.rowNow(index, label);
+    if (!r.ok) return refuse(r.reason);
+    const s = rowSet(r.open);
+    if (!s.ok) return refuse(`variant row ${r.row.index} (${JSON.stringify(r.row.label)}): ${s.reason}`);
+    if (s.set.model === null) return refuse(`variant row ${r.row.index} (${JSON.stringify(r.row.label)}) pairs no model from ${r.open}`);
+    if (study.compare?.row.index === r.row.index) closeCompare();
+    drawn = { model: s.set.model, geometry: s.set.geometry, results: s.set.results };
+    return { ok: true as const, row: { index: r.row.index, label: r.row.label }, set: drawn };
   });
 
   /** A model-mode still the renderer composed (renderer/stillLayers.ts). */
