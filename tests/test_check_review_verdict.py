@@ -224,6 +224,27 @@ def test_head_override_needs_dry_run():
         _main(["--pr", "7", "--head", OLD], _pr())
 
 
+def test_at_merge_replay_drops_an_approval_posted_after_the_merge(capsys):
+    # #2628's shape: merged 19:36:41, its head approved at 19:40:33.
+    pr = {**_pr(head=OLD), "merged_at": "2026-10-30T19:36:41Z"}
+    late = [_c(f"Review-verdict: opus approve {OLD}", "2026-10-30T19:40:33Z")]
+    assert _main(["--pr", "7", "--dry-run"], pr, late)[0] == 0
+    assert '"state": "success"' in capsys.readouterr().out
+    code, posted = _main(["--pr", "7", "--dry-run", "--at-merge"], pr, late)
+    assert code == 0 and posted == []
+    assert '"state": "pending"' in capsys.readouterr().out
+    on_time = [{**late[0], "created_at": "2026-10-30T19:30:00Z"}]
+    _main(["--pr", "7", "--dry-run", "--at-merge"], pr, on_time)
+    assert '"state": "success"' in capsys.readouterr().out
+
+
+def test_at_merge_refuses_an_unmerged_pr_and_a_live_post():
+    pr = {**_pr(), "merged_at": None}
+    assert _main(["--pr", "7", "--dry-run", "--at-merge"], pr)[0] == 2
+    with pytest.raises(SystemExit):
+        _main(["--pr", "7", "--at-merge"], _pr())
+
+
 def test_unknown_pr_exits_2_and_posts_nothing():
     code, posted = _main(["--pr", "7"], None)
     assert code == 2 and posted == []
