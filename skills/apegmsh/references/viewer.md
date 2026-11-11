@@ -22,6 +22,7 @@ them opens the whole set:
 <stem>.ladruno         results (a partitioned run: <stem>.part-<N>.ladruno)
 <stem>.results.h5      native results
 <stem>.user.h5         combinations, user results, modes, spectra, entities
+<stem>.workspace.h5    named sets, plot and view definitions (§9)
 ```
 
 - **One results file per set.** When both a `.ladruno` and a
@@ -30,12 +31,13 @@ them opens the whole set:
   the banner names it. Opening any part of a partitioned run opens the
   whole part set, and an incomplete part set is refused by name.
 - **Names compare case-insensitively** on Windows and macOS. Any other
-  suffix is refused with the list of the five above.
+  suffix is refused with the list of the six above.
 - **The set is watched.** A rewritten file reloads once it has stopped
   changing. A sibling that appears or vanishes reopens the set. The
   `.user.h5` appearing, being replaced or being deleted re-reads it, and so
   does a rewrite of the model or the results, because its staleness depends
-  on them.
+  on them. The `.workspace.h5` is read again the same way, and again after
+  every model read (its verdicts are judged against that model).
 - **A study of variants** opens from its `<study>.variants.json`; to switch, compare and show a difference, see `variants.md`.
 
 ### What the app will open
@@ -267,3 +269,49 @@ cannot draw the card.
 **Supports**: the **BC** switch in the Display card (off by default) draws
 the restraints from the model alone: an arrow into the node per restrained
 translation, a half circle per restrained rotation.
+
+## 9. Named sets — the Sets panel and `<stem>.workspace.h5` (ADR 0132)
+
+The **Sets** panel in the right rail keeps what the human makes in the
+window in the set's `<stem>.workspace.h5`, beside the model. It is the one
+file the app writes, and only from the human's window: the agent modes
+(`--render`, `--describe`, capture) read it and never save.
+
+- **Naming a set.** Pick **Nodes** or **Elements**, click the model
+  (Shift+click adds), type a name and **Save set**. Nodes: each click
+  takes the node of the clicked element nearest the click. Elements: the
+  OpenSees tags of the selected cells; a cell with no
+  `/opensees/element_meta` row is left out, with a note. Main takes each
+  member's coordinates (a node's position, an element's centroid) and the
+  model's `fem_hash` / `model_hash` from the model file itself. A name
+  the file already holds is refused: rename or delete that set first.
+- **Rename** and **Delete** act on one row; every other row is copied
+  verbatim, refused rows included.
+- **Verdicts**, each with its reason, judged against the model on screen
+  exactly as Python's `WorkspaceFile.verdicts()` judges them:
+  `current` (every identity hash equal), `moved` (the hashes changed and
+  every member sits where it was; the next save records the new hashes),
+  `partial · k of n` (a plot that reads it refuses until the human clicks
+  **Accept the survivors**, which keeps the k, in order, with the model's
+  hashes) and `lost · 0 of n` (pick it again, or delete it). A row that
+  refuses alone is listed with its reason. Stored plots and views are
+  listed by name; drawing a plot is a later slice.
+- **Saving is atomic.** The app reads the old file whole and closes it,
+  writes a new file beside it as `<stem>.workspace.h5.<host>-<pid>-<random>.partial`,
+  reads that back, and replaces the old file in one rename only if no one
+  else changed it meanwhile (`revision-moved` otherwise: save again). A
+  save that dies leaves the old file whole.
+- **Another program holding the file** (a Python session with it open)
+  blocks the replace on Windows. The panel then says so, naming the file:
+  close it there and save again. Nothing was replaced, and the app does
+  not retry on its own.
+- **An unreadable file** (not HDF5, no version key) is never written over:
+  the save moves it aside to `<stem>.workspace.h5.unreadable-<UTC time>`
+  first, and the banner names that file once, until closed.
+- **A newer file** (workspace 1.1 and up, written by a later apeGmsh) is
+  shown read-only with a banner; nothing writes over it.
+
+The page never names the file: main writes the window set's own
+`<stem>.workspace.h5`. To make sets from a script instead, or read the
+human's, see `references/results.md`, "What the user makes".
+

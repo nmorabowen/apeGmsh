@@ -1,0 +1,161 @@
+{
+ "plots": [],
+ "refused": [],
+ "revision": 5,
+ "sets": {
+  "columns": {
+   "fem_hash": "ffffffffffffffffffffffffffffffff",
+   "ids": [
+    201,
+    202,
+    203
+   ],
+   "kind": "elements",
+   "model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "xyz": [
+    [
+     0.0,
+     0.0,
+     1.5
+    ],
+    [
+     6.0,
+     0.0,
+     1.5
+    ],
+    [
+     12.0,
+     0.0,
+     1.5
+    ]
+   ]
+  },
+  "roof line": {
+   "fem_hash": "ffffffffffffffffffffffffffffffff",
+   "ids": [
+    31,
+    32,
+    33
+   ],
+   "kind": "nodes",
+   "model_hash": "",
+   "xyz": [
+    [
+     0.0,
+     0.0,
+     9.0
+    ],
+    [
+     6.0,
+     0.0,
+     9.0
+    ],
+    [
+     12.0,
+     0.0,
+     9.0
+    ]
+   ]
+  },
+  "springs": {
+   "fem_hash": "ffffffffffffffffffffffffffffffff",
+   "ids": [
+    501,
+    502
+   ],
+   "kind": "elements",
+   "model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "xyz": [
+    [
+     12.0,
+     0.0,
+     0.0
+    ],
+    [
+     12.0,
+     0.0,
+     0.0
+    ]
+   ]
+  },
+  "\u00dcn\u00efcode base": {
+   "fem_hash": "ffffffffffffffffffffffffffffffff",
+   "ids": [
+    3,
+    2,
+    1
+   ],
+   "kind": "nodes",
+   "model_hash": "",
+   "xyz": [
+    [
+     12.0,
+     0.0,
+     0.0
+    ],
+    [
+     6.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0
+    ]
+   ]
+  }
+ },
+ "verdicts": {
+  "columns": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "roof line": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "springs": {
+   "checked": false,
+   "matched": 2,
+   "max_distance": null,
+   "members": [
+    true,
+    true
+   ],
+   "total": 2,
+   "verdict": "current"
+  },
+  "\u00dcn\u00efcode base": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  }
+ },
+ "version": "1.0.0",
+ "views": [],
+ "writer": "apeGmshViewer 0.0.1"
+}

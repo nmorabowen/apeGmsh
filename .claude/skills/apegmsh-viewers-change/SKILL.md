@@ -158,6 +158,22 @@ The page is not trusted to name a path (owner ruling "option A", #2753). Read th
       and label (`Study.row`, which resolves and confines it again at open time), never touch
       `windowSet`, `dropped` or `followModel`, read through their own `ResultsHost`, and are
       emptied in `pageLoading`. `test/main/variantDoors.test.ts` is the pattern.
+- [ ] **The one write door is `workspace:save`** (VU9a, #2803; `main/workspace.ts`). It takes
+      one edit with closed keys (`parseEdit`: a `path`, or any key the op does not name, is
+      `bad-request` before any read) and writes only `windowSet()`'s `<stem>.workspace.h5`;
+      `cannotWrite` refuses every mode but view. The owner's HG9 rules are code there: read
+      the target whole and close it (a Node or h5wasm handle on the target blocks the replace
+      on Windows, `EPERM`), map a blocked replace to `heldRefusal` (never a retry), and never
+      move a held file aside. A new write follows `saveWorkspace`'s order (partial created
+      `"x"` through `reader/h5open.ts` `createH5`, verify, fsync, revision check, replace) and
+      its tests: `test/main/workspaceSave.test.ts` kills a child mid-save
+      (`workspaceKillDriver.ts`) and injects `EPERM` through `WorkspaceDisk`, because a real
+      hold blocks only on Windows and CI's `app-tests` runs on Linux.
+- [ ] **h5wasm 0.10.3 write traps.** A dtype's width comes from its letter, not its digits:
+      `"<f8"` writes **f4** (use `"<d"`), `"<i4"` is i4 by luck of `i`. An empty array needs
+      an explicit dtype (it guesses integer). `"x"` on an existing name returns a negative
+      `file_id` instead of throwing (`createH5` throws). Prove a new layout with h5py reading
+      it back (`test/fixtures/vu9a/README.md` has the round trip).
 
 ## Before the PR
 

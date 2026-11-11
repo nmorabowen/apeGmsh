@@ -113,3 +113,18 @@ test("D5: the app validates a view as an apegmsh-view/1 shot; a body that is no 
   assert.equal(data, null);
   assert.equal(reason, "bad-shot");
 });
+
+test("a file the app wrote, read back by Python: Python's read of it (app_written.golden.json) is the app's", () => {
+  // app_written/frame.workspace.h5 was written by main/workspace.ts `saveWorkspace` (four creates and a rename),
+  // then read by apeGmsh.results.user.WorkspaceFile; the golden is what Python read and judged.
+  const want = golden("app_written.golden.json") as { revision: number; writer: string; version: string; sets: Record<string, { kind: string; ids: number[]; xyz: number[][]; fem_hash: string; model_hash: string }>; refused: unknown[]; verdicts: Golden };
+  const data = readWorkspaceFile(H5, FIX("app_written/frame.workspace.h5"));
+  assert.equal(data.revision, want.revision);
+  assert.equal(data.writer, want.writer);
+  assert.equal(data.version, want.version);
+  assert.deepEqual(want.refused, [], "Python refused no row the app wrote");
+  const got = Object.fromEntries(data.sets.map((s) => [s.name, { kind: s.kind, ids: [...s.ids], xyz: Array.from({ length: s.ids.length }, (_, i) => [...s.xyz.slice(3 * i, 3 * i + 3)]), fem_hash: s.fem_hash, model_hash: s.model_hash }]));
+  assert.deepEqual(got, want.sets);
+  assert.deepEqual(Object.keys(got), ["roof line", "springs", "columns", "Ünïcode base"]);
+  assert.deepEqual(appVerdicts("app_written/frame.workspace.h5", "frame.h5"), want.verdicts);
+});
