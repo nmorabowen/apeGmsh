@@ -53,13 +53,17 @@ jobs:
           assert name == 'stock-openseespy', name
           "
 
-      - name: Run the one file
+      # Round 1 (one file, 20 cold jobs) had 0 deaths and STRCON x168 each;
+      # round 2 runs the whole live-stock selection, as the lane does, so
+      # the shared process carries the state the earlier tests leave.
+      - name: Run the live-stock selection
         env:
           PYTHONUNBUFFERED: "1"
+          APEGMSH_WARRANT_LANE: stock
         run: |
           set +e
           rm -f j.xml
-          pytest tests/opensees/integration/test_md_stage_all_elements.py \
+          pytest tests \
             -s -v -p no:cacheprovider -rs \
             -m "live and not qt and not subprocess and not bench" \
             --junitxml=j.xml > out.log 2>&1
