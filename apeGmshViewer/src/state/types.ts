@@ -25,6 +25,7 @@ export * from "./types/model.ts";
 export * from "./types/results.ts";
 export * from "./types/user.ts";
 export * from "./types/variants.ts";
+export * from "./types/workspace.ts";
 export * from "./types/contour.ts";
 export * from "./types/deform.ts";
 export * from "./types/clip.ts";

@@ -16,6 +16,7 @@ import type { CombinationRead, UserFileState, UserResultRead } from "./user.ts";
 import type { VariantsState } from "./variants.ts";
 import type { Visibility } from "./visibility.ts";
 import type { Layout, SearchState, SpotlightState } from "./windows.ts";
+import type { WorkspaceState } from "./workspace.ts";
 
 export interface State {
   artifacts: Record<ArtifactKind, ArtifactInfo | null>;
@@ -99,6 +100,8 @@ export interface State {
   userResult: UserResultRead | null;
   /** VU10 (ADR 0132 D9): the study's variants, the compare set and the difference; it lasts across the window set's loads */
   variants: VariantsState;
+  /** VU9a (ADR 0132): the window set's `<stem>.workspace.h5` as main read it, the pick kind, and the save in flight */
+  workspace: WorkspaceState;
   /** V4c1: the nodal contour (shown when `visibility.colourBy` is `contour`) */
   contour: ContourState;
   /** V4d: the model's spatial dimension (`/meta/ndm`), or why it is not known */

@@ -10,6 +10,7 @@ import { initialCamera } from "./camera.ts";
 import { initialOffers } from "./offers.ts";
 import { initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./overlays.ts";
 import { initialVariants } from "./variants.ts";
+import { initialWorkspace } from "./workspace.ts";
 
 /** The deformed shape before the user turns it on: true scale, no ghost (V4d; the Qt defaults). */
 export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
@@ -73,6 +74,7 @@ export const initialState: State = {
   combination: null,
   userResult: null,
   variants: initialVariants,
+  workspace: initialWorkspace,
   contour: initialContour,
   ndm: NO_NDM,
   units: null,

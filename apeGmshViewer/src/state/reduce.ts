@@ -25,6 +25,7 @@ import { reduceOverlays } from "./reduce/overlays.ts";
 import { reduceUser } from "./reduce/user.ts";
 import { reduceVariants } from "./reduce/variants.ts";
 import { reduceWindows } from "./reduce/windows.ts";
+import { reduceWorkspace } from "./reduce/workspace.ts";
 import { elementsOfDecl, selectedElementsOf } from "./search.ts";
 import {
   combinationFieldsOf,
@@ -51,6 +52,7 @@ export { initialOffers, MAX_OFFERS } from "./reduce/offers.ts";
 export { initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./reduce/overlays.ts";
 export { NO_USER_FILE, userEventOf, userInfoOf, userPathOf, userReadable } from "./reduce/user.ts";
 export { initialVariants } from "./reduce/variants.ts";
+export { initialWorkspace } from "./reduce/workspace.ts";
 
 type Markers = { on: boolean; size: number | null; auto: boolean };
 
@@ -853,6 +855,16 @@ export function reduce(s: State, e: Event): State {
       };
       const variants = reduceVariants(s.variants, e, { differenceKey });
       return variants === s.variants ? s : { ...s, variants };
+    }
+    case "workspaceReading":
+    case "workspaceRead":
+    case "setWorkspaceKind":
+    case "workspaceSave":
+    case "workspaceSaved":
+    case "dismissWorkspaceAside": {
+      // VU9a: a workspace event touches the workspace slice and nothing else.
+      const workspace = reduceWorkspace(s.workspace, e);
+      return workspace === s.workspace ? s : { ...s, workspace };
     }
     default: {
       const unknown: never = e;

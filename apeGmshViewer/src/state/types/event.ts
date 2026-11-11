@@ -13,6 +13,7 @@ import type { ResultsEvent } from "./events/results.ts";
 import type { UserEvent } from "./events/user.ts";
 import type { VariantsEvent } from "./events/variants.ts";
 import type { WindowsEvent } from "./events/windows.ts";
+import type { WorkspaceEvent } from "./events/workspace.ts";
 
 /**
  * Decision 17's twenty events, plus `fileClosed` (added by V2e review: an
@@ -28,6 +29,7 @@ export type Event =
   | ResultsEvent
   | UserEvent
   | VariantsEvent
+  | WorkspaceEvent
   | ContourEvent
   | DeformEvent
   | ClipEvent
