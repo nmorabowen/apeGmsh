@@ -20,17 +20,22 @@ stock lane runs it on stock openseespy and the fork lane on the fork:
 ``emitted`` must equal ``reference`` to 1e-10 (measured bit for bit), and
 ``first`` must differ from it, so the model can tell the two flips apart:
 revert the emit and the first assertion fails.
+
+The tag-blind neighbour test runs each leg in a child interpreter (#2881):
+the plastic leg of stock ``StressDensityModel`` can end in a Fortran
+``STOP``, which is ``exit(0)``, and in the pytest process that ended the
+``live-stock`` job with status 0 and no report (#2543, as #2542 found for
+the sibling ``test_tag_blind_stage_parameter.py``).
 """
 from __future__ import annotations
 
 import io
-from typing import Any, Callable
+import sys
+from typing import Any, Callable, NamedTuple
 
 import pytest
 
 from apeGmsh.opensees.emitter.py import PyEmitter
-
-pytestmark = pytest.mark.live
 
 #: Dafalias & Manzari (2004) Toyoura sand, the OpenSees example set.
 MD_ARGS = [125.0, 0.05, 0.8, 1.25, 0.712, 0.019, 0.934, 0.7, 100.0, 0.01,
@@ -261,6 +266,7 @@ def assert_route_matches_reference(
         assert _max_diff(first, ref) > 1e-8 * scale
 
 
+@pytest.mark.live
 @pytest.mark.parametrize("element", ["SSPquad"])
 def test_two_quads_manzari(element: str) -> None:
     ops = _ops()
@@ -269,11 +275,13 @@ def test_two_quads_manzari(element: str) -> None:
                               element=element))
 
 
+@pytest.mark.live
 def test_brick_column_manzari() -> None:
     ops = _ops()
     assert_route_matches_reference(lambda how: brick_column(ops, how))
 
 
+@pytest.mark.live
 @pytest.mark.ladruno_fork
 def test_two_quads_ladruno_sanisand() -> None:
     ops = _ops()
@@ -284,6 +292,7 @@ def test_two_quads_ladruno_sanisand() -> None:
         first_fails=True)
 
 
+@pytest.mark.live
 @pytest.mark.ladruno_fork
 @pytest.mark.parametrize("mat", ["ManzariDafalias", "LadrunoSANISAND"])
 def test_two_ladruno_up_elements(mat: str) -> None:
@@ -299,6 +308,7 @@ def test_two_ladruno_up_elements(mat: str) -> None:
         first_fails=sanisand)
 
 
+@pytest.mark.live
 def test_four_node_quad_drops_the_sweep() -> None:
     """FourNodeQuad reads ``materialState`` as a per-point address, so the
     sweep misses it and the emitted flip is the first-element-only one:
@@ -336,12 +346,17 @@ _TRI6 = [(0, 0), (1, 0), (0, 1), (0.5, 0), (0.5, 0.5), (0, 0.5)]
 _QUAD4 = [(0, 0), (1, 0), (1, 1), (0, 1)]
 
 
-def _neighbour_model(ops: Deck, how: str) -> "tuple[int, list[list[float]]]":
+def _neighbour_model(
+    ops: Deck, how: str,
+    neighbours: "list[tuple[str, list[float], float]]" = TAG_BLIND_NEIGHBOURS,
+    *, on_flip: "Callable[[], None] | None" = None,
+) -> "tuple[int, list[list[float]]]":
     """Every DOF on a prescribed strain path to t=1, the flip, then on to
     t=2.  Elements 1 and 2: SSPquads carrying ManzariDafalias (tags 1 and
     2 for the reference, tag 1 otherwise).  Then one SixNodeTri per
-    :data:`TAG_BLIND_NEIGHBOURS` class in simple shear, an elastic quad
-    and a truss.  Returns each element's response."""
+    ``neighbours`` class in simple shear, an elastic quad and a truss.
+    ``on_flip`` runs right after the flip.  Returns each element's
+    response."""
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     tags = [1, 2] if how == "reference" else [1, 1]
@@ -374,7 +389,7 @@ def _neighbour_model(ops: Deck, how: str) -> "tuple[int, list[list[float]]]":
     for e, t in zip((1, 2), tags):
         ops.element("SSPquad", e, *place(_QUAD4, squeeze), t,
                     "PlaneStrain", 1.0)
-    for k, (cls, args, amp) in enumerate(TAG_BLIND_NEIGHBOURS):
+    for k, (cls, args, amp) in enumerate(neighbours):
         ops.nDMaterial(cls, 10 + k, *args)
 
         def shear(x: float, y: float, amp: float = amp) -> tuple[float, float]:
@@ -382,7 +397,7 @@ def _neighbour_model(ops: Deck, how: str) -> "tuple[int, list[list[float]]]":
 
         ops.element("tri6n", 3 + k, *place(_TRI6, shear), 1.0,
                     "PlaneStrain", 10 + k)
-    n = len(TAG_BLIND_NEIGHBOURS)
+    n = len(neighbours)
     ops.nDMaterial("ElasticIsotropic", 50, 1.0e5, 0.3)
     ops.element("quad", 3 + n, *place(_QUAD4, squeeze), 1.0, "PlaneStrain",
                 50)
@@ -405,6 +420,8 @@ def _neighbour_model(ops: Deck, how: str) -> "tuple[int, list[list[float]]]":
         ops.updateMaterialStage("-material", 1, "-stage", 1)
     else:
         flip(ops, how, tags)
+    if on_flip is not None:
+        on_flip()
     code = code or int(ops.analyze(20))
     out = [
         list(ops.eleResponse(e, "stresses") or ops.eleResponse(e, "stress")
@@ -415,19 +432,240 @@ def _neighbour_model(ops: Deck, how: str) -> "tuple[int, list[list[float]]]":
     return code, out
 
 
-def test_the_sweep_leaves_other_elements_alone() -> None:
-    """The emitted flip names the carriers only.  A DruckerPrager and a
-    StressDensityModel element in plastic shear beside the sand keep the
+#: The child that runs one leg of :func:`_neighbour_model` with one
+#: neighbour class.  It prints ``BACKEND`` first, ``FLIPPED`` right after
+#: the flip and ``RESULT`` last, so a child that died in between is
+#: visible as such, and where.
+_SWEEP_CHILD = r"""
+import json, sys
+from apeGmsh.opensees.emitter.live import get_backend_name, get_ops
+from tests.opensees.integration import test_md_stage_all_elements as m
+
+spec = json.loads(sys.argv[1])
+(neighbour,) = [nb for nb in m.TAG_BLIND_NEIGHBOURS if nb[0] == spec["cls"]]
+ops = get_ops()
+print("BACKEND", get_backend_name(), flush=True)
+code, out = m._neighbour_model(
+    m.Deck(ops), spec["how"], [neighbour],
+    on_flip=lambda: print("FLIPPED", flush=True))
+print("RESULT", json.dumps({"code": code, "out": out}), flush=True)
+"""
+
+#: What the stress-density Fortran (``SDM-UC.f``) writes before each of its
+#: ``STOP`` statements.  Only the plastic leg (stage 1) calls that Fortran.
+_SDM_STOP = "Stop in S-D model"
+
+_LEGS = ("reference", "emitted", "every_element")
+
+
+class _Leg(NamedTuple):
+    backend: str
+    returncode: int
+    stdout: str
+    log: str  # return code, stdout and stderr, for assertion messages
+    code: "int | None"  # the analyze code; None when RESULT never printed
+    out: "list[list[float]] | None"  # each element's response
+
+
+def _run_leg(cls: str, how: str) -> _Leg:
+    """``_neighbour_model(how)`` with the one neighbour ``cls``, in a child
+    interpreter on the resolved backend."""
+    import json
+    import os
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    env = {**os.environ, "LADRUNO_OPENSEES_QUIET": "1",
+           "PYTHONPATH": os.pathsep.join(
+               [str(root / "src"), str(root),
+                os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep)}
+    proc = subprocess.run(
+        [sys.executable, "-c", _SWEEP_CHILD,
+         json.dumps({"cls": cls, "how": how})],
+        cwd=str(root), capture_output=True, text=True, timeout=300, env=env,
+    )
+    log = f"{cls} {how}: rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    backend = [ln.split()[1] for ln in proc.stdout.splitlines()
+               if ln.startswith("BACKEND ")]
+    assert backend, f"the child never resolved a backend:\n{log}"
+    result = [json.loads(ln[len("RESULT "):]) for ln in proc.stdout.splitlines()
+              if ln.startswith("RESULT ")]
+    code, out = ((int(result[0]["code"]), result[0]["out"]) if result
+                 else (None, None))
+    return _Leg(backend[0], proc.returncode, proc.stdout, log, code, out)
+
+
+def _backend() -> str:
+    """The backend this process resolves; the children must resolve the
+    same one.  Skips only when no backend imports at all."""
+    from apeGmsh.opensees.emitter.live import get_backend_name
+
+    try:
+        return get_backend_name()
+    except ImportError as e:
+        pytest.skip(f"no OpenSees backend: {e}")
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("cls", [c for c, _a, _amp in TAG_BLIND_NEIGHBOURS])
+def test_the_sweep_leaves_other_elements_alone(
+    cls: str, record_property: "Callable[[str, object], None]",
+) -> None:
+    """The emitted flip names the carriers only.  A DruckerPrager or a
+    StressDensityModel element in plastic shear beside the sand keeps the
     per-element reference's answer, which an every-element sweep breaks
-    (it switches them: measured on stock 3.8.0 and the fork)."""
-    ops = _ops()
-    code_r, ref = _neighbour_model(ops, "reference")
-    code_e, emitted = _neighbour_model(ops, "emitted")
-    code_s, swept = _neighbour_model(ops, "every_element")
-    assert (code_r, code_e, code_s) == (0, 0, 0)
-    flat_ref = [v for resp in ref for v in resp]
+    (it switches them: measured on stock 3.8.0 and the fork).
+
+    Each leg runs in a child (#2881).  On the stock Linux wheel the swept
+    ``StressDensityModel`` may instead reach the model's Fortran ``STOP``
+    (#2543): the switched element enters the plastic leg, whose ``strcon``
+    LAPACK answers.  That STOP after the flip is the switch, and it is the
+    one early death accepted; the test records which outcome it took."""
+    backend = _backend()
+    legs = {how: _run_leg(cls, how) for how in _LEGS}
+    for leg in legs.values():
+        assert leg.backend == backend, leg.log
+    ref, emitted, swept = (legs[how] for how in _LEGS)
+    for leg in (ref, emitted):
+        assert leg.returncode == 0 and leg.code == 0, leg.log
+        assert leg.out is not None and _SDM_STOP not in leg.log, leg.log
+    assert ref.out is not None and emitted.out is not None
+    flat_ref = [v for resp in ref.out for v in resp]
     scale = max(1.0, max(abs(v) for v in flat_ref))
-    assert _max_diff([v for r in emitted for v in r], flat_ref) <= 1e-10 * scale
-    for k, (cls, _args, _amp) in enumerate(TAG_BLIND_NEIGHBOURS):
-        hit = _max_diff(swept[2 + k], ref[2 + k])
-        assert hit > 1e-3 * max(abs(v) for v in ref[2 + k]), cls
+    assert _max_diff([v for r in emitted.out for v in r],
+                     flat_ref) <= 1e-10 * scale, (emitted.log, ref.log)
+    if swept.out is None:
+        # Only the plastic leg calls the stress-density Fortran, so its STOP
+        # after the flip is the switch; nothing else may end the child early.
+        # A Fortran STOP exits 0: a signal or a nonzero code is a crash.
+        assert cls == "StressDensityModel" and backend == "stock-openseespy", \
+            swept.log
+        assert swept.returncode == 0, swept.log
+        assert "FLIPPED" in swept.stdout and _SDM_STOP in swept.stdout, \
+            swept.log
+        assert swept.stdout.index("FLIPPED") < swept.stdout.index(_SDM_STOP), \
+            swept.log
+        outcome = "stop-after-flip"
+    else:
+        assert swept.returncode == 0 and swept.code == 0, swept.log
+        hit = _max_diff(swept.out[2], ref.out[2])
+        assert hit > 1e-3 * max(abs(v) for v in ref.out[2]), (cls, swept.log)
+        outcome = "switched"
+    record_property("outcome", outcome)
+    print(f"{cls} on {backend}: the swept leg {outcome}")
+
+
+# ---------------------------------------------------------------------------
+# The neighbour test against stubbed children (#2881): what it accepts
+# ---------------------------------------------------------------------------
+
+_STOP_LINE = " ### / Stop in S-D model / ### cnjpnt: no conjugate point(1)\n"
+_STUB_REF = [[1.0, 2.0, 3.0]] * 5
+_STUB_SWEPT = [[1.0, 2.0, 3.0]] * 2 + [[10.0, 20.0, 30.0]] + [[1.0, 2.0, 3.0]] * 2
+
+
+def _stub_ok(out: "list[list[float]]") -> "tuple[int, str, str]":
+    import json
+
+    return (0, "FLIPPED\nRESULT " + json.dumps({"code": 0, "out": out}) + "\n",
+            "")
+
+
+_STOP_DEATH = (0, "FLIPPED\n" + _STOP_LINE, "")
+_GOOD = {"reference": _stub_ok(_STUB_REF), "emitted": _stub_ok(_STUB_REF),
+         "every_element": _stub_ok(_STUB_SWEPT)}
+
+
+def _with(**legs: "tuple[int, str, str]") -> "dict[str, tuple[int, str, str]]":
+    return {**_GOOD, **legs}
+
+
+@pytest.mark.parametrize(("cls", "backend", "children", "outcome"), [
+    ("DruckerPrager", "stock-openseespy", _GOOD, "switched"),
+    ("StressDensityModel", "ladruno-fork", _GOOD, "switched"),
+    ("StressDensityModel", "stock-openseespy",
+     _with(every_element=_STOP_DEATH), "stop-after-flip"),
+    # A wrong value: the emitted flip off the reference, or a sweep that
+    # did not switch the neighbour.
+    ("DruckerPrager", "stock-openseespy",
+     _with(emitted=_stub_ok([[1.0, 2.0, 3.0 + 1e-6]] + _STUB_REF[1:])), None),
+    ("StressDensityModel", "ladruno-fork",
+     _with(every_element=_stub_ok(_STUB_REF)), None),
+    # A nonzero analyze code.
+    ("DruckerPrager", "stock-openseespy",
+     _with(every_element=(0, "FLIPPED\nRESULT "
+                          '{"code": -3, "out": [[1.0]]}\n', "")), None),
+    # The STOP accepted only for StressDensityModel, only on stock.
+    ("DruckerPrager", "stock-openseespy",
+     _with(every_element=_STOP_DEATH), None),
+    ("StressDensityModel", "ladruno-fork",
+     _with(every_element=_STOP_DEATH), None),
+    # ... only on the swept leg.
+    ("StressDensityModel", "stock-openseespy",
+     _with(emitted=_STOP_DEATH), None),
+    ("StressDensityModel", "stock-openseespy",
+     _with(reference=_STOP_DEATH), None),
+    # ... only as a clean exit, after the flip, on stdout.
+    ("StressDensityModel", "stock-openseespy",
+     _with(every_element=(-11,) + _STOP_DEATH[1:]), None),
+    ("StressDensityModel", "stock-openseespy",
+     _with(every_element=(1,) + _STOP_DEATH[1:]), None),
+    ("StressDensityModel", "stock-openseespy",
+     _with(every_element=(0, _STOP_LINE + "FLIPPED\n", "")), None),
+    ("StressDensityModel", "stock-openseespy",
+     _with(every_element=(0, "FLIPPED\n", _STOP_LINE)), None),
+    ("StressDensityModel", "stock-openseespy",
+     _with(every_element=(0, "FLIPPED\n", "")), None),
+], ids=["dp-switched", "sdm-fork-switched", "sdm-stock-stop-after-flip",
+        "emitted-off-reference", "sweep-did-not-switch", "nonzero-code",
+        "dp-stop", "fork-stop", "stop-in-emitted", "stop-in-reference",
+        "signal", "nonzero-exit", "stop-before-flip", "stop-on-stderr",
+        "silent-death"])
+def test_the_neighbour_test_accepts_only_its_two_outcomes(
+    monkeypatch: pytest.MonkeyPatch, cls: str, backend: str,
+    children: "dict[str, tuple[int, str, str]]", outcome: "str | None",
+) -> None:
+    import json
+    import subprocess
+
+    def fake_run(argv: "list[str]",
+                 **_kw: Any) -> "subprocess.CompletedProcess[str]":
+        spec = json.loads(argv[-1])
+        assert spec["cls"] == cls
+        rc, out, err = children[spec["how"]]
+        return subprocess.CompletedProcess(
+            argv, rc, f"BACKEND {backend}\n{out}", err)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(sys.modules[__name__], "_backend", lambda: backend)
+    recorded: "dict[str, object]" = {}
+    run = test_the_sweep_leaves_other_elements_alone
+    if outcome is None:
+        with pytest.raises(AssertionError):
+            run(cls, recorded.__setitem__)
+    else:
+        run(cls, recorded.__setitem__)
+        assert recorded == {"outcome": outcome}
+
+
+def test_a_child_on_another_backend_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Children that would pass (``dp-switched``), but on stock while this
+    process resolved the fork."""
+    import json
+    import subprocess
+
+    def fake_run(argv: "list[str]",
+                 **_kw: Any) -> "subprocess.CompletedProcess[str]":
+        rc, out, err = _GOOD[json.loads(argv[-1])["how"]]
+        return subprocess.CompletedProcess(
+            argv, rc, "BACKEND stock-openseespy\n" + out, err)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(sys.modules[__name__], "_backend",
+                        lambda: "ladruno-fork")
+    with pytest.raises(AssertionError):
+        test_the_sweep_leaves_other_elements_alone(
+            "DruckerPrager", lambda *_a: None)
