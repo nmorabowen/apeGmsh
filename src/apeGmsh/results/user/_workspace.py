@@ -34,6 +34,7 @@ import math
 import os
 import re
 import secrets
+import sys
 import time
 import warnings
 from collections import Counter
@@ -1078,8 +1079,11 @@ def write_workspace(
     refused rows included, except a set that now reads ``moved``, whose row
     takes the model's hashes. Refuses (:class:`WorkspaceWriteRefused`) a row that
     would refuse, a tag the model lacks, an old file newer than this writer, and
-    a write that lost a race (``revision-moved``). An unreadable old file is
-    renamed aside, with a :class:`WorkspaceRenamedAside` warning.
+    a write that lost a race (``revision-moved``), and, on Windows, a replace
+    that another program holding the old file open still blocks after the
+    retries (``held-open``; the old file stays whole and the partial is removed).
+    An unreadable old file is renamed aside, with a
+    :class:`WorkspaceRenamedAside` warning.
     """
     target = Path(path)
     if _stem(target) is None:
@@ -1143,7 +1147,16 @@ def write_workspace(
             warnings.warn(
                 f"{target} was not a readable workspace; it was renamed aside to {aside.name}",
                 WorkspaceRenamedAside, stacklevel=2)
-        _replace(partial, target)
+        try:
+            _replace(partial, target)
+        except PermissionError as exc:
+            if not _held_open(target, exc):
+                raise
+            raise WorkspaceWriteRefused(
+                "held-open",
+                f"another program holds {target} open, so it cannot be replaced "
+                f"({exc.strerror}); nothing was replaced. Close it there and write again."
+            ) from exc
     except BaseException:
         with contextlib.suppress(OSError):
             partial.unlink(missing_ok=True)
@@ -1227,6 +1240,24 @@ def _refuse_if_moved(target: Path, digest: Optional[str]) -> None:
             "revision-moved",
             f"{target} {'was created' if digest is None else 'changed'} while this write "
             "ran; nothing was replaced. Write again.")
+
+
+#: ``ERROR_ACCESS_DENIED`` and ``ERROR_SHARING_VIOLATION``: what Windows answers a
+#: replace onto a file another process holds open (h5py, h5wasm or a plain handle).
+_HELD_WINERRORS = frozenset({5, 32})
+
+
+def _held_open(target: Path, exc: PermissionError) -> bool:
+    """Whether a replace that still failed after ``_replace``'s retries met a holder.
+
+    Only Windows blocks a replace onto an open file; a POSIX ``PermissionError``
+    is a real permission problem. A read-only target also answers ``WinError 5``
+    and is not a holder, so it keeps its own error.
+    """
+    if sys.platform != "win32":
+        return False
+    return (exc.winerror in _HELD_WINERRORS and target.is_file()
+            and os.access(target, os.W_OK))
 
 
 def _rename_aside(target: Path) -> Path:
