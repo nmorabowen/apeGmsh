@@ -18,7 +18,14 @@ Oracles, read back from the ``.ladruno`` through ``Results.from_ladruno``:
   2-D cantilever and ``-fullGenLapack`` on the live domain otherwise;
 * every node's every written slot equals the live ``nodeEigenvector`` of
   that node and mode at rtol 1e-12 (raw, unscaled); a rotation is written
-  where a beam touches the node, 0.0 at a brick node.
+  where a beam touches the node, and a brick node has none.
+
+Rotations at nodes other classes touch (#2407 / #2414): a beam node tied
+into a brick by ``ASDEmbeddedNodeElement -rot``, a cantilever with a
+``mixedBeamColumn``, and one cantilever per rotation-only beam class of the
+census (``_ROTATION_TOKEN_FOR_LIVE_CLASS``) each read the live rotations,
+with no warning; a class the tables do not know at a beam node refuses by
+node, slot and class (ruling R6 = (A)).
 
 Refusals on the live domain: a deck node off its FEM coordinates, a FEM
 node the deck never built, a non-positive eigenvalue (a negative
@@ -266,6 +273,173 @@ def test_solid_and_frame_modes_equal_the_live_vectors(opspy: Any, tmp_path: Path
     v = np.array([ops.nodeEigenvector(n, 1) for n in range(5, 9)])
     assert np.abs(v).max() > 0.0
     np.testing.assert_allclose(lam, _full_lapack(ops, 4), rtol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# #2407 / #2414: rotations at nodes a raw deck's other classes touch
+# ---------------------------------------------------------------------------
+
+
+def _rotations_move(ops: Any, nodes: "tuple[int, ...]", n: int, ndm: int) -> None:
+    """The live rotations at ``nodes`` are not all zero, so a file that
+    wrote 0.0 there could not pass :func:`_check_file`."""
+    first = 2 if ndm == 2 else 3
+    v = np.array([ops.nodeEigenvector(nid, k)[first:]
+                  for nid in nodes for k in range(1, n + 1)])
+    assert np.abs(v).max() > 0.0
+
+
+def test_an_embedded_beam_node_reads_its_live_rotations(opspy: Any, tmp_path: Path) -> None:
+    """#2407: a brick plus a 3-D ``elasticBeamColumn``, with beam node 9
+    tied into the brick by ``ASDEmbeddedNodeElement ... -rot``. Node 9's
+    rotations are the live ``nodeEigenvector`` (they were 0.0, with a
+    ``RotationSlotUnresolvedWarning``), as nodes 10 and 11 are."""
+    ops = opspy
+    cube = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+            [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+    col = [[0.2, 0.2, 0.2], [0.2, 0.2, 1.5], [0.2, 0.2, 2.5]]
+    xyz = np.array(cube + col, dtype=float)
+    fem = _fem(xyz, {5: ("Hexahedron 8", 3, [list(range(1, 9))], [1]),
+                     1: ("Line 2", 1, [[9, 10], [10, 11]], [2, 3])}, "live_modes_embedded")
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for n in range(1, 9):
+        ops.node(n, *[float(v) for v in xyz[n - 1]])
+    for n in (1, 2, 3, 4):
+        ops.fix(n, 1, 1, 1)
+    for n in range(5, 9):
+        ops.mass(n, M, M, M)
+    ops.nDMaterial("ElasticIsotropic", 1, 2.0e8, 0.25)
+    ops.element("stdBrick", 1, *range(1, 9), 1)
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for n in (9, 10, 11):
+        ops.node(n, *[float(v) for v in xyz[n - 1]])
+    ops.geomTransf("Linear", 1, 1.0, 0.0, 0.0)
+    for eid, (i, j) in ((2, (9, 10)), (3, (10, 11))):
+        ops.element("elasticBeamColumn", eid, i, j, A, E, G, J, I_Y, I_Z, 1)
+    # Node 9 lies in the tetrahedron of brick corners 1, 2, 4, 5.
+    ops.element("ASDEmbeddedNodeElement", 4, 9, 1, 2, 4, 5, "-rot")
+    for n in (10, 11):
+        ops.mass(n, M, M, M, JM, JM, JM)
+    assert ops.eleType(4) == "ASDEmbeddedNodeElement"
+    p, archive, spy = _capture(fem, ops, 3, tmp_path)
+    _check_file(p, archive, spy, ops, 3, rotation_nodes={9, 10, 11}, ndm=3)
+    _rotations_move(ops, (9,), 3, ndm=3)
+
+
+def test_a_mixed_beam_cantilever_reads_its_live_rotations(opspy: Any, tmp_path: Path) -> None:
+    """#2414: a stock 3-D cantilever, ``elasticBeamColumn`` 1-2 plus
+    ``mixedBeamColumn`` 2-3 (``MixedBeamColumn3d``). Nodes 2 and 3 read
+    the live rotations in every mode (they were 0.0)."""
+    ops = opspy
+    xyz = np.array([[0, 0, 0], [1.5, 0, 0], [3.0, 0, 0]], dtype=float)
+    fem = _fem(xyz, {1: ("Line 2", 1, [[1, 2], [2, 3]], [1, 2])}, "live_modes_mixed_beam")
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for n, c in enumerate(xyz, start=1):
+        ops.node(n, *[float(v) for v in c])
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.section("Elastic", 1, E, A, I_Z, I_Y, G, J)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.element("elasticBeamColumn", 1, 1, 2, A, E, G, J, I_Y, I_Z, 1)
+    ops.element("mixedBeamColumn", 2, 2, 3, 1, 1)
+    for n in (2, 3):
+        ops.mass(n, M, M, M, JM, JM, JM)
+    assert ops.eleType(2) == "MixedBeamColumn3d"
+    p, archive, spy = _capture(fem, ops, 6, tmp_path)
+    _check_file(p, archive, spy, ops, 6, rotation_nodes={1, 2, 3}, ndm=3)
+    _rotations_move(ops, (2, 3), 6, ndm=3)
+
+
+#: Each rotation-only class of ``_ROTATION_TOKEN_FOR_LIVE_CLASS``: its
+#: ``ndm`` and the stock ``element`` command (after the tag and nodes)
+#: that makes it, over section 1, integration 1 and transformation 1.
+ROTATION_ONLY: "dict[str, tuple[int, tuple[Any, ...]]]" = {
+    "MixedBeamColumn2d": (2, ("mixedBeamColumn", 1, 1)),
+    "MixedBeamColumn3d": (3, ("mixedBeamColumn", 1, 1)),
+    "MixedBeamColumnAsym3d": (3, ("mixedBeamColumnAsym", 1, 1)),
+    "ForceBeamColumnCBDI3d": (3, ("forceBeamColumnCBDI", 1, 1)),
+    "ElasticForceBeamColumn2d": (2, ("elasticForceBeamColumn", 1, 1)),
+    "ElasticForceBeamColumn3d": (3, ("elasticForceBeamColumn", 1, 1)),
+    "ForceBeamColumn2dThermal": (2, ("forceBeamColumnThermal", 1, 1)),
+    "ForceBeamColumn3dThermal": (3, ("forceBeamColumnThermal", 1, 1)),
+    "DispBeamColumnNL2d": (2, ("dispBeamColumnNL", 1, 1)),
+    "DispBeamColumnNL3d": (3, ("dispBeamColumnNL", 1, 1)),
+    "DispBeamColumnAsym3d": (3, ("dispBeamColumnAsym", 1, 1)),
+    "DispBeamColumn2dThermal": (2, ("dispBeamColumnThermal", 1, 1)),
+    "DispBeamColumn3dThermal": (3, ("dispBeamColumnThermal", 1, 1)),
+    "TimoshenkoBeamColumn2d": (2, ("timoshenkoBeamColumn", 1, 1)),
+    "TimoshenkoBeamColumn3d": (3, ("timoshenkoBeamColumn", 1, 1)),
+    # K11, K33, K44 = 4, 4, 2 about both axes: the unmodified rows.
+    "ModElasticBeam3d": (3, ("ModElasticBeam3d", A, E, G, J, I_Y, I_Z,
+                             4.0, 4.0, 2.0, 4.0, 4.0, 2.0, 1)),
+}
+
+
+def test_the_rotation_only_oracles_cover_the_table() -> None:
+    from apeGmsh.opensees._recorder_translate import _ROTATION_TOKEN_FOR_LIVE_CLASS
+
+    assert set(ROTATION_ONLY) == set(_ROTATION_TOKEN_FOR_LIVE_CLASS)
+
+
+@pytest.mark.parametrize("cls", list(ROTATION_ONLY))
+def test_a_rotation_only_beam_class_reads_its_live_rotations(
+    cls: str, opspy: Any, tmp_path: Path,
+) -> None:
+    """#2414 census: a two-element stock cantilever of ``cls`` along x is
+    that ``eleType`` with the FEM's node order, and every node reads the
+    live rotations. Dropping the class's row makes the capture refuse."""
+    ndm, command = ROTATION_ONLY[cls]
+    ops = opspy
+    xyz = np.array([[0.0] * ndm, [1.5] + [0.0] * (ndm - 1), [3.0] + [0.0] * (ndm - 1)])
+    fem = _fem(xyz, {1: ("Line 2", 1, [[1, 2], [2, 3]], [1, 2])}, f"live_modes_{cls}")
+    ops.model("basic", "-ndm", ndm, "-ndf", 3 if ndm == 2 else 6)
+    for n, c in enumerate(xyz, start=1):
+        ops.node(n, *[float(v) for v in c])
+    if ndm == 2:
+        ops.fix(1, 1, 1, 1)
+        ops.geomTransf("Linear", 1)
+        ops.section("Elastic", 1, E, A, I_Z)
+    else:
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        ops.section("Elastic", 1, E, A, I_Z, I_Y, G, J)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    for eid in (1, 2):
+        ops.element(command[0], eid, eid, eid + 1, *command[1:])
+    for n in (2, 3):
+        ops.mass(n, *((M, M, JM) if ndm == 2 else (M, M, M, JM, JM, JM)))
+    assert [ops.eleType(e) for e in (1, 2)] == [cls, cls]
+    assert [list(ops.eleNodes(e)) for e in (1, 2)] == [[1, 2], [2, 3]]
+    n_modes = 2 if ndm == 2 else 4
+    p, archive, spy = _capture(fem, ops, n_modes, tmp_path)
+    _check_file(p, archive, spy, ops, n_modes, rotation_nodes={1, 2, 3}, ndm=ndm)
+    _rotations_move(ops, (2, 3), n_modes, ndm=ndm)
+
+
+def test_an_unknown_class_at_a_beam_node_refuses_by_name(opspy: Any, tmp_path: Path) -> None:
+    """Ruling R6 = (A): a class the tables do not know
+    (``ElastomericBearingPlasticity2d``) touching beam node 3 leaves its
+    rotation slot unsettled, so the capture refuses by node, slot and
+    class and writes nothing, where it wrote 0.0 over the live rotation."""
+    ops = opspy
+    xy = np.array([[0.0, 0.0], [1.5, 0.0], [3.0, 0.0]])
+    _cantilever_2d(ops, xy)
+    ops.node(4, 3.0, -0.2)                # the bearing's far end, not FEM
+    ops.fix(4, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1.0e6)
+    ops.element("elastomericBearingPlasticity", 3, 3, 4, 1.0e6, 1.0e3, 0.05,
+                0.0, 1.0, "-P", 1, "-Mz", 1)
+    assert ops.eleType(3) == "ElastomericBearingPlasticity2d"
+    out = tmp_path / "modes.ladruno"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match=(
+                r"capture_live_modes: node 3's rotation slots \['rotation_z'\] "
+                r"cannot be settled: a ElastomericBearingPlasticity2d touches "
+                r"it.*\(1 node\(s\): \[3\]\)\. Nothing was written")):
+            capture_live_modes(_line_fem(xy), 2, out, ops=ops)
+    assert not out.exists()
+    assert abs(ops.nodeEigenvector(3, 1)[2]) > 0.0     # a real rotation there
 
 
 # ---------------------------------------------------------------------------
