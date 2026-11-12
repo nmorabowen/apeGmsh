@@ -27,6 +27,11 @@ tests pin it with stub engines, without importing openseespy:
   CST, LST, Bezier*, Brick* at the pin) is refused by name, not verified;
 * a rejected option *value* says "value ... of option ... is not supported";
 * the refusal names the build;
+* a known option the build says it ignored is refused too;
+* the gate keys on the call's shape, so a stray token after a verified call
+  is still read;
+* a refused element is removed again, and a taken tag or a known class's
+  failing call is not called a missing fork;
 * ``live`` + ``ladruno_fork`` checks against the real build at FORK_PIN
   (run by the ``live-fork`` lane).
 """
@@ -195,20 +200,33 @@ PIN_IGNORED = [
 
 
 class _CreatesAnyway:
-    """A build whose ``element`` prints ``line`` and still creates the
-    element (``tags`` lists it), stamped ``build`` when one is given."""
+    """A build whose ``element`` prints ``line`` (a callable of the call's
+    trailing arguments, or a fixed string) and still creates the element
+    (``tags`` lists it), stamped ``build`` when one is given. A tag already
+    in the domain fails the call the way OpenSees does; ``remove`` takes an
+    element out again."""
 
-    def __init__(self, line: str, *, fd: bool = False,
+    def __init__(self, line: Any, *, fd: bool = False,
                  build: "str | None" = None) -> None:
         self.line, self.fd, self.build = line, fd, build
         self.tags: list[int] = []
 
-    def element(self, _ele_type: str, tag: int, *_args: Any) -> None:
+    def _print(self, text: str) -> None:
         if self.fd:
-            os.write(2, self.line.encode())
+            os.write(2, text.encode())
         else:
-            sys.stderr.write(self.line)
+            sys.stderr.write(text)
+
+    def element(self, _ele_type: str, tag: int, *args: Any) -> None:
+        if tag in self.tags:
+            self._print(f"WARNING could not add element with tag {tag} to the domain\n")
+            raise RuntimeError("See stderr output")
+        self._print(self.line(args) if callable(self.line) else self.line)
         self.tags.append(tag)
+
+    def remove(self, kind: str, tag: int) -> None:
+        assert kind == "element"
+        self.tags.remove(tag)
 
     def getEleTags(self) -> list[int]:  # noqa: N802 - the OpenSees name
         return list(self.tags)
@@ -222,6 +240,11 @@ class _CreatesAnywayNoEleTags(_CreatesAnyway):
         raise AttributeError("getEleTags")
 
 
+class _CreatesAnywayNoRemove(_CreatesAnyway):
+    def remove(self, kind: str, tag: int) -> None:
+        raise RuntimeError("no remove")
+
+
 @pytest.mark.parametrize("fd", [False, True], ids=["sys.stderr", "fd2"])
 @pytest.mark.parametrize(("etype", "line"), PIN_IGNORED,
                          ids=[t for t, _ln in PIN_IGNORED])
@@ -233,23 +256,27 @@ def test_an_ignored_option_is_refused_though_the_element_was_built(
     with pytest.raises(RuntimeError) as info:
         le.element(etype, 5, 1, 2, 3, 4, 1, "-bogus")
     msg = str(info.value)
-    assert ops.tags == [5], "the stub did create it: the build went on"
     assert f"element {etype}: option -bogus is not supported by this build" in msg
     assert "WITHOUT" in msg, "it says the element was built without it"
     assert line.strip() in msg, "it quotes the build's line"
     assert _FORK_REQUIRED not in msg
     assert le._fork_verified_types == set(), "a refused signature is not cached"
+    assert ops.tags == [], "the element the build made without it is removed"
+    assert "removed from the domain again" in msg
 
 
 def test_an_ignored_option_is_refused_without_get_ele_tags() -> None:
     """A build with no ``getEleTags`` is trusted to have created the
-    element, but not to have kept an option it said it ignored."""
-    le = _bare_emitter(_CreatesAnywayNoEleTags(PIN_IGNORED[0][1]))
+    element, but not to have kept an option it said it ignored. It cannot
+    confirm the element, so nothing is removed."""
+    ops = _CreatesAnywayNoEleTags(PIN_IGNORED[0][1])
+    le = _bare_emitter(ops)
     with pytest.raises(RuntimeError, match="option -bogus is not supported"):
         le.element("LadrunoQuad", 5, 1, 2, 3, 4, 1, "-bogus")
+    assert ops.tags == [5]
     quiet = _bare_emitter(_CreatesAnywayNoEleTags(""))
     quiet.element("LadrunoQuad", 5, 1, 2, 3, 4, 1)
-    assert quiet._fork_verified_types == {"LadrunoQuad"}
+    assert quiet._fork_verified_types == {"LadrunoQuad # # # # #", "LadrunoQuad"}
 
 
 def test_a_clean_success_is_still_verified_once() -> None:
@@ -259,7 +286,8 @@ def test_a_clean_success_is_still_verified_once() -> None:
     le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-thick", 0.2)
     le.element("LadrunoQuad", 2, 1, 2, 3, 4, 1, "-thick", 0.3)
     assert ops.tags == [1, 2]
-    assert le._fork_verified_types == {"LadrunoQuad -thick"}
+    assert le._fork_verified_types == {"LadrunoQuad # # # # # -thick #",
+                                       "LadrunoQuad"}
 
 
 def test_the_refusal_names_the_build() -> None:
@@ -272,15 +300,193 @@ def test_the_refusal_names_the_build() -> None:
         le.element("LadrunoQuad", 5, 1, 2, 3, 4, 1, "-bogus")
 
 
-def test_a_non_option_warning_on_success_is_not_a_refusal() -> None:
-    """The pin's other success-path warnings ('-bulkViscosity b1 < 0;
-    ignoring (b1=0)', OPS_LadrunoQuad.cpp:158) name no unknown option."""
-    line = "WARNING LadrunoQuad -- -bulkViscosity b1 < 0; ignoring (b1=0)\n"
+def test_another_classes_ignored_line_on_success_is_not_a_refusal() -> None:
+    """A material's own 'unknown option ... (ignored)' line (it names the
+    material, not the element) does not refuse the element."""
+    ops = _CreatesAnyway(PIN_LINES["LadrunoCohesiveHinge -implex"])
+    le = _bare_emitter(ops)
+    le.element("LadrunoQuad", 5, 1, 2, 3, 4, 1)
+    assert ops.tags == [5]
+
+
+# ---------------------------------------------------------------------------
+# Review F1: a stray token after a verified call is still read
+# ---------------------------------------------------------------------------
+
+
+def _quad_parser(args: tuple[Any, ...]) -> str:
+    """OPS_LadrunoQuad.cpp at the pin: every token after matTag that is not
+    a known option prints 'ignoring unknown option <tok>' (line 164); a
+    number read as a string prints as 'Invalid String Input!' (seen on fork
+    79e062367 for a stray 0.2)."""
+    known = {"-thick": 1, "-geom": 1}
+    rest, out, i = list(args[5:]), [], 0
+    while i < len(rest):
+        tok = rest[i] if isinstance(rest[i], str) else "Invalid String Input!"
+        if tok in known:
+            i += 1 + known[tok]
+            continue
+        out.append(f"WARNING LadrunoQuad -- ignoring unknown option {tok}\n")
+        i += 1
+    return "".join(out)
+
+
+@pytest.mark.parametrize("stray", [
+    (0.2,), ("PlaneStress",), ("-thick", 0.2, "-1e3"), ("-thick", 0.2, "junk"),
+], ids=["number", "word", "numeric-flag", "after-a-flag"])
+def test_a_stray_token_after_a_verified_call_is_still_refused(
+    stray: tuple[Any, ...],
+) -> None:
+    """A clean call verifies the type, and a later call of the same type with
+    a stray token must still be read and refused (before the fix it took the
+    fast path, keyed on the ``-alpha`` flags alone)."""
+    ops = _CreatesAnyway(_quad_parser)
+    le = _bare_emitter(ops)
+    le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1)
+    le.element("LadrunoQuad", 2, 1, 2, 3, 4, 1, "-thick", 0.2)
+    with pytest.raises(RuntimeError, match="is not supported by this build") as info:
+        le.element("LadrunoQuad", 3, 1, 2, 3, 4, 1, *stray)
+    assert "WITHOUT" in str(info.value)
+    assert ops.tags == [1, 2]
+
+
+def test_a_flag_value_change_is_read_again() -> None:
+    """``-geom linear`` verified does not verify ``-geom finite``: a
+    string value is part of the call shape."""
+    seen: list[tuple[Any, ...]] = []
+
+    def parser(args: tuple[Any, ...]) -> str:
+        seen.append(args)
+        return ""
+
+    le = _bare_emitter(_CreatesAnyway(parser))
+    le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-geom", "linear")
+    le.element("LadrunoQuad", 2, 1, 2, 3, 4, 1, "-geom", "linear")
+    le.element("LadrunoQuad", 3, 1, 2, 3, 4, 1, "-geom", "finite")
+    assert le._fork_verified_types == {
+        "LadrunoQuad", "LadrunoQuad # # # # # -geom linear",
+        "LadrunoQuad # # # # # -geom finite"}
+    assert len(seen) == 3  # the stub saw every call: all three were made
+
+
+# ---------------------------------------------------------------------------
+# Review F2: a refused element is removed; a taken tag is not "needs the fork"
+# ---------------------------------------------------------------------------
+
+
+def test_a_retry_after_a_refusal_builds_on_the_same_tag() -> None:
+    ops = _CreatesAnyway(_quad_parser)
+    le = _bare_emitter(ops)
+    with pytest.raises(RuntimeError, match="option -bogus"):
+        le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-bogus")
+    assert ops.tags == []
+    le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1)
+    assert ops.tags == [1]
+
+
+def test_a_refused_element_that_cannot_be_removed_says_so() -> None:
+    ops = _CreatesAnywayNoRemove(_quad_parser)
+    le = _bare_emitter(ops)
+    with pytest.raises(RuntimeError) as info:
+        le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-bogus")
+    assert "could NOT be removed" in str(info.value)
+    assert ops.tags == [1]
+
+
+def test_a_taken_tag_is_not_called_a_missing_fork() -> None:
+    ops = _CreatesAnywayNoRemove(_quad_parser)
+    le = _bare_emitter(ops)
+    with pytest.raises(RuntimeError):
+        le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-bogus")
+    with pytest.raises(RuntimeError) as info:
+        le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1)
+    msg = str(info.value)
+    assert "already in the domain" in msg
+    assert _FORK_REQUIRED not in msg
+
+
+def test_a_known_class_that_fails_another_call_is_not_a_missing_fork() -> None:
+    """Once the build has built the class, a later call that fails with no
+    line the gate reads says the class is known, not that it needs the
+    fork."""
+
+    class _FailsSecond(_CreatesAnyway):
+        def element(self, ele_type: str, tag: int, *args: Any) -> None:
+            if self.tags:
+                raise RuntimeError("See stderr output")
+            super().element(ele_type, tag, *args)
+
+    le = _bare_emitter(_FailsSecond(""))
+    le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1)
+    with pytest.raises(RuntimeError) as info:
+        le.element("LadrunoQuad", 2, 1, 2, 3, 4, 1, 0.5)
+    assert "knows LadrunoQuad" in str(info.value)
+    assert _FORK_REQUIRED not in str(info.value)
+
+
+# ---------------------------------------------------------------------------
+# Review F3: a known option the build ignored is refused
+# ---------------------------------------------------------------------------
+
+#: The pin's "ignoring" lines for known options, tag 5 (paths under
+#: ``SRC/element/``): ``ladrunoBrick/OPS_LadrunoBrick.cpp:272`` / ``:286`` /
+#: ``:293`` / ``:180``, ``ladrunoPlane/OPS_LadrunoQuad.cpp:228`` / ``:219`` /
+#: ``:158``, ``OPS_LadrunoCST.cpp:164``, ``OPS_LadrunoLST.cpp:191``,
+#: ``bezierTriangle/OPS_BezierTri6.cpp:200``,
+#: ``ladrunoKinematicCoupling/OPS_LadrunoKinematicCoupling.cpp:272`` /
+#: ``:291``, ``ladrunoEmbeddedNode/LadrunoEmbeddedNode.cpp:241``.
+PIN_IGNORED_KNOWN = [
+    ("LadrunoBrick", "-damp", "WARNING LadrunoBrick 5: -damp is only supported "
+     "with -formulation std|bbar; ignoring the damping object for this "
+     "formulation\n"),
+    ("LadrunoBrick", "-bulkViscosity", "WARNING LadrunoBrick 5: -bulkViscosity "
+     "is only supported with -formulation std|bbar; ignoring it for this "
+     "formulation\n"),
+    ("LadrunoBrick", "-bulkViscosity", "WARNING LadrunoBrick 5: -bulkViscosity "
+     "is only supported with -geom linear (global-frame velocities are "
+     "frame-consistent only then); ignoring it\n"),
+    ("LadrunoBrick", "-bulkViscosity", "WARNING -bulkViscosity b1 < 0 for "
+     "LadrunoBrick 5; ignoring (b1=0)\n"),
+    ("LadrunoQuad", "-bulkViscosity", "WARNING LadrunoQuad 5 -- -bulkViscosity "
+     "is not applied with -geom finite; ignoring it\n"),
+    ("LadrunoQuad", "-bulkViscosity", "WARNING LadrunoQuad 5 -- -bulkViscosity "
+     "is only supported with -formulation std|bbar; ignoring it for this "
+     "formulation\n"),
+    ("LadrunoQuad", "-bulkViscosity", "WARNING LadrunoQuad -- -bulkViscosity "
+     "b1 < 0; ignoring (b1=0)\n"),
+    ("LadrunoCST", "-bulkViscosity", "WARNING LadrunoCST 5 -- -bulkViscosity "
+     "is not applied with -geom finite; ignoring it\n"),
+    ("LadrunoLST", "-bulkViscosity", "WARNING LadrunoLST 5 -- -bulkViscosity "
+     "is not applied with -geom finite; ignoring it\n"),
+    ("BezierTri6", "-bbar", "WARNING BezierTri6 5 - '-bbar' is not valid for "
+     "PlaneStress (no volumetric locking); ignoring -bbar\n"),
+    ("LadrunoKinematicCoupling", "-alUpdate", "WARNING LadrunoKinematicCoupling "
+     "5: -alUpdate has no effect without -enforce al (the penalty formulation "
+     "carries no multiplier); ignored\n"),
+    ("LadrunoKinematicCoupling", "-bipenalty", "WARNING LadrunoKinematicCoupling: "
+     "-bipenalty ignored with -enforce al (augmented Lagrangian needs no mass "
+     "penalty)\n"),
+    ("LadrunoEmbeddedNode", "-corot", "WARNING LadrunoEmbeddedNode 5: -corot "
+     "only applies to a material interface (-matN/-matT*); ignoring "
+     "(penalty/isotropic ties are already frame-objective)\n"),
+]
+
+
+@pytest.mark.parametrize(("etype", "opt", "line"), PIN_IGNORED_KNOWN,
+                         ids=[f"{t}{o}-{i}" for i, (t, o, _l)
+                              in enumerate(PIN_IGNORED_KNOWN)])
+def test_a_known_option_the_build_ignored_is_refused(
+    etype: str, opt: str, line: str,
+) -> None:
     ops = _CreatesAnyway(line)
     le = _bare_emitter(ops)
-    le.element("LadrunoQuad", 5, 1, 2, 3, 4, 1, "-bulkViscosity", -1.0, 0.0)
-    assert le._fork_verified_types == {"LadrunoQuad -bulkViscosity"}
-
+    with pytest.raises(RuntimeError) as info:
+        le.element(etype, 5, 1, 2, 3, 4, 1, opt)
+    msg = str(info.value)
+    assert f"element {etype}: option {opt} was ignored by this build" in msg
+    assert "WITHOUT" in msg and line.strip() in msg
+    assert _FORK_REQUIRED not in msg
+    assert ops.tags == [] and le._fork_verified_types == set()
 
 # ---------------------------------------------------------------------------
 # #2524 scope addition: a rejected option VALUE says so
@@ -384,7 +590,15 @@ def test_pin_refuses_a_quad_option_it_ignores() -> None:
         msg = str(info.value)
         assert "option -bogus is not supported by this build" in msg
         assert "WITHOUT" in msg
-        em.element("LadrunoQuad", 2, 1, 2, 3, 4, 1)  # no option: builds
+        assert "removed from the domain again" in msg
+        assert 1 not in list(o.getEleTags() or [])
+        # The tag is free again, and a stray thickness after a verified
+        # call is still read (review F1/F2).
+        em.element("LadrunoQuad", 1, 1, 2, 3, 4, 1)
+        # The parser reads the number as a string and prints
+        # 'ignoring unknown option Invalid String Input!'.
+        with pytest.raises(RuntimeError, match="is not supported by this build"):
+            em.element("LadrunoQuad", 2, 1, 2, 3, 4, 1, 0.2)
     finally:
         o.wipe()
 
@@ -498,8 +712,8 @@ def test_a_verified_type_is_still_gated_on_a_new_option() -> None:
 
 
 def test_a_verified_signature_takes_the_fast_path() -> None:
-    """The gate probes once per type and option set: repeats skip it, and a
-    different tag or option value is the same signature."""
+    """The gate probes once per call shape: repeats skip it, and a
+    different tag or numeric value is the same shape."""
     ops = _KnowsClassRejectsShear()
     le = _bare_emitter(ops)
     le.element("LadrunoIMKBeam", 1, *_IMK)
@@ -508,7 +722,9 @@ def test_a_verified_signature_takes_the_fast_path() -> None:
     le.element("LadrunoIMKBeam", 4, *_IMK, "-mass", 2.0)
     assert ops.tags == [1, 2, 3, 4]
     assert ops.probes == 2
-    assert le._fork_verified_types == {"LadrunoIMKBeam", "LadrunoIMKBeam -mass"}
+    assert le._fork_verified_types == {
+        "LadrunoIMKBeam", "LadrunoIMKBeam # # # # # #",
+        "LadrunoIMKBeam # # # # # # -mass #"}
 
 
 def test_no_temp_file_runs_uncaptured_and_closes_the_dups(

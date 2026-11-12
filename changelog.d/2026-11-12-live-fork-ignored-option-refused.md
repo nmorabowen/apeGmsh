@@ -8,7 +8,18 @@ still create the element without it: `LadrunoQuad`, `LadrunoCST` and
 ladruno-v20261103). The live route verified such a call because it
 succeeded, so the model ran without the option and nothing said so. The
 live fork-element gate now reads the build's output on success too, and
-refuses by name: the element type, the option, and the build.
+refuses by name: the element type, the option, and the build. A known option
+the build says it ignored (`LadrunoBrick ... -damp is only supported with
+-formulation std|bbar; ignoring ...`, `-bulkViscosity is not applied with
+-geom finite; ignoring it`, `-bipenalty ignored with -enforce al`) is refused
+the same way. The element the build made without the option is removed from
+the domain again, so a corrected retry can reuse its tag.
+
+The gate now verifies a call by its shape (every string in place, every
+number as `#`), not by its `-flag` set alone, so a stray token such as a
+stock-style thickness `0.2` after an earlier clean call is still read. A
+failing call on a taken tag, or a failing call of a class the build has
+already built, no longer says the element "requires the Ladruno fork build".
 
 A rejected option value (`unknown -formulation 'xyz' for LadrunoBrick 5`,
 `LadrunoKinematicCoupling: unknown -enforce 'xyz'`,
