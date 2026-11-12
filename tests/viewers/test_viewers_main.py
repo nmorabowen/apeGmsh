@@ -24,6 +24,7 @@ other test is pinned to the VTK path, which Linux keeps (G2).
 from __future__ import annotations
 
 import ast
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -696,6 +697,32 @@ def test_app_without_the_app_exits_2(ladruno_set, tmp_path, monkeypatch, capsys)
     assert main(["render", str(ladruno_set), str(out)]) == 2
     assert "apeGmshViewer was not found" in capsys.readouterr().err
     assert not out.exists()
+
+
+@pytest.mark.parametrize("name", ["run.h5", "run.mpco"])
+@pytest.mark.parametrize("pack", [False, True])
+def test_app_skip_viewer_skips_any_source(app_backend, tmp_path, monkeypatch, capsys, name, pack):
+    """VA6e amendment 2: APEGMSH_SKIP_VIEWER=1 skips for a non-.ladruno source, exit 0,
+    as in-process render and assess do (VA6b); the .ladruno check is not reached."""
+    from apeGmsh.results import Results
+
+    real = Results.demo(n_steps=2, n_elements=2)
+    opened: list = []
+    monkeypatch.setattr(main_mod, "_open_results", lambda path, model_h5: opened.append(model_h5) or real)
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    src = tmp_path / name
+    src.write_bytes(b"")
+    target = tmp_path / ("pack" if pack else "x.png")
+    model = tmp_path / "model.h5"
+    flags = ["--pack", str(target)] if pack else [str(target)]
+    code = main(["render", str(src), *flags, "--model-h5", str(model), "--json"])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "[skip viewer] APEGMSH_SKIP_VIEWER set" in out
+    assert json.loads(out.strip().splitlines()[-1]) == {"ok": True, "written": []}
+    assert opened == [model]  # the caller's --model-h5, as the VTK path opens it
+    assert not target.exists()
+    assert app_backend.specs == []
 
 
 def test_vtk_backend_never_reaches_agent_view(patch_open_results, tmp_path, monkeypatch):

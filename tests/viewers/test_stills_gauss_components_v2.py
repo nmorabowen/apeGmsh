@@ -151,6 +151,20 @@ def test_a_column_in_two_tokens_is_refused(app_backend, quad_set, tmp_path):
     assert app_backend.specs == []
 
 
+def test_skip_viewer_with_a_native_source_draws_nothing_and_does_not_refuse(app_backend, quad_set, tmp_path, monkeypatch, capsys):
+    """Under APEGMSH_SKIP_VIEWER=1 any source skips (VA6b); a Gauss shot of a source the
+    app cannot open is validated by Python's recorded set and never resolved against a file."""
+    from apeGmsh.viewers.session import _results_stills as stills
+
+    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
+    with Results.from_ladruno(quad_set) as r:
+        monkeypatch.setattr(type(r), "path", property(lambda self: tmp_path / "quad.h5"))
+        assert r.render(tmp_path / "x.png", view="contour", component="stress_xx") is None
+        assert stills._app_gauss_contour(r, "stress_xx")["source"] == "element"
+    assert "[skip viewer]" in capsys.readouterr().out
+    assert app_backend.specs == []
+
+
 # ---------------------------------------------------------------------
 # Drawn by the app (a source build named by APEGMSH_VIEWER)
 # ---------------------------------------------------------------------
