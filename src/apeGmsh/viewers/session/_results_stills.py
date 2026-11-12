@@ -61,6 +61,12 @@ from apeGmsh.agent_view import (
     mesh_spec,
     shoot,
 )
+from apeGmsh.results.readers._ladruno_element_io import (
+    _block_canonicals,
+    is_fiber_token,
+    parse_blocks,
+    resolve_generic_gauss_blocks,
+)
 
 from .._stills import _DEFAULT_WINDOW, _SKIP_ENV, _env_skips
 from ..render import (
@@ -651,26 +657,58 @@ def _stage_index(results: Any, stage_id: str) -> int:
 
 
 def _app_contour(results: Any, stage_id: str, component: str) -> dict[str, str]:
-    """A Python nodal component as the app's ``{field, component}`` (R13).
-
-    Only a recorded nodal axis component of a field in
-    :data:`NODAL_FIELDS` maps; anything else is refused by name
-    rather than guessed (R16b and R16c are not drawn here).
-    """
+    """A recorded nodal axis component (R13) or stored Gauss component (R16b) as the
+    app's contour; anything else (a derived scalar, R16c) is refused, never guessed."""
     _require_contour_data(results, stage_id, component)
     stage = results.stage(stage_id)
-    recorded = set(stage.nodes.available_components())
     prefix, _, axis = component.rpartition("_")
     table = MODE_FIELDS if stage.kind == "mode" else NODAL_FIELDS
-    if component not in recorded or axis not in _AXES or prefix not in table:
+    if component in set(stage.nodes.available_components()) and axis in _AXES and prefix in table:
+        return {"field": table[prefix], "component": axis}
+    if component in results.inspect.components(stage=stage_id).get("gauss", ()):
+        return _app_gauss_contour(results, component)
+    raise ContourDataError(
+        f"component {component!r} has no apegmsh-view/1 contour here: the Windows "
+        f"stills draw a recorded nodal axis component of {sorted(table)} (e.g. "
+        f"displacement_z) or a stored Gauss component (e.g. stress_xx). For another "
+        f"one, write a spec and call apeGmsh.agent_view.render_stills."
+    )
+
+
+def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
+    """R16b: the app names a ``.ladruno`` Gauss column ``<token>/<label>``, the file's own
+    COMP_NAMES label, in the element field ``<token>`` (``reader/ladrunoElements.ts``).
+    The column is the one this reader reads as ``component`` (``_block_canonicals``), in
+    any stage: one (token, label) or refused. The mode is v1's averaged still:
+    ``gauss_cell_averaged`` at one Gauss point, else ``gauss_node``."""
+    import h5py
+
+    hits: set[tuple[str, str, bool]] = set()
+    n_gauss = 0
+    with h5py.File(results.path, "r") as h5:
+        for name in (k for k in h5 if k.startswith("MODEL_STAGE[")):
+            on = h5[name]["RESULTS/ON_ELEMENTS"] if "RESULTS/ON_ELEMENTS" in h5[name] else {}
+            for token in (t for t in on if not is_fiber_token(t)):
+                for key in on[token]:
+                    try:
+                        blocks = parse_blocks(on[token][key])
+                    except (KeyError, ValueError):
+                        continue
+                    gauss = [b for b in resolve_generic_gauss_blocks(blocks, token=token, bucket_key=key) if b.gauss_id >= 0]
+                    for b in gauss:
+                        for label, canonical in zip(b.comp_names, _block_canonicals(token, b)):
+                            if canonical == component:
+                                hits.add((token, label, b.catalog_named))
+                                n_gauss = max(n_gauss, len(gauss))
+    if len(hits) != 1 or next(iter(hits))[2]:
         raise ContourDataError(
-            f"component {component!r} has no apegmsh-view/1 contour here: the "
-            f"Windows stills draw a recorded nodal axis component of "
-            f"{sorted(table)} (e.g. displacement_z). A stored Gauss "
-            f"component (R16b) waits on follow-up slice #2794. For another "
-            f"one, write a spec and call apeGmsh.agent_view.render_stills."
+            f"stored Gauss component {component!r} is not one column the app names in "
+            f"{Path(results.path).name}: {sorted(h[:2] for h in hits) or 'none'}"
+            f"{' (named by the response catalog, not by the file)' if any(h[2] for h in hits) else ''} (R16b)."
         )
-    return {"field": table[prefix], "component": axis}
+    token, label, _ = next(iter(hits))
+    mode = "cell_averaged" if n_gauss <= 1 else "node"
+    return {"field": token, "component": f"{token}/{label}", "source": "element", "gauss": mode}
 
 
 def _auto_deform_scale(results: Any, stage_id: str, step: int) -> float:
