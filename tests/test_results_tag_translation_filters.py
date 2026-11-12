@@ -35,6 +35,7 @@ import pytest
 from apeGmsh.results.readers._tag_translation import (
     ElementTagTranslator,
     WarnElementFilterUnread,
+    WarnElementIdCollision,
 )
 
 # (fem, ops) = (2, 1), (3, 2): fem 2 is also the ops tag of fem 3, so a
@@ -503,3 +504,161 @@ def test_a_mixed_paired_and_sentinel_bucket_reads_fem_keyed(tmp_path) -> None:
             )
     finally:
         reader.close()
+
+
+# ── A sentinel ops tag equal to a paired fem id (#2076) ────────────────
+#
+# An element emitted without a mesh id is addressed by its ops tag; a
+# paired one by its fem id. When the two coincide the id names two
+# elements: a filter holding it is refused by name, an unfiltered read
+# whose index carries it warns, and every read of the archive warns once.
+
+
+def _shared_translator() -> ElementTagTranslator:
+    """The card's repro: fem 1 -> ops 5, fem 2 -> ops 6, and a sentinel
+    element at ops 1, so id 1 is fem 1 and the sentinel."""
+    t = ElementTagTranslator({1: 5, 2: 6}, {5: 1, 6: 2}, ops_only=(1,))
+    t.declare_recorded(np.array([1, 5, 6]))
+    return t
+
+
+class TestSharedIds:
+
+    def test_a_filter_holding_a_shared_id_is_refused_by_name(self) -> None:
+        """It returned bucket [5], the paired element's row, with no word
+        that the id also names the sentinel element."""
+        t = _shared_translator()
+        with pytest.raises(
+            ValueError, match=r"\[1 \(fem id of ops tag 5\)\] each name two",
+        ):
+            t.read_translation(np.array([2, 1]))
+
+    def test_an_unfiltered_index_with_a_shared_id_warns(self) -> None:
+        """The index [1, 1, 2] labels two elements 1; it must say so."""
+        t = _shared_translator()
+        bucket, back = t.read_translation(None)
+        assert bucket is None
+        with pytest.warns(WarnElementIdCollision, match=r"carries ids \[1 "):
+            labels = back(np.array([1, 5, 6]))
+        np.testing.assert_array_equal(labels, [1, 1, 2])
+        # Every such read warns, not only the first.
+        with pytest.warns(WarnElementIdCollision, match=r"carries ids \[1 "):
+            back(np.array([1]))
+
+    def test_an_unshared_filter_reads_and_warns_once(self) -> None:
+        t = _shared_translator()
+        with pytest.warns(
+            WarnElementIdCollision, match=r"under OpenSees tags \[1 ",
+        ):
+            bucket, back = t.read_translation(np.array([2]))
+        np.testing.assert_array_equal(bucket, [6])
+        np.testing.assert_array_equal(back(bucket), [2])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", WarnElementIdCollision)
+            bucket, _ = t.read_translation(np.array([2]))
+        np.testing.assert_array_equal(bucket, [6])
+
+    def test_an_unrelated_stub_archive_stays_silent(self) -> None:
+        """A stub archive's pairing never fires, so its shared ids
+        neither refuse nor warn."""
+        t = ElementTagTranslator({1: 5, 2: 6}, {5: 1, 6: 2}, ops_only=(1,))
+        t.declare_recorded(np.array([1, 99]))
+        assert not t.describes_files()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", WarnElementIdCollision)
+            bucket, back = t.read_translation(np.array([1]))
+            np.testing.assert_array_equal(bucket, [1])
+            np.testing.assert_array_equal(back(np.array([1, 99])), [1, 99])
+
+
+def test_a_shared_id_through_the_mpco_reader(tmp_path: Path) -> None:
+    """One Gauss bucket recording ops 1, 2 (fem 7, 8) and a sentinel at
+    ops 7: the unfiltered read returns the index [7, 8, 7] and warns, a
+    filter [7] is refused, and [8] still returns ops 2's rows."""
+    reader = _mpco_reader(_mpco_files(tmp_path, [[1, 2, 7]]))
+    reader.attach_tag_map(ElementTagTranslator(
+        {7: 1, 8: 2}, {1: 7, 2: 8}, ops_only=(7,),
+    ))
+    try:
+        with pytest.warns(WarnElementIdCollision, match=r"carries ids \[7 "):
+            slab = _mpco_read(reader, None)
+        np.testing.assert_array_equal(slab.element_index, [7, 8, 7])
+        with pytest.raises(ValueError, match=r"\[7 \(fem id of ops tag 1\)\]"):
+            _mpco_read(reader, np.array([7]))
+        got = _rows(_mpco_read(reader, np.array([8])))
+        assert sorted(got) == [8]
+        # value = ops_tag * 100 + step * 10 (component 0)
+        np.testing.assert_array_equal(got[8][:, 0], [200.0, 210.0])
+    finally:
+        reader.close()
+
+
+def _block_with_springs(path: Path, element_tags: str) -> ElementTagTranslator:
+    """The natural model that reaches the overlap: a 4x4x4 ``stdBrick``
+    block with surface physical groups ``top``/``bot`` (their quads take
+    the low fem ids) and five node-pair ``ZeroLength`` ground springs
+    (sentinel fem ids), emitted with ``element_tags``. Returns the
+    translator built from its archive, every element declared recorded."""
+    from apeGmsh import apeGmsh
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
+    from apeGmsh.opensees.opensees_model import OpenSeesModel
+
+    side = 10.0
+    with apeGmsh(model_name="block", verbose=False, units="kN_m_s") as g:
+        g.model.geometry.add_box(0.0, 0.0, 0.0, side, side, side, label="v")
+        g.physical.add_volume("v", name="Vol")
+        for z, name in ((side, "top"), (0.0, "bot")):
+            tags = g.model.select(None, dim=2).in_box(
+                (-1, -1, z - 0.1), (side + 1, side + 1, z + 0.1),
+            ).result().tags()
+            g.physical.add_surface(tags, name=name)
+        grounds = [
+            g.decouple_node(coords=(0.0, 0.0, -1.0 - k), label=f"gnd_{k}")
+            for k in range(5)
+        ]
+        g.mesh.recipe.structured(size=2.5, fallback="strict")
+        fem = g.mesh.queries.get_fem_data(dim=None)
+    decoupled = {int(n) for n in fem.nodes.decoupled_ids}
+    mesh_nodes = [int(n) for n in fem.nodes.ids if int(n) not in decoupled]
+    ops = apeSees(fem, _artifacts=False, element_tags=element_tags)
+    ops.model(ndm=3, ndf=3)
+    steel = ops.nDMaterial.ElasticIsotropic(E=2.0e8, nu=0.3, rho=0.0, name="s")
+    ops.element.stdBrick(pg="Vol", material=steel)
+    spring = ops.uniaxialMaterial.ElasticMaterial(E=2.0e8)
+    dirs = tuple(ZeroLengthMatDir(material=spring, dof=d) for d in (1, 2, 3))
+    for k, gnd in enumerate(grounds):
+        ops.element.ZeroLength(nodes=(gnd, mesh_nodes[k]), mat_dirs=dirs)
+        ops.fix(nodes=[int(gnd.tag)], dofs=(1, 1, 1))
+    ops.h5(str(path))
+    model = OpenSeesModel.from_h5(str(path))
+    t = ElementTagTranslator.from_model(model)
+    t.declare_recorded(np.array([int(r.tag) for r in model.elements()]))
+    return t
+
+
+@pytest.mark.parametrize("element_tags", ["sequential", "fem"])
+def test_the_natural_block_with_springs(tmp_path: Path, element_tags) -> None:
+    """Under ``sequential`` tags the bricks are fem 33..96 at ops 7..70 and
+    the springs ops 71..75, so a ``pg="Vol"`` filter (every brick fem id)
+    holds the five shared ids and is refused by name; with ``fem`` tags
+    no id is shared and the same filter reads every brick silently."""
+    t = _block_with_springs(tmp_path / "model.h5", element_tags)
+    assert t.describes_files()
+    bricks = np.arange(33, 97, dtype=np.int64)
+    if element_tags == "fem":
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", WarnElementIdCollision)
+            warnings.simplefilter("error", WarnElementFilterUnread)
+            bucket, back = t.read_translation(bricks)
+        np.testing.assert_array_equal(back(bucket), bricks)
+        return
+    with pytest.raises(ValueError, match=(
+        r"\[71 \(fem id of ops tag 45\), 72 .*75 \(fem id of ops tag 49\)\]"
+    )):
+        t.read_translation(bricks)
+    # The bricks below the shared ids still read, under the once-warning.
+    with pytest.warns(WarnElementIdCollision, match=r"\[71 .*75 "):
+        bucket, back = t.read_translation(bricks[:38])
+    np.testing.assert_array_equal(bucket, np.arange(7, 45))
+    np.testing.assert_array_equal(back(bucket), bricks[:38])
