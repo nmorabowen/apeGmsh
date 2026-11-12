@@ -24,6 +24,11 @@
 //   shape's counts are of drawn nodes too. With a plane cutting, each carries
 //   a `limit`: they are counted before the cut.
 // - A tie takes the lowest id, so the answer never depends on row order.
+// - `deform.scale_auto` is true when the spec left the scale out (G3, VA6c
+//   #2765): `scale` is then the auto scale of the step drawn
+//   (state/deform.ts `autoDeformScale`, Python's `_auto_deform_scale`), and
+//   the entry recomputes it from the step's values and refuses a view drawn
+//   at any other scale.
 // - `position` is the reference position, in the model's coordinates, also
 //   under a deformed shape: a node's position, or the mean of an element's
 //   nodes. A discrete field names the element and its corner's node, and
@@ -36,6 +41,7 @@ import { userResultOnHand, type CombinationColumnOf, type DifferenceColumnOf, ty
 import { elementMaskOf, visibleMaps } from "../renderer/visible.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { columnOf, gaussCellValues, isNodeTopology, meshFemIds, vertexValues } from "../state/contour.ts";
+import { autoDeformScale } from "../state/deform.ts";
 import { applyPlan, cellLookup, planFor } from "../state/extrapolation.ts";
 import { activeCount, contourView, deformView, type ContourView } from "../state/selectors.ts";
 import type { ArtifactInfo, CameraPose, ContourScan, MeshInfo, State } from "../state/types.ts";
@@ -101,7 +107,16 @@ export type ManifestContour =
 
 export type ManifestDeform =
   | { state: "unavailable" | "refused"; reason: string }
-  | { state: "loading" | "ready" | "partial"; scale: number; ghost: boolean; drawn: number | null; undeformed: number | null; limit: string | null };
+  | {
+      state: "loading" | "ready" | "partial";
+      scale: number;
+      /** G3: the spec left the scale out, so `scale` is the auto scale of the step drawn */
+      scale_auto: boolean;
+      ghost: boolean;
+      drawn: number | null;
+      undeformed: number | null;
+      limit: string | null;
+    };
 
 export interface ManifestFile {
   path: string;
@@ -475,9 +490,29 @@ function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepVal
   };
 }
 
-function deformOf(s: State): ManifestDeform | null {
+/**
+ * G3: the auto scale of the step on hand, which the view must be drawn at:
+ * recomputed here from the step's displacement rows and every model node, so a
+ * view drawn at another scale (the base view's 1, a stale step's) cannot stand
+ * as the auto scale.
+ */
+function autoScaleOf(s: State, datasets: readonly [string, string, string | null], blobs: BlobStore, step: StepValues | null): number {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !step || step.stage !== at.stage || step.step !== at.step) {
+    throw new Error(`manifest: the auto deform scale needs the step the view shows, and the step data on hand is ${step ? `stage ${step.stage} step ${step.step}` : "none"}`);
+  }
+  const nodes = s.mesh?.nodes;
+  if (!nodes) throw new Error("manifest: the auto deform scale needs every model node's position, and the model's nodes are not read");
+  const [x, y, z] = datasets;
+  const auto = autoDeformScale([row(step, x), row(step, y), z === null ? null : row(step, z)], blobs.get(nodes.xyz));
+  if (s.deform.scale !== auto) throw new Error(`manifest: the deformed shape is drawn at scale ${s.deform.scale}, not the auto scale ${auto} of the step shown`);
+  return auto;
+}
+
+function deformOf(s: State, shot: SpecShot, blobs: BlobStore, step: StepValues | null): ManifestDeform | null {
   const v = deformView(s);
   const limit = cutting(s) ? CUT_COUNT : null;
+  const auto = shot.deform !== null && shot.deform.scale === null;
   switch (v.state) {
     case "off":
       return null;
@@ -485,11 +520,12 @@ function deformOf(s: State): ManifestDeform | null {
     case "refused":
       return { state: v.state, reason: v.reason };
     case "loading":
-      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: null, undeformed: null, limit };
     case "ready":
-      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: v.drawn, undeformed: 0, limit };
-    case "partial":
-      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: v.drawn, undeformed: v.missing, limit };
+    case "partial": {
+      const scale = auto ? autoScaleOf(s, v.datasets, blobs, step) : v.scale;
+      const counts = v.state === "loading" ? { drawn: null, undeformed: null } : { drawn: v.drawn, undeformed: v.state === "partial" ? v.missing : 0 };
+      return { state: v.state, scale, scale_auto: auto, ghost: v.ghost, ...counts, limit };
+    }
     default: {
       const unknown: never = v;
       throw new Error(`manifest: unknown deformed view ${JSON.stringify(unknown)}`);
@@ -527,7 +563,7 @@ export function manifestEntry(s: State, input: EntryInput): ManifestEntry {
     pairing: describeSet(s, []).pairing,
     ...placeOf(s),
     contour: contourOf(s, input.blobs, input.step, input.combination ?? null, input.difference ?? null),
-    deform: deformOf(s),
+    deform: deformOf(s, input.shot, input.blobs, input.step),
     banner: bannerLines(s),
     layout: input.layout,
   };

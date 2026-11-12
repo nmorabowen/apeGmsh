@@ -31,7 +31,7 @@ import { DEFAULT_PANEL_IDS, mountCollapsibleChrome } from "../ui/collapse.ts";
 import { OfferRunner, snapshotManifest } from "../spec/snapshot.ts";
 import { APP_LAYERS, type AppLayer } from "../spec/spec.ts";
 import type { OfferIn } from "../state/types.ts";
-import { onScreenOf, runAgentMode, type Layout, type RenderBridge } from "./agentRender.ts";
+import { autoScaleOf, onScreenOf, runAgentMode, type Layout, type RenderBridge } from "./agentRender.ts";
 import { CombinationFeed, UserResultFeed, VariantRunner, type VariantDoor } from "./contour.ts";
 import { mountVariants } from "../panels/variants.ts";
 import { mountSets } from "../panels/sets.ts";
@@ -316,6 +316,7 @@ function mountOfferFlow(): void {
       await painted();
       await painted();
     },
+    autoScale: (s) => autoScaleOf(s, effects, blobs),
   });
   panels.push(runner.start());
   panels.push(door.onOffers((offers) => runner.receive(offers)));

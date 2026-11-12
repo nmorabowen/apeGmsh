@@ -17,6 +17,8 @@ import { manifestEntry, refusedEntry, type ManifestEntry } from "../../src/spec/
 import { validateSpec, type SpecShot } from "../../src/spec/spec.ts";
 import { viewVerdict } from "../../src/spec/verdict.ts";
 import { takeShots, type RenderDeps } from "../../src/renderer/agentRender.ts";
+import { autoDeformScale } from "../../src/state/deform.ts";
+import { deformView } from "../../src/state/selectors.ts";
 import { opened, until } from "../contour/harness.ts";
 import { caseShot, ORACLE, sameAsOracle } from "./manifestOracle.ts";
 
@@ -111,6 +113,87 @@ test("D3: a deformed shape states its scale and the nodes it draws undeformed, a
   assert.ok(undeformed > 0, "the Top box's own nodes have no displacement");
   assert.ok(entry.banner.some((b) => b.startsWith(`Deformed shape: ${undeformed.toLocaleString()} of`)), `the banner names the count: ${entry.banner.join(" | ")}`);
   assert.equal(entry.contour, null, "no contour asked for, none stated");
+});
+
+/**
+ * G3 (VA6c, #2765): Python's `_auto_deform_scale` on contour_staged, stage
+ * "erect" (index 1), step 1 (test/deform/autoScale.test.ts holds every step).
+ */
+const PY_AUTO_ERECT_1 = 7.119963311072635;
+
+test("G3: a shot with no deform scale states the auto scale it is drawn at, and that it was automatic", async () => {
+  const h = await setOf("contour_staged");
+  const explicit = await entryOf(h, shotOf({ stage: "erect", step: 1, deform: { scale: 10 } }));
+  assert.ok(explicit.entry.deform?.state === "ready");
+  assert.deepEqual([explicit.entry.deform.scale, explicit.entry.deform.scale_auto], [10, false], "a scale the spec gives is not automatic");
+  // The render mode's step: the auto scale dispatched once the step's displacement is read.
+  const shot = shotOf({ stage: "erect", step: 1, deform: {} });
+  assert.equal(shot.deform!.scale, null, "the spec leaves the scale out");
+  const c = compileShot(shot, describeSet(h.store.get(), []));
+  assert.ok(c.ok);
+  for (const e of c.plan.events) h.store.dispatch(e);
+  await until(() => {
+    const s = h.store.get();
+    const v = deformView(s);
+    const step = h.effects.currentStep();
+    const at = s.phase.at;
+    const stepHere = at?.kind === "results" && step?.stage === at.stage && step.step === at.step;
+    return stepHere && (v.state === "ready" || v.state === "partial") && h.effects.currentDisplacement()?.key === v.keys.disp;
+  }, "the displacement of erect step 1");
+  const input = { shot, png: "s.png", image: [1600, 1000] as [number, number], camera: explicit.entry.camera!, layout: null, blobs: h.blobs, step: h.effects.currentStep() };
+  // Fail closed: drawn at the base view's 1, the view is not the auto scale, so the shot is refused (the entry throws).
+  assert.equal(h.store.get().deform.scale, 1);
+  assert.throws(() => manifestEntry(h.store.get(), input), /drawn at scale 1, not the auto scale 7\.11996/);
+  const mesh = h.store.get().mesh!;
+  h.store.dispatch({ type: "setDeformScale", scale: autoDeformScale(h.effects.currentDisplacement()!.nodal!.rows, h.blobs.get(mesh.nodes!.xyz)) });
+  const entry = manifestEntry(h.store.get(), input);
+  assert.ok(entry.deform?.state === "ready");
+  assert.equal(entry.deform.scale_auto, true);
+  assert.ok(Math.abs(entry.deform.scale - PY_AUTO_ERECT_1) <= 1e-12 * PY_AUTO_ERECT_1, `the app's ${entry.deform.scale}, Python's ${PY_AUTO_ERECT_1}`);
+  assert.equal(entry.shot.deform!.scale, null, "the shot as applied keeps the scale left out");
+  // The auto scale is of the step on hand: step data of another step, or no model nodes, cannot state it.
+  const step = h.effects.currentStep()!;
+  assert.throws(() => manifestEntry(h.store.get(), { ...input, step: { ...step, step: 0 } }), /needs the step the view shows/);
+  assert.throws(() => manifestEntry({ ...h.store.get(), mesh: { ...mesh, nodes: undefined } }, input), /model's nodes are not read/);
+});
+
+// The render mode's own shot runner (renderer/agentRender.ts `takeShots`) over the app's read path, with a viewport
+// that applies whatever the state asks: a spec with no deform scale renders at the auto scale, and the manifest says so.
+test("G3: the render mode draws a shot with no deform scale at the auto scale, and its entry states it", async () => {
+  const h = await setOf("contour_staged");
+  const frame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => setTimeout(() => cb(0), 0)) as unknown as typeof requestAnimationFrame;
+  const canvas = { width: 640, height: 480, getBoundingClientRect: () => ({ x: 0, y: 0, width: 640, height: 480 }) };
+  const deps = {
+    store: h.store,
+    blobs: h.blobs,
+    effects: h.effects,
+    viewport: {
+      renderer: { domElement: canvas },
+      camera: {},
+      renderNow: () => {},
+      currentPose: () => ({ eye: [1, 1, 1], target: [0, 0, 0], up: [0, 0, 1] }),
+      // The viewport applies the displacement on hand at the state's scale (renderer/agentRender.ts `deformOnScreen`).
+      get deformApplied() {
+        return `${h.effects.currentDisplacement()?.key}|scale ${h.store.get().deform.scale}`;
+      },
+    },
+    bridge: { renderCapture: async (name: string) => ({ path: name, width: 640, height: 480 }) },
+    layout: { apply: () => {}, inLayout: () => [] },
+    combination: () => null,
+  } as unknown as RenderDeps;
+  try {
+    const v = validateSpec({ spec: "apegmsh-view/1", files: { model: "m.h5" }, size: [640, 480], shots: [{ name: "big", stage: "erect", step: 1, deform: { scale: 10 } }, { name: "auto", stage: "erect", step: 1, deform: {} }] });
+    assert.ok(v.ok);
+    const [big, auto] = await takeShots(deps, v.spec, describeSet(h.store.get(), []), null);
+    assert.deepEqual([big!.entry.status, auto!.entry.status], ["ok", "ok"], `the auto shot: ${auto!.entry.reason}`);
+    const d = auto!.entry.deform;
+    assert.ok(d?.state === "ready");
+    assert.equal(d.scale_auto, true, "the manifest says the scale was automatic");
+    assert.ok(Math.abs(d.scale - PY_AUTO_ERECT_1) <= 1e-12 * PY_AUTO_ERECT_1, `drawn at ${d.scale}; Python's auto scale is ${PY_AUTO_ERECT_1}`);
+  } finally {
+    globalThis.requestAnimationFrame = frame;
+  }
 });
 
 test("INV-7: the chrome, the layers and the background change no number of the entry", async () => {
