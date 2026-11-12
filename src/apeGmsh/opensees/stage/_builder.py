@@ -1206,7 +1206,7 @@ class _StageBuilder:
         for prec in self._update_parameter_records:
             # An element spec registered after the call is checked here;
             # a class already warned about is not warned about again.
-            self._check_parameter_name(prec, stacklevel=2)
+            self._check_parameter_name(prec, stacklevel=3)
         self._check_stage_routes()
         record = StageRecord(
             name=self._name,
@@ -1320,7 +1320,8 @@ class _StageBuilder:
                     if isinstance(dep, (NDMaterial, UniaxialMaterial,
                                         Section)))
                 targets.append(ParameterTarget(
-                    cls=type(spec).__name__, materials=mats))
+                    cls=type(spec).__name__, ndm=bridge._ndm,
+                    materials=mats))
         where = (f"pg {rec.pg!r}" if rec.elements is None
                  else f"elements {list(rec.elements)!r}")
         check_parameter_name(

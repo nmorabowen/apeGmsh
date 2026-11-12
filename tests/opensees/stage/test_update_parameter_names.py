@@ -30,6 +30,7 @@ from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.stage._parameter_names import (
     ELEMENT_PARAMETER_NAMES,
+    ELEMENT_PARAMETER_NAMES_BY_NDM,
     MATERIAL_PARAMETER_NAMES,
     UncataloguedParameterWarning,
 )
@@ -184,6 +185,47 @@ def test_elastic_beam_forwards_nothing() -> None:
         _close(ops, s)
 
 
+def _beam3d() -> apeSees:
+    ops = apeSees(_fem(), default_orientation=None)
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(0.0, 0.0, 1.0))
+    ops.element.elasticBeamColumn(
+        pg="bars", transf=transf, A=0.01, E=2e11, Iz=1e-4, Iy=2e-4,
+        G=8e10, J=3e-4)
+    return ops
+
+
+def test_2d_beam_refuses_iz() -> None:
+    """ElasticBeam2d takes ``I``, not ``Iz`` (its setParameter): the
+    union of the 2-D and 3-D names let ``Iz`` emit on a 2-D beam."""
+    ops = _beam()
+    with ops.stage(name="s") as s:
+        with pytest.raises(BridgeError,
+                           match=r"elasticBeamColumn takes A, E, I, release, "
+                                 r"rho .*ElasticBeam2d"):
+            s.update_parameter("Iz", 2e-4, pg="bars")
+        s.update_parameter("I", 2e-4, pg="bars")
+        _close(ops, s)
+
+
+def test_3d_beam_refuses_rho_and_takes_iz() -> None:
+    """ElasticBeam3d takes ``Iz`` / ``Iy`` / ``G`` / ``J``, and no ``rho``."""
+    ops = _beam3d()
+    with ops.stage(name="s") as s:
+        with pytest.raises(BridgeError, match=r"ElasticBeam3d"):
+            s.update_parameter("rho", 1.0, pg="bars")
+        with pytest.raises(BridgeError, match=r"ElasticBeam3d"):
+            s.update_parameter("I", 2e-4, pg="bars")
+        with _silent():
+            s.update_parameter("Iz", 2e-4, pg="bars")
+        _close(ops, s)
+    deck = TclEmitter()
+    ops.build().emit(deck)
+    lines = deck.lines()
+    assert sum(" Iz" in ln and "addToParameter" in ln for ln in lines) == 2
+    assert not any(" rho" in ln and "addToParameter" in ln for ln in lines)
+
+
 # ---------------------------------------------------------------------------
 # Seams
 # ---------------------------------------------------------------------------
@@ -268,6 +310,37 @@ def test_uncatalogued_element_warns_once_and_emits() -> None:
     assert sum("xPerm" in ln for ln in deck.lines()) == 2
 
 
+def test_a_warning_from_the_stage_close_points_at_the_user() -> None:
+    """An element registered after the call is warned about at the stage
+    close; the warning names this file (the ``with``), not the builder."""
+    ops = apeSees(_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    with pytest.warns(UncataloguedParameterWarning,
+                      match="LadrunoQuad") as rec:
+        with ops.stage(name="late") as s:
+            s.update_parameter("xPerm", 1.0, pg="soil")
+            ops.element.LadrunoQuad(pg="soil", thickness=1.0, material=mat)
+            _close(ops, s)
+    (w,) = [w for w in rec
+            if issubclass(w.category, UncataloguedParameterWarning)]
+    assert w.filename == __file__
+
+
+def test_a_warning_from_the_call_points_at_the_user() -> None:
+    ops = apeSees(_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    ops.element.LadrunoQuad(pg="soil", thickness=1.0, material=mat)
+    with pytest.warns(UncataloguedParameterWarning) as rec:
+        with ops.stage(name="s") as s:
+            s.update_parameter("xPerm", 1.0, pg="soil")
+            _close(ops, s)
+    (w,) = [w for w in rec
+            if issubclass(w.category, UncataloguedParameterWarning)]
+    assert w.filename == __file__
+
+
 def test_uncatalogued_material_behind_a_forwarding_element_warns() -> None:
     ops = apeSees(_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
@@ -289,5 +362,7 @@ def test_uncatalogued_material_behind_a_forwarding_element_warns() -> None:
 
 def test_every_entry_cites_a_setparameter() -> None:
     for entry in (*ELEMENT_PARAMETER_NAMES.values(),
+                  *(e for by_ndm in ELEMENT_PARAMETER_NAMES_BY_NDM.values()
+                    for e in by_ndm.values()),
                   *MATERIAL_PARAMETER_NAMES.values()):
         assert "::setParameter" in entry.source

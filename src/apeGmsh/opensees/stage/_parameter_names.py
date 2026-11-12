@@ -38,12 +38,14 @@ from ..material.nd_soil import SET_PARAMETER_NAMES as _SOIL_NAMES
 
 __all__ = [
     "ELEMENT_PARAMETER_NAMES",
+    "ELEMENT_PARAMETER_NAMES_BY_NDM",
     "MATERIAL_PARAMETER_NAMES",
     "ElementNames",
     "MaterialNames",
     "ParameterTarget",
     "UncataloguedParameterWarning",
     "check_parameter_name",
+    "element_names",
 ]
 
 
@@ -103,18 +105,6 @@ ELEMENT_PARAMETER_NAMES: dict[str, ElementNames] = {
         forwards=True,
         source="SRC/element/truss/Truss.cpp::Truss::setParameter",
     ),
-    # One bridge class emits ElasticBeam2d or ElasticBeam3d by ndm; the
-    # names are the union of the two bodies, which can only refuse less.
-    "elasticBeamColumn": ElementNames(
-        owns=frozenset({"E", "A", "I", "rho", "release",
-                        "Iz", "Iy", "G", "J", "releasez", "releasey"}),
-        claims=frozenset({"damp"}),
-        forwards=False,
-        source=(
-            "SRC/element/elasticBeamColumn/ElasticBeam2d.cpp::"
-            "ElasticBeam2d::setParameter, SRC/element/elasticBeamColumn/"
-            "ElasticBeam3d.cpp::ElasticBeam3d::setParameter"),
-    ),
     "SSPquadUP": ElementNames(
         owns=frozenset({
             "hPerm", "vPerm", "pressureUpperSide", "pressureLowerSide",
@@ -123,13 +113,54 @@ ELEMENT_PARAMETER_NAMES: dict[str, ElementNames] = {
         forwards=True,
         source="SRC/element/UWelements/SSPquadUP.cpp::SSPquadUP::setParameter",
     ),
-    "LadrunoUP": ElementNames(
-        owns=frozenset({"xPerm", "yPerm", "zPerm"}),
-        claims=frozenset({"material"}),
-        forwards=True,
-        source="SRC/element/ladrunoUP/LadrunoUP.cpp::LadrunoUP::setParameter",
-    ),
 }
+
+_BEAM2D = ("SRC/element/elasticBeamColumn/ElasticBeam2d.cpp::"
+           "ElasticBeam2d::setParameter")
+_BEAM3D = ("SRC/element/elasticBeamColumn/ElasticBeam3d.cpp::"
+           "ElasticBeam3d::setParameter")
+_LADRUNO_UP = "SRC/element/ladrunoUP/LadrunoUP.cpp::LadrunoUP::setParameter"
+
+#: Element classes whose names depend on the model's ``ndm``, keyed by the
+#: bridge class name, then ``ndm``.  ``elasticBeamColumn`` builds
+#: ElasticBeam2d or ElasticBeam3d, which share no section names: ``Iz`` on
+#: a 2-D beam, or ``rho`` on a 3-D one, reaches nothing.  ``LadrunoUP``
+#: takes ``zPerm`` only at ``ndm=3``.  A model whose ``ndm`` is not here
+#: is uncatalogued for the class.
+ELEMENT_PARAMETER_NAMES_BY_NDM: dict[str, dict[int, ElementNames]] = {
+    "elasticBeamColumn": {
+        2: ElementNames(
+            owns=frozenset({"E", "A", "I", "rho", "release"}),
+            claims=frozenset({"damp"}), forwards=False, source=_BEAM2D),
+        3: ElementNames(
+            owns=frozenset({"E", "A", "Iz", "Iy", "G", "J",
+                            "releasez", "releasey"}),
+            claims=frozenset({"damp"}), forwards=False, source=_BEAM3D),
+    },
+    "LadrunoUP": {
+        2: ElementNames(
+            owns=frozenset({"xPerm", "yPerm"}),
+            claims=frozenset({"material"}), forwards=True,
+            source=_LADRUNO_UP),
+        3: ElementNames(
+            owns=frozenset({"xPerm", "yPerm", "zPerm"}),
+            claims=frozenset({"material"}), forwards=True,
+            source=_LADRUNO_UP),
+    },
+}
+
+
+def element_names(cls: str, ndm: "int | None") -> "ElementNames | None":
+    """The catalogue entry of element class ``cls`` in a model of ``ndm``,
+    or ``None`` when the class (or, for a class that depends on it, the
+    ``ndm``) is not catalogued."""
+    entry = ELEMENT_PARAMETER_NAMES.get(cls)
+    if entry is not None:
+        return entry
+    by_ndm = ELEMENT_PARAMETER_NAMES_BY_NDM.get(cls)
+    if by_ndm is None or ndm is None:
+        return None
+    return by_ndm.get(int(ndm))
 
 _SOIL_SOURCES: dict[str, str] = {
     "PressureIndependMultiYield": (
@@ -184,10 +215,12 @@ MATERIAL_PARAMETER_NAMES: dict[str, MaterialNames] = {
 
 @dataclass(frozen=True)
 class ParameterTarget:
-    """One targeted element spec, as the check reads it: its class and the
+    """One targeted element spec, as the check reads it: its class, the
+    model's ``ndm`` (``None`` before ``ops.model``), and the
     ``(class, tag)`` of each material it carries directly."""
 
     cls: str
+    ndm: "int | None"
     materials: tuple[tuple[str, "int | None"], ...]
 
 
@@ -231,7 +264,7 @@ def check_parameter_name(
     refused: list[str] = []
     uncatalogued: set[str] = set()
     for target in targets:
-        entry = ELEMENT_PARAMETER_NAMES.get(target.cls)
+        entry = element_names(target.cls, target.ndm)
         if entry is None:
             uncatalogued.add(target.cls)
             continue
