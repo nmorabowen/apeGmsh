@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { compileShot } from "../../src/spec/compile.ts";
 import { describeSet } from "../../src/spec/describe.ts";
 import { manifestEntry } from "../../src/spec/manifest.ts";
+import { sameView, viewShotOf } from "../../src/spec/snapshot.ts";
 import { validateSpec, type SpecShot } from "../../src/spec/spec.ts";
 import { viewVerdict } from "../../src/spec/verdict.ts";
 import { elementContourFields, gaussFields } from "../../src/state/contour.ts";
@@ -215,6 +216,11 @@ for (const c of SPEC_CASES) {
     assert.equal(k.range.history_scan.status, "done");
     close(k.range.min!, Math.min(...c.steps.map((x) => x.min[0])), "history min");
     close(k.range.max!, Math.max(...c.steps.map((x) => x.max[0])), "history max");
+    // INV-2/INV-3: the view read back from the window's state names the derived scalar and compiles to the same view.
+    const back = viewShotOf(h.store.get(), { eye: [1, 1, 1], target: [0, 0, 0], up: [0, 0, 1] });
+    assert.deepEqual(back.outside, []);
+    assert.equal(back.shot.contour?.component, "von_mises_stress");
+    assert.ok(sameView(back.shot, shot, describeSet(h.store.get(), [])), "the read-back view draws what the shot drew");
   });
 }
 
