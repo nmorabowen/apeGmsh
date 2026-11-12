@@ -2189,7 +2189,7 @@ def is_line_station_synthesis_catalogued(class_name: str) -> bool:
 
 #: OpenSees ``element`` command token -> the catalogued C++ classes it
 #: builds, for a line-stations ``element_class_name`` given as the command
-#: a user types (#2070). Each command builds its ``2d`` or ``3d`` class by
+#: a user types. Each command builds its ``2d`` or ``3d`` class by
 #: the model's ``ndm``; the classes of one command share their station
 #: source (``section force`` or ``localForce``), so the token decides it
 #: without the ``ndm``. Commands whose classes the catalog does not list
