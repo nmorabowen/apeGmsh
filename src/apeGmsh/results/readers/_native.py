@@ -95,6 +95,83 @@ class NativeRepeatedNodeId(ValueError):
         )
 
 
+class NativeRepeatedElementId(ValueError):
+    """An element-side read of a native results file would return one
+    element twice (#2363).
+
+    Raised by ``read_gauss``, ``read_elements``, ``read_line_stations``,
+    ``read_fibers`` and ``read_layers``. Each element is listed once per
+    stage: in one group of one partition, once in that group's
+    ``_element_index``. The read refuses three shapes of repeat, as the
+    MPCO reader does (``MPCOElementInTwoBuckets``):
+
+    * twice in one group's ``_element_index``;
+    * in two groups of one partition (two class tags, say: the writer
+      checks each group on its own, so it lets this through);
+    * in two partitions (a legacy multi-partition file).
+
+    A fibers or layers group lists one row per fiber or layer, so there
+    an element repeats within its group by design; only the second and
+    third shapes apply, plus, for layers, a repeated (element, Gauss
+    point, layer, sub-point) row, which ``what`` then names. Only the
+    elements the read returns are checked: an ``element_ids`` filter that
+    leaves the repeat out reads.
+
+    ``file``, ``stage_id``, ``level`` (the read's ``ResultLevel`` value)
+    and ``component`` name the read; ``repeated`` maps each repeated id
+    (a tuple for a layer row) to its ``(dataset, row)`` places, ascending.
+    ``shape`` says where the first repeat sits: ``"group"``,
+    ``"groups"`` or ``"partitions"``.
+    """
+
+    def __init__(
+        self, file: Path, stage_id: str, level: str, component: str,
+        repeated: "dict[object, list[tuple[str, int]]]",
+        *, what: str = "element",
+    ) -> None:
+        self.file = file
+        self.stage_id = stage_id
+        self.level = level
+        self.component = component
+        self.repeated = repeated
+        (first_ds, _), (second_ds, _) = next(iter(repeated.values()))[:2]
+        if first_ds == second_ds:
+            self.shape = "group"
+            where = f"twice in one group ({first_ds})"
+        elif _partition_of(first_ds) == _partition_of(second_ds):
+            self.shape = "groups"
+            where = (
+                f"in two groups of one partition ({first_ds} and "
+                f"{second_ds})"
+            )
+        else:
+            self.shape = "partitions"
+            where = f"in two partitions ({first_ds} and {second_ds})"
+        shown = "; ".join(
+            f"{key} at " + ", ".join(f"{ds} row {row}" for ds, row in places)
+            for key, places in list(repeated.items())[:_SHOWN]
+        )
+        more = (
+            f"; and {len(repeated) - _SHOWN} more"
+            if len(repeated) > _SHOWN else ""
+        )
+        super().__init__(
+            f"{file}: stage {stage_id!r} {level} component {component!r}: "
+            f"the read would return {what} id(s) more than once; the first "
+            f"sits {where} ({what} {shown}{more}). Each {what} is listed "
+            f"once per stage, in one group of one partition; a repeated id "
+            f"would read as two columns of one {what}. The file is "
+            f"malformed."
+        )
+
+
+def _partition_of(dataset: str) -> str:
+    """The partition id in a native element dataset path
+    (``/stages/<sid>/partitions/<pid>/elements/...``)."""
+    parts = dataset.split("/")
+    return parts[parts.index("partitions") + 1]
+
+
 class NativePartitionCopiesDisagree(ValueError):
     """A node held by several partitions has copies of one component that
     are not bit-for-bit equal.
@@ -301,6 +378,61 @@ class NativeReader:
                     raise NativeRepeatedNodeId(
                         self._path, dataset.name, repeated,
                     )
+
+    def _refuse_repeated_elements(
+        self, stage_id: str, level: str, component: str,
+        chunks: "list[tuple[str, ndarray, ndarray]]",
+    ) -> None:
+        """Raise :class:`NativeRepeatedElementId` if an element id repeats
+        over ``chunks`` (#2363).
+
+        ``chunks`` holds, for each group the read returns, the path of its
+        ``_element_index``, the element ids the read returns from it, and
+        their rows in that dataset. A repeat within one chunk, across two
+        chunks of one partition or across partitions all refuse.
+        """
+        if not chunks:
+            return
+        repeated = _repeated_rows(
+            np.concatenate([ids for _, ids, _ in chunks]),
+        )
+        if not repeated:
+            return
+        sizes = np.array([ids.size for _, ids, _ in chunks])
+        starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
+        places: dict[object, list[tuple[str, int]]] = {}
+        for eid, rows in repeated.items():
+            owner = np.searchsorted(starts, rows, side="right") - 1
+            places[eid] = [
+                (chunks[k][0], int(chunks[k][2][r - starts[k]]))
+                for k, r in zip(owner.tolist(), rows)
+            ]
+        raise NativeRepeatedElementId(
+            self._path, stage_id, level, component, places,
+        )
+
+    def _refuse_repeated_layer_rows(
+        self, stage_id: str, component: str, group: str, key: ndarray,
+        sel: ndarray,
+    ) -> None:
+        """Raise :class:`NativeRepeatedElementId` if rows ``sel`` of a
+        layers group list one (element, Gauss point, layer, sub-point)
+        ``key`` twice, the row id the writer refuses to repeat (#2363)."""
+        if sel.size < 2:
+            return
+        uniq, inverse = np.unique(key[sel], axis=0, return_inverse=True)
+        rows = _repeated_rows(np.asarray(inverse, dtype=np.int64).ravel())
+        if rows:
+            raise NativeRepeatedElementId(
+                self._path, stage_id, ResultLevel.LAYERS.value, component,
+                {
+                    tuple(int(v) for v in uniq[k]): [
+                        (group, int(sel[r])) for r in rs
+                    ]
+                    for k, rs in rows.items()
+                },
+                what="layer row",
+            )
 
     def _validate_per_zone_versions(self) -> None:
         """Apply the floor check (ADR 0113 (#1303)) to every zone present.
@@ -955,6 +1087,8 @@ class NativeReader:
         widths: list[tuple[str, int]] = []
         chunks_quat: list[ndarray] = []
         any_quat = False
+        # (``_element_index`` path, ids returned, their rows) per group.
+        returned: list[tuple[str, ndarray, ndarray]] = []
 
         for pid in self.partitions(stage_id):
             gauss_root_path = (
@@ -990,6 +1124,9 @@ class NativeReader:
                 n_gp = nc.shape[0]
 
                 sel_eidx = eidx[elem_sel]
+                returned.append((
+                    grp[_native.DSET_ELEMENT_INDEX].name, sel_eidx, elem_sel,
+                ))
                 full = grp[component][...]                  # (T, E_g, n_gp)
                 values_t = full[t_idx]
                 values_es = values_t[:, elem_sel, :]
@@ -1017,6 +1154,9 @@ class NativeReader:
                     )
                     chunks_quat.append(np.repeat(quat[elem_sel], n_gp, axis=0))
 
+        self._refuse_repeated_elements(
+            stage_id, ResultLevel.GAUSS.value, component, returned,
+        )
         # One slab holds one natural_coords width: a 2-D-parent group
         # beside a 3-D-parent group refuses by name, as MPCO and .ladruno
         # do, rather than fail in np.concatenate.
@@ -1117,6 +1257,9 @@ class NativeReader:
         # iff at least one group carries real stations; an all-absent
         # read returns ``station_natural_coord=None``.
         xis: list["ndarray | None"] = []
+        # One row per fiber, so an element repeats within its group; it
+        # may not sit in a second group or partition.
+        returned: list[tuple[str, ndarray, ndarray]] = []
 
         for pid in self.partitions(stage_id):
             root_path = (
@@ -1153,6 +1296,9 @@ class NativeReader:
                 if not mask.any():
                     continue
                 sel = np.where(mask)[0]
+                returned.append(_element_firsts(
+                    grp[_native.DSET_ELEMENT_INDEX].name, e, sel,
+                ))
 
                 full = grp[component][...]                   # (T, sum_F)
                 v.append(full[t_idx][:, sel])
@@ -1164,6 +1310,9 @@ class NativeReader:
                 mtags.append(m[sel])
                 xis.append(xi[sel] if xi is not None else None)
 
+        self._refuse_repeated_elements(
+            stage_id, ResultLevel.FIBERS.value, component, returned,
+        )
         if any(x is not None for x in xis):
             station = np.concatenate([
                 x if x is not None
@@ -1217,6 +1366,10 @@ class NativeReader:
         sub_gp: list[ndarray] = []
         thk: list[ndarray] = []
         quat: list[ndarray] = []
+        # One row per (element, Gauss point, layer, sub-point): that row
+        # may not repeat in its group, and an element may not sit in a
+        # second group or partition.
+        returned: list[tuple[str, ndarray, ndarray]] = []
 
         for pid in self.partitions(stage_id):
             root_path = (
@@ -1247,6 +1400,13 @@ class NativeReader:
                 if not mask.any():
                     continue
                 sel = np.where(mask)[0]
+                self._refuse_repeated_layer_rows(
+                    stage_id, component, grp.name,
+                    np.stack([e, g, lay, sg], axis=1), sel,
+                )
+                returned.append(_element_firsts(
+                    grp[_native.DSET_ELEMENT_INDEX].name, e, sel,
+                ))
 
                 full = grp[component][...]
                 v.append(full[t_idx][:, sel])
@@ -1257,6 +1417,9 @@ class NativeReader:
                 thk.append(th[sel])
                 quat.append(q[sel])
 
+        self._refuse_repeated_elements(
+            stage_id, ResultLevel.LAYERS.value, component, returned,
+        )
         return LayerSlab(
             component=component,
             values=(
@@ -1296,6 +1459,7 @@ class NativeReader:
         )
 
         v, e_idx, snc_rows = [], [], []
+        returned: list[tuple[str, ndarray, ndarray]] = []
         for pid in self.partitions(stage_id):
             root_path = (
                 f"{_native.elements_path(stage_id, pid)}/"
@@ -1321,6 +1485,9 @@ class NativeReader:
                     elem_sel = np.where(mask)[0]
 
                 sel_eidx = eidx[elem_sel]
+                returned.append((
+                    grp[_native.DSET_ELEMENT_INDEX].name, sel_eidx, elem_sel,
+                ))
                 full = grp[component][...]                    # (T, E_g, n_st)
                 values_t = full[t_idx]
                 values_es = values_t[:, elem_sel, :]
@@ -1332,6 +1499,9 @@ class NativeReader:
                 e_idx.append(np.repeat(sel_eidx, n_st))
                 snc_rows.append(np.tile(snc, E_sel))
 
+        self._refuse_repeated_elements(
+            stage_id, ResultLevel.LINE_STATIONS.value, component, returned,
+        )
         return LineStationSlab(
             component=component,
             values=(
@@ -1368,6 +1538,7 @@ class NativeReader:
         # produce ragged arrays. If multiple groups carry the same component,
         # we concat along the element axis only when their npes match.
         combined: dict[int, dict] = {}    # npe -> {"v": [...], "e": [...]}
+        returned: list[tuple[str, ndarray, ndarray]] = []
 
         for pid in self.partitions(stage_id):
             root_path = (
@@ -1394,11 +1565,17 @@ class NativeReader:
                     elem_sel = np.where(mask)[0]
 
                 sel_eidx = eidx[elem_sel]
+                returned.append((
+                    grp[_native.DSET_ELEMENT_INDEX].name, sel_eidx, elem_sel,
+                ))
                 values_es = full[t_idx][:, elem_sel, :]
                 bucket = combined.setdefault(npe, {"v": [], "e": []})
                 bucket["v"].append(values_es)
                 bucket["e"].append(sel_eidx)
 
+        self._refuse_repeated_elements(
+            stage_id, ResultLevel.ELEMENTS.value, component, returned,
+        )
         if not combined:
             return ElementSlab(
                 component=component,
@@ -1454,6 +1631,15 @@ class NativeReader:
 # =====================================================================
 # Helpers
 # =====================================================================
+
+def _element_firsts(
+    dataset: str, eidx: ndarray, sel: ndarray,
+) -> "tuple[str, ndarray, ndarray]":
+    """A per-row group's chunk for ``_refuse_repeated_elements``: each
+    element among rows ``sel`` of ``eidx`` once, with its first row."""
+    ids, first = np.unique(eidx[sel], return_index=True)
+    return dataset, ids, sel[first]
+
 
 def _concat_or_empty(chunks: list[ndarray], dtype) -> ndarray:
     if chunks:
