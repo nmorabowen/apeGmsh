@@ -16,7 +16,7 @@ import { reactionComponentsOf } from "./loads.ts";
 import { springCountOf } from "./springs.ts";
 import { tensorFields } from "./tensor.ts";
 import { vectorFieldOf } from "./vectors.ts";
-import { CMAP_NAMES, fieldsOf, gaussFields, RANGE_MODES } from "./contour.ts";
+import { CMAP_NAMES, elementContourFields, fieldsOf, RANGE_MODES } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
 import {
   WINDOW_KINDS,
@@ -1234,14 +1234,15 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
           if (filter(it)) items.push(it);
         }
       }
-      for (const f of gaussFields(st.gauss)) {
+      // VA6d (#2766): the picker's catalog, so a derived scalar (von_mises_stress) is listed where the picker lists it.
+      for (const f of elementContourFields(st.gauss)) {
         for (const c of f.components) {
           const active = s.contour.source === "element" && s.contour.field === f.name && s.contour.component === c.key;
           const it = commandItem(
             `val:cfield-elem-${f.name}-${c.key}`,
             "element",
             `${f.name} · ${c.label}`,
-            `Element Gauss contour (${c.datasets.join(", ")})`,
+            c.derived ? `Element Gauss contour, derived from ${c.datasets.join(", ")}` : `Element Gauss contour (${c.datasets.join(", ")})`,
             [
               { type: "setColourBy", by: "contour" },
               { type: "setContourField", field: f.name, component: c.key, source: "element" },
