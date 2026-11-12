@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pytest
 
@@ -40,8 +41,12 @@ def test_repeat_within_one_partition_refuses_at_open(tmp_path: Path) -> None:
     path = tmp_path / "run.h5"
     _write(path, {
         "partition_0": ([1, 2], {"displacement_x": [[0.1, 0.2], [0.1, 0.2]]}),
-        "partition_1": ([7, 9, 7], {"displacement_x": [[1.0, 2.0, 3.0]] * 2}),
+        "partition_1": ([7, 9, 8], {"displacement_x": [[1.0, 2.0, 3.0]] * 2}),
     })
+    # NativeWriter refuses a repeated id (#2361), so the malformed file
+    # is made by rewriting the ids in place.
+    with h5py.File(path, "r+") as f:
+        f["/stages/stage_0/partitions/partition_1/nodes/_ids"][...] = [7, 9, 7]
     with pytest.raises(NativeRepeatedNodeId) as info:
         NativeReader(path)
     err = info.value
