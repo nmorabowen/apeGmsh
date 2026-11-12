@@ -169,16 +169,20 @@ STAGE_FLAG_PARAMETERS: frozenset[str] = frozenset(
 #: whole group back to elastic, on the fork only (stock keeps the flag;
 #: SAniSandMS, PM4Sand and PM4Silt keep it on both builds, measured).
 #: Fork commit ``43b235bbb`` stops the reset and ``FORK_PIN`` carries it,
-#: but every older fork build still resets (79e062367, measured).  The
-#: build is known only where the model runs, and a staged model runs only
-#: as a deck (``apeSees.analyze`` / ``run`` and ``OpenSeesModel.build(
-#: "live")`` refuse stages), so the check is the deck's: a deck that
-#: builds an element or material after a flip of the group, and solves
-#: before flipping it again, asks the running build for ``ladrunoBuild``
-#: and stops unless the sha is one measured to carry the fix
-#: (``_internal/build/stage_emit.MD_STATIC_RESET_GUARD``, on every target
-#: mode, and on the ``model.h5`` replay, whose deck is emitted by the same
-#: emitters; stock has no ``ladrunoBuild`` and runs).
+#: but every older fork build still resets (79e062367, measured).  A fork
+#: build says it carries the fix by listing ``mdStageFlagPreserved`` in
+#: its ``ladrunoSchema`` v1 ``capabilities`` (fork PR #1017).  The build is
+#: known only where the model runs, so the check is made there, on every
+#: target mode (#2516, #2518): a deck that builds an element or material
+#: after a flip of the group, and solves before flipping it again, stops
+#: by name unless the running build lists the capability (stock has no
+#: ``ladrunoBuild`` and runs), and so does the deck the ``model.h5``
+#: replay emits through the same emitters
+#: (``_internal/build/stage_emit.MD_STATIC_RESET_GUARD``); the live
+#: emitter asks the engine it drives the same question before such a
+#: solve (``emitter/live.LiveOpsEmitter``).  A staged model runs only as a
+#: deck (``apeSees.analyze`` / ``run`` and ``OpenSeesModel.build("live")``
+#: refuse stages), so the live check guards a direct driver.
 FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
     {"ManzariDafalias", "LadrunoSANISAND"},
 )

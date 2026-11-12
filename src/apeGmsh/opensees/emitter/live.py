@@ -37,9 +37,12 @@ from .._internal.build.stage_emit import (
     BEAM3D_PARTIAL_LOAD_MESSAGE,
     FORCE_BEAM_PARTIAL_LOAD_GUARD,
     FORCE_BEAM_PARTIAL_LOAD_MESSAGE,
+    MD_STATIC_RESET_GUARD,
     MEMBRANE_WP208_MESSAGE,
     Beam3dPartialLoadTargets,
+    StageFlagResetWatch,
     SweptMaterialReach,
+    engine_has_capability,
     fork_build_has_beam3d_partial_load,
     fork_build_has_force_beam_partial_load,
     stock_version_has_force_beam_partial_load,
@@ -1396,6 +1399,8 @@ class LiveOpsEmitter:
                 raise RuntimeError(refusal)
         self._stage_zero_ledger().material(mat_type, tag)
         self._swept_reach().note_material(mat_type, tag, params)
+        if self._reaches_engine():
+            self._md_reset_watch().note_material(mat_type, tag)
         self._ops.nDMaterial(mat_type, tag, *params)
 
     def section(
@@ -1475,6 +1480,8 @@ class LiveOpsEmitter:
         self._stage_zero_ledger().owed = True
         self._swept_reach().note_element(tag, args)
         self._beam3d_load_targets().note_element(ele_type, tag)
+        if self._reaches_engine():
+            self._md_reset_watch().note_construction()
         if is_membrane_wp208(ele_type, args) and not (
                 fork_build_has_membrane_wp208(self._backend().build)):
             raise RuntimeError(MEMBRANE_WP208_MESSAGE)
@@ -2435,6 +2442,8 @@ class LiveOpsEmitter:
                 "its own material."
             )
         self._stage_zero_ledger().user_flip(mat_tag)
+        if self._reaches_engine():
+            self._md_reset_watch().note_flip(mat_tag, stage)
         self._ops.updateMaterialStage(
             "-material", int(mat_tag), "-stage", int(stage),
         )
@@ -2444,6 +2453,38 @@ class LiveOpsEmitter:
     _stage0: "StageZeroLedger | None" = None
     _reach: "SweptMaterialReach | None" = None
     _beam3d_targets: "Beam3dPartialLoadTargets | None" = None
+    _md_reset: "StageFlagResetWatch | None" = None
+
+    def _md_reset_watch(self) -> StageFlagResetWatch:
+        """The ManzariDafalias constructor-reset watch (#2516, #2518): fed
+        only the calls that reach the engine (:meth:`_reaches_engine`), at
+        rank ``None``, since this emitter drives one process."""
+        if self._md_reset is None:
+            self._md_reset = StageFlagResetWatch()
+        return self._md_reset
+
+    def _reaches_engine(self) -> bool:
+        """Whether ``self._ops`` calls run on the engine: not inside a
+        non-zero partition block, where :class:`_NoOpOps` swallows them."""
+        return not isinstance(self._ops, _NoOpOps)
+
+    def _refuse_md_static_reset(self) -> None:
+        """Raise :data:`MD_STATIC_RESET_GUARD`'s message before a solve that
+        could see the ManzariDafalias constructor reset, unless the engine
+        this emitter drives promises the fix (:func:`engine_has_capability`:
+        stock, or a fork whose ``ladrunoSchema`` lists
+        ``mdStageFlagPreserved``).  The deck route asks the running build
+        the same question at its start (#2518)."""
+        if self._md_reset is None or not self._md_reset.pending:
+            return
+        ops = self._real_ops if self._in_partition else self._ops
+        module = ops.module if isinstance(ops, _CoercingOps) else ops
+        if engine_has_capability(
+                MD_STATIC_RESET_GUARD, self._backend(), module):
+            return
+        from .._internal.build.errors import BridgeError
+
+        raise BridgeError(MD_STATIC_RESET_GUARD.message)
 
     def _beam3d_load_targets(self) -> Beam3dPartialLoadTargets:
         if self._beam3d_targets is None:
@@ -2464,7 +2505,10 @@ class LiveOpsEmitter:
         """Issue the owed fresh-stage calls of the class-wide groups
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
         StageZeroLedger`): at a solve verb, and at the end of
-        ``apeSees.run()``, whose caller drives the solve."""
+        ``apeSees.run()``, whose caller drives the solve.  First refuse a
+        solve the fork's constructor reset would change
+        (:meth:`_refuse_md_static_reset`), as a deck checks at that verb."""
+        self._refuse_md_static_reset()
         for tag, stage in self._stage_zero_ledger().due():
             self._ops.updateMaterialStage("-material", tag, "-stage", stage)
 
@@ -2492,6 +2536,8 @@ class LiveOpsEmitter:
         value: float,
     ) -> None:
         self._stage_zero_ledger().parameter(args)
+        if self._reaches_engine():
+            self._md_reset_watch().note_parameter(args, value)
         self._ops.parameter(int(pid))
         for et in ele_tags:
             self._ops.addToParameter(int(pid), "element", int(et), *args)
