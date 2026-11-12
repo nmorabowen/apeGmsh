@@ -63,12 +63,60 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 from numpy import ndarray
 
+from ..readers._ladruno import _repeated_rows
 from ..schema import _native, _versions
 
 if TYPE_CHECKING:
     import h5py
 
     from ...mesh.FEMData import FEMData
+
+
+#: How many repeated ids a refusal message names before "and N more"
+#: (the reader's ``NativeRepeatedNodeId`` shows the same number).
+_SHOWN = 5
+
+
+class NativeWriteRepeatedId(ValueError):
+    """A :class:`NativeWriter` write lists one id twice in one partition
+    chunk (#2361).
+
+    The writer side of the reader's ``NativeRepeatedNodeId`` (#2360),
+    which refuses such a file at open. The writer refuses it before
+    anything of the call reaches the file, so a malformed file is never
+    produced. Each row of an id dataset is one node, one element, or (for
+    ``layers``) one (element, Gauss point, layer, sub-point); a repeat
+    would read as two columns of one of them. A node in two *partitions*
+    is not a repeat: each partition is its own chunk.
+
+    ``file``, ``stage_id`` and ``partition_id`` name the chunk,
+    ``dataset`` the HDF5 path of the id dataset (for ``layers``, the
+    group path and its four key datasets), and ``repeated`` maps each
+    repeated id (a tuple for ``layers``) to the rows it sits at.
+    """
+
+    def __init__(
+        self, file: Path, stage_id: str, partition_id: str, dataset: str,
+        what: str, repeated: "dict[Any, list[int]]",
+    ) -> None:
+        self.file = file
+        self.stage_id = stage_id
+        self.partition_id = partition_id
+        self.dataset = dataset
+        self.repeated = repeated
+        shown = dict(list(repeated.items())[:_SHOWN])
+        more = (
+            f" and {len(repeated) - _SHOWN} more"
+            if len(repeated) > _SHOWN else ""
+        )
+        super().__init__(
+            f"{file}: stage {stage_id!r} partition {partition_id!r}: "
+            f"{dataset} would list {what} id(s) more than once "
+            f"(id: rows {shown}{more}). Each {what} is listed once per "
+            f"partition chunk; a repeated id would read as two columns of "
+            f"one {what}, and the reader refuses the file. Nothing of this "
+            f"write reached the file."
+        )
 
 
 #: Root attrs naming the OpenSees build that produced the results
@@ -646,12 +694,19 @@ class NativeWriter:
         """Write nodal results for one partition.
 
         ``components[name]`` must have shape ``(T, N)`` matching the
-        stage's time vector length and the node count.
+        stage's time vector length and the node count. A node id listed
+        twice raises :class:`NativeWriteRepeatedId` before anything is
+        written.
         """
+        node_ids = np.asarray(node_ids, dtype=np.int64)
+        self._refuse_repeated(
+            stage_id, partition_id,
+            f"{_native.nodes_path(stage_id, partition_id)}/{_native.DSET_IDS}",
+            "node", node_ids,
+        )
         nodes_grp = self._require_partition(stage_id, partition_id).require_group(
             _native.GROUP_NODES,
         )
-        node_ids = np.asarray(node_ids, dtype=np.int64)
         _write_or_validate_ids(nodes_grp, _native.DSET_IDS, node_ids)
         for comp_name, values in components.items():
             arr = np.asarray(values)
@@ -688,7 +743,17 @@ class NativeWriter:
         - ``natural_coords``: ``(n_GP_g, dim)``
         - ``components[name]``: ``(T, E_g, n_GP_g)``
         - ``local_axes_quaternion``: ``(E_g, 4)``, optional (shells)
+
+        An element id listed twice in ``element_index`` raises
+        :class:`NativeWriteRepeatedId` before the group is created.
         """
+        eidx = np.asarray(element_index, dtype=np.int64)
+        self._refuse_repeated(
+            stage_id, partition_id,
+            f"{_native.gauss_group_path(stage_id, partition_id, group_id)}"
+            f"/{_native.DSET_ELEMENT_INDEX}",
+            "element", eidx,
+        )
         grp = self._require_element_subgroup(
             stage_id, partition_id, _native.GROUP_GAUSS_POINTS, group_id,
         )
@@ -696,7 +761,6 @@ class NativeWriter:
         grp.attrs[_native.ATTR_INT_RULE] = int(int_rule)
         grp.attrs[_native.ATTR_CUSTOM_RULE_IDX] = int(custom_rule_idx)
 
-        eidx = np.asarray(element_index, dtype=np.int64)
         nc = np.asarray(natural_coords, dtype=np.float64)
         grp.create_dataset(_native.DSET_ELEMENT_INDEX, data=eidx)
         grp.create_dataset(_native.DSET_NATURAL_COORDS, data=nc)
@@ -800,11 +864,31 @@ class NativeWriter:
         local_axes_quaternion: ndarray,
         components: dict[str, ndarray],
     ) -> None:
+        """Write one layered-shell group: one row per (element, surface
+        Gauss point, layer, sub-point).
+
+        That 4-tuple is the row's id: a tuple listed twice raises
+        :class:`NativeWriteRepeatedId` before the group is created.
+        """
+        eidx = np.asarray(element_index, dtype=np.int64)
+        n = eidx.size
+        key = [eidx.ravel()] + [
+            np.asarray(a, dtype=np.int64).ravel()
+            for a in (gp_index, layer_index, sub_gp_index)
+        ]
+        # Unequal sizes are refused below, by the per-dataset size check.
+        if all(k.size == n for k in key):
+            group = _native.layers_group_path(stage_id, partition_id, group_id)
+            self._refuse_repeated(
+                stage_id, partition_id,
+                f"{group} ({_native.DSET_ELEMENT_INDEX}, "
+                f"{_native.DSET_GP_INDEX}, {_native.DSET_LAYER_INDEX}, "
+                f"{_native.DSET_SUB_GP_INDEX})",
+                "layer row", np.stack(key, axis=1),
+            )
         grp = self._require_element_subgroup(
             stage_id, partition_id, _native.GROUP_LAYERS, group_id,
         )
-        eidx = np.asarray(element_index, dtype=np.int64)
-        n = eidx.size
         for name, arr, dtype in [
             (_native.DSET_ELEMENT_INDEX, eidx, np.int64),
             (_native.DSET_GP_INDEX, gp_index, np.int64),
@@ -854,13 +938,22 @@ class NativeWriter:
         station_natural_coord: ndarray,
         components: dict[str, ndarray],
     ) -> None:
+        """Write one line-stations group. An element id listed twice in
+        ``element_index`` raises :class:`NativeWriteRepeatedId` before the
+        group is created."""
+        eidx = np.asarray(element_index, dtype=np.int64)
+        self._refuse_repeated(
+            stage_id, partition_id,
+            f"{_native.line_stations_group_path(stage_id, partition_id, group_id)}"
+            f"/{_native.DSET_ELEMENT_INDEX}",
+            "element", eidx,
+        )
         grp = self._require_element_subgroup(
             stage_id, partition_id, _native.GROUP_LINE_STATIONS, group_id,
         )
         grp.attrs[_native.ATTR_CLASS_TAG] = int(class_tag)
         grp.attrs[_native.ATTR_INT_RULE] = int(int_rule)
 
-        eidx = np.asarray(element_index, dtype=np.int64)
         snc = np.asarray(station_natural_coord, dtype=np.float64)
         grp.create_dataset(_native.DSET_ELEMENT_INDEX, data=eidx)
         grp.create_dataset(_native.DSET_STATION_NATURAL_COORD, data=snc)
@@ -891,13 +984,22 @@ class NativeWriter:
         element_index: ndarray,
         components: dict[str, ndarray],    # (T, E_g, npe_g)
     ) -> None:
+        """Write one per-element-node force group. An element id listed
+        twice in ``element_index`` raises :class:`NativeWriteRepeatedId`
+        before the group is created."""
+        eidx = np.asarray(element_index, dtype=np.int64)
+        self._refuse_repeated(
+            stage_id, partition_id,
+            f"{_native.nodal_forces_group_path(stage_id, partition_id, group_id)}"
+            f"/{_native.DSET_ELEMENT_INDEX}",
+            "element", eidx,
+        )
         grp = self._require_element_subgroup(
             stage_id, partition_id, _native.GROUP_NODAL_FORCES, group_id,
         )
         grp.attrs[_native.ATTR_CLASS_TAG] = int(class_tag)
         grp.attrs[_native.ATTR_FRAME] = frame
 
-        eidx = np.asarray(element_index, dtype=np.int64)
         grp.create_dataset(_native.DSET_ELEMENT_INDEX, data=eidx)
 
         for comp_name, values in components.items():
@@ -920,13 +1022,21 @@ class NativeWriter:
         partition_id: str,
         ids: ndarray,
     ) -> None:
-        """Write the partition's flat element ID list at ``elements/_ids``."""
+        """Write the partition's flat element ID list at ``elements/_ids``.
+
+        An element id listed twice raises :class:`NativeWriteRepeatedId`
+        before anything is written.
+        """
+        ids = np.asarray(ids, dtype=np.int64)
+        self._refuse_repeated(
+            stage_id, partition_id,
+            f"{_native.elements_path(stage_id, partition_id)}/{_native.DSET_IDS}",
+            "element", ids,
+        )
         grp = self._require_partition(stage_id, partition_id).require_group(
             _native.GROUP_ELEMENTS,
         )
-        _write_or_validate_ids(
-            grp, _native.DSET_IDS, np.asarray(ids, dtype=np.int64),
-        )
+        _write_or_validate_ids(grp, _native.DSET_IDS, ids)
 
     def stamp_element_index_space(self, space: str) -> None:
         """Stamp root ``element_index_space`` (results 1.2.0, #1746).
@@ -955,6 +1065,35 @@ class NativeWriter:
                 f"Call open() or use as context manager."
             )
         return self._h5
+
+    def _refuse_repeated(
+        self, stage_id: str, partition_id: str, dataset: str, what: str,
+        ids: ndarray,
+    ) -> None:
+        """Raise :class:`NativeWriteRepeatedId` if ``ids`` lists an id
+        twice (#2361).
+
+        ``ids`` is 1-D (one id per row) or 2-D (one composite id per row,
+        e.g. the layers 4-tuple). Checked per write, so the same node in
+        two partitions is never a repeat. Uses the reader's
+        ``_repeated_rows``, so the writer refuses exactly what the readers
+        refuse at open.
+        """
+        self._require_open()
+        if ids.ndim == 2:
+            if ids.shape[0] < 2:
+                return
+            uniq, inverse = np.unique(ids, axis=0, return_inverse=True)
+            rows = _repeated_rows(np.asarray(inverse, dtype=np.int64).ravel())
+            repeated: dict[Any, list[int]] = {
+                tuple(int(v) for v in uniq[k]): r for k, r in rows.items()
+            }
+        else:
+            repeated = dict(_repeated_rows(ids.ravel()))
+        if repeated:
+            raise NativeWriteRepeatedId(
+                self._path, stage_id, partition_id, dataset, what, repeated,
+            )
 
     def _require_partition(self, stage_id: str, partition_id: str) -> Any:
         h5 = self._require_open()
