@@ -87,6 +87,8 @@ export type ManifestContour =
       difference?: { window: string; compare: string };
       /** VU16, a user result's contour only: the `.user.h5` entry (`field` too) and its basis (A6 judged it current) */
       user?: { name: string; basis: string };
+      /** VA6d, a derived scalar's contour only (`von_mises_stress`): the stored tensor components it is computed from */
+      derived?: { from: string[] };
       /** element fields: how the values reach the screen (`element_mean`, `gauss_node`, ...); nodal: `nodal` */
       topology: string;
       cmap: string;
@@ -472,6 +474,8 @@ function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepVal
     component: v.component.key,
     label: v.component.label,
     source: v.state === "ready" ? "nodal" : "element",
+    // VA6d: a derived scalar names the stored components it was computed from at each Gauss point.
+    ...(v.state === "element" && v.component.derived ? { derived: { from: [...v.component.derived.tensor.components] } } : {}),
     topology: v.state === "ready" ? "nodal" : v.topology,
     cmap: v.cmap,
     range: {
