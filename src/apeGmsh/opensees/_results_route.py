@@ -91,13 +91,17 @@ from ._internal.build.ndf import (
 from ._internal.build.ownership import is_partitioned
 from ._internal.build.pg_expand import expand_pg_to_nodes
 from ._internal.build.recorders import (
+    PORE_PRESSURE,
     _node_record_layout,
     _recorder_file_path,
     _resolve_node_targets,
+    deck_node_token,
+    layout_components,
+    node_pressure_slot,
 )
 from ._internal.tag_plan import emit_mode
 from ._internal.types import Element, Recorder
-from ._readback import ReadSession, RotationRoles, rotation_roles
+from ._readback import ReadSession, RotationRoles, pressure_slot, rotation_roles
 from ._recorder_translate import (
     group_node_components_by_ops_token,
     node_component_to_ops,
@@ -157,6 +161,9 @@ _TYPED_RESPONSES: dict[str, tuple[str, str | None]] = {
     "accel": ("acceleration", "angular_acceleration"),
     "incrDisp": ("displacement_increment", None),
     "reaction": ("reaction_force", "reaction_moment"),
+    # What a deck holding a damping-coupled u-p element (SSPquadUP)
+    # records for reactions: C*v carries part of the support reaction.
+    "reactionIncInertia": ("reaction_force", "reaction_moment"),
     "unbalance": ("force", "moment"),
 }
 
@@ -518,6 +525,17 @@ class _NodeRoles:
             self._rot = rotation_roles(self._element_plan())
         return self._rot.refusal(int(tag))
 
+    def pressure_slot(self, tag: int, origin: str) -> "tuple[str, int] | None":
+        """``(response, DOF)`` that holds node ``tag``'s pore pressure,
+        or ``None`` when no u-p element gives it one (:func:`pressure_slot`)."""
+        if self._rot is None:
+            self._rot = rotation_roles(self._element_plan())
+        try:
+            return pressure_slot(
+                self._rot, int(tag), self.ndm, self.node_ndf(tag, origin))
+        except ValueError:
+            return None
+
     def component(
         self, tag: int, dof: int, prefixes: tuple[str, str | None],
         origin: str,
@@ -579,7 +597,14 @@ def _typed_source(
         raise BridgeError(f"{_WHERE}: {origin} records no node.")
     components: list[str] = []
     for dof in rec.dofs:
-        names = {roles.component(n, int(dof), prefixes, origin) for n in nodes}
+        # The DOF a u-p element keeps p in, under the response it keeps it
+        # in (SSPquadUP: vel DOF 3), is the pore pressure, not a rotation.
+        names = {
+            PORE_PRESSURE
+            if roles.pressure_slot(n, origin) == (rec.response, int(dof))
+            else roles.component(n, int(dof), prefixes, origin)
+            for n in nodes
+        }
         if len(names) != 1:
             raise BridgeError(
                 f"{_WHERE}: {origin}: DOF {dof} carries {sorted(names)} on "
@@ -610,7 +635,7 @@ def _declared_sources(
             )
         for n in nodes:
             roles.node_ndf(n, origin)
-        for comp in record.components:
+        for comp in layout_components(record.components):
             prefix, _, axis = comp.rpartition("_")
             if prefix not in _DECLARED_PREFIXES or axis not in _AXES:
                 raise BridgeError(
@@ -621,25 +646,39 @@ def _declared_sources(
         # The deck's own DOF mapping, re-derived by the emit's function
         # over this run's per-node ndf (inferred plus ops.ndf): it raises,
         # naming the node, wherever a column is not that component.
+        plan = roles._element_plan()
+        comps = layout_components(record.components)
         try:
-            layout = _node_record_layout(
-                record, decl, nodes, roles._element_plan(),
-                node_ndf=roles.ndf)
+            if comps:
+                layout = _node_record_layout(
+                    record, decl, nodes, plan, node_ndf=roles.ndf)
+            pressure = node_pressure_slot(
+                record, decl, nodes, plan, node_ndf=roles.ndf)
         except BridgeError as e:
             raise BridgeError(f"{_WHERE}: {e} {_ALTERNATIVES}.") from e
-        grouped = group_node_components_by_ops_token(
-            record.components, layout)
+        grouped = (group_node_components_by_ops_token(comps, layout)
+                   if comps else {})
         for token, dofs in grouped.items():
             columns = [
-                next(c for c in record.components
+                next(c for c in comps
                      if node_component_to_ops(c, layout) == (token, dof))
                 for dof in dofs
             ]
+            # The emit's own file name: the token the deck wrote.
             file = _recorder_file_path(
-                decl.file_root, decl.name, record.name or "default", token)
+                decl.file_root, decl.name, record.name or "default",
+                deck_node_token(token, plan))
             out.append(_TextSource(
                 origin=origin, path=_resolve_file(run, file),
                 node_ids=nodes, components=tuple(columns),
+            ))
+        if pressure is not None:
+            file = _recorder_file_path(
+                decl.file_root, decl.name, record.name or "default",
+                "pressure")
+            out.append(_TextSource(
+                origin=origin, path=_resolve_file(run, file),
+                node_ids=nodes, components=(PORE_PRESSURE,),
             ))
     return out
 
@@ -995,6 +1034,11 @@ def _write_and_read_text(
         # component the reader maps to that dof.
         by_dof: dict[int, int] = {}
         for k, comp in enumerate(src.components):
+            if comp == PORE_PRESSURE and token == "pressure":
+                # Slotless: the reader's one pressure column per node.
+                assert logical.dofs is not None
+                by_dof[logical.dofs[0]] = k
+                continue
             pair = node_component_to_ops(comp, _READER_LAYOUT)
             if pair is None or pair[0] != token:
                 raise BridgeError(

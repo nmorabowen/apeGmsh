@@ -220,6 +220,9 @@ FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = SWEPT_MATERIAL_CLASSES
 #: (``stage_emit.MATERIAL_STATE_FORK_FLOOR``), so one table names them
 #: here and in the deck guard that stops a deck by name on a fork build
 #: older than the floor.
+#: ``SSPquadUP`` (stock u-p quad, its p DOF held) is measured the same
+#: way, equal bit for bit, on stock openseespy 3.7.1.2 and the fork build
+#: 011b02586 (2026-11-10).
 #: ``SSPquad`` and ``SSPbrick`` have no bridge primitive yet
 #: (``element/solid.py`` defers them), so no spec carries those names
 #: today; they are listed so the primitive that adds them is not refused.
@@ -234,7 +237,7 @@ FIRST_ELEMENT_ONLY_PLASTIC_INIT: frozenset[str] = SWEPT_MATERIAL_CLASSES
 #: emit the bare first-element-only flip).
 MATERIAL_STATE_ELEMENTS: frozenset[str] = frozenset({
     "SixNodeTri", "FourNodeTetrahedron", "SSPquad", "SSPbrick",
-    "BezierTri6", "BezierTet10", "LadrunoUP",
+    "SSPquadUP", "BezierTri6", "BezierTet10", "LadrunoUP",
 }) | frozenset(MATERIAL_STATE_FORK_FLOOR)
 
 
