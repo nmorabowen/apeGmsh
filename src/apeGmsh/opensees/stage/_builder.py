@@ -960,11 +960,22 @@ def _refuse_activation_after_plastic_flip(
     :func:`_refuse_multi_element_plastic_flip` holds that flip to every
     carrier alive at it, the new one included.  The earlier stages' flip
     checks count only the carriers alive at them (#2528), so this is the
-    check that keeps a carrier activated after the flip refused.  It
-    counts per tag (``earlier_live``): it refuses a carrier of a tag that
-    has a carrier outside this stage's activations.  A carrier of another
-    material of the same class-wide group, whose own tag has no such
-    carrier, is not refused here; counting per group is #2534.
+    check that keeps a carrier activated after the flip refused.
+
+    It counts per class-wide group (``earlier_live``, #2534): a new
+    carrier of any material of a group is refused when the group has a
+    carrier outside this stage's activations, whichever material that
+    one holds.  The flag is one static for the group
+    (:data:`CLASS_WIDE_STAGE_FLAG`), so a second material the flip never
+    named turns plastic with it, and its new element enters plastic with
+    no ``Elastic2Plastic()``: on stock openseespy 3.7.1 that element gives,
+    bit for bit, the answer of a new carrier of the flipped material
+    itself, off the per-element reference (``tests/opensees/stage/
+    test_stage_routes_final_model.py``).  Only
+    :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` groups are counted: the
+    ``updateParameter`` of SAniSandMS, PM4Sand and PM4Silt sets the static
+    and nothing else, so a flip at the activation would leave the new
+    element as it is.
     """
     if not activated_pgs:
         return

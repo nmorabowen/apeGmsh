@@ -652,3 +652,185 @@ def test_the_deck_gives_the_per_element_reference_answer(
                         lambda **k: None)
     bad = _alive_run(tmp_path, shared=True, wrong=True)
     assert max(abs(a - b) for a, b in zip(bad, ref)) > 1e-2 * scale
+
+
+# ---------------------------------------------------------------------------
+# #2534: late carriers are counted per class-wide group
+# ---------------------------------------------------------------------------
+#
+# The flag the plastic flip at 'plastic' sets is ManzariDafalias's
+# class-wide static, so a carrier of a second ManzariDafalias activated
+# after it enters plastic with no Elastic2Plastic(), as a carrier of the
+# flipped sand does (the CASES row above).  A flip of the whole group at
+# the activating stage is the way through; a group whose flip runs nothing
+# per element is not counted.
+
+
+def _group_reflip_at_the_activation() -> apeSees:
+    """The refused model with 'install' flipping the whole group again:
+    its sweep runs after C's element line and reaches A and C."""
+    ops = _ops()
+    sand = _md(ops, "sand")
+    sand_c = _md(ops, "sand_c")
+    _host(ops, "A", sand)
+    _host(ops, "C", sand_c)
+    _stage(ops, "plastic", lambda s: s.update_material_stage(
+        materials=[sand], stage=1))
+    _stage(ops, "install", lambda s: (
+        s.activate(pgs=["C"]),
+        s.update_material_stage(materials=[sand, sand_c], stage=1)))
+    return ops
+
+
+@pytest.mark.parametrize("target", ["tcl", "py", "h5"])
+def test_a_flip_of_the_group_at_the_activation_passes(
+    target: str, tmp_path: Path,
+) -> None:
+    from tests.opensees.h5.test_h5_stage_route_replay import _replay
+
+    ops = _quiet(_group_reflip_at_the_activation)
+    out = tmp_path / f"model.{target}"
+    _quiet(lambda: getattr(ops, target)(str(out)))
+    assert out.exists()
+    if target == "h5":
+        _replay(out, "tcl")
+
+
+def test_a_group_whose_flip_runs_nothing_per_element_is_not_counted(
+) -> None:
+    """PM4Sand's ``updateParameter`` for ``updateMaterialStage`` and
+    ``materialState`` sets the class-wide ``me2p`` and nothing else
+    (``PM4Sand.cpp``; PM4Silt and SAniSandMS alike), so a flip at the
+    activation would change nothing in the new element: a late carrier of
+    a second PM4Sand gets the per-element answer, and passes."""
+    ops = _ops()
+    sand = ops.nDMaterial.PM4Sand(name="sand", Dr=0.55, G0=677.0,
+                                  hpo=0.4, rho=1.7)
+    sand_c = ops.nDMaterial.PM4Sand(name="sand_c", Dr=0.55, G0=677.0,
+                                    hpo=0.4, rho=1.7)
+    ops.element.SixNodeTri(pg="A", thickness=1.0, material=sand)
+    ops.element.SixNodeTri(pg="C", thickness=1.0, material=sand_c)
+    _quiet(lambda: _stage(ops, "plastic", lambda s: s.update_material_stage(
+        materials=[sand], stage=1)))
+    _quiet(lambda: _stage(ops, "install", lambda s: s.activate(pgs=["C"])))
+    tcl = TclEmitter()
+    _quiet(lambda: ops.build().emit(tcl))
+    assert any(ln.startswith("element tri6n") for ln in tcl.lines())
+
+
+# Live: the per-element reference.  Raw commands on the resolved backend,
+# one quad per material, so no first-element-only sweep is in play: A
+# (material 1) is consolidated elastic, flipped plastic and loaded; then
+# quad C is built and loaded with A.  Variants: "late" (C on material 2,
+# no flip after it: the refused model), "same" (C on material 1, no flip:
+# #2445's refused model), "reference" (C's own updateMaterialStage after
+# it is built, the per-element reference) and "group" (both materials
+# flipped after C is built, what the refusal asks for).
+
+_MD_ARGS = (125.0, 0.05, 0.8, 1.25, 0.712, 0.019, 0.934, 0.7, 100.0, 0.01,
+            7.05, 0.968, 1.1, 0.704, 3.5, 4.0, 600.0, 1.42)
+
+
+def _late_second_material_run(
+    variant: str,
+) -> "tuple[list[int], list[float]]":
+    """Analyze codes and every node's displacement of ``variant``.  The
+    run sets stage 0 before it analyzes, so the class-wide static an
+    earlier run left in this process does not leak in."""
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    ops = get_ops()
+    ops.wipe()
+
+    def quad(tag: int, x0: float, mat: int) -> "list[int]":
+        nn = [4 * (tag - 1) + k for k in (1, 2, 3, 4)]
+        for n, (dx, y) in zip(nn, ((0, 0), (1, 0), (1, 1), (0, 1))):
+            ops.node(n, x0 + dx, float(y))
+            ops.fix(n, int(dx == 0), int(y == 0))
+        ops.element("quad", tag, *nn, 1.0, "PlaneStrain", mat)
+        return nn
+
+    def load(series: int, nn: "list[int]", fx: float, fy: float) -> None:
+        ops.timeSeries("Linear", series)
+        ops.pattern("Plain", series, series)
+        for n in (nn[1], nn[2]):
+            ops.load(n, fx, 0.0)
+        for n in (nn[2], nn[3]):
+            ops.load(n, 0.0, fy)
+
+    def analyze(n: int) -> int:
+        ops.system("UmfPack")
+        ops.numberer("RCM")
+        ops.constraints("Transformation")
+        ops.test("NormUnbalance", 1e-8, 100)
+        ops.algorithm("Newton")
+        ops.integrator("LoadControl", 1.0 / n)
+        ops.analysis("Static")
+        code = int(ops.analyze(n))
+        ops.loadConst("-time", 0.0)
+        ops.wipeAnalysis()
+        return code
+
+    try:
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.nDMaterial("ManzariDafalias", 1, *_MD_ARGS)
+        ops.nDMaterial("ManzariDafalias", 2, *_MD_ARGS)
+        a = quad(1, 0.0, 1)
+        ops.updateMaterialStage("-material", 1, "-stage", 0)
+        load(1, a, -50.0, -50.0)
+        codes = [analyze(10)]
+        ops.updateMaterialStage("-material", 1, "-stage", 1)
+        load(2, a, 0.0, -8.0)
+        codes.append(analyze(20))
+        c = quad(2, 2.0, 1 if variant == "same" else 2)
+        if variant == "reference":
+            ops.updateMaterialStage("-material", 2, "-stage", 1)
+        elif variant == "group":
+            ops.updateMaterialStage("-material", 1, "-stage", 1)
+            ops.updateMaterialStage("-material", 2, "-stage", 1)
+        load(3, c, -50.0, -50.0)
+        codes.append(analyze(20))
+        load(4, c, 0.0, -8.0)
+        load(5, a, 0.0, -2.0)
+        codes.append(analyze(20))
+        return codes, [float(d) for n in sorted(ops.getNodeTags())
+                       for d in ops.nodeDisp(n)]
+    finally:
+        ops.wipe()
+
+
+def _check_the_per_element_reference() -> None:
+    runs = {v: _late_second_material_run(v)
+            for v in ("reference", "late", "same", "group")}
+    assert all(codes == [0, 0, 0, 0] for codes, _d in runs.values()), runs
+    ref = runs["reference"][1]
+    scale = max(abs(v) for v in ref)
+    assert scale > 1e-3
+    # What the refusal asks for gives the per-element answer, bit for bit.
+    assert runs["group"][1] == ref
+    # The refused second-material carrier is the refused same-tag one.
+    assert runs["late"][1] == runs["same"][1]
+    # And it is not the per-element answer: C (nodes 5-8) moves.
+    off = max(abs(x - y) for x, y in zip(runs["late"][1][8:], ref[8:]))
+    assert off > 1e-5 * scale, off
+
+
+@pytest.mark.live
+def test_a_late_second_material_is_not_the_per_element_answer() -> None:
+    """#2534 on the bound backend.  Stock openseespy 3.7.1: C is off the
+    reference by 4.9e-07 on a 3.41e-03 peak (the Pmin stress seed of a
+    fresh element), bit for bit the refused same-tag answer.  The fork
+    build 79e062367, whose ManzariDafalias constructor resets the static
+    (#2443), is off by 1.8e-03.  Flipping the group after the activation
+    gives the reference on both."""
+    pytest.importorskip("openseespy.opensees")
+    _check_the_per_element_reference()
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+def test_a_late_second_material_is_not_the_per_element_answer_on_the_fork(
+) -> None:
+    """``live-fork``: the same oracle at FORK_PIN, which carries the
+    constructor fix (43b235bbb), so C behaves as on stock."""
+    _check_the_per_element_reference()
