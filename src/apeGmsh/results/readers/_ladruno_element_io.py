@@ -1709,7 +1709,8 @@ def _names_component(blocks: list[_Block], component: str) -> bool:
 def line_station_available(on_elements: "h5py.Group") -> set[str]:
     """Line-station canonicals the file's buckets can answer.
 
-    A ``localForce`` bucket that :func:`_local_force_2d_gate` refuses
+    A ``localForce`` bucket that :func:`_local_force_2d_gate` or
+    :func:`untagged_local_force_names` refuses
     lists nothing and warns once, naming its class: its columns name no
     component reliably, and a read of its elements raises the same reason.
     A bucket under a station-source token whose ``COLUMN_MAP`` does not
@@ -1741,6 +1742,7 @@ def line_station_available(on_elements: "h5py.Group") -> set[str]:
                     and not any(b.level == 2 for b in blocks)):
                 continue
             try:
+                blocks = _untagged_local_force_blocks(bucket, blocks, token)
                 alias_2d = _local_force_2d_gate(bucket, blocks, token)
             except ValueError as exc:
                 warnings.warn(
@@ -1994,6 +1996,101 @@ def _local_force_2d_gate(
     return True
 
 
+#: Beam classes whose ``localForce`` the fork records untagged: no
+#: ``output.tag`` names the columns, so MPCO and ``.ladruno`` both write
+#: ``C1..Cn`` (#2022). Their column order is the class's
+#: ``NODAL_FORCE_CATALOG[(cls, "local_force")]`` layout, end i then end j,
+#: live-verified against ``eleResponse(tag, "localForce")`` by
+#: ``test_mpco_frame_nodal_forces_live.py``. Fork tagging is the durable fix.
+UNTAGGED_LOCAL_FORCE_CLASSES = frozenset({"LadrunoIMKBeam", "LadrunoIMKBeam2d"})
+
+#: A ``NODAL_FORCE_CATALOG`` local-frame component -> its ``localForce``
+#: station base (:data:`_BEAM_BASE_TO_CANONICAL`).
+_NODAL_LOCAL_TO_STATION_BASE: dict[str, str] = {
+    "nodal_resisting_force_local_x": "N",
+    "nodal_resisting_force_local_y": "Vy",
+    "nodal_resisting_force_local_z": "Vz",
+    "nodal_resisting_moment_local_x": "T",
+    "nodal_resisting_moment_local_y": "My",
+    "nodal_resisting_moment_local_z": "Mz",
+}
+
+
+def untagged_local_force_names(
+    class_name: Optional[str], names: "list[str] | tuple[str, ...]",
+    where: str,
+) -> Optional[tuple[str, ...]]:
+    """Station names for a ``localForce`` bucket that holds only ``C1..Cn``.
+
+    ``None`` when ``names`` are not all generic ``C<k>`` (the bucket is
+    tagged and reads by its own names), or when the class is a non-beam
+    (:func:`is_non_beam_class`: a truss's force vector is no beam's
+    stations). For a class of :data:`UNTAGGED_LOCAL_FORCE_CLASSES`, the
+    names its catalog order gives (``N_1,Vy_1,..,Mz_2``; 2-D
+    ``N_1,Vy_1,Mz_1,..``). Every other C-only bucket raises
+    :class:`ValueError` naming ``where`` and the class: its columns have
+    no known order. So does one whose names are not ``C1..Cn`` in order,
+    or whose width is not the class's ``2 x per-node`` count.
+    """
+    names = [n.strip() for n in names]
+    if not names or not all(_GENERIC_COMP_RE.match(n) for n in names):
+        return None
+    if is_non_beam_class(class_name):
+        return None
+    cls = class_name or "<unparsed>"
+    if class_name not in UNTAGGED_LOCAL_FORCE_CLASSES:
+        raise ValueError(
+            f"{where} (element class {cls!r}) records its localForce "
+            f"untagged ({','.join(names[:12])}); no column order is known "
+            f"for this class, so its line stations cannot be read."
+        )
+    if names != [f"C{k}" for k in range(1, len(names) + 1)]:
+        raise ValueError(
+            f"{where} (element class {cls!r}): its untagged columns "
+            f"{names} are not C1..C{len(names)} in order."
+        )
+    layout = lookup_nodal_force(class_name, "local_force")
+    width = layout.n_nodes_per_element * layout.n_components_per_node
+    if len(names) != width:
+        raise ValueError(
+            f"{where} (element class {cls!r}): {len(names)} untagged "
+            f"columns, but its localForce order "
+            f"({layout.n_nodes_per_element} ends x "
+            f"{layout.n_components_per_node}) is {width} wide."
+        )
+    bases = [_NODAL_LOCAL_TO_STATION_BASE[c] for c in layout.component_layout]
+    return tuple(
+        f"{base}_{end}"
+        for end in range(1, layout.n_nodes_per_element + 1) for base in bases
+    )
+
+
+def _untagged_local_force_blocks(
+    bucket: "h5py.Group", blocks: list[_Block], token: str,
+) -> list[_Block]:
+    """``blocks`` with an untagged ``localForce`` block named by its class.
+
+    :func:`untagged_local_force_names` on the bucket's names; the bucket
+    must be one element-level block of multiplicity 1, or it raises. Any
+    other bucket or token comes back as it is.
+    """
+    if token != "localForce":
+        return blocks
+    names = [n for b in blocks for n in b.comp_names]
+    key = bucket.name.rsplit("/", 1)[-1]
+    where = f"localForce bucket {key!r}"
+    named = untagged_local_force_names(_class_name(key) or None, names, where)
+    if named is None:
+        return blocks
+    if len(blocks) != 1 or blocks[0].multiplicity != 1 or blocks[0].level == 2:
+        raise ValueError(
+            f"{where} (element class {_class_name(key)!r}): its untagged "
+            f"columns span {len(blocks)} block(s), not one element-level "
+            f"block; they cannot be matched to the class's order."
+        )
+    return [replace(blocks[0], comp_names=named)]
+
+
 def _section_served_ids(on_elements: "h5py.Group", component: str) -> ndarray:
     """Element ids a section-level bucket serves ``component`` for.
 
@@ -2179,7 +2276,10 @@ def _read_element_stations(
     section-level bucket serves with this component: its columns name
     none reliably. An element with section stations keeps them, since the
     section source ranks first (:func:`read_line_station_slab`), and
-    reads of other elements pass the bucket over.
+    reads of other elements pass the bucket over. An untagged ``C1..Cn``
+    ``localForce`` bucket reads by its class's catalog order, and is
+    refused the same way when the class has none
+    (:func:`untagged_local_force_names`, #2022).
 
     A ``basicForce`` end-moment pair (``Mz_1,Mz_2`` / ``My_1,My_2``) takes
     the ``localForce`` station signs, so it reads ``[-M_1, +M_2]``, the
@@ -2188,6 +2288,7 @@ def _read_element_stations(
     naming the bucket and the component.
     """
     try:
+        blocks = _untagged_local_force_blocks(bucket, blocks, token)
         alias_2d = _local_force_2d_gate(bucket, blocks, token)
     except ValueError as exc:
         hit = _select_rows(bucket, element_ids)

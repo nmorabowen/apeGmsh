@@ -50,6 +50,7 @@ from numpy import ndarray
 
 from ...opensees._response_catalog import local_force_station_signs
 from ._buckets import LINE_STATION_NON_BEAM_CLASSES, is_non_beam_class
+from ._ladruno_element_io import untagged_local_force_names
 
 if TYPE_CHECKING:
     import h5py
@@ -87,11 +88,14 @@ _BRACKET_CLASS_RE = re.compile(r"^\d+-(?P<cls>[^\[]+)\[")
 class NoLineStationTokensError(ValueError):
     """A ``localForce`` bucket names no station force or moment at all.
 
-    A truss's ``C1..C4`` (MPCO's names for an untagged response), a
-    corotational truss's bare ``N``, a wall's ``Fx_i``: these are element
-    force vectors, not beam line stations, so line-station discovery passes
-    over them. Every other parse failure is a malformed beam bucket and
-    raises.
+    A truss's ``C1..C4`` (MPCO's names for an untagged response, on a
+    non-beam class), a corotational truss's bare ``N``, a wall's ``Fx_i``:
+    these are element force vectors, not beam line stations, so
+    line-station discovery passes over them. An untagged ``C1..Cn`` bucket
+    of any other class is no such vector: a LadrunoIMKBeam's reads by its
+    catalog order, and any other class's raises
+    (:func:`untagged_local_force_names`, #2022). Every other parse failure
+    is a malformed beam bucket and raises.
     """
 
 
@@ -179,6 +183,15 @@ def parse_local_force_layout(
             f"{len(tokens)} columns ({components_raw!r}) but its DATA rows "
             f"are {data_width} wide; refusing to guess the layout."
         )
+
+    # An untagged ``C1..Cn`` bucket: named by its class's catalog order
+    # (LadrunoIMKBeam), refused for any other beam class, left as it is
+    # (and so passed over) for a non-beam class (#2022).
+    named = untagged_local_force_names(
+        bracket_class(bracket_key), tokens, f"localForce bucket {bracket_key!r}",
+    )
+    if named is not None:
+        tokens = list(named)
 
     parsed: list[tuple[int, str, int]] = []      # (col_idx, base, station)
     for col_idx, tok in enumerate(tokens):
