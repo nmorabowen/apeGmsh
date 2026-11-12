@@ -5,12 +5,15 @@ every copy agrees.
 Native files carry no partition-reduction rule, so a boundary node whose
 copies differ (a per-rank partial reaction: 3.0 on one rank, 4.0 on the
 other, true value 7.0) used to read as the first copy, 3.0, silently.
+
+``NativeWriter`` refuses a second partition per stage (ADR 0123 D5), so
+these legacy multi-partition files are built with raw h5py
+(``_native_legacy``); the reader keeps the #2360 rule for them (D4).
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-import h5py
 import numpy as np
 import pytest
 
@@ -19,34 +22,23 @@ from apeGmsh.results.readers._native import (
     NativePartitionCopiesDisagree,
     NativeRepeatedNodeId,
 )
-from apeGmsh.results.writers import NativeWriter
+
+from tests.results._native_legacy import write_multi_partition
 
 _TIME = np.array([0.0, 1.0])
 
 
 def _write(path: Path, partitions: dict[str, tuple[list[int], dict]]) -> None:
-    with NativeWriter(path) as w:
-        w.open()
-        sid = w.begin_stage(name="s", kind="static", time=_TIME)
-        for pid, (ids, comps) in partitions.items():
-            w.write_nodes(
-                sid, pid, node_ids=np.array(ids, dtype=np.int64),
-                components={k: np.asarray(v, dtype=np.float64)
-                            for k, v in comps.items()},
-            )
-        w.end_stage()
+    write_multi_partition(path, partitions, time=_TIME)
 
 
 def test_repeat_within_one_partition_refuses_at_open(tmp_path: Path) -> None:
     path = tmp_path / "run.h5"
     _write(path, {
         "partition_0": ([1, 2], {"displacement_x": [[0.1, 0.2], [0.1, 0.2]]}),
-        "partition_1": ([7, 9, 8], {"displacement_x": [[1.0, 2.0, 3.0]] * 2}),
+        # NativeWriter refuses this repeat (#2361); the raw builder does not.
+        "partition_1": ([7, 9, 7], {"displacement_x": [[1.0, 2.0, 3.0]] * 2}),
     })
-    # NativeWriter refuses a repeated id (#2361), so the malformed file
-    # is made by rewriting the ids in place.
-    with h5py.File(path, "r+") as f:
-        f["/stages/stage_0/partitions/partition_1/nodes/_ids"][...] = [7, 9, 7]
     with pytest.raises(NativeRepeatedNodeId) as info:
         NativeReader(path)
     err = info.value
