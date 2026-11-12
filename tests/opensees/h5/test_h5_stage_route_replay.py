@@ -17,7 +17,10 @@ a pre-fix archive.
 
 The fork's constructor reset (#2443) is not a route check: the deck checks
 the build it runs on (#2516, ``stage_emit.MD_STATIC_RESET_GUARD``), and the
-replayed deck carries that check as the bridge's deck does.
+replayed deck carries that check as the bridge's deck does.  A carrier of a
+second material of the flipped class-wide group, activated after the flip,
+is a route check since #2534: it enters plastic with no
+``Elastic2Plastic()``, as a carrier of the flipped material does (#2445).
 
 A pre-fix archive is written here with the checks switched off, the way
 the bridge wrote it before them: ``check_stage_routes`` at stage close and,
@@ -238,16 +241,22 @@ def _multi_element_on_quads() -> apeSees:
 
 
 def _flip_then_activate(*, system: str = "UmfPack", reflip: bool = False,
-                        own_material: bool = False,
+                        own_material: bool = False, elastic: bool = False,
                         mode: "str | None" = None) -> apeSees:
-    """Sand on ``A`` flipped plastic, then ``C`` activated.  With
-    ``own_material``, ``C`` carries a second ManzariDafalias (the fork's
-    constructor reset, #2443) instead of the same sand (#2445).  ``mode``
-    pins the bridge's ``OpenSeesTarget``."""
+    """Sand on ``A`` flipped plastic, then ``C`` activated.  ``C`` carries
+    the same sand (#2445); with ``own_material``, a second
+    ManzariDafalias, of the same class-wide group (#2534); with
+    ``elastic``, an ElasticIsotropic, of no group.  ``mode`` pins the
+    bridge's ``OpenSeesTarget``."""
     ops = _ops(mode)
     sand = _md(ops, "sand")
     _host(ops, "A", sand)
-    _host(ops, "C", _md(ops, "sand_c") if own_material else sand)
+    if elastic:
+        carried = ops.nDMaterial.ElasticIsotropic(name="fill", E=1e5,
+                                                  nu=0.3)
+    else:
+        carried = _md(ops, "sand_c") if own_material else sand
+    _host(ops, "C", carried)
     _stage(ops, "plastic", lambda s: s.update_material_stage(
         materials=[sand], stage=1))
 
@@ -332,6 +341,15 @@ REFUSED: dict[str, tuple[Callable[[], apeSees], str, str]] = {
         _flip_then_activate, "#2445",
         "SixNodeTri on pg 'C' carries nDMaterial tag 1, whose stage flag "
         "an earlier stage left plastic"),
+    # #2534: the flag is the class-wide group's, so a carrier of a second
+    # ManzariDafalias, which the flip never named, is refused as the
+    # carrier of the flipped sand is.  Before #2534 an R1b VALID case
+    # (``own_material_on_stock``).
+    "activation of a second material of the group after the plastic flip": (
+        lambda: _flip_then_activate(own_material=True), "#2534",
+        "SixNodeTri on pg 'C' carries nDMaterial tag 2, whose stage flag "
+        "an earlier stage left plastic (ManzariDafalias::mElastFlag is one "
+        "flag for every material of the class)"),
     # #2528: the flip at 'push' counts only the carriers alive at it, so
     # each of these is refused at 'install', where the carrier enters.
     "activation after a flip of every alive carrier": (
@@ -355,11 +373,14 @@ REFUSED: dict[str, tuple[Callable[[], apeSees], str, str]] = {
 
 
 def _fork_reset(mode: "str | None" = None) -> apeSees:
-    """The fork's constructor reset (#2443): a second ManzariDafalias
-    activated after the plastic flip, on a fork-only chain (Pardiso), so
-    the archive requires the fork."""
-    return _flip_then_activate(system="Pardiso", own_material=True,
-                               mode=mode)
+    """The deck's check for the fork's constructor reset (#2443, #2516):
+    an element built after the plastic flip, with no flip of the group
+    before the next solve, on a fork-only chain (Pardiso), so the archive
+    requires the fork.  The element carries an ElasticIsotropic: a
+    carrier of the group activated so is refused at stage close (#2445,
+    #2534), while the deck's watch counts every element, whatever it
+    carries (``stage_emit.MaterialStageCarriers``, fail closed)."""
+    return _flip_then_activate(system="Pardiso", elastic=True, mode=mode)
 
 
 # ---------------------------------------------------------------------------
@@ -404,10 +425,12 @@ def valid_bridge(case: str) -> apeSees:
         return ops
     if case == "reflip_on_activation":
         return _flip_then_activate(reflip=True)
-    if case == "own_material_on_stock":
-        # The fork-reset model on a stock chain: it replays byte for byte,
-        # the deck's build check included.
-        return _flip_then_activate(own_material=True)
+    if case == "elastic_fill_on_stock":
+        # An element of no class-wide group activated after the plastic
+        # flip, on a stock chain: it replays byte for byte, the deck's
+        # build check included.  (A second ManzariDafalias there was the
+        # case ``own_material_on_stock`` until #2534 refused it.)
+        return _flip_then_activate(elastic=True)
     if case == "ladruno_quads":
         # One sand on two LadrunoQuad, flipped plastic: a
         # MATERIAL_STATE_ELEMENTS class from the fork-floor table, so the
@@ -428,7 +451,7 @@ def valid_bridge(case: str) -> apeSees:
 
 
 VALID = ("both_routes", "beside_clay", "whole_group_elastic",
-         "reflip_on_activation", "own_material_on_stock", "ladruno_quads",
+         "reflip_on_activation", "elastic_fill_on_stock", "ladruno_quads",
          "alive_at_the_flip", "alive_at_the_flip_materialstate")
 
 

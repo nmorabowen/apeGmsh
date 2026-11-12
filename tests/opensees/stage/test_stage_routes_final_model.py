@@ -142,6 +142,25 @@ def _flip_then_activate_a_late_carrier(late: bool) -> apeSees:
     return ops
 
 
+def _flip_then_activate_a_late_second_material(late: bool) -> apeSees:
+    """#2534: sand on ``A`` flipped plastic, then ``C``, which carries a
+    second ManzariDafalias the flip never named, activated.  The flag is
+    the class's, so ``C`` enters plastic with no Elastic2Plastic(), as a
+    carrier of the sand itself does."""
+    ops = _ops()
+    sand = _md(ops, "sand")
+    sand_c = _md(ops, "sand_c")
+    _host(ops, "A", sand)
+    if not late:
+        _host(ops, "C", sand_c)
+    _stage(ops, "plastic", lambda s: s.update_material_stage(
+        materials=[sand], stage=1))
+    _stage(ops, "install", lambda s: s.activate(pgs=["C"]))
+    if late:
+        _host(ops, "C", sand_c)
+    return ops
+
+
 CASES: dict[str, tuple[Build, str]] = {
     "multi-element flip on a late FourNodeQuad": (
         _multi_element_on_a_late_quad, "but FourNodeQuad carries it"),
@@ -162,6 +181,10 @@ CASES: dict[str, tuple[Build, str]] = {
         _flip_then_activate_a_late_carrier,
         "SixNodeTri on pg 'C' carries nDMaterial tag 1, whose stage flag "
         "an earlier stage left plastic"),
+    "activation of a late second material after the plastic flip": (
+        _flip_then_activate_a_late_second_material,
+        "SixNodeTri on pg 'C' carries nDMaterial tag 2, whose stage flag "
+        "an earlier stage left plastic (ManzariDafalias::mElastFlag"),
 }
 
 
