@@ -1005,8 +1005,8 @@ def _refuse_activation_after_plastic_flip(
     # nothing at the earlier flip: build-time validator V7 refuses that
     # flip, with its own message.  A carrier a later stage activates
     # counts as live here, which can only refuse more.  Counted per
-    # group, not per tag (#2534): the flag the earlier flip left plastic
-    # is the group's.
+    # group, not per tag: the flag the earlier flip left plastic is the
+    # group's.
     earlier_live = {
         group_of_tag[tag] for tag, specs in carriers.items()
         if any(spec.pg not in activated for spec in specs)
