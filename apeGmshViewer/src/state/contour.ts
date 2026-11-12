@@ -23,6 +23,7 @@
 import type { Combined } from "../combination/evaluate.ts";
 import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
 import type { NodeTopology } from "./extrapolation.ts";
+import { DERIVED_SCALARS, derivedTensorOf, type DerivedName, type DerivedTensor, type TensorFamily } from "./tensor.ts";
 import { CMAP_NAMES, type ContourCmap, type ContourRange, type ContourScan, type ContourSource, type ContourState, type DeclPath, type Decl, type GaussGroup, type GaussMode, type ResultsStage, type State } from "./types.ts";
 export { CMAP_NAMES };
 
@@ -678,6 +679,13 @@ const ELEMENT_SUFFIXES = new Set(["x", "y", "z", "xx", "yy", "zz", "xy", "yz", "
 export interface ElementComponent extends FieldComponent {
   /** the name says its axes are local (`_local_` before the axis, h5-schema.md's component naming rule) */
   local: boolean;
+  /**
+   * VA6d (#2766): a scalar derived from the field's tensor (`von_mises_stress`),
+   * not a dataset of the file: its `datasets` are the tensor components read
+   * with the step, and the effects compute it at every Gauss point
+   * (state/tensor.ts `derivedGroupValues`). Absent for a stored component.
+   */
+  derived?: { name: DerivedName; tensor: Extract<DerivedTensor, { ok: true }> };
 }
 
 export interface ElementField {
@@ -694,6 +702,12 @@ export interface ElementField {
    * from the others. Null when it can.
    */
   refused: string | null;
+  /**
+   * VA6d: the derived scalars of the field's tensor that are not offered,
+   * each with why (an incomplete or ambiguous tensor). Set by
+   * `elementContourFields` only; a spec naming one is refused with its reason.
+   */
+  derivedRefused?: { name: DerivedName; reason: string }[];
 }
 
 /**
@@ -758,9 +772,36 @@ export function gaussFields(groups: readonly GaussGroup[]): ElementField[] {
   });
 }
 
-/** The element field and component of a stage that a pick names, or null when the stage does not have it. */
+/**
+ * VA6d (#2766): the element fields a contour offers: `gaussFields` (the
+ * stored components, what main reads), each followed by the derived scalars
+ * of its tensor (state/tensor.ts `DERIVED_SCALARS`) when its components make
+ * a complete one; a derived scalar its tensor cannot give is listed in
+ * `derivedRefused` with why, never offered. The picker, the spec's
+ * `--describe` and compile, and the reducer's check all read this one list,
+ * so a window and a still offer the same components.
+ */
+export function elementContourFields(groups: readonly GaussGroup[]): ElementField[] {
+  return gaussFields(groups).map((f) => {
+    const own = groups.filter((g) => f.groups.includes(g.id));
+    const names = f.components.map((c) => c.key);
+    const derived: ElementComponent[] = [];
+    const derivedRefused: { name: DerivedName; reason: string }[] = [];
+    for (const [name, family] of Object.entries(DERIVED_SCALARS) as [DerivedName, TensorFamily][]) {
+      const t = derivedTensorOf(own, names, family);
+      if (t === null) continue;
+      if (!t.ok) derivedRefused.push({ name, reason: t.reason });
+      // A stored component of the same key would make the pick ambiguous (a stored name carries its field's prefix, so no known writer does this).
+      else if (names.includes(name)) derivedRefused.push({ name, reason: `the field stores a component named ${name}, so the name does not say which is meant` });
+      else derived.push({ key: name, label: name, datasets: t.components, magnitude: false, local: false, derived: { name, tensor: t } });
+    }
+    return derived.length || derivedRefused.length ? { ...f, components: [...f.components, ...derived], derivedRefused } : f;
+  });
+}
+
+/** The element field and component of a stage that a pick names (a derived scalar included), or null when the stage does not have it. */
 export function elementComponentOf(stage: ResultsStage, field: string, component: string): { field: ElementField; component: ElementComponent } | null {
-  const f = gaussFields(stage.gauss).find((x) => x.name === field);
+  const f = elementContourFields(stage.gauss).find((x) => x.name === field);
   const c = f?.components.find((x) => x.key === component);
   return f && c ? { field: f, component: c } : null;
 }

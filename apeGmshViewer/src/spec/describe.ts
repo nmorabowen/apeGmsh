@@ -7,7 +7,7 @@
 // State (and, for the box, the drawn positions), never the DOM.
 
 import { pairingNotice } from "../state/results.ts";
-import { fieldsOf, gaussFields, MAGNITUDE } from "../state/contour.ts";
+import { elementContourFields, fieldsOf, MAGNITUDE, type ElementComponent } from "../state/contour.ts";
 import { noticesOf, refusalsOf, resultsPairing, warningsOf } from "../state/selectors.ts";
 import { CMAP_NAMES, type State } from "../state/types.ts";
 import { THEME_MODES } from "../theme/tokens.ts";
@@ -18,6 +18,11 @@ export interface DescribedComponent {
   key: string;
   /** what the legend shows (`z`, `magnitude`, `Uz`, `[0]`) */
   label: string;
+  /**
+   * VA6d (#2766): set on a scalar derived from the field's tensor
+   * (`von_mises_stress`), not a dataset: what it is computed from, and how
+   */
+  derived?: string;
 }
 
 export interface DescribedField {
@@ -26,6 +31,8 @@ export interface DescribedField {
   components: DescribedComponent[];
   /** why the field cannot be drawn (a refused component, element groups that disagree), or null */
   refused: string | null;
+  /** VA6d: the derived scalars the field's tensor cannot give (incomplete or ambiguous), each with why; absent when none */
+  refusedComponents?: { key: string; reason: string }[];
 }
 
 export interface DescribedStage {
@@ -91,6 +98,14 @@ export function boxOf(positions: readonly ArrayLike<number>[]): SetDescription["
 
 const componentKey = (key: string): string => (key === MAGNITUDE ? SPEC_MAGNITUDE : key);
 
+/** What a derived component says it is (Python's `_derived._von_mises`; a 2-D element's zz is 0, `plane=None`). */
+function derivedNote(c: ElementComponent): string {
+  const d = c.derived!;
+  const strain = d.tensor.family === "strain" ? ", the shear components halved (engineering shear)" : "";
+  const plane = d.tensor.groups.some((g) => g.slots[2] === null) ? "; a 2-D element's out-of-plane zz is taken as 0" : "";
+  return `the von Mises equivalent of the ${d.tensor.family} tensor (${d.tensor.components.join(", ")}) at each Gauss point${strain}${plane}`;
+}
+
 export function describeSet(s: State, positions: readonly ArrayLike<number>[]): SetDescription {
   const p = resultsPairing(s);
   const ra = s.artifacts.results;
@@ -116,11 +131,12 @@ export function describeSet(s: State, positions: readonly ArrayLike<number>[]): 
               components: f.components.map((c) => ({ key: componentKey(c.key), label: c.label })),
               refused: f.magnitudeRefused,
             })),
-            ...gaussFields(st.gauss).map((f) => ({
+            ...elementContourFields(st.gauss).map((f) => ({
               name: f.name,
               source: "element" as const,
-              components: f.components.map((c) => ({ key: c.key, label: c.label })),
+              components: f.components.map((c) => (c.derived ? { key: c.key, label: c.label, derived: derivedNote(c) } : { key: c.key, label: c.label })),
               refused: f.refused,
+              ...(f.derivedRefused?.length ? { refusedComponents: f.derivedRefused.map((r) => ({ key: r.name, reason: r.reason })) } : {}),
             })),
           ],
         }))

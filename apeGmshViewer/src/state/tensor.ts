@@ -165,6 +165,97 @@ export function eigenSym3(t: ArrayLike<number>): Eigen3 {
   };
 }
 
+// ---- derived scalars (VA6d, #2766) ------------------------------------------------
+
+/**
+ * The derived scalars an element contour offers, each computed from one
+ * family's tensor: Python's `_derived.compute` names (`_vocabulary`
+ * `DERIVED_STRESS_SCALARS` / `DERIVED_STRAIN_SCALARS`). Only these two are
+ * served; any other derived name is not offered, so a spec naming one is
+ * refused as an unknown component.
+ */
+export const DERIVED_SCALARS = { von_mises_stress: "stress", von_mises_strain: "strain" } as const satisfies Record<string, TensorFamily>;
+export type DerivedName = keyof typeof DERIVED_SCALARS;
+
+export const isDerivedName = (name: string): name is DerivedName => Object.hasOwn(DERIVED_SCALARS, name);
+
+const SLOT_NAMES = ["xx", "yy", "zz", "xy", "yz", "xz"] as const;
+
+/**
+ * The von Mises equivalent of an assembled Voigt tensor (`assembleTensor`: a
+ * strain's shear already halved), as Python's `_von_mises`: J2 = s:s / 2 of
+ * the deviator s; a stress gives sqrt(3 J2), a strain sqrt(4/3 J2), the
+ * equivalent strain work-conjugate to it under J2 flow.
+ */
+export function vonMises(t: ArrayLike<number>, family: TensorFamily): number {
+  const m = (t[0]! + t[1]! + t[2]!) / 3;
+  const dx = t[0]! - m, dy = t[1]! - m, dz = t[2]! - m;
+  const j2 = 0.5 * (dx * dx + dy * dy + dz * dz + 2 * (t[3]! * t[3]! + t[4]! * t[4]! + t[5]! * t[5]!));
+  return Math.sqrt(Math.max((family === "strain" ? 4 / 3 : 3) * j2, 0));
+}
+
+/** One group a derived scalar reads: its tensor slots, as `tensorFields` found them. */
+export type DerivedTensor =
+  | { ok: true; family: TensorFamily; groups: TensorGroup[]; components: string[] }
+  | { ok: false; reason: string };
+
+/**
+ * The `family` tensor that an element field's groups make, for its derived
+ * scalars, through `tensorFields` (the Principal card's catalog) over the
+ * field's own components; null when the field records no component of the
+ * family. Refused, by name, when it is incomplete or ambiguous, so a derived
+ * value is never drawn from partial components:
+ * - a group without the in-plane xx, yy and xy (`tensorFields`' rule, Python's `available_derived`);
+ * - a group that names one slot twice (`sigma12` and `sigma21`);
+ * - a group with some, not all, of the out-of-plane zz, yz and xz: a 3-D tensor
+ *   with a missing component. With none of them the group is a 2-D element,
+ *   whose zz is 0 (Python's `plane=None`: exact for a plane-stress stress and a
+ *   plane-strain strain);
+ * - a field whose groups do not all make the tensor, or make two.
+ */
+export function derivedTensorOf(groups: readonly GaussGroup[], names: readonly string[], family: TensorFamily): DerivedTensor | null {
+  const own = groups.map((g) => ({ ...g, components: g.components.filter((c) => names.includes(c)) }));
+  const fields = tensorFields(own).filter((f) => f.family === family);
+  if (fields.length === 0) return null;
+  if (fields.length > 1) return { ok: false, reason: `its groups make ${fields.length} ${family} tensors (${fields.map((f) => f.name).join(", ")}), so which one is meant is not known` };
+  const f = fields[0]!;
+  if (f.refused.length) return { ok: false, reason: f.refused.join("; ") };
+  for (const g of f.groups) {
+    const out = [2, 4, 5].filter((v) => g.slots[v] !== null);
+    if (out.length > 0 && out.length < 3) {
+      const missing = [2, 4, 5].filter((v) => g.slots[v] === null).map((v) => SLOT_NAMES[v]);
+      return { ok: false, reason: `group ${g.id} records ${out.map((v) => SLOT_NAMES[v]).join(", ")} but no ${missing.join(", ")} ${family} component, so its tensor is not known` };
+    }
+  }
+  const missing = groups.filter((g) => !f.groups.some((x) => x.id === g.id)).map((g) => g.id);
+  if (missing.length) return { ok: false, reason: `group${missing.length === 1 ? "" : "s"} ${missing.join(", ")} make${missing.length === 1 ? "s" : ""} no ${family} tensor` };
+  return { ok: true, family, groups: f.groups, components: f.components };
+}
+
+/**
+ * A derived scalar at every Gauss point of one group, (E * G,) element-major,
+ * from the group's tensor read with the step (`values`: by component, then
+ * group, as main's `tensor` read answers). A point with a non-finite
+ * component is NaN (no data). A component the read lacks, or of another
+ * length, is an error: never a value from partial components.
+ */
+export function derivedGroupValues(name: DerivedName, group: TensorGroup, n: number, values: Readonly<Record<string, Readonly<Record<string, Float64Array>>>>): Float64Array {
+  const family = DERIVED_SCALARS[name];
+  const cols = group.slots.map((c) => {
+    if (c === null) return null;
+    const col = values[c]?.[group.id];
+    if (!(col instanceof Float64Array)) throw new Error(`${name}: the step data has no ${c} for group ${group.id}`);
+    if (col.length !== n) throw new Error(`${name}: ${c} of group ${group.id} has ${col.length} values, not ${n}`);
+    return col;
+  });
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = assembleTensor(family, (v) => cols[v]?.[i] ?? null);
+    out[i] = t ? vonMises(t, family) : NaN;
+  }
+  return out;
+}
+
 /** The Voigt tensor of one point: `read(slot)` is the file's value (NaN when not finite), 0 for a slot the group does not record; a strain's shear halved. */
 export function assembleTensor(family: TensorFamily, read: (voigt: number) => number | null): Float64Array | null {
   const t = new Float64Array(6);

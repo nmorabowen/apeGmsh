@@ -119,6 +119,9 @@ function fieldOf(shot: SpecShot, st: DescribedStage): { ok: true; field: Describ
   // A component by its key (the dataset name, or "magnitude") or by the legend's label; one component only.
   const hits = f.components.filter((x) => x.key === c.component || x.label === c.component);
   if (hits.length === 0) {
+    // VA6d: a derived scalar the field's tensor cannot give is refused by its name, with why (never drawn from partial components).
+    const derived = f.refusedComponents?.find((x) => x.key === c.component);
+    if (derived) return { ok: false, reason: `${f.source} field ${JSON.stringify(f.name)} of stage ${label} cannot give ${JSON.stringify(c.component)}: ${derived.reason}` };
     const why = f.source === "nodal" && c.component === SPEC_MAGNITUDE && f.refused ? `: the magnitude is not offered (${f.refused})` : "";
     return {
       ok: false,
