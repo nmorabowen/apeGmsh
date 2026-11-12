@@ -92,11 +92,17 @@ def _chain(ops: apeSees) -> "dict[str, Any]":
 def _bridge(
     cls: str = "ManzariDafalias", mode: "str | None" = None, *,
     first: int = 1, reflip: bool = False, activate_first: bool = False,
+    fill: str = "own",
 ) -> apeSees:
-    """``Rock`` (material a) is global; ``Fill`` (material b, one class)
-    is activated by stage ``install``.  Stage ``plastic`` flips the group
-    to ``first`` (the materials live then); with ``activate_first`` it
-    runs after ``install``."""
+    """``Rock`` (material a) is global; ``Fill`` is activated by stage
+    ``install``.  Stage ``plastic`` flips the group to ``first`` (the
+    materials live then); with ``activate_first`` it runs after
+    ``install``.  ``fill="own"``: Fill carries material b, of the same
+    class.  ``fill="elastic"``: it carries an ElasticIsotropic.  A carrier
+    of the group activated after a plastic flip, with no flip of the group
+    in its stage, is refused at stage close (#2445, #2534), so a guarded
+    deck builds an element of another material there: the deck's watch
+    counts every element, whatever it carries (fail closed)."""
     target = None if mode is None else OpenSeesTarget(mode=mode)  # type: ignore[arg-type]
     ops = apeSees(build_two_quad_fem(), default_orientation=None,
                   opensees=target)
@@ -104,9 +110,12 @@ def _bridge(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         mats = [getattr(ops.nDMaterial, cls)(name=n, **_KW[cls])
-                for n in ("a", "b")]
+                for n in ("a", "b")[:2 if fill == "own" else 1]]
+        carried = (mats[1] if fill == "own" else
+                   ops.nDMaterial.ElasticIsotropic(name="fill", E=1e5,
+                                                   nu=0.3))
     ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mats[0])
-    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mats[1])
+    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=carried)
     ops.fix(pg="Base", dofs=(1, 1))
 
     def plastic() -> None:
@@ -252,11 +261,11 @@ def test_the_decks_check_before_their_first_command(
     cls: str, mode: "str | None",
 ) -> None:
     """Every target mode: an ``"auto"`` deck is guarded as a fork one."""
-    tcl = _tcl(_bridge(cls, mode))
+    tcl = _tcl(_bridge(cls, mode, fill="elastic"))
     at = next(i for i, ln in enumerate(tcl) if not ln.startswith("#"))
     assert tcl[at:at + len(_TCL_GUARD)] == _TCL_GUARD
     assert tcl[at + len(_TCL_GUARD)].startswith("model ")
-    py = _py(_bridge(cls, mode))
+    py = _py(_bridge(cls, mode, fill="elastic"))
     at = py.index("import openseespy.opensees as ops")
     assert py[at + 1:at + 1 + len(_PY_GUARD)] == _PY_GUARD
     assert py[at + 1 + len(_PY_GUARD)] == "ops.wipe()"
@@ -285,11 +294,11 @@ def _without(lines: "list[str]", guard: "list[str]") -> "list[str]":
 def test_the_guard_is_the_only_difference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tcl, py = _tcl(_bridge()), _py(_bridge())
+    tcl, py = _tcl(_bridge(fill="elastic")), _py(_bridge(fill="elastic"))
     monkeypatch.setattr(stage_emit.MaterialStageCarriers,
                         "solve_fork_guards", lambda self: ())
-    assert _without(tcl, _TCL_GUARD) == _tcl(_bridge())
-    assert _without(py, _PY_GUARD) == _py(_bridge())
+    assert _without(tcl, _TCL_GUARD) == _tcl(_bridge(fill="elastic"))
+    assert _without(py, _PY_GUARD) == _py(_bridge(fill="elastic"))
 
 
 def test_the_archive_replay_carries_the_guard(tmp_path: Path) -> None:
@@ -297,7 +306,7 @@ def test_the_archive_replay_carries_the_guard(tmp_path: Path) -> None:
     carries it as the bridge's deck does."""
     from apeGmsh.opensees import OpenSeesModel
 
-    ops = _bridge(mode="auto")
+    ops = _bridge(mode="auto", fill="elastic")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         ops.h5(str(tmp_path / "a.h5"))
@@ -485,7 +494,7 @@ def _run_py_deck(tmp_path: Path, *, fork_module: bool) -> None:
     deck = tmp_path / "deck.py"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        _bridge(mode="auto").py(str(deck))
+        _bridge(mode="auto", fill="elastic").py(str(deck))
     run_guarded_head(deck.read_text(encoding="utf-8"), tmp_path,
                      fork_module=fork_module)
 
