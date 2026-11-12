@@ -1998,7 +1998,7 @@ def _local_force_2d_gate(
 
 #: Beam classes whose ``localForce`` the fork records untagged: no
 #: ``output.tag`` names the columns, so MPCO and ``.ladruno`` both write
-#: ``C1..Cn`` (#2022). Their column order is the class's
+#: ``C1..Cn``. Their column order is the class's
 #: ``NODAL_FORCE_CATALOG[(cls, "local_force")]`` layout, end i then end j,
 #: live-verified against ``eleResponse(tag, "localForce")`` by
 #: ``test_mpco_frame_nodal_forces_live.py``. Fork tagging is the durable fix.

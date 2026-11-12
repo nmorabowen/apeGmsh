@@ -186,7 +186,7 @@ def parse_local_force_layout(
 
     # An untagged ``C1..Cn`` bucket: named by its class's catalog order
     # (LadrunoIMKBeam), refused for any other beam class, left as it is
-    # (and so passed over) for a non-beam class (#2022).
+    # (and so passed over) for a non-beam class.
     named = untagged_local_force_names(
         bracket_class(bracket_key), tokens, f"localForce bucket {bracket_key!r}",
     )
