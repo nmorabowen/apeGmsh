@@ -1996,13 +1996,26 @@ def _local_force_2d_gate(
     return True
 
 
-#: Beam classes whose ``localForce`` the fork records untagged: no
-#: ``output.tag`` names the columns, so MPCO and ``.ladruno`` both write
-#: ``C1..Cn``. Their column order is the class's
-#: ``NODAL_FORCE_CATALOG[(cls, "local_force")]`` layout, end i then end j,
-#: live-verified against ``eleResponse(tag, "localForce")`` by
-#: ``test_mpco_frame_nodal_forces_live.py``. Fork tagging is the durable fix.
+#: Beam classes whose ``localForce`` fork builds before 208523694
+#: (2026-10-19) record untagged: no ``output.tag`` names the columns, so MPCO
+#: and ``.ladruno`` both write ``C1..Cn``. Builds from that commit on (the
+#: ``ladruno-v20261103`` pin among them) tag the columns ``N_1,Vy_1,..``,
+#: which read by name; this decode serves files from the older builds. The
+#: column order is the class's ``NODAL_FORCE_CATALOG[(cls, "local_force")]``
+#: layout, end i then end j, live-verified against
+#: ``eleResponse(tag, "localForce")`` by ``test_mpco_frame_nodal_forces_live.py``.
 UNTAGGED_LOCAL_FORCE_CLASSES = frozenset({"LadrunoIMKBeam", "LadrunoIMKBeam2d"})
+
+#: Classes outside :data:`LINE_STATION_NON_BEAM_CLASSES` whose untagged
+#: ``localForce`` is a force vector, not beam end forces, read from the
+#: fork's ``setResponse``: TrussSection's nodal force vector
+#: (``Vector(numDOF)``), LadrunoEmbeddedNode's local-frame interface force
+#: (``Vector(ndm)``), and LadrunoEmbeddedRebar's tie traction
+#: (``Vector(ndm)``, which older builds also answered to ``localForce``).
+#: Their ``C1..Cn`` bucket is passed over, as a truss's is.
+_UNTAGGED_LOCAL_FORCE_VECTOR_CLASSES = frozenset({
+    "TrussSection", "LadrunoEmbeddedNode", "LadrunoEmbeddedRebar",
+})
 
 #: A ``NODAL_FORCE_CATALOG`` local-frame component -> its ``localForce``
 #: station base (:data:`_BEAM_BASE_TO_CANONICAL`).
@@ -2024,8 +2037,10 @@ def untagged_local_force_names(
 
     ``None`` when ``names`` are not all generic ``C<k>`` (the bucket is
     tagged and reads by its own names), or when the class is a non-beam
-    (:func:`is_non_beam_class`: a truss's force vector is no beam's
-    stations). For a class of :data:`UNTAGGED_LOCAL_FORCE_CLASSES`, the
+    (:func:`is_non_beam_class`) or in
+    :data:`_UNTAGGED_LOCAL_FORCE_VECTOR_CLASSES`: a force vector is no
+    beam's stations. For a class of :data:`UNTAGGED_LOCAL_FORCE_CLASSES`
+    (files from fork builds that predate its column tags), the
     names its catalog order gives (``N_1,Vy_1,..,Mz_2``; 2-D
     ``N_1,Vy_1,Mz_1,..``). Every other C-only bucket raises
     :class:`ValueError` naming ``where`` and the class: its columns have
@@ -2035,7 +2050,8 @@ def untagged_local_force_names(
     names = [n.strip() for n in names]
     if not names or not all(_GENERIC_COMP_RE.match(n) for n in names):
         return None
-    if is_non_beam_class(class_name):
+    if (is_non_beam_class(class_name)
+            or class_name in _UNTAGGED_LOCAL_FORCE_VECTOR_CLASSES):
         return None
     cls = class_name or "<unparsed>"
     if class_name not in UNTAGGED_LOCAL_FORCE_CLASSES:

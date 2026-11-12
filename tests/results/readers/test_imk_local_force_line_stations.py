@@ -1,7 +1,8 @@
 """LadrunoIMKBeam ``localForce`` line stations on MPCO and ``.ladruno`` (#2022).
 
-The fork records a LadrunoIMKBeam's ``localForce`` untagged, so both
-formats name its columns ``C1..C12`` (2-D ``C1..C6``). Before #2022 both
+Fork builds before 208523694 record a LadrunoIMKBeam's ``localForce``
+untagged, so both formats name its columns ``C1..C12`` (2-D ``C1..C6``);
+later builds tag them and read by name. Before #2022 both
 readers passed such a bucket over: a line-station read of an IMK beam came
 back ``(T, 0)`` with no warning, while an ElasticBeam3d with the same
 values read its two end stations.
@@ -19,8 +20,9 @@ table every route applies (``local_force_station_signs``). Two oracles:
   closed-form moment diagram, ``bending_moment_z`` 8600 -> 600.
 
 Any other beam class whose ``localForce`` holds only ``C`` names has no
-known column order and is refused by name; a non-beam's (a truss's force
-vector) is still no beam's stations and stays passed over.
+known column order and is refused by name; a force vector (a truss's, a
+TrussSection's, a LadrunoEmbeddedNode's) is still no beam's stations and
+stays passed over.
 """
 from __future__ import annotations
 
@@ -216,6 +218,43 @@ def test_truss_c_only_bucket_stays_passed_over(
             warnings.simplefilter("error")
             slab = _read(r, "axial_force", None)
         assert slab.element_index.size == 0
+
+
+#: Classes outside the catalog's non-beams whose untagged ``localForce`` is
+#: a force vector (fork ``setResponse``): TrussSection ``Vector(numDOF)``,
+#: LadrunoEmbeddedNode ``Vector(ndm)``, LadrunoEmbeddedRebar ``Vector(ndm)``
+#: (older builds).
+FORCE_VECTOR_BUCKETS = [
+    ("13-TrussSection[1:0:0]", 6),
+    ("33006-LadrunoEmbeddedNode[0:0:0]", 3),
+    ("33005-LadrunoEmbeddedRebar[0:0:0]", 3),
+]
+
+
+@pytest.mark.parametrize(("key", "width"), FORCE_VECTOR_BUCKETS,
+                         ids=[k.split("[")[0] for k, _ in FORCE_VECTOR_BUCKETS])
+@pytest.mark.parametrize("fmt", FORMATS)
+def test_force_vector_c_only_bucket_beside_a_beam_is_passed_over(
+    tmp_path: Path, fmt: str, key: str, width: int,
+) -> None:
+    """The review's F1 repro: an unfiltered ``bending_moment_z`` read of a
+    tagged ElasticBeam3d beside one of these buckets raised at 8ac43db0.
+    The force vector is no beam's stations: the beam reads, nothing
+    raises or warns."""
+    f = _File(fmt, tmp_path / f"vector.{fmt}")
+    f.add("localForce", [11], key=ELASTIC_3D, names=_TAGGED_3D,
+          row=_counting(12))
+    f.add("localForce", [21], key=key, names=_c_names(width),
+          row=_counting(width))
+    with f.reader() as r:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            for ids in (None, [21]):
+                slab = _read(r, "bending_moment_z", ids)
+                assert slab.element_index.tolist() == (
+                    [11, 11] if ids is None else [])
+        _assert_hand(_read(r, "bending_moment_z", None),
+                     "bending_moment_z", 11, HAND_3D)
 
 
 # ---------------------------------------------------------------------
