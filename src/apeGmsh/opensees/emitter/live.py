@@ -303,24 +303,72 @@ def captured_engine_output(*, echo: bool) -> Iterator[EngineOutput]:
 
 
 #: The line a Ladruno build prints when it knows a class but not one of its
-#: options. At ladruno-v20261023 (bdb69cea5) these read
-#: ``WARNING LadrunoIMKBeam (2D) -- unknown option '-shear'``,
-#: ``WARNING LadrunoDispBeamColumn2d: unknown option '-foo'`` (also ``3d``,
-#: and ``LadrunoForceBeamColumn2d`` / ``3d``), and
-#: ``ERROR LadrunoUP 5 -- unknown flag '-foo' (unknown flags are fatal ...)``.
-_UNKNOWN_OPTION = re.compile(r"unknown (?:option|flag) '([^']+)'")
+#: options. At FORK_PIN ladruno-v20261103 (6050d78e1), with ``<x>`` the
+#: option and ``<t>`` the element tag:
+#:
+#: * ``WARNING LadrunoIMKBeam -- unknown option '<x>'`` (``(2D)`` in 2-D),
+#:   ``WARNING LadrunoDispBeamColumn2d: unknown option '<x>'`` (also ``3d``,
+#:   and ``LadrunoForceBeamColumn2d`` / ``3d``), ``WARNING element
+#:   LadrunoMembrane <t>: unknown option '<x>'``, ``WARNING
+#:   LadrunoKinematicCoupling: unknown option '<x>'`` (and
+#:   ``LadrunoDistributingCoupling``, ``LadrunoEmbeddedNode``,
+#:   ``LadrunoEmbeddedRebar``, ``LadrunoRigidBody``) and ``ERROR LadrunoUP
+#:   <t> -- unknown flag '<x>' (unknown flags are fatal ...)``: the call
+#:   fails;
+#: * ``WARNING unknown option '<x>' for BezierTri6 <t>`` (and
+#:   ``BezierTet10``, ``LadrunoBrick``, ``LadrunoBrick20``) and ``WARNING
+#:   LadrunoQuad -- ignoring unknown option <x>`` (unquoted; also
+#:   ``LadrunoCST``, ``LadrunoLST``): the build **creates the element
+#:   without the option** (#2524), so the gate reads the output on success
+#:   too.
+_UNKNOWN_OPTION = re.compile(
+    r"unknown (?:option|flag) '([^']+)'|ignoring unknown option (\S+)")
+
+#: The line a Ladruno build prints when it knows an option but not the value
+#: given to it; the call fails. At FORK_PIN: ``WARNING unknown -formulation
+#: '<v>' for LadrunoBrick <t> (...)`` (also ``-hourglass``, ``-geom``;
+#: ``LadrunoBrick20``; ``-fbar`` / ``-geom`` for ``BezierTet10``),
+#: ``WARNING LadrunoQuad -- unknown -formulation <v>`` (unquoted; also
+#: ``-type`` / ``-geom``, and ``LadrunoCST`` / ``LadrunoLST``), ``WARNING
+#: LadrunoKinematicCoupling: unknown -enforce '<v>' (...)`` (also
+#: ``-alUpdate``; ``-enforce`` for the other coupling and embedded
+#: classes), ``ERROR LadrunoUP <t> -- unknown -formulation '<v>' (...)``
+#: (also ``-pOrder`` / ``-geom``), ``WARNING element LadrunoMembrane <t>:
+#: unknown -method '<v>' (...)``, and ``WARNING LadrunoForceBeamColumn3d:
+#: unknown -Integration type '<v>'`` (``invalid ... type`` in 2-D). An
+#: ``invalid -<opt> ...`` line without ``type`` is a malformed number, not a
+#: rejected value, and is not read.
+_UNKNOWN_VALUE = re.compile(
+    r"\b(?:unknown (-\w+)(?: type)?|invalid (-\w+) type) "
+    r"(?:'([^']*)'|([^\s']+))")
 
 
-def _rejected_option(ele_type: str, text: str) -> "tuple[str, str] | None":
-    """``(option, line)`` when the build printed that ``ele_type`` rejects an
-    option; ``None`` otherwise (no such line, or nothing readable). The
-    class may print its name with a ``2d`` / ``3d`` suffix
+class _Rejection(NamedTuple):
+    """What a build printed about one of ``ele_type``'s options: the
+    ``option``, the rejected ``value`` (``None`` when the option itself is
+    unknown) and the printed ``line``."""
+
+    option: str
+    value: "str | None"
+    line: str
+
+
+def _rejected_option(ele_type: str, text: str) -> "_Rejection | None":
+    """The first line in which the build says ``ele_type`` rejects an option
+    or an option's value; ``None`` otherwise (no such line, or nothing
+    readable). The class may print its name with a ``2d`` / ``3d`` suffix
     (``LadrunoDispBeamColumn2d``); any other suffix is another class."""
     for line in text.splitlines():
-        if re.search(rf"\b{re.escape(ele_type)}(?:2d|3d)?\b", line):
-            m = _UNKNOWN_OPTION.search(line)
-            if m:
-                return m.group(1), line.strip()
+        if not re.search(rf"\b{re.escape(ele_type)}(?:2d|3d)?\b", line):
+            continue
+        m = _UNKNOWN_OPTION.search(line)
+        if m:
+            return _Rejection(m.group(1) or m.group(2), None, line.strip())
+        v = _UNKNOWN_VALUE.search(line)
+        if v:
+            return _Rejection(v.group(1) or v.group(2),
+                              v.group(3) if v.group(3) is not None else v.group(4),
+                              line.strip())
     return None
 
 
@@ -339,14 +387,36 @@ def _fork_signature(
     return " ".join([ele_type, *flags])
 
 
-def _fork_option_rejected(ele_type: str, option: str, line: str) -> str:
+def _fork_option_rejected(
+    ele_type: str, rejected: _Rejection, build: "str | None", *,
+    created: bool,
+) -> str:
+    """The refusal of a rejected option (or option value) of ``ele_type``.
+
+    ``created`` is False when the build failed the call or created no
+    element, and True when it went on without the option: the case #2524
+    refuses, since the model would otherwise run without what the user
+    asked for and nothing would say so.
+    """
+    opt, value, line = rejected
+    which = f"Ladruno build {build}" if build else "unstamped build"
+    if value is None:
+        head = f"option {opt} is not supported by this build"
+        known = f"knows {ele_type} but rejected {opt!r}"
+        why = "so the option is newer than this OpenSees build or misspelt"
+    else:
+        head = f"value {value!r} of option {opt} is not supported by this build"
+        known = f"knows {ele_type} and its {opt} option but rejected {value!r}"
+        why = "so the value is newer than this OpenSees build or misspelt"
+    if created:
+        known += (", then created the element WITHOUT it; apeGmsh refuses "
+                  "rather than run a model that silently dropped it")
     return (
-        f"element {ele_type}: option {option} is not supported by this build. "
-        f"The live build knows {ele_type} but rejected {option!r} "
-        f"(it printed: {line!r}), so the option is newer than this OpenSees "
-        f"build. Run on a Ladruno build that carries it (compare "
-        f"ops.ladrunoBuild() with the release that added it), or drop the "
-        f"option. Deck emission (ops.tcl(...) / ops.py(...)) is unaffected."
+        f"element {ele_type}: {head}. The live build ({which}) {known} "
+        f"(it printed: {line!r}), {why}. Run on a Ladruno build that "
+        f"carries it (compare ops.ladrunoBuild() with the release that added "
+        f"it), or drop it. Deck emission (ops.tcl(...) / ops.py(...)) is "
+        f"unaffected."
     )
 
 
@@ -1342,32 +1412,51 @@ class LiveOpsEmitter:
         The call runs once per type and option set (``key``, from
         :func:`_fork_signature`) under :func:`captured_engine_output`
         (echoed, so the user still sees the build's lines). When the build
-        printed that it knows the element but not one of its options, the
-        error names that option instead of claiming the element is unknown
-        (#2498)."""
+        printed that it knows the element but not one of its options, or
+        not the value given to one, the error names it instead of claiming
+        the element is unknown (#2498). That line is read on success too:
+        several classes print it and still create the element without the
+        option (:data:`_UNKNOWN_OPTION`), which is refused (#2524).
+
+        A class that prints nothing for an unknown option cannot be caught
+        here. At FORK_PIN every gated class prints; LadrunoDispBeamColumn
+        started to (and to fail the call) at fork 34df942c7 (WP-200), and
+        a build before it drops the option in silence. No known-options
+        table restates the fork's parsers here (#2524)."""
         try:
             with captured_engine_output(echo=True) as printed:
                 self._ops.element(ele_type, tag, *args)
         except Exception as e:
             rejected = _rejected_option(ele_type, printed.text)
             if rejected is not None:
-                raise RuntimeError(_fork_option_rejected(ele_type, *rejected)) from e
+                raise RuntimeError(self._option_refusal(
+                    ele_type, rejected, created=False)) from e
             raise RuntimeError(_fork_element_required(ele_type)) from e
         try:
             tags = self._ops.getEleTags()
         except Exception:
             # Build lacks getEleTags — don't false-positive; the element
-            # call did not raise, so trust it.
-            self._fork_verified_types.add(key)
-            return
-        if isinstance(tags, int):  # some builds return a bare int for 1 elem
-            tags = [tags]
-        if tag not in (tags or []):
-            rejected = _rejected_option(ele_type, printed.text)
-            if rejected is not None:
-                raise RuntimeError(_fork_option_rejected(ele_type, *rejected))
+            # call did not raise, so trust it (unless it said otherwise).
+            tags = None
+        else:
+            if isinstance(tags, int):  # some builds return a bare int for 1 elem
+                tags = [tags]
+            tags = list(tags or [])
+        created = tags is None or tag in tags
+        rejected = _rejected_option(ele_type, printed.text)
+        if rejected is not None:
+            raise RuntimeError(self._option_refusal(
+                ele_type, rejected, created=created))
+        if not created:
             raise RuntimeError(_fork_element_required(ele_type))
         self._fork_verified_types.add(key)
+
+    def _option_refusal(
+        self, ele_type: str, rejected: _Rejection, *, created: bool,
+    ) -> str:
+        """:func:`_fork_option_rejected` for the build this emitter drives."""
+        return _fork_option_rejected(
+            ele_type, rejected, self._backend().build, created=created)
 
     def _stock_build_gate(self, message: str) -> None:
         """Raise ``message`` when the bound backend is not the Ladruno fork.

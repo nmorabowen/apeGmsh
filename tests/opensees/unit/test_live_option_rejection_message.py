@@ -20,6 +20,15 @@ tests pin it with stub engines, without importing openseespy:
 * a capture that cannot open its temp files closes what it duplicated and
   lets the engine call speak for itself, without chaining its error to the
   ``OSError``.
+
+#2524 adds:
+
+* a build that prints the rejection and still creates the element (Quad,
+  CST, LST, Bezier*, Brick* at the pin) is refused by name, not verified;
+* a rejected option *value* says "value ... of option ... is not supported";
+* the refusal names the build;
+* ``live`` + ``ladruno_fork`` checks against the real build at FORK_PIN
+  (run by the ``live-fork`` lane).
 """
 from __future__ import annotations
 
@@ -117,11 +126,16 @@ def test_another_classes_option_line_is_not_this_elements() -> None:
             le.element(etype, 5, 1, 2, "-foo", 1.0)
 
 
-#: The rejection lines other fork classes print at FORK_PIN
-#: ladruno-v20261023 (bdb69cea5), with ``<x>`` = ``-foo`` and tag 5:
-#: ``LadrunoDispBeamColumn2d.cpp:411`` / ``3d.cpp:590``,
-#: ``LadrunoForceBeamColumn2d.cpp:580`` / ``3d.cpp:862``,
-#: ``OPS_LadrunoUP.cpp:539``.
+#: The rejection lines fork classes print, and then fail the call, at
+#: FORK_PIN ladruno-v20261103 (6050d78e1), with ``<x>`` = ``-foo`` and tag
+#: 5 (paths under ``SRC/element/``):
+#: ``ladrunoDispBeamColumn/LadrunoDispBeamColumn2d.cpp:493`` / ``3d.cpp:754``,
+#: ``ladrunoForceBeamColumn/LadrunoForceBeamColumn2d.cpp:722`` /
+#: ``3d.cpp:1084``, ``ladrunoUP/OPS_LadrunoUP.cpp:539``,
+#: ``ladrunoIMKBeam/OPS_LadrunoIMKBeam.cpp:387``,
+#: ``ladrunoMembrane/OPS_LadrunoMembrane.cpp:325``,
+#: ``ladrunoKinematicCoupling/OPS_LadrunoKinematicCoupling.cpp:247`` (the
+#: other coupling, embedded and rigid-body parsers print the same form).
 PIN_REJECTIONS = [
     ("LadrunoDispBeamColumn",
      "WARNING LadrunoDispBeamColumn2d: unknown option '-foo'\n"),
@@ -134,11 +148,17 @@ PIN_REJECTIONS = [
     ("LadrunoUP",
      "ERROR LadrunoUP 5 -- unknown flag '-foo' "
      "(unknown flags are fatal for this element)\n"),
+    ("LadrunoIMKBeam", "WARNING LadrunoIMKBeam -- unknown option '-foo'\n"),
+    ("LadrunoMembrane",
+     "WARNING element LadrunoMembrane 5: unknown option '-foo'\n"),
+    ("LadrunoKinematicCoupling",
+     "WARNING LadrunoKinematicCoupling: unknown option '-foo'\n"),
 ]
 
 
 @pytest.mark.parametrize(("etype", "line"), PIN_REJECTIONS,
-                         ids=[ln.split()[1].rstrip(":") for _t, ln in PIN_REJECTIONS])
+                         ids=[f"{t}-{ln.split()[1].rstrip(':')}"
+                              for t, ln in PIN_REJECTIONS])
 def test_every_pin_rejection_line_names_the_option(etype: str, line: str) -> None:
     le = _bare_emitter(_ElementOps(line))
     with pytest.raises(RuntimeError) as info:
@@ -146,7 +166,275 @@ def test_every_pin_rejection_line_names_the_option(etype: str, line: str) -> Non
     msg = str(info.value)
     assert f"element {etype}: option -foo is not supported by this build" in msg
     assert line.strip() in msg, "it quotes the build's line"
+    assert "WITHOUT" not in msg, "the build failed the call, it created nothing"
     assert _FORK_REQUIRED not in msg
+
+
+# ---------------------------------------------------------------------------
+# #2524: a build that prints the rejection and still creates the element
+# ---------------------------------------------------------------------------
+
+#: The lines the classes that warn and go on print at FORK_PIN
+#: ladruno-v20261103 (6050d78e1), with ``<x>`` = ``-bogus`` and tag 5. Each
+#: parser's ``else`` branch prints and falls through, so the element is
+#: built without the option (paths under ``SRC/element/``):
+#: ``ladrunoPlane/OPS_LadrunoQuad.cpp:164``, ``OPS_LadrunoCST.cpp:132``,
+#: ``OPS_LadrunoLST.cpp:159`` (unquoted, each its own class name);
+#: ``bezierTriangle/OPS_BezierTri6.cpp:187``,
+#: ``bezierTetrahedron/OPS_BezierTet10.cpp:226``,
+#: ``ladrunoBrick/OPS_LadrunoBrick.cpp:260``, ``OPS_LadrunoBrick20.cpp:163``.
+PIN_IGNORED = [
+    ("LadrunoQuad", "WARNING LadrunoQuad -- ignoring unknown option -bogus\n"),
+    ("LadrunoCST", "WARNING LadrunoCST -- ignoring unknown option -bogus\n"),
+    ("LadrunoLST", "WARNING LadrunoLST -- ignoring unknown option -bogus\n"),
+    ("BezierTri6", "WARNING unknown option '-bogus' for BezierTri6 5\n"),
+    ("BezierTet10", "WARNING unknown option '-bogus' for BezierTet10 5\n"),
+    ("LadrunoBrick", "WARNING unknown option '-bogus' for LadrunoBrick 5\n"),
+    ("LadrunoBrick20", "WARNING unknown option '-bogus' for LadrunoBrick20 5\n"),
+]
+
+
+class _CreatesAnyway:
+    """A build whose ``element`` prints ``line`` and still creates the
+    element (``tags`` lists it), stamped ``build`` when one is given."""
+
+    def __init__(self, line: str, *, fd: bool = False,
+                 build: "str | None" = None) -> None:
+        self.line, self.fd, self.build = line, fd, build
+        self.tags: list[int] = []
+
+    def element(self, _ele_type: str, tag: int, *_args: Any) -> None:
+        if self.fd:
+            os.write(2, self.line.encode())
+        else:
+            sys.stderr.write(self.line)
+        self.tags.append(tag)
+
+    def getEleTags(self) -> list[int]:  # noqa: N802 - the OpenSees name
+        return list(self.tags)
+
+    def ladrunoBuild(self) -> "str | None":  # noqa: N802 - the OpenSees name
+        return self.build
+
+
+class _CreatesAnywayNoEleTags(_CreatesAnyway):
+    def getEleTags(self) -> list[int]:  # noqa: N802 - the OpenSees name
+        raise AttributeError("getEleTags")
+
+
+@pytest.mark.parametrize("fd", [False, True], ids=["sys.stderr", "fd2"])
+@pytest.mark.parametrize(("etype", "line"), PIN_IGNORED,
+                         ids=[t for t, _ln in PIN_IGNORED])
+def test_an_ignored_option_is_refused_though_the_element_was_built(
+    etype: str, line: str, fd: bool,
+) -> None:
+    ops = _CreatesAnyway(line, fd=fd)
+    le = _bare_emitter(ops)
+    with pytest.raises(RuntimeError) as info:
+        le.element(etype, 5, 1, 2, 3, 4, 1, "-bogus")
+    msg = str(info.value)
+    assert ops.tags == [5], "the stub did create it: the build went on"
+    assert f"element {etype}: option -bogus is not supported by this build" in msg
+    assert "WITHOUT" in msg, "it says the element was built without it"
+    assert line.strip() in msg, "it quotes the build's line"
+    assert _FORK_REQUIRED not in msg
+    assert le._fork_verified_types == set(), "a refused signature is not cached"
+
+
+def test_an_ignored_option_is_refused_without_get_ele_tags() -> None:
+    """A build with no ``getEleTags`` is trusted to have created the
+    element, but not to have kept an option it said it ignored."""
+    le = _bare_emitter(_CreatesAnywayNoEleTags(PIN_IGNORED[0][1]))
+    with pytest.raises(RuntimeError, match="option -bogus is not supported"):
+        le.element("LadrunoQuad", 5, 1, 2, 3, 4, 1, "-bogus")
+    quiet = _bare_emitter(_CreatesAnywayNoEleTags(""))
+    quiet.element("LadrunoQuad", 5, 1, 2, 3, 4, 1)
+    assert quiet._fork_verified_types == {"LadrunoQuad"}
+
+
+def test_a_clean_success_is_still_verified_once() -> None:
+    """No rejection line: created, verified, and the repeat skips the gate."""
+    ops = _CreatesAnyway("")
+    le = _bare_emitter(ops)
+    le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-thick", 0.2)
+    le.element("LadrunoQuad", 2, 1, 2, 3, 4, 1, "-thick", 0.3)
+    assert ops.tags == [1, 2]
+    assert le._fork_verified_types == {"LadrunoQuad -thick"}
+
+
+def test_the_refusal_names_the_build() -> None:
+    sha = "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe"
+    le = _bare_emitter(_CreatesAnyway(PIN_IGNORED[0][1], build=sha))
+    with pytest.raises(RuntimeError, match=f"Ladruno build {sha}"):
+        le.element("LadrunoQuad", 5, 1, 2, 3, 4, 1, "-bogus")
+    le = _bare_emitter(_CreatesAnyway(PIN_IGNORED[0][1]))
+    with pytest.raises(RuntimeError, match="unstamped build"):
+        le.element("LadrunoQuad", 5, 1, 2, 3, 4, 1, "-bogus")
+
+
+def test_a_non_option_warning_on_success_is_not_a_refusal() -> None:
+    """The pin's other success-path warnings ('-bulkViscosity b1 < 0;
+    ignoring (b1=0)', OPS_LadrunoQuad.cpp:158) name no unknown option."""
+    line = "WARNING LadrunoQuad -- -bulkViscosity b1 < 0; ignoring (b1=0)\n"
+    ops = _CreatesAnyway(line)
+    le = _bare_emitter(ops)
+    le.element("LadrunoQuad", 5, 1, 2, 3, 4, 1, "-bulkViscosity", -1.0, 0.0)
+    assert le._fork_verified_types == {"LadrunoQuad -bulkViscosity"}
+
+
+# ---------------------------------------------------------------------------
+# #2524 scope addition: a rejected option VALUE says so
+# ---------------------------------------------------------------------------
+
+#: The lines the pin prints, failing the call, when it knows an option but
+#: not its value ``xyz`` (tag 5; paths under ``SRC/element/``):
+#: ``ladrunoBrick/OPS_LadrunoBrick.cpp:126`` / ``:141``,
+#: ``OPS_LadrunoBrick20.cpp:113``, ``bezierTetrahedron/OPS_BezierTet10.cpp:167``
+#: / ``:220``, ``ladrunoPlane/OPS_LadrunoQuad.cpp:107`` / ``:113`` (unquoted),
+#: ``ladrunoKinematicCoupling/OPS_LadrunoKinematicCoupling.cpp:197`` /
+#: ``:218``, ``ladrunoUP/OPS_LadrunoUP.cpp:390``,
+#: ``ladrunoMembrane/OPS_LadrunoMembrane.cpp:198``,
+#: ``ladrunoForceBeamColumn/LadrunoForceBeamColumn3d.cpp:554`` / ``2d.cpp:531``.
+PIN_VALUES = [
+    ("LadrunoBrick", "-formulation", "WARNING unknown -formulation 'xyz' for "
+     "LadrunoBrick 5 (use std|bbar|uri|ssp|eas)\n"),
+    ("LadrunoBrick", "-hourglass", "WARNING unknown -hourglass 'xyz' for "
+     "LadrunoBrick 5 (use viscous|stiffness|physical)\n"),
+    ("LadrunoBrick20", "-formulation", "WARNING unknown -formulation 'xyz' for "
+     "LadrunoBrick20 5 (use std or uri)\n"),
+    ("BezierTet10", "-fbar", "WARNING unknown -fbar 'xyz' for BezierTet10 5 "
+     "(use centroid|mean_dilatation)\n"),
+    ("BezierTet10", "-geom", "WARNING unknown -geom 'xyz' for BezierTet10 5 "
+     "(use linear|corot|finite)\n"),
+    ("LadrunoQuad", "-formulation", "WARNING LadrunoQuad -- unknown "
+     "-formulation xyz\n"),
+    ("LadrunoQuad", "-geom", "WARNING LadrunoQuad -- unknown -geom xyz "
+     "(want linear|finite)\n"),
+    ("LadrunoKinematicCoupling", "-enforce", "WARNING LadrunoKinematicCoupling: "
+     "unknown -enforce 'xyz' (want penalty|al)\n"),
+    ("LadrunoKinematicCoupling", "-alUpdate", "WARNING LadrunoKinematicCoupling: "
+     "unknown -alUpdate 'xyz' (want ...)\n"),
+    ("LadrunoUP", "-formulation", "ERROR LadrunoUP 5 -- unknown -formulation "
+     "'xyz' (want std|bbar; ssp/eas/uri are not u-p axes, ADR 71 §3.4)\n"),
+    ("LadrunoMembrane", "-method", "WARNING element LadrunoMembrane 5: unknown "
+     "-method 'xyz' (expected tributary, oneway, fea_poisson, or fea_plate)\n"),
+    ("LadrunoForceBeamColumn", "-Integration", "WARNING "
+     "LadrunoForceBeamColumn3d: unknown -Integration type 'xyz'\n"),
+    ("LadrunoForceBeamColumn", "-Integration", "WARNING "
+     "LadrunoForceBeamColumn2d: invalid -Integration type 'xyz'\n"),
+]
+
+
+@pytest.mark.parametrize(("etype", "opt", "line"), PIN_VALUES,
+                         ids=[f"{t}{o}-{i}" for i, (t, o, _l) in enumerate(PIN_VALUES)])
+def test_a_rejected_value_names_the_option_and_value(
+    etype: str, opt: str, line: str,
+) -> None:
+    le = _bare_emitter(_ElementOps(line))
+    with pytest.raises(RuntimeError) as info:
+        le.element(etype, 5, 1, 2, opt, "xyz")
+    msg = str(info.value)
+    assert (f"element {etype}: value 'xyz' of option {opt} is not supported "
+            f"by this build") in msg
+    assert line.strip() in msg, "it quotes the build's line"
+    assert "WITHOUT" not in msg
+    assert _FORK_REQUIRED not in msg
+
+
+@pytest.mark.parametrize(("etype", "line"), [
+    ("LadrunoIMKBeam", "WARNING LadrunoIMKBeam -- invalid -pm P0 (must be > 0)\n"),
+    ("LadrunoBrick", "WARNING invalid -bulkViscosity b1 b2 for LadrunoBrick 5\n"),
+    ("LadrunoBrick", "WARNING invalid -b body force for LadrunoBrick 5\n"),
+])
+def test_a_malformed_number_is_not_a_rejected_value(etype: str, line: str) -> None:
+    """``invalid -<opt> ...`` without ``type`` is a bad number, not a value
+    the build does not know (OPS_LadrunoIMKBeam.cpp:350,
+    OPS_LadrunoBrick.cpp:174 / :242): it is not dressed up as one."""
+    le = _bare_emitter(_ElementOps(line))
+    with pytest.raises(RuntimeError) as info:
+        le.element(etype, 5, 1, 2)
+    assert "is not supported by this build" not in str(info.value)
+
+
+# ---------------------------------------------------------------------------
+# The real build at FORK_PIN (live-fork lane)
+# ---------------------------------------------------------------------------
+
+
+def _live_emitter() -> Any:
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+
+    return LiveOpsEmitter(wipe=True)
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+def test_pin_refuses_a_quad_option_it_ignores() -> None:
+    """At the pin LadrunoQuad prints 'ignoring unknown option -bogus' and
+    builds the element; the live route refuses by name."""
+    em = _live_emitter()
+    o = em.ops
+    try:
+        o.model("basic", "-ndm", 2, "-ndf", 2)
+        for n, (x, y) in enumerate([(0, 0), (1, 0), (1, 1), (0, 1)], start=1):
+            o.node(n, float(x), float(y))
+        o.nDMaterial("ElasticIsotropic", 1, 2.0e11, 0.3)
+        with pytest.raises(RuntimeError) as info:
+            em.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-bogus")
+        msg = str(info.value)
+        assert "option -bogus is not supported by this build" in msg
+        assert "WITHOUT" in msg
+        em.element("LadrunoQuad", 2, 1, 2, 3, 4, 1)  # no option: builds
+    finally:
+        o.wipe()
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+def test_pin_refuses_a_brick_option_and_a_brick_value() -> None:
+    em = _live_emitter()
+    o = em.ops
+    try:
+        o.model("basic", "-ndm", 3, "-ndf", 3)
+        corners = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                   (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+        for n, xyz in enumerate(corners, start=1):
+            o.node(n, *map(float, xyz))
+        o.nDMaterial("ElasticIsotropic", 1, 2.0e11, 0.3)
+        with pytest.raises(RuntimeError) as info:
+            em.element("LadrunoBrick", 1, *range(1, 9), 1, "-bogus")
+        assert "option -bogus is not supported by this build" in str(info.value)
+        assert "WITHOUT" in str(info.value)
+        with pytest.raises(RuntimeError) as info:
+            em.element("LadrunoBrick", 2, *range(1, 9), 1, "-formulation", "xyz")
+        assert ("value 'xyz' of option -formulation is not supported"
+                in str(info.value))
+    finally:
+        o.wipe()
+
+
+@pytest.mark.live
+@pytest.mark.ladruno_fork
+def test_pin_refuses_a_disp_beam_column_option() -> None:
+    """LadrunoDispBeamColumn printed nothing for an unknown flag before fork
+    34df942c7 (WP-200); at the pin it prints and fails the call, so the
+    live route names the option (no apeGmsh-side options table)."""
+    em = _live_emitter()
+    o = em.ops
+    try:
+        o.model("basic", "-ndm", 2, "-ndf", 3)
+        o.node(1, 0.0, 0.0)
+        o.node(2, 3.0, 0.0)
+        o.section("Elastic", 1, 2.0e11, 0.02, 3.0e-4)
+        o.geomTransf("Linear", 1)
+        o.beamIntegration("Lobatto", 1, 1, 3)
+        with pytest.raises(RuntimeError) as info:
+            em.element("LadrunoDispBeamColumn", 1, 1, 2, 1, 1, "-bogus")
+        msg = str(info.value)
+        assert "option -bogus is not supported by this build" in msg
+        assert "WITHOUT" not in msg
+    finally:
+        o.wipe()
 
 
 def test_the_builds_line_still_reaches_the_user(
