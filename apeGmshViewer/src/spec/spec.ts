@@ -72,7 +72,13 @@ export interface SpecContour {
 }
 
 export interface SpecDeform {
-  scale: number;
+  /**
+   * The deformed shape's scale; null when the spec leaves it out (G3, VA6c
+   * #2765): the render mode then takes the auto scale of the step drawn
+   * (state/deform.ts `autoDeformScale`), and the manifest records it with
+   * `scale_auto`.
+   */
+  scale: number | null;
   ghost: boolean;
 }
 
@@ -228,8 +234,9 @@ function contour(v: unknown, key: string): SpecContour {
 
 function deform(v: unknown, key: string): SpecDeform {
   const o = object(v, key, ["scale", "ghost"]);
-  const scale = o["scale"] === undefined ? 1 : finite(o["scale"], `${key}.scale`);
-  if (!(scale > 0)) throw new SpecError(`${key}.scale`, `must be positive; got ${scale}`);
+  // G3: a scale left out is the auto scale (null), never 1.
+  const scale = o["scale"] === undefined ? null : finite(o["scale"], `${key}.scale`);
+  if (scale !== null && !(scale > 0)) throw new SpecError(`${key}.scale`, `must be positive; got ${scale}`);
   const ghost = o["ghost"] === undefined ? false : bool(o["ghost"], `${key}.ghost`);
   return { scale, ghost };
 }

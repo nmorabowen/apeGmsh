@@ -218,6 +218,7 @@ def _emit_recorder_declaration(
                     record, decl, emitter, fem,
                     element_record_response_tokens,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    element_plan=element_plan,
                 )
         finally:
             emitter.recorder_declaration_end()
@@ -580,6 +581,7 @@ def _emit_element_level_record(
     response_tokens: object,  # callable; passed in to keep imports local
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    element_plan: "ElementPlan | None" = None,
 ) -> None:
     """Emit one element-level :class:`RecorderRecord` (elements / gauss /
     line_stations).
@@ -589,6 +591,11 @@ def _emit_element_level_record(
     ``element_record_response_tokens`` helper), and issues one
     ``emitter.recorder("Element", ...)`` call for the canonical group
     plus one per ``raw=`` token.
+
+    A gauss strain record on a class that answers no element-level
+    ``strains`` (:func:`_per_material_strain_points`: Tri31) emits one
+    ``material <gp> strain`` line per Gauss point instead, to
+    ``<file_root>/<decl.name>__<record_name>__gauss_material<gp>.out``.
 
     For ``line_stations`` records, also emits a paired
     ``integrationPoints`` recorder writing to ``<file>_gpx.out`` —
@@ -626,7 +633,23 @@ def _emit_element_level_record(
             record.category, record.components, record_name=record.name,
             sigma_zz_capable=sigma_zz_capable,
         )
-        if tokens is not None:
+        n_points = None if tokens is None else _per_material_strain_points(
+            record, decl, tuple(tokens), elem_ids, element_plan,
+            by_ops_tag=fem_eid_to_ops_tag is not None,
+        )
+        if n_points is not None:
+            for gp in range(1, n_points + 1):
+                args_gp: list[int | float | str] = ["-file", _recorder_file_path(
+                    decl.file_root, decl.name, record_name,
+                    f"{record.category}_material{gp}",
+                )]
+                if record.dt is not None:
+                    args_gp += ["-dT", record.dt]
+                args_gp += ["-time", "-ele", *elem_ids,
+                            "material", str(gp), "strain"]
+                emitter.recorder("Element", *args_gp)
+            emitted_canonical = True
+        elif tokens is not None:
             file_path = _recorder_file_path(
                 decl.file_root, decl.name, record_name, record.category,
             )
@@ -673,6 +696,149 @@ def _emit_element_level_record(
         args += ["-ele", *elem_ids]
         args.append("integrationPoints")
         emitter.recorder("Element", *args)
+
+
+def _per_material_strain_points(
+    record: RecorderRecord,
+    decl: RecorderDeclaration,
+    tokens: tuple[str, ...],
+    elem_ids: tuple[int, ...],
+    element_plan: "ElementPlan | None",
+    *,
+    by_ops_tag: bool,
+) -> "int | None":
+    """The Gauss-point count when ``record``'s strain is recorded per
+    material, else ``None`` (the record keeps its element-level tokens).
+
+    A class in
+    :data:`~apeGmsh.opensees._response_catalog.PER_MATERIAL_STRAIN_CLASSES`
+    (Tri31) has no element-level ``strains`` response: a ``recorder
+    Element ... strains`` on it writes the time column alone. Its strain
+    is read per Gauss point (``material <gp> strain``), and the point
+    count is the class's entry in
+    :data:`~apeGmsh.opensees._response_catalog.RESPONSE_CATALOG`.
+
+    - With the element plan (the bridge), the record's classes are those
+      of the plan specs its elements belong to. A record that spans a
+      per-material class and any other class raises a
+      :class:`BridgeError` naming both: one response cannot serve both.
+      An explicit ``element_class_name`` that is not the record's one
+      class raises where either it or a planned class is per-material.
+    - Without the plan (``ModelData``: a hand-written deck), an explicit
+      ``element_class_name`` naming a per-material class is honoured. A
+      strain record with neither keeps ``strains`` unchanged: there is
+      nothing to resolve its class from (out of scope of #2892).
+    """
+    if record.category != "gauss" or tokens != ("strains",):
+        return None
+    from ..._response_catalog import needs_per_material_strain
+
+    token = "strain"  # the catalog token of the ``strains`` keyword
+    where = (f"recorder.declare({decl.name!r}) gauss record "
+             f"{record.name or 'default'!r}")
+    explicit = record.element_class_name
+    if element_plan is None:
+        if explicit is None or not needs_per_material_strain(explicit, token):
+            return None
+        return _strain_gauss_points(explicit, where)
+
+    classes = _record_element_classes(
+        elem_ids, element_plan, by_ops_tag=by_ops_tag, where=where)
+    per_material = [c for c in classes if needs_per_material_strain(c, token)]
+    if explicit is not None and set(classes) != {explicit} and (
+        per_material or needs_per_material_strain(explicit, token)
+    ):
+        raise BridgeError(
+            f"{where}: element_class_name={explicit!r} contradicts the "
+            f"record's elements, which are {_shown_classes(classes)}. Drop "
+            "element_class_name (the bridge reads the class from the "
+            "element plan), or narrow the selector to that class."
+        )
+    if not per_material:
+        return None
+    if len(classes) > 1:
+        other = next(c for c in classes if c != per_material[0])
+        raise BridgeError(
+            f"{where}: the record spans {per_material[0]!r} (element "
+            f"{classes[per_material[0]]}), whose strain records only per "
+            f"Gauss point (material <gp> strain), and {other!r} (element "
+            f"{classes[other]}), which records element-level strains; all "
+            f"classes: {_shown_classes(classes)}. Declare each class's "
+            "groups in their own record."
+        )
+    return _strain_gauss_points(per_material[0], where)
+
+
+def _shown_classes(classes: "Mapping[str, int]") -> str:
+    return ", ".join(f"{c!r} (element {t})" for c, t in classes.items())
+
+
+def _record_element_classes(
+    elem_ids: tuple[int, ...],
+    element_plan: "ElementPlan",
+    *,
+    by_ops_tag: bool,
+    where: str,
+) -> "dict[str, int]":
+    """``{C++ class: FEM eid of its first element}`` over ``elem_ids``,
+    from the plan specs whose rows hold them.
+
+    ``elem_ids`` are emitted OpenSees tags when ``by_ops_tag`` (the
+    bridge translated them), else FEM eids. An element in no planned
+    spec raises a :class:`BridgeError`: its class is unknown.
+    """
+    import numpy as np
+
+    from ..._element_capabilities import Unknown, element_capability
+
+    ids = np.asarray(elem_ids, dtype=np.int64)
+    covered = np.zeros(ids.shape, dtype=bool)
+    out: dict[str, int] = {}
+    for spec, rows in element_plan:
+        if not len(rows):
+            continue
+        if not by_ops_tag:
+            keys = rows.eids
+        elif rows.tags is not None:
+            keys = rows.tags
+        else:
+            keys = np.arange(rows.tag_start, rows.tag_start + len(rows),
+                             dtype=np.int64)
+        hit = np.isin(ids, keys)
+        if not hit.any():
+            continue
+        covered |= hit
+        py_name = type(spec).__name__
+        cap = element_capability(py_name)
+        name = py_name if cap is Unknown else (cap.cpp_class_name or py_name)
+        if name not in out:
+            # Report the FEM eid the user selects by (``ids=``, the mesh),
+            # never the OpenSees tag it was translated to.
+            row = int(np.flatnonzero(keys == ids[hit][0])[0])
+            out[name] = int(rows.eids[row])
+    if not covered.all():
+        what = "OpenSees element tag" if by_ops_tag else "element"
+        raise BridgeError(
+            f"{where}: {what} {int(ids[~covered][0])} belongs to no "
+            "planned element spec, so its class, and whether it records "
+            "strain element-level or per Gauss point, is unknown."
+        )
+    return out
+
+
+def _strain_gauss_points(class_name: str, where: str) -> int:
+    """The Gauss-point count of ``class_name``'s catalogued strain."""
+    from ..._response_catalog import RESPONSE_CATALOG
+
+    counts = {int(layout.n_gauss_points) for (c, _rule, t), layout
+              in RESPONSE_CATALOG.items() if c == class_name and t == "strain"}
+    if len(counts) != 1:
+        raise BridgeError(
+            f"{where}: {class_name!r} records strain per Gauss point, but "
+            f"the response catalog gives it {len(counts)} strain point "
+            "counts; one is needed to write one recorder line per point."
+        )
+    return int(next(iter(counts)))
 
 
 def _resolve_element_targets(

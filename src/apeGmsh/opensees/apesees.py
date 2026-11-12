@@ -9839,8 +9839,8 @@ class apeSees(
         fork's stack profiler: ``profiler start [flags]`` before the analyze
         loop and ``profiler report <profile> [-run profile_run]`` after,
         with ``profile_deep`` / ``profile_memory`` / ``profile_per_step``
-        toggling the ``start`` flags. Requires the fork build — the live
-        emitter raises a clear error on stock openseespy. (Deck-mode
+        toggling the ``start`` flags. Requires the fork build: on stock
+        openseespy it refuses before the domain is wiped. (Deck-mode
         profiling uses the explicit ``ops.profiler.*`` verbs instead, and
         does NOT consume the ``profile=`` kwargs here.)
 
@@ -9883,6 +9883,11 @@ class apeSees(
         # who only emit Tcl / py.
         from .emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
+        if profile is not None:
+            from .procedures._modal import refuse_fork_verb_before_wipe
+
+            refuse_fork_verb_before_wipe(
+                self, "apeSees.analyze(profile=...)", "the fork's profiler")
         bm = self.build()
         self._assert_fork_if_required()
         refuse_fork_chain_before_wipe(bm)
@@ -10794,14 +10799,27 @@ class apeSees(
         that is the user's call (or :meth:`analyze`'s). Useful when
         the user wants to declare a model, populate openseespy state,
         and then run their own analysis driver.
-        """
-        from .emitter.live import LiveOpsEmitter
 
+        A staged model is refused before the domain is touched (#2533):
+        the live emitter cannot replay stages, and its ``stage_open``
+        would otherwise raise after the wipe.
+        """
+        from .emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
+
+        if self._stage_records:
+            raise NotImplementedError(
+                "apeSees.run: live execution does not support staged "
+                "models (Phase SSI-2.A) "
+                f"(got {len(self._stage_records)} stage(s)). Emit the "
+                "deck with ops.tcl(...) / ops.py(...) and run it there; "
+                "the live domain is untouched."
+            )
+        bm = self.build()
+        refuse_fork_chain_before_wipe(bm)  # before the domain is touched
         self._read_state = DroppedSession(
             "ops.run() re-emitted the model into the live domain without "
             "solving it; call ops.analyze(...) to read"
         )
-        bm = self.build()
         emitter = LiveOpsEmitter(wipe=wipe)
         bm.emit(emitter)
         emitter._write_stage_zero()  # the caller's own analyze follows

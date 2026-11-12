@@ -22,7 +22,7 @@ import pytest
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees.apesees import apeSees
 from apeGmsh.opensees._internal.build.stage_emit import (
-    FORK_BUILD_HAS_MD_STATIC_FIX,
+    MD_STAGE_FLAG_CAPABILITY,
     MD_STATIC_FIX_COMMIT,
     MD_STATIC_RESET_GUARD,
 )
@@ -304,7 +304,9 @@ def test_a_material_a_later_stage_activates_need_not_be_named() -> None:
     """``B`` is registered before the flip stage closes, but the stage after
     it activates ``B``, so ``B`` is out of the domain at the flip line.  Only
     the final model shows that, which is why no check runs at stage close:
-    one there would refuse this correct model."""
+    one there would refuse this correct model.  ``install`` flips the group
+    again, as #2534 asks of a stage that activates a carrier of a group an
+    earlier stage left plastic."""
     ops = apeSees(_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     with warnings.catch_warnings():
@@ -320,6 +322,7 @@ def test_a_material_a_later_stage_activates_need_not_be_named() -> None:
         with ops.stage(name="install") as s:
             s.activate(pgs=["B"])
             s.fix(nodes=[5, 6], dofs=(0, 1))
+            s.update_material_stage(materials=[mat_a, mat_b], stage=1)
             s.analysis(**_chain(ops))
             s.run(n_increments=1)
     _emit(ops)
@@ -683,14 +686,20 @@ def test_fork_reset_table() -> None:
 
 @pytest.mark.parametrize("cls", sorted(FORK_RESETS_STAGE_STATIC))
 @pytest.mark.parametrize("mode", ["fork", "stock", "auto", None])
-def test_the_stage_close_no_longer_refuses_the_reset(
+def test_the_stage_close_refuses_the_reset_pattern_as_a_late_carrier(
     cls: str, mode: "str | None",
 ) -> None:
-    """#2516: no target refuses the pattern at stage close.  A staged model
-    runs only as a deck, so the deck checks the build it runs on
-    (``tests/opensees/integration/test_deck_md_static_guard.py``)."""
+    """#2516 took the fork reset off the stage close: the deck checks the
+    build it runs on (``tests/opensees/integration/
+    test_deck_md_static_guard.py``).  #2534 refuses this pattern on every
+    target anyway, for another reason: B's material, of the group the flip
+    left plastic, enters plastic with no Elastic2Plastic(), on stock too.
+    Flipping the group again at the activation passes."""
     ops, mat = _staged_bridge(cls, mode)
-    _flip_then_activate(ops, mat)
+    with pytest.raises(BridgeError, match="#2534"):
+        _flip_then_activate(ops, mat)
+    ops, mat = _staged_bridge(cls, mode)
+    _flip_then_activate(ops, mat, reflip=True)
     assert len(ops._stage_records) == 2
 
 
@@ -735,24 +744,55 @@ def _run_reset(cls: str, *, add: bool) -> "tuple[int, float]":
         ops.wipe()
 
 
-#: The fork commit that stops the constructor reset, and the fork builds
-#: measured with :func:`_run_reset` (does the build carry it?).  One
-#: table, in ``stage_emit``: the deck guard accepts its ``True`` rows.
+#: The fork commit that stops the constructor reset.
 _MD_STATIC_FIX = MD_STATIC_FIX_COMMIT
-_FORK_BUILD_HAS_MD_STATIC_FIX = FORK_BUILD_HAS_MD_STATIC_FIX
+
+#: Fork builds measured with :func:`_run_reset`, by exact
+#: ``ladrunoBuild()`` sha: does the build carry :data:`_MD_STATIC_FIX`?
+#: Ancestry checked on the fork (GitHub compare).  The guards no longer
+#: read it (#2518): they ask the build for its ``mdStageFlagPreserved``
+#: capability.  It stays the live reset test's record of what each build
+#: does, for the v0 builds that carry the fix but cannot say so.
+_FORK_BUILD_HAS_MD_STATIC_FIX: "dict[str, bool]" = {
+    # FORK_PIN ladruno-v20261103 (6050d78e1): 43b235bbb is its ancestor
+    # (GitHub compare: ahead 226, behind 0); its ladrunoSchema is v1 and
+    # lists mdStageFlagPreserved (fork LadrunoSchema.h kCapabilities).
+    "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe": True,
+    # ladruno-v20261030b (23d937bc4): ahead 103, behind 0.
+    "23d937bc4011d1b29230671511531e23f777d78c": True,
+    # ladruno-v20261030 (c9004f48d): ahead 97, behind 0.
+    "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
+    # ladruno-v20261029 (6ee6a04fd): ahead 92, behind 0.
+    "6ee6a04fdc9e8a4699b9c483284151f80b48f701": True,
+    # ladruno-v20261028: ahead 89, behind 0.
+    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
+    # ladruno-v20261023, which merges the fix: no reset.
+    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
+    # A build one commit past fork wp/209 (0f2e73c2e), on fork branch
+    # build/86893bd: ahead 35, behind 0.  The live reset test passes on
+    # it: no reset.
+    "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
+    # The maintainer's venv build, an ancestor of the fix: resets.
+    "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
+}
 
 
 def _reset_expected(cls: str) -> bool:
     """Whether the bound build resets ``cls``'s static on a new element:
     a fork build without :data:`_MD_STATIC_FIX`, for the classes of
-    ``FORK_RESETS_STAGE_STATIC`` only.  An unmeasured fork build skips by
-    name rather than guess."""
+    ``FORK_RESETS_STAGE_STATIC`` only.  A build that lists
+    ``mdStageFlagPreserved`` promises no reset, so the run tests the
+    promise; any other fork build is read from the measured table, and an
+    unmeasured one skips by name rather than guess."""
     from apeGmsh.opensees.emitter.live import get_backend_info
 
     info = get_backend_info()
     if info.kind != "fork" or cls not in FORK_RESETS_STAGE_STATIC:
         # Stock never resets; neither does a class whose constructor
         # keeps the flag (SAniSandMS), on any fork build.
+        return False
+    if (info.schema is not None
+            and MD_STAGE_FLAG_CAPABILITY in info.schema.capabilities):
         return False
     if info.build not in _FORK_BUILD_HAS_MD_STATIC_FIX:
         pytest.skip(
@@ -765,7 +805,9 @@ def _reset_expected(cls: str) -> bool:
 
 def test_the_fork_pin_is_measured_for_the_reset() -> None:
     """A FORK_PIN bump re-measures the reset: the live-fork lane runs
-    only the pinned build, so it must be in the table."""
+    only the pinned build, so it must be in the table, carrying the fix.
+    The guards ask the build for the capability, not for its sha
+    (#2518)."""
     from pathlib import Path
 
     pin = Path(__file__).resolve().parents[3] / "FORK_PIN"
@@ -776,11 +818,8 @@ def test_the_fork_pin_is_measured_for_the_reset() -> None:
     assert shas[0] in _FORK_BUILD_HAS_MD_STATIC_FIX, (
         "FORK_PIN moved: measure the #2444 reset on the new build "
         "(test_live_reset_follows_the_fork_build) and add it")
-    # The pin carries the fix, so the deck guard accepts it (#2516).
     assert _FORK_BUILD_HAS_MD_STATIC_FIX[shas[0]] is True
-    assert shas[0] in MD_STATIC_RESET_GUARD.builds
-    assert set(MD_STATIC_RESET_GUARD.builds) == {
-        sha for sha, fixed in _FORK_BUILD_HAS_MD_STATIC_FIX.items() if fixed}
+    assert MD_STATIC_RESET_GUARD.capability == "mdStageFlagPreserved"
 
 
 @pytest.mark.live

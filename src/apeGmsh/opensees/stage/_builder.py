@@ -46,7 +46,9 @@ from .._internal.types import (
     NDMaterial,
     Primitive,
     Recorder,
+    Section,
     TimeSeries,
+    UniaxialMaterial,
 )
 from ..analysis.analysis import Static
 from ..node import Node, _iter_tags, _select_nodes
@@ -56,6 +58,7 @@ from ._chain import (
     StageChain,
     algorithm_needs_test,
 )
+from ._parameter_names import ParameterTarget, check_parameter_name
 
 if TYPE_CHECKING:
     from apeGmsh._kernel.records._constraints import (
@@ -169,16 +172,20 @@ STAGE_FLAG_PARAMETERS: frozenset[str] = frozenset(
 #: whole group back to elastic, on the fork only (stock keeps the flag;
 #: SAniSandMS, PM4Sand and PM4Silt keep it on both builds, measured).
 #: Fork commit ``43b235bbb`` stops the reset and ``FORK_PIN`` carries it,
-#: but every older fork build still resets (79e062367, measured).  The
-#: build is known only where the model runs, and a staged model runs only
-#: as a deck (``apeSees.analyze`` / ``run`` and ``OpenSeesModel.build(
-#: "live")`` refuse stages), so the check is the deck's: a deck that
-#: builds an element or material after a flip of the group, and solves
-#: before flipping it again, asks the running build for ``ladrunoBuild``
-#: and stops unless the sha is one measured to carry the fix
-#: (``_internal/build/stage_emit.MD_STATIC_RESET_GUARD``, on every target
-#: mode, and on the ``model.h5`` replay, whose deck is emitted by the same
-#: emitters; stock has no ``ladrunoBuild`` and runs).
+#: but every older fork build still resets (79e062367, measured).  A fork
+#: build says it carries the fix by listing ``mdStageFlagPreserved`` in
+#: its ``ladrunoSchema`` v1 ``capabilities``.  The build is known only
+#: where the model runs, so the check is made there, on every target
+#: mode: a deck that builds an element or material
+#: after a flip of the group, and solves before flipping it again, stops
+#: by name unless the running build lists the capability (stock has no
+#: ``ladrunoBuild`` and runs), and so does the deck the ``model.h5``
+#: replay emits through the same emitters
+#: (``_internal/build/stage_emit.MD_STATIC_RESET_GUARD``); the live
+#: emitter asks the engine it drives the same question before such a
+#: solve (``emitter/live.LiveOpsEmitter``).  A staged model runs only as a
+#: deck (``apeSees.analyze`` / ``run`` and ``OpenSeesModel.build("live")``
+#: refuse stages), so the live check guards a direct driver.
 FORK_RESETS_STAGE_STATIC: frozenset[str] = frozenset(
     {"ManzariDafalias", "LadrunoSANISAND"},
 )
@@ -963,11 +970,22 @@ def _refuse_activation_after_plastic_flip(
     :func:`_refuse_multi_element_plastic_flip` holds that flip to every
     carrier alive at it, the new one included.  The earlier stages' flip
     checks count only the carriers alive at them (#2528), so this is the
-    check that keeps a carrier activated after the flip refused.  It
-    counts per tag (``earlier_live``): it refuses a carrier of a tag that
-    has a carrier outside this stage's activations.  A carrier of another
-    material of the same class-wide group, whose own tag has no such
-    carrier, is not refused here; counting per group is #2534.
+    check that keeps a carrier activated after the flip refused.
+
+    It counts per class-wide group (``earlier_live``, #2534): a new
+    carrier of any material of a group is refused when the group has a
+    carrier outside this stage's activations, whichever material that
+    one holds.  The flag is one static for the group
+    (:data:`CLASS_WIDE_STAGE_FLAG`), so a second material the flip never
+    named turns plastic with it, and its new element enters plastic with
+    no ``Elastic2Plastic()``: on stock openseespy 3.7.1 that element gives,
+    bit for bit, the answer of a new carrier of the flipped material
+    itself, off the per-element reference (``tests/opensees/stage/
+    test_stage_routes_final_model.py``).  Only
+    :data:`FIRST_ELEMENT_ONLY_PLASTIC_INIT` groups are counted: the
+    ``updateParameter`` of SAniSandMS, PM4Sand and PM4Silt sets the static
+    and nothing else, so a flip at the activation would leave the new
+    element as it is.
     """
     if not activated_pgs:
         return
@@ -993,24 +1011,30 @@ def _refuse_activation_after_plastic_flip(
         return
     activated = set(activated_pgs)
     carriers = _first_element_only_carriers(model.specs, tags)[0]
+    # A group none of whose elements was live before this stage reached
+    # nothing at the earlier flip: build-time validator V7 refuses that
+    # flip, with its own message.  A carrier a later stage activates
+    # counts as live here, which can only refuse more.  Counted per
+    # group, not per tag: the flag the earlier flip left plastic is the
+    # group's.
+    earlier_live = {
+        group_of_tag[tag] for tag, specs in carriers.items()
+        if any(spec.pg not in activated for spec in specs)
+    }
     for tag, specs in sorted(carriers.items()):
         new = sorted({spec.where for spec in specs if spec.pg in activated})
-        # A material none of whose elements was live before this
-        # stage reached nothing at the earlier flip: build-time
-        # validator V7 refuses that flip, with its own message.  A
-        # carrier a later stage activates counts as live here, which can
-        # only refuse more.
-        earlier_live = any(spec.pg not in activated for spec in specs)
-        if new and earlier_live:
+        group = group_of_tag[tag]
+        if new and group in earlier_live:
             raise BridgeError(
                 f"Stage {name!r}.activate: {', '.join(new)} "
                 f"carries nDMaterial tag {tag}, whose stage flag an "
-                "earlier stage left plastic.  The new element enters "
+                f"earlier stage left plastic ({group} is one flag for "
+                "every material of the class).  The new element enters "
                 "the plastic stage with no Elastic2Plastic() of its "
-                "own, so its back-stress is never re-seated (issue "
-                "#2445).  Flip the whole group again in this stage "
-                "(the flip runs after the activation and reaches it), "
-                "or activate the element before the flip."
+                "own, so its back-stress is never re-seated (issues "
+                "#2445, #2534).  Flip the whole group again in this "
+                "stage (the flip runs after the activation and reaches "
+                "it), or activate the element before the flip."
             )
 
 
@@ -1200,6 +1224,10 @@ class _StageBuilder:
                 "dt=) — every stage must declare its analyze loop."
             )
         self._check_chain_against_run()
+        for prec in self._update_parameter_records:
+            # An element spec registered after the call is checked here;
+            # a class already warned about is not warned about again.
+            self._check_parameter_name(prec, stacklevel=3)
         self._check_stage_routes()
         record = StageRecord(
             name=self._name,
@@ -1273,6 +1301,55 @@ class _StageBuilder:
             activations=[
                 *(stage.activated_pgs for stage in bridge._stage_records),
                 self._activated_pgs])
+
+    def _check_parameter_name(
+        self, rec: UpdateParameterRecord, *, stacklevel: int,
+    ) -> None:
+        """#2377: refuse an ``s.update_parameter`` name that no targeted
+        object takes, by element class
+        (:func:`._parameter_names.check_parameter_name`).
+
+        The targets are the registered element specs whose elements meet
+        the record's ``pg=`` / ``elements=``; a spec registered later is
+        checked again at the stage close.  The stage-flag names have
+        their own route checks (:func:`check_stage_routes`)."""
+        if rec.name in STAGE_FLAG_PARAMETERS:
+            return
+        from .._internal.build.pg_expand import (
+            expand_pg_to_elements,
+            expand_spec_to_elements,
+        )
+
+        bridge = self._bridge
+        specs = [p for p in bridge._primitives if isinstance(p, Element)]
+        if not specs:
+            return
+        if rec.elements is not None:
+            wanted = {int(e) for e in rec.elements}
+        else:
+            assert rec.pg is not None  # update_parameter takes one
+            wanted = {int(e) for e in expand_pg_to_elements(
+                bridge.fem, rec.pg).eids}
+        targets: list[ParameterTarget] = []
+        for spec in specs:
+            if wanted.intersection(
+                    int(e) for e in expand_spec_to_elements(
+                        bridge.fem, spec).eids):
+                mats = tuple(
+                    (type(dep).__name__, bridge.tag_for(dep))
+                    for dep in spec.dependencies()
+                    if isinstance(dep, (NDMaterial, UniaxialMaterial,
+                                        Section)))
+                targets.append(ParameterTarget(
+                    cls=type(spec).__name__, ndm=bridge._ndm,
+                    materials=mats))
+        where = (f"pg {rec.pg!r}" if rec.elements is None
+                 else f"elements {list(rec.elements)!r}")
+        check_parameter_name(
+            f"Stage {self._name!r}: s.update_parameter({rec.name!r}, "
+            f"{rec.value}) on {where}",
+            rec.name, rec.mat_tag, targets, owner=bridge,
+            stacklevel=stacklevel)
 
     def _check_chain_against_run(self) -> None:
         """Stage-close checks that need both ``analysis`` and ``run``.
@@ -2518,9 +2595,13 @@ class _StageBuilder:
         ``OPS_addToParameter``), so a material is unreachable without an
         element that hosts it.
 
-        No registry of known parameter names — the element's /
-        material's own ``setParameter`` is the authority, and a name it
-        does not recognise already errors there.
+        A name that no object takes is lost in OpenSees with only a
+        printed warning, so the name is checked against the targeted
+        element classes (``stage/_parameter_names.py``, #2377): a
+        catalogued class that does not take it, and does not forward it
+        to a catalogued material that does, is refused; an uncatalogued
+        element or material class warns once
+        (:class:`UncataloguedParameterWarning`) and the update emits.
 
         Parameters
         ----------
@@ -2552,7 +2633,10 @@ class _StageBuilder:
             ``"materialState"`` with no ``material=``, or with one whose
             class is not in :data:`MATERIAL_STATE_CLASSES` (no object
             would take it).  The stage close refuses the other stage-flag
-            routes that reach nothing or the wrong material.
+            routes that reach nothing or the wrong material.  Or a
+            catalogued element class it targets takes no ``name``
+            (#2377), here or, for an element registered later, at the
+            stage close.
         """
         if not name:
             raise ValueError(
@@ -2613,6 +2697,7 @@ class _StageBuilder:
             ),
             mat_tag=mat_tag,
         )
+        self._check_parameter_name(record, stacklevel=3)
         self._bridge._declare_record(  # K1-6
             record, "update_parameter", None)
         self._update_parameter_records.append(record)

@@ -289,13 +289,15 @@ def test_build_live_does_not_ask_an_unpinned_or_stock_archive_for_the_fork(
 def _pre_fix_fork_reset(
     mode: "str | None", path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> Path:
-    """The #2444 model (a second ManzariDafalias activated after a plastic
-    flip, on a serial system) archived with the stage-close route checks
-    off, as an archive written before them was."""
+    """An element built after a plastic flip, on a serial system, archived
+    with the stage-close route checks off, as an archive written before
+    them was.  It carries an ElasticIsotropic: the #2444 model (a second
+    ManzariDafalias there) is a route refusal since #2534, while the deck's
+    reset watch counts every element, whatever it carries."""
     from tests.opensees.h5 import test_h5_stage_route_replay as routes
 
     build: Callable[[], apeSees] = lambda: routes._flip_then_activate(
-        own_material=True, mode=mode)
+        elastic=True, mode=mode)
     return routes._write(build, path, monkeypatch, pre_fix=True)
 
 
@@ -322,7 +324,7 @@ def test_the_bridge_deck_carries_the_fork_reset_check(
     deck = tmp_path / f"deck.{target}"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        getattr(routes._flip_then_activate(own_material=True, mode=mode),
+        getattr(routes._flip_then_activate(elastic=True, mode=mode),
                 target)(str(deck))
     _guard_at(deck.read_text(encoding="utf-8").splitlines(), target)
 

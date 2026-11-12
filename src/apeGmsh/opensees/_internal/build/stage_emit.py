@@ -35,6 +35,7 @@ from .ownership import (
 
 if TYPE_CHECKING:
     from ...emitter.base import Emitter
+    from ..._target import BackendInfo
     from apeGmsh.mesh.FEMData import FEMData
     from ..tag_plan import TagPlan
 
@@ -814,45 +815,55 @@ def _refuse_tcl_syntax(who: str, message: str) -> None:
 #: resetting their class-wide stage flag.
 MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 
-#: Fork builds measured for that reset, by exact ``ladrunoBuild()`` sha:
-#: does the build carry :data:`MD_STATIC_FIX_COMMIT`?  Ancestry checked on
-#: the fork (GitHub compare); each row is measured by the live reset test
-#: (``tests/opensees/stage/test_class_wide_stage_flag.py``).  A sha cannot
-#: be ordered, so a build joins only once it is measured, and the deck
-#: guard (:data:`MD_STATIC_RESET_GUARD`) refuses every fork build not
-#: listed ``True``.  A ``FORK_PIN`` bump adds its row (a unit lock fails
-#: otherwise).
-FORK_BUILD_HAS_MD_STATIC_FIX: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261103 (6050d78e1): 43b235bbb is its ancestor
-    # (GitHub compare: ahead 226, behind 0). It is 23d937bc4 plus
-    # 123 commits: the LadrunoConcrete3D tangent, concrete integration,
-    # beam-column, contact and integrator fixes.
-    "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe": True,
-    # ladruno-v20261030b (23d937bc4): 43b235bbb is its ancestor
-    # (GitHub compare: ahead 103, behind 0). It is c9004f48d plus
-    # 6 commits: summed material return codes saturate (Tri31,
-    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
-    "23d937bc4011d1b29230671511531e23f777d78c": True,
-    # ladruno-v20261030 (c9004f48d): 43b235bbb is its ancestor
-    # (GitHub compare: ahead 97, behind 0). It is 6ee6a04fd plus
-    # 5 commits that change only LadrunoConcrete3D.
-    "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
-    # ladruno-v20261029 (6ee6a04fd): 43b235bbb is its ancestor
-    # (GitHub compare: ahead 92, behind 0). It is 3 commits past
-    # 9aadc76cc and changes only the release workflow.
-    "6ee6a04fdc9e8a4699b9c483284151f80b48f701": True,
-    # ladruno-v20261028: 43b235bbb is its ancestor (GitHub
-    # compare: ahead 89, behind 0).
-    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
-    # ladruno-v20261023, which merges the fix: no reset.
-    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
-    # A build one commit past fork wp/209 (0f2e73c2e), on fork branch
-    # build/86893bd: 43b235bbb is its ancestor (GitHub compare: ahead 35,
-    # behind 0).  The live reset test passes on it: no reset.
-    "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
-    # The maintainer's venv build, an ancestor of the fix: resets.
-    "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
-}
+#: The ``ladrunoSchema`` v1 capability that promises that fix
+#: (``kCapabilities`` in the fork's ``SRC/interpreter/LadrunoSchema.h``,
+#: listed at ``FORK_PIN`` ``6050d78e1``).  The fork defines a capability's
+#: absence as "older build, refuse", so a v0 schema, which predates every
+#: name, lacks it.
+MD_STAGE_FLAG_CAPABILITY = "mdStageFlagPreserved"
+
+
+class ForkBuildCapability(NamedTuple):
+    """A behaviour a Ladruno fork build must promise by name before an
+    emitted deck runs on it (#2518).
+
+    Some fixes change no command and no option token, so no
+    :class:`ForkBuildFloor` probe can tell a fixed build from an older
+    one, and a sha cannot be ordered.  ``ladrunoSchema`` v1 lists such
+    behaviours in its ``capabilities``.  The deck asks the running build:
+    one without ``ladrunoBuild`` (stock) runs on; one with it runs only
+    when ``ladrunoSchema`` answers schema v1 whose ``capabilities`` list
+    holds :attr:`capability`.  Every other answer stops the deck with
+    :attr:`message`: no ``ladrunoSchema`` command, a call that fails, a
+    v0 schema, another version, or a list without the name (fail closed,
+    as ``_target`` reads any version but 0 and 1 as unknown).  A
+    command-existence probe would not do: v0 builds register
+    ``ladrunoSchema`` too.  The live route asks the engine it drives the
+    same question (:func:`engine_has_capability`).
+    """
+
+    #: The ``capabilities`` entry the running build must list.
+    capability: str
+    #: The error the deck stops with.
+    message: str
+
+
+def engine_has_capability(
+    guard: ForkBuildCapability, info: "BackendInfo", ops: object,
+) -> bool:
+    """Whether the engine ``ops``, which ``info`` describes, passes
+    ``guard``, as the deck's check would answer on it.
+
+    A readable schema (``info.schema``, v0 or v1) answers by its
+    ``capabilities``: empty for v0.  Without one, only an engine with no
+    ``ladrunoBuild`` command (stock) passes; a fork whose schema is
+    unknown (``schema is None``: no ``ladrunoSchema``, a failing call,
+    another version, a build that answers no sha) is refused, never
+    passed (fail closed).
+    """
+    if info.schema is not None:
+        return guard.capability in info.schema.capabilities
+    return not hasattr(ops, "ladrunoBuild")  # apegmsh-lint: getattr-undefined-ok fork-only OpenSees command, the one fork signal; the deck guard asks the same
 
 
 class ForkBuildAllowlist(NamedTuple):
@@ -881,34 +892,34 @@ class ForkBuildAllowlist(NamedTuple):
 
 
 #: A check an emitted deck runs on the build at its start.
-ForkBuildGuard: TypeAlias = "ForkBuildFloor | ForkBuildAllowlist"
+ForkBuildGuard: TypeAlias = (
+    "ForkBuildFloor | ForkBuildAllowlist | ForkBuildCapability")
 
 
-#: The error :data:`MD_STATIC_RESET_GUARD` stops a deck with.
+#: The error :data:`MD_STATIC_RESET_GUARD` stops a deck with, and the live
+#: route raises: one message on every route.
 MD_STATIC_RESET_MESSAGE = (
-    "apeGmsh: this deck builds an element or material after a stage "
+    "apeGmsh: this model builds an element or material after a stage "
     "flipped the class-wide stage flag ManzariDafalias::mElastFlag of "
     "ManzariDafalias and LadrunoSANISAND, and solves before flipping "
     "it again. A Ladruno fork build without fork commit "
     f"{MD_STATIC_FIX_COMMIT[:9]} resets that flag in the material "
     "constructor, so every one of these materials would go back to "
-    "elastic with no warning (apeGmsh issues #2444, #2516). The "
-    "running OpenSees is a fork build whose ladrunoBuild sha is not "
-    "one measured to carry the fix. Rebuild the Ladruno fork at "
-    "FORK_PIN, flip the whole group again after the activation, or "
-    "activate these elements before the flip."
+    "elastic with no warning (apeGmsh issues #2444, #2518). The "
+    "running OpenSees is a Ladruno fork build whose ladrunoSchema does "
+    f"not report the {MD_STAGE_FLAG_CAPABILITY} capability, so it cannot "
+    "be shown to carry the fix. Rebuild the Ladruno fork at FORK_PIN, "
+    "flip the whole group again after the activation, or activate these "
+    "elements before the flip."
 )
 
 
 #: The guard a deck whose solve could see the ManzariDafalias constructor
-#: reset runs (:meth:`MaterialStageCarriers.solve_fork_guards`).  The one
-#: hook for a fork capability marker of the fix: when the fork
-#: registers one, this becomes a :class:`ForkBuildFloor` on that command
-#: (with its own message) and the sha table goes.
-MD_STATIC_RESET_GUARD = ForkBuildAllowlist(
-    builds=tuple(sorted(
-        sha for sha, fixed in FORK_BUILD_HAS_MD_STATIC_FIX.items() if fixed)),
-    message=MD_STATIC_RESET_MESSAGE)
+#: reset runs (:meth:`MaterialStageCarriers.solve_fork_guards`), and the
+#: question the live route asks the engine it drives
+#: (``LiveOpsEmitter``, :func:`engine_has_capability`).
+MD_STATIC_RESET_GUARD = ForkBuildCapability(
+    capability=MD_STAGE_FLAG_CAPABILITY, message=MD_STATIC_RESET_MESSAGE)
 
 
 #: The Ladruno fork merge that completes fork WP-202, WP-203 and WP-205:
@@ -1399,8 +1410,12 @@ def fork_guard_lines(
     A :class:`ForkBuildFloor` stops the deck when the build lacks its
     probe command; a :class:`ForkBuildAllowlist` when the build has
     ``ladrunoBuild`` and it does not answer a listed sha, or lacks it and
-    the guard is not ``stock_runs``.  Any other object raises.
+    the guard is not ``stock_runs``; a :class:`ForkBuildCapability` when
+    the build has ``ladrunoBuild`` and its ``ladrunoSchema`` is not a v1
+    schema listing the capability.  Any other object raises.
     """
+    if isinstance(guard, ForkBuildCapability):
+        return _capability_lines(guard, dialect)
     if isinstance(guard, ForkBuildFloor):
         message = fork_floor_message(guard)
         if dialect == "tcl":
@@ -1449,7 +1464,55 @@ def fork_guard_lines(
                 f"        raise SystemExit({guard.message!r})"]
     raise BridgeError(
         f"fork_guard_lines: {type(guard).__name__} is not a fork build "
-        "guard (ForkBuildFloor or ForkBuildAllowlist).")
+        "guard (ForkBuildFloor, ForkBuildAllowlist or ForkBuildCapability).")
+
+
+#: A capability name the guards can quote as is: in a Tcl regexp, in a
+#: Python string literal, and as a JSON string without escapes.
+_CAPABILITY_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+
+
+def _capability_lines(
+    guard: ForkBuildCapability, dialect: 'Literal["py", "tcl"]',
+) -> list[str]:
+    """:func:`fork_guard_lines` for a :class:`ForkBuildCapability`.
+
+    Tcl has no JSON parser, so it matches the compact JSON the fork
+    renders: ``"schema_version":1`` (not 10, not 1.0) and the name
+    quoted as one entry of the ``"capabilities":[...]`` list (after the
+    ``[`` or a comma, before a comma or the ``]``).  The py deck parses
+    the answer with ``json.loads`` and checks the same two facts.
+    """
+    _refuse_tcl_syntax("ForkBuildCapability", guard.message)
+    cap = guard.capability
+    if not _CAPABILITY_RE.fullmatch(cap):
+        raise BridgeError(
+            f"ForkBuildCapability: {cap!r} is not a ladrunoSchema "
+            "capability name (a letter, then letters, digits or _).")
+    if dialect == "tcl":
+        return ['if {[info commands ladrunoBuild] ne ""} {',
+                '    if {[info commands ladrunoSchema] eq "" || '
+                "[catch {ladrunoSchema} _apesees_schema] || "
+                r'![regexp {"schema_version"\s*:\s*1([^0-9.eE]|$)} '
+                "$_apesees_schema] || "
+                r'![regexp {"capabilities"\s*:\s*\[(\s*|[^]]*,\s*)"'
+                f'{cap}'
+                r'"\s*[],]} $_apesees_schema]} {',
+                f'        error "{guard.message}"',
+                "    }",
+                "}"]
+    return ["if hasattr(ops, 'ladrunoBuild'):",
+            "    try:",
+            "        import json as _apesees_json",
+            "        _apesees_schema = _apesees_json.loads(ops.ladrunoSchema())",
+            "        _apesees_v = _apesees_schema['schema_version']",
+            "        _apesees_caps = _apesees_schema['capabilities']",
+            "        _apesees_ok = (type(_apesees_v) is int and _apesees_v == 1"
+            f" and type(_apesees_caps) is list and {cap!r} in _apesees_caps)",
+            "    except Exception:",
+            "        _apesees_ok = False",
+            "    if not _apesees_ok:",
+            f"        raise SystemExit({guard.message!r})"]
 
 
 def parse_ops_version(text: object) -> "tuple[int, int, int] | None":
@@ -1535,6 +1598,112 @@ def _carried_material_tag(
     return int(value)
 
 
+class StageFlagResetWatch:
+    """Whether a solve could see the ManzariDafalias constructor reset
+    (#2516), from the calls an emitter makes.
+
+    On a fork build without :data:`MD_STATIC_FIX_COMMIT` the constructor
+    of a ``FORK_RESETS_STAGE_STATIC`` class sets the class-wide stage
+    flag to elastic, and every new element copies its material through
+    it.  So an ``element`` or ``nDMaterial`` made after a user flip left
+    the group at a non-zero stage, with no flip of the group again before
+    the next solve verb, gives that build's answer and no other:
+    :attr:`pending`.  Every element counts, whatever it carries: an
+    element of an unknown grammar could copy the material, so the watch
+    never misses one (fail closed).  A flip of the group after the
+    construction, and before the solve, makes every build agree
+    (``Elastic2Plastic()`` runs on each flip, whatever the flag held).
+
+    The deck emitters keep one in :class:`MaterialStageCarriers` and set
+    :attr:`rank` inside a partition block: the static is per process, so
+    a line inside a block acts on that rank only, and rank ``None`` is a
+    line outside every block, which every rank runs.  ``LiveOpsEmitter``
+    keeps one at rank ``None`` and feeds it only the calls that reach the
+    engine.
+    """
+
+    def __init__(self) -> None:
+        from ...stage._builder import (
+            CLASS_WIDE_STAGE_FLAG,
+            FORK_RESETS_STAGE_STATIC,
+            STAGE_FLAG_PARAMETERS,
+        )
+        #: The partition rank the next calls run on (``None``: every rank).
+        self.rank: int | None = None
+        # The class-wide group of each FORK_RESETS_STAGE_STATIC class; the
+        # stage a user flip left each group at, and the groups a
+        # construction reset since, both keyed by (group, rank).
+        self._reset_classes: dict[str, str] = {
+            cls: CLASS_WIDE_STAGE_FLAG[cls] for cls in FORK_RESETS_STAGE_STATIC}
+        self._flag_params = STAGE_FLAG_PARAMETERS
+        self._reset_group: dict[int, str] = {}
+        self._group_stage: dict[tuple[str, int | None], int] = {}
+        self._reset_pending: set[tuple[str, int | None]] = set()
+
+    @property
+    def pending(self) -> bool:
+        """Whether a construction reset a group on a resetting build and no
+        flip set it again."""
+        return bool(self._reset_pending)
+
+    def note_construction(self) -> None:
+        """An ``element`` or ``nDMaterial``: on a resetting build every
+        group a user flip left non-zero, on the ranks that run the line,
+        is now elastic there."""
+        rank = self.rank
+        for (group, at), stage in self._group_stage.items():
+            if stage != 0 and (rank is None or at is None or at == rank):
+                self._reset_pending.add((group, rank))
+
+    def note_material(self, mat_type: str, tag: int) -> None:
+        """``nDMaterial mat_type tag ...``: a construction, and the tag's
+        group from now on."""
+        self.note_construction()
+        if mat_type in self._reset_classes:
+            self._reset_group[int(tag)] = self._reset_classes[mat_type]
+        else:
+            self._reset_group.pop(int(tag), None)
+
+    def _set_group_stage(self, group: str, stage: int) -> None:
+        """A flip of ``group`` to ``stage``: it sets the flag on the ranks
+        that run the line.  A flip on every rank heals every pending
+        reset of the group; a flip on one rank heals only that rank's,
+        never one every rank owes (fail closed)."""
+        rank = self.rank
+        if rank is None:
+            for key in [k for k in self._group_stage if k[0] == group]:
+                del self._group_stage[key]
+            self._reset_pending = {
+                k for k in self._reset_pending if k[0] != group}
+        else:
+            self._reset_pending.discard((group, rank))
+        self._group_stage[(group, rank)] = int(stage)
+
+    def note_flip(self, mat_tag: int, stage: int) -> None:
+        """A user flip of ``mat_tag`` to ``stage`` (``updateMaterialStage``
+        or a stage-flag ``updateParameter``): it sets its group's flag on
+        every build."""
+        group = self._reset_group.get(int(mat_tag))
+        if group is not None:
+            self._set_group_stage(group, int(stage))
+
+    def note_parameter(
+        self, args: "Sequence[int | float | str]", value: float,
+    ) -> None:
+        """An ``updateParameter`` on ``args``: a stage-flag name sets the
+        flag of the material it names.  One with no material tag reaches
+        every material of its elements, so it may set any group's flag
+        and heals none."""
+        if not args or args[0] not in self._flag_params:
+            return
+        if len(args) > 1:
+            self.note_flip(int(args[1]), int(value))
+            return
+        if int(value) != 0:
+            for group in set(self._reset_group.values()):
+                self._group_stage[(group, self.rank)] = int(value)
+
+
 class MaterialStageCarriers:
     """Which emitted elements carry each swept material (#2445).
 
@@ -1581,22 +1750,11 @@ class MaterialStageCarriers:
     (#2504).  The check is derived from the calls, like the lines it
     guards, so ``model_hash`` does not see it.
 
-    And it watches for the ManzariDafalias constructor reset (#2516).
-    On a fork build without :data:`MD_STATIC_FIX_COMMIT` the constructor
-    of a ``FORK_RESETS_STAGE_STATIC`` class sets the class-wide stage
-    flag to elastic, and every new element copies its material through
-    it.  So an ``element`` or ``nDMaterial`` emitted after a user flip
-    left the group at a non-zero stage, with no flip of the group again
-    before the next solve verb, gives that build's answer and no other.
-    :meth:`solve_fork_guards` then names :data:`MD_STATIC_RESET_GUARD`.
-    Every element counts, whatever it carries: an element of an
-    unknown grammar could copy the material, so the watch never misses
-    one (fail closed), and a staged deck builds its sections and
-    materials before its first stage block.  A flip of the group after
-    the construction, and before the solve, makes every build agree
-    (``Elastic2Plastic()`` runs on each flip, whatever the flag held).
-    The flag is per process, so the watch keeps each partition rank
-    apart: a flip inside one rank's block heals that rank only.
+    And it watches for the ManzariDafalias constructor reset
+    (:class:`StageFlagResetWatch`, #2516): :meth:`solve_fork_guards`
+    names :data:`MD_STATIC_RESET_GUARD` when a solve could see it.  The
+    flag is per process, so the watch keeps each partition rank apart: a
+    flip inside one rank's block heals that rank only.
     """
 
     def __init__(self) -> None:
@@ -1609,88 +1767,32 @@ class MaterialStageCarriers:
         self._rank: int | None = None
         # element tag -> its MATERIAL_STATE_FORK_FLOOR floor.
         self._floors: dict[int, ForkBuildFloor] = {}
-        from ...stage._builder import (
-            CLASS_WIDE_STAGE_FLAG,
-            FORK_RESETS_STAGE_STATIC,
-            STAGE_FLAG_PARAMETERS,
-        )
-        # The constructor-reset watch: the class-wide group of each
-        # FORK_RESETS_STAGE_STATIC class; the stage a user flip left each
-        # group at, and the groups a construction reset since, both keyed
-        # by (group, rank).  The static is per process, so a line inside
-        # a partition block acts on that rank only; rank None is a line
-        # outside every block, which every rank runs.
-        self._reset_classes: dict[str, str] = {
-            cls: CLASS_WIDE_STAGE_FLAG[cls] for cls in FORK_RESETS_STAGE_STATIC}
-        self._flag_params = STAGE_FLAG_PARAMETERS
-        self._reset_group: dict[int, str] = {}
-        self._group_stage: dict[tuple[str, int | None], int] = {}
-        self._reset_pending: set[tuple[str, int | None]] = set()
-
-    def _note_construction(self) -> None:
-        """An ``element`` or ``nDMaterial``: on a resetting build every
-        group a user flip left non-zero, on the ranks that run the line,
-        is now elastic there."""
-        rank = self._rank
-        for (group, at), stage in self._group_stage.items():
-            if stage != 0 and (rank is None or at is None or at == rank):
-                self._reset_pending.add((group, rank))
-
-    def _set_group_stage(self, group: str, stage: int) -> None:
-        """A flip of ``group`` to ``stage``: it sets the flag on the ranks
-        that run the line.  A flip on every rank heals every pending
-        reset of the group; a flip on one rank heals only that rank's,
-        never one every rank owes (fail closed)."""
-        rank = self._rank
-        if rank is None:
-            for key in [k for k in self._group_stage if k[0] == group]:
-                del self._group_stage[key]
-            self._reset_pending = {
-                k for k in self._reset_pending if k[0] != group}
-        else:
-            self._reset_pending.discard((group, rank))
-        self._group_stage[(group, rank)] = int(stage)
+        self._reset = StageFlagResetWatch()
 
     def note_flip(self, mat_tag: int, stage: int) -> None:
-        """A user flip of ``mat_tag`` to ``stage`` (``updateMaterialStage``
-        or a stage-flag ``updateParameter``): it sets its group's flag on
-        every build."""
-        group = self._reset_group.get(int(mat_tag))
-        if group is not None:
-            self._set_group_stage(group, int(stage))
+        """A user flip of ``mat_tag`` to ``stage``
+        (:meth:`StageFlagResetWatch.note_flip`)."""
+        self._reset.note_flip(mat_tag, stage)
 
     def note_parameter(
         self, args: "Sequence[int | float | str]", value: float,
     ) -> None:
-        """An ``updateParameter`` on ``args``: a stage-flag name sets the
-        flag of the material it names.  One with no material tag reaches
-        every material of its elements, so it may set any group's flag
-        and heals none."""
-        if not args or args[0] not in self._flag_params:
-            return
-        if len(args) > 1:
-            self.note_flip(int(args[1]), int(value))
-            return
-        if int(value) != 0:
-            for group in set(self._reset_group.values()):
-                self._group_stage[(group, self._rank)] = int(value)
+        """An ``updateParameter`` on ``args``
+        (:meth:`StageFlagResetWatch.note_parameter`)."""
+        self._reset.note_parameter(args, value)
 
     def solve_fork_guards(self) -> tuple[ForkBuildGuard, ...]:
         """The guards a solve verb needs: :data:`MD_STATIC_RESET_GUARD`
         once a construction reset a group on a resetting build and no
         flip set it again."""
-        return (MD_STATIC_RESET_GUARD,) if self._reset_pending else ()
+        return (MD_STATIC_RESET_GUARD,) if self._reset.pending else ()
 
     def note_material(
         self, mat_type: str, tag: int,
         params: "Sequence[int | float | str]" = (),
     ) -> None:
         tag = int(tag)
-        self._note_construction()
-        if mat_type in self._reset_classes:
-            self._reset_group[tag] = self._reset_classes[mat_type]
-        else:
-            self._reset_group.pop(tag, None)
+        self._reset.note_material(mat_type, tag)
         self._wraps.pop(tag, None)
         if mat_type in SWEPT_MATERIAL_CLASSES:
             self._swept.add(tag)
@@ -1721,7 +1823,7 @@ class MaterialStageCarriers:
     def note_element(
         self, token: str, tag: int, argv: "Sequence[int | float | str]",
     ) -> None:
-        self._note_construction()
+        self._reset.note_construction()
         floor = MATERIAL_STATE_FORK_FLOOR.get(token)
         if floor is not None:
             self._floors[int(tag)] = floor
@@ -1740,9 +1842,11 @@ class MaterialStageCarriers:
 
     def partition_open(self, rank: int) -> None:
         self._rank = int(rank)
+        self._reset.rank = int(rank)
 
     def partition_close(self) -> None:
         self._rank = None
+        self._reset.rank = None
 
     def _carriers_of(self, mat_tag: int) -> tuple[int, ...]:
         by_rank = self._carriers.get(int(mat_tag), {})

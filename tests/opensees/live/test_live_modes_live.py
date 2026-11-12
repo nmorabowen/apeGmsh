@@ -18,7 +18,14 @@ Oracles, read back from the ``.ladruno`` through ``Results.from_ladruno``:
   2-D cantilever and ``-fullGenLapack`` on the live domain otherwise;
 * every node's every written slot equals the live ``nodeEigenvector`` of
   that node and mode at rtol 1e-12 (raw, unscaled); a rotation is written
-  where a beam touches the node, 0.0 at a brick node.
+  where a beam touches the node, and a brick node has none.
+
+Rotations at nodes other classes touch (#2407 / #2414): a beam node tied
+into a brick by ``ASDEmbeddedNodeElement -rot``, a cantilever with a
+``mixedBeamColumn``, and one cantilever per rotation-only beam class of the
+census (``_ROTATION_TOKEN_FOR_LIVE_CLASS``) each read the live rotations,
+with no warning; a class the tables do not know at a beam node refuses by
+node, slot and class (ruling R6 = (A)).
 
 Refusals on the live domain: a deck node off its FEM coordinates, a FEM
 node the deck never built, a non-positive eigenvalue (a negative
@@ -266,6 +273,324 @@ def test_solid_and_frame_modes_equal_the_live_vectors(opspy: Any, tmp_path: Path
     v = np.array([ops.nodeEigenvector(n, 1) for n in range(5, 9)])
     assert np.abs(v).max() > 0.0
     np.testing.assert_allclose(lam, _full_lapack(ops, 4), rtol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# #2407 / #2414: rotations at nodes a raw deck's other classes touch
+# ---------------------------------------------------------------------------
+
+
+def _rotations_move(ops: Any, nodes: "tuple[int, ...]", n: int, ndm: int) -> None:
+    """The live rotations at ``nodes`` are not all zero, so a file that
+    wrote 0.0 there could not pass :func:`_check_file`."""
+    first = 2 if ndm == 2 else 3
+    v = np.array([ops.nodeEigenvector(nid, k)[first:]
+                  for nid in nodes for k in range(1, n + 1)])
+    assert np.abs(v).max() > 0.0
+
+
+def test_an_embedded_beam_node_reads_its_live_rotations(opspy: Any, tmp_path: Path) -> None:
+    """#2407: a brick plus a 3-D ``elasticBeamColumn``, with beam node 9
+    tied into the brick by ``ASDEmbeddedNodeElement ... -rot``. Node 9's
+    rotations are the live ``nodeEigenvector`` (they were 0.0, with a
+    ``RotationSlotUnresolvedWarning``), as nodes 10 and 11 are."""
+    ops = opspy
+    cube = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+            [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+    col = [[0.2, 0.2, 0.2], [0.2, 0.2, 1.5], [0.2, 0.2, 2.5]]
+    xyz = np.array(cube + col, dtype=float)
+    fem = _fem(xyz, {5: ("Hexahedron 8", 3, [list(range(1, 9))], [1]),
+                     1: ("Line 2", 1, [[9, 10], [10, 11]], [2, 3])}, "live_modes_embedded")
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for n in range(1, 9):
+        ops.node(n, *[float(v) for v in xyz[n - 1]])
+    for n in (1, 2, 3, 4):
+        ops.fix(n, 1, 1, 1)
+    for n in range(5, 9):
+        ops.mass(n, M, M, M)
+    ops.nDMaterial("ElasticIsotropic", 1, 2.0e8, 0.25)
+    ops.element("stdBrick", 1, *range(1, 9), 1)
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for n in (9, 10, 11):
+        ops.node(n, *[float(v) for v in xyz[n - 1]])
+    ops.geomTransf("Linear", 1, 1.0, 0.0, 0.0)
+    for eid, (i, j) in ((2, (9, 10)), (3, (10, 11))):
+        ops.element("elasticBeamColumn", eid, i, j, A, E, G, J, I_Y, I_Z, 1)
+    # Node 9 lies in the tetrahedron of brick corners 1, 2, 4, 5.
+    ops.element("ASDEmbeddedNodeElement", 4, 9, 1, 2, 4, 5, "-rot")
+    for n in (10, 11):
+        ops.mass(n, M, M, M, JM, JM, JM)
+    assert ops.eleType(4) == "ASDEmbeddedNodeElement"
+    p, archive, spy = _capture(fem, ops, 3, tmp_path)
+    _check_file(p, archive, spy, ops, 3, rotation_nodes={9, 10, 11}, ndm=3)
+    _rotations_move(ops, (9,), 3, ndm=3)
+
+
+def test_a_mixed_beam_cantilever_reads_its_live_rotations(opspy: Any, tmp_path: Path) -> None:
+    """#2414: a stock 3-D cantilever, ``elasticBeamColumn`` 1-2 plus
+    ``mixedBeamColumn`` 2-3 (``MixedBeamColumn3d``). Nodes 2 and 3 read
+    the live rotations in every mode (they were 0.0)."""
+    ops = opspy
+    xyz = np.array([[0, 0, 0], [1.5, 0, 0], [3.0, 0, 0]], dtype=float)
+    fem = _fem(xyz, {1: ("Line 2", 1, [[1, 2], [2, 3]], [1, 2])}, "live_modes_mixed_beam")
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for n, c in enumerate(xyz, start=1):
+        ops.node(n, *[float(v) for v in c])
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    ops.section("Elastic", 1, E, A, I_Z, I_Y, G, J)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    ops.element("elasticBeamColumn", 1, 1, 2, A, E, G, J, I_Y, I_Z, 1)
+    ops.element("mixedBeamColumn", 2, 2, 3, 1, 1)
+    for n in (2, 3):
+        ops.mass(n, M, M, M, JM, JM, JM)
+    assert ops.eleType(2) == "MixedBeamColumn3d"
+    p, archive, spy = _capture(fem, ops, 6, tmp_path)
+    _check_file(p, archive, spy, ops, 6, rotation_nodes={1, 2, 3}, ndm=3)
+    _rotations_move(ops, (2, 3), 6, ndm=3)
+
+
+#: Each rotation-only class of ``_ROTATION_TOKEN_FOR_LIVE_CLASS``: its
+#: ``ndm`` and the stock ``element`` command (after the tag and nodes)
+#: that makes it, over section 1, integration 1 and transformation 1.
+ROTATION_ONLY: "dict[str, tuple[int, tuple[Any, ...]]]" = {
+    "MixedBeamColumn2d": (2, ("mixedBeamColumn", 1, 1)),
+    "MixedBeamColumn3d": (3, ("mixedBeamColumn", 1, 1)),
+    "ForceBeamColumnCBDI3d": (3, ("forceBeamColumnCBDI", 1, 1)),
+    "ElasticForceBeamColumn2d": (2, ("elasticForceBeamColumn", 1, 1)),
+    "ElasticForceBeamColumn3d": (3, ("elasticForceBeamColumn", 1, 1)),
+    "ForceBeamColumn2dThermal": (2, ("forceBeamColumnThermal", 1, 1)),
+    "ForceBeamColumn3dThermal": (3, ("forceBeamColumnThermal", 1, 1)),
+    "DispBeamColumnNL2d": (2, ("dispBeamColumnNL", 1, 1)),
+    "DispBeamColumnNL3d": (3, ("dispBeamColumnNL", 1, 1)),
+    "DispBeamColumn2dThermal": (2, ("dispBeamColumnThermal", 1, 1)),
+    "DispBeamColumn3dThermal": (3, ("dispBeamColumnThermal", 1, 1)),
+    "TimoshenkoBeamColumn2d": (2, ("timoshenkoBeamColumn", 1, 1)),
+    "TimoshenkoBeamColumn3d": (3, ("timoshenkoBeamColumn", 1, 1)),
+    # Built on a FiberAsym section (shear centre off the centroid), as the
+    # Asym elements require: on a plain Elastic section stock prints
+    # "Matrix::operator*: incompatible sizes" or "ProfileSPD aii<0".
+    "MixedBeamColumnAsym3d": (3, ("mixedBeamColumnAsym", 1, 1)),
+    "DispBeamColumnAsym3d": (3, ("dispBeamColumnAsym", 1, 1)),
+    # K11, K33, K44 = 4, 4, 2 about both axes: the unmodified rows.
+    "ModElasticBeam3d": (3, ("ModElasticBeam3d", A, E, G, J, I_Y, I_Z,
+                             4.0, 4.0, 2.0, 4.0, 4.0, 2.0, 1)),
+}
+
+
+#: The classes whose section 1 is the FiberAsym section their docs require.
+_ASYM = frozenset({"MixedBeamColumnAsym3d", "DispBeamColumnAsym3d"})
+#: What stock prints when an element misbehaves on its section.
+_ELEMENT_FAULT = re.compile(r"incompatible sizes|aii\s*<\s*0|failed|error", re.I)
+
+
+def _fiber_asym_section() -> "tuple[Any, ...]":
+    """An L-shaped steel fibre section (two 0.1 x 0.05 legs), shear centre
+    at (0.01, 0.02), with GJ: section 1 of an Asym beam."""
+    return (("section", "FiberAsym", 1, 0.01, 0.02, "-GJ", G * J),
+            ("patch", "rect", 1, 4, 2, -0.05, -0.05, 0.05, 0.0),
+            ("patch", "rect", 1, 2, 4, -0.05, 0.0, 0.0, 0.05))
+
+
+def test_the_rotation_only_oracles_cover_the_table() -> None:
+    from apeGmsh.opensees._recorder_translate import _ROTATION_TOKEN_FOR_LIVE_CLASS
+
+    assert set(ROTATION_ONLY) == set(_ROTATION_TOKEN_FOR_LIVE_CLASS)
+
+
+@pytest.mark.parametrize("cls", list(ROTATION_ONLY))
+def test_a_rotation_only_beam_class_reads_its_live_rotations(
+    cls: str, opspy: Any, tmp_path: Path, capfd: Any,
+) -> None:
+    """#2414 census: a two-element stock cantilever of ``cls`` along x is
+    that ``eleType`` with the FEM's node order, and every node reads the
+    live rotations. Dropping the class's row makes the capture refuse.
+    The element must behave: stock prints no fault while it is built and
+    solved, and the capture refuses a non-positive eigenvalue."""
+    ndm, command = ROTATION_ONLY[cls]
+    ops = opspy
+    xyz = np.array([[0.0] * ndm, [1.5] + [0.0] * (ndm - 1), [3.0] + [0.0] * (ndm - 1)])
+    fem = _fem(xyz, {1: ("Line 2", 1, [[1, 2], [2, 3]], [1, 2])}, f"live_modes_{cls}")
+    ops.model("basic", "-ndm", ndm, "-ndf", 3 if ndm == 2 else 6)
+    for n, c in enumerate(xyz, start=1):
+        ops.node(n, *[float(v) for v in c])
+    if ndm == 2:
+        ops.fix(1, 1, 1, 1)
+        ops.geomTransf("Linear", 1)
+        ops.section("Elastic", 1, E, A, I_Z)
+    else:
+        ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        if cls in _ASYM:
+            ops.uniaxialMaterial("Elastic", 1, E)
+            for name, *args in _fiber_asym_section():
+                getattr(ops, name)(*args)
+        else:
+            ops.section("Elastic", 1, E, A, I_Z, I_Y, G, J)
+    ops.beamIntegration("Lobatto", 1, 1, 3)
+    for eid in (1, 2):
+        ops.element(command[0], eid, eid, eid + 1, *command[1:])
+    for n in (2, 3):
+        ops.mass(n, *((M, M, JM) if ndm == 2 else (M, M, M, JM, JM, JM)))
+    assert [ops.eleType(e) for e in (1, 2)] == [cls, cls]
+    assert [list(ops.eleNodes(e)) for e in (1, 2)] == [[1, 2], [2, 3]]
+    n_modes = 2 if ndm == 2 else 4
+    p, archive, spy = _capture(fem, ops, n_modes, tmp_path)
+    _check_file(p, archive, spy, ops, n_modes, rotation_nodes={1, 2, 3}, ndm=ndm)
+    _rotations_move(ops, (2, 3), n_modes, ndm=ndm)
+    out, err = capfd.readouterr()
+    assert not _ELEMENT_FAULT.search(out + err), out + err
+
+
+def test_an_unknown_class_at_a_beam_node_refuses_by_name(opspy: Any, tmp_path: Path) -> None:
+    """Ruling R6 = (A): a class the tables do not know
+    (``ElastomericBearingPlasticity2d``) touching beam node 3 leaves its
+    rotation slot unsettled, so the capture refuses by node, slot and
+    class and writes nothing, where it wrote 0.0 over the live rotation."""
+    ops = opspy
+    xy = np.array([[0.0, 0.0], [1.5, 0.0], [3.0, 0.0]])
+    _cantilever_2d(ops, xy)
+    ops.node(4, 3.0, -0.2)                # the bearing's far end, not FEM
+    ops.fix(4, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1.0e6)
+    ops.element("elastomericBearingPlasticity", 3, 3, 4, 1.0e6, 1.0e3, 0.05,
+                0.0, 1.0, "-P", 1, "-Mz", 1)
+    assert ops.eleType(3) == "ElastomericBearingPlasticity2d"
+    out = tmp_path / "modes.ladruno"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match=(
+                r"capture_live_modes: node 3's rotation slots \['rotation_z'\] "
+                r"cannot be settled: a ElastomericBearingPlasticity2d touches "
+                r"it.*\(1 node\(s\): \[3\]\)\. Nothing was written")):
+            capture_live_modes(_line_fem(xy), 2, out, ops=ops)
+    assert not out.exists()
+    assert abs(ops.nodeEigenvector(3, 1)[2]) > 0.0     # a real rotation there
+
+
+def _beams_and_truss_tail(ops: Any) -> FEMData:
+    """Review F1: a 3-D, ndf 6 cantilever (beams 1-2, 2-3) with a ``Truss``
+    2-4; node 4's rotation slots are touched by no rotational class."""
+    xyz = np.array([[0, 0, 0], [1.5, 0, 0], [3.0, 0, 0], [1.5, 1.0, 0]], dtype=float)
+    fem = _fem(xyz, {1: ("Line 2", 1, [[1, 2], [2, 3], [2, 4]], [1, 2, 3])},
+               "live_modes_truss_tail")
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for n, c in enumerate(xyz, start=1):
+        ops.node(n, *[float(v) for v in c])
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    for eid, (i, j) in ((1, (1, 2)), (2, (2, 3))):
+        ops.element("elasticBeamColumn", eid, i, j, A, E, G, J, I_Y, I_Z, 1)
+    ops.uniaxialMaterial("Elastic", 1, E)
+    ops.element("Truss", 3, 2, 4, A, 1)
+    for n in (2, 3):
+        ops.mass(n, M, M, M, JM, JM, JM)
+    return fem
+
+
+def test_a_fixed_rotation_slot_reads_its_zero(opspy: Any, tmp_path: Path) -> None:
+    """Review F1: node 4 is fixed in all six DOFs, so its rotations are 0
+    in every mode whatever the slot means. The capture writes that 0.0
+    (the live value) instead of refusing, and nodes 1-3 read theirs."""
+    ops = opspy
+    fem = _beams_and_truss_tail(ops)
+    ops.fix(4, 1, 1, 1, 1, 1, 1)
+    assert {4, 5, 6} <= {int(d) for d in ops.getFixedDOFs(4)}
+    p, archive, spy = _capture(fem, ops, 4, tmp_path)
+    _check_file(p, archive, spy, ops, 4, rotation_nodes={1, 2, 3, 4}, ndm=3)
+    assert all(ops.nodeEigenvector(4, k)[3:] == [0.0, 0.0, 0.0] for k in range(1, 5))
+
+
+@pytest.mark.parametrize("tie", ["equalDOF", "rigidLink"])
+def test_a_tied_rotation_slot_still_refuses(tie: str, opspy: Any, tmp_path: Path) -> None:
+    """Review F1: a slot an ``equalDOF`` or ``rigidLink`` ties to beam node 3
+    is not fixed, and moves with it, so it stays unsettled and refuses."""
+    ops = opspy
+    fem = _beams_and_truss_tail(ops)
+    if tie == "equalDOF":
+        ops.fix(4, 1, 1, 1, 0, 0, 0)
+        ops.equalDOF(3, 4, 4, 5, 6)
+    else:
+        ops.rigidLink("beam", 3, 4)
+    ops.constraints("Transformation")
+    out = tmp_path / "modes.ladruno"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match=(
+                r"capture_live_modes: node 4's rotation slots \['rotation_x', "
+                r"'rotation_y', 'rotation_z'\] cannot be settled: no "
+                r"beam-column or shell")):
+            capture_live_modes(fem, 4, out, ops=ops)
+    assert not out.exists()
+    assert np.abs(np.array([ops.nodeEigenvector(4, k)[3:] for k in range(1, 5)])).max() > 0.0
+
+
+def _bearing_tail(ops: Any) -> FEMData:
+    """Delta review F1: a 2-D cantilever 1-2-3, a beam 3-5 and an
+    ``elastomericBearingPlasticity`` 5-4 with node 4 fixed. Node 5 is in
+    the live domain only; node 4 is a FEM node whose rz the unknown
+    bearing class alone touches."""
+    xy = np.array([[0.0, 0.0], [1.5, 0.0], [3.0, 0.0], [3.0, -0.7]])
+    fem = _fem(xy, {1: ("Line 2", 1, [[1, 2], [2, 3]], [1, 2])}, "live_modes_bearing")
+    _cantilever_2d(ops, xy[:3])
+    ops.node(5, 3.0, -0.5)
+    ops.node(4, 3.0, -0.7)
+    ops.element("elasticBeamColumn", 4, 3, 5, A, E, I_Z, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1.0e6)
+    ops.element("elastomericBearingPlasticity", 3, 5, 4, 1.0e6, 1.0e3, 0.05,
+                0.0, 1.0, "-P", 1, "-Mz", 1)
+    ops.fix(4, 1, 1, 1)
+    return fem
+
+
+def _refuses_node_4_rz(fem: FEMData, ops: Any, tmp: Path) -> None:
+    out = tmp / "modes.ladruno"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match=(
+                r"capture_live_modes: node 4's rotation slots \['rotation_z'\] "
+                r"cannot be settled: a ElastomericBearingPlasticity2d touches it")):
+            capture_live_modes(fem, 2, out, ops=ops, solver="-fullGenLapack")
+    assert not out.exists()
+
+
+def test_a_fixed_slot_with_no_equation_reads_its_zero(opspy: Any, tmp_path: Path) -> None:
+    """The bearing tail with no handler: node 4 is fixed and numbered -1,
+    so its rz is 0 in every mode, and the capture writes it."""
+    ops = opspy
+    fem = _bearing_tail(ops)
+    p, archive, spy = _capture(fem, ops, 2, tmp_path)
+    assert list(ops.nodeDOFs(4)) == [-1, -1, -1]
+    _check_file(p, archive, spy, ops, 2, rotation_nodes={1, 2, 3, 4}, ndm=2)
+
+
+def test_a_fixed_slot_under_penalty_refuses(opspy: Any, tmp_path: Path) -> None:
+    """Delta review F1: under ``constraints Penalty`` a fixed DOF keeps an
+    equation (``nodeDOFs`` is no -1) and moves in the modes: node 4's live
+    rz is not 0, so the capture refuses it rather than writing 0.0."""
+    ops = opspy
+    fem = _bearing_tail(ops)
+    ops.constraints("Penalty", 1.0e8, 1.0e8)
+    _refuses_node_4_rz(fem, ops, tmp_path)
+    assert -1 not in list(ops.nodeDOFs(4))
+    assert abs(ops.nodeEigenvector(4, 1)[2]) > 0.0
+
+
+def test_a_fixed_slot_under_lagrange_refuses(opspy: Any, tmp_path: Path) -> None:
+    """Delta review F1: ``constraints Lagrange`` also keeps an equation
+    (a multiplier) at a fixed DOF, so the slot is not settled by the fix
+    and refuses."""
+    from apeGmsh.opensees.emitter.live import get_backend_info
+
+    if get_backend_info().kind == "stock":
+        pytest.skip("stock openseespy 3.7.1 exits the process in eigen under "
+                    "constraints Lagrange (DOF_Group::setNodeAccel: 0 Node "
+                    "Pointer); the fake-ops case covers it there")
+    ops = opspy
+    fem = _bearing_tail(ops)
+    ops.constraints("Lagrange")
+    _refuses_node_4_rz(fem, ops, tmp_path)
+    assert -1 not in list(ops.nodeDOFs(4))
 
 
 # ---------------------------------------------------------------------------

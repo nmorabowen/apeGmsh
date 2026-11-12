@@ -32,6 +32,7 @@ import type { SpecShot, SpecVariant, ViewSpec } from "../spec/spec.ts";
 import { applyClip, shownView } from "../spec/snapshot.ts";
 import type { OnScreen } from "../spec/verdict.ts";
 import type { BlobStore } from "../state/blobs.ts";
+import { autoDeformScale } from "../state/deform.ts";
 import { combinationFieldsOf, contourView, deformView, userResultPickOf, variantRowOf } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { State, VariantsIn } from "../state/types.ts";
@@ -146,6 +147,23 @@ async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+/**
+ * G3 (VA6c, #2765): the auto scale of the step on screen (state/deform.ts
+ * `autoDeformScale`, Python's `_auto_deform_scale`), from the displacement
+ * rows the effects read for it and every model node; or the reason it cannot
+ * be computed. Called once the view is on screen, so the displacement on hand
+ * must be the step's: anything else refuses, never a stale step's scale.
+ */
+export function autoScaleOf(s: State, effects: Effects, blobs: BlobStore): { ok: true; scale: number } | { ok: false; reason: string } {
+  const v = deformView(s);
+  if (v.state !== "ready" && v.state !== "partial") return { ok: false, reason: `the auto deform scale needs the deformed shape drawn, and it is ${v.state}` };
+  const disp = effects.currentDisplacement();
+  if (disp?.key !== v.keys.disp || !disp.nodal) return { ok: false, reason: "the auto deform scale needs the displacement of the step shown, and it is not read" };
+  const nodes = s.mesh?.nodes;
+  if (!nodes) return { ok: false, reason: "the auto deform scale needs every model node's position, and the model's nodes are not read" };
+  return { ok: true, scale: autoDeformScale(disp.nodal.rows, blobs.get(nodes.xyz)) };
+}
+
 async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: SetDescription): Promise<ShotResult> {
   const { store, viewport, bridge, layout, blobs, effects } = deps;
   const t0 = performance.now();
@@ -175,8 +193,23 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
     return refuse(`the app refused the view: ${err instanceof Error ? err.message : String(err)}`);
   }
   // D9: layers are presentation; the view (and so any refusal) is decided before they are applied.
-  const why = await shownView({ store, onScreen: (st) => onScreenOf(st, viewport, effects), sleep, now: () => performance.now() }, shot, plan);
+  const shown = { store, onScreen: (st: State) => onScreenOf(st, viewport, effects), sleep, now: () => performance.now() };
+  const why = await shownView(shown, shot, plan);
   if (why !== null) return refuse(why);
+  // G3 (VA6c, #2765): a deform with no scale is drawn at the auto scale of its step. That needs the step's
+  // displacement, so the view is first waited for at the base view's scale (shownView settles a shape the
+  // app answers `unavailable` while a stage's node ids load), then redrawn at the auto scale and waited for again.
+  if (plan.deform !== null && plan.deform.scale === null) {
+    const auto = autoScaleOf(store.get(), effects, blobs);
+    if (!auto.ok) return refuse(auto.reason);
+    try {
+      store.dispatch({ type: "setDeformScale", scale: auto.scale });
+    } catch (err) {
+      return refuse(`the app refused the auto deform scale ${auto.scale}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const again = await shownView(shown, shot, plan);
+    if (again !== null) return refuse(again);
+  }
   const shownMs = performance.now() - t0;
   store.dispatch({ type: "setCamera", to: "home" });
   store.dispatch({ type: "setCamera", to: plan.camera });

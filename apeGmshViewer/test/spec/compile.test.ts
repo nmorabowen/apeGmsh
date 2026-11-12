@@ -124,6 +124,13 @@ test("the four ADR 0094 views (mesh, contour, deformed, reactions) compile into 
   assert.deepEqual([s.visibility.colourBy, s.deform.on, s.deform.scale, s.deform.ghost], ["group", true, 10, false]);
   s = apply(plan(shotOf({ stage: 1, step: "first", deform: { scale: 10, ghost: true } }), d));
   assert.deepEqual([s.deform.on, s.deform.scale, s.deform.ghost], [true, 10, true]);
+  // G3 (VA6c, #2765): a scale left out is the auto scale, never 1 taken as asked: the plan says so (scale null) and sets no
+  // scale of its own, so the view stays at the base view's 1 (not the shot before's 10) until the render mode dispatches it.
+  const auto = plan(shotOf({ stage: 1, step: "first", deform: {} }), d);
+  assert.deepEqual(auto.deform, { scale: null, ghost: false });
+  assert.deepEqual(auto.events.filter((e) => e.type === "setDeformScale"), [{ type: "setDeformScale", scale: 1 }], "only the base view's scale");
+  s = apply(auto);
+  assert.deepEqual([s.deform.on, s.deform.scale, s.deform.ghost], [true, 1, false]);
   // reactions: the reaction magnitude, a fixed range, another colormap; the deformed shape is off again (each shot starts from the base view).
   s = apply(plan(shotOf({ stage: "unprop", step: 2, contour: { field: "reaction_force", component: "magnitude", range: { min: 0, max: 50 }, cmap: "viridis" } }), d));
   assert.deepEqual([s.contour.field, s.contour.component, s.contour.range, s.contour.fixed, s.contour.cmap, s.deform.on], ["reaction_force", MAGNITUDE, "fixed", { min: 0, max: 50 }, "viridis", false]);

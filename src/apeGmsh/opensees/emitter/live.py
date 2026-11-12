@@ -37,9 +37,12 @@ from .._internal.build.stage_emit import (
     BEAM3D_PARTIAL_LOAD_MESSAGE,
     FORCE_BEAM_PARTIAL_LOAD_GUARD,
     FORCE_BEAM_PARTIAL_LOAD_MESSAGE,
+    MD_STATIC_RESET_GUARD,
     MEMBRANE_WP208_MESSAGE,
     Beam3dPartialLoadTargets,
+    StageFlagResetWatch,
     SweptMaterialReach,
+    engine_has_capability,
     fork_build_has_beam3d_partial_load,
     fork_build_has_force_beam_partial_load,
     stock_version_has_force_beam_partial_load,
@@ -303,50 +306,215 @@ def captured_engine_output(*, echo: bool) -> Iterator[EngineOutput]:
 
 
 #: The line a Ladruno build prints when it knows a class but not one of its
-#: options. At ladruno-v20261023 (bdb69cea5) these read
-#: ``WARNING LadrunoIMKBeam (2D) -- unknown option '-shear'``,
-#: ``WARNING LadrunoDispBeamColumn2d: unknown option '-foo'`` (also ``3d``,
-#: and ``LadrunoForceBeamColumn2d`` / ``3d``), and
-#: ``ERROR LadrunoUP 5 -- unknown flag '-foo' (unknown flags are fatal ...)``.
-_UNKNOWN_OPTION = re.compile(r"unknown (?:option|flag) '([^']+)'")
+#: options. At FORK_PIN ladruno-v20261103 (6050d78e1), with ``<x>`` the
+#: option and ``<t>`` the element tag:
+#:
+#: * ``WARNING LadrunoIMKBeam -- unknown option '<x>'`` (``(2D)`` in 2-D),
+#:   ``WARNING LadrunoDispBeamColumn2d: unknown option '<x>'`` (also ``3d``,
+#:   and ``LadrunoForceBeamColumn2d`` / ``3d``), ``WARNING element
+#:   LadrunoMembrane <t>: unknown option '<x>'``, ``WARNING
+#:   LadrunoKinematicCoupling: unknown option '<x>'`` (and
+#:   ``LadrunoDistributingCoupling``, ``LadrunoEmbeddedNode``,
+#:   ``LadrunoEmbeddedRebar``, ``LadrunoRigidBody``) and ``ERROR LadrunoUP
+#:   <t> -- unknown flag '<x>' (unknown flags are fatal ...)``: the call
+#:   fails;
+#: * ``WARNING unknown option '<x>' for BezierTri6 <t>`` (and
+#:   ``BezierTet10``, ``LadrunoBrick``, ``LadrunoBrick20``) and ``WARNING
+#:   LadrunoQuad -- ignoring unknown option <x>`` (unquoted; also
+#:   ``LadrunoCST``, ``LadrunoLST``): the build **creates the element
+#:   without the option**, so the gate reads the output on success
+#:   too.
+#: The unquoted form runs to the end of the line: a number where the parser
+#: reads a string prints as ``ignoring unknown option Invalid String Input!``
+#: (seen on a fork build for a stray ``0.2``).
+_UNKNOWN_OPTION = re.compile(
+    r"unknown (?:option|flag) '([^']+)'|ignoring unknown option (.+?)\s*$")
+
+#: The line a Ladruno build prints when it knows an option but not the value
+#: given to it; the call fails. At FORK_PIN: ``WARNING unknown -formulation
+#: '<v>' for LadrunoBrick <t> (...)`` (also ``-hourglass``, ``-geom``;
+#: ``LadrunoBrick20``; ``-fbar`` / ``-geom`` for ``BezierTet10``),
+#: ``WARNING LadrunoQuad -- unknown -formulation <v>`` (unquoted; also
+#: ``-type`` / ``-geom``, and ``LadrunoCST`` / ``LadrunoLST``), ``WARNING
+#: LadrunoKinematicCoupling: unknown -enforce '<v>' (...)`` (also
+#: ``-alUpdate``; ``-enforce`` for the other coupling and embedded
+#: classes), ``ERROR LadrunoUP <t> -- unknown -formulation '<v>' (...)``
+#: (also ``-pOrder`` / ``-geom``), ``WARNING element LadrunoMembrane <t>:
+#: unknown -method '<v>' (...)``, and ``WARNING LadrunoForceBeamColumn3d:
+#: unknown -Integration type '<v>'`` (``invalid ... type`` in 2-D). An
+#: ``invalid -<opt> ...`` line without ``type`` is a malformed number, not a
+#: rejected value, and is not read.
+_UNKNOWN_VALUE = re.compile(
+    r"\b(?:unknown (-\w+)(?: type)?|invalid (-\w+) type) "
+    r"(?:'([^']*)'|([^\s']+))")
 
 
-def _rejected_option(ele_type: str, text: str) -> "tuple[str, str] | None":
-    """``(option, line)`` when the build printed that ``ele_type`` rejects an
-    option; ``None`` otherwise (no such line, or nothing readable). The
-    class may print its name with a ``2d`` / ``3d`` suffix
-    (``LadrunoDispBeamColumn2d``); any other suffix is another class."""
+#: The word a Ladruno build prints when it parsed a known option and then
+#: dropped it, because it does not apply with the other options given. At
+#: FORK_PIN: ``WARNING LadrunoBrick <t>: -damp is only supported with
+#: -formulation std|bbar; ignoring the damping object ...``
+#: (``OPS_LadrunoBrick.cpp:272``, and ``-bulkViscosity`` at ``:286`` /
+#: ``:293``), ``WARNING LadrunoQuad <t> -- -bulkViscosity is not applied with
+#: -geom finite; ignoring it`` (also ``LadrunoCST`` / ``LadrunoLST``), the
+#: negative ``-bulkViscosity`` clamp ``...; ignoring (b1=0)``, ``WARNING
+#: BezierTri6 <t> - '-bbar' is not valid for PlaneStress ...; ignoring
+#: -bbar``, ``WARNING LadrunoKinematicCoupling: -bipenalty ignored with
+#: -enforce al ...`` (and the other coupling and embedded classes), and
+#: ``-alUpdate has no effect without -enforce al ...; ignored``. The element
+#: is built without the option. The option named is the line's first flag.
+_IGNORED = re.compile(r"\bignor(?:e|ed|es|ing)\b")
+_FLAG = re.compile(r"(?<![\w-])(-[A-Za-z]\w*)")
+
+_RejectionKind = Literal["unknown", "value", "ignored"]
+
+
+class _Rejection(NamedTuple):
+    """What a build printed about one of ``ele_type``'s options: the
+    ``option``, the rejected ``value`` (``None`` unless ``kind`` is
+    ``"value"``), the printed ``line``, and the ``kind``: an option the
+    build does not know, a value it does not know, or a known option it
+    ignored."""
+
+    option: str
+    value: "str | None"
+    line: str
+    kind: _RejectionKind
+
+
+def _class_lines(ele_type: str, text: str) -> "Iterator[str]":
+    """The lines of ``text`` that name ``ele_type``. The class may print its
+    name with a ``2d`` / ``3d`` suffix (``LadrunoDispBeamColumn2d``); any
+    other suffix is another class."""
+    name = re.compile(rf"\b{re.escape(ele_type)}(?:2d|3d)?\b")
     for line in text.splitlines():
-        if re.search(rf"\b{re.escape(ele_type)}(?:2d|3d)?\b", line):
-            m = _UNKNOWN_OPTION.search(line)
-            if m:
-                return m.group(1), line.strip()
+        if name.search(line):
+            yield line.strip()
+
+
+def _rejected_option(ele_type: str, text: str) -> "_Rejection | None":
+    """The first line in which the build says ``ele_type`` rejects an option
+    or an option's value; ``None`` otherwise (no such line, or nothing
+    readable)."""
+    for line in _class_lines(ele_type, text):
+        m = _UNKNOWN_OPTION.search(line)
+        if m:
+            return _Rejection(m.group(1) or m.group(2), None, line, "unknown")
+        v = _UNKNOWN_VALUE.search(line)
+        if v:
+            return _Rejection(v.group(1) or v.group(2),
+                              v.group(3) if v.group(3) is not None else v.group(4),
+                              line, "value")
+    return None
+
+
+def _ignored_option(ele_type: str, text: str) -> "_Rejection | None":
+    """The first line in which the build says it ignored one of
+    ``ele_type``'s options (:data:`_IGNORED`); ``None`` otherwise. Read only
+    when the call succeeded."""
+    for line in _class_lines(ele_type, text):
+        if _IGNORED.search(line):
+            flag = _FLAG.search(line)
+            if flag:
+                return _Rejection(flag.group(1), None, line, "ignored")
     return None
 
 
 def _fork_signature(
     ele_type: str, args: "tuple[int | float | str, ...]",
 ) -> str:
-    """The fork gate's verification key: the type name followed by the
-    sorted ``-option`` flags the call carries (``"LadrunoIMKBeam -shear"``),
-    or the bare type name for a call without options. A build can know a
-    class but reject one of its options, so a type verified without
-    ``-shear`` is not verified with it (#2498)."""
-    flags = sorted({
-        a for a in args
-        if isinstance(a, str) and a[:1] == "-" and a[1:2].isalpha()
-    })
-    return " ".join([ele_type, *flags])
+    """The fork gate's verification key: the shape of the call, the type
+    name followed by every argument in place, a string as itself, a
+    negative number as ``-#`` and any other value as ``#``
+    (``"LadrunoQuad # # # # # -thick #"``).
+
+    A build can know a class but reject, or build without, one of its
+    options, and whether it does depends on more than the flags: a stray
+    positional token (a stock-style thickness ``0.2``, ``"PlaneStress"``)
+    or a flag's string value (``-enforce al`` against ``penalty``) changes
+    what the parser prints. So a call is verified only by an earlier call
+    of the same shape. A number's sign is part of the shape, because a
+    parser may clamp a negative value and say so (``-bulkViscosity b1 < 0;
+    ignoring (b1=0)``); its magnitude is not, so a mesh of one element kind
+    is read once.
+    """
+    return " ".join([ele_type, *(_shape_token(a) for a in args)])
 
 
-def _fork_option_rejected(ele_type: str, option: str, line: str) -> str:
+def _shape_token(arg: object) -> str:
+    """One argument's place in :func:`_fork_signature`."""
+    if isinstance(arg, str):
+        return arg
+    try:
+        negative = float(arg) < 0  # type: ignore[arg-type]
+    except (TypeError, ValueError):  # not a number: shaped like one anyway
+        return "#"
+    return "-#" if negative else "#"
+
+
+def _fork_option_rejected(
+    ele_type: str, rejected: _Rejection, build: "str | None", *,
+    created: bool, removed: "bool | None" = None,
+) -> str:
+    """The refusal of a rejected or ignored option (or option value) of
+    ``ele_type``.
+
+    ``created`` is False when the build failed the call or created no
+    element, and True when it went on without the option, which is refused
+    too: the model would otherwise run without what the user asked for and
+    nothing would say so. ``removed`` says whether that element was then
+    taken out of the domain again (``None``: not attempted).
+    """
+    opt, value, line, kind = rejected
+    which = f"Ladruno build {build}" if build else "unstamped build"
+    if kind == "ignored":
+        head = f"option {opt} was ignored by this build"
+        known = f"parsed {opt} for {ele_type} and then dropped it"
+        why = ("so the option does not apply with the other options given. "
+               "Drop it, or change the options it depends on")
+    else:
+        if kind == "value":
+            head = (f"value {value!r} of option {opt} is not supported by "
+                    f"this build")
+            known = (f"knows {ele_type} and its {opt} option but rejected "
+                     f"{value!r}")
+            why = "so the value is newer than this OpenSees build or misspelt"
+        else:
+            head = f"option {opt} is not supported by this build"
+            known = f"knows {ele_type} but rejected {opt!r}"
+            why = "so the option is newer than this OpenSees build or misspelt"
+        why += (". Run on a Ladruno build that carries it (compare "
+                "ops.ladrunoBuild() with the release that added it), or drop "
+                "it")
+    if created:
+        known += (", then created the element WITHOUT it; apeGmsh refuses "
+                  "rather than run a model that silently dropped it")
+        if removed is True:
+            known += " (the element was removed from the domain again)"
+        elif removed is False:
+            known += (" (the element could NOT be removed and is still in "
+                      "the domain: wipe before building again)")
     return (
-        f"element {ele_type}: option {option} is not supported by this build. "
-        f"The live build knows {ele_type} but rejected {option!r} "
-        f"(it printed: {line!r}), so the option is newer than this OpenSees "
-        f"build. Run on a Ladruno build that carries it (compare "
-        f"ops.ladrunoBuild() with the release that added it), or drop the "
-        f"option. Deck emission (ops.tcl(...) / ops.py(...)) is unaffected."
+        f"element {ele_type}: {head}. The live build ({which}) {known} "
+        f"(it printed: {line!r}), {why}. Deck emission (ops.tcl(...) / "
+        f"ops.py(...)) is unaffected."
+    )
+
+
+def _fork_call_failed(ele_type: str, tag: int) -> str:
+    return (
+        f"element {ele_type} {tag}: the live build knows {ele_type} (an "
+        f"earlier call built one) but failed this call. Its own lines above "
+        f"say why; check the arguments against the build's {ele_type} "
+        f"command."
+    )
+
+
+def _fork_tag_taken(ele_type: str, tag: int) -> str:
+    return (
+        f"element {ele_type} {tag}: the live build failed the call and an "
+        f"element with tag {tag} is already in the domain, so the tag is "
+        f"taken, not the element type unknown. Use a free tag, or wipe the "
+        f"domain before building again."
     )
 
 
@@ -1002,8 +1170,8 @@ class LiveOpsEmitter:
         # the first success wave the second element through the verification,
         # and openseespy would fail on it with a cryptic error instead of the
         # curated fork-required message. Each type is verified once per
-        # option set (the key is :func:`_fork_signature`: the bare type name
-        # for a call without ``-options``), then O(1).
+        # call shape (the key is :func:`_fork_signature`: the strings in
+        # place, every number as ``#``), then O(1).
         self._fork_verified_types: set[str] = set()
         # ADR 0057 Phase A: live harvest of strategy-ladder escalations —
         # one ``(label, increment, rung_index, rung_args)`` per escalation
@@ -1231,6 +1399,8 @@ class LiveOpsEmitter:
                 raise RuntimeError(refusal)
         self._stage_zero_ledger().material(mat_type, tag)
         self._swept_reach().note_material(mat_type, tag, params)
+        if self._reaches_engine():
+            self._md_reset_watch().note_material(mat_type, tag)
         self._ops.nDMaterial(mat_type, tag, *params)
 
     def section(
@@ -1302,13 +1472,16 @@ class LiveOpsEmitter:
         # element instead of letting it fail later with a cryptic openseespy
         # error. Skipped while a non-zero partition block is open (the
         # ``_NoOpOps`` stand-in has no real domain to probe) and once THIS
-        # element TYPE with THESE options has been verified (per-type, not a
-        # single flag — a build that knows one fork element but not another
-        # must still be gated on the second; per option set — a build that
-        # knows the type but not ``-shear`` must still be gated on it).
+        # element TYPE with THIS call shape has been verified (per-type, not
+        # a single flag — a build that knows one fork element but not another
+        # must still be gated on the second; per call shape — a build that
+        # knows the type but not ``-shear``, or builds it without a stray
+        # token, must still be gated on it).
         self._stage_zero_ledger().owed = True
         self._swept_reach().note_element(tag, args)
         self._beam3d_load_targets().note_element(ele_type, tag)
+        if self._reaches_engine():
+            self._md_reset_watch().note_construction()
         if is_membrane_wp208(ele_type, args) and not (
                 fork_build_has_membrane_wp208(self._backend().build)):
             raise RuntimeError(MEMBRANE_WP208_MESSAGE)
@@ -1339,35 +1512,87 @@ class LiveOpsEmitter:
         the live build rejects it (by raising) or silently drops it (no
         element created — stock openseespy warns and returns).
 
-        The call runs once per type and option set (``key``, from
+        The call runs once per call shape (``key``, from
         :func:`_fork_signature`) under :func:`captured_engine_output`
         (echoed, so the user still sees the build's lines). When the build
-        printed that it knows the element but not one of its options, the
-        error names that option instead of claiming the element is unknown
-        (#2498)."""
+        printed that it knows the element but not one of its options, or
+        not the value given to one, the error names it instead of claiming
+        the element is unknown (#2498). Those lines, and a line saying a
+        known option was ignored (:data:`_IGNORED`), are read on success
+        too: several classes print them and still create the element without
+        the option, which is refused, and the element is removed from the
+        domain again when the build lists it.
+
+        A class that prints nothing for an unknown option cannot be caught
+        here. At FORK_PIN every gated class prints; LadrunoDispBeamColumn
+        started to (and to fail the call) at fork 34df942c7 (WP-200), and
+        a build before it drops the option in silence. No known-options
+        table restates the fork's parsers here: it would drift from them."""
         try:
             with captured_engine_output(echo=True) as printed:
                 self._ops.element(ele_type, tag, *args)
         except Exception as e:
             rejected = _rejected_option(ele_type, printed.text)
             if rejected is not None:
-                raise RuntimeError(_fork_option_rejected(ele_type, *rejected)) from e
+                raise RuntimeError(self._option_refusal(
+                    ele_type, rejected, created=False)) from e
+            # A taken tag is the cause only on a fork build: a stock build
+            # fails a fork class whatever its tag, so the fork-required
+            # message stands there.
+            if (self._backend().kind == "fork"
+                    and tag in (self._ele_tags() or ())):
+                raise RuntimeError(_fork_tag_taken(ele_type, tag)) from e
+            if ele_type in self._fork_verified_types:
+                raise RuntimeError(_fork_call_failed(ele_type, tag)) from e
             raise RuntimeError(_fork_element_required(ele_type)) from e
+        # A build without getEleTags: the call did not raise, so trust that
+        # it created the element (unless it said otherwise).
+        tags = self._ele_tags()
+        created = tags is None or tag in tags
+        rejected = (_rejected_option(ele_type, printed.text)
+                    or _ignored_option(ele_type, printed.text))
+        if rejected is not None:
+            removed = None
+            if created and tags is not None:
+                removed = self._remove_element(tag)
+            raise RuntimeError(self._option_refusal(
+                ele_type, rejected, created=created, removed=removed))
+        if not created:
+            raise RuntimeError(_fork_element_required(ele_type))
+        # The verified call shape, and the bare type name: the build knows
+        # the class, so a later failing call of another shape is not "needs
+        # the fork".
+        self._fork_verified_types.update((key, ele_type))
+
+    def _ele_tags(self) -> "list[int] | None":
+        """The live domain's element tags, or ``None`` when the build cannot
+        list them (no ``getEleTags``, or it fails)."""
         try:
             tags = self._ops.getEleTags()
-        except Exception:
-            # Build lacks getEleTags — don't false-positive; the element
-            # call did not raise, so trust it.
-            self._fork_verified_types.add(key)
-            return
+        except Exception:  # no getEleTags on this build: unknown, not empty
+            return None
         if isinstance(tags, int):  # some builds return a bare int for 1 elem
-            tags = [tags]
-        if tag not in (tags or []):
-            rejected = _rejected_option(ele_type, printed.text)
-            if rejected is not None:
-                raise RuntimeError(_fork_option_rejected(ele_type, *rejected))
-            raise RuntimeError(_fork_element_required(ele_type))
-        self._fork_verified_types.add(key)
+            return [tags]
+        return list(tags or [])
+
+    def _remove_element(self, tag: int) -> bool:
+        """Remove element ``tag`` the build created without an option it was
+        given; True iff the domain no longer lists it afterwards."""
+        try:
+            self._ops.remove("element", tag)
+        except Exception:  # best effort: the refusal says it is still there
+            return False
+        tags = self._ele_tags()
+        return tags is not None and tag not in tags
+
+    def _option_refusal(
+        self, ele_type: str, rejected: _Rejection, *, created: bool,
+        removed: "bool | None" = None,
+    ) -> str:
+        """:func:`_fork_option_rejected` for the build this emitter drives."""
+        return _fork_option_rejected(
+            ele_type, rejected, self._backend().build, created=created,
+            removed=removed)
 
     def _stock_build_gate(self, message: str) -> None:
         """Raise ``message`` when the bound backend is not the Ladruno fork.
@@ -2217,6 +2442,8 @@ class LiveOpsEmitter:
                 "its own material."
             )
         self._stage_zero_ledger().user_flip(mat_tag)
+        if self._reaches_engine():
+            self._md_reset_watch().note_flip(mat_tag, stage)
         self._ops.updateMaterialStage(
             "-material", int(mat_tag), "-stage", int(stage),
         )
@@ -2226,6 +2453,38 @@ class LiveOpsEmitter:
     _stage0: "StageZeroLedger | None" = None
     _reach: "SweptMaterialReach | None" = None
     _beam3d_targets: "Beam3dPartialLoadTargets | None" = None
+    _md_reset: "StageFlagResetWatch | None" = None
+
+    def _md_reset_watch(self) -> StageFlagResetWatch:
+        """The ManzariDafalias constructor-reset watch (#2516, #2518): fed
+        only the calls that reach the engine (:meth:`_reaches_engine`), at
+        rank ``None``, since this emitter drives one process."""
+        if self._md_reset is None:
+            self._md_reset = StageFlagResetWatch()
+        return self._md_reset
+
+    def _reaches_engine(self) -> bool:
+        """Whether ``self._ops`` calls run on the engine: not inside a
+        non-zero partition block, where :class:`_NoOpOps` swallows them."""
+        return not isinstance(self._ops, _NoOpOps)
+
+    def _refuse_md_static_reset(self) -> None:
+        """Raise :data:`MD_STATIC_RESET_GUARD`'s message before a solve that
+        could see the ManzariDafalias constructor reset, unless the engine
+        this emitter drives promises the fix (:func:`engine_has_capability`:
+        stock, or a fork whose ``ladrunoSchema`` lists
+        ``mdStageFlagPreserved``).  The deck route asks the running build
+        the same question at its start (#2518)."""
+        if self._md_reset is None or not self._md_reset.pending:
+            return
+        ops = self._real_ops if self._in_partition else self._ops
+        module = ops.module if isinstance(ops, _CoercingOps) else ops
+        if engine_has_capability(
+                MD_STATIC_RESET_GUARD, self._backend(), module):
+            return
+        from .._internal.build.errors import BridgeError
+
+        raise BridgeError(MD_STATIC_RESET_GUARD.message)
 
     def _beam3d_load_targets(self) -> Beam3dPartialLoadTargets:
         if self._beam3d_targets is None:
@@ -2246,7 +2505,10 @@ class LiveOpsEmitter:
         """Issue the owed fresh-stage calls of the class-wide groups
         (:class:`~apeGmsh.opensees._internal.build.stage_validate.
         StageZeroLedger`): at a solve verb, and at the end of
-        ``apeSees.run()``, whose caller drives the solve."""
+        ``apeSees.run()``, whose caller drives the solve.  First refuse a
+        solve the fork's constructor reset would change
+        (:meth:`_refuse_md_static_reset`), as a deck checks at that verb."""
+        self._refuse_md_static_reset()
         for tag, stage in self._stage_zero_ledger().due():
             self._ops.updateMaterialStage("-material", tag, "-stage", stage)
 
@@ -2274,6 +2536,8 @@ class LiveOpsEmitter:
         value: float,
     ) -> None:
         self._stage_zero_ledger().parameter(args)
+        if self._reaches_engine():
+            self._md_reset_watch().note_parameter(args, value)
         self._ops.parameter(int(pid))
         for et in ele_tags:
             self._ops.addToParameter(int(pid), "element", int(et), *args)

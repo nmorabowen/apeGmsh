@@ -36,6 +36,7 @@ export interface ShotPlan {
   clip: SpecClip[];
   /** the drawn contour, as the store names it; null when the shot draws none. VU16: `user` is a user result (`field` its name) */
   contour: { field: string; component: string; label: string; source: "nodal" | "element" | "user" } | null;
+  /** the shot's deformed shape; `scale` null is G3's auto scale, which the render mode dispatches once the step's displacement is read */
   deform: SpecDeform | null;
   /** applied after the view is drawn: a fit frames what is drawn (the deformed shape, an isolated group) */
   camera: CameraRequest;
@@ -241,7 +242,11 @@ export function compileShot(shot: SpecShot, d: SetDescription, combinationFields
     events.push({ type: "setDifference", on: true });
   }
   if (shot.deform) {
-    events.push({ type: "setDeform", on: true }, { type: "setDeformScale", scale: shot.deform.scale }, { type: "setReferenceGhost", on: shot.deform.ghost });
+    events.push({ type: "setDeform", on: true });
+    // G3 (VA6c, #2765): a scale left out stays at the base view's 1 here; the auto scale needs the step's
+    // displacement, so the render mode dispatches it once that is read (`plan.deform.scale` null says so).
+    if (shot.deform.scale !== null) events.push({ type: "setDeformScale", scale: shot.deform.scale });
+    events.push({ type: "setReferenceGhost", on: shot.deform.ghost });
   }
   if (shot.isolate.length) {
     const known = new Set(d.groups.map((g) => g.path));

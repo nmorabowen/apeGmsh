@@ -1,5 +1,5 @@
-"""#2516: a deck the fork's ManzariDafalias constructor reset would change
-checks the running build first.
+"""#2516, #2518: a deck the fork's ManzariDafalias constructor reset would
+change checks the running build first.
 
 On a Ladruno fork build without commit ``43b235bbb`` (fork PR #1005) the
 constructor of ``ManzariDafalias`` and ``LadrunoSANISAND`` sets their
@@ -10,12 +10,14 @@ silently runs every material of the group elastic on such a build.  Stock
 OpenSees keeps the flag (``test_live_reset_happens_exactly_where_the_table_says``
 on ``live-stock``), as does ``FORK_PIN``.
 
-No command marks the fix, so the deck asks for ``ladrunoBuild``: a build
-without it (stock) runs on, and a build with it runs only when its sha is
-one :data:`FORK_BUILD_HAS_MD_STATIC_FIX` measured to carry the fix.  Every
-other fork build, an unmeasured newer one included, stops by name.  The
-stage close no longer refuses the pattern: a staged model runs only as a
-deck, so the deck is where the build is known.
+No command marks the fix, but ``ladrunoSchema`` v1 (fork PR #1017) lists
+it as the ``mdStageFlagPreserved`` capability.  So the deck asks: a build
+without ``ladrunoBuild`` (stock) runs on, and a build with it runs only
+when ``ladrunoSchema`` answers a v1 schema whose ``capabilities`` hold the
+name (#2518; #2516 matched an allowlist of measured shas instead).  A v0
+schema, no ``ladrunoSchema``, or any other answer stops it by name.  The
+stage close does not refuse the pattern: the build is known only where
+the model runs.
 
 The Tcl guard is evaluated in ``tkinter.Tcl`` and the py guard with
 ``exec`` against stub engines, on every lane.  The live cases run the
@@ -38,8 +40,9 @@ from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build import stage_emit
 from apeGmsh.opensees._internal.build.errors import BridgeError
 from apeGmsh.opensees._internal.build.stage_emit import (
-    FORK_BUILD_HAS_MD_STATIC_FIX,
     MD_STATIC_RESET_GUARD,
+    MD_STATIC_RESET_MESSAGE,
+    ForkBuildCapability,
     fork_guard_lines,
 )
 from apeGmsh.opensees._target import OpenSeesTarget
@@ -69,6 +72,56 @@ _PY_GUARD = fork_guard_lines(MD_STATIC_RESET_GUARD, "py")
 #: The fork build measured to reset (the maintainer's venv build).
 _STALE_FORK = "79e0623670c61c768357a01dff1477a4a0ef7e06"
 
+#: The capability the guard asks for.
+_CAP = "mdStageFlagPreserved"
+
+
+def schema_json(
+    version: int = 1, caps: "tuple[str, ...] | None" = (_CAP,),
+    build: str = "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe", *,
+    indent: "int | None" = None,
+) -> str:
+    """A ``ladrunoSchema()`` answer as the fork renders it: one JSON
+    object, keys sorted, compact (``caps=None``: no ``capabilities`` key,
+    the v0 shape)."""
+    import json
+
+    obj: dict[str, Any] = {
+        "build": build, "commands": ["ladrunoBuild", "ladrunoSchema"],
+        "engine": "dl", "options": {"x": {"-y": {"nargs": 1,
+                                                "since": "PR-1"}}},
+        "schema_version": version}
+    if caps is not None:
+        obj["capabilities"] = list(caps)
+    return json.dumps(obj, sort_keys=True, indent=indent,
+                      separators=None if indent else (",", ":"))
+
+
+#: ``ladrunoSchema`` answers of a fork build (one with ``ladrunoBuild``),
+#: and whether the guard lets the deck run on.  Stock (no
+#: ``ladrunoBuild``) and a fork with no ``ladrunoSchema`` are cases of
+#: their own.
+SCHEMA_CASES: "dict[str, tuple[str, bool]]" = {
+    "v1 lists it": (schema_json(), True),
+    "v1 lists it, indented": (schema_json(indent=2), True),
+    "v1 lists it among others": (
+        schema_json(caps=("aaa", _CAP, "zzz")), True),
+    "v1 lists it last": (schema_json(caps=("aaa", _CAP)), True),
+    "v1 empty list": (schema_json(caps=()), False),
+    "v1 a longer name": (schema_json(caps=(_CAP + "X",)), False),
+    "v1 a prefixed name": (schema_json(caps=("X" + _CAP,)), False),
+    "v0": (schema_json(version=0, caps=None), False),
+    "v2 lists it": (schema_json(version=2), False),
+    "v10 lists it": (schema_json(version=10), False),
+    # A JSON true is not the integer 1, and a string is not the list.
+    "version true": (schema_json().replace(
+        '"schema_version":1', '"schema_version":true'), False),
+    "capabilities a string": (schema_json().replace(
+        f'["{_CAP}"]', f'"{_CAP}"'), False),
+    "not JSON": ("not json", False),
+    "empty": ("", False),
+}
+
 
 def _pin_sha() -> str:
     for line in (_ROOT / "FORK_PIN").read_text(encoding="utf-8").splitlines():
@@ -92,11 +145,17 @@ def _chain(ops: apeSees) -> "dict[str, Any]":
 def _bridge(
     cls: str = "ManzariDafalias", mode: "str | None" = None, *,
     first: int = 1, reflip: bool = False, activate_first: bool = False,
+    fill: str = "own",
 ) -> apeSees:
-    """``Rock`` (material a) is global; ``Fill`` (material b, one class)
-    is activated by stage ``install``.  Stage ``plastic`` flips the group
-    to ``first`` (the materials live then); with ``activate_first`` it
-    runs after ``install``."""
+    """``Rock`` (material a) is global; ``Fill`` is activated by stage
+    ``install``.  Stage ``plastic`` flips the group to ``first`` (the
+    materials live then); with ``activate_first`` it runs after
+    ``install``.  ``fill="own"``: Fill carries material b, of the same
+    class.  ``fill="elastic"``: it carries an ElasticIsotropic.  A carrier
+    of the group activated after a plastic flip, with no flip of the group
+    in its stage, is refused at stage close (#2445, #2534), so a guarded
+    deck builds an element of another material there: the deck's watch
+    counts every element, whatever it carries (fail closed)."""
     target = None if mode is None else OpenSeesTarget(mode=mode)  # type: ignore[arg-type]
     ops = apeSees(build_two_quad_fem(), default_orientation=None,
                   opensees=target)
@@ -104,9 +163,12 @@ def _bridge(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         mats = [getattr(ops.nDMaterial, cls)(name=n, **_KW[cls])
-                for n in ("a", "b")]
+                for n in ("a", "b")[:2 if fill == "own" else 1]]
+        carried = (mats[1] if fill == "own" else
+                   ops.nDMaterial.ElasticIsotropic(name="fill", E=1e5,
+                                                   nu=0.3))
     ops.element.FourNodeQuad(pg="Rock", thickness=1.0, material=mats[0])
-    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mats[1])
+    ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=carried)
     ops.fix(pg="Base", dofs=(1, 1))
 
     def plastic() -> None:
@@ -158,32 +220,41 @@ def _guards(lines: "list[str]") -> int:
 
 
 # ---------------------------------------------------------------------------
-# The known-fixed list
+# The guard asks for the capability, not for a sha
 # ---------------------------------------------------------------------------
 
 
-def test_the_guard_accepts_exactly_the_measured_fixed_builds() -> None:
-    fixed = {sha for sha, ok in FORK_BUILD_HAS_MD_STATIC_FIX.items() if ok}
-    assert set(MD_STATIC_RESET_GUARD.builds) == fixed
-    assert _pin_sha() in fixed, "FORK_PIN carries the fix; measure a bump"
-    assert _STALE_FORK not in fixed
-    assert all(len(sha) == 40 for sha in MD_STATIC_RESET_GUARD.builds)
+def test_the_guard_asks_for_the_capability() -> None:
+    assert MD_STATIC_RESET_GUARD == ForkBuildCapability(
+        capability=_CAP, message=MD_STATIC_RESET_MESSAGE)
+    for lines in (_TCL_GUARD, _PY_GUARD):
+        text = "\n".join(lines)
+        assert "ladrunoSchema" in text and _CAP in text
+        assert _pin_sha() not in text and _STALE_FORK not in text
 
 
 def test_the_message_names_the_flag_and_the_fix() -> None:
     for name in ("ManzariDafalias::mElastFlag", "LadrunoSANISAND",
-                 "43b235bbb", "#2444", "ladrunoBuild", "FORK_PIN"):
+                 "43b235bbb", "#2444", "ladrunoSchema", _CAP, "FORK_PIN"):
         assert name in _MESSAGE, name
 
 
-def test_a_malformed_allowlist_raises_at_emit() -> None:
+def test_a_malformed_guard_raises_at_emit() -> None:
     bad_sha = stage_emit.ForkBuildAllowlist(builds=("bdb69cea5",),
                                            message="m")
-    bad_msg = stage_emit.ForkBuildAllowlist(
-        builds=MD_STATIC_RESET_GUARD.builds, message="m [x]")
-    for guard, match in ((bad_sha, "40-hex"), (bad_msg, "Tcl syntax")):
-        with pytest.raises(BridgeError, match=match):
-            fork_guard_lines(guard, "py")
+    bad_msg = stage_emit.ForkBuildAllowlist(builds=(_STALE_FORK,),
+                                           message="m [x]")
+    cases: "list[tuple[Any, str]]" = [
+        (bad_sha, "40-hex"), (bad_msg, "Tcl syntax"),
+        (ForkBuildCapability(capability=_CAP, message="m $x"),
+         "Tcl syntax")]
+    for name in ("md stage", 'md"x', "md]", "1md", ""):
+        cases.append((ForkBuildCapability(capability=name, message="m"),
+                      "capability name"))
+    for guard, match in cases:
+        for dialect in ("py", "tcl"):
+            with pytest.raises(BridgeError, match=match):
+                fork_guard_lines(guard, dialect)  # type: ignore[arg-type]
 
 
 def test_an_unknown_guard_kind_raises() -> None:
@@ -201,44 +272,73 @@ def _tcl_interp() -> Any:
     return tkinter, tkinter.Tcl()
 
 
+def tcl_guard_passes(tkinter: Any, guard: str, schema: "str | None", *,
+                     build: str = "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe",
+                     raises: bool = False) -> bool:
+    """Run the Tcl ``guard`` in a fresh interpreter whose stub fork answers
+    ``ladrunoBuild`` with ``build`` and ``ladrunoSchema`` with ``schema``
+    (``None``: no such command; ``raises``: the command errors).  True
+    when it runs on; a stop must carry the message."""
+    tcl = tkinter.Tcl()
+    tcl.eval(f"proc ladrunoBuild {{}} {{ return {{{build}}} }}")
+    if raises:
+        tcl.eval("proc ladrunoSchema {} { error boom }")
+    elif schema is not None:
+        tcl.eval(f"proc ladrunoSchema {{}} {{ return {{{schema}}} }}")
+    try:
+        tcl.eval(guard)
+    except tkinter.TclError as err:
+        assert str(err) == _MESSAGE
+        return False
+    return True
+
+
+def py_guard_passes(code: Any, schema: "str | None", *,
+                    raises: bool = False) -> bool:
+    """:func:`tcl_guard_passes` for the compiled py guard ``code``."""
+    def boom() -> str:
+        raise RuntimeError("boom")
+
+    attrs: dict[str, Any] = {"ladrunoBuild": lambda: _pin_sha()}
+    if raises:
+        attrs["ladrunoSchema"] = boom
+    elif schema is not None:
+        attrs["ladrunoSchema"] = lambda: schema
+    try:
+        exec(code, {"ops": types.SimpleNamespace(**attrs)})
+    except SystemExit as err:
+        assert err.code == _MESSAGE
+        return False
+    return True
+
+
 def test_the_tcl_guard_on_stub_builds() -> None:
+    """The key present: the deck runs on.  Absent (v0, no
+    ``ladrunoSchema``, a failing call, another version, a near name):
+    it stops, always with the one message."""
     tkinter, tcl = _tcl_interp()
     guard = "\n".join(_TCL_GUARD)
     tcl.eval(guard)  # stock: no ladrunoBuild, runs on
-    for answer, ok in ((_pin_sha(), True), (f" {_pin_sha()}\n", True),
-                       (_STALE_FORK, False), ("", False),
-                       ("unknown", False), ("0" * 40, False)):
-        tcl.eval(f"proc ladrunoBuild {{}} {{ return {{{answer}}} }}")
-        if ok:
-            tcl.eval(guard)
-            continue
-        with pytest.raises(tkinter.TclError) as err:
-            tcl.eval(guard)
-        assert str(err.value) == _MESSAGE, answer
-    tcl.eval("proc ladrunoBuild {} { error boom }")
-    with pytest.raises(tkinter.TclError) as err:
-        tcl.eval(guard)
-    assert str(err.value) == _MESSAGE
+    for name, (schema, ok) in SCHEMA_CASES.items():
+        assert tcl_guard_passes(tkinter, guard, schema) is ok, name
+    # The sha is not the question: the stale build listing the key runs,
+    # the pin's sha with a v0 schema stops.
+    assert tcl_guard_passes(tkinter, guard, schema_json(),
+                            build=_STALE_FORK)
+    assert not tcl_guard_passes(tkinter, guard,
+                                schema_json(version=0, caps=None),
+                                build=_pin_sha())
+    assert not tcl_guard_passes(tkinter, guard, None)
+    assert not tcl_guard_passes(tkinter, guard, None, raises=True)
 
 
 def test_the_py_guard_on_stub_builds() -> None:
     code = compile("\n".join(_PY_GUARD), "<guard>", "exec")
     exec(code, {"ops": types.SimpleNamespace()})  # stock runs on
-
-    def raising() -> str:
-        raise RuntimeError("boom")
-
-    for build, ok in ((lambda: _pin_sha(), True),
-                      (lambda: _pin_sha() + "\n", True),
-                      (lambda: _STALE_FORK, False), (lambda: "", False),
-                      (lambda: "unknown", False), (raising, False)):
-        engine = {"ops": types.SimpleNamespace(ladrunoBuild=build)}
-        if ok:
-            exec(code, engine)
-            continue
-        with pytest.raises(SystemExit) as err:
-            exec(code, engine)
-        assert err.value.code == _MESSAGE
+    for name, (schema, ok) in SCHEMA_CASES.items():
+        assert py_guard_passes(code, schema) is ok, name
+    assert not py_guard_passes(code, None)
+    assert not py_guard_passes(code, None, raises=True)
 
 
 # ---------------------------------------------------------------------------
@@ -252,11 +352,11 @@ def test_the_decks_check_before_their_first_command(
     cls: str, mode: "str | None",
 ) -> None:
     """Every target mode: an ``"auto"`` deck is guarded as a fork one."""
-    tcl = _tcl(_bridge(cls, mode))
+    tcl = _tcl(_bridge(cls, mode, fill="elastic"))
     at = next(i for i, ln in enumerate(tcl) if not ln.startswith("#"))
     assert tcl[at:at + len(_TCL_GUARD)] == _TCL_GUARD
     assert tcl[at + len(_TCL_GUARD)].startswith("model ")
-    py = _py(_bridge(cls, mode))
+    py = _py(_bridge(cls, mode, fill="elastic"))
     at = py.index("import openseespy.opensees as ops")
     assert py[at + 1:at + 1 + len(_PY_GUARD)] == _PY_GUARD
     assert py[at + 1 + len(_PY_GUARD)] == "ops.wipe()"
@@ -285,11 +385,11 @@ def _without(lines: "list[str]", guard: "list[str]") -> "list[str]":
 def test_the_guard_is_the_only_difference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tcl, py = _tcl(_bridge()), _py(_bridge())
+    tcl, py = _tcl(_bridge(fill="elastic")), _py(_bridge(fill="elastic"))
     monkeypatch.setattr(stage_emit.MaterialStageCarriers,
                         "solve_fork_guards", lambda self: ())
-    assert _without(tcl, _TCL_GUARD) == _tcl(_bridge())
-    assert _without(py, _PY_GUARD) == _py(_bridge())
+    assert _without(tcl, _TCL_GUARD) == _tcl(_bridge(fill="elastic"))
+    assert _without(py, _PY_GUARD) == _py(_bridge(fill="elastic"))
 
 
 def test_the_archive_replay_carries_the_guard(tmp_path: Path) -> None:
@@ -297,7 +397,7 @@ def test_the_archive_replay_carries_the_guard(tmp_path: Path) -> None:
     carries it as the bridge's deck does."""
     from apeGmsh.opensees import OpenSeesModel
 
-    ops = _bridge(mode="auto")
+    ops = _bridge(mode="auto", fill="elastic")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         ops.h5(str(tmp_path / "a.h5"))
@@ -464,9 +564,31 @@ def test_a_new_material_after_the_flip_counts() -> None:
 _PROBE = """\
 import json
 {import_line}
-print("MD_PROBE " + json.dumps(
-    ops.ladrunoBuild() if hasattr(ops, "ladrunoBuild") else None), flush=True)
+def _ask(name):
+    if not hasattr(ops, name):
+        return None
+    try:
+        return str(getattr(ops, name)())
+    except Exception as exc:
+        return "RAISED " + repr(exc)
+print("MD_PROBE " + json.dumps([_ask("ladrunoBuild"), _ask("ladrunoSchema")]),
+      flush=True)
 """
+
+
+def lists_the_capability(schema: "str | None") -> bool:
+    """Whether a ``ladrunoSchema()`` answer is a v1 schema listing the
+    capability: the guard's question, read here without its code."""
+    import json
+
+    try:
+        obj = json.loads(schema or "")
+    except ValueError:
+        return False
+    return (isinstance(obj, dict) and obj.get("schema_version") == 1
+            and obj.get("schema_version") is not True
+            and isinstance(obj.get("capabilities"), list)
+            and _CAP in obj["capabilities"])
 
 _FORK_IMPORT = (
     "from apeGmsh.opensees.emitter.live import get_ops\nops = get_ops()")
@@ -485,7 +607,7 @@ def _run_py_deck(tmp_path: Path, *, fork_module: bool) -> None:
     deck = tmp_path / "deck.py"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        _bridge(mode="auto").py(str(deck))
+        _bridge(mode="auto", fill="elastic").py(str(deck))
     run_guarded_head(deck.read_text(encoding="utf-8"), tmp_path,
                      fork_module=fork_module)
 
@@ -510,13 +632,14 @@ def run_guarded_head(text: str, tmp_path: Path, *, fork_module: bool) -> None:
     line = next((ln for ln in proc.stdout.splitlines()
                  if ln.startswith("MD_PROBE ")), None)
     assert line is not None, out[-2000:]
-    build = json.loads(line.split(" ", 1)[1])
-    accepted = build is None or str(build).strip() in MD_STATIC_RESET_GUARD.builds
-    # Anchors that do not trust the table: the pin runs, 79e06 stops.
-    if build == _pin_sha():
-        assert accepted
-    if build == _STALE_FORK:
-        assert not accepted
+    build, schema = json.loads(line.split(" ", 1)[1])
+    accepted = build is None or lists_the_capability(schema)
+    # Anchors that do not trust the schema: the pin (v1, fork PR #1017)
+    # runs, 79e06 (no capabilities) stops.
+    if build is not None and build.strip() == _pin_sha():
+        assert accepted, schema
+    if build is not None and build.strip() == _STALE_FORK:
+        assert not accepted, schema
     if accepted:
         assert proc.returncode == 0 and "GUARD_PASSED" in proc.stdout, out
         assert _MESSAGE not in out
@@ -535,6 +658,7 @@ def test_the_py_deck_on_the_bound_openseespy(tmp_path: Path) -> None:
 @pytest.mark.live
 @pytest.mark.ladruno_fork
 def test_the_py_deck_on_the_fork(tmp_path: Path) -> None:
-    """``live-fork``: at FORK_PIN the deck runs; on the stale fork build
-    (the local 79e062367) it stops by name."""
+    """``live-fork``: at FORK_PIN, whose ``ladrunoSchema`` lists
+    ``mdStageFlagPreserved``, the deck runs; on the stale fork build (the
+    local 79e062367) it stops by name."""
     _run_py_deck(tmp_path, fork_module=True)

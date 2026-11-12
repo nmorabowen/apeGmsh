@@ -232,8 +232,9 @@ def _resolve_fem_via_model(
        Without a tag map the reader reads ops tags as fem element ids, so
        a deck that numbered its elements otherwise would answer ``pg=``
        with the wrong elements and no error; that warns
-       :class:`ModelFemMismatchWarning` and binds the capture's own
-       FEMData, as rule 2 does (#1408).  ``Results.from_fem`` lands
+       :class:`ModelFemMismatchWarning` and binds a copy of the capture's
+       own FEMData (#1408), so each element read still warns that it
+       has no fem<->ops pairing (#2907).  ``Results.from_fem`` lands
        here with ``model_h5`` its own ``fem.to_h5`` cache.  A candidate
        with no elements, or a capture with none, has nothing to mislabel
        and passes.  A bridge archive (``ops.h5``) relabels through its
@@ -327,7 +328,17 @@ def _checked_candidate(
     Only the elements are checked: with no tag map they are what the
     reader pairs by id, and a wrong pairing reads the wrong elements
     with no error (#1408).  The caller asserted the node pairing.
+
+    A mismatch binds a shallow copy of the capture's FEMData, never the
+    reader's own object (#2907).  ``Results._element_tag_pairing_missing``
+    tells the reader's snapshot from a caller's ``fem=`` by identity, and
+    warns :class:`WarnElementTagPairingMissing` on every element read of
+    the second.  The caller here passed ``fem=`` and reads by its fem
+    ids, which nothing translates, so the reads must keep that warning
+    as they did before the check replaced ``fem=``.
     """
+    import copy
+
     from .readers._tag_translation import ElementTagTranslator
 
     if not ElementTagTranslator.from_model(model).is_empty:
@@ -352,7 +363,7 @@ def _checked_candidate(
         ),
         stacklevel=4,
     )
-    return embedded
+    return copy.copy(embedded)
 
 
 def _candidate_elements_reason(
