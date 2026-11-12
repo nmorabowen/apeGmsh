@@ -14,6 +14,8 @@ catalogue in `stage/_parameter_names.py`. Each entry cites the C++
 
 - A catalogued element that does not take the name and does not forward
   names to its materials is refused (`elasticBeamColumn` forwards nothing).
+  The beam's names depend on `ndm`: a 2-D beam takes `I` and `rho`, and a
+  3-D beam takes `Iz`, `Iy`, `G` and `J`.
 - A forwarding element (`FourNodeQuad`, `Truss`, `SSPquadUP`, `LadrunoUP`) is
   refused only when every material it carries is catalogued and none of them
   takes the name. A material that matches only its own tag takes the name only
