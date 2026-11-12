@@ -37,12 +37,10 @@ pytest.importorskip("pyvista")
 # ---------------------------------------------------------------------
 
 
-# transition: moves to a .ladruno source in VA6e #2794 (R22b refuses non-.ladruno on the app path)
-@pytest.fixture(autouse=True)
-def _vtk_backend(monkeypatch):
-    from apeGmsh.viewers import render as render_mod
-
-    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+# The still tests read VTK actors, so they take ``vtk_stills`` and run where
+# VTK is the platform's still path (G2); VA6e #2794 removed VA6b's pin. The
+# animation, session-window and re-step tests never reach the stills backend.
+from tests.viewers.test_x2_golden_stills import vtk_stills  # noqa: E402,F401
 
 
 def _drawn(plotter: Any) -> list[dict[str, Any]]:
@@ -279,7 +277,7 @@ def _assert_stage_frames(
 
 
 @pytest.mark.parametrize("view", ["mesh", "contour", "deformed"])
-def test_render_still_hides_inactive_elements(staged, tmp_path, view):
+def test_render_still_hides_inactive_elements(vtk_stills, staged, tmp_path, view):
     results, _n_total = staged
     kw: dict[str, Any] = {"window_size": (160, 120)}
     if view != "mesh":
@@ -290,7 +288,7 @@ def test_render_still_hides_inactive_elements(staged, tmp_path, view):
     _assert_stage_frames(results, frames, _STILL_STAGE)
 
 
-def test_render_pack_hides_inactive_elements(staged, tmp_path):
+def test_render_pack_hides_inactive_elements(vtk_stills, staged, tmp_path):
     results, _n_total = staged
     with _capture() as frames:
         written = results.render_pack(tmp_path / "pack", window_size=(160, 120))
@@ -300,7 +298,7 @@ def test_render_pack_hides_inactive_elements(staged, tmp_path):
     _assert_stage_frames(results, frames, _STILL_STAGE)
 
 
-def test_assess_figures_hide_inactive_elements(staged, tmp_path):
+def test_assess_figures_hide_inactive_elements(vtk_stills, staged, tmp_path):
     results, _n_total = staged
     with _capture() as frames:
         results.assess(figures=True, out_dir=tmp_path / "assess")
@@ -340,7 +338,7 @@ sys.exit(rc)
 
 
 @pytest.mark.subprocess
-def test_cli_render_hides_inactive_elements(staged, tmp_path):
+def test_cli_render_hides_inactive_elements(vtk_stills, staged, tmp_path):
     import json
     import os
     import subprocess
