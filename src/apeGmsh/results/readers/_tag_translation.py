@@ -162,7 +162,7 @@ class ElementTagTranslator:
                 "both paired with a fem_eid and listed without one."
             )
         # Sentinel ops tags that are also a paired fem id: each names two
-        # elements (module docstring, #2076). Warned on the first read of
+        # elements (see the module docstring). Warned on the first read of
         # a describing archive, not here: a stub archive never reads
         # through its pairing, and Results builds a translator more than
         # once per open.
