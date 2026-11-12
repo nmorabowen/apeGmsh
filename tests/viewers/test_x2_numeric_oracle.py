@@ -98,12 +98,12 @@ _CAMERA = G._MANIFEST["camera"]
 # =====================================================================
 
 
-# transition: moves to a .ladruno source in VA6e #2794 (R22b refuses non-.ladruno on the app path)
-@pytest.fixture(autouse=True)
-def _vtk_backend(monkeypatch):
-    from apeGmsh.viewers import render as render_mod
-
-    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+# The VTK-scene tests take ``vtk_stills`` (they read VTK actors, so they run
+# where VTK is the platform's still path, G2); section 7 checks the numbers
+# the app draws from the plate's ``.ladruno`` (VA6e #2794 removed VA6b's pin).
+vtk_stills = G.vtk_stills
+plate_set = G.plate_set
+plate_app = G.plate_app
 
 
 def _merge_points(pts: np.ndarray, tol: float = X_ATOL) -> np.ndarray:
@@ -538,7 +538,7 @@ def _render_view(plate: Results, tmp_path: Path, which: str, **over: Any):
 
 
 @pytest.mark.parametrize("view", sorted(_RENDER))
-def test_render_draws_golden_data(plate, tmp_path: Path, view: str) -> None:
+def test_render_draws_golden_data(vtk_stills, plate, tmp_path: Path, view: str) -> None:
     rec = _render_view(plate, tmp_path, view)
     key = f"render.{view}"
     if REGEN:
@@ -576,7 +576,7 @@ def _check_pack(names: list[str], recs: dict[str, dict[str, Any]], key: str) -> 
         assert_record(recs[name], f"pack.{name}", gold)
 
 
-def test_render_pack_draws_golden_data(plate, tmp_path: Path) -> None:
+def test_render_pack_draws_golden_data(vtk_stills, plate, tmp_path: Path) -> None:
     names, recs = _pack_records(lambda: [
         p.name for p in plate.render_pack(
             tmp_path / "pack", camera=_CAMERA, window_size=_WINDOW)])
@@ -595,7 +595,7 @@ def test_render_pack_draws_golden_data(plate, tmp_path: Path) -> None:
     _check_pack(names, recs, "render_pack")
 
 
-def test_assess_figures_draw_render_pack_data(plate, tmp_path: Path) -> None:
+def test_assess_figures_draw_render_pack_data(vtk_stills, plate, tmp_path: Path) -> None:
     names, recs = _pack_records(lambda: [
         p.name for p in plate.assess(
             figures=True, out_dir=tmp_path / "assess").figures])
@@ -668,7 +668,7 @@ def _rejects(rec: dict[str, Any], key: str, gold: dict[str, np.ndarray]) -> str:
     ("reactions at the wrong step", "reactions", dict(step=1)),
 ])
 def test_oracle_rejects_wrong_render(
-    plate, tmp_path: Path, label: str, view: str, over: dict,
+    vtk_stills, plate, tmp_path: Path, label: str, view: str, over: dict,
 ) -> None:
     if REGEN:
         pytest.skip("regenerating")
@@ -676,7 +676,7 @@ def test_oracle_rejects_wrong_render(
     _rejects(rec, f"render.{view}", load_golden())
 
 
-def test_oracle_rejects_tampered_data(plate, tmp_path: Path) -> None:
+def test_oracle_rejects_tampered_data(vtk_stills, plate, tmp_path: Path) -> None:
     """Data-level mutants the public knobs cannot make."""
     if REGEN:
         pytest.skip("regenerating")
@@ -730,7 +730,7 @@ def test_seam_rejects_an_unreadable_3d_prop() -> None:
 
 
 def test_a_written_still_without_a_captured_shot_fails(
-    plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    vtk_stills, plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A path that writes its still around ``BasePlotter.screenshot``
     must FAIL the oracle, not skip it (even off a GL lane)."""
@@ -759,3 +759,47 @@ def test_a_written_still_without_a_captured_shot_fails(
             pytest.fail(f"a bypassed shot did not fail closed: {exc!r}")
         else:
             pytest.fail("a bypassed shot was accepted")
+
+
+# =====================================================================
+# 7. The app path: the numbers apeGmshViewer draws are the fixture's
+# =====================================================================
+#
+# The VTK scene above has no app-path equivalent; the app states what it
+# drew in its manifest (``apeGmshViewer/src/spec/manifest.ts``). Drawn by a
+# source build named by ``APEGMSH_VIEWER`` (never the installed app); skipped
+# without one, so CI (Linux, G2) does not run it.
+
+
+def test_app_draws_the_fixture_data(plate_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import apeGmsh.agent_view as agent_view
+    from apeGmsh.viewers import render as render_mod
+
+    named = os.environ.get("APEGMSH_VIEWER")
+    if not named or not Path(named).is_file():
+        pytest.skip("APEGMSH_VIEWER does not name a source build of apeGmshViewer")
+    real, manifests = agent_view.render_stills, []
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "app")
+    monkeypatch.setattr(agent_view, "render_stills", lambda spec, out, **k: manifests.append(real(spec, out, **k)) or manifests[-1])
+    for view in ("contour", "deformed"):
+        spec = _RENDER[view]
+        plate_app.render(tmp_path / f"{view}.png", view=view, component=spec["component"],
+                         step=spec["step"], camera=_CAMERA, window_size=_WINDOW)
+    _, ids, _, comps = G._plate_fem_and_data()
+    uy, last = comps["displacement_y"], int(G._MANIFEST["fixture"]["n_steps"]) - 1
+    for manifest in manifests:
+        (entry,) = manifest["shots"]
+        assert entry["status"] == "ok", entry["reason"]
+        assert entry["step"] == last
+        c = entry["contour"]
+        assert (c["drawn"], c["source"], c["field"], c["label"]) == (True, "nodal", "DISPLACEMENT", "y")
+        assert (c["range"]["mode"], c["range"]["min"], c["range"]["max"]) == (
+            "history", pytest.approx(uy.min(), abs=V_ATOL), pytest.approx(uy.max(), abs=V_ATOL))
+        rec = c["extrema"]["recorded"]
+        for end, i in (("min", int(np.argmin(uy[last]))), ("max", int(np.argmax(uy[last])))):
+            assert rec[end]["value"] == pytest.approx(uy[last][i], abs=V_ATOL)
+            assert rec[end]["node"] == int(ids[i])
+    assert manifests[0]["shots"][0]["deform"] is None
+    deform = manifests[1]["shots"][0]["deform"]
+    assert deform["state"] == "ready"
+    assert deform["scale"] == pytest.approx(G._plate_auto_scale(), rel=1e-12)

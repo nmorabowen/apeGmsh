@@ -189,12 +189,19 @@ def _write_plate_results(dest: Path) -> Path:
 def _write_plate_ladruno(dest: Path) -> Path:
     """The same plate as the pair apeGmshViewer opens (R22b): ``plate.h5``, the
     mesh, beside ``plate.ladruno``, the stage as the fork's recorder lays it out
-    (``ndm`` 2: the native file's x and y components)."""
+    (``ndm`` 2: the native file's x and y components). A broker-only
+    ``to_h5`` declares no ``/meta/ndm``, and the app then refuses to guess a
+    zero z for a deformed shape, so the mesh is declared 2-D, as the bridge
+    stamps a 2-D model."""
+    import h5py
+
     from apeGmsh.results.readers._ladruno_writer import NodalStage, write_nodal_stages
 
     fem, ids, time, components = _plate_fem_and_data()
     model = dest / "plate.h5"
     fem.to_h5(str(model))
+    with h5py.File(model, "r+") as f:
+        f["meta"].attrs["ndm"] = 2
     return write_nodal_stages(
         dest / "plate.ladruno", model_h5=model, node_ids=ids,
         coords=np.asarray(fem.nodes.coords, dtype=np.float64), ndm=2,
