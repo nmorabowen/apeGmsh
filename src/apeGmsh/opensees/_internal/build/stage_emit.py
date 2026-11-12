@@ -693,6 +693,7 @@ MATERIAL_STATE_ELEMENT_TOKENS: dict[str, int | None] = {
     "tri6n": 8,
     "FourNodeTetrahedron": 4,
     "SSPquad": 4,
+    "SSPquadUP": 4,
     "SSPbrick": 8,
     "BezierTri6": 8,
     "BezierTet10": 10,
