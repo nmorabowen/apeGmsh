@@ -23,7 +23,8 @@
 // `fem_hash`, only when both are stamped (a stamp written in part reads as
 // unpaired, schema §7b.1); `element_index_space` stands in for the native
 // root stamp, and `stage_names` names the MODEL_STAGE groups when it counts
-// as many.
+// as many. `stage_display_names` labels them on top (W4d #2843): a stage's
+// `name` is what is shown, its `programName` what matches the model.
 //
 // A partitioned run (`<stem>.part-<N>.ladruno`, #2188) is opened as one file by
 // reader/ladrunoParts.ts, from any of its parts. Its identity on re-open is every
@@ -44,7 +45,7 @@ import { unopenedSibling } from "./pairing.ts";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
 import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
-import type { ModeFacts, UnitSystemId } from "../state/types.ts";
+import type { CompareStageIn, ModeFacts, UnitSystemId } from "../state/types.ts";
 import type { ProgramDecls } from "../model/types.ts";
 
 /** A `.ladruno` as main reads it: one file, or a part set read as one (#2188). */
@@ -69,7 +70,10 @@ function identityOf(rf: AnyResultsFile): string | null {
 /** One stage as the renderer's store keeps it (state/types.ts `ResultsStage`). */
 export interface ResultsStageMeta {
   id: string;
+  /** the label every site shows: a `.ladruno`'s display name (`stage_display_names`), else the program name */
   name: string;
+  /** the program's stage name, which every match against the model uses (W4d #2843); a native file's stage name */
+  programName: string;
   kind: StageInfo["kind"];
   time: number[];
   nodal: string[];
@@ -244,38 +248,76 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
 
 /**
- * Each stage's name (aligned with `index.stages`). A well-formed
- * INFO/PROVENANCE@stage_names names the MODEL_STAGE (host) stages when it
- * counts as many; a mode stage keeps its own name, its host prefix renamed.
- * Otherwise every stage keeps the file's name, and a malformed or miscounted
- * stage_names warns. An absent one is silent (the pairing says unstamped).
+ * Each stage's program name and display name (both aligned with
+ * `index.stages`; W4d #2843).
+ *
+ * Program names: a well-formed INFO/PROVENANCE@stage_names names the
+ * MODEL_STAGE (host) stages when it counts as many; a mode stage keeps its
+ * own name, its host prefix renamed. Otherwise every stage keeps the file's
+ * name, and a malformed or miscounted stage_names warns. An absent one is
+ * silent (the pairing says unstamped). Every match against the model
+ * (`/sequence`, `/opensees/stages`, a compare set) uses these.
+ *
+ * Display names: a well-formed INFO/PROVENANCE@stage_display_names (a
+ * `stage_names=` rename, W4c #2823) renames the host stages the same way,
+ * on top of the program names. It binds by stage_names, so one that is
+ * malformed, miscounted, holds an empty or whitespace-only name, or has no
+ * bound stage_names to go with shows the program names, and warns. They label the stage and are never matched.
  */
-function ladrunoStageNames(rf: AnyLadruno, warningsOut?: string[]): string[] {
+function ladrunoStageNames(rf: AnyLadruno, warningsOut?: string[]): { program: string[]; display: string[] } {
   const ix = rf.index;
   const own = ix.stages.map((s) => s.name);
   const prov = ix.provenance;
-  if (prov.state !== "present") return own;
-  const fact = prov.attrs.stage_names;
-  if (fact.state === "absent") return own;
-  const warn = (w: string) => warningsOut?.push(`${ix.path}: ${w}; the file's own stage names are shown`);
-  if (fact.state === "malformed" || prov.stageNames === null) {
-    warn(fact.state === "malformed" ? fact.reason : "INFO/PROVENANCE@stage_names could not be read");
-    return own;
-  }
+  if (prov.state !== "present") return { program: own, display: own };
   const hosts = ix.stages.filter((s) => Object.hasOwn(ix.fileKinds, s.id));
-  if (prov.stageNames.length !== hosts.length) {
-    warn(`INFO/PROVENANCE@stage_names names ${prov.stageNames.length} stage(s), the file has ${hosts.length} MODEL_STAGE group(s)`);
-    return own;
-  }
-  const renamed = new Map(hosts.map((h, k) => [h.id, { from: h.name, to: prov.stageNames![k]! }]));
   const hostOf = new Map(ix.modes.map((m) => [m.stageId, m.hostStageId]));
-  return ix.stages.map((s) => {
-    const r = renamed.get(s.id);
-    if (r) return r.to;
-    const host = hostOf.get(s.id);
-    const h = host === undefined ? undefined : renamed.get(host);
-    return h && s.name.startsWith(`${h.from}/`) ? `${h.to}/${s.name.slice(h.from.length + 1)}` : s.name;
-  });
+  const at = new Map(ix.stages.map((s, k) => [s.id, k]));
+  // `base` with the host stages named by `list` (one per host, in file order), a mode stage's host prefix renamed with it.
+  const rename = (base: string[], list: readonly string[]): string[] => {
+    const to = new Map(hosts.map((h, k) => [h.id, list[k]!]));
+    return ix.stages.map((s, k) => {
+      const r = to.get(s.id);
+      if (r !== undefined) return r;
+      const host = hostOf.get(s.id);
+      const t = host === undefined ? undefined : to.get(host);
+      const from = host === undefined ? undefined : base[at.get(host)!];
+      const name = base[k]!;
+      return t !== undefined && from !== undefined && name.startsWith(`${from}/`) ? `${t}/${name.slice(from.length + 1)}` : name;
+    });
+  };
+  // The attribute's list when it is well formed and counts the hosts; else null, and (unless absent) a warning.
+  const listOf = (attr: "stage_names" | "stage_display_names", list: string[] | null, shown: string): string[] | null => {
+    const fact = prov.attrs[attr];
+    if (fact.state === "absent") return null;
+    const warn = (w: string) => warningsOut?.push(`${ix.path}: ${w}; ${shown}`);
+    if (fact.state === "malformed" || list === null) {
+      warn(fact.state === "malformed" ? fact.reason : `INFO/PROVENANCE@${attr} could not be read`);
+      return null;
+    }
+    if (list.length !== hosts.length) {
+      warn(`INFO/PROVENANCE@${attr} names ${list.length} stage(s), the file has ${hosts.length} MODEL_STAGE group(s)`);
+      return null;
+    }
+    return list;
+  };
+  const bound = listOf("stage_names", prov.stageNames, "the file's own stage names are shown");
+  const program = bound ? rename(own, bound) : own;
+  if (!bound && prov.attrs.stage_display_names.state !== "absent") {
+    warningsOut?.push(
+      `${ix.path}: INFO/PROVENANCE@stage_display_names has no INFO/PROVENANCE@stage_names to bind the stages by; the file's own stage names are shown`,
+    );
+    return { program, display: program };
+  }
+  const shown = listOf("stage_display_names", prov.stageDisplayNames, "the program's stage names are shown");
+  // A display name that is empty or only whitespace labels nothing: degenerate, like a malformed list.
+  const blank = shown ? shown.findIndex((n) => n.trim() === "") : -1;
+  if (shown && blank >= 0) {
+    warningsOut?.push(
+      `${ix.path}: INFO/PROVENANCE@stage_display_names[${blank}] = ${JSON.stringify(shown[blank])} is empty or only whitespace; the program's stage names are shown`,
+    );
+    return { program, display: program };
+  }
+  return { program, display: shown ? rename(program, shown) : program };
 }
 
 /** One gauss group as the store keeps it, from either reader (a `.ladruno`'s since #2187). */
@@ -321,7 +363,8 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
       elementIndexSpace,
       stages: ix.stages.map((s, k) => ({
         id: s.id,
-        name: names[k]!,
+        name: names.display[k]!,
+        programName: names.program[k]!,
         kind: s.kind,
         time: Array.from(s.time),
         nodal: s.nodes ? [...s.nodes.components] : [],
@@ -350,6 +393,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
     stages: i.stages.map((s) => ({
       id: s.id,
       name: s.name,
+      programName: s.name,
       kind: s.kind,
       time: Array.from(s.time),
       nodal: s.nodes ? [...s.nodes.components] : [],
@@ -363,6 +407,15 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
     units: i.units,
     elementIndexSpace: i.elementIndexSpace,
   };
+}
+
+/**
+ * The compare set's stages as `variants:compare` answers them (state/types.ts
+ * `CompareStageIn`): the difference matches the window's stage by
+ * `programName`, so it is carried (W4d #2843). main.ts and the tests share it.
+ */
+export function compareStagesOf(meta: Pick<ResultsMeta, "stages">): CompareStageIn[] {
+  return meta.stages.map((s) => ({ id: s.id, name: s.name, programName: s.programName, nodal: [...s.nodal], time: [...s.time] }));
 }
 
 export class ResultsHost {

@@ -309,3 +309,16 @@ slice 10 deletes native results; no new native file is written in the
 meantime. D2 holds: the app reads `.ladruno` against the fork's format
 documents and its `GENERATOR` and `FORMAT_VERSION` gate, and imports
 nothing from apeGmsh.
+
+## Pointer (2026-11-10): ADR 0132
+
+[ADR 0132](0132-workspace-file-and-variants-manifest.md) (Accepted 2026-11-03)
+supersedes two clauses of this ADR in part. D1: a set's files are no longer
+only what a run leaves behind. The set gains `<stem>.workspace.h5`, which the
+user makes in the app, which no run writes, and which a run's unconditional
+rewrite of its artifacts never touches. D3, as
+[ADR 0130](0130-states-quantities-and-the-user-results-file.md) D2 amended it:
+the app writes one zone of `.user.h5` and one whole file,
+`<stem>.workspace.h5`. ADR 0132 now governs `<stem>.workspace.h5` and the
+variants manifest `<study>.variants.json`. The decision text above is
+unchanged.

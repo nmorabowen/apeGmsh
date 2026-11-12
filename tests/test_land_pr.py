@@ -68,7 +68,7 @@ RUN_ID = "38000000001"
 STARTED = "2026-10-13T10:00:00Z"
 
 
-JOB_IDS = {name: 9000 + i for i, name in enumerate((*land_pr.REQUIRED_CHECKS, "qt-window-tests", "build"))}
+JOB_IDS = {name: 9000 + i for i, name in enumerate((*land_pr.REQUIRED_CHECKS, "qt-window-tests", "build", "app-tests"))}
 
 
 def _job(name, run=RUN_ID):
@@ -921,6 +921,10 @@ PROGRAM_PR = {**PR_1218, "labels": [{"name": "program"}, {"name": "semantic"}], 
 def _scope(files=None, *, card=CARD_1812, comments=(), pr=PROGRAM_PR, rows=None):
     files = OWNED_1812 if files is None else files
     cards = {1801: {"body": card, "comments": [{"body": c} for c in comments]}}
+    # FOREIGN_1812 carries #1761's apeGmshViewer/ files, so check 6 needs app-tests green (#2864).
+    # The job reports on every PR, so these check-9 replays carry a green run of it.
+    if not any(run.get("name") == "app-tests" for run in pr["statusCheckRollup"]):
+        pr = {**pr, "statusCheckRollup": [*pr["statusCheckRollup"], *_rollup(names=("app-tests",))]}
     return _recording(1218, pr, SQUASH_1218, files, rows=rows, cards=cards)
 
 
@@ -2224,3 +2228,119 @@ def test_check_card_exits_1_when_an_amendment_path_is_skipped_2412(monkeypatch, 
     monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
     assert land_pr.main(["--check-card", "2000"]) == 1
     assert "skipped (negation 'never')" in capsys.readouterr().out
+
+
+# VH0 (#2864): a PR that changes a path the `app-tests` lane checks (its filter's pathspec
+# list, land_pr.APP_PATHS) needs that lane green on its head. The filter skips the checks on
+# every other PR, so the lane stays out of REQUIRED_CHECKS there.
+APP_ROLLUP = _rollup(names=(*land_pr.REQUIRED_CHECKS, "app-tests"))
+VIEWER_ROWS = {
+    "modified": [_row("apeGmshViewer/src/renderer/contour.ts"), _row("src/apeGmsh/results/_x.py")],
+    "deleted": [_row("apeGmshViewer/fixtures/deform_2d.results.h5", status="removed", patch=None)],
+    "renamed-out": [_row("examples/demo_generate_vtu.py", status="renamed",
+                         previous="apeGmshViewer/demo_generate_vtu.py", patch=None)],
+    "renamed-in": [_row("apeGmshViewer/src/moved.ts", status="renamed", previous="src/moved.ts", patch=None)],
+    # The filter's other pathspecs (review of #2874): the workflow and the pairing oracle's
+    # test, fixture and stamp_provenance (#2129), which only this lane runs.
+    "workflow": [_row(".github/workflows/tests.yml")],
+    "oracle-test": [_row("tests/test_app_ladruno_pairing_oracle.py")],
+    "oracle-fixture": [_row("tests/fixtures/ladruno/truss2d.ladruno", patch=None)],
+    "provenance": [_row("src/apeGmsh/results/readers/_ladruno_provenance.py")],
+    "provenance-deleted": [_row("src/apeGmsh/results/readers/_ladruno_provenance.py", status="removed", patch=None)],
+}
+
+
+@pytest.mark.parametrize("kind", sorted(VIEWER_ROWS))
+def test_an_app_lane_pr_without_app_tests_is_refused_2864(kind):
+    """The replay of the gap: the five required checks green, `app-tests` absent. A rename
+    out of apeGmshViewer/ (the 67902f8e5 shape) and a deletion (209005c49) count too."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, rows=VIEWER_ROWS[kind])
+    with pytest.raises(land_pr.LandError, match=r"check 6: required check 'app-tests' has not reported.*lane checks.*#2864"):
+        _run(1218, gh, git, dry_run=True)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("kind", sorted(VIEWER_ROWS))
+@pytest.mark.parametrize("seen", [
+    {"conclusion": "FAILURE"},
+    {"conclusion": "SKIPPED"},
+    {"status": "IN_PROGRESS", "conclusion": None},
+], ids=["failure", "skipped", "pending"])
+def test_an_app_lane_pr_with_app_tests_not_green_is_refused_2864(seen, kind):
+    rollup = _rollup(names=(*land_pr.REQUIRED_CHECKS, "app-tests"), **{"app-tests": seen})
+    gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": rollup}, SQUASH_1218, rows=VIEWER_ROWS[kind])
+    with pytest.raises(land_pr.LandError, match=r"check 6: required check 'app-tests' is \w+ on"):
+        _run(1218, gh, git, dry_run=True)
+
+
+def test_a_failed_app_tests_run_before_a_green_rerun_refuses_2864():
+    history = [*_rollup(names=("app-tests",), **{"app-tests": {"conclusion": "FAILURE"}}), *APP_ROLLUP]
+    gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": history}, SQUASH_1218, rows=VIEWER_ROWS["modified"])
+    with pytest.raises(land_pr.LandError, match=r"check 6: required check 'app-tests' is FAILURE"):
+        _run(1218, gh, git, dry_run=True)
+
+
+@pytest.mark.parametrize("kind", sorted(VIEWER_ROWS))
+def test_an_app_lane_pr_with_app_tests_green_passes_2864(kind, capsys):
+    gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": APP_ROLLUP}, SQUASH_1218, rows=VIEWER_ROWS[kind])
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "'app-tests' is required too" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("files", [
+    FILES_1218,
+    # Names that only start like a pathspec, or sit beside one, are not matched by it.
+    ["apeGmshViewerNotes.md", "docs/apeGmshViewer.md", "src/apeGmsh/viewers/apeGmshViewer/x.py",
+     ".github/workflows/tests.yml.bak", ".github/workflows/live-fork.yml",
+     "tests/fixtures/ladruno/other.ladruno", "src/apeGmsh/results/readers/_ladruno.py"],
+])
+def test_a_pr_outside_the_app_lane_with_no_app_tests_run_passes_2864(files, capsys):
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, files)
+    assert not any(run["name"] == "app-tests" for run in PR_1218["statusCheckRollup"])
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "app-tests" not in capsys.readouterr().out
+
+
+#: The app-tests filter step: `changed=$(git diff --name-only "$range" -- <pathspecs>)`.
+_FILTER_DIFF = re.compile(r'changed=\$\(git diff --name-only "\$range" --((?:[^)\\]|\\\n)*)\)')
+
+
+def _app_job(workflow: str) -> str:
+    block = re.search(rf"^  {re.escape(land_pr.APP_CHECK)}:\n((?:    .*\n|\s*\n)*)", workflow, re.MULTILINE)
+    assert block is not None, f"tests.yml has no {land_pr.APP_CHECK!r} job"
+    return block.group(1)
+
+
+def _filter_pathspecs(workflow: str) -> tuple[str, ...]:
+    """The pathspec list of the app-tests filter's `git diff`, in order (continuations joined)."""
+    found = _FILTER_DIFF.findall(_app_job(workflow))
+    assert len(found) == 1, f"expected one filter `git diff` in the {land_pr.APP_CHECK} job, found {len(found)}"
+    return tuple(found[0].replace("\\\n", " ").split())
+
+
+def _workflow() -> str:
+    return (SCRIPT.parents[1] / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+
+
+def test_app_check_names_the_tests_yml_job_2864():
+    """The shared namespace: the rollup names a job by its key unless it sets `name:`, and a
+    job-level `if:` or `needs:` could skip it whole. Either would make check 6 wait on a name
+    that never reports green, so the job must be `app-tests:` with none of them."""
+    keys = re.findall(r"^    (\w[\w-]*):", _app_job(_workflow()), re.MULTILINE)
+    assert "runs-on" in keys and not {"name", "if", "needs"} & set(keys), keys
+
+
+def test_app_paths_equal_the_filter_pathspecs_2864():
+    """land_pr requires app-tests for exactly the paths the lane's filter runs its checks on
+    (review of #2874): a pathspec added to tests.yml without APP_PATHS fails here."""
+    assert _filter_pathspecs(_workflow()) == land_pr.APP_PATHS
+
+
+def test_the_pathspec_parser_sees_a_grown_filter_2864():
+    """The equality above is not vacuous: one more pathspec in the filter is read, and differs."""
+    grown = _workflow().replace(
+        "src/apeGmsh/results/readers/_ladruno_provenance.py)",
+        "src/apeGmsh/results/readers/_ladruno_provenance.py \\\n            src/apeGmsh/extra.py)",
+    )
+    assert grown != _workflow()
+    assert _filter_pathspecs(grown) == (*land_pr.APP_PATHS, "src/apeGmsh/extra.py")

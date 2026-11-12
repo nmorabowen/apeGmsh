@@ -138,11 +138,17 @@ def test_gp_world_coords_match_the_forks_recorded_positions(
 def test_whole_file_slab_places_every_class_silently(
     ext: str, stem: str,
 ) -> None:
-    """One slab over every class in the file: placed per element, no
-    warning, and each P2 GP at its engine position."""
+    """One slab over every class the file records strain for: placed per
+    element, no warning, and each P2 GP at its engine position.
+
+    ``tri.mpco`` and ``tri.ladruno`` hold no strain rows for their Tri31
+    element 1 (Tri31 answers no element-level ``strains``), so a
+    whole-file strain read refuses (#2893, #2895); the slab there is
+    every other element."""
     path = FIXTURES / f"{stem}.{ext}"
     p2 = (2, 3, 4) if stem == "tri" else (2, 3)
-    fem, slab = _read(path, f"strain_{AXES[stem][0]}")
+    eids = [2, 3, 4, 5] if stem == "tri" else None
+    fem, slab = _read(path, f"strain_{AXES[stem][0]}", eids)
     world = _place(slab, fem)
     keep = np.isin(np.asarray(slab.element_index), p2)
     assert np.unique(np.asarray(slab.element_index)[keep]).size == len(p2)

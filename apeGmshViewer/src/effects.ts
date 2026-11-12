@@ -8,12 +8,14 @@
 // `goToSource` to the bridge; each is feature-detected here, so this module
 // works before and after that PR.
 
-import { CombinationRefused, evaluate, type CombinationTable } from "./combination/evaluate.ts";
+import { evaluateDraft } from "./combination/author.ts";
+import { CombinationRefused, evaluate, type CombinationTable, type Source } from "./combination/evaluate.ts";
 import type { ModelFile } from "./model/types.ts";
 import type { GeometryZone } from "./reader/geometry.ts";
 import type { LadrunoLineStationStep, LadrunoSpringStep } from "./reader/ladruno.ts";
 import type { ProvenanceZone } from "./reader/provenance.ts";
 import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZONE_FLOOR } from "./reader/read.ts";
+import type { UserColumnRead } from "./reader/userFile.ts";
 import { spectrumSource, type CaseQuantityName, type CaseRead, type SpectraStaleness, type SpectrumTarget } from "./reader/userSpectra.ts";
 import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
@@ -24,12 +26,14 @@ import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplace
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
 import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
-import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
+import { contourView, deformView, draftJudgedOf, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
 import { applyTheme } from "./theme/tokens.ts";
-import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
+import { membersOf } from "./state/workspace.ts";
+import type { CombinationDraft, CombinationEdit, CombinationSaveIn, DraftCheck } from "./state/types.ts";
+import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ResultsInfo, StageElements, State, WorkspaceEdit, WorkspaceIn, WorkspacePageEdit, WorkspaceSaveIn, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
 
@@ -129,6 +133,72 @@ export interface Bridge {
   goToSource?(file: string, line: number): Promise<{ ok: boolean; reason?: string }>;
   /** VU7b-1 (ADR 0130 D5): one result of one `/spectra` case, with its values (main's `user:readCase`); VU7b-2 exposes it in preload.ts. */
   readUserCase?(req: { path: string; case: string; target: SpectrumTarget; label: string }): Promise<CaseRead>;
+  /** VU16 (ADR 0130 D7): one component of a state-free ON_NODES user result, as a contour column (main's `user:readResult`). */
+  readUserResult?(req: { path: string; name: string; component: string }): Promise<UserColumnRead>;
+  /** VU9a (ADR 0132): the window set's `<stem>.workspace.h5` as main reads it (main's `workspace:read`; it takes no path) */
+  workspaceRead?(): Promise<WorkspaceIn>;
+  /** VU9a: one edit into that file (main's `workspace:save`; never a path) */
+  workspaceSave?(edit: WorkspaceEdit): Promise<WorkspaceSaveIn>;
+  /** VU9b (ADR 0130 A4): one combination edit into the window set's `.user.h5` (main's `combinations:save`; never a path) */
+  combinationsSave?(edit: CombinationEdit): Promise<CombinationSaveIn>;
+}
+
+/**
+ * VU9b (ADR 0130 A3; #2693): the check of a draft User Combination before it is
+ * offered for save. The readers' rules judge it beside the file's rows
+ * (selectors `draftJudgedOf`); then VU4's evaluator evaluates it for the first
+ * nodal quantity of the `/spectra` cases it reaches, read through main's
+ * `user:readCase` (combination/author.ts `evaluateDraft`). A stale `/spectra`
+ * is read for the check, and the preview says so. Null when there is no draft
+ * to check (no user file read). A bridge with no `readUserCase` throws.
+ */
+export async function checkCombinationDraft(bridge: Pick<Bridge, "readUserCase">, s: State, draft: CombinationDraft): Promise<DraftCheck | null> {
+  const j = draftJudgedOf(s, draft);
+  if (j === null) return null;
+  if (!j.ok) return { key: j.key, status: "refused", reason: j.reason, detail: j.detail };
+  let inner: Source | null = null;
+  if (j.cases.length) {
+    if (j.quantity === null) return { key: j.key, status: "ok", preview: null, note: `not evaluated here: the /spectra cases it reaches (${j.cases.join(", ")}) hold no nodal result` };
+    if (typeof bridge.readUserCase !== "function") throw new Error("this build's bridge has no readUserCase (main's user:readCase)");
+    const reads = new Map<string, CaseRead>();
+    for (const name of j.cases) reads.set(name, await bridge.readUserCase({ path: j.path, case: name, target: "nodes", label: j.quantity.label }));
+    inner = spectrumSource(reads, j.quantity, j.staleness, true);
+  }
+  const v = evaluateDraft(j.table, j.name, inner);
+  if (v.ok === "not-here") return { key: j.key, status: "ok", preview: null, note: v.note };
+  if (!v.ok) return { key: j.key, status: "refused", reason: v.refused.reason, detail: v.refused.detail };
+  const values = v.combined.field.values;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const x of values) {
+    if (!Number.isFinite(x)) continue;
+    if (x < min) min = x;
+    if (x > max) max = x;
+  }
+  const q = j.quantity!;
+  return {
+    key: j.key,
+    status: "ok",
+    preview: { label: `${q.label}/${q.component}`, nodes: v.combined.field.keys.length, range: min <= max ? { min, max } : null, signed: v.combined.signed },
+    note: j.staleness.stale ? `/spectra is stale (${j.staleness.reason || "no reason given"}): the value is shown, and the file lists the combination as stale` : null,
+  };
+}
+
+/** VU9b: carry one combination edit to main's door. A bridge with no `combinationsSave` throws: this build's preload has it. */
+export function saveCombinationEdit(bridge: Pick<Bridge, "combinationsSave">, edit: CombinationEdit): Promise<CombinationSaveIn> {
+  if (typeof bridge.combinationsSave !== "function") throw new Error("this build's bridge has no combinationsSave (main's combinations:save)");
+  return bridge.combinationsSave(edit);
+}
+
+/**
+ * VU16: the column of user result `name`'s `component` in the `.user.h5` at
+ * `path`, through main's `user:readResult` (which refuses a stale entry with
+ * A6's reason). A bridge with no `readUserResult` throws: this build's
+ * preload always has it, so its absence is a broken build, never "no result".
+ */
+export function userResultColumn(bridge: Pick<Bridge, "readUserResult">, req: { path: string; name: string; component: string }): Promise<UserColumnRead> {
+  if (typeof bridge.readUserResult !== "function") throw new Error("this build's bridge has no readUserResult (main's user:readResult)");
+  return bridge.readUserResult(req);
 }
 
 /** What `userCombinationColumn` answers: the contour column, or the evaluator's refusal. */
@@ -407,6 +477,9 @@ export class Effects {
     this.blobs = blobs;
     this.bridge = bridge;
     this.setWindowMs = opts.setWindowMs ?? 1000;
+    // VU9a: the sets panel's saves reach main in every mode; main writes only from the human's window and refuses the rest.
+    this.carryWorkspaceSaves();
+    this.previewWorkspace();
     // A file rewritten on disk (D1 rewrites on every run) is read again; one
     // that changes mid-read is re-read when that read ends (see `open`).
     this.off.push(
@@ -1345,6 +1418,124 @@ export class Effects {
     else void this.open(this.bridge.pathForFile(f));
   }
 
+  /** Counts workspace reads: an answer that is not the latest read's is dropped. */
+  private workspaceSeq = 0;
+  /** The save request the effects carried last (`WorkspaceState.request.seq`). */
+  private workspaceRequest = 0;
+
+  /**
+   * VU9a (ADR 0132 D7): read the window set's workspace through main, which
+   * names the file and judges each set against the set's model. A build
+   * without the door reads nothing and says so; an answer the store cannot
+   * take is a refusal with the reason.
+   */
+  async readWorkspace(): Promise<void> {
+    const seq = ++this.workspaceSeq;
+    if (typeof this.bridge.workspaceRead !== "function") {
+      this.store.dispatch({ type: "workspaceRead", read: { status: "none", reason: "this build has no workspace door (main's workspace:read)" } });
+      return;
+    }
+    this.store.dispatch({ type: "workspaceReading" });
+    let read: WorkspaceIn;
+    try {
+      read = await this.bridge.workspaceRead();
+    } catch (err) {
+      read = { status: "none", reason: `workspace:read failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    if (seq !== this.workspaceSeq) return;
+    this.store.dispatch({ type: "workspaceRead", read });
+  }
+
+  /** The edit main is sent for a page edit: a create takes its members from the selection now (state/workspace.ts). */
+  private workspaceEditOf(s: State, edit: WorkspacePageEdit, expect: string): WorkspaceEdit | string {
+    if (edit.op !== "create") return { ...edit, expect };
+    const kind = s.workspace.kind;
+    const m = membersOf(s, kind, this.nodeTable(s));
+    if (!m.ok) return m.reason;
+    for (const n of m.notes) console.warn(`apeGmshViewer: ${n}`);
+    return { op: "create", name: edit.name, kind, ids: m.ids, expect };
+  }
+
+  /** VU9a: carry a `workspaceSave` to main and land its answer. */
+  private async saveWorkspace(seq: number, edit: WorkspacePageEdit, expect: string): Promise<void> {
+    const s = this.store.get();
+    const answer = (detail: string, reason: string): WorkspaceSaveIn => ({ ok: false, reason, detail, file: null, held: false });
+    const out = this.workspaceEditOf(s, edit, expect);
+    let result: WorkspaceSaveIn;
+    if (typeof out === "string") result = answer(out, "no-members");
+    else if (typeof this.bridge.workspaceSave !== "function") result = answer("this build has no workspace door (main's workspace:save)", "unavailable");
+    else {
+      try {
+        result = await this.bridge.workspaceSave(out);
+      } catch (err) {
+        result = answer(`workspace:save failed: ${err instanceof Error ? err.message : String(err)}`, "failed");
+      }
+    }
+    this.store.dispatch({ type: "workspaceSaved", seq, answer: result });
+    // The file on disk is not the read the edit was made on: read it again, so the panel shows what is there.
+    if (!result.ok && result.reason === "stale") void this.readWorkspace();
+  }
+
+  /**
+   * VU9a, view mode: the workspace is read once the model's read lands (its
+   * verdicts are judged against that model), again when the workspace file
+   * changes on disk (another writer, or this window's own save, which the
+   * reducer recognises by its `@save_id`), and closed with the model. A
+   * `workspaceSave` the panel dispatched goes to main.
+   */
+  private followWorkspace(): void {
+    this.off.push(
+      this.store.subscribe((s, prev) => {
+        const m = s.artifacts.model;
+        if (m === prev.artifacts.model) return;
+        // Another model: a read still on its way for the last one is dropped (#2890 review 1).
+        if (m?.path !== prev.artifacts.model?.path) this.workspaceSeq++;
+        if (m === null) {
+          this.workspaceSeq++;
+          if (s.workspace.read !== null) this.store.dispatch({ type: "workspaceRead", read: null });
+        } else if (m.status === "ready" && !(prev.artifacts.model?.status === "ready" && prev.artifacts.model.path === m.path && s.mesh === prev.mesh)) void this.readWorkspace();
+      }),
+    );
+    if (typeof this.bridge.onFileChanged === "function") {
+      const off = this.bridge.onFileChanged((path) => {
+        if (/\.workspace\.h5$/i.test(path)) void this.readWorkspace();
+      });
+      if (typeof off === "function") this.off.push(off);
+    }
+  }
+
+  /** The node table of the model on screen, from the BlobStore; null when the mesh was built without it. */
+  private nodeTable(s: State): { ids: ArrayLike<number>; xyz: ArrayLike<number> } | null {
+    return s.mesh?.nodes ? { ids: this.blobs.get(s.mesh.nodes.ids) as ArrayLike<number>, xyz: this.blobs.get(s.mesh.nodes.xyz) as ArrayLike<number> } : null;
+  }
+
+  /** VU9a: the members a save would take, recomputed when the selection, the kind or the mesh changes, so the panel lists them. */
+  private previewWorkspace(): void {
+    this.off.push(
+      this.store.subscribe((s, prev) => {
+        if (s.selection === prev.selection && s.workspace.kind === prev.workspace.kind && s.mesh === prev.mesh && s.decls === prev.decls && s.deform.on === prev.deform.on && s.workspace.deformedPicks === prev.workspace.deformedPicks) return;
+        queueMicrotask(() => {
+          const now = this.store.get();
+          const kind = now.workspace.kind;
+          const m = membersOf(now, kind, this.nodeTable(now));
+          this.store.dispatch({ type: "workspacePreview", preview: m.ok ? { kind, ids: m.ids, notes: m.notes } : { kind, reason: m.reason } });
+        });
+      }),
+    );
+  }
+
+  /** VU9a: a `workspaceSave` request the effects have not carried yet goes to main (every mode: main refuses where only the human's window writes). */
+  private carryWorkspaceSaves(): void {
+    this.off.push(
+      this.store.subscribe((s) => {
+        const r = s.workspace.request;
+        if (!r || r.seq === this.workspaceRequest) return;
+        this.workspaceRequest = r.seq;
+        void this.saveWorkspace(r.seq, r.edit, r.expect);
+      }),
+    );
+  }
+
   /** Attach the window and bridge listeners; the returned function detaches them. */
   attach(): () => void {
     const onDragOver = (e: DragEvent) => e.preventDefault();
@@ -1366,6 +1557,8 @@ export class Effects {
     if (typeof this.bridge.onFileChanged === "function") {
       keep(this.bridge.onFileChanged((path) => this.store.dispatch({ type: "fileChanged", path })));
     }
+    // VU9a: the window set's workspace follows the model on screen.
+    this.followWorkspace();
     return () => this.dispose();
   }
 

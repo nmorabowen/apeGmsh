@@ -357,8 +357,11 @@ what you derive from them:
 ```
 
 You write `<stem>.user.h5` from Python with one call. apeGmshViewer reads
-it and does not write it today. ADR 0130 plans for the app to write the
-`/combinations` zone and nothing else.
+it, and writes the `/combinations` zone and nothing else: a User
+Combination the human saves in the app is a new generation `g<N+1>`
+(copy, add, replace; ADR 0130 A4), and one revert puts `@current` back.
+`UserFile(...).combinations()` reads what the app wrote like any other
+generation. The app never creates the file.
 
 ```python
 import numpy as np
@@ -468,8 +471,10 @@ terms read `/spectra` through `UserSpectra`, the default of
 
 Named sets, plot definitions and saved views live in a fourth file of the
 set, `<stem>.workspace.h5`, never in `.user.h5`. It holds definitions
-only, never a result value. Today you write and read it from Python;
-ADR 0132 plans for the app to write it when the human saves:
+only, never a result value. Python and apeGmshViewer both read and
+write it. The app writes it when the human saves in its Sets panel,
+only from the human's window, through the same atomic write and with
+the same verdicts (`references/viewer.md` §9). From Python:
 
 ```python
 from apeGmsh.results.user import (
@@ -492,8 +497,11 @@ write_workspace("frame.workspace.h5", remove={"views": ["roof iso"]})
 - A given row replaces the row of the same name; every other row is
   copied verbatim. Like `.user.h5`, the write is atomic and refuses when
   another writer got there first. A tag the model lacks refuses the
-  write (`WorkspaceWriteRefused`). An unreadable old file is renamed
-  aside with a `WorkspaceRenamedAside` warning, never overwritten.
+  write (`WorkspaceWriteRefused`). On Windows, a workspace another
+  program holds open (the app, h5py, a viewer) refuses the write too,
+  with reason `held-open`: close it there and write again. The old file
+  stays whole. An unreadable old file is renamed aside with a
+  `WorkspaceRenamedAside` warning, never overwritten.
 - **Verdicts.** Each member's coordinates are stored with the set (a
   node's position, an element's centroid). When the model is re-meshed
   or re-declared, `verdicts()` looks for each member where it was:
@@ -552,7 +560,12 @@ ratio = ff.data[0, :, ff.components.index("footfall_ratio")]   # per fem.nodes.i
 ```
 
 Evaluate `response_nodes=ops.nodes.get(pg="Slab")` (self excitation at
-every slab node) when the map is the point. The driver, its rules and the figure accessors
+every slab node) when the map is the point. apeGmshViewer draws the map:
+the Contour card's User Results group offers `footfall` and its three
+columns, `NaN` nodes are no data, and it is never a deformed shape. A
+still is a `--render` shot with `"contour": {"field": "footfall",
+"component": "footfall_ratio", "source": "user"}` and no stage
+([viewer.md](viewer.md) §6). The driver, its rules and the figure accessors
 (`frf`, `mode_table`, `to_dataframe`) are in
 [opensees-bridge.md](opensees-bridge.md) §Footfall; worked floor
 `examples/footfall_two_bay_shell.py`; how-to

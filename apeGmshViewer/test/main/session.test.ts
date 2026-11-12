@@ -18,7 +18,7 @@ function harness(...files: string[]) {
   const session = new OpenSession({
     exists: (path) => disk.has(path),
     watch: (opened, sink): SessionWatcher => {
-      const w = { opened, closed: false, sink, set: { model: null, geometry: null, results: null, user: null } as OpenSet, close: () => (w.closed = true) };
+      const w = { opened, closed: false, sink, set: { model: null, geometry: null, results: null, user: null, workspace: null } as OpenSet, close: () => (w.closed = true) };
       watchers.push(w);
       return w;
     },
@@ -32,7 +32,7 @@ function harness(...files: string[]) {
 test("open pairs the file, watches its set and, when asked, tells the renderer", () => {
   const { session, watchers, log } = harness("a.h5", "a.geometry.h5");
   assert.ok(session.open(p("a.h5"), true));
-  assert.deepEqual(session.set, { model: p("a.h5"), geometry: p("a.geometry.h5"), results: null, user: null });
+  assert.deepEqual(session.set, { model: p("a.h5"), geometry: p("a.geometry.h5"), results: null, user: null, workspace: null });
   assert.equal(watchers.length, 1);
   assert.equal(log.length, 1);
   assert.match(log[0]!, /^open /);
@@ -59,7 +59,7 @@ test("a renderer-opened file that cannot be paired ends the old set", () => {
   assert.match(log.join("\n"), /note not watching .*b\.hdf5/);
   // A late report from the closed watcher reaches nobody.
   watchers[0]!.sink.changed(p("a.h5"));
-  watchers[0]!.sink.reopened({ model: p("a.h5"), geometry: null, results: null, user: null });
+  watchers[0]!.sink.reopened({ model: p("a.h5"), geometry: null, results: null, user: null, workspace: null });
   assert.equal(log.filter((l) => !l.startsWith("note")).length, 0);
 });
 
@@ -67,7 +67,7 @@ test("a renderer-opened model of another stem becomes the open set", () => {
   const { session, watchers } = harness("a.h5", "b.h5", "b.geometry.h5");
   session.open(p("a.h5"), false);
   session.rendererOpened(p("b.h5"));
-  assert.deepEqual(session.set, { model: p("b.h5"), geometry: p("b.geometry.h5"), results: null, user: null });
+  assert.deepEqual(session.set, { model: p("b.h5"), geometry: p("b.geometry.h5"), results: null, user: null, workspace: null });
   assert.equal(watchers[0]!.closed, true);
   assert.equal(watchers.length, 2);
 });
@@ -83,7 +83,7 @@ test("the renderer re-reading the open model changes nothing", () => {
 test("a reopen from the live watcher updates the set and tells the renderer", () => {
   const { session, watchers, log } = harness("a.h5");
   session.open(p("a.h5"), false);
-  const next = { model: p("a.h5"), geometry: p("a.geometry.h5"), results: null, user: null };
+  const next = { model: p("a.h5"), geometry: p("a.geometry.h5"), results: null, user: null, workspace: null };
   watchers[0]!.sink.reopened(next);
   assert.deepEqual(session.set, next);
   assert.deepEqual(log, [`open ${JSON.stringify(next)}`]);

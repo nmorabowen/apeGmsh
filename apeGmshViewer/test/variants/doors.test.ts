@@ -94,7 +94,7 @@ test("Study: a re-read of the same path drops a compare row whose label or file 
   const study = new Study({ read: () => next, watch: (_m, cb) => ((watched = cb), { close: () => changes.push("closed") }), note: (x) => changes.push(x), recheck: (_m, r) => ({ ok: true, real: r.real }), confined: () => null });
   study.onChange = () => changes.push("changed");
   assert.ok(study.open(m).ok);
-  study.compare = { row: row(1, "C", "c.h5"), set: { model: row(1, "C", "c.h5").resolved, geometry: null, results: null, user: null } };
+  study.compare = { row: row(1, "C", "c.h5"), set: { model: row(1, "C", "c.h5").resolved, geometry: null, results: null, user: null, workspace: null }, lineage: { femHash: "f", modelHash: "m" } };
   watched!();
   assert.notEqual(study.compare, null, "the same row, label and file: kept");
   next = { ...next, rows: [row(0, "U", "u.h5"), row(1, "C2", "c.h5")] };

@@ -63,6 +63,8 @@ export type ZoneRead<T> = { ok: true; value: T } | { ok: false; reason: string }
 export interface CombinationTable {
   /** the `/combinations` generation read (`@current`), null when the file holds no zone */
   generation: number | null;
+  /** VU9b: every `g<N>` the zone holds, ascending ([] with no zone): the authoring panel's revert reads it */
+  generations: number[];
   /** the `.user.h5` rows that stand */
   rows: Combination[];
   /** the model.h5 `/opensees/combinations` rows that stand */
@@ -81,6 +83,12 @@ export interface ResultEntry {
   link: string;
   /** one per row of `DATA` axis 0; empty for a state-free entry */
   states: StateAddress[];
+  /**
+   * VU16: the `@COMPONENTS` of a nodes, entities or domain entry, in `DATA`
+   * column order; [] for an elements entry, whose columns its buckets'
+   * `COLUMN_MAP` names.
+   */
+  components: string[];
 }
 export interface ResultIndex {
   entries: ResultEntry[];
@@ -361,7 +369,7 @@ function zoneVersionChecked(t: Tree, f: FpFile, zone: string, root: string, targ
 function readCombinations(t: Tree, f: FpFile, warnings: string[], modelRows: ZoneRead<Combination[]>): CombinationTable {
   if (!modelRows.ok) throw new ZoneRefused("/opensees/combinations", modelRows.reason);
   if (!zoneVersionChecked(t, f, "combinations", "combinations", COMBINATIONS_TARGET, ZONE_FLOOR.combinations, warnings)) {
-    return { generation: null, ...resolve([], modelRows.value) };
+    return { generation: null, generations: [], ...resolve([], modelRows.value) };
   }
   const zone = t.group(f, "combinations");
   const current = zone === null ? null : intAttr(zone, "current", false);
@@ -369,7 +377,134 @@ function readCombinations(t: Tree, f: FpFile, warnings: string[], modelRows: Zon
   if (current === null) throw new ZoneRefused("/combinations", "@current is not an integer");
   const g = t.group(zone, `g${current}`);
   if (g === null) throw new ZoneRefused("/combinations", `@current names g${current}, which it does not hold`);
-  return { generation: current, ...resolve(readGeneration(t, g, "/combinations"), modelRows.value) };
+  return { generation: current, generations: generationsOf(t, zone), ...resolve(readGeneration(t, g, "/combinations"), modelRows.value) };
+}
+
+const GENERATION = /^g(\d+)$/;
+/** Every `g<N>` group of a `/combinations` zone, ascending (Python's `_GENERATION`). */
+function generationsOf(t: Tree, zone: FpGroup): number[] {
+  return zone
+    .keys()
+    .flatMap((k) => {
+      const m = GENERATION.exec(k);
+      return m && t.group(zone, k) !== null ? [Number(m[1])] : [];
+    })
+    .sort((a, b) => a - b);
+}
+
+// ---------------------------------------------------------------------------
+// VU9b (ADR 0130 A4): what a combination save reads of the file before it writes
+// ---------------------------------------------------------------------------
+
+/** A file a combination save may not write, with the reason (`no-version`, `newer`, `refused`, ...). */
+export class UserWriteRefused extends Error {
+  readonly reason: string;
+  readonly detail: string;
+  constructor(reason: string, detail: string) {
+    super(`${reason}: ${detail}`);
+    this.reason = reason;
+    this.detail = detail;
+  }
+}
+
+/** What a save needs of the file it copies: `/meta@revision`, the root zones, and the generations with the rows of `@current` (and of the one a revert asks for). */
+export interface UserWriteBase {
+  revision: number;
+  zones: string[];
+  /** `@current`, or null when the file holds no `/combinations` (a first save creates it) */
+  current: number | null;
+  /** every `g<N>`, ascending */
+  held: number[];
+  /** the rows of `@current` as stored, refused ones included */
+  rows: Combination[];
+  /** generation `also` and its rows, when the caller asked for one and the zone holds it; else null */
+  also: { generation: number; rows: Combination[] } | null;
+}
+
+/** The root zones a `.user.h5` writer must understand, and their `/meta` keys (Python's `_check_known_versions`). */
+const WRITE_ZONES: readonly [string, string][] = [
+  ["combinations", "combinations_schema_version"],
+  ["results", "user_results_schema_version"],
+  ["modes", "modes_schema_version"],
+  ["spectra", "spectra_schema_version"],
+  ["entities", "entities_schema_version"],
+];
+
+/**
+ * Read `path` (read-only, closed before this returns) for a combination save.
+ * Refuses a file whose `/meta` or `/combinations` is newer than this app
+ * writes (A4: no writer touches a zone newer than it knows; `/meta@revision`
+ * is written too), a zone group with no version key, and a `/combinations`
+ * this reader refuses: the save would otherwise carry it forward unread.
+ */
+export function readForWrite(h5: UserH5, path: string, also: number | null = null): UserWriteBase {
+  let f: FpFile;
+  try {
+    f = openH5(h5, path);
+  } catch (err) {
+    throw new UserWriteRefused("cannot-read", `${path} is not a readable HDF5 file: ${message(err)}`);
+  }
+  const t = new Tree(h5);
+  try {
+    let meta: ReturnType<typeof readMeta>;
+    try {
+      meta = readMeta(t, f, path);
+    } catch (err) {
+      throw new UserWriteRefused("refused", message(err));
+    }
+    if (meta.warnings.length) throw new UserWriteRefused("newer", `${path}: ${meta.warnings.join("; ")}; this app does not write over a newer file`);
+    const m = t.group(f, "meta")!;
+    for (const [root, key] of WRITE_ZONES) {
+      if (f.keys().includes(root) && m.attrs[key] === undefined) throw new UserWriteRefused("no-version", `${path}: /${root} has no ${key} in /meta; nothing was replaced`);
+    }
+    const warnings: string[] = [];
+    let present: boolean;
+    try {
+      present = zoneVersionChecked(t, f, "combinations", "combinations", COMBINATIONS_TARGET, ZONE_FLOOR.combinations, warnings);
+    } catch (err) {
+      throw new UserWriteRefused("refused", `${path}: ${message(err)}`);
+    }
+    if (warnings.length) throw new UserWriteRefused("newer", `${path}: ${warnings.join("; ")}; this app does not write a zone newer than it knows (ADR 0130 A4)`);
+    const base = { revision: meta.revision, zones: meta.zones };
+    if (!present) return { ...base, current: null, held: [], rows: [], also: null };
+    try {
+      const zone = t.group(f, "combinations");
+      const current = zone === null ? null : intAttr(zone, "current", false);
+      if (zone === null || current === null) throw new ZoneRefused("/combinations", "it has no integer @current");
+      const g = t.group(zone, `g${current}`);
+      if (g === null) throw new ZoneRefused("/combinations", `@current names g${current}, which it does not hold`);
+      const held = generationsOf(t, zone);
+      const other = also === null ? null : t.group(zone, `g${also}`);
+      return {
+        ...base,
+        current,
+        held,
+        rows: readGeneration(t, g, "/combinations"),
+        also: also === null || other === null ? null : { generation: also, rows: readGeneration(t, other, "/combinations") },
+      };
+    } catch (err) {
+      throw new UserWriteRefused("refused", `${path}: /combinations cannot be read, so it is not written over: ${message(err)}`);
+    }
+  } finally {
+    f.close();
+  }
+}
+
+/** `/meta@revision` of `path` now (read-only, closed at once): a save compares it immediately before the replace. */
+export function readRevision(h5: UserH5, path: string): number {
+  const f = openH5(h5, path);
+  try {
+    return readMeta(new Tree(h5), f, path).revision;
+  } finally {
+    f.close();
+  }
+}
+
+/** The model archive's `/opensees/combinations` rows as stored, refused ones included (Python's `read_model_combinations`); throws when it cannot be read. */
+export function modelCombinationRows(h5: UserH5, model: string): Combination[] {
+  const r = readModelCombinations(h5, model, []);
+  if (!r.ok) throw new UserWriteRefused("refused", `${model}: ${r.reason}`);
+  return r.value;
 }
 
 function column(t: Tree, g: FpGroup, name: string, code: string, zone: string, length: number | null): unknown[] {
@@ -579,7 +714,9 @@ function readEntryMeta(t: Tree, link: string, g: FpGroup): ResultEntry {
     checkHolder(t, holder, tg, s);
     if (tg === "elements") checkPlacement(t, g, bucket);
   }
-  return { name: name!, target: tg, basis: basis as ResultEntry["basis"], perState: perState === 1, linear: linear === 1, link, states };
+  // checkHolder held @COMPONENTS to one name per DATA column.
+  const components = tg === "elements" ? [] : textAttr(vals, "COMPONENTS")!.split(",");
+  return { name: name!, target: tg, basis: basis as ResultEntry["basis"], perState: perState === 1, linear: linear === 1, link, states, components };
 }
 
 /** The shapes of one holder; `DATA` is never read, only its shape (Python's `_check_holder`). */
@@ -1006,6 +1143,96 @@ export function readEntityValues(h5: UserH5, path: string, name: string): Entity
     };
   } finally {
     f.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// VU16: one component of a state-free ON_NODES user result, as a contour column
+// ---------------------------------------------------------------------------
+
+/** One component of a state-free `ON_NODES` user result: the node ids and their values, in `DATA` row order. */
+export interface UserNodalColumn {
+  name: string;
+  component: string;
+  /** every component of the entry, in `DATA` column order */
+  components: string[];
+  /** the entry's `ID` column (FEM node ids) */
+  ids: Float64Array;
+  /** `DATA[0, :, column]`; NaN is no value at that node (drawn as no data) */
+  values: Float64Array;
+}
+
+/** What `user:readResult` answers: the column, or why it is not given (`stale`: A6; `refused`: anything else). */
+export type UserColumnRead = { ok: true; value: UserNodalColumn } | { ok: false; reason: "refused" | "stale"; detail: string };
+
+/** A user result whose column cannot be given: absent, refused, on another target, or per state. */
+export class UserColumnRefused extends Error {}
+
+/**
+ * The column of `component` of the state-free `ON_NODES` user result `name`,
+ * read on request (never by the index). It must stand in `results` (the index
+ * `readUserFile` read from the same file), so its `DATA` and `ID` shapes are
+ * already checked; an id listed twice refuses, because a node takes one value.
+ */
+export function readUserNodalColumn(h5: UserH5, path: string, results: ZoneRead<ResultIndex>, name: string, component: string): UserNodalColumn {
+  if (!results.ok) throw new UserColumnRefused(`${path}: /results ${results.reason}`);
+  const entry = results.value.entries.find((e) => e.name === name);
+  if (entry === undefined) {
+    const why = results.value.refused.find((r) => r.name === name);
+    throw new UserColumnRefused(why ? `user result ${pyStr(name)} is refused: ${why.reason}: ${why.detail}` : `${path} holds no user result ${pyStr(name)}`);
+  }
+  if (entry.target !== "nodes") throw new UserColumnRefused(`user result ${pyStr(name)} is on ${entry.target}; this app draws a user result on nodes only`);
+  if (entry.perState) throw new UserColumnRefused(`user result ${pyStr(name)} is per state (${entry.states.length} states); this app draws a state-free one only`);
+  const column = entry.components.indexOf(component);
+  if (column < 0) throw new UserColumnRefused(`user result ${pyStr(name)} has no component ${pyStr(component)}; its components are ${entry.components.join(", ")}`);
+  const t = new Tree(h5);
+  const f = openH5(h5, path);
+  try {
+    const v = t.group(f, `results/${entry.link}/RESULTS/ON_NODES/values`)!;
+    const data = t.dataset(v, "DATA")!;
+    const [, n, c] = shape(data) as [number, number, number];
+    const raw = data.value as Float64Array;
+    const ids = Float64Array.from(columnValues(t.dataset(v, "ID")!) as number[]);
+    const values = new Float64Array(n);
+    for (let k = 0; k < n; k++) values[k] = raw[k * c + column]!;
+    const seen = new Set<number>();
+    for (const id of ids) {
+      if (seen.has(id)) throw new UserColumnRefused(`user result ${pyStr(name)} lists node ${id} twice in its ID column`);
+      seen.add(id);
+    }
+    return { name, component, components: [...entry.components], ids, values };
+  } finally {
+    f.close();
+  }
+}
+
+/**
+ * `user:readResult`'s answer for the `.user.h5` at `path` judged against the
+ * set's `model` and `results` (A6): a stale entry is refused with its reason
+ * before its `DATA` is read; then `readUserNodalColumn`. Never raises.
+ */
+export function readUserResultColumn(
+  h5: UserH5,
+  path: string,
+  model: string | null,
+  results: string | null,
+  list: (dir: string) => readonly string[],
+  name: string,
+  component: string,
+): UserColumnRead {
+  const set = readUserSet(h5, path, model, results, list);
+  if (!set.ok) return { ok: false, reason: "refused", detail: set.error };
+  // A standing entry with no own verdict is stale (A6: nothing is read as current on no proof), as reduce.ts
+  // `NO_VERDICT` holds; a name `__proto__` sets the record's prototype, never an own key. An entry that does not
+  // stand is refused by `readUserNodalColumn`, with why.
+  const standing = set.user.results.ok && set.user.results.value.entries.some((e) => e.name === name);
+  const mark = Object.hasOwn(set.staleness.results, name) ? set.staleness.results[name]! : null;
+  if (standing && mark === null) return { ok: false, reason: "stale", detail: `user result ${pyStr(name)} is stale (A6): the reader gave no staleness verdict for it` };
+  if (mark?.stale) return { ok: false, reason: "stale", detail: `user result ${pyStr(name)} is stale (A6): ${mark.reason}` };
+  try {
+    return { ok: true, value: readUserNodalColumn(h5, path, set.user.results, name, component) };
+  } catch (err) {
+    return { ok: false, reason: "refused", detail: message(err) };
   }
 }
 

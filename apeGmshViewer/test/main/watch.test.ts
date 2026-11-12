@@ -38,7 +38,7 @@ test("a slow rewrite is reported once, at least 300 ms after the last write", as
   writeFileSync(model, "v1");
   const { heard, watcher } = harness(model);
   try {
-    assert.deepEqual(watcher.set, { model, geometry: null, results: null, user: null });
+    assert.deepEqual(watcher.set, { model, geometry: null, results: null, user: null, workspace: null });
     await sleep(100);
     // A writer that truncates, then writes in chunks 100 ms apart for 600 ms.
     writeFileSync(model, "");
@@ -70,12 +70,12 @@ test("a sibling that appears, then vanishes, changes the set", async () => {
     await sleep(100);
     writeFileSync(geometry, "geometry");
     await until(() => heard.length > 0);
-    assert.deepEqual(heard[0]!.reopened, { model, geometry, results: null, user: null });
-    assert.deepEqual(watcher.set, { model, geometry, results: null, user: null });
+    assert.deepEqual(heard[0]!.reopened, { model, geometry, results: null, user: null, workspace: null });
+    assert.deepEqual(watcher.set, { model, geometry, results: null, user: null, workspace: null });
 
     rmSync(geometry);
     await until(() => heard.length > 1);
-    assert.deepEqual(heard[1]!.reopened, { model, geometry: null, results: null, user: null });
+    assert.deepEqual(heard[1]!.reopened, { model, geometry: null, results: null, user: null, workspace: null });
 
     // A file of another stem is not watched.
     writeFileSync(join(dir, "other.geometry.h5"), "changed");
@@ -95,7 +95,7 @@ test("a rewritten geometry of an unchanged set is a fileChanged, not a reopen", 
   writeFileSync(geometry, "g1");
   const { heard, watcher } = harness(geometry); // opened from the geometry
   try {
-    assert.deepEqual(watcher.set, { model, geometry, results: null, user: null });
+    assert.deepEqual(watcher.set, { model, geometry, results: null, user: null, workspace: null });
     await sleep(100);
     writeFileSync(geometry, "g2, longer");
     await until(() => heard.length > 0);
@@ -121,7 +121,7 @@ test("a file opened under an upper-case suffix is reported when rewritten", asyn
   writeFileSync(results, "r1");
   const { heard, watcher } = harness(results);
   try {
-    assert.deepEqual(watcher.set, { model, geometry: null, results, user: null });
+    assert.deepEqual(watcher.set, { model, geometry: null, results, user: null, workspace: null });
     await sleep(100);
     writeFileSync(results, "r2, longer");
     await until(() => heard.length > 0);

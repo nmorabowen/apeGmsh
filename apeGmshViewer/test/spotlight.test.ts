@@ -44,7 +44,7 @@ const defLoaded: State = reduce(initialState, { type: "fileLoaded", artifact: "m
 
 test("SPOTLIGHT_EVENT_LEDGER classifies every EventType with a non-empty command/description or reason", () => {
   const entries = Object.entries(SPOTLIGHT_EVENT_LEDGER) as [EventType, (typeof SPOTLIGHT_EVENT_LEDGER)[EventType]][];
-  assert.equal(entries.length, 108, "all 108 store events are classified in SPOTLIGHT_EVENT_LEDGER");
+  assert.equal(entries.length, 120, "all 120 store events (VU9a added the seven workspace events, VU19 the four compare-door events) are classified in SPOTLIGHT_EVENT_LEDGER");
   const exposedCommands = new Set<string>();
   for (const [eventType, entry] of entries) {
     if (entry.kind === "expose") {
@@ -486,6 +486,7 @@ test("spotlightViewOf exposes contour, unit, deform, and step drill-downs when p
         {
           id: "stage_000",
           name: "gravity",
+          programName: "gravity",
           kind: "static",
           time: [0, 0.5, 1.0],
           nodal: ["displacement_x", "displacement_y", "displacement_z"],

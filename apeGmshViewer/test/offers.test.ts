@@ -244,19 +244,25 @@ test("INV-5: an offer reaching the window changes nothing but the list; every ke
 test("INV-5: only the panel's click dispatches Apply or Back; main and the spec side never do", () => {
   const root = fileURLToPath(new URL("../src/", import.meta.url));
   const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(join(dir, d.name)) : d.name.endsWith(".ts") ? [join(dir, d.name)] : []));
-  const senders = walk(root).filter((f) => /type: "(applyOffer|backOffer)"/.test(readFileSync(f, "utf8")) && !/state[\\/]types\.ts$/.test(f));
+  // Skips the barrel and state/types/events/offers.ts, which declares applyOffer and backOffer; keep it in step if they move.
+  const senders = walk(root).filter((f) => /type: "(applyOffer|backOffer)"/.test(readFileSync(f, "utf8")) && !/state[\\/]types(\.ts|[\\/]events[\\/]offers\.ts)$/.test(f));
   assert.deepEqual(senders.map((f) => f.slice(root.length).replace(/\\/g, "/")), ["panels/offers.ts"]);
 });
 
 test("INV-5: an agent's call returns before anything in the window takes focus, restores or opens", () => {
-  const src = readFileSync(fileURLToPath(new URL("../src/main/main.ts", import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+  const src = read("../src/main/main.ts");
   const start = src.indexOf('app.on("second-instance"');
   const heard = src.indexOf("heardFromAgent(data as Reach);\n      return;", start);
   assert.ok(start >= 0 && heard > start, "the handler hands an agent's call over, and returns");
   for (const opener of ["fileFromArgv(argv", "openPath(next", "win.restore()", "win.focus()"]) {
     assert.ok(src.indexOf(opener, start) > heard, `${opener} comes after the agent's return`);
   }
-  const reach = src.slice(src.indexOf("function heardFromAgent"), src.indexOf('ipcMain.on("viewer:offersReady"'));
+  // VH3 (#2868): the agent's path is ./modes/reach.ts, whole; main.ts only hands the call to it.
+  assert.match(src, /^import \{[^}]*\bheardFromAgent\b[^}]*\} from "\.\/modes\/reach\.ts";$/m, "main.ts takes heardFromAgent from the reach module");
+  assert.doesNotMatch(src, /function heardFromAgent|function writeSnapshot/, "main.ts keeps no agent path of its own");
+  const reach = read("../src/main/modes/reach.ts");
+  assert.match(reach, /^export function heardFromAgent\(/m, "the reach module holds the agent's path");
   assert.doesNotMatch(reach, /focus|restore|openPath|show\(|reload/, "the agent's path touches none of them");
 });
 
@@ -705,7 +711,7 @@ test("D6: a stage name two stages share reads back as its index", async () => {
   const r = await rig();
   r.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 1, step: 0 } });
   const s = r.store.get();
-  const stages = s.results!.stages.map((st) => ({ ...st, name: "same" }));
+  const stages = s.results!.stages.map((st) => ({ ...st, name: "same", programName: "same" }));
   const dup: State = { ...s, results: { ...s.results!, stages } };
   assert.equal(viewShotOf(dup, POSES["start"]!).shot.stage, 1);
   assert.equal(viewShotOf(s, POSES["start"]!).shot.stage, "erect");

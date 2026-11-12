@@ -628,6 +628,7 @@ test("H1: reduce emits a notice on setPhase and resultsLoaded when a selected co
   const stage0: ResultsStage = {
     id: "MODEL_STAGE[1]",
     name: "stage_0",
+    programName: "stage_0",
     kind: "static",
     time: [0, 1],
     nodal: [],
@@ -640,6 +641,7 @@ test("H1: reduce emits a notice on setPhase and resultsLoaded when a selected co
   const stage1: ResultsStage = {
     id: "MODEL_STAGE[2]",
     name: "stage_1",
+    programName: "stage_1",
     kind: "static",
     time: [0, 1],
     nodal: [],
@@ -652,6 +654,7 @@ test("H1: reduce emits a notice on setPhase and resultsLoaded when a selected co
   const stage2Empty: ResultsStage = {
     id: "MODEL_STAGE[3]",
     name: "stage_2",
+    programName: "stage_2",
     kind: "static",
     time: [0, 1],
     nodal: [],

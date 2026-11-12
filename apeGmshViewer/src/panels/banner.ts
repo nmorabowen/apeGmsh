@@ -6,8 +6,10 @@
 // how many drawn nodes have no displacement (`partial`), or why it is refused.
 // V4c2a adds the element contour's refusal (an unverified file, disagreeing
 // groups, rows that do not join the mesh) and element components refused alone.
+// VU9a adds the workspace (ADR 0132): a newer file shown read-only, and the
+// file an unreadable one was moved aside to, with a control that closes it.
 
-import { BANNER_BELOW_SCRUBBER_PX, noticesOf, refusalsOf, SCRUBBER_TOP_PX, scrubberRow, warningsOf } from "../state/selectors.ts";
+import { BANNER_BELOW_SCRUBBER_PX, noticesOf, refusalsOf, SCRUBBER_TOP_PX, scrubberRow, warningsOf, workspaceAsideNotice } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 
@@ -52,7 +54,9 @@ export function mountBanner(store: Store): () => void {
       s.contour.component === prev.contour.component &&
       s.contour.gauss === prev.contour.gauss &&
       s.contour.join === prev.contour.join &&
-      s.contour.notice === prev.contour.notice
+      s.contour.notice === prev.contour.notice &&
+      s.workspace.read === prev.workspace.read &&
+      s.workspace.aside === prev.workspace.aside
     ) return;
     const refusals = refusalsOf(s);
     const notices = noticesOf(s);
@@ -72,12 +76,31 @@ export function mountBanner(store: Store): () => void {
     });
     if (open) banner.dataset["open"] = "true";
     else delete banner.dataset["open"];
+    const aside = s.workspace.aside === null ? null : workspaceAsideNotice(s.workspace.aside);
+    const closers: (() => void)[] = [];
+    const noticeRow = (n: string) => {
+      const row = el("div", "notice", n);
+      if (n !== aside) return row;
+      // VU9a: the aside line is said once per rename; the user closes it.
+      row.dataset["workspaceAside"] = "true";
+      const close = el("button", "banner-summary", "Close");
+      close.type = "button";
+      close.title = "close this notice (the aside file stays on disk)";
+      closers.push(listen(close, "click", () => store.dispatch({ type: "dismissWorkspaceAside" })));
+      row.append(" ", close);
+      return row;
+    };
     banner.replaceChildren(
       summary,
       ...refusals.map((r) => el("div", "refused", r)),
-      ...notices.map((n) => el("div", "notice", n)),
+      ...notices.map(noticeRow),
       ...warnings.map((w) => el("div", undefined, w)),
     );
+    const summaryOff = unlisten;
+    unlisten = () => {
+      summaryOff?.();
+      for (const c of closers) c();
+    };
     publish();
   };
   /**

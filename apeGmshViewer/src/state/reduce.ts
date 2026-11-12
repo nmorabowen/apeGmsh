@@ -3,65 +3,57 @@
 // The event union is exhaustive: the `never` check at the end of the switch
 // fails to compile when an event is added without a case, and an event the
 // code does not know raises at run time.
+//
+// A slice whose events write only its own part of the state has its own
+// sub-reducer under reduce/, the way the clip events call `reduceClip`: each
+// takes its sub-state, and what it reads of the rest as explicit inputs, and
+// returns the same object when nothing changed. The model's events and the
+// cases that read or write several slices (the files, the selection, the
+// phase, the results, the contour and the deformed shape) stay here, as do
+// the follow-ups a delegated event needs from another slice (`withPhase`,
+// `withLineDiagramPick`, `syncLineDiagramDerived`).
 
-import { initialClip, reduceClip } from "./clip.ts";
+import { reduceClip } from "./clip.ts";
 import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";
-import {
-  defaultLineDiagramComponent,
-  initialLineDiagramState,
-  LINE_DIAGRAM_CMAP_NAMES,
-  lineDiagramKeysOf,
-} from "./lineDiagram.ts";
+import { defaultLineDiagramComponent, lineDiagramKeysOf } from "./lineDiagram.ts";
 import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
+import { initialCamera, reduceCamera } from "./reduce/camera.ts";
+import { initialState } from "./reduce/initial.ts";
+import { pickLineDiagram, reduceLineDiagram } from "./reduce/lineDiagram.ts";
+import { reduceOffers } from "./reduce/offers.ts";
+import { reduceOverlays } from "./reduce/overlays.ts";
+import { reduceUser } from "./reduce/user.ts";
+import { reduceVariants } from "./reduce/variants.ts";
+import { reduceWindows } from "./reduce/windows.ts";
+import { reduceWorkspace, workspaceForAnotherModel } from "./reduce/workspace.ts";
 import { elementsOfDecl, selectedElementsOf } from "./search.ts";
-import { combinationFieldsOf, combinationRequestOf, deformOf, differencePlanOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
+import {
+  combinationFieldsOf,
+  combinationRequestOf,
+  deformOf,
+  compareUserRequestOf,
+  differencePlanOf,
+  elementJoinKey,
+  geometryPairing,
+  resultsPairing,
+  stageCount,
+  stageIdentity,
+  syncLineDiagramDerived,
+  userResultPickOf,
+  userResultRequestOf,
+} from "./selectors.ts";
 import { initialSearch, initialSpotlight } from "./spotlight.ts";
 import { THEME_MODES } from "../theme/tokens.ts";
-import {
-  LINE_STATION_COMPONENTS,
-  NAMED_VIEWS,
-  USER_ENTITY_KINDS,
-  USER_RESULT_BASES,
-  USER_RESULT_TARGETS,
-  USER_ZONES,
-  WINDOW_KINDS,
-  type StaleMark,
-  type UserCombination,
-  type UserCombinationIn,
-  type UserIndexIn,
-  type UserInfo,
-  type UserReadIn,
-  type UserRefusal,
-  type UserRefusalIn,
-  type UserStalenessIn,
-  type ArtifactInfo,
-  type ArtifactKind,
-  type CameraPose,
-  type CameraRequest,
-  type CameraState,
-  type ContourState,
-  type DeclPath,
-  type DeformState,
-  type Event,
-  type LineDiagramState,
-  type LoadsState,
-  type PrincipalState,
-  type ReactionsState,
-  type SpringsState,
-  type SupportsState,
-  type VectorsState,
-  type MeshInfo,
-  type Offer,
-  type OffersState,
-  type PhaseKey,
-  type SpatialNdm,
-  type State,
-  type UnitSystemId,
-  type Vec3,
-  type VariantsIn,
-  type VariantsState,
-} from "./types.ts";
+import type { ArtifactInfo, ArtifactKind, ContourState, DeclPath, Event, MeshInfo, PhaseKey, State, UnitSystemId } from "./types.ts";
 import { UNIT_SYSTEM_IDS } from "./units.ts";
+
+export { canonicalPose, initialCamera, ROLL_TOLERANCE } from "./reduce/camera.ts";
+export { emptyRecord, initialContour, initialDeform, initialLineDiagram, initialState } from "./reduce/initial.ts";
+export { initialOffers, MAX_OFFERS } from "./reduce/offers.ts";
+export { initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./reduce/overlays.ts";
+export { NO_USER_FILE, userEventOf, userInfoOf, userPathOf, userReadable } from "./reduce/user.ts";
+export { initialVariants } from "./reduce/variants.ts";
+export { initialWorkspace } from "./reduce/workspace.ts";
 
 type Markers = { on: boolean; size: number | null; auto: boolean };
 
@@ -78,148 +70,11 @@ function markerSize<M extends Markers>(m: M, size: number | null, auto: boolean 
   return { ...m, size: Math.max(NODE_SIZE_MIN, Math.min(NODE_SIZE_MAX, size)), auto: auto === true };
 }
 
-/** The deformed shape before the user turns it on: true scale, no ghost (V4d; the Qt defaults). */
-export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
-
-export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
-
-export const initialSupports: SupportsState = { on: false, scale: 1 };
-
-export const initialPrincipal: PrincipalState = { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true };
-export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
-export const initialSprings: SpringsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", notice: null };
-export const initialVectors: VectorsState = { on: false, field: null, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant" };
-
-export const initialLoads: LoadsState = {
-  on: false,
-  scale: 1,
-  showNodalForces: true,
-  showNodalMoments: true,
-  showElementLoads: true,
-  showSp: true,
-  includeSupportReactions: false,
-  scaleBySeries: false,
-  headSize: 12,
-  thin: true,
-  colorBy: "mono",
-  selectedPatterns: null,
-};
-
-/** VA1: no camera until the viewport first frames a scene. */
-export const initialCamera: CameraState = { pose: null, request: null, seq: 0, read: null };
-
-/** VA5 (ADR 0128 D5): the longest offer list; the next offer drops the oldest. */
-export const MAX_OFFERS = 8;
-
-export const initialOffers: OffersState = { list: [], seq: 0, request: null, requestSeq: 0, back: [], notice: null };
-
 /** The opacity a model opens on: solids translucent when they would hide beams, else opaque. */
 export function defaultOpacity(mesh: MeshInfo): number {
   const hasLines = mesh.counts.lineCells > 0 || mesh.counts.opsOnly > 0;
   return mesh.counts.solidCells > 0 && hasLines ? 0.35 : 1;
 }
-
-/** The largest camera roll (radians) an explicit `up` may imply; the camera is a Z-up turntable with none. */
-export const ROLL_TOLERANCE = 1e-6;
-
-function vec3Of(v: unknown, who: string, key: string): Vec3 {
-  if (!Array.isArray(v) || v.length !== 3 || !v.every((x) => typeof x === "number" && Number.isFinite(x))) {
-    throw new RangeError(`${who}: ${key} must be three finite numbers; got ${JSON.stringify(v)}`);
-  }
-  return [v[0] as number, v[1] as number, v[2] as number];
-}
-
-/**
- * VA1: a camera pose, checked and made canonical: `up` becomes the unit
- * screen-up, its part across the view direction. Refused, with the reason: a
- * key other than eye, target and up; a value that is not three finite
- * numbers; eye = target; an up along the view direction; and an up that
- * would roll the Z-up camera by more than ROLL_TOLERANCE. Looking straight
- * down or up, any up across the view is allowed: it sets the heading.
- */
-export function canonicalPose(p: CameraPose, who: string): CameraPose {
-  const keys = Object.keys(p).sort().join(", ");
-  if (keys !== "eye, target, up") throw new RangeError(`${who}: a pose has exactly eye, target and up; got ${keys || "no key"}`);
-  const eye = vec3Of(p.eye, who, "eye");
-  const target = vec3Of(p.target, who, "target");
-  const up = vec3Of(p.up, who, "up");
-  const f = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
-  const fl = Math.hypot(f[0]!, f[1]!, f[2]!);
-  if (!(fl > 0)) throw new RangeError(`${who}: eye and target are the same point ${JSON.stringify(eye)}`);
-  const [fx, fy, fz] = [f[0]! / fl, f[1]! / fl, f[2]! / fl];
-  const along = up[0] * fx + up[1] * fy + up[2] * fz;
-  const across = [up[0] - along * fx, up[1] - along * fy, up[2] - along * fz];
-  const al = Math.hypot(across[0]!, across[1]!, across[2]!);
-  if (!(al > 1e-9 * Math.hypot(...up))) throw new RangeError(`${who}: up ${JSON.stringify(up)} is along the view direction`);
-  const u: Vec3 = [across[0]! / al, across[1]! / al, across[2]! / al];
-  // A Z-up turntable's screen-up lies in the plane of the view direction and
-  // world Z, on the +Z side: (Z - fz f) / |..|, whose length is hypot(fx, fy).
-  const h = Math.hypot(fx, fy);
-  if (h > 1e-12) {
-    const [ix, iy, iz] = [(-fz * fx) / h, (-fz * fy) / h, h];
-    const cross = Math.hypot(iy * u[2] - iz * u[1], iz * u[0] - ix * u[2], ix * u[1] - iy * u[0]);
-    const roll = Math.atan2(cross, ix * u[0] + iy * u[1] + iz * u[2]);
-    // target - eye is rounded: each component of the view direction is off by
-    // up to about eps * |coordinate| / |target - eye|, which turns the no-roll
-    // up by that much over h. Near the vertical, far from the origin (a
-    // georeferenced model), that exceeds ROLL_TOLERANCE, so it is allowed for.
-    const scale = Math.max(...eye.map(Math.abs), ...target.map(Math.abs));
-    const tolerance = ROLL_TOLERANCE + (16 * Number.EPSILON * scale) / (fl * h);
-    if (!(roll <= tolerance)) {
-      const deg = (roll * 180) / Math.PI;
-      throw new RangeError(`${who}: up ${JSON.stringify(up)} rolls the camera by ${deg.toPrecision(4)} degrees; the camera has no roll (world Z stays up the screen)`);
-    }
-  }
-  return { eye, target, up: u };
-}
-
-const samePose = (a: CameraPose, b: CameraPose): boolean =>
-  a.eye.every((x, i) => x === b.eye[i]) && a.target.every((x, i) => x === b.target[i]) && a.up.every((x, i) => x === b.up[i]);
-
-/** VA1: a `setCamera` request checked; null when it is a defined no-op (nothing drawn, or `fit-selection` with nothing selected). */
-function cameraRequestOf(s: State, to: CameraRequest): CameraRequest | null {
-  const drawn = s.mesh !== null || s.geometry !== null;
-  if (typeof to === "string") {
-    if (!(NAMED_VIEWS as readonly string[]).includes(to)) throw new RangeError(`setCamera: ${JSON.stringify(to)} is not a named view (${NAMED_VIEWS.join(", ")})`);
-    if (!drawn) return null;
-    if (to === "fit-selection" && selectedElementsOf(s).length === 0) return null;
-    return to;
-  }
-  if (to !== null && typeof to === "object" && "eye" in to) return canonicalPose(to, "setCamera");
-  if (to !== null && typeof to === "object" && "yaw" in to) {
-    const keys = Object.keys(to).sort().join(", ");
-    if (keys !== "tilt, yaw") throw new RangeError(`setCamera: a turn has exactly yaw and tilt; got ${keys}`);
-    if (!Number.isFinite(to.yaw) || !Number.isFinite(to.tilt)) throw new RangeError(`setCamera: a turn needs a finite yaw and tilt; got ${JSON.stringify(to)}`);
-    if (!drawn) return null;
-    return { yaw: to.yaw, tilt: Math.min(Math.PI, Math.max(0, to.tilt)) };
-  }
-  throw new RangeError(`setCamera: ${JSON.stringify(to)} is not a named view, a pose (eye, target, up) or a turn (yaw, tilt)`);
-}
-
-/** No model, no dimension. */
-const NO_NDM: SpatialNdm = { ndm: null, reason: "no model is loaded" };
-
-/** A record with no prototype: a key named `constructor` or `__proto__` is just a key. */
-export const emptyRecord = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
-
-/** The contour before anything is picked: whole-history range, jet (V4c1). */
-export const initialContour: ContourState = {
-  source: "nodal",
-  gauss: "cell",
-  join: null,
-  field: null,
-  component: null,
-  range: "history",
-  fixed: null,
-  cmap: "jet",
-  declaredUnits: null,
-  sourceUnits: null,
-  targetUnits: "as_stored",
-  stepRange: null,
-  scan: null,
-  notice: null,
-  reads: 0,
-};
 
 function syncContourUnits(c: ContourState, declaredUnits: UnitSystemId | null, keepManual: boolean): ContourState {
   if (declaredUnits !== null) {
@@ -231,59 +86,6 @@ function syncContourUnits(c: ContourState, declaredUnits: UnitSystemId | null, k
   }
   return { ...c, declaredUnits: null };
 }
-
-/** VU10: no study, no compare set, no difference. */
-export const initialVariants: VariantsState = { study: null, switching: null, notice: null, compare: null, difference: false, read: null };
-
-export const initialState: State = {
-  artifacts: { geometry: null, model: null, results: null },
-  decls: emptyRecord(),
-  names: emptyRecord(),
-  blocks: [],
-  mesh: null,
-  phase: { axis: [], at: null },
-  selection: { decls: [], picks: [] },
-  hover: null,
-  visibility: { hidden: [], edges: true, opacity: 1, colourBy: "group", extrudeFrames: false, showOffsets: false },
-  nodes: { on: false, size: null, auto: true },
-  gaussPoints: { on: false, size: null, auto: true, measured: null },
-  inspector: { pinned: [] },
-  windows: { open: [] },
-  overrides: {},
-  geometry: null,
-  provenance: [],
-  provenanceOrigin: false,
-  source: { seq: 0, request: null, last: null },
-  view: { frameSeq: 0 },
-  definitions: null,
-  neutralLoads: null,
-  sequence: { status: "absent" },
-  stage: null,
-  lineage: null,
-  stageElements: { status: "none" },
-  results: null,
-  resultStep: null,
-  user: null,
-  combination: null,
-  variants: initialVariants,
-  contour: initialContour,
-  ndm: NO_NDM,
-  units: null,
-  deform: initialDeform,
-  clip: initialClip,
-  lineDiagram: initialLineDiagram,
-  loads: initialLoads,
-  reactions: initialReactions,
-  springs: initialSprings,
-  principal: initialPrincipal,
-  vectors: initialVectors,
-  supports: initialSupports,
-  spotlight: initialSpotlight,
-  search: initialSearch,
-  camera: initialCamera,
-  theme: "dark",
-  offers: initialOffers,
-};
 
 const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
 
@@ -418,297 +220,33 @@ function withCombinationPick(s: State, name: string): State {
 
 /**
  * Auto-pick a line-station component when landing on a results stage with
- * `lineStations` and `lineDiagram.component` is null or absent from the stage.
+ * `lineStations` and `lineDiagram.component` is null or absent from the stage
+ * (reduce/lineDiagram.ts `pickLineDiagram`), then re-derive the chains and the
+ * hover from the selection when it asks.
  */
 function withLineDiagramPick(s: State, preserveNotice = false): State {
-  const stage = shownStage(s);
-  const avail = stage?.lineStations;
-  if (!avail || avail.length === 0) {
-    if (stage !== undefined && s.lineDiagram.component !== null) {
-      const prevComp = s.lineDiagram.component;
-      const notice = `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`;
-      return {
-        ...s,
-        lineDiagram: {
-          ...s.lineDiagram,
-          component: null,
-          flipSign: null,
-          stepRange: null,
-          scan: null,
-          notice,
-          drawnBeams: [],
-          chains: [],
-          hover: null,
-        },
-      };
-    }
-    if (
-      s.lineDiagram.stepRange === null &&
-      s.lineDiagram.scan === null &&
-      s.lineDiagram.drawnBeams.length === 0 &&
-      s.lineDiagram.chains.length === 0 &&
-      s.lineDiagram.hover === null
-    ) {
-      return s;
-    }
-    return {
-      ...s,
-      lineDiagram: {
-        ...s.lineDiagram,
-        stepRange: null,
-        scan: null,
-        drawnBeams: [],
-        chains: [],
-        hover: null,
-      },
-    };
-  }
-  if (s.lineDiagram.component !== null && avail.includes(s.lineDiagram.component)) {
-    const keys = lineDiagramKeysOf(s);
-    const keepStep = keys !== null && s.lineDiagram.stepRange?.key === keys.step;
-    const keepScan = keys !== null && s.lineDiagram.scan?.key === keys.scan;
-    const nextNotice = keepStep || preserveNotice ? s.lineDiagram.notice : null;
-    if (keepStep && keepScan && s.lineDiagram.notice === nextNotice) return syncLineDiagramDerived(s);
-    return syncLineDiagramDerived({
-      ...s,
-      lineDiagram: {
-        ...s.lineDiagram,
-        stepRange: keepStep ? s.lineDiagram.stepRange : null,
-        scan: keepScan ? s.lineDiagram.scan : null,
-        notice: nextNotice,
-        drawnBeams: keepStep ? s.lineDiagram.drawnBeams : [],
-        chains: keepStep ? s.lineDiagram.chains : [],
-        hover: keepStep ? s.lineDiagram.hover : null,
-      },
-    });
-  }
-  const prevComp = s.lineDiagram.component;
-  const picked = defaultLineDiagramComponent(avail);
-  const notice =
-    prevComp !== null && prevComp !== picked
-      ? picked !== null
-        ? `Stage ${stage.name || stage.id} has no ${prevComp} line stations; switched to ${picked}.`
-        : `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`
-      : null;
-  if (picked === s.lineDiagram.component && s.lineDiagram.notice === notice) return syncLineDiagramDerived(s);
-  return {
-    ...s,
-    lineDiagram: {
-      ...s.lineDiagram,
-      component: picked,
-      flipSign: null,
-      stepRange: null,
-      scan: null,
-      notice,
-      drawnBeams: [],
-      chains: [],
-      hover: null,
-    },
-  };
-}
-
-/** A listed offer, or a loud error: an event for an offer never listed is a bug. */
-function offerOf(s: State, id: number, who: string): Offer {
-  const o = s.offers.list.find((x) => x.id === id);
-  if (!o) throw new RangeError(`${who}: offer ${JSON.stringify(id)} is not on the list`);
-  return o;
-}
-
-/** The state with one offer changed. A click already running can outlive its offer (the cap dropped it): nothing to change then. */
-function withOffer(s: State, id: number, change: Partial<Offer>): State {
-  if (!s.offers.list.some((x) => x.id === id)) {
-    if (id > 0 && id <= s.offers.seq) return s;
-    throw new RangeError(`no offer ${JSON.stringify(id)} was ever listed`);
-  }
-  return { ...s, offers: { ...s.offers, list: s.offers.list.map((o) => (o.id === id ? { ...o, ...change } : o)) } };
-}
-
-/** Whatever has no staleness verdict is stale (A6: nothing is drawn as current on no proof). */
-const NO_VERDICT: StaleMark = { stale: true, reason: "the reader gave no staleness verdict for it" };
-
-function oneOf<T extends string>(v: string, allowed: readonly T[], who: string): T {
-  if (!(allowed as readonly string[]).includes(v)) throw new RangeError(`userRead: ${who} ${JSON.stringify(v)} is not one of ${allowed.join(", ")}`);
-  return v as T;
-}
-
-const refusalsOf = (rows: readonly UserRefusalIn[]): UserRefusal[] => rows.map((r) => ({ name: r.name, reason: r.reason, detail: r.detail }));
-
-/** The targets a 1.0.0 spectrum case holds (h5-schema.md `/spectra`: ON_NODES and ON_DOMAIN only). */
-const SPECTRUM_TARGETS = ["nodes", "domain"] as const;
-
-/**
- * ADR 0130: the renderer's view of a `.user.h5` (`user:read`'s index and A6
- * staleness): the User Combinations and Spectra families of the phase bar, the
- * User Results picker group, and the modal table with each row's verdict. A
- * target or basis this app does not know raises, so the caller refuses the
- * answer, never shows it.
- */
-export function userInfoOf(index: UserIndexIn, staleness: UserStalenessIn): UserInfo {
-  // Own keys only: a user result may be named `constructor`.
-  const markOf = (rec: Record<string, StaleMark>, key: string): StaleMark => (Object.hasOwn(rec, key) ? rec[key]! : NO_VERDICT);
-  const zoneMark = (z: string): StaleMark => markOf(staleness.zones, z);
-  const known = USER_ZONES as readonly string[];
-  const warnings = [...index.warnings];
-  for (const z of index.zones) if (!known.includes(z)) warnings.push(`${index.path.split(/[\\/]/).pop()} holds /${z}, a zone this app does not know; it is not read`);
-  let combinations: UserInfo["combinations"] = null;
-  let table: UserInfo["table"] = null;
-  const c = index.combinations;
-  if (!c.ok) combinations = { ok: false, reason: c.reason };
-  else if (c.value.rows.length || c.value.modelRows.length || c.value.refused.length) {
-    const stale = new Set(staleness.combinations);
-    const item = (origin: "user" | "model") => (r: UserCombinationIn): UserCombination => ({ name: r.name, rule: r.rule, origin, terms: r.terms.length, stale: stale.has(r.name) });
-    combinations = { ok: true, items: [...c.value.rows.map(item("user")), ...c.value.modelRows.map(item("model"))], refused: refusalsOf(c.value.refused) };
-    // VU7b-2: the rows as the evaluator takes them, copied so the state owns them.
-    const row = (r: UserCombinationIn): UserCombinationIn => ({ ...r, terms: r.terms.map((t) => ({ ...t })) });
-    table = { rows: c.value.rows.map(row), modelRows: c.value.modelRows.map(row), refused: c.value.refused.map((r) => ({ ...r })) };
-  }
-  let results: UserInfo["results"] = null;
-  const r = index.results;
-  if (!r.ok) results = { ok: false, reason: r.reason };
-  else if (r.value.entries.length || r.value.refused.length) {
-    results = {
-      ok: true,
-      items: r.value.entries.map((x) => ({
-        name: x.name,
-        target: oneOf(x.target, USER_RESULT_TARGETS, `the target of ${x.name}`),
-        basis: oneOf(x.basis, USER_RESULT_BASES, `the basis of ${x.name}`),
-        perState: x.perState,
-        linear: x.linear,
-        stale: markOf(staleness.results, x.name),
-      })),
-      refused: refusalsOf(r.value.refused),
-    };
-  }
-  const m = index.modes;
-  let modes: UserInfo["modes"] = null;
-  if (m !== null && !m.ok) modes = { ok: false, reason: m.reason, stale: zoneMark("modes") };
-  else if (m !== null) {
-    // One verdict per row, in table order; a count that disagrees is no verdict at all.
-    const verdicts = staleness.modes.length === m.value.rows.length ? staleness.modes : null;
-    modes = { ok: true, components: [...m.value.components], rows: m.value.rows.map((r, i) => ({ ...r, verdict: verdicts?.[i] ?? NO_VERDICT })), stale: zoneMark("modes") };
-  }
-  const sp = index.spectra;
-  let spectra: UserInfo["spectra"] = null;
-  if (sp !== null && !sp.ok) spectra = { ok: false, reason: sp.reason, stale: zoneMark("spectra") };
-  else if (sp !== null) {
-    const items = sp.value.cases.map((c) => {
-      const d = c.modes.map((x) => x.damping);
-      const same = d.length > 0 && d.every((x) => Object.is(x, d[0]));
-      return {
-        name: c.name,
-        direction: c.direction,
-        scale: c.scale,
-        modes: c.modes.map((x) => x.mode),
-        damping: same ? d[0]! : null,
-        results: c.results.map((q) => `${oneOf(q.target, SPECTRUM_TARGETS, `the target of ${c.name} ${q.label}`)}/${q.label}`),
-        nodal: c.results.filter((q) => q.target === "nodes").map((q) => ({ label: q.label, components: [...q.components] })),
-      };
-    });
-    spectra = { ok: true, items, refused: refusalsOf(sp.value.refused), stale: zoneMark("spectra") };
-  }
-  return { warnings, combinations, table, results, spectra, modes, entities: entitiesOf(index.entities ?? null, zoneMark("entities")) };
-}
-
-/** VU8: `/entities` as the renderer draws it: the standing rows, each with its `ENTITY_ROW`, and the refused ones. */
-function entitiesOf(e: NonNullable<UserIndexIn["entities"]> | null, stale: StaleMark): UserInfo["entities"] {
-  if (e === null) return null;
-  if (!e.ok) return { ok: false, reason: e.reason, stale };
-  const refused = e.value.refused.map((r) => ({ kind: oneOf(r.kind, USER_ENTITY_KINDS, `the kind of the refused entity ${r.name}`), row: r.row, name: r.name, reason: r.reason, detail: r.detail }));
-  /** The rows of `kind` that stand, each with its position. */
-  const standing = <T>(kind: (typeof USER_ENTITY_KINDS)[number], rows: readonly T[]) =>
-    rows.map((x, row) => ({ x, row })).filter(({ row }) => !refused.some((r) => r.kind === kind && r.row === row));
-  return {
-    ok: true,
-    cuts: standing("cut", e.value.cuts).map(({ x: c, row }) => ({
-      row,
-      name: c.name,
-      side: oneOf(c.side, ["positive", "negative"] as const, `the side of the cut ${c.name}`),
-      point: c.point,
-      normal: c.normal,
-      reference: c.reference,
-      elementIds: [...c.elementIds],
-      polygon: [...c.polygon],
-    })),
-    storeys: standing("storey", e.value.storeys).map(({ x: s, row }) => ({ row, name: s.name, level: s.level, reference: s.reference, nodeIds: [...s.nodeIds] })),
-    pointSets: standing("point_set", e.value.pointSets).map(({ x: p, row }) => ({ row, name: p.name, xyz: [...p.xyz], hostElement: [...p.hostElement] })),
-    refused,
-    stale,
-  };
-}
-
-/** The suffixes main/pairing.ts `classify` knows, longest first; a part file `<stem>.part-<N>.ladruno` is its stem's results. */
-const SET_SUFFIX = /^(.*?)(?:\.part-\d+\.ladruno|\.geometry\.h5|\.results\.h5|\.user\.h5|\.ladruno|\.h5)$/i;
-
-/**
- * ADR 0130 D2: the `.user.h5` of a set, `<stem>.user.h5` beside its model (or
- * its results, with no model): main/pairing.ts `candidates`, which the
- * renderer cannot import (it reads node:fs); test/state/user.test.ts holds the
- * two together. A path the app does not open raises.
- */
-export function userPathOf(set: { model: string | null; results: string | null }): string | null {
-  const from = set.model ?? set.results;
-  if (from === null) return null;
-  const m = SET_SUFFIX.exec(from);
-  if (!m || m[1] === "") throw new Error(`userPathOf: ${from} is not a <stem>.h5, <stem>.results.h5 or <stem>.ladruno`);
-  return `${m[1]}.user.h5`;
-}
-
-/** reader/userFile.ts `readUserFile`'s refusal of a path with no file: the set has no `.user.h5`, which is not a failure. */
-export const NO_USER_FILE = (path: string): string => `no such file: ${path}`;
-
-/**
- * The state with another `.user.h5` state. VU7b-2: a combination's value read
- * from the file before is dropped, and a combination shown that the file no
- * longer lists leaves for the mesh (`withPhase`); off a combination the phase
- * is not touched.
- */
-function withUser(s: State, user: State["user"]): State {
-  const next = { ...s, user, combination: null };
-  return s.phase.at?.kind === "combination" ? withPhase(next) : next;
-}
-
-/** The event a `user:read` answer for `path` becomes: no file there is `userClosed`; any other answer is `userRead`. */
-export function userEventOf(path: string, read: UserReadIn): Event {
-  return !read.ok && read.error === NO_USER_FILE(path) ? { type: "userClosed" } : { type: "userRead", path, read };
-}
-
-/**
- * Whether the `.user.h5` may be read now: after the model's first read has
- * landed (ready or failed), so the first frame never waits on it (ADR 0130
- * VU3a: "the first frame reads none of it"). A set with no model reads at once.
- */
-export function userReadable(s: State, model: string | null): boolean {
-  if (model === null) return true;
-  const a = s.artifacts.model;
-  return a !== null && a.path === model && a.status !== "opened";
-}
-
-/** The study's row `index` when its label is `label` (the panel offers only those); a stale or unknown row is a bug. */
-function studyRow(s: State, index: number, label: string, who: string): VariantsIn["rows"][number] {
-  const study = s.variants.study;
-  if (!study) throw new Error(`${who}: no variants manifest is open`);
-  const row = study.rows.find((r) => r.index === index);
-  if (!row || row.label !== label) throw new Error(`${who}: the study has no variant row ${index} labelled ${JSON.stringify(label)}`);
-  return row;
-}
-
-/**
- * VU10: main's study replaces the page's. With none, the compare set and the
- * difference go; a compare set main no longer holds (its row left the
- * manifest, or main closed it) goes too, so the page never shows a slot main
- * has emptied. A switch in flight stays until main answers it.
- */
-function withStudy(s: State, study: VariantsIn | null): State {
-  if (study !== null && (typeof study !== "object" || !Array.isArray(study.rows) || !Array.isArray(study.refused) || typeof study.manifest !== "string")) {
-    throw new RangeError(`variantsRead: ${JSON.stringify(study)} is not a study`);
-  }
-  const v = s.variants;
-  const c = v.compare;
-  const kept = c !== null && study !== null && (c.status === "opening" || (study.compare !== null && study.compare.index === c.index && study.compare.label === c.label));
-  return { ...s, variants: { ...v, study, compare: kept ? c : null, difference: kept && v.difference, read: kept ? v.read : null } };
+  const { ld, sync } = pickLineDiagram(s.lineDiagram, shownStage(s), () => lineDiagramKeysOf(s), preserveNotice);
+  const t = ld === s.lineDiagram ? s : { ...s, lineDiagram: ld };
+  return sync ? syncLineDiagramDerived(t) : t;
 }
 
 export function reduce(s: State, e: Event): State {
+  return withPickFrame(s, e, reduceEvent(s, e));
+}
+
+/**
+ * VU9a (#2890 delta review): whether the selection holds a click made while
+ * the deformed shape showed (`WorkspaceState.deformedPicks`). A click's point is
+ * where the cell was drawn; Nodes compares it with undeformed node positions,
+ * so such a selection is refused for a node set until it is clicked again.
+ */
+function withPickFrame(s: State, e: Event, next: State): State {
+  if (next.selection === s.selection || !["select", "selectAdd", "selectDecls", "clearSelection"].includes(e.type)) return next;
+  const deformed = next.selection.picks.length === 0 ? false : e.type === "select" ? s.deform.on : s.workspace.deformedPicks || (e.type === "selectAdd" && s.deform.on);
+  return deformed === next.workspace.deformedPicks ? next : { ...next, workspace: { ...next.workspace, deformedPicks: deformed } };
+}
+
+function reduceEvent(s: State, e: Event): State {
   switch (e.type) {
     case "fileOpened": {
       const prev = s.artifacts[e.artifact];
@@ -722,8 +260,11 @@ export function reduce(s: State, e: Event): State {
         ? { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null }
         : s.lineDiagram;
       // VA1: opening another model drops the camera of the one shown; the same path again (a reload, a retry after a failed read) keeps it.
-      const camera = e.artifact === "model" && !(prev && prev.path === e.path) ? { ...initialCamera, seq: s.camera.seq } : s.camera;
-      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera });
+      const anotherModel = e.artifact === "model" && !(prev && prev.path === e.path);
+      const camera = anotherModel ? { ...initialCamera, seq: s.camera.seq } : s.camera;
+      // VU9a: another model's set has another workspace; the last one's read is never edited against it.
+      const workspace = anotherModel ? workspaceForAnotherModel(s.workspace) : s.workspace;
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera, workspace });
     }
     case "fileLoaded": {
       // A fileChanged that arrived while this read ran keeps the artifact
@@ -838,6 +379,8 @@ export function reduce(s: State, e: Event): State {
         offers: s.offers,
         // VU10: the study and the compare set are the window's, not the model's (a switch loads another model).
         variants: s.variants,
+        // VU9a: a failed read of the model leaves no workspace edited against it; a read that lands reads it again.
+        workspace: workspaceForAnotherModel(s.workspace),
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -877,6 +420,8 @@ export function reduce(s: State, e: Event): State {
         offers: s.offers,
         // VU10: the study and the compare set are the window's, not the model's (a switch loads another model).
         variants: s.variants,
+        // VU9a: the closed set's workspace leaves; the pick kind and the request count are the window's.
+        workspace: workspaceForAnotherModel(s.workspace),
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -1019,11 +564,13 @@ export function reduce(s: State, e: Event): State {
         warnings: [...e.warnings, ...(e.info.partial ? [`${e.info.path.split(/[\\/]/).pop()}: ${e.info.partial}; it is read as it stands`] : [])],
       };
       // A re-read keeps the results position only while that index still
-      // names the same stage (its id and name); otherwise the phase leaves it.
+      // names the same stage (its id and program name; W4d #2843: a display
+      // rename re-stamped onto the file is a label, not another stage);
+      // otherwise the phase leaves it.
       const at = s.phase.at;
       const old = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
       const now = at?.kind === "results" ? e.info.stages[at.stage] : undefined;
-      const keep = !old || (now !== undefined && now.id === old.id && now.name === old.name);
+      const keep = !old || (now !== undefined && now.id === old.id && now.programName === old.programName);
       const declaredUnits = s.units ?? e.info.units ?? null;
       const rereadResults = prev.status === "ready";
       const firstLineStage = e.info.stages.find((st) => (st.lineStations?.length ?? 0) > 0);
@@ -1079,7 +626,8 @@ export function reduce(s: State, e: Event): State {
         lineSwitchNotice !== null,
       );
       const c = next.contour;
-      if (c.field === null || c.component === null) return next;
+      // VU16: a user result is the user file's, not the results'; a re-read of the results keeps it.
+      if (c.field === null || c.component === null || c.source === "user") return next;
       const field = c.field, component = c.component;
       const stage = shownStage(next);
       const has = stage ? hasPick(stage, c.source, field, component) : e.info.stages.some((st) => hasPick(st, c.source, field, component));
@@ -1091,8 +639,21 @@ export function reduce(s: State, e: Event): State {
     }
     case "setContourField": {
       const source = e.source ?? "nodal";
-      if (source !== "nodal" && source !== "element") throw new RangeError(`setContourField: source ${JSON.stringify(source)}`);
+      if (source !== "nodal" && source !== "element" && source !== "user") throw new RangeError(`setContourField: source ${JSON.stringify(source)}`);
       const at = s.phase.at;
+      if (source === "user") {
+        // VU16: a state-free ON_NODES user result the set's .user.h5 lists, and one of its columns. A stale one is
+        // picked, and the contour refuses it with A6's reason (selectors `userResultContour`).
+        if (at?.kind === "combination") throw new RangeError(`setContourField: User Combination ${JSON.stringify(at.name)} is shown; a user result is not drawn over it`);
+        const p = userResultPickOf(s, e.field);
+        if (!p.ok) throw new RangeError(`setContourField: ${p.reason}`);
+        if (!p.entry.components.includes(e.component)) {
+          throw new RangeError(`setContourField: user result ${JSON.stringify(e.field)} has no component ${JSON.stringify(e.component)}; its components are ${p.entry.components.join(", ")}`);
+        }
+        const c = s.contour;
+        if (c.source === source && c.field === e.field && c.component === e.component && c.notice === null) return s;
+        return { ...s, contour: { ...c, source, field: e.field, component: e.component, join: null, notice: null } };
+      }
       if (at?.kind === "combination") {
         // VU7b-2: what the combination offers: one nodal component of the cases it reaches.
         const f = combinationFieldsOf(s, at.name);
@@ -1192,12 +753,6 @@ export function reduce(s: State, e: Event): State {
       return { ...s, inspector: { pinned: [...s.inspector.pinned, e.decl] } };
     case "inspectorUnpin":
       return { ...s, inspector: { pinned: s.inspector.pinned.filter((d) => d !== e.decl) } };
-    case "openWindow":
-      if (!WINDOW_KINDS.includes(e.window)) throw new RangeError(`openWindow: ${JSON.stringify(e.window)} is not a window kind`);
-      if (s.windows.open.includes(e.window)) return s;
-      return { ...s, windows: { open: [...s.windows.open, e.window] } };
-    case "closeWindow":
-      return { ...s, windows: { open: s.windows.open.filter((w) => w !== e.window) } };
     case "requestSource": {
       // A declaration, or a /provenance record the app has no declaration
       // for (a synthesised series or pattern, from the sources listing).
@@ -1212,18 +767,10 @@ export function reduce(s: State, e: Event): State {
     case "frameSelection":
       if (!s.mesh) return s;
       return { ...s, view: { frameSeq: s.view.frameSeq + 1 } };
-    case "setCamera": {
-      const to = cameraRequestOf(s, e.to);
-      if (to === null) return s;
-      const seq = s.camera.seq + 1;
-      // An explicit pose is the camera at once; a named view or a turn is resolved by the viewport, which writes the pose back.
-      const pose = typeof to === "object" && "eye" in to ? to : s.camera.pose;
-      return { ...s, camera: { ...s.camera, pose, request: { to, seq }, seq } };
-    }
+    case "setCamera":
     case "cameraMoved": {
-      const pose = canonicalPose(e.pose, "cameraMoved");
-      if (s.camera.pose && samePose(s.camera.pose, pose)) return s;
-      return { ...s, camera: { ...s.camera, pose } };
+      const camera = reduceCamera(s.camera, e, { drawn: s.mesh !== null || s.geometry !== null, nothingSelected: () => selectedElementsOf(s).length === 0 });
+      return camera === s.camera ? s : { ...s, camera };
     }
     case "setTheme":
       if (!(THEME_MODES as readonly string[]).includes(e.theme)) throw new RangeError(`setTheme: ${JSON.stringify(e.theme)} is not a theme (${THEME_MODES.join(", ")})`);
@@ -1251,484 +798,102 @@ export function reduce(s: State, e: Event): State {
       const clip = reduceClip(s.clip, e, s.mesh?.center ?? [0, 0, 0]);
       return clip === s.clip ? s : { ...s, clip };
     }
-    case "setLineDiagram": {
-      const on: unknown = e.on;
-      if (typeof on !== "boolean") throw new RangeError(`setLineDiagram: ${JSON.stringify(on)}`);
-      return s.lineDiagram.on === on
-        ? s
-        : syncLineDiagramDerived(withLineDiagramPick({ ...s, lineDiagram: { ...s.lineDiagram, on } }));
-    }
-    case "setLineDiagramComponent": {
-      if (!LINE_STATION_COMPONENTS.includes(e.component)) {
-        throw new RangeError(`setLineDiagramComponent: ${JSON.stringify(e.component)}`);
-      }
-      const stage = shownStage(s);
-      if (stage?.lineStations && stage.lineStations.length > 0 && !stage.lineStations.includes(e.component)) {
-        throw new RangeError(`setLineDiagramComponent: ${e.component} is not a line-station component of stage ${stage.id}`);
-      }
-      if (s.lineDiagram.component === e.component && s.lineDiagram.flipSign === null && s.lineDiagram.notice === null) return s;
-      return {
-        ...s,
-        lineDiagram: {
-          ...s.lineDiagram,
-          component: e.component,
-          flipSign: null,
-          stepRange: null,
-          scan: null,
-          notice: null,
-          drawnBeams: [],
-          chains: [],
-          hover: null,
-        },
-      };
-    }
+    case "setLineDiagram":
+    case "setLineDiagramComponent":
     case "setLineDiagramScale":
-      if (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0) {
-        throw new RangeError(`setLineDiagramScale: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
-      }
-      return s.lineDiagram.scale === e.scale
-        ? s
-        : syncLineDiagramDerived({ ...s, lineDiagram: { ...s.lineDiagram, scale: e.scale } });
     case "setLineDiagramPlane":
-      if (e.plane !== "local" && e.plane !== "screen") {
-        throw new RangeError(`setLineDiagramPlane: ${JSON.stringify(e.plane)}`);
-      }
-      return s.lineDiagram.plane === e.plane && s.lineDiagram.notice === null
-        ? s
-        : { ...s, lineDiagram: { ...s.lineDiagram, plane: e.plane, notice: null } };
     case "setLineDiagramCmap":
-      if (!LINE_DIAGRAM_CMAP_NAMES.includes(e.cmap)) {
-        throw new RangeError(`setLineDiagramCmap: ${JSON.stringify(e.cmap)}`);
-      }
-      return s.lineDiagram.cmap === e.cmap ? s : { ...s, lineDiagram: { ...s.lineDiagram, cmap: e.cmap } };
     case "setLineDiagramFill":
-      if (typeof e.fill !== "boolean") throw new RangeError(`setLineDiagramFill: ${JSON.stringify(e.fill)}`);
-      return s.lineDiagram.fill === e.fill ? s : { ...s, lineDiagram: { ...s.lineDiagram, fill: e.fill } };
     case "setLineDiagramFlipSign":
-      if (e.flipSign !== null && typeof e.flipSign !== "boolean") {
-        throw new RangeError(`setLineDiagramFlipSign: ${JSON.stringify(e.flipSign)}`);
-      }
-      return s.lineDiagram.flipSign === e.flipSign
-        ? s
-        : syncLineDiagramDerived({ ...s, lineDiagram: { ...s.lineDiagram, flipSign: e.flipSign } });
-    case "setLineDiagramRange": {
-      if (e.range !== "history" && e.range !== "step" && e.range !== "fixed") {
-        throw new RangeError(`setLineDiagramRange: ${JSON.stringify(e.range)}`);
-      }
-      let fixed = s.lineDiagram.fixed;
-      if (e.range === "fixed") {
-        fixed = e.fixed ?? s.lineDiagram.fixed;
-        if (!fixed || !Number.isFinite(fixed.min) || !Number.isFinite(fixed.max) || !(fixed.min < fixed.max)) {
-          throw new RangeError(`setLineDiagramRange: a fixed range needs a finite min below a finite max; got ${JSON.stringify(fixed)}`);
-        }
-      }
-      return { ...s, lineDiagram: { ...s.lineDiagram, range: e.range, fixed } };
+    case "setLineDiagramRange":
+    case "lineDiagramStepRange":
+    case "lineDiagramScan": {
+      const lineDiagram = reduceLineDiagram(s.lineDiagram, e, { stage: () => shownStage(s), keys: () => lineDiagramKeysOf(s) });
+      if (lineDiagram === s.lineDiagram) return s;
+      const t = { ...s, lineDiagram };
+      // Turned on, it picks a component for the stage shown; a new scale, sign or drawn set re-derives the chains and the hover.
+      if (e.type === "setLineDiagram") return syncLineDiagramDerived(withLineDiagramPick(t));
+      return e.type === "setLineDiagramScale" || e.type === "setLineDiagramFlipSign" || e.type === "lineDiagramStepRange" ? syncLineDiagramDerived(t) : t;
     }
-    case "lineDiagramStepRange": {
-      if (lineDiagramKeysOf(s)?.step !== e.key) return s;
-      const prevNotice = s.lineDiagram.notice;
-      const keepSwitchNotice =
-        s.lineDiagram.stepRange === null &&
-        prevNotice !== null &&
-        prevNotice.includes(" line stations; switched to ");
-      const nextNotice =
-        e.notice === undefined
-          ? prevNotice
-          : keepSwitchNotice
-            ? e.notice === null || prevNotice.includes(e.notice)
-              ? prevNotice
-              : `${prevNotice} ${e.notice}`
-            : e.notice;
-      const drawnBeams =
-        e.drawnBeams !== undefined
-          ? e.drawnBeams.map((b) => ({
-              decl: b.decl,
-              elementId: b.elementId,
-              nodeStart: b.nodeStart,
-              nodeEnd: b.nodeEnd,
-              pStart: [b.pStart[0], b.pStart[1], b.pStart[2]] as [number, number, number],
-              pEnd: [b.pEnd[0], b.pEnd[1], b.pEnd[2]] as [number, number, number],
-              length: b.length,
-              xLocal: [b.xLocal[0], b.xLocal[1], b.xLocal[2]] as [number, number, number],
-              extrudeDir: [b.extrudeDir[0], b.extrudeDir[1], b.extrudeDir[2]] as [number, number, number],
-              xi: [...b.xi],
-              values: [...b.values],
-              autoScale: b.autoScale,
-              ...(b.spanMode !== undefined ? { spanMode: b.spanMode } : {}),
-              ...(b.spanReason !== undefined ? { spanReason: b.spanReason } : {}),
-            }))
-          : e.min === null
-            ? []
-            : s.lineDiagram.drawnBeams;
-      return syncLineDiagramDerived({
-        ...s,
-        lineDiagram: {
-          ...s.lineDiagram,
-          stepRange: { key: e.key, min: e.min, max: e.max },
-          notice: nextNotice,
-          drawnBeams,
-        },
-      });
-    }
-    case "lineDiagramScan":
-      if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
-      return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
-    case "setSupports": {
-      if (e.on !== undefined && typeof e.on !== "boolean") throw new RangeError(`setSupports: on ${JSON.stringify(e.on)}`);
-      if (e.scale !== undefined && (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0)) {
-        throw new RangeError(`setSupports: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
-      }
-      const on = e.on ?? s.supports.on;
-      const scale = e.scale ?? s.supports.scale;
-      return on === s.supports.on && scale === s.supports.scale ? s : { ...s, supports: { on, scale } };
-    }
-    case "setPrincipal": {
-      for (const k of ["on", "thin"] as const) {
-        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setPrincipal: ${k} ${JSON.stringify(e[k])}`);
-      }
-      for (const k of ["scale", "headSize"] as const) {
-        const v = e[k];
-        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
-          throw new RangeError(`setPrincipal: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
-        }
-      }
-      if (e.field !== undefined && e.field !== null && typeof e.field !== "string") throw new RangeError(`setPrincipal: field ${JSON.stringify(e.field)}`);
-      if (e.show !== undefined && !(Array.isArray(e.show) && e.show.length === 3 && e.show.every((b) => typeof b === "boolean"))) {
-        throw new RangeError(`setPrincipal: show must be three booleans (p1, p2, p3); got ${JSON.stringify(e.show)}`);
-      }
-      if (e.head !== undefined && e.head !== "axis" && e.head !== "arrow") throw new RangeError(`setPrincipal: head ${JSON.stringify(e.head)}`);
-      if (e.cmap !== undefined && !(CMAP_NAMES as readonly string[]).includes(e.cmap)) throw new RangeError(`setPrincipal: cmap ${JSON.stringify(e.cmap)}`);
-      const cur = s.principal;
-      const show = e.show && e.show.some((b, i) => b !== cur.show[i]) ? ([e.show[0], e.show[1], e.show[2]] as const) : cur.show;
-      const next: PrincipalState = {
-        on: e.on ?? cur.on,
-        field: e.field !== undefined ? e.field : cur.field,
-        show,
-        head: e.head ?? cur.head,
-        cmap: e.cmap ?? cur.cmap,
-        scale: e.scale ?? cur.scale,
-        headSize: e.headSize ?? cur.headSize,
-        thin: e.thin ?? cur.thin,
-      };
-      return (Object.keys(next) as (keyof PrincipalState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, principal: next };
-    }
-    case "setReactions": {
-      for (const k of ["on", "thin", "allNodes", "forces", "moments"] as const) {
-        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setReactions: ${k} ${JSON.stringify(e[k])}`);
-      }
-      for (const k of ["scale", "headSize"] as const) {
-        const v = e[k];
-        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
-          throw new RangeError(`setReactions: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
-        }
-      }
-      if (e.colorBy !== undefined && !["mono", "type", "magnitude"].includes(e.colorBy)) throw new RangeError(`setReactions: colorBy ${JSON.stringify(e.colorBy)}`);
-      if (e.component !== undefined && !["resultant", "xyz", "x", "y", "z"].includes(e.component)) {
-        throw new RangeError(`setReactions: component ${JSON.stringify(e.component)}`);
-      }
-      const cur = s.reactions;
-      const pos = (v: number | undefined, was: number) => (v !== undefined && Number.isFinite(v) && v > 0 ? v : was);
-      const next: ReactionsState = {
-        on: e.on ?? cur.on,
-        scale: pos(e.scale, cur.scale),
-        headSize: pos(e.headSize, cur.headSize),
-        colorBy: e.colorBy ?? cur.colorBy,
-        thin: e.thin ?? cur.thin,
-        component: e.component ?? cur.component,
-        allNodes: e.allNodes ?? cur.allNodes,
-        forces: e.forces ?? cur.forces,
-        moments: e.moments ?? cur.moments,
-      };
-      return (Object.keys(next) as (keyof ReactionsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, reactions: next };
-    }
-    case "setSprings": {
-      for (const k of ["on", "thin"] as const) {
-        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setSprings: ${k} ${JSON.stringify(e[k])}`);
-      }
-      for (const k of ["scale", "headSize"] as const) {
-        const v = e[k];
-        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
-          throw new RangeError(`setSprings: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
-        }
-      }
-      if (e.colorBy !== undefined && !["mono", "magnitude"].includes(e.colorBy)) throw new RangeError(`setSprings: colorBy ${JSON.stringify(e.colorBy)}`);
-      if (e.component !== undefined && !["resultant", "xyz", "x", "y", "z"].includes(e.component)) {
-        throw new RangeError(`setSprings: component ${JSON.stringify(e.component)}`);
-      }
-      if (e.notice !== undefined && e.notice !== null && typeof e.notice !== "string") throw new RangeError(`setSprings: notice ${JSON.stringify(e.notice)}`);
-      const cur = s.springs;
-      const next: SpringsState = {
-        on: e.on ?? cur.on,
-        scale: e.scale ?? cur.scale,
-        headSize: e.headSize ?? cur.headSize,
-        colorBy: e.colorBy ?? cur.colorBy,
-        thin: e.thin ?? cur.thin,
-        component: e.component ?? cur.component,
-        notice: e.notice !== undefined ? e.notice : cur.notice,
-      };
-      return (Object.keys(next) as (keyof SpringsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, springs: next };
-    }
-    case "setVectors": {
-      for (const k of ["on", "thin"] as const) {
-        if (e[k] !== undefined && typeof e[k] !== "boolean") throw new RangeError(`setVectors: ${k} ${JSON.stringify(e[k])}`);
-      }
-      for (const k of ["scale", "headSize"] as const) {
-        const v = e[k];
-        if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) {
-          throw new RangeError(`setVectors: the ${k} must be a finite number above 0; got ${JSON.stringify(v)}`);
-        }
-      }
-      if (e.field !== undefined && e.field !== null && (typeof e.field !== "string" || e.field === "")) throw new RangeError(`setVectors: field ${JSON.stringify(e.field)}`);
-      if (e.colorBy !== undefined && !["mono", "type", "magnitude"].includes(e.colorBy)) throw new RangeError(`setVectors: colorBy ${JSON.stringify(e.colorBy)}`);
-      if (e.component !== undefined && !["resultant", "xyz", "x", "y", "z"].includes(e.component)) {
-        throw new RangeError(`setVectors: component ${JSON.stringify(e.component)}`);
-      }
-      const cur = s.vectors;
-      const next: VectorsState = {
-        on: e.on ?? cur.on,
-        field: e.field !== undefined ? e.field : cur.field,
-        scale: e.scale ?? cur.scale,
-        headSize: e.headSize ?? cur.headSize,
-        colorBy: e.colorBy ?? cur.colorBy,
-        thin: e.thin ?? cur.thin,
-        component: e.component ?? cur.component,
-      };
-      return (Object.keys(next) as (keyof VectorsState)[]).every((k) => next[k] === cur[k]) ? s : { ...s, vectors: next };
-    }
+    case "setSupports":
+    case "setPrincipal":
+    case "setReactions":
+    case "setSprings":
+    case "setVectors":
     case "setLoads": {
-      if (e.on !== undefined && typeof e.on !== "boolean") {
-        throw new RangeError(`setLoads: on ${JSON.stringify(e.on)}`);
-      }
-      if (e.scale !== undefined && (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0)) {
-        throw new RangeError(`setLoads: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
-      }
-      const cur = s.loads;
-      let on = e.on ?? cur.on;
-      const scale = e.scale ?? cur.scale;
-      const showNodalForces = e.showNodalForces ?? cur.showNodalForces;
-      const showNodalMoments = e.showNodalMoments ?? cur.showNodalMoments;
-      const showElementLoads = e.showElementLoads ?? cur.showElementLoads;
-      const showSp = e.showSp ?? cur.showSp;
-      const includeSupportReactions = e.includeSupportReactions ?? cur.includeSupportReactions;
-      const scaleBySeries = e.scaleBySeries ?? cur.scaleBySeries;
-      const headSize = e.headSize ?? cur.headSize;
-      const thin = e.thin ?? cur.thin;
-      const colorBy = e.colorBy ?? cur.colorBy;
-      let selectedPatterns = cur.selectedPatterns;
-      if (e.selectedPatterns !== undefined) {
-        selectedPatterns = e.selectedPatterns === null ? null : [...new Set(e.selectedPatterns)];
-      } else if (e.togglePattern !== undefined) {
-        const key = e.togglePattern;
-        if (!cur.on || cur.selectedPatterns === null) {
-          on = e.on ?? true;
-          selectedPatterns = [key];
-        } else if (cur.selectedPatterns.includes(key)) {
-          const rest = cur.selectedPatterns.filter((p) => p !== key);
-          if (rest.length === 0) {
-            on = e.on ?? false;
-            selectedPatterns = null;
-          } else {
-            selectedPatterns = rest;
-          }
-        } else {
-          selectedPatterns = [...cur.selectedPatterns, key];
-        }
-      }
-      const samePatterns =
-        selectedPatterns === cur.selectedPatterns ||
-        (selectedPatterns !== null &&
-          cur.selectedPatterns !== null &&
-          selectedPatterns.length === cur.selectedPatterns.length &&
-          selectedPatterns.every((p, i) => p === cur.selectedPatterns![i]));
-      if (
-        on === cur.on &&
-        scale === cur.scale &&
-        showNodalForces === cur.showNodalForces &&
-        showNodalMoments === cur.showNodalMoments &&
-        showElementLoads === cur.showElementLoads &&
-        showSp === cur.showSp &&
-        includeSupportReactions === cur.includeSupportReactions &&
-        scaleBySeries === cur.scaleBySeries &&
-        headSize === cur.headSize &&
-        thin === cur.thin &&
-        colorBy === cur.colorBy &&
-        samePatterns
-      ) {
-        return s;
-      }
-      return {
-        ...s,
-        loads: {
-          on,
-          scale,
-          showNodalForces,
-          showNodalMoments,
-          showElementLoads,
-          showSp,
-          includeSupportReactions,
-          scaleBySeries,
-          headSize,
-          thin,
-          colorBy,
-          selectedPatterns,
-        },
-      };
+      const cur = { supports: s.supports, principal: s.principal, reactions: s.reactions, springs: s.springs, vectors: s.vectors, loads: s.loads };
+      const next = reduceOverlays(cur, e);
+      return next === cur ? s : { ...s, ...next };
     }
-    case "openSpotlight": {
-      const mode = e.mode ?? "root";
-      const query = e.query ?? s.spotlight.query;
-      if (s.spotlight.open && s.spotlight.mode === mode && s.spotlight.query === query) return s;
-      return { ...s, spotlight: { ...s.spotlight, open: true, mode, query } };
-    }
+    case "openWindow":
+    case "closeWindow":
+    case "openSpotlight":
     case "closeSpotlight":
-      return !s.spotlight.open && s.spotlight.mode === "root" && s.spotlight.query === "" && s.spotlight.clauses.length === 0
-        ? s
-        : { ...s, spotlight: { ...s.spotlight, open: false, mode: "root", query: "", clauses: [] } };
-    case "setSpotlightMode": {
-      const query = e.query ?? "";
-      if (s.spotlight.mode === e.mode && s.spotlight.query === query) return s;
-      return { ...s, spotlight: { ...s.spotlight, mode: e.mode, query } };
-    }
+    case "setSpotlightMode":
     case "setSpotlightQuery":
-      return s.spotlight.query === e.query ? s : { ...s, spotlight: { ...s.spotlight, query: e.query } };
-    case "addSpotlightClause": {
-      const seq = s.spotlight.seq + 1;
-      const clause = { ...e.clause, id: `sp-${seq}` };
-      return { ...s, spotlight: { ...s.spotlight, clauses: [...s.spotlight.clauses, clause], seq } };
-    }
-    case "removeSpotlightClause": {
-      const clauses = s.spotlight.clauses.filter((c) => c.id !== e.id);
-      return clauses.length === s.spotlight.clauses.length ? s : { ...s, spotlight: { ...s.spotlight, clauses } };
-    }
+    case "addSpotlightClause":
+    case "removeSpotlightClause":
     case "clearSpotlightClauses":
-      return s.spotlight.clauses.length === 0 ? s : { ...s, spotlight: { ...s.spotlight, clauses: [] } };
     case "setSearchText":
-      return s.search.text === e.text ? s : { ...s, search: { ...s.search, text: e.text } };
-    case "addSearchClause": {
-      const seq = s.search.seq + 1;
-      const clause = { ...e.clause, id: `q-${seq}` };
-      return { ...s, search: { ...s.search, clauses: [...s.search.clauses, clause], seq } };
+    case "addSearchClause":
+    case "removeSearchClause":
+    case "clearSearch": {
+      const cur = { windows: s.windows, spotlight: s.spotlight, search: s.search };
+      const next = reduceWindows(cur, e);
+      return next === cur ? s : { ...s, ...next };
     }
-    case "removeSearchClause": {
-      const clauses = s.search.clauses.filter((c) => c.id !== e.id);
-      return clauses.length === s.search.clauses.length ? s : { ...s, search: { ...s.search, clauses } };
-    }
-    case "clearSearch":
-      return s.search.text === "" && s.search.clauses.length === 0 ? s : { ...s, search: { ...s.search, text: "", clauses: [] } };
-    case "offerReceived": {
-      // INV-5: this lists the offers and touches nothing else of the state.
-      if (!Number.isFinite(e.at)) throw new RangeError(`offerReceived: ${JSON.stringify(e.at)} is not a time`);
-      let seq = s.offers.seq;
-      const arrived = e.offers.map((o): Offer => ({ ...o, id: ++seq, arrivedAt: e.at, status: o.refused ? "refused" : "pending", reason: o.refused ?? null, opens: [], viewRefused: Boolean(o.refused) }));
-      // Newest first; a spec's shots keep their own order within one arrival.
-      return { ...s, offers: { ...s.offers, seq, list: [...arrived, ...s.offers.list].slice(0, MAX_OFFERS) } };
-    }
-    case "offerAssessed": {
-      const o = offerOf(s, e.id, "offerAssessed");
-      if (o.status === "applying" || o.viewRefused) return s;
-      const status = o.status === "applied" ? "applied" : e.refused === null ? "pending" : "refused";
-      const reason = status === "refused" ? e.refused : null;
-      const sameOpens = o.opens.length === e.opens.length && o.opens.every((p, i) => p === e.opens[i]);
-      if (o.status === status && o.reason === reason && sameOpens) return s;
-      return withOffer(s, e.id, { status, reason, opens: e.opens });
-    }
-    case "applyOffer": {
-      const o = offerOf(s, e.id, "applyOffer");
-      if (o.status === "refused") throw new Error(`applyOffer: offer ${e.id} is refused and cannot be applied: ${o.reason}`);
-      // One click at a time: a click while another runs does nothing.
-      if (s.offers.request) return s;
-      const seq = s.offers.requestSeq + 1;
-      const t = withOffer(s, e.id, { status: "applying" });
-      return { ...t, offers: { ...t.offers, requestSeq: seq, request: { kind: "apply", id: e.id, seq }, notice: null } };
-    }
-    case "backOffer": {
-      if (s.offers.back.length === 0) throw new Error("backOffer: no applied offer to go back from");
-      if (s.offers.request) return s;
-      const seq = s.offers.requestSeq + 1;
-      return { ...s, offers: { ...s.offers, requestSeq: seq, request: { kind: "back", seq }, notice: null } };
-    }
-    case "offerApplied": {
-      const t = withOffer(s, e.id, { status: "applied", reason: null });
-      const back = e.memo ? [{ offer: e.id, memo: e.memo }, ...t.offers.back] : t.offers.back;
-      return { ...t, offers: { ...t.offers, request: null, back } };
-    }
-    case "offerRefused": {
-      if (e.reason === "") throw new RangeError("offerRefused: a refusal names its reason");
-      const t = withOffer(s, e.id, { status: "refused", reason: e.reason, viewRefused: true });
-      return { ...t, offers: { ...t.offers, request: null } };
-    }
+    case "offerReceived":
+    case "offerAssessed":
+    case "applyOffer":
+    case "backOffer":
+    case "offerApplied":
+    case "offerRefused":
     case "offerBackDone": {
-      const [top, ...back] = s.offers.back;
-      if (!top) throw new Error("offerBackDone: no applied offer to go back from");
-      // Its offer is on offer again, unless an earlier click on it is still on the way back.
-      const t = back.some((b) => b.offer === top.offer) ? s : withOffer(s, top.offer, { status: "pending", reason: null });
-      return { ...t, offers: { ...t.offers, request: null, back, notice: e.notice } };
+      // INV-5: an offer event touches the offers and nothing else of the state.
+      const offers = reduceOffers(s.offers, e);
+      return offers === s.offers ? s : { ...s, offers };
     }
-    case "userOpened": {
-      if (typeof e.path !== "string" || e.path === "") throw new RangeError(`userOpened: ${JSON.stringify(e.path)} is not a path`);
-      // A re-read of the same file is pending too: a verdict read before the change (to it, the model or the results) is not shown as current.
-      if (s.user?.path === e.path && s.user.status === "reading") return s;
-      // VU7b-2: a combination's value read before the change is not shown as current.
-      return withUser(s, { status: "reading", path: e.path });
-    }
-    case "userRead": {
-      if (!s.user || s.user.path !== e.path) throw new Error(`userRead: ${e.path} is not the open .user.h5`);
-      if (!e.read.ok) return withUser(s, { status: "failed", path: e.path, error: e.read.error });
-      if (e.read.user.path !== e.path) throw new Error(`userRead: the answer is for ${e.read.user.path}, not ${e.path}`);
-      return withUser(s, { status: "ready", path: e.path, info: userInfoOf(e.read.user, e.read.staleness) });
-    }
+    case "userOpened":
+    case "userRead":
     case "userClosed":
-      return s.user === null ? s : withUser(s, null);
-    case "combinationRead": {
-      const r = e.read;
-      if (r === null || typeof r !== "object" || typeof r.key !== "string" || !["loading", "ready", "refused", "failed"].includes(r.status)) {
-        throw new RangeError(`combinationRead: ${JSON.stringify(r)} is not a combination read`);
-      }
-      // Only for the combination and quantity shown now: a late answer for another is dropped.
-      if (combinationRequestOf(s)?.key !== r.key) return s;
-      return { ...s, combination: r };
+    case "combinationRead":
+    case "userResultRead": {
+      const cur = { user: s.user, combination: s.combination, userResult: s.userResult };
+      const next = reduceUser(cur, e, { combinationKey: () => combinationRequestOf(s)?.key, userResultKey: () => userResultRequestOf(s)?.key });
+      if (next === cur) return s;
+      const t = { ...s, ...next };
+      // VU7b-2: another user file state leaves a User Combination shown that the file no longer lists (withPhase); off a combination the phase is not touched.
+      const fileChanged = e.type === "userOpened" || e.type === "userRead" || e.type === "userClosed";
+      return fileChanged && s.phase.at?.kind === "combination" ? withPhase(t) : t;
     }
     case "variantsRead":
-      return withStudy(s, e.study);
-    case "variantSwitch": {
-      const row = studyRow(s, e.index, e.label, "variantSwitch");
-      if (s.variants.study!.active === row.index) return s;
-      return { ...s, variants: { ...s.variants, switching: { index: row.index, label: row.label }, notice: null } };
-    }
+    case "variantSwitch":
     case "variantSwitched":
-      if (s.variants.switching === null) return s;
-      return { ...s, variants: { ...s.variants, switching: null, notice: e.reason } };
-    case "variantCompare": {
-      if (e.row === null) return s.variants.compare === null ? s : { ...s, variants: { ...s.variants, compare: null, difference: false, read: null } };
-      const row = studyRow(s, e.row.index, e.row.label, "variantCompare");
-      // INV-6: the compare set is never the window set.
-      if (s.variants.study!.active === row.index) throw new Error(`variantCompare: variant ${JSON.stringify(row.label)} is the window set; a compare set is another row`);
-      return { ...s, variants: { ...s.variants, compare: { index: row.index, label: row.label, status: "opening" }, difference: false, read: null, notice: null } };
+    case "variantCompare":
+    case "compareOpened":
+    case "setDifference":
+    case "differenceRead":
+    case "compareModelRead":
+    case "compareUserRead":
+    case "showCompareUser":
+    case "compareUserResultRead": {
+      const differenceKey = () => {
+        const p = differencePlanOf(s);
+        return p !== null && p.ok ? p.key : null;
+      };
+      const variants = reduceVariants(s.variants, e, { differenceKey, compareUserKey: () => compareUserRequestOf(s)?.key ?? null });
+      return variants === s.variants ? s : { ...s, variants };
     }
-    case "compareOpened": {
-      const c = s.variants.compare;
-      const r = e.result;
-      // Only the compare asked for now: a late answer for another row is dropped.
-      if (c?.status !== "opening" || c.index !== r.index || c.label !== r.label) return s;
-      if ("reason" in r) return { ...s, variants: { ...s.variants, compare: { index: r.index, label: r.label, status: "failed", reason: r.reason }, notice: r.reason } };
-      return { ...s, variants: { ...s.variants, compare: { status: "open", ...r } } };
-    }
-    case "setDifference": {
-      if (e.on === s.variants.difference) return s;
-      // A spec turns it on as it asks for the compare set (spec/compile.ts); the difference then waits for the set.
-      const st = s.variants.compare?.status;
-      if (e.on && st !== "open" && st !== "opening") throw new Error("setDifference: no compare set is open, so there is nothing to subtract");
-      return { ...s, variants: { ...s.variants, difference: e.on, read: null } };
-    }
-    case "differenceRead": {
-      const r = e.read;
-      if (r === null || typeof r !== "object" || typeof r.key !== "string" || !["loading", "ready", "refused"].includes(r.status)) {
-        throw new RangeError(`differenceRead: ${JSON.stringify(r)} is not a difference read`);
-      }
-      // Only for the difference shown now: a late answer for another key is dropped.
-      const plan = differencePlanOf(s);
-      if (plan === null || !plan.ok || plan.key !== r.key) return s;
-      return { ...s, variants: { ...s.variants, read: r } };
+    case "workspaceReading":
+    case "workspaceRead":
+    case "setWorkspaceKind":
+    case "workspaceSave":
+    case "workspaceSaved":
+    case "workspacePreview":
+    case "dismissWorkspaceAside": {
+      // VU9a: a workspace event touches the workspace slice and nothing else.
+      const workspace = reduceWorkspace(s.workspace, e);
+      return workspace === s.workspace ? s : { ...s, workspace };
     }
     default: {
       const unknown: never = e;

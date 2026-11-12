@@ -22,13 +22,13 @@ test("classify: the longest suffix wins, case-insensitively", () => {
 
 test("classify: a file the app does not open is refused by name; .mpco is not a sibling", () => {
   assert.throws(() => classify(p("m.txt")), /opens <stem>\.h5.*got .*m\.txt/);
-  assert.throws(() => classify(p("m.mpco")), /<stem>\.results\.h5 or <stem>\.user\.h5; got .*m\.mpco/);
+  assert.throws(() => classify(p("m.mpco")), /<stem>\.user\.h5 or <stem>\.workspace\.h5; got .*m\.mpco/);
   assert.throws(() => classify(".h5"), /got \.h5/);
 });
 
 test("candidates: the conventional names, and the opened file's own spelling", () => {
-  assert.deepEqual(candidates(p("m.h5")), { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.results.h5"), user: p("m.user.h5") });
-  assert.deepEqual(candidates(p("M.Geometry.H5")), { model: p("M.h5"), geometry: p("M.Geometry.H5"), results: p("M.results.h5"), user: p("M.user.h5") });
+  assert.deepEqual(candidates(p("m.h5")), { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.results.h5"), user: p("m.user.h5"), workspace: p("m.workspace.h5") });
+  assert.deepEqual(candidates(p("M.Geometry.H5")), { model: p("M.h5"), geometry: p("M.Geometry.H5"), results: p("M.results.h5"), user: p("M.user.h5"), workspace: p("M.workspace.h5") });
 });
 
 // Fable, #1310 finding 1: the set was built from lower-case names only, so a
@@ -36,14 +36,14 @@ test("candidates: the conventional names, and the opened file's own spelling", (
 // case-sensitive disk (and was not reported when rewritten on Windows).
 test("an opened file stays in its set whatever the case of its suffix", () => {
   const set = pairSet(p("M.Geometry.H5"), disk("M.Geometry.H5", "M.h5"));
-  assert.deepEqual(set, { model: p("M.h5"), geometry: p("M.Geometry.H5"), results: null, user: null });
+  assert.deepEqual(set, { model: p("M.h5"), geometry: p("M.Geometry.H5"), results: null, user: null, workspace: null });
   assert.equal(pairSet(p("m.RESULTS.H5"), disk("m.RESULTS.H5")).results, p("m.RESULTS.H5"));
 });
 
 test("samePath folds case only where asked; sameSet and inSet follow it", () => {
   assert.ok(samePath("C:/a/M.H5", "c:/a/m.h5", true));
   assert.ok(!samePath("C:/a/M.H5", "c:/a/m.h5", false));
-  const a = { model: "C:/a/M.H5", geometry: null, results: null, user: null };
+  const a = { model: "C:/a/M.H5", geometry: null, results: null, user: null, workspace: null };
   assert.ok(sameSet(a, { ...a, model: "c:/a/m.h5" }, true));
   assert.ok(!sameSet(a, { ...a, model: "c:/a/m.h5" }, false));
   assert.ok(inSet(a, "c:/A/m.H5", true));
@@ -52,11 +52,11 @@ test("samePath folds case only where asked; sameSet and inSet follow it", () => 
 
 test("opening the model opens its geometry and results siblings", () => {
   const set = pairSet(p("m.h5"), disk("m.h5", "m.geometry.h5", "m.results.h5", "other.geometry.h5"));
-  assert.deepEqual(set, { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.results.h5"), user: null });
+  assert.deepEqual(set, { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.results.h5"), user: null, workspace: null });
 });
 
 test("absent siblings are null; an .mpco is not the results (maintainer, #1310)", () => {
-  assert.deepEqual(pairSet(p("m.h5"), disk("m.h5")), { model: p("m.h5"), geometry: null, results: null, user: null });
+  assert.deepEqual(pairSet(p("m.h5"), disk("m.h5")), { model: p("m.h5"), geometry: null, results: null, user: null, workspace: null });
   assert.equal(pairSet(p("m.h5"), disk("m.h5", "m.mpco")).results, null);
 });
 
@@ -66,6 +66,7 @@ test("opening the geometry finds its model", () => {
     geometry: p("m.geometry.h5"),
     results: null,
     user: null,
+    workspace: null,
   });
   // No model beside it: the set holds the geometry alone.
   assert.deepEqual(pairSet(p("m.geometry.h5"), disk("m.geometry.h5")), {
@@ -73,6 +74,7 @@ test("opening the geometry finds its model", () => {
     geometry: p("m.geometry.h5"),
     results: null,
     user: null,
+    workspace: null,
   });
 });
 
@@ -82,6 +84,7 @@ test("opening the results finds its model and geometry", () => {
     geometry: p("m.geometry.h5"),
     results: p("m.results.h5"),
     user: null,
+    workspace: null,
   });
 });
 
@@ -91,7 +94,7 @@ test("pairSet refuses a missing or relative path", () => {
 });
 
 test("sameSet compares the three paths", () => {
-  const a = { model: "a", geometry: null, results: null, user: null };
+  const a = { model: "a", geometry: null, results: null, user: null, workspace: null };
   assert.ok(sameSet(a, { ...a }));
   assert.ok(!sameSet(a, { ...a, geometry: "g" }));
   assert.ok(sameSet(null, null));
@@ -118,7 +121,7 @@ test("fileFromArgv: packaged double-click, unpackaged --file, second-instance sw
 test("classify: <stem>.ladruno is the results kind, case-insensitively", () => {
   assert.deepEqual(classify(p("m.ladruno")), { kind: "results", stem: p("m") });
   assert.deepEqual(classify(p("M.LaDrUnO")), { kind: "results", stem: p("M") });
-  assert.deepEqual(candidates(p("m.ladruno")), { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.ladruno"), user: p("m.user.h5") });
+  assert.deepEqual(candidates(p("m.ladruno")), { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.ladruno"), user: p("m.user.h5"), workspace: p("m.workspace.h5") });
 });
 
 // -- V8-b (#2188): a part set is the results of its stem (ADR 0122 slice 8) --
@@ -131,8 +134,8 @@ test("classify: a <stem>.part-<N>.ladruno is the results kind of <stem>, case-in
 
 test("opening any part opens the set under the stem; the results slot keeps the opened part", () => {
   const d = disk("m.h5", "m.part-0.ladruno", "m.part-1.ladruno");
-  assert.deepEqual(pairSet(p("m.part-1.ladruno"), d), { model: p("m.h5"), geometry: null, results: p("m.part-1.ladruno"), user: null });
-  assert.deepEqual(pairSet(p("m.part-0.ladruno"), d), { model: p("m.h5"), geometry: null, results: p("m.part-0.ladruno"), user: null });
+  assert.deepEqual(pairSet(p("m.part-1.ladruno"), d), { model: p("m.h5"), geometry: null, results: p("m.part-1.ladruno"), user: null, workspace: null });
+  assert.deepEqual(pairSet(p("m.part-0.ladruno"), d), { model: p("m.h5"), geometry: null, results: p("m.part-0.ladruno"), user: null, workspace: null });
 });
 
 test("opening the model finds the part set by part 0; the .ladruno outranks it, and it outranks the .results.h5", () => {
@@ -167,12 +170,13 @@ test("unopenedSibling: a part names the stem's .ladruno or .results.h5, never an
 });
 
 test("opening the model finds a .ladruno beside it when it is the only results file", () => {
-  assert.deepEqual(pairSet(p("m.h5"), disk("m.h5", "m.ladruno")), { model: p("m.h5"), geometry: null, results: p("m.ladruno"), user: null });
+  assert.deepEqual(pairSet(p("m.h5"), disk("m.h5", "m.ladruno")), { model: p("m.h5"), geometry: null, results: p("m.ladruno"), user: null, workspace: null });
   assert.deepEqual(pairSet(p("m.ladruno"), disk("m.h5", "m.geometry.h5", "m.ladruno")), {
     model: p("m.h5"),
     geometry: p("m.geometry.h5"),
     results: p("m.ladruno"),
     user: null,
+    workspace: null,
   });
 });
 
@@ -195,7 +199,7 @@ test("the watcher's re-evaluation keeps the rule: the opened results file wins w
 });
 
 test("stemSet refuses Candidates candidates() did not make (it could not know which file was opened)", () => {
-  assert.throws(() => stemSet({ model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.results.h5"), user: p("m.user.h5") }, () => true), /candidates\(\) made/);
+  assert.throws(() => stemSet({ model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.results.h5"), user: p("m.user.h5"), workspace: p("m.workspace.h5") }, () => true), /candidates\(\) made/);
 });
 
 test("unopenedSibling: the stem's other results file when it exists, for the banner", () => {
@@ -214,22 +218,22 @@ test("classify: <stem>.user.h5 is the user kind of <stem>, never a model of <ste
   assert.deepEqual(classify(p("M.User.H5")), { kind: "user", stem: p("M") });
   assert.deepEqual(classify(p("a.b.user.h5")), { kind: "user", stem: p("a.b") });
   // A writer's partial (h5-schema.md "Writing") is not a file of the set.
-  assert.throws(() => classify(p("m.user.h5.host-12-ab.partial")), /<stem>\.user\.h5; got/);
+  assert.throws(() => classify(p("m.user.h5.host-12-ab.partial")), /<stem>\.workspace\.h5; got/);
 });
 
 test("every set holds its user file: opened from any member, or opening it", () => {
   const all = disk("m.h5", "m.geometry.h5", "m.ladruno", "m.user.h5");
-  const want = { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.ladruno"), user: p("m.user.h5") };
+  const want = { model: p("m.h5"), geometry: p("m.geometry.h5"), results: p("m.ladruno"), user: p("m.user.h5"), workspace: null };
   for (const opened of ["m.h5", "m.geometry.h5", "m.ladruno", "m.user.h5"]) assert.deepEqual(pairSet(p(opened), all), want, opened);
   // Alone, it is a set of one: no model to pair with (the staleness table says so).
-  assert.deepEqual(pairSet(p("m.user.h5"), disk("m.user.h5")), { model: null, geometry: null, results: null, user: p("m.user.h5") });
+  assert.deepEqual(pairSet(p("m.user.h5"), disk("m.user.h5")), { model: null, geometry: null, results: null, user: p("m.user.h5"), workspace: null });
   // The opened spelling is kept; another stem's user file is not this set's.
   assert.equal(pairSet(p("M.USER.H5"), disk("M.USER.H5", "M.h5")).user, p("M.USER.H5"));
   assert.equal(pairSet(p("m.h5"), disk("m.h5", "other.user.h5")).user, null);
 });
 
 test("sameSet and inSet see the user file", () => {
-  const a = { model: "m.h5", geometry: null, results: null, user: null };
+  const a = { model: "m.h5", geometry: null, results: null, user: null, workspace: null };
   assert.ok(!sameSet(a, { ...a, user: "m.user.h5" }), "a user file appearing is a new set");
   assert.ok(inSet({ ...a, user: "m.user.h5" }, "m.user.h5"));
   assert.ok(!inSet(a, "m.user.h5"));

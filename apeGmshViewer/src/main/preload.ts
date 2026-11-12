@@ -26,10 +26,27 @@
 //   readUserCase(req)       VU7b-2: one result of one `/spectra` case of that
 //                          file, with its values (`user:readCase`,
 //                          reader/userSpectra.ts `CaseRead`); never raises
-//   renderJob() ... renderDone(result)  the ADR 0128 agent modes (below)
+//   readUserResult(req)     VU16: one component of a state-free ON_NODES user
+//                          result of that file, as a contour column
+//                          (`user:readResult`, reader/userFile.ts
+//                          `UserColumnRead`); a stale entry is refused (A6)
+//   renderJob() ... renderDone(result)  the ADR 0128 agent modes (below);
+//                          renderVariant(row) VU18: the set a shot draws, a
+//                          variant row by index and label, or null (the spec's)
 //   onOffers(cb) onSnapshotRequest(cb) snapshotReply(id, reply)  ADR 0128 D5, D6 (below)
 //   variants() onVariants(cb) variantsSwitch(i, label) variantsCompare(i, label)
 //   readCompareStep(req) compareClose()  VU10: the study, a switch and the compare set (below)
+//   compareModel() compareUserRead() compareUserReadResult({name, component})
+//                          VU19: the compare set's model and `.user.h5`, judged
+//                          against its own model (A6); never a path or a row
+//   workspaceRead()         VU9a (ADR 0132): the open set's `<stem>.workspace.h5`,
+//                          its tables and each set's verdict (main/workspace.ts);
+//                          it takes no argument, main names the file
+//   workspaceSave(edit)     VU9a: one edit (`{op, ...}`) into that file; never a
+//                          path (option A, #2753). A refusal replaced nothing
+//   combinationsSave(edit)  VU9b (ADR 0130 A4): add a User Combination to the open
+//                          set's `<stem>.user.h5`, or revert the last save, by
+//                          copy-then-replace (main/combinations.ts); never a path
 // onOpen and onFileChanged return a function that removes the listener.
 // Until the page subscribes to a channel, main reloads the page instead of
 // sending on it, so the P0 page (which reads the model from config) follows.
@@ -42,6 +59,8 @@ interface OpenSet {
   results: string | null;
   /** ADR 0130: the `<stem>.user.h5` beside the model, or null */
   user: string | null;
+  /** ADR 0132 D1: the `<stem>.workspace.h5` beside the model, or null */
+  workspace: string | null;
 }
 
 /**
@@ -124,6 +143,9 @@ contextBridge.exposeInMainWorld("viewer", {
   // one `readUser` named, which main gave the page; main reads only the open set's user file (VU11), so this door
   // opens nothing else.
   readUserCase: (req: { path: string; case: string; target: string; label: string }) => ipcRenderer.invoke("user:readCase", req),
+  // VU16 (#2800): one component of a state-free ON_NODES user result, as a contour column (`user:readResult`). As
+  // readUserCase, the path is the one `readUser` named; main reads only the open set's user file, and refuses a stale entry.
+  readUserResult: (req: { path: string; name: string; component: string }) => ipcRenderer.invoke("user:readResult", req),
   onScanProgress: (cb: (p: { scanId: number; done: number; total: number }) => void) => {
     const handler = (_e: IpcRendererEvent, p: { scanId: number; done: number; total: number }) => cb(p);
     ipcRenderer.on("results:scanProgress", handler);
@@ -140,6 +162,8 @@ contextBridge.exposeInMainWorld("viewer", {
   renderPng: (name: string, png: Uint8Array) => ipcRenderer.invoke("render:png", name, png),
   renderCapture: (name: string) => ipcRenderer.invoke("render:capture", name),
   renderDone: (result: unknown) => ipcRenderer.invoke("render:done", result),
+  // VU18 (ADR 0132 D9.2): the set a render shot draws, a variant row by index and label (null: the spec's set), never a path.
+  renderVariant: (row: { index: number; label: string } | null) => ipcRenderer.invoke("render:variant", row === null ? null : { index: row.index, label: row.label }),
   // ADR 0128 D5 (--present): the offers main heard over the second-instance path. Main holds them until
   // this subscribes; it never reloads the page for one (INV-5), which is why they do not use `listen`.
   onOffers: (cb: (offers: unknown[]) => void) => {
@@ -174,5 +198,17 @@ contextBridge.exposeInMainWorld("viewer", {
   variantsCompare: (index: number, label: string) => ipcRenderer.invoke("variants:compare", index, label),
   readCompareStep: (req: { stage: string; step: number; seq: number }) => ipcRenderer.invoke("compare:readStep", { stage: req.stage, step: req.step, seq: req.seq }),
   compareClose: () => ipcRenderer.invoke("compare:close"),
+  // VU19 (ADR 0132 D9.5): the compare set's model and `.user.h5`, through doors of the compare slot. None names a
+  // file or a row: main reads the set it holds in its compare slot, and each answer names the slot it read.
+  compareModel: () => ipcRenderer.invoke("compare:model", {}),
+  compareUserRead: () => ipcRenderer.invoke("compare:userRead", {}),
+  compareUserReadResult: (req: { name: string; component: string }) => ipcRenderer.invoke("compare:userReadResult", { name: req.name, component: req.component }),
   snapshotReply: (id: number, reply: unknown) => ipcRenderer.invoke("viewer:snapshotReply", id, reply),
+  // VU9a (ADR 0132 D6, D7; HG9 on #2803): the window set's workspace. Neither door names a file: main reads and writes
+  // the set's own `<stem>.workspace.h5`, and refuses an edit with any key its op does not name (a path included).
+  workspaceRead: () => ipcRenderer.invoke("workspace:read"),
+  workspaceSave: (edit: unknown) => ipcRenderer.invoke("workspace:save", edit),
+  // VU9b (ADR 0130 A4; HG9 on #2693): one combination edit (`{op: add, row, expect}` or `{op: revert, expect}`) into
+  // the window set's own `<stem>.user.h5`; it never names a file, and main refuses any key the op does not name.
+  combinationsSave: (edit: unknown) => ipcRenderer.invoke("combinations:save", edit),
 });
