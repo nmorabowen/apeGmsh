@@ -106,7 +106,8 @@ test("gauss_cell: per-cell colours equal the closed form on a quad plus triangle
   const missing = quads[0]!;
   h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
   const picker = contourFieldsOf(h.store.get())!;
-  assert.deepEqual(picker.elements.map((f) => [f.name, f.components.map((c) => c.label), f.groups, f.refused]), [["stress", ["xx", "xy", "yy"], ["quads_G1", "tris_G1"], null]]);
+  // VA6d: the picker offers the von Mises of the complete in-plane tensor after the stored components.
+  assert.deepEqual(picker.elements.map((f) => [f.name, f.components.map((c) => c.label), f.groups, f.refused]), [["stress", ["xx", "xy", "yy", "von_mises_stress"], ["quads_G1", "tris_G1"], null]]);
   assert.equal(picker.elementsVerified, true);
   const k = 1;
   for (const [c, comp] of PLANE.entries()) {
