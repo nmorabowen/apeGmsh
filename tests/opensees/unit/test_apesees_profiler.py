@@ -207,6 +207,9 @@ def test_analyze_profile_brackets_live_run(monkeypatch) -> None:
             return 0
 
     monkeypatch.setattr(live_mod, "LiveOpsEmitter", _RecLive)
+    # profile= needs the fork: it refuses on stock before the wipe (#2533).
+    monkeypatch.setattr(live_mod, "_get_ops", lambda: type(
+        "_Fork", (), {"ladrunoBuild": lambda self: "f" * 40})())
 
     ops = _build_quad_with_chain()
     ops.analyze(steps=5, profile="p.h5", profile_run="caseA", profile_deep=True)
