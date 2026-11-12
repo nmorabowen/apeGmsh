@@ -815,11 +815,11 @@ def _refuse_tcl_syntax(who: str, message: str) -> None:
 #: resetting their class-wide stage flag.
 MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 
-#: The ``ladrunoSchema`` v1 capability that promises that fix (fork PR
-#: #1017, merged as ``71e47c8d4``; ``kCapabilities`` in
-#: ``SRC/interpreter/LadrunoSchema.h``, listed at ``FORK_PIN``
-#: ``6050d78e1``).  The fork defines a capability's absence as "older
-#: build, refuse", so a v0 schema, which predates every name, lacks it.
+#: The ``ladrunoSchema`` v1 capability that promises that fix
+#: (``kCapabilities`` in the fork's ``SRC/interpreter/LadrunoSchema.h``,
+#: listed at ``FORK_PIN`` ``6050d78e1``).  The fork defines a capability's
+#: absence as "older build, refuse", so a v0 schema, which predates every
+#: name, lacks it.
 MD_STAGE_FLAG_CAPABILITY = "mdStageFlagPreserved"
 
 
@@ -863,7 +863,7 @@ def engine_has_capability(
     """
     if info.schema is not None:
         return guard.capability in info.schema.capabilities
-    return not hasattr(ops, "ladrunoBuild")
+    return not hasattr(ops, "ladrunoBuild")  # apegmsh-lint: getattr-undefined-ok fork-only OpenSees command, the one fork signal; the deck guard asks the same
 
 
 class ForkBuildAllowlist(NamedTuple):
