@@ -506,8 +506,8 @@ _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
 }
 
 #: ``ops.eleType`` class name -> the ``element`` token of its rotation
-#: family, for the rotation roles only (:meth:`LiveDomainFacts.rotation_roles`,
-#: #2407 / #2414). Each is a stock openseespy 3.7.1 beam-column whose
+#: family, for the rotation roles only (:meth:`LiveDomainFacts.rotation_roles`).
+#: Each is a stock openseespy 3.7.1 beam-column whose
 #: nodes carry ``ux uy rz`` (ndf 3, 2-D) or ``ux..rz`` (ndf 6, 3-D), so a
 #: node it touches holds a rotation in those slots. They are kept out of
 #: :data:`_TOKEN_FOR_LIVE_CLASS`: no catalog entry types their responses
@@ -539,7 +539,7 @@ _ROTATION_TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
 }
 
 #: ``ops.eleType`` classes that neither give nor take away a rotation at
-#: the nodes they touch, as a truss does not (#2407).
+#: the nodes they touch, as a truss does not.
 #: ``ASDEmbeddedNodeElement`` ties a node to a solid's translations, and
 #: with ``-rot`` its rotation to the solid's rotation: it constrains the
 #: slot a beam made a rotation, it does not change what that slot holds.
