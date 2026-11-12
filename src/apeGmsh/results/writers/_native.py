@@ -148,9 +148,9 @@ class NativeSecondPartition(ValueError):
             f"{existing!r}; this write names partition {refused!r}. A native "
             f"results.h5 stage holds one partition (ADR 0123 D5): write "
             f"every result of the stage into {existing!r}, or record a "
-            f"partitioned run as a .ladruno or MPCO part set, whose "
-            f"readers reduce across ranks. Nothing of this write reached "
-            f"the file."
+            f"partitioned run as a part set (one history file per rank, "
+            f"e.g. MPCO), whose readers reduce across ranks. Nothing of "
+            f"this write reached the file."
         )
 
 
