@@ -75,15 +75,59 @@ _REGEN = bool(os.environ.get("APEGMSH_REGEN_GOLDENS"))
 # =====================================================================
 
 
-# transition: moves to a .ladruno source in VA6e #2794 (R22b refuses non-.ladruno on the app path)
-@pytest.fixture(autouse=True)
-def _vtk_backend(monkeypatch):
+@pytest.fixture
+def vtk_stills() -> None:
+    """The VTK stills path, where it is the platform's (G2: Linux and macOS).
+
+    VA6b draws ``results.render`` / ``render_pack`` / ``assess(figures=True)``
+    through apeGmshViewer on Windows and keeps VTK for Linux. A test that reads
+    VTK frames or actors runs where that path runs and skips on the app path,
+    whose shots the ``test_app_*`` tests pin on a ``.ladruno`` source (with
+    ``test_stills_gauss_components_v2.py`` and ``test_assess_figures_v2.py``).
+    No test forces a backend its platform does not take: VA6e (#2794) removed
+    VA6b's transition pins.
+    """
+    from apeGmsh.viewers.render import _stills_backend
+
+    if _stills_backend() == "app":
+        pytest.skip("VTK stills are the Linux/macOS path (parity plan G2); this platform draws through apeGmshViewer")
+
+
+class FakeApp:
+    """``agent_view.render_stills`` without the app: records each spec and
+    writes a stand-in PNG per shot and an all-ok manifest, as the app does on
+    exit 0 (``apeGmshViewer/src/spec/manifest.ts``)."""
+
+    def __init__(self) -> None:
+        self.specs: list[dict] = []
+
+    def __call__(self, spec: Any, out: Any, **kwargs: Any) -> dict:
+        self.specs.append(json.loads(json.dumps(spec)))
+        out = Path(out)
+        out.mkdir(parents=True)
+        shots = []
+        for shot in spec["shots"]:
+            (out / f"{shot['name']}.png").write_bytes(b"\x89PNG stand-in")
+            shots.append({"name": shot["name"], "status": "ok", "png": f"{shot['name']}.png"})
+        manifest = {"spec": spec["spec"], "shots": shots}
+        (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return manifest
+
+
+@pytest.fixture
+def app_backend(monkeypatch: pytest.MonkeyPatch) -> FakeApp:
+    """The ``apegmsh-view/1`` path (Windows'), on any platform, with a fake app."""
+    import apeGmsh.agent_view as agent_view
     from apeGmsh.viewers import render as render_mod
 
-    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+    fake = FakeApp()
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "app")
+    monkeypatch.setattr(agent_view, "render_stills", fake)
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    return fake
 
 
-def _write_plate_results(dest: Path) -> Path:
+def _plate_fem_and_data() -> tuple[Any, np.ndarray, np.ndarray, dict[str, np.ndarray]]:
     """8x2 quad plate (4 x 1, z=0) + a 5-step static stage.
 
     ``displacement_y`` carries a sine whose wave number grows with the
@@ -93,7 +137,6 @@ def _write_plate_results(dest: Path) -> Path:
     default component resolves to ``displacement_x``.
     """
     from apeGmsh import apeGmsh
-    from apeGmsh.results.writers import NativeWriter
 
     fix = _MANIFEST["fixture"]
     g = apeGmsh(model_name="x2_golden", verbose=False, _artifacts=False)
@@ -121,22 +164,43 @@ def _write_plate_results(dest: Path) -> Path:
     edge = np.where(np.isclose(x, 0.0), 1.0, 0.0)
     rx = (amp + 0.1) * edge * (y - 0.5) * (k + 1)
     ry = -(amp + 0.1) * edge * (1.0 + y)
+    return fem, ids, np.linspace(0.0, 1.0, n_steps), {
+        "displacement_x": ux,
+        "displacement_y": uy,
+        "reaction_force_x": rx,
+        "reaction_force_y": ry,
+    }
 
+
+def _write_plate_results(dest: Path) -> Path:
+    """The plate (:func:`_plate_fem_and_data`) as a native results file."""
+    from apeGmsh.results.writers import NativeWriter
+
+    fem, ids, time, components = _plate_fem_and_data()
     path = dest / "x2_plate.h5"
     with NativeWriter(path) as w:
         w.open(fem=fem)
-        sid = w.begin_stage(
-            name="push", kind="static",
-            time=np.linspace(0.0, 1.0, n_steps),
-        )
-        w.write_nodes(sid, "partition_0", node_ids=ids, components={
-            "displacement_x": ux,
-            "displacement_y": uy,
-            "reaction_force_x": rx,
-            "reaction_force_y": ry,
-        })
+        sid = w.begin_stage(name="push", kind="static", time=time)
+        w.write_nodes(sid, "partition_0", node_ids=ids, components=components)
         w.end_stage()
     return path
+
+
+def _write_plate_ladruno(dest: Path) -> Path:
+    """The same plate as the pair apeGmshViewer opens (R22b): ``plate.h5``, the
+    mesh, beside ``plate.ladruno``, the stage as the fork's recorder lays it out
+    (``ndm`` 2: the native file's x and y components)."""
+    from apeGmsh.results.readers._ladruno_writer import NodalStage, write_nodal_stages
+
+    fem, ids, time, components = _plate_fem_and_data()
+    model = dest / "plate.h5"
+    fem.to_h5(str(model))
+    return write_nodal_stages(
+        dest / "plate.ladruno", model_h5=model, node_ids=ids,
+        coords=np.asarray(fem.nodes.coords, dtype=np.float64), ndm=2,
+        stages=[NodalStage("static", time, ids, components)],
+        source="the X2 plate fixture", recorded_stages=[None],
+    )
 
 
 @pytest.fixture(scope="module")
@@ -260,7 +324,7 @@ def _require_still(written: Any, out: Path) -> None:
 
 
 @pytest.mark.parametrize("view", ["mesh", "contour", "deformed", "reactions"])
-def test_render_view_matches_golden(plate, tmp_path: Path, view: str) -> None:
+def test_render_view_matches_golden(vtk_stills, plate, tmp_path: Path, view: str) -> None:
     spec = _MANIFEST["render"][view]
     out = tmp_path / f"{view}.png"
     written = plate.render(
@@ -276,7 +340,7 @@ def test_render_view_matches_golden(plate, tmp_path: Path, view: str) -> None:
 # =====================================================================
 
 
-def test_render_pack_files_and_stills(plate, tmp_path: Path) -> None:
+def test_render_pack_files_and_stills(vtk_stills, plate, tmp_path: Path) -> None:
     spec = _MANIFEST["render_pack"]
     dest = tmp_path / "pack"
     written = plate.render_pack(dest, camera=_CAMERA, window_size=_WINDOW)
@@ -302,7 +366,7 @@ def test_render_pack_files_and_stills(plate, tmp_path: Path) -> None:
 # =====================================================================
 
 
-def test_assess_figure_names(plate, tmp_path: Path) -> None:
+def test_assess_figure_names(vtk_stills, plate, tmp_path: Path) -> None:
     report = plate.assess(figures=True, out_dir=tmp_path / "assess")
     if not report.figures:
         _require_still(None, tmp_path / "assess" / "mesh.png")
@@ -316,7 +380,7 @@ def test_assess_figure_names(plate, tmp_path: Path) -> None:
 # =====================================================================
 
 
-def test_comparison_rejects_wrong_renders(plate, tmp_path: Path) -> None:
+def test_comparison_rejects_wrong_renders(vtk_stills, plate, tmp_path: Path) -> None:
     """Mutation proof, kept as a test: a wrong step, component or deform
     must FAIL against the committed goldens."""
     if _REGEN:
@@ -340,3 +404,84 @@ def test_comparison_rejects_wrong_renders(plate, tmp_path: Path) -> None:
         assert _diff_verdict(actual, golden) is not None, (
             f"{label}: the comparison accepted a wrong render of {view!r}"
         )
+
+
+# =====================================================================
+# The same calls on the app path (Windows'), from the plate's .ladruno
+# =====================================================================
+#
+# The parity plan maps each still above onto one apegmsh-view/1 shot; the
+# literals here are its rows: R4-R7 (camera "xy" is the app's "top"), R13 (a
+# nodal component as {field, component}), R18/G3 (the auto scale), R22 (the
+# stage by index), R26/G1 (no reactions still), R27/G6 (history.png stays
+# matplotlib). The fake app records the spec; no window opens.
+
+
+@pytest.fixture(scope="module")
+def plate_set(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return _write_plate_ladruno(tmp_path_factory.mktemp("x2_golden_app"))
+
+
+@pytest.fixture
+def plate_app(plate_set: Path):
+    with Results.from_ladruno(plate_set) as r:
+        yield r
+
+
+def _plate_auto_scale() -> float:
+    """G3 in closed form from the fixture's own arrays: 0.12 of the bounding
+    diagonal over the largest |u| component at the last step."""
+    fem, _, _, comps = _plate_fem_and_data()
+    xyz = np.asarray(fem.nodes.coords, dtype=float)
+    peak = max(float(np.abs(comps[c][-1]).max()) for c in ("displacement_x", "displacement_y"))
+    return 0.12 * float(np.linalg.norm(xyz.max(axis=0) - xyz.min(axis=0))) / peak
+
+
+@pytest.mark.parametrize("view", ["mesh", "contour", "deformed"])
+def test_app_render_view_is_one_shot(app_backend, plate_app, tmp_path: Path, view: str) -> None:
+    spec = _MANIFEST["render"][view]
+    out = tmp_path / f"{view}.png"
+    written = plate_app.render(
+        out, view=view, component=spec["component"], step=spec["step"],
+        camera=_CAMERA, window_size=_WINDOW,
+    )
+    assert written == out and out.is_file()
+    (sent,) = app_backend.specs
+    assert sent["size"] == list(_WINDOW) and sent["chrome"] == "model"
+    assert sent["files"] == {
+        "model": str(plate_app.path.with_suffix(".h5").resolve()),
+        "results": str(plate_app.path.resolve()),
+    }
+    (shot,) = sent["shots"]
+    if view == "mesh":
+        assert shot == {"name": "still", "camera": "top"}
+        return
+    assert shot["camera"] == "top"
+    assert (shot["stage"], shot["step"]) == (0, _MANIFEST["fixture"]["n_steps"] - 1)
+    assert shot["contour"] == {"field": "DISPLACEMENT", "component": "y"}
+    if view == "deformed":
+        assert shot["deform"]["scale"] == pytest.approx(_plate_auto_scale(), rel=1e-12)
+    else:
+        assert "deform" not in shot
+
+
+def test_app_render_reactions_is_dropped(app_backend, plate_app, tmp_path: Path) -> None:
+    """G1 (R11): no reactions still on the app path; the refusal names the nodal contour."""
+    with pytest.raises(ValueError, match="reaction_force"):
+        plate_app.render(tmp_path / "r.png", view="reactions", component="reactions")
+    assert app_backend.specs == []
+
+
+def test_app_render_pack_and_assess_are_one_spec(app_backend, plate_app, tmp_path: Path) -> None:
+    """G5: the pack (and assess's figures) is ONE spec: the v1 file set without
+    reactions.png (G1, R26), history.png still matplotlib (G6, R27)."""
+    expected = [n for n in _MANIFEST["render_pack"]["files"] if n != "reactions.png"]
+    written = plate_app.render_pack(tmp_path / "pack", camera=_CAMERA, window_size=_WINDOW)
+    assert [p.name for p in written] == expected
+    report = plate_app.assess(figures=True, out_dir=tmp_path / "assess")
+    assert [p.name for p in report.figures] == [n for n in _MANIFEST["assess_figures"] if n != "reactions.png"]
+    pack, assess = app_backend.specs
+    assert pack["shots"] == assess["shots"]
+    assert [s["name"] for s in pack["shots"]] == ["mesh", "contour", "deformed"]
+    # v1's starter heuristic: no displacement_z is recorded, so displacement_x.
+    assert pack["shots"][1]["contour"] == {"field": "DISPLACEMENT", "component": "x"}
