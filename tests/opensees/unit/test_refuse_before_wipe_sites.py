@@ -17,10 +17,26 @@ Two layers:
   function by the refusal, or is one of the named exemptions below.  A new
   site fails here until it is guarded and has a behaviour row in
   :data:`SITES`.
+
+#2533 adds the fork-only *verbs*.  ``complex_eigen``,
+``modal_response_history``, ``response_spectrum_analysis``, the FRF sweeps,
+``critical_time_step`` and ``analyze_explicit`` passed the chain refusal
+with a stock chain, wiped, and only then failed at the fork command.  Each
+now calls ``refuse_fork_verb_before_wipe`` (the ``has_fork`` verdict
+``eigen_feast`` already read) before the wipe, and a staged ``ops.run()``
+refuses before it too:
+
+* behaviour: each fork-only verb, with a stock chain, refuses by name on a
+  stand-in stock domain and on real stock openseespy, and the user's node
+  survives; on a stand-in fork it reaches the wipe (the control);
+* source scan: a wiping site that touches a fork-only ``LiveOpsEmitter``
+  method (derived from ``emitter/live.py``) calls the verb refusal before
+  the wipe, and has its rows in :data:`FORK_VERB_SITES`.
 """
 from __future__ import annotations
 
 import ast
+import re
 import warnings
 from pathlib import Path
 from typing import Any, Callable
@@ -116,6 +132,80 @@ SITES: dict[str, Callable[[Any, bool], Any]] = {
             base_accel_dir=1, damp=0.05),
 }
 
+#: #2533: the wiping sites of the fork-only verbs, each with the public
+#: verbs (the names their refusal gives, after ``apeSees.``) that reach it.
+FORK_VERB_SITES: dict[str, tuple[str, ...]] = {
+    "apeGmsh/opensees/apesees.py:apeSees.analyze":
+        ("analyze(profile=...)",),
+    "apeGmsh/opensees/procedures/_modal.py:_ModalMixin.eigen_feast":
+        ("eigen_feast",),
+    "apeGmsh/opensees/procedures/_modal.py:_ModalMixin.complex_eigen":
+        ("complex_eigen",),
+    "apeGmsh/opensees/procedures/_modal.py:_ModalMixin.modal_response_history":
+        ("modal_response_history",),
+    "apeGmsh/opensees/procedures/_modal.py:"
+    "_ModalMixin.response_spectrum_analysis":
+        ("response_spectrum_analysis",),
+    "apeGmsh/opensees/procedures/_explicit.py:_ExplicitMixin.critical_time_step":
+        ("critical_time_step",),
+    "apeGmsh/opensees/procedures/_explicit.py:_ExplicitMixin.analyze_explicit":
+        ("analyze_explicit",),
+    "apeGmsh/opensees/procedures/_frf.py:_FrfMixin._run_modal_sweep":
+        ("frequency_response", "steady_state_dynamics", "random_response"),
+}
+
+#: The verb whose refusal a :data:`SITES` row meets first at a fork-verb
+#: site, where it comes before the chain's: the row drives the site's first
+#: verb.  ``analyze`` refuses only under ``profile=``, which its row omits.
+_SITE_VERB = {
+    site: verbs[0] for site, verbs in FORK_VERB_SITES.items()
+    if site != "apeGmsh/opensees/apesees.py:apeSees.analyze"}
+
+
+def _sweep(ops: Any, verb: str) -> Any:
+    kw: dict[str, Any] = dict(
+        f_min=0.1, f_max=10.0, n_freq=2, node=2, dof=1, num_modes=1,
+        base_accel_dir=1, damp=0.05)
+    if verb == "random_response":
+        kw["input_psd"] = ops.timeSeries.Constant()
+    return getattr(ops, verb)(**kw)
+
+
+#: One driver per fork-only public verb, and the stock chain row it runs
+#: with: a chain the #2449 refusal passes, so only the verb refusal stands
+#: between the call and the wipe.
+FORK_VERBS: dict[str, tuple[Callable[[Any], Any], tuple[str, str]]] = {
+    "analyze(profile=...)": (lambda o: o.analyze(steps=1, profile="p.txt"),
+                             ("integrator", "LoadControl")),
+    "eigen_feast": (lambda o: o.eigen_feast(0.0, 10.0),
+                    ("integrator", "LoadControl")),
+    "complex_eigen": (lambda o: o.complex_eigen(1),
+                      ("integrator", "LoadControl")),
+    "modal_response_history": (_modal_history,
+                               ("integrator", "LoadControl")),
+    "response_spectrum_analysis": (
+        lambda o: o.response_spectrum_analysis(
+            1, periods=[0.0, 1.0], accels=[1.0, 1.0], combine="SRSS",
+            num_modes=1),
+        ("integrator", "LoadControl")),
+    "frequency_response": (lambda o: _sweep(o, "frequency_response"),
+                           ("integrator", "LoadControl")),
+    "steady_state_dynamics": (lambda o: _sweep(o, "steady_state_dynamics"),
+                              ("integrator", "LoadControl")),
+    "random_response": (lambda o: _sweep(o, "random_response"),
+                        ("integrator", "LoadControl")),
+    "critical_time_step": (lambda o: o.critical_time_step(),
+                           ("integrator", "CentralDifference")),
+    "analyze_explicit": (lambda o: o.analyze_explicit(duration=0.1),
+                         ("integrator", "CentralDifference")),
+}
+
+
+def _verb_refusal(verb: str) -> str:
+    return (re.escape(f"apeSees.{verb}")
+            + " requires the Ladruno fork build of OpenSees")
+
+
 #: Sites behind ``require_rsa_feature``: on the stand-in stock domain that
 #: gate refuses first (the domain survives either way), so their rows pass
 #: it to reach the chain refusal this slice adds.
@@ -175,12 +265,86 @@ def test_a_refused_site_keeps_the_users_node(
         monkeypatch.setattr(target_mod, "require_rsa_feature", lambda f: None)
     match = OWN_RULE_FIRST.get(
         (site, row), "requires the Ladruno fork|fork-only")
+    if site in _SITE_VERB:
+        match = _verb_refusal(_SITE_VERB[site])
     ops = _chain_frame(family, row, staged=False)
     transient = family == "integrator" and row in _TRANSIENT
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         with pytest.raises(RuntimeError, match=match):
             SITES[site](ops, transient)
+    assert stock.nodes.get(USER_NODE) == USER_XYZ, stock.calls[:5]
+    assert ("wipe",) not in stock.calls, stock.calls[:5]
+
+
+def _stand_in(monkeypatch: pytest.MonkeyPatch, domain: "_StockDomain") -> None:
+    import apeGmsh.opensees.emitter.live as live_mod
+
+    domain.node(USER_NODE, *USER_XYZ)
+    domain.calls.clear()
+    monkeypatch.setattr(live_mod, "_get_ops", lambda: domain)
+
+
+@pytest.mark.parametrize("verb", sorted(FORK_VERBS))
+def test_a_fork_verb_refuses_by_name_with_a_stock_chain(
+    monkeypatch: pytest.MonkeyPatch, verb: str,
+) -> None:
+    """#2533: the chain is stock, so only the verb's own refusal can keep
+    the user's node; before the fix each verb wiped, then failed."""
+    stock = _StockDomain()
+    _stand_in(monkeypatch, stock)
+    drive, (family, row) = FORK_VERBS[verb]
+    ops = _chain_frame(family, row, staged=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(RuntimeError, match=_verb_refusal(verb)):
+            drive(ops)
+    assert stock.nodes.get(USER_NODE) == USER_XYZ, stock.calls[:5]
+    assert ("wipe",) not in stock.calls, stock.calls[:5]
+
+
+class _ForkDomain(_StockDomain):
+    """A stand-in fork: ``ladrunoBuild`` answers a sha."""
+
+    def ladrunoBuild(self) -> str:
+        return "f" * 40
+
+
+@pytest.mark.parametrize("verb", sorted(FORK_VERBS))
+def test_a_fork_verb_still_reaches_the_wipe_on_the_fork(
+    monkeypatch: pytest.MonkeyPatch, verb: str,
+) -> None:
+    """The control: on a fork the refusal stays silent and the verb wipes
+    and emits.  The stand-in answers 0 to every fork command, so what
+    follows the emit may fail; only the wipe is asserted."""
+    fork = _ForkDomain()
+    _stand_in(monkeypatch, fork)
+    drive, (family, row) = FORK_VERBS[verb]
+    ops = _chain_frame(family, row, staged=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            drive(ops)
+        except Exception as exc:  # the stand-in's 0 is no fork answer
+            assert "requires the Ladruno fork" not in str(exc), exc
+    assert fork.calls[0] == ("wipe",)
+    assert USER_NODE not in fork.nodes
+
+
+def test_a_staged_run_refuses_before_the_wipe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2533: ``ops.run()`` on a staged model refused at ``stage_open``,
+    after the wipe; ``ops.eigen()`` refused the same model up front."""
+    stock = _StockDomain()
+    _stand_in(monkeypatch, stock)
+    ops = _chain_frame("integrator", "LoadControl", staged=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(NotImplementedError,
+                           match=r"apeSees\.run: live execution does not "
+                                 "support staged models"):
+            ops.run()
     assert stock.nodes.get(USER_NODE) == USER_XYZ, stock.calls[:5]
     assert ("wipe",) not in stock.calls, stock.calls[:5]
 
@@ -240,6 +404,35 @@ def test_a_refused_site_keeps_the_users_node_on_real_stock(site: str) -> None:
         live.wipe()
 
 
+@pytest.mark.live
+@pytest.mark.parametrize("verb", sorted(FORK_VERBS))
+def test_a_fork_verb_keeps_the_users_node_on_real_stock(verb: str) -> None:
+    """#2533 in the real stock domain: with a stock chain, each fork-only
+    verb refuses by name and the user's node still answers ``nodeCoord``."""
+    from apeGmsh.opensees.emitter.live import get_backend_info, get_ops
+
+    try:
+        kind = get_backend_info().kind
+    except ImportError:
+        pytest.skip("no in-process OpenSees backend")
+    if kind == "fork":
+        pytest.skip("the fork runs a fork-only verb; nothing is refused")
+    live = get_ops()
+    live.wipe()
+    live.model("basic", "-ndm", 3, "-ndf", 6)
+    live.node(USER_NODE, *USER_XYZ)
+    try:
+        drive, (family, row) = FORK_VERBS[verb]
+        ops = _chain_frame(family, row, staged=False)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with pytest.raises(RuntimeError, match=_verb_refusal(verb)):
+                drive(ops)
+        assert list(live.nodeCoord(USER_NODE)) == USER_XYZ
+    finally:
+        live.wipe()
+
+
 # -- source scan ------------------------------------------------------------
 
 
@@ -275,11 +468,11 @@ def _called_names(fn: ast.AST, before: int) -> set[str]:
     return out
 
 
-def _wiping_sites() -> dict[str, set[str]]:
+def _wiping_functions() -> dict[str, tuple[ast.AST, int]]:
     """``<module>:<qualname>`` of each function that constructs a wiping
-    ``LiveOpsEmitter``, mapped to the names it calls before the first such
+    ``LiveOpsEmitter``, mapped to its node and the line of the first such
     construction."""
-    sites: dict[str, set[str]] = {}
+    sites: dict[str, tuple[ast.AST, int]] = {}
     for path in sorted((SRC / "apeGmsh").rglob("*.py")):
         rel = path.relative_to(SRC).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
@@ -295,7 +488,7 @@ def _wiping_sites() -> dict[str, set[str]]:
                         if ctors:
                             first = min(c.lineno for c in ctors)
                             key = f"{rel}:{'.'.join(inner)}"
-                            sites[key] = _called_names(child, first)
+                            sites[key] = (child, first)
                             continue
                     visit(child, inner)
                 elif _is_emitter_ctor(child) and _can_wipe(child):
@@ -307,6 +500,105 @@ def _wiping_sites() -> dict[str, set[str]]:
 
         visit(tree, [])
     return sites
+
+
+def _wiping_sites() -> dict[str, set[str]]:
+    """Each wiping site mapped to the names it calls before its first
+    wiping construction."""
+    return {key: _called_names(fn, first)
+            for key, (fn, first) in _wiping_functions().items()}
+
+
+VERB_REFUSAL = "refuse_fork_verb_before_wipe"
+
+#: Fork-only ``LiveOpsEmitter`` methods that no ``*_FORK_REQUIRED`` gate in
+#: ``emitter/live.py`` marks, and why.
+UNGATED_FORK_METHODS = {
+    "eigen_feast": "stock has ``ops.eigen``; ``-feast`` is a parse error",
+    "critical_time_step": "a bare ``ops.criticalTimeStep()``: "
+                          "AttributeError on stock",
+}
+
+
+def _fork_emitter_methods() -> set[str]:
+    """The ``LiveOpsEmitter`` methods that need the fork: each that names a
+    ``*_FORK_REQUIRED`` message, each that calls one of those on ``self``,
+    and :data:`UNGATED_FORK_METHODS`."""
+    path = SRC / "apeGmsh/opensees/emitter/live.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body
+               if isinstance(n, ast.ClassDef) and n.name == "LiveOpsEmitter")
+    methods = {f.name: f for f in cls.body if isinstance(f, ast.FunctionDef)}
+    assert set(UNGATED_FORK_METHODS) <= set(methods)
+    fork = {name for name, f in methods.items() if any(
+        isinstance(n, ast.Name) and n.id.endswith("_FORK_REQUIRED")
+        for n in ast.walk(f))} | set(UNGATED_FORK_METHODS)
+    while True:
+        more = {name for name, f in methods.items() if name not in fork
+                and any(isinstance(n, ast.Attribute) and n.attr in fork
+                        and isinstance(n.value, ast.Name)
+                        and n.value.id == "self" for n in ast.walk(f))}
+        if not more:
+            return fork
+        fork |= more
+
+
+def _touches_fork_method(fn: ast.AST, fork: set[str]) -> bool:
+    """``fn`` reads a fork-only emitter method (``x.complex_eigen``, not
+    the bridge's own ``self.<verb>``), or dispatches by a computed name
+    (``getattr(emitter, command)``), which may reach one."""
+    for node in ast.walk(fn):
+        if (isinstance(node, ast.Attribute) and node.attr in fork
+                and not (isinstance(node.value, ast.Name)
+                         and node.value.id == "self")):
+            return True
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr" and len(node.args) >= 2
+                and not isinstance(node.args[1], ast.Constant)):
+            return True
+    return False
+
+
+def _fork_verb_sites() -> dict[str, set[str]]:
+    fork = _fork_emitter_methods()
+    return {key: _called_names(fn, first)
+            for key, (fn, first) in _wiping_functions().items()
+            if _touches_fork_method(fn, fork)}
+
+
+def test_every_fork_verb_refuses_before_the_wipe() -> None:
+    """#2533: a wiping site that runs a fork-only emitter method calls the
+    verb refusal before the wipe, and has its rows here."""
+    sites = _fork_verb_sites()
+    unguarded = sorted(k for k, called in sites.items()
+                       if VERB_REFUSAL not in called)
+    assert not unguarded, (
+        "a fork-only verb wipes with no "
+        f"{VERB_REFUSAL}(...) before it: {unguarded}")
+    assert set(sites) == set(FORK_VERB_SITES)
+    assert {v for vs in FORK_VERB_SITES.values() for v in vs} == set(
+        FORK_VERBS)
+
+
+def test_the_fork_method_scan_sees_each_form() -> None:
+    """Self-test: the derived set holds the gated, the transitively gated
+    and the ungated fork methods, and no stock one; the site test sees an
+    attribute and a computed ``getattr``, not ``self.<verb>``."""
+    fork = _fork_emitter_methods()
+    assert {"complex_eigen", "modal_response_history",
+            "response_spectrum_analysis", "frequency_response",
+            "steady_state_dynamics", "random_response", "eigen_feast",
+            "critical_time_step", "ladruno_contact_force"} <= fork
+    assert not {"eigen", "modal_properties", "analyze", "node"} & fork
+
+    def fn(src: str) -> ast.AST:
+        return ast.parse(src)
+
+    assert _touches_fork_method(fn("le.complex_eigen(1)"), fork)
+    assert _touches_fork_method(fn("r = getattr(le, command)"), fork)
+    assert not _touches_fork_method(fn("getattr(le, 'eigen')"), fork)
+    assert not _touches_fork_method(fn("self.complex_eigen(1)"), fork)
+    assert not _touches_fork_method(fn("le.eigen(1)"), fork)
 
 
 def test_every_wiping_site_refuses_before_the_wipe() -> None:

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ..pattern.pattern import Plain
 
 from ._host import _ProcedureHost
+from ._modal import refuse_fork_verb_before_wipe
 
 
 class _FrfMixin(_ProcedureHost):
@@ -324,6 +325,8 @@ class _FrfMixin(_ProcedureHost):
         if out is not None:
             args.extend(("-out", out))
 
+        refuse_fork_verb_before_wipe(
+            self, context, "fork ADR-44 modal frequency-domain sweep")
         bm = self.build()
         self._assert_fork_if_required()
         refuse_fork_chain_before_wipe(bm)
