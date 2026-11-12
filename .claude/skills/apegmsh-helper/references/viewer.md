@@ -40,6 +40,34 @@ them opens the whole set:
   every model read (its verdicts are judged against that model).
 - **A study of variants** opens from its `<study>.variants.json`; to switch, compare and show a difference, see `variants.md`.
 
+### One `--render` call over a study
+
+A spec that names `files.variants` covers the whole study in one call. A
+shot names the row it draws with `"variant": {"index": <i>, "label": "<label>"}`,
+both as the manifest has them (never a path); a shot without it draws the
+spec's `files.model` set:
+
+```json
+{"spec": "apegmsh-view/1",
+ "files": {"model": "plate_uncracked.h5", "variants": "study.variants.json"},
+ "shots": [
+   {"name": "uncracked", "variant": {"index": 0, "label": "Uncracked"}, "stage": 0, "contour": {"field": "DISPLACEMENT", "component": "y", "range": {"min": 0, "max": 0.18}}},
+   {"name": "cracked",   "variant": {"index": 1, "label": "Cracked"},   "stage": 0, "contour": {"field": "DISPLACEMENT", "component": "y", "range": {"min": 0, "max": 0.18}}}]}
+```
+
+- The manifest is read again for every shot that names a row, so a rewrite
+  between two shots counts. A label that differs from the row's (case
+  included), an index the manifest lacks, a refused row, or a row whose file
+  now resolves outside the study's folder refuses that shot: no PNG, and
+  `manifest.json` gives the reason. The run exits 1 and the other shots
+  still render.
+- `variant` needs `files.variants`, and a shot's `compare` cannot be its
+  own `variant`. Both are refused before any shot.
+- A spec that names any row reads no `.user.h5`, so none of its shots may
+  show a User Combination or a user result. The spec is refused if one does.
+- Set a fixed `range` when the stills will be compared, so the colours mean
+  the same value in each.
+
 ### What the app will open
 
 The app opens only files a person or the app itself chose, never a path the

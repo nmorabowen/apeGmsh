@@ -84,6 +84,12 @@ export interface SpecClip {
   flip: boolean;
 }
 
+/** VU18: a manifest row as a shot names it: both must match the row main reads (D9.2). */
+export interface SpecVariant {
+  index: number;
+  label: string;
+}
+
 export interface SpecShot {
   name: string;
   caption: string | null;
@@ -103,6 +109,14 @@ export interface SpecShot {
    * stage; never with a combination or a deformed shape.
    */
   compare?: string | null;
+  /**
+   * VU18 (ADR 0132 D9.2): a row of `files.variants`, named by its index and
+   * label as the page names one (never a path); the shot draws that row's set
+   * instead of the spec's. Main re-reads the manifest for every shot that
+   * names one (D9.3) and refuses the shot when the row no longer answers to
+   * both. Absent or null: the spec's own set.
+   */
+  variant?: SpecVariant;
   step: SpecStep;
   camera: SpecCamera;
   colour_by: "group" | "role" | "contour";
@@ -239,6 +253,15 @@ function step(v: unknown, key: string): SpecStep {
   throw new SpecError(key, `must be "first", "last" or a step index (an integer from 0); got ${show(v)}`);
 }
 
+/** VU18: `{ index, label }`, both required; whether the row answers to them is main's to say, per shot (D9.2, D9.3). */
+function variantRow(v: unknown, key: string): SpecVariant {
+  const o = object(v, key, ["index", "label"]);
+  for (const k of ["index", "label"]) if (!(k in o)) throw new SpecError(`${key}.${k}`, "is required: a variant row is named by its index and its label");
+  const index = o["index"];
+  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) throw new SpecError(`${key}.index`, `must be a row index of files.variants (an integer from 0); got ${show(index)}`);
+  return { index, label: text(o["label"], `${key}.label`) };
+}
+
 function stage(v: unknown, key: string): string | number {
   if (typeof v === "string") return v;
   if (typeof v === "number" && Number.isInteger(v) && v >= 0) return v;
@@ -287,7 +310,7 @@ interface Defaults {
 }
 
 function shot(v: unknown, key: string, d: Defaults): SpecShot {
-  const o = object(v, key, ["name", "caption", "stage", "combination", "compare", "step", "camera", "colour_by", "contour", "deform", "clip", "isolate", "chrome", "layers", "background"]);
+  const o = object(v, key, ["name", "caption", "stage", "combination", "compare", "variant", "step", "camera", "colour_by", "contour", "deform", "clip", "isolate", "chrome", "layers", "background"]);
   const name = text(o["name"], `${key}.name`);
   if (!NAME.test(name)) throw new SpecError(`${key}.name`, `is the PNG's file name: letters, digits, _, . and -, starting with a letter or digit, at most 100 characters; got ${show(name)}`);
   const c = o["contour"] === undefined ? null : contour(o["contour"], `${key}.contour`);
@@ -309,6 +332,12 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
     if (!c) throw new SpecError(`${key}.compare`, "needs a contour: a difference is shown as a contour");
     if (c.source === "element") throw new SpecError(`${key}.compare`, "a difference is of a nodal component; contour.source is \"element\"");
     if (o["deform"] !== undefined) throw new SpecError(`${key}.deform`, "a difference is never a deformed shape");
+  }
+  // VU18: a variant names the row whose set the shot draws; it needs the manifest, and is never its own compare set.
+  const row = o["variant"] === undefined || o["variant"] === null ? null : variantRow(o["variant"], `${key}.variant`);
+  if (row !== null) {
+    if (!d.variants) throw new SpecError(`${key}.variant`, "names a variant row, and the spec has no files.variants to find it in");
+    if (cmp !== null && cmp === row.label) throw new SpecError(`${key}.compare`, `is ${show(cmp)}, the variant the shot draws; a compare set is another variant`);
   }
   // VU16: a user result is one state of its own file: it is shown at no stage or step, over no combination, never subtracted, never a shape.
   if (c?.source === "user") {
@@ -334,6 +363,7 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
     stage: st,
     ...(comb === null ? {} : { combination: comb }),
     ...(cmp === null ? {} : { compare: cmp }),
+    ...(row === null ? {} : { variant: row }),
     step: o["step"] === undefined ? "last" : step(o["step"], `${key}.step`),
     camera: o["camera"] === undefined ? "iso" : camera(o["camera"], `${key}.camera`),
     colour_by: colourBy,
@@ -396,6 +426,16 @@ function validate(raw: unknown): ViewSpec {
     const k = s.name.toLowerCase();
     if (seen.has(k)) throw new SpecError(`shots[${i}].name`, `${show(s.name)} is already the name of shots[${seen.get(k)}] (names are file names, compared ignoring case)`);
     seen.set(k, i);
+  }
+  // VU18: the render mode reads the spec set's `.user.h5` once, before the shots, and never a variant row's. A spec
+  // that names a row draws every shot with no user file, so no shot of it may show a User Combination or a user result.
+  const switching = shots.findIndex((s) => s.variant !== undefined);
+  if (switching >= 0) {
+    const why = `shots[${switching}] names a variant row, and a spec that draws variant rows reads no .user.h5 (the render mode does not read a row's user file)`;
+    for (const [i, s] of shots.entries()) {
+      if (s.combination != null) throw new SpecError(`shots[${i}].combination`, `${why}: a User Combination cannot be shown`);
+      if (s.contour?.source === "user") throw new SpecError(`shots[${i}].contour.source`, `${why}: a user result cannot be shown`);
+    }
   }
   return {
     spec: SPEC_VERSION,
