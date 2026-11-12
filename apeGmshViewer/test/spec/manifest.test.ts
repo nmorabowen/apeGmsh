@@ -157,6 +157,46 @@ test("G3: a shot with no deform scale states the auto scale it is drawn at, and 
   assert.throws(() => manifestEntry({ ...h.store.get(), mesh: { ...mesh, nodes: undefined } }, input), /model's nodes are not read/);
 });
 
+// The render mode's own shot runner (renderer/agentRender.ts `takeShots`) over the app's read path, with a viewport
+// that applies whatever the state asks: a spec with no deform scale renders at the auto scale, and the manifest says so.
+// TODO(VA6c): todo until the card owns src/renderer/agentRender.ts, which must dispatch the auto scale (VA6c report).
+test("G3: the render mode draws a shot with no deform scale at the auto scale, and its entry states it", { todo: "needs src/renderer/agentRender.ts (card amendment)" }, async () => {
+  const h = await setOf("contour_staged");
+  const frame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => setTimeout(() => cb(0), 0)) as unknown as typeof requestAnimationFrame;
+  const canvas = { width: 640, height: 480, getBoundingClientRect: () => ({ x: 0, y: 0, width: 640, height: 480 }) };
+  const deps = {
+    store: h.store,
+    blobs: h.blobs,
+    effects: h.effects,
+    viewport: {
+      renderer: { domElement: canvas },
+      camera: {},
+      renderNow: () => {},
+      currentPose: () => ({ eye: [1, 1, 1], target: [0, 0, 0], up: [0, 0, 1] }),
+      // The viewport applies the displacement on hand at the state's scale (renderer/agentRender.ts `deformOnScreen`).
+      get deformApplied() {
+        return `${h.effects.currentDisplacement()?.key}|scale ${h.store.get().deform.scale}`;
+      },
+    },
+    bridge: { renderCapture: async (name: string) => ({ path: name, width: 640, height: 480 }) },
+    layout: { apply: () => {}, inLayout: () => [] },
+    combination: () => null,
+  } as unknown as RenderDeps;
+  try {
+    const v = validateSpec({ spec: "apegmsh-view/1", files: { model: "m.h5" }, size: [640, 480], shots: [{ name: "big", stage: "erect", step: 1, deform: { scale: 10 } }, { name: "auto", stage: "erect", step: 1, deform: {} }] });
+    assert.ok(v.ok);
+    const [big, auto] = await takeShots(deps, v.spec, describeSet(h.store.get(), []), null);
+    assert.deepEqual([big!.entry.status, auto!.entry.status], ["ok", "ok"], `the auto shot: ${auto!.entry.reason}`);
+    const d = auto!.entry.deform;
+    assert.ok(d?.state === "ready");
+    assert.equal(d.scale_auto, true, "the manifest says the scale was automatic");
+    assert.ok(Math.abs(d.scale - PY_AUTO_ERECT_1) <= 1e-12 * PY_AUTO_ERECT_1, `drawn at ${d.scale}; Python's auto scale is ${PY_AUTO_ERECT_1}`);
+  } finally {
+    globalThis.requestAnimationFrame = frame;
+  }
+});
+
 test("INV-7: the chrome, the layers and the background change no number of the entry", async () => {
   const h = await setOf("contour_staged");
   const shot = { stage: "erect", step: 1, contour: { field: "displacement", component: "displacement_z" } };
