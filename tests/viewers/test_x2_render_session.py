@@ -37,12 +37,13 @@ _SRC = str(Path(apeGmsh.__file__).resolve().parents[1])
 _WINDOW = (320, 180)
 
 
-# transition: moves to a .ladruno source in VA6e #2794 (R22b refuses non-.ladruno on the app path)
-@pytest.fixture(autouse=True)
-def _vtk_backend(monkeypatch):
-    from apeGmsh.viewers import render as render_mod
-
-    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+# The VTK-path tests take ``vtk_stills`` (they run where that path is the
+# platform's, G2); the ``test_app_*`` tests take the app path on the plate's
+# ``.ladruno`` (VA6e #2794 removed VA6b's transition pin).
+vtk_stills = G.vtk_stills
+app_backend = G.app_backend
+plate_set = G.plate_set
+plate_app = G.plate_app
 
 
 @pytest.fixture(scope="module")
@@ -87,7 +88,7 @@ def _gl_or_skip(written: Any) -> None:
 
 @pytest.mark.parametrize("view", ["mesh", "contour", "deformed", "reactions"])
 def test_render_constructs_no_director(
-    plate, no_director, tmp_path: Path, view: str,
+    vtk_stills, plate, no_director, tmp_path: Path, view: str,
 ) -> None:
     out = tmp_path / f"{view}.png"
     written = plate.render(
@@ -99,7 +100,7 @@ def test_render_constructs_no_director(
 
 
 def test_render_pack_constructs_no_director(
-    plate, no_director, tmp_path: Path,
+    vtk_stills, plate, no_director, tmp_path: Path,
 ) -> None:
     written = plate.render_pack(tmp_path / "pack", window_size=_WINDOW)
     _gl_or_skip(written)
@@ -107,11 +108,23 @@ def test_render_pack_constructs_no_director(
 
 
 def test_assess_figures_construct_no_director(
-    plate, no_director, tmp_path: Path,
+    vtk_stills, plate, no_director, tmp_path: Path,
 ) -> None:
     report = plate.assess(figures=True, out_dir=tmp_path / "assess")
     _gl_or_skip(report.figures)
     assert [p.name for p in report.figures] == G._MANIFEST["assess_figures"]
+
+
+def test_app_doors_construct_no_director(
+    app_backend, plate_app, no_director, tmp_path: Path,
+) -> None:
+    """The app path, every in-process door: one spec each, no director."""
+    for view in ("mesh", "contour", "deformed"):
+        out = tmp_path / f"{view}.png"
+        assert plate_app.render(out, view=view, camera="xy", window_size=_WINDOW) == out
+    plate_app.render_pack(tmp_path / "pack", window_size=_WINDOW)
+    plate_app.assess(figures=True, out_dir=tmp_path / "assess")
+    assert len(app_backend.specs) == 5
 
 
 # =====================================================================
@@ -167,7 +180,7 @@ def test_view_tokens_become_one_session_view(plate) -> None:
 
 @pytest.mark.parametrize("axis", ["x", "y", "z"])
 def test_per_axis_reactions_refused_naming_alternative(
-    plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, axis: str,
+    vtk_stills, plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, axis: str,
 ) -> None:
     monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
     with pytest.raises(ValueError, match="component='reactions'") as info:
@@ -180,7 +193,7 @@ def test_per_axis_reactions_refused_naming_alternative(
 
 @pytest.mark.parametrize("view", ["contour", "deformed", "reactions"])
 def test_arbitrary_deform_field_refused_naming_alternative(
-    plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, view: str,
+    vtk_stills, plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, view: str,
 ) -> None:
     monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
     with pytest.raises(ValueError, match="deform=SCALE") as info:
@@ -192,14 +205,15 @@ def test_arbitrary_deform_field_refused_naming_alternative(
 
 @pytest.mark.parametrize("view", ["contour", "deformed"])
 def test_unrecorded_contour_keeps_the_runtimeerror_type(
-    plate, tmp_path: Path, view: str,
+    plate_app, tmp_path: Path, view: str,
 ) -> None:
     """The old path raised ``NoDataError`` (a ``RuntimeError``) for a
     contour of an unrecorded component. The session path keeps that
     type, and is a ``ValueError`` as well. Raised before any plotter
-    opens, so no GL is needed."""
+    opens or any app runs, so no GL is needed. The plate's ``.ladruno``
+    runs it on the platform's path: VTK on Linux, the app's on Windows."""
     with pytest.raises(RuntimeError, match="not recorded") as info:
-        plate.render(
+        plate_app.render(
             tmp_path / "c.png", view=view, component="no_such_component",
         )
     assert isinstance(info.value, ValueError)
@@ -207,7 +221,7 @@ def test_unrecorded_contour_keeps_the_runtimeerror_type(
 
 
 def test_supported_forms_still_skip_cleanly(
-    plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    vtk_stills, plate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The refusals are narrow: the supported spellings still pass."""
     monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
@@ -218,6 +232,23 @@ def test_supported_forms_still_skip_cleanly(
         dict(view="mesh", deform=("reaction_force", 1.0)),  # mesh: no warp
     ):
         assert plate.render(tmp_path / "ok.png", **kw) is None, kw
+
+
+@pytest.mark.parametrize("kw, row", [
+    (dict(view="reactions", component="reaction_x"), "G1"),
+    (dict(view="reactions", component="reactions"), "G1"),
+    (dict(view="contour", deform=("velocity", 1.0)), "G4"),
+    (dict(view="deformed", deform=("reaction_force", 1.0)), "G4"),
+])
+def test_app_refusals_name_their_parity_row(
+    app_backend, plate_app, tmp_path: Path, kw: dict, row: str,
+) -> None:
+    """The app path's two dropped stills (parity plan G1, G4) refuse by row,
+    before any app runs; ``deform=`` on a mesh still warps nothing, so it passes."""
+    with pytest.raises(ValueError, match=row):
+        plate_app.render(tmp_path / "x.png", **kw)
+    assert plate_app.render(tmp_path / "m.png", view="mesh", deform=("reaction_force", 1.0)) is not None
+    assert len(app_backend.specs) == 1
 
 
 # =====================================================================
@@ -254,7 +285,7 @@ _NO_DIRECTOR_MAIN = (
 
 @pytest.mark.subprocess
 def test_cli_render_and_pack_construct_no_director(
-    plate_h5: Path, tmp_path: Path,
+    vtk_stills, plate_h5: Path, tmp_path: Path,
 ) -> None:
     out = tmp_path / "deformed.png"
     one = _cli(
@@ -277,7 +308,7 @@ def test_cli_render_and_pack_construct_no_director(
 
 
 @pytest.mark.subprocess
-def test_cli_refuses_per_axis_reactions(plate_h5: Path, tmp_path: Path) -> None:
+def test_cli_refuses_per_axis_reactions(vtk_stills, plate_h5: Path, tmp_path: Path) -> None:
     proc = _cli(
         ["render", str(plate_h5), str(tmp_path / "r.png"),
          "--view", "reactions", "--component", "reaction_x"],

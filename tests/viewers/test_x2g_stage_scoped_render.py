@@ -46,15 +46,23 @@ _STAGES = ["g", "construction", "excavate"]
 _WIN = (160, 120)
 
 
-# transition: moves to a .ladruno source in VA6e #2794 (R22b refuses non-.ladruno on the app path)
+# The VTK-scene tests take ``vtk_stills`` (they run where VTK is the
+# platform's still path, G2); the ``test_app_*`` tests draw the same staged
+# run from its ``.ladruno`` on the app path (VA6e #2794 removed VA6b's pin).
+from tests.viewers import test_x2_golden_stills as _G  # noqa: E402
+
+app_backend = _G.app_backend
+vtk_stills = _G.vtk_stills
+
+
 @pytest.fixture(autouse=True)
-def _vtk_backend(monkeypatch):
-    from apeGmsh.viewers import render as render_mod
+def _vtk_path_unless_app(request):
+    """Every test here but the ``test_app_*`` ones reads the VTK scene."""
+    if "app_backend" not in request.fixturenames:
+        request.getfixturevalue("vtk_stills")
 
-    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
 
-
-def _build(g, tmp_path, monkeypatch, reactions_in=None):
+def _build(g, tmp_path, monkeypatch, reactions_in=None, ladruno=False):
     """The staged-disp file; with ``reactions_in``, reactions are
     recorded too and then stripped from every OTHER stage, so exactly
     that stage carries a reaction field."""
@@ -121,6 +129,21 @@ def _build(g, tmp_path, monkeypatch, reactions_in=None):
         stages.append(
             (name, [float(i + 1) + 0.5 * k for k in range(2)], comps),
         )
+    if ladruno:
+        # The same run as the pair apeGmshViewer opens: the bridge's model
+        # archive as <stem>.h5, the stages written as the fork's recorder lays
+        # them out and bound to the program's stages by name (R22b).
+        from apeGmsh.results.readers._ladruno_writer import NodalStage, write_nodal_stages
+
+        ops.h5(str(tmp_path / "staged.h5"))
+        out = write_nodal_stages(
+            tmp_path / "staged.ladruno", model_h5=tmp_path / "staged.h5",
+            node_ids=ids, coords=np.asarray(fem.nodes.coords, dtype=np.float64),
+            ndm=3, stages=[NodalStage("static", np.asarray(t), np.asarray(ids), c) for _, t, c in stages],
+            source="the X2-g staged run", recorded_stages=list(_STAGES),
+        )
+        # model_h5= binds the program's stage names (without it the file's stand).
+        return Results.from_ladruno(out, model_h5=tmp_path / "staged.h5")
     out = _write_composed_run(
         ops, fem, tmp_path / "staged_disp.h5", ids, stages,
     )
@@ -157,6 +180,15 @@ def _strip_reactions(path: Any, keep: str) -> None:
 @pytest.fixture
 def staged_disp(g, tmp_path, monkeypatch):
     results = _build(g, tmp_path, monkeypatch)
+    try:
+        yield results
+    finally:
+        results.close()
+
+
+@pytest.fixture
+def staged_app(g, tmp_path, monkeypatch):
+    results = _build(g, tmp_path, monkeypatch, ladruno=True)
     try:
         yield results
     finally:
@@ -366,3 +398,60 @@ def test_single_stage_stills_are_silent(plate, tmp_path):  # noqa: F811
         warnings.simplefilter("error", UserWarning)
         plate.render(tmp_path / "one.png", view="mesh", window_size=_WIN)
         plate.render_pack(tmp_path / "pack", window_size=_WIN)
+
+
+# ---------------------------------------------------------------------
+# The app path (Windows'): the same staged run from its .ladruno. A shot
+# names its stage by index (parity plan R22), so "that stage" is the index
+# of the scope; the step is the scoped stage's; the warnings are the same.
+# ---------------------------------------------------------------------
+
+
+def _app_shots(fake) -> list[dict[str, Any]]:
+    return [s for spec in fake.specs for s in spec["shots"] if "stage" in s]
+
+
+@pytest.mark.parametrize("stage", _STAGES)
+def test_app_scoped_stills_name_that_stage(app_backend, staged_app, tmp_path, stage):
+    scoped = staged_app.stage(stage)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)  # a scoped still is silent
+        for view in ("contour", "deformed"):
+            scoped.render(tmp_path / f"{view}.png", view=view, component="displacement_z", window_size=_WIN)
+        scoped.render_pack(tmp_path / "pack", window_size=_WIN)
+        scoped.assess(figures=True, out_dir=tmp_path / "assess")
+    shots = _app_shots(app_backend)
+    assert len(shots) == 6  # two stills, then contour + deformed in the pack and in assess
+    index = _STAGES.index(stage)
+    diag = float(np.sqrt(6.0))  # the 1 x 1 x 2 model's bounding diagonal
+    for shot in shots:
+        assert (shot["stage"], shot["step"]) == (index, 1), shot
+        assert shot["contour"] == {"field": "DISPLACEMENT", "component": "z"}
+        if "deform" in shot:
+            # G3: |u_z| peaks at z = 2 on the last step: a * 2 * 3.
+            assert shot["deform"]["scale"] == pytest.approx(0.12 * diag / (6.0 * _AMP[stage]), rel=1e-12)
+
+
+def test_app_scoped_step_indexes_the_scoped_stage(app_backend, staged_app, tmp_path):
+    staged_app.stage("construction").render(
+        tmp_path / "c0.png", view="contour", component="displacement_z", step=0, window_size=_WIN)
+    (shot,) = _app_shots(app_backend)
+    assert (shot["stage"], shot["step"]) == (1, 0)
+
+
+def test_app_unknown_scope_refuses(app_backend, staged_app, tmp_path):
+    scoped = staged_app.stage("g")
+    scoped._stage_id = "no-such-stage"
+    with pytest.raises(RuntimeError, match="no-such-stage"):
+        scoped.render(tmp_path / "x.png", view="contour", component="displacement_z", window_size=_WIN)
+    assert app_backend.specs == []
+
+
+def test_app_unscoped_stills_warn_and_draw_the_last_stage(app_backend, staged_app, tmp_path):
+    with pytest.warns(UserWarning, match=_REMEDY) as rec:
+        staged_app.render(tmp_path / "u.png", view="contour", component="displacement_z", window_size=_WIN)
+    assert len(_unscoped_warnings(rec)) == 1
+    with pytest.warns(UserWarning, match=_REMEDY + "_pack") as rec:
+        staged_app.render_pack(tmp_path / "p", window_size=_WIN)
+    assert len(_unscoped_warnings(rec)) == 1
+    assert {s["stage"] for s in _app_shots(app_backend)} == {_STAGES.index("excavate")}

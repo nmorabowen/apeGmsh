@@ -1,15 +1,8 @@
 """``results.render`` / ``results.render_pack`` on the session path (X2-d).
 
-The public still verbs of ADR 0094 keep their signatures and their
-closed ``view=`` set; what changed is the picture source. Each
-``view=`` token is translated into ONE ``ResultsSession`` mesh view
-(slots + pose + style buttons + instant) and drawn by
-``ResultsSession.render`` (``_stills.render_still``) — no
-``ResultsDirector``, no ``DiagramSpec`` registry, no attach-then-sync.
-The session path is reused as it is (ADR 0112 D8): nothing here adds a
-session feature.
-
-``view=`` → session view:
+The ADR 0094 still verbs keep their signatures and closed ``view=`` set.
+Each ``view=`` token becomes ONE ``ResultsSession`` mesh view drawn by
+``ResultsSession.render`` (no director, no attach-then-sync; ADR 0112 D8):
 
 | view | slots | pose | style buttons |
 |---|---|---|---|
@@ -18,32 +11,16 @@ session feature.
 | ``deformed`` | ``Contour(component)`` | ``Deform(field, scale)`` (auto-fit when no scale) | both off |
 | ``reactions`` | ``Reactions()`` | ``deform=`` if given | mesh on, outlines off |
 
-The style buttons are the old still's picture, not the session's boot
-picture: the old ``view='mesh'`` drew the raw mesh with element edges
-and no feature-edge pass, and the old contour drew the bare contour
-(the X2-a image goldens, ``tests/viewers/test_x2_golden_stills.py``,
-and the X2-e numeric oracle, ``tests/viewers/test_x2_numeric_oracle.py``,
-pin the picture and the drawn data).
+The style buttons are the old still's picture (pinned by
+``tests/viewers/test_x2_golden_stills.py`` and ``test_x2_numeric_oracle.py``).
+A component the stage cannot produce raises :class:`ContourDataError`. The
+session is ``ResultsSession(results=...)`` + ``add_view()``, not
+``results.session()``, which would boot persisted section cuts as clips.
 
-A contour of a component the stage cannot produce raises
-:class:`ContourDataError`: a ``RuntimeError`` like the old path's
-``NoDataError``, and also a ``ValueError`` like the session's refusal.
-
-The session is built with ``ResultsSession(results=...)`` +
-``add_view()`` rather than ``results.session()``: the latter boots
-persisted section cuts as view clips, which ``results.render`` never
-drew.
-
-The pack helpers (``_has_static_reactions``, ``_extrema_node``,
-``_try_history``) are the ``viewers/render.py`` ones carried here so
-this path owns them; the originals stay until X3 deletes the director
-path.
-
-``app_still`` / ``app_pack`` (VA6b) are the Windows path: each ``view=``
-token is one ``apegmsh-view/1`` shot drawn by apeGmshViewer (the parity
-plan), from the ``.ladruno`` ``Results.path`` names and its ``<stem>.h5``
-(``results_files``; any other source is refused, R22b).
-Linux keeps the session path (G2). R16b waits on slice #2794.
+``app_still`` / ``app_pack`` (VA6b) are the Windows path: each ``view=`` token
+is one ``apegmsh-view/1`` shot drawn by apeGmshViewer (the parity plan) from
+the ``.ladruno`` ``Results.path`` names and its ``<stem>.h5`` (R22b); a stored
+Gauss component is an element field (R16b, VA6e). Linux keeps the session path (G2).
 """
 from __future__ import annotations
 
@@ -61,6 +38,13 @@ from apeGmsh.agent_view import (
     mesh_spec,
     shoot,
 )
+from apeGmsh.results.readers._ladruno_element_io import (
+    _block_canonicals,
+    is_fiber_token,
+    parse_blocks,
+    resolve_generic_gauss_blocks,
+)
+from apeGmsh.results.readers._ladruno_multi import discover_partition_files
 
 from .._stills import _DEFAULT_WINDOW, _SKIP_ENV, _env_skips
 from ..render import (
@@ -157,12 +141,8 @@ def render_results_pack(
     ``reactions.png`` (static stages with reactions), ``history.png``
     (matplotlib, at the extrema node).
 
-    An unscoped multi-stage Results packs its last stage and warns
-    once (#1750).
-
-    On Windows the pack is ONE ``apegmsh-view/1`` spec drawn by
-    apeGmshViewer (:func:`app_pack`, G5), from the ``.ladruno``
-    :attr:`Results.path` names (R22b).
+    An unscoped multi-stage Results packs its last stage and warns once
+    (#1750). On Windows it is ONE ``apegmsh-view/1`` spec (:func:`app_pack`, G5).
     """
     if _app_backend():
         files = None if _env_skips() else results_files(results, "render_pack")
@@ -346,13 +326,9 @@ def default_contour_component(results: Any) -> Optional[str]:
     return sorted(nodal, key=_component_sort_key)[0]
 
 
-#: Canonical axis order of the S1 starter: the diagram catalog's sort,
-#: restated here. Importing it would pull in the retired
-#: ``viewers.diagrams`` ontology (``test_diagrams_import_guard.py``), and
-#: importing ``opensees._response_catalog.split_canonical_component``
-#: would break ADR 0014 (``test_viewers_pure_h5_consumer.py``). The keys
-#: are exactly that splitter's suffixes, tensor indices first so
-#: ``stress_xz`` does not split as ``z``.
+#: Canonical axis order of the S1 starter, restated: importing the catalog's
+#: sort would pull in ``viewers.diagrams`` or break ADR 0014. Tensor indices
+#: first, so ``stress_xz`` does not split as ``z``.
 _AXIS_ORDER: dict[str, int] = {
     "xx": 10, "yy": 11, "zz": 12, "xy": 13, "yz": 14, "xz": 15,
     "x": 0, "y": 1, "z": 2,
@@ -367,15 +343,9 @@ def _component_sort_key(name: str) -> tuple[int, str]:
 
 
 def _resolve_stage(results: Any) -> str:
-    """The stage a still draws (X2-g, #1742).
-
-    Mirrors ``Results._resolve_stage`` (``export_animation``): the
-    ``results.stage(s)`` / ``results.modes[i]`` scope first, then the
-    only stage. Where ``Results._resolve_stage`` raises (several stages,
-    none scoped), a still keeps its documented unscoped default: the
-    LAST stage. A scope that names no stage in the file raises; a still
-    never silently draws another stage.
-    """
+    """The stage a still draws (X2-g, #1742): ``Results._resolve_stage``'s scope
+    first, then the only stage; with several and none scoped, the LAST (the
+    documented default). A scope naming no stage in the file raises."""
     stages = list(results.stages)
     if not stages:
         raise RuntimeError("results.render requires at least one stage.")
@@ -437,16 +407,10 @@ def _resolve_step(results: Any, stage_id: str, step: int) -> int:
 
 
 class ContourDataError(RuntimeError, ValueError):
-    """No data for the requested contour component.
-
-    The old path raised ``viewers.diagrams.NoDataError``, a
-    ``RuntimeError``, from the contour's attach. The session path
-    refuses earlier with a ``ValueError`` (``_specs``). This type is
-    both, so ``except RuntimeError`` and ``except ValueError`` callers
-    keep working. This module cannot subclass ``NoDataError`` itself:
-    that would import the retired ``viewers.diagrams`` ontology
-    (``test_diagrams_import_guard.py``).
-    """
+    """No data for the requested contour component: a ``RuntimeError`` like the old
+    path's ``NoDataError`` and a ``ValueError`` like the session's refusal, so both
+    callers keep working (subclassing ``NoDataError`` would import the retired
+    ``viewers.diagrams``, ``test_diagrams_import_guard.py``)."""
 
 
 def _require_contour_data(results: Any, stage_id: str, quantity: str) -> None:
@@ -651,34 +615,72 @@ def _stage_index(results: Any, stage_id: str) -> int:
 
 
 def _app_contour(results: Any, stage_id: str, component: str) -> dict[str, str]:
-    """A Python nodal component as the app's ``{field, component}`` (R13).
-
-    Only a recorded nodal axis component of a field in
-    :data:`NODAL_FIELDS` maps; anything else is refused by name
-    rather than guessed (R16b and R16c are not drawn here).
-    """
+    """A recorded nodal axis component (R13) or stored Gauss component (R16b) as the
+    app's contour; anything else (a derived scalar, R16c) is refused, never guessed."""
     _require_contour_data(results, stage_id, component)
     stage = results.stage(stage_id)
-    recorded = set(stage.nodes.available_components())
     prefix, _, axis = component.rpartition("_")
     table = MODE_FIELDS if stage.kind == "mode" else NODAL_FIELDS
-    if component not in recorded or axis not in _AXES or prefix not in table:
+    if component in set(stage.nodes.available_components()) and axis in _AXES and prefix in table:
+        return {"field": table[prefix], "component": axis}
+    if component in results.inspect.components(stage=stage_id).get("gauss", ()):
+        return _app_gauss_contour(results, component)
+    raise ContourDataError(
+        f"component {component!r} has no apegmsh-view/1 contour here: the Windows "
+        f"stills draw a recorded nodal axis component of {sorted(table)} (e.g. "
+        f"displacement_z) or a stored Gauss component (e.g. stress_xx). For another "
+        f"one, write a spec and call apeGmsh.agent_view.render_stills."
+    )
+
+
+def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
+    """R16b: the app names a ``.ladruno`` Gauss column ``<token>/<label>`` (the file's own
+    COMP_NAMES label) in the element field ``<token>`` (``reader/ladrunoElements.ts``):
+    the column this reader reads as ``component`` (``_block_canonicals``), one in every
+    part of the set the app opens, or refused. A block renamed in place (the shell
+    families, ``_name_shell_blocks``) keeps the file's label at the same position. The
+    mode is v1's averaged still: ``gauss_cell_averaged`` at one Gauss point, else
+    ``gauss_node``. Any other source is drawn nothing, so it passes only under the skip."""
+    import h5py
+
+    if results.path is None or Path(results.path).suffix.lower() != ".ladruno":
+        if not _env_skips():
+            raise ContourDataError(f"a stored Gauss component is drawn from a .ladruno only (R22b); {results.path} is not one")
+        return {"field": component, "component": component, "source": "element"}
+    hits: set[tuple[str, str, bool]] = set()
+    n_gauss = 0
+    for part in discover_partition_files(results.path):
+        with h5py.File(part, "r") as h5:
+            for stage in (h5[k] for k in h5 if k.startswith("MODEL_STAGE[")):
+                on = stage["RESULTS/ON_ELEMENTS"] if "RESULTS/ON_ELEMENTS" in stage else {}
+                for token, key in ((t, k) for t in on if not is_fiber_token(t) for k in on[t]):
+                    try:
+                        blocks = parse_blocks(on[token][key])
+                    except (KeyError, ValueError):
+                        continue
+                    filed = {(o.col_start, o.gauss_id): o.comp_names for o in blocks}
+                    gauss = [b for b in resolve_generic_gauss_blocks(blocks, token=token, bucket_key=key) if b.gauss_id >= 0]
+                    for b in gauss:
+                        own = filed.get((b.col_start, b.gauss_id)) if b.catalog_named else b.comp_names
+                        own = own if own is not None and len(own) == len(b.comp_names) else None
+                        for i in (i for i, c in enumerate(_block_canonicals(token, b)) if c == component):
+                            hits.add((token, own[i] if own else b.comp_names[i], own is None))
+                            n_gauss = max(n_gauss, len(gauss))
+    if len(hits) != 1 or next(iter(hits))[2]:
         raise ContourDataError(
-            f"component {component!r} has no apegmsh-view/1 contour here: the "
-            f"Windows stills draw a recorded nodal axis component of "
-            f"{sorted(table)} (e.g. displacement_z). A stored Gauss "
-            f"component (R16b) waits on follow-up slice #2794. For another "
-            f"one, write a spec and call apeGmsh.agent_view.render_stills."
+            f"stored Gauss component {component!r} is not one column the app names in "
+            f"{Path(results.path).name}: {sorted(h[:2] for h in hits) or 'none'}"
+            f"{' (named by the response catalog, not by the file)' if any(h[2] for h in hits) else ''} (R16b)."
         )
-    return {"field": table[prefix], "component": axis}
+    token, label, _ = next(iter(hits))
+    mode = "cell_averaged" if n_gauss <= 1 else "node"
+    return {"field": token, "component": f"{token}/{label}", "source": "element", "gauss": mode}
 
 
 def _auto_deform_scale(results: Any, stage_id: str, step: int) -> float:
-    """G3: the session path's auto scale, ``_realize._apply_pose``'s rule.
-
-    The largest |u| component at the drawn step becomes
-    ``_DEFORM_FRACTION`` of the model diagonal; 1 when either is zero.
-    """
+    """G3: the session path's auto scale (``_realize._apply_pose``): the largest |u|
+    component at the drawn step becomes ``_DEFORM_FRACTION`` of the model diagonal;
+    1 when either is zero."""
     import numpy as np
 
     from apeGmsh.results._geometry import model_diagonal
@@ -720,13 +722,9 @@ def app_shot_for_view(
     deform: DeformArg,
     camera: str,
 ) -> dict[str, Any]:
-    """One ``apegmsh-view/1`` shot for a ``view=`` token (parity plan R9-R22).
-
-    The stage is the session path's (``_resolve_stage``), named by index
-    (R22). ``reactions`` (G1) and a velocity or acceleration warp (G4)
-    are dropped, so they are refused. ``deformed`` with no scale takes
-    the auto scale (G3).
-    """
+    """One ``apegmsh-view/1`` shot for a ``view=`` token (parity plan R9-R22): the
+    session path's stage, by index (R22); ``reactions`` (G1) and a velocity or
+    acceleration warp (G4) refused; ``deformed`` with no scale auto-scaled (G3)."""
     view = _require_view(view)
     deform_spec = _require_deform(deform)
     if view == "reactions":
@@ -774,13 +772,9 @@ def app_still(
     camera: Optional[str] = None,
     window_size: tuple[int, int] = _DEFAULT_WINDOW,
 ) -> Optional[Path]:
-    """``results.render`` drawn by apeGmshViewer from ``files`` (Windows).
-
-    ``files`` is the set the app opens (:func:`ladruno_files`). Returns
-    the written Path; ``None`` only under ``APEGMSH_SKIP_VIEWER=1``.
-    Raises ``AgentViewError`` on a refusal and ``FileNotFoundError``
-    without the app (G9).
-    """
+    """``results.render`` drawn by apeGmshViewer from ``files`` (:func:`ladruno_files`,
+    Windows): the written Path, ``None`` only under ``APEGMSH_SKIP_VIEWER=1``;
+    ``AgentViewError`` on a refusal, ``FileNotFoundError`` without the app (G9)."""
     _warn_if_unscoped(results, "render")
     _require_fem(results, "render")
     camera = _resolve_camera(camera, results.fem.nodes.coords)
@@ -803,13 +797,9 @@ def app_pack_spec(
     camera: str,
     window_size: tuple[int, int],
 ) -> dict[str, Any]:
-    """G5: the canned pack as ONE ``apegmsh-view/1`` spec (R23-R28).
-
-    ``mesh``, then ``contour`` and ``deformed`` at the last step of the
-    pack's stage with the default component; ``deformed`` only when a
-    displacement is recorded. ``reactions`` is dropped (G1, R26), and
-    ``history.png`` stays matplotlib (G6, R27), outside the spec.
-    """
+    """G5: the canned pack as ONE ``apegmsh-view/1`` spec (R23-R28): ``mesh``, then
+    ``contour`` and ``deformed`` (only with a displacement) at the last step with the
+    default component. No ``reactions`` (G1); ``history.png`` stays matplotlib (G6)."""
     shots = [app_shot_for_view(
         results, name="mesh", view="mesh", component=None, step=-1,
         deform=None, camera=camera,
@@ -850,13 +840,9 @@ def app_pack(
     camera: Optional[str] = None,
     window_size: tuple[int, int] = _DEFAULT_WINDOW,
 ) -> tuple[Path, ...]:
-    """``results.render_pack`` drawn by apeGmshViewer from ``files`` (Windows).
-
-    Writes ``<shot>.png`` per shot of :func:`app_pack_spec`, the app's
-    ``manifest.json`` (the record of what was drawn, ADR 0128 D3), and
-    ``history.png``. Returns the PNG paths in pack order; ``()`` only
-    under ``APEGMSH_SKIP_VIEWER=1``.
-    """
+    """``results.render_pack`` drawn by apeGmshViewer from ``files`` (Windows): a PNG
+    per shot of :func:`app_pack_spec`, the app's ``manifest.json`` (ADR 0128 D3) and
+    ``history.png``; the PNG paths in pack order, ``()`` only under the skip."""
     _warn_if_unscoped(results, "render_pack")
     _require_fem(results, "render_pack")
     if files is None or _env_skips():
