@@ -88,7 +88,7 @@ a viewer, a script) imports **main's** apeGmsh unless it runs with `PYTHONPATH=<
     `main` takes squash merges only and does not require an up-to-date branch. "Zero checks visible" means conflicting or a stalled Actions, not green; pending is a refusal.
     Never `--auto`: it ignores the non-required lanes, and #757 merged under it before any check was required. Run the suite locally when CI has not visibly run (#630 merged during an Actions stall).
   - **`main` is green** (check 10, lesson #1877): G, the latest commit with a completed Tests run, is green on the required jobs. While the run on `main`'s head H is in progress, a PR lands
-    if its checks ran on a base that contains H, or as one of at most three landings on G (#2919): at most two commits in G..H, none with a required job already red, and no file shared with G..H.
+    if its checks ran on a base that contains H, or as one of at most three landings on G (#2919): at most two commits in G..H, each run there a first attempt still queued or running with no required job finished other than green, and no file shared with G..H.
     The script reads G..H by SHA when it lands and re-reads H before the merge. Only `fixes-red-main` overrides it, for the fix or the revert.
   - **After the merge, `compare/main...<merge-sha>` reads `behind` or `identical`**; `diverged`
     means it did not reach `main` (#858), and `git merge-base --is-ancestor` cannot tell once the

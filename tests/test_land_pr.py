@@ -141,9 +141,9 @@ def _row(path, status="modified", previous=None, patch="@@ -1 +1 @@\n-a\n+b"):
     return json.dumps([path, status, previous, changes, patch])
 
 
-def _run_row(run_id, sha, status="completed", conclusion="success"):
+def _run_row(run_id, sha, status="completed", conclusion="success", attempt=1):
     """One row of `gh api MAIN_RUNS --jq MAIN_RUNS_JQ`: main's Tests push runs, newest first."""
-    return {"id": run_id, "head_sha": sha, "status": status, "conclusion": conclusion}
+    return {"id": run_id, "head_sha": sha, "status": status, "conclusion": conclusion, "run_attempt": attempt}
 
 
 #: By default main's head is MAIN_TIP and its Tests run there is completed and green.
@@ -2554,3 +2554,74 @@ def test_the_pathspec_parser_sees_a_grown_filter_2864():
     )
     assert grown != _workflow()
     assert _filter_pathspecs(grown) == (*land_pr.APP_PATHS, "src/apeGmsh/extra.py")
+
+
+# Review of #2920 (prog-reviewer-opus at bace06cb): the group rule must read the state of every
+# run in G..H, not only its jobs' reds. P1-P5 are the reviewer's probes; each merged at bace06cb.
+def _second_with(main, jobs):
+    """#1858 landing on 3af31061 (G = 6f66fd23), with 3af31061's run and jobs as given."""
+    gh, git = _landing(1858, PR_1858, FILES_1858, CARD_1858, BASE_1858, main=main, order=ORDER_AT_1858,
+                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"), jobs=jobs)
+    gh.responses[_group_call(MAIN_TIP, SHA_3AF)] = G_TO_3AF
+    return gh, git
+
+
+def _without(name):
+    rows = _job_rows()
+    return {"total": len(rows["jobs"]) - 1, "jobs": [job for job in rows["jobs"] if job["name"] != name]}
+
+
+@pytest.mark.parametrize("run, jobs, why", [
+    pytest.param(_run_row(38428776331, SHA_3AF, "completed", "startup_failure"), {"total": 0, "jobs": []},
+                 r"is completed \(startup_failure\) without all five required jobs green", id="P1-startup-failure"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "completed", "failure"), _without("suite"),
+                 r"is completed \(failure\) without all five", id="P2-failure-suite-missing"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "queued", None),
+                 _job_rows(**{"lock-tests": {"status": "queued", "conclusion": None}}),
+                 r"is queued with jobs already completed, which is a re-run", id="P3-rerun-of-failed-jobs"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "in_progress", None),
+                 _job_rows(**{"lock-tests": {"conclusion": "cancelled"}, "suite": {"status": "in_progress", "conclusion": None}}),
+                 r"required job 'lock-tests' of the Tests run on 3af31061bd34 \(38428776331\) already reported cancelled",
+                 id="P4-cancelled-required-job"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "completed", "success"), _without("live-stock"),
+                 r"is completed \(success\) without all five", id="P5-success-live-stock-missing"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "in_progress", None, attempt=2), None,
+                 r"is on attempt 2, and a re-run can hide an earlier attempt's failure", id="second-attempt"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "in_progress", None, attempt=None), None,
+                 r"is on attempt None", id="attempt-unread"),
+    *[pytest.param(_run_row(38428776331, SHA_3AF, "in_progress", None),
+                   _job_rows(**{"lock-tests": {"conclusion": c}, "suite": {"status": "in_progress", "conclusion": None}}),
+                   rf"'lock-tests' .*already reported {c}, not success", id=f"job-{c}")
+      for c in ("skipped", "neutral", "timed_out", "action_required")],
+])
+def test_a_g_h_run_that_is_not_a_first_attempt_still_running_refuses(run, jobs, why):
+    """Only a first-attempt run, queued or in progress, with no required job finished other
+    than green, lets G..H count as pending. Revert-proof: at bace06cb each of these merges."""
+    gh, git = _second_with([run, RUN_6F66, RUN_53F1], {run["id"]: jobs} if jobs else None)
+    with pytest.raises(land_pr.LandError, match=rf"Group rule \(#2919\): .*2 of 3; refused: .*{why}") as refused:
+        _run(1858, gh, git)
+    state = "ended without all five required jobs green" if run["status"] == "completed" else "is in progress"
+    assert f"at 3af31061bd34: its Tests run {state} and #1858" in str(refused.value)
+    assert _group_call(MAIN_TIP, SHA_3AF) not in gh.calls
+    assert not _merged(gh)
+
+
+def test_a_queued_first_attempt_with_nothing_finished_lands():
+    """The converse of P3: H's run just queued, no job has started. Revert-proof: refusing every
+    queued run (or admitting only in_progress) refuses it."""
+    run = _run_row(38428776331, SHA_3AF, "queued", None)
+    gh, git = _second_with([run, RUN_6F66, RUN_53F1], {run["id"]: _job_rows("queued", None)})
+    assert _run(1858, gh, git) == 0
+
+
+def test_a_rename_in_g_h_counts_its_old_name():
+    """G..H renamed `old.py` to `new.py`; a PR that edits `old.py` overlaps it. Revert-proof:
+    comparing only G..H's new names admits it."""
+    pr = {**PR_1858, "labels": [], "body": ""}
+    gh, git = _landing(1858, pr, FILES_1858, None, BASE_1858, main=RUNS_AT_1858, order=ORDER_AT_1858,
+                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"))
+    gh.responses[_files_call(1858)] = _row("src/apeGmsh/old.py") + "\n"
+    gh.responses[_group_call(MAIN_TIP, SHA_3AF)] = _group_listing([SHA_3AF], [("src/apeGmsh/new.py", "src/apeGmsh/old.py")])
+    with pytest.raises(land_pr.LandError, match=r"refused: files overlap G\.\.H on src/apeGmsh/old\.py\.$"):
+        _run(1858, gh, git)
+    assert not _merged(gh)

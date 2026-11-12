@@ -22,8 +22,9 @@ Checks 10 and 11 are lesson #1877 (3af31061 merged #1698 into a red ``main``).
 Check 10 refuses while ``main``'s latest completed Tests run is red, when main's
 head H has no run, and, while H's run is in progress, unless the PR's checks ran
 on a base that contains H or the group rule admits it (#2919): the latest
-verified commit G is green, at most GROUP_MAX - 1 commits sit in G..H, none of
-them has reported a red required job, and the PR's files are disjoint from
+verified commit G is green, at most GROUP_MAX - 1 commits sit in G..H, every run
+there is a first attempt still queued or in progress with no required job
+finished other than green, and the PR's files are disjoint from
 G..H's, read by SHA at landing time; ``land`` re-reads main's head before the
 merge and refuses if it moved. A read that fails refuses. The ``fixes-red-main``
 label, for the fix or the revert, overrides it. Check 11 refuses a PR that touches ``tests/`` or a BASELINE file
@@ -191,7 +192,7 @@ MAIN_PAGE = 30
 MAIN_COMMITS = f"repos/{{owner}}/{{repo}}/commits?sha=main&per_page={MAIN_PAGE}"
 MAIN_COMMITS_JQ = "[.[].sha]"
 MAIN_RUNS = f"repos/{{owner}}/{{repo}}/actions/workflows/tests.yml/runs?branch=main&event=push&per_page={MAIN_PAGE}"
-MAIN_RUNS_JQ = "[.workflow_runs[] | {id, head_sha, status, conclusion}]"
+MAIN_RUNS_JQ = "[.workflow_runs[] | {id, head_sha, status, conclusion, run_attempt}]"
 #: The jobs of one main Tests run (the latest attempt); only REQUIRED_CHECKS among them judge main.
 MAIN_JOBS = "repos/{{owner}}/{{repo}}/actions/runs/{run}/jobs?per_page=100"
 MAIN_JOBS_JQ = "{total: .total_count, jobs: [.jobs[] | {name, status, conclusion}]}"
@@ -806,20 +807,36 @@ def _check_bases(number: int, pr: dict[str, Any], gh: Runner, check_no: int) -> 
 
 def _group(
     number: int, rows: list[FileRow], gh: Runner, order: list[str], latest: str,
-    reported: dict[str, list[tuple[int, str, str, str | None]]],
+    reported: dict[str, list[tuple[int, str, str, str | None]]], by_sha: dict[str, list[dict[str, Any]]],
 ) -> tuple[bool, str]:
     """Check 10's group rule (#2919). G (`latest`) is green, which the caller has proved. The PR
-    lands as landing k+1 on G, where k commits sit in G..H, when no required job in G..H has
-    already failed, k + 1 <= GROUP_MAX, and its files are disjoint from G..H's. G..H is read now,
-    by SHA, and must agree with main's commit order. Returns (admitted, the verdict for the message)."""
+    lands as landing k+1 on G, where k commits sit in G..H, when every Tests run in G..H is a
+    first attempt still queued or in progress (a queued run with a finished job is a re-run),
+    no required job in G..H has completed with anything but success, k + 1 <= GROUP_MAX, and its
+    files are disjoint from G..H's. A run that completed in G..H never had all five required jobs
+    finish (else its commit would be G), so it proves nothing and refuses: startup_failure, a
+    missing job. G..H is read now, by SHA, and must agree with main's commit order. Returns
+    (admitted, the verdict for the message)."""
     k = order.index(latest)
     tip = order[0]
     where = f"G = {latest[:12]} (green), {k} commit(s) in G..H, so this landing would be {k + 1} of {GROUP_MAX}"
     for sha in reversed(order[:k]):
-        for run_id, name, _status, conclusion in reported.get(sha, []):
-            if conclusion in RED_CONCLUSIONS:
+        for run in by_sha.get(sha, []):
+            said = f"the Tests run on {sha[:12]} ({run['id']})"
+            if run.get("run_attempt") != 1:  # a re-run of failed jobs lists only its own attempt's jobs
+                return False, (f"{where}; refused: {said} is on attempt {run.get('run_attempt')}, and a "
+                               f"re-run can hide an earlier attempt's failure; files: not read")
+            if run["status"] not in ("queued", "in_progress"):
+                return False, (f"{where}; refused: {said} is {run['status']} ({run['conclusion']}) without "
+                               f"all five required jobs green, so it proves nothing; files: not read")
+            if run["status"] == "queued" and any(job[0] == run["id"] and job[2] == "completed"
+                                                 for job in reported.get(sha, [])):
+                return False, (f"{where}; refused: {said} is queued with jobs already completed, which is a "
+                               f"re-run; files: not read")
+        for run_id, name, status, conclusion in reported.get(sha, []):
+            if status == "completed" and conclusion != "success":
                 return False, (f"{where}; refused: required job {name!r} of the Tests run on {sha[:12]} "
-                               f"({run_id}) already reported {conclusion}, so G..H is red; files: not read")
+                               f"({run_id}) already reported {conclusion}, not success; files: not read")
     if k + 1 > GROUP_MAX:
         return False, f"{where}; refused: the group on G is full; files: not read"
     try:
@@ -852,8 +869,9 @@ def check_main_green(number: int, pr: dict[str, Any], rows: list[FileRow], gh: R
     """Check 10 (lesson #1877; T's ruling on #1877; the group rule, #2919). main's latest
     completed Tests run, on G, is green. While the run on main's head H is in progress, a PR
     lands when its required checks ran on a base that contains H, or by the group rule
-    (`_group`): at most GROUP_MAX landings on G, none on a G..H that has already reported a
-    red required job, and each file-disjoint from G..H. #1858 and #1866 landed while
+    (`_group`): at most GROUP_MAX landings on G, only while every run in G..H is a first
+    attempt still pending with no required job finished other than green, and each
+    file-disjoint from G..H. #1858 and #1866 landed while
     3af31061's run was in progress, on bases without it; 3af31061's lock-tests had already
     failed, so the group rule refuses both too."""
     if FIXES_RED_MAIN in {lab["name"] for lab in pr["labels"]}:
@@ -921,10 +939,12 @@ def check_main_green(number: int, pr: dict[str, Any], rows: list[FileRow], gh: R
         except _UNREADABLE as exc:
             raise LandError(f"check 10: main unverified at {tip[:12]}: compare with {base[:12]} failed ({exc!r}). {UNVERIFIED}") from exc
         if status not in ("ahead", "identical"):
-            admitted, verdict = _group(number, rows, gh, order, latest, reported)
+            admitted, verdict = _group(number, rows, gh, order, latest, reported, by_sha)
             if not admitted:
+                pending = all(run["status"] in ("queued", "in_progress") for run in by_sha[tip])
+                state = "is in progress" if pending else "ended without all five required jobs green"
                 raise LandError(
-                    f"check 10: main unverified at {tip[:12]}: its Tests run is in progress and #{number}"
+                    f"check 10: main unverified at {tip[:12]}: its Tests run {state} and #{number}"
                     f"'s required checks in {where} ran on base {base[:12]}, which does not contain it "
                     f"(compare: {status}). {UNVERIFIED} Group rule (#2919): {verdict}."
                 )
