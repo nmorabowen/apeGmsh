@@ -98,11 +98,15 @@ export function boxOf(positions: readonly ArrayLike<number>[]): SetDescription["
 
 const componentKey = (key: string): string => (key === MAGNITUDE ? SPEC_MAGNITUDE : key);
 
-/** What a derived component says it is (Python's `_derived._von_mises`; a 2-D element's zz is 0, `plane=None`). */
+/** What a derived component says it is (Python's `_derived._von_mises`, on v1's `plane="auto"` tensor). */
 function derivedNote(c: ElementComponent): string {
   const d = c.derived!;
   const strain = d.tensor.family === "strain" ? ", the shear components halved (engineering shear)" : "";
-  const plane = d.tensor.groups.some((g) => g.slots[2] === null) ? "; a 2-D element's out-of-plane zz is taken as 0" : "";
+  // F1: v1's `plane="auto"`, per element; the manifest counts the elements left at 0 (`contour.derived.plane`).
+  const zz = `${d.tensor.family}_zz`;
+  const plane = d.tensor.groups.some((g) => g.slots[2] === null)
+    ? `; ${zz}, not recorded, is recovered per element from its plane type and Poisson's ratio (${d.tensor.family === "stress" ? "ν(σxx + σyy) for plane strain, 0 for plane stress" : "-ν/(1-ν)(εxx + εyy) for plane stress, 0 for plane strain"}), and left at 0 for an element the model does not classify`
+    : "";
   return `the von Mises equivalent of the ${d.tensor.family} tensor (${d.tensor.components.join(", ")}) at each Gauss point${strain}${plane}`;
 }
 

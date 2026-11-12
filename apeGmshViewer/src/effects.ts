@@ -21,7 +21,7 @@ import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
 import { columnOf, combinedColumn, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isNodeTopology, joinElements, type CombinedColumn, type ElementComponent } from "./state/contour.ts";
-import { derivedGroupValues, type DerivedName, type TensorGroup } from "./state/tensor.ts";
+import { derivedGroupValues, planeRecoveryMap, type DerivedName, type PlaneOf, type PlaneRecovery, type TensorGroup } from "./state/tensor.ts";
 import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
@@ -386,24 +386,39 @@ export interface StepData {
   springsError?: string | null;
 }
 
-/** VA6d: what a derived scalar reads with a step: its tensor components, and each group's tensor slots and Gauss-value count. */
+/**
+ * VA6d: what a derived scalar reads with a step: its tensor components, and
+ * for each group its tensor slots, value count and the out-of-plane recovery
+ * (its element ids and the model's plane map, F1).
+ */
 interface DerivedRead {
   name: DerivedName;
   components: string[];
-  groups: { group: TensorGroup; n: number }[];
+  groups: { group: TensorGroup; n: number; plane: PlaneRecovery }[];
 }
 
-/** The read a derived element component needs, or null for a stored one; a group the stage does not list is an error. */
-function derivedReadOf(component: ElementComponent, st: ResultsStage): DerivedRead | null {
+/** The model's plane map (state/tensor.ts `planeRecoveryMap`), once per declarations object: a re-read model is a new object. */
+const planeMaps = new WeakMap<object, Map<number, PlaneOf>>();
+function planeMapOf(decls: State["decls"]): Map<number, PlaneOf> {
+  let m = planeMaps.get(decls);
+  if (!m) planeMaps.set(decls, (m = planeRecoveryMap(decls)));
+  return m;
+}
+
+/** The read a derived element component needs, or null for a stored one; a group the stage does not list, or without its element ids, is an error. */
+function derivedReadOf(component: ElementComponent, st: ResultsStage, s: State, blobs: BlobStore): DerivedRead | null {
   const d = component.derived;
   if (!d) return null;
+  const map = planeMapOf(s.decls);
   return {
     name: d.name,
     components: d.tensor.components,
     groups: d.tensor.groups.map((group) => {
       const g = st.gauss.find((x) => x.id === group.id);
       if (!g) throw new Error(`${d.name}: stage ${st.id} has no gauss group ${group.id}`);
-      return { group, n: g.nElements * g.nGauss };
+      const eids = g.elementIds ? blobs.get(g.elementIds) : undefined;
+      if (!(eids instanceof Float64Array)) throw new Error(`${d.name}: the element ids of group ${group.id} are not loaded`);
+      return { group, n: g.nElements * g.nGauss, plane: { map, eids, nGauss: g.nGauss } };
     }),
   };
 }
@@ -411,7 +426,7 @@ function derivedReadOf(component: ElementComponent, st: ResultsStage): DerivedRe
 /** A derived scalar's values by gauss group, from one step's tensor read (state/tensor.ts `derivedGroupValues`). */
 function derivedBlocks(d: DerivedRead, tensor: Readonly<Record<string, Readonly<Record<string, Float64Array>>>>): Record<string, Float64Array> {
   const out: Record<string, Float64Array> = {};
-  for (const { group, n } of d.groups) out[group.id] = derivedGroupValues(d.name, group, n, tensor);
+  for (const { group, n, plane } of d.groups) out[group.id] = derivedGroupValues(d.name, group, n, tensor, plane);
   return out;
 }
 
@@ -935,7 +950,7 @@ export class Effects {
     // V4c2b: a node-located topology's history scan carries the plan, so main measures the values drawn.
     const plan = v.state === "element" && isNodeTopology(v.topology) ? planFor({ ...v, topology: v.topology }, s, this.blobs) : undefined;
     // VA6d: main's scan reads stored components only, so a derived scalar's history is scanned here, step by step.
-    const derived = v.state === "element" ? derivedReadOf(v.component, s.results!.stages[(s.phase.at as { stage: number }).stage]!) : null;
+    const derived = v.state === "element" ? derivedReadOf(v.component, s.results!.stages[(s.phase.at as { stage: number }).stage]!, s, this.blobs) : null;
     if (v.state === "element" && derived !== null) this.startDerivedScan(s, want, derived, v.groups, plan);
     else this.startScan(s, want, v.component.datasets, v.component.magnitude, v.state === "element", plan);
   }
@@ -1220,7 +1235,7 @@ export class Effects {
     const element = v.state === "element" ? v.component.key : null;
     // VA6d: a derived scalar is no dataset: its tensor components are read with the step (the Principal card's
     // `tensor` read) and the scalar computed at every Gauss point when the step lands (`fetchStep`).
-    const derived = v.state === "element" ? derivedReadOf(v.component, st) : null;
+    const derived = v.state === "element" ? derivedReadOf(v.component, st, s, this.blobs) : null;
     // The Gauss markers place beam stations from any one component's slab (the stations do not depend on it).
     const lineDiagram =
       s.lineDiagram.on && s.lineDiagram.component !== null && st.lineStations?.includes(s.lineDiagram.component)

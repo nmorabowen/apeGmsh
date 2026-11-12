@@ -5,7 +5,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { assembleTensor, derivedGroupValues, derivedTensorOf, eigenSym3, tensorFields, tensorSlotOf, vonMises, type TensorGroup, type Vec3 } from "../src/state/tensor.ts";
+import {
+  assembleTensor,
+  derivedGroupValues,
+  derivedTensorOf,
+  eigenSym3,
+  elementPlane,
+  materialNu,
+  planeRecoveryMap,
+  planeStatement,
+  tensorFields,
+  tensorSlotOf,
+  vonMises,
+  type TensorGroup,
+  type Vec3,
+} from "../src/state/tensor.ts";
 
 const close = (a: number, b: number, tol = 1e-12) => assert.ok(Math.abs(a - b) <= tol * Math.max(1, Math.abs(b)), `${a} vs ${b}`);
 const closeVec = (a: Vec3, b: readonly number[], tol = 1e-12) => a.forEach((x, i) => close(x, b[i]!, tol));
@@ -190,9 +204,11 @@ test("derivedTensorOf refuses, by name, an incomplete or ambiguous tensor: never
   };
   // The in-plane xy missing (elem_solid and extrap_solid record only xx and yy).
   assert.match(no([gg("hex_G8", ["stress_xx", "stress_yy"], 8)], ["stress_xx", "stress_yy"], "stress"), /group hex_G8: no xy stress component, so its tensor is not known/);
-  // A 3-D tensor with some of the out-of-plane components and not the others.
+  // A 3-D tensor with one out-of-plane shear and not the other.
   const five = ["stress_xx", "stress_yy", "stress_zz", "stress_xy", "stress_yz"];
-  assert.match(no([gg("h", five)], five, "stress"), /group h records zz, yz but no xz stress component/);
+  assert.match(no([gg("h", five)], five, "stress"), /group h records the yz but no xz stress component/);
+  const xzOnly = ["stress_xx", "stress_yy", "stress_xy", "stress_xz"];
+  assert.match(no([gg("h", xzOnly)], xzOnly, "stress"), /group h records the xz but no yz stress component/);
   // One slot named twice.
   const twice = ["stress/sigma11", "stress/sigma22", "stress/sigma12", "stress/sigma21"];
   assert.match(no([gg("stress/1-Q[1:0:0]", twice)], twice, "stress"), /name one stress slot twice/);
@@ -201,15 +217,93 @@ test("derivedTensorOf refuses, by name, an incomplete or ambiguous tensor: never
   assert.match(no([gg("A/1", a), gg("B/1", a)], a, "stress"), /its groups make 2 stress tensors \(A, B\)/);
 });
 
+test("F2: a 2-D group that records zz (and neither out-of-plane shear) makes the tensor, its zz used as recorded (v1's _assemble_tensor)", () => {
+  const four = ["stress_xx", "stress_yy", "stress_zz", "stress_xy"];
+  const t = derivedTensorOf([gg("q", four)], four, "stress");
+  assert.ok(t?.ok, JSON.stringify(t));
+  assert.deepEqual(t.groups[0]!.slots, ["stress_xx", "stress_yy", "stress_zz", "stress_xy", null, null]);
+  const v = derivedGroupValues("von_mises_stress", t.groups[0]!, 1, { stress_xx: { q: Float64Array.from([3]) }, stress_yy: { q: Float64Array.from([1]) }, stress_zz: { q: Float64Array.from([-2]) }, stress_xy: { q: Float64Array.from([0]) } }, {
+    map: new Map(),
+    eids: Float64Array.from([1]),
+    nGauss: 1,
+  });
+  // sqrt(1/2 ((3-1)^2 + (1+2)^2 + (-2-3)^2)) = sqrt(19).
+  close(v[0]!, Math.sqrt(19));
+});
+
+const NO_PLANE = (n: number) => ({ map: new Map(), eids: Float64Array.from({ length: n }, (_, i) => i + 1), nGauss: 1 });
+
 test("derivedGroupValues: von Mises at every point of a group; a non-finite component is no data; a missing or short column is an error", () => {
   const group: TensorGroup = { id: "g", slots: ["sx", "sy", null, "txy", null, null] };
   const values = { sx: { g: Float64Array.from([10, 0, NaN]) }, sy: { g: Float64Array.from([0, 0, 1]) }, txy: { g: Float64Array.from([0, 2, 1]) } };
-  const v = derivedGroupValues("von_mises_stress", group, 3, values);
+  const v = derivedGroupValues("von_mises_stress", group, 3, values, NO_PLANE(3));
   close(v[0]!, 10);
   close(v[1]!, Math.sqrt(3) * 2);
   assert.ok(Number.isNaN(v[2]!));
   // The strain halves the engineering shear: a gamma of 2 is a tensor shear of 1, so 2 / sqrt(3).
-  close(derivedGroupValues("von_mises_strain", group, 3, values)[1]!, 2 / Math.sqrt(3));
-  assert.throws(() => derivedGroupValues("von_mises_stress", group, 3, { sx: values.sx, sy: values.sy }), /the step data has no txy for group g/);
-  assert.throws(() => derivedGroupValues("von_mises_stress", group, 4, values), /sx of group g has 3 values, not 4/);
+  close(derivedGroupValues("von_mises_strain", group, 3, values, NO_PLANE(3))[1]!, 2 / Math.sqrt(3));
+  assert.throws(() => derivedGroupValues("von_mises_stress", group, 3, { sx: values.sx, sy: values.sy }, NO_PLANE(3)), /the step data has no txy for group g/);
+  assert.throws(() => derivedGroupValues("von_mises_stress", group, 4, values, { ...NO_PLANE(4) }), /sx of group g has 3 values, not 4/);
+  assert.throws(() => derivedGroupValues("von_mises_stress", group, 3, values, NO_PLANE(2)), /group g has 2 element ids at 1 Gauss points for 3 values/);
+});
+
+// -- F1: v1's per-element out-of-plane recovery (`_plane_recovery`, plane="auto") ----------
+
+test("F1: the plane type and nu of each element, read as v1's _plane_recovery reads them", () => {
+  assert.deepEqual(elementPlane("quad", [0.2, "PlaneStrain", 1]), { plane: "PlaneStrain", mat: 1 });
+  assert.deepEqual(elementPlane("tri31", [0.1, "PlaneStress", 7]), { plane: "PlaneStress", mat: 7 });
+  assert.deepEqual(elementPlane("LadrunoQuad", [3]), { plane: "PlaneStrain", mat: 3 }, "the Ladruno default with no -type");
+  assert.deepEqual(elementPlane("LadrunoQuad", [3, "-thick", 0.1, "-type", "PlaneStress"]), { plane: "PlaneStress", mat: 3 });
+  assert.deepEqual(elementPlane("LadrunoUP", [4, "-perm", 1e-6, 1e-6, "-rho", 2]), { plane: "PlaneStrain", mat: 4 });
+  assert.equal(elementPlane("LadrunoUP", [4, "-perm", 1e-6, 1e-6, 1e-6]), null, "a 3-D u-p is not classified");
+  assert.equal(elementPlane("stdBrick", [1]), null);
+  assert.equal(elementPlane("quad", [0.2, "Axisym", 1]), null);
+  assert.equal(materialNu("ElasticIsotropic", [3e10, 0.2, 2400]), 0.2);
+  close(materialNu("J2Plasticity", [10, 6])!, (30 - 12) / (2 * 36));
+  assert.equal(materialNu("ASDPlasticMaterial3D", ["Young", 1, "PoissonsRatio", 0.3]), 0.3);
+  assert.equal(materialNu("ElasticOrthotropic", [1, 2, 3]), null);
+  const decls = {
+    "mesh/element/1": { kind: "element", tag: null, type: "Quadrilateral", params: [], element: { femId: 1, metas: [{ type: "quad", args: [0.2, "PlaneStrain", 1] }] } },
+    "mesh/element/2": { kind: "element", tag: null, type: "Quadrilateral", params: [], element: { femId: 2, metas: [{ type: "quad", args: [0.2, "PlaneStress", 9] }] } },
+    "mesh/element/3": { kind: "element", tag: null, type: "Hexahedron", params: [], element: { femId: 3, metas: [{ type: "stdBrick", args: [1] }] } },
+    "opensees/nDMaterial/1": { kind: "nDMaterial", tag: 1, type: "ElasticIsotropic", params: [3e10, 0.2, 2400] },
+  } as never;
+  assert.deepEqual([...planeRecoveryMap(decls)], [
+    [1, { plane: "PlaneStrain", nu: 0.2 }],
+    [2, { plane: "PlaneStress", nu: null }],
+  ]);
+});
+
+test("F1: zz recovered per element: nu(sxx + syy) on plane strain, -nu/(1-nu)(exx + eyy) on plane stress, 0 on the other or unclassified", () => {
+  const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(b)), `${what}: ${a} vs ${b}`);
+  const group: TensorGroup = { id: "g", slots: ["xx", "yy", null, "xy", null, null] };
+  const values = { xx: { g: Float64Array.from([3, 3, 3, 3]) }, yy: { g: Float64Array.from([1, 1, 1, 1]) }, xy: { g: Float64Array.from([0, 0, 0, 0]) } };
+  const map = new Map([
+    [1, { plane: "PlaneStrain" as const, nu: 0.25 }],
+    [2, { plane: "PlaneStress" as const, nu: 0.25 }],
+    [3, { plane: "PlaneStrain" as const, nu: null }],
+  ]);
+  const plane = { map, eids: Float64Array.from([1, 2, 3, 4]), nGauss: 1 };
+  const vm = (x: number, y: number, z: number) => Math.sqrt(0.5 * ((x - y) ** 2 + (y - z) ** 2 + (z - x) ** 2));
+  const s = derivedGroupValues("von_mises_stress", group, 4, values, plane);
+  near(s[0]!, vm(3, 1, 0.25 * 4), "plane strain: szz = nu (sxx + syy)");
+  near(s[1]!, vm(3, 1, 0), "plane stress: szz = 0");
+  near(s[2]!, vm(3, 1, 0), "no nu: 0");
+  near(s[3]!, vm(3, 1, 0), "unclassified: 0");
+  const e = derivedGroupValues("von_mises_strain", group, 4, values, plane);
+  const evm = (x: number, y: number, z: number) => { const m = (x + y + z) / 3; return Math.sqrt((2 / 3) * ((x - m) ** 2 + (y - m) ** 2 + (z - m) ** 2)); };
+  near(e[0]!, evm(3, 1, 0), "plane strain: ezz = 0");
+  near(e[1]!, evm(3, 1, (-0.25 / 0.75) * 4), "plane stress: ezz = -nu/(1-nu)(exx + eyy)");
+  // A recorded NaN zz is recovered where the model classifies some element; with an empty map it stays no data.
+  const nanZz: TensorGroup = { id: "g", slots: ["xx", "yy", "zz", "xy", null, null] };
+  const withNan = { ...values, zz: { g: Float64Array.from([NaN, 5, NaN, NaN]) } };
+  const r = derivedGroupValues("von_mises_stress", nanZz, 4, withNan, plane);
+  near(r[0]!, vm(3, 1, 1), "a NaN zz is recovered");
+  near(r[1]!, vm(3, 1, 5), "a finite recorded zz is used verbatim");
+  assert.ok(Number.isNaN(derivedGroupValues("von_mises_stress", nanZz, 4, withNan, { ...plane, map: new Map() })[0]!), "no classified element: a NaN zz stays no data");
+  assert.deepEqual(
+    planeStatement("stress", [{ group, eids: plane.eids }], map),
+    { elements: 4, recorded: 0, recovered: 1, zero_exact: 1, unclassified: 1, no_nu: 1 },
+  );
+  assert.deepEqual(planeStatement("stress", [{ group: nanZz, eids: plane.eids }], map).recorded, 4);
 });

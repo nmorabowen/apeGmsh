@@ -571,12 +571,13 @@ for (const set of Object.keys(ORACLE.sets)) {
 log("D3 manifest oracle: ok");
 
 // ---- 7: VA6d (#2766, G10), a derived scalar renders, and its manifest equals Python -------------
-// Python: apeGmsh.results._derived.compute("von_mises_stress", columns, ndm=2) on the stored columns, reduced as
-// the manifest oracle reduces a stored component (the numbers and the script: test/contour/derived.test.ts, PR #2766).
+// v1's default read (`gauss.get(component="von_mises_stress")`, plane="auto": elem_mixed's PlaneStrain sigma_zz
+// recovered, extrap_plane's left at 0 with no /opensees zone), reduced as the manifest oracle reduces a stored
+// component (the numbers and the script: test/contour/derived.test.ts, PR #2766).
 
 const DERIVED = [
-  { set: "elem_mixed", gauss: "cell", topology: "gauss_cell", holder: "element", min: [8.023403267940607, 2], max: [35.95657102672612, 16], history: [5.326818938165629, 35.95657102672612] },
-  { set: "extrap_plane", gauss: "node", topology: "gauss_node", holder: "node", min: [16.774003323595714, 13], max: [144.59875518136386, 5], history: [5.591334441198571, 144.59875518136386] },
+  { set: "elem_mixed", gauss: "cell", topology: "gauss_cell", holder: "element", min: [7.623975340988453, 2], max: [33.24432282360403, 16], history: [4.976444513907494, 33.24432282360403], unclassified: 0 },
+  { set: "extrap_plane", gauss: "node", topology: "gauss_node", holder: "node", min: [16.774003323595714, 13], max: [144.59875518136386, 5], history: [5.591334441198571, 144.59875518136386], unclassified: 15 },
 ] as const;
 const near = (a: number | null | undefined, b: number) => typeof a === "number" && Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(b));
 for (const c of DERIVED) {
@@ -596,7 +597,8 @@ for (const c of DERIVED) {
     const k = s.contour;
     assert.ok(k?.drawn, `${c.set} ${s.name}: drawn`);
     if (!k.drawn) continue;
-    assert.deepEqual([k.component, k.source, k.topology, k.derived], ["von_mises_stress", "element", c.topology, { from: ["stress_xx", "stress_yy", "stress_xy"] }]);
+    assert.deepEqual([k.component, k.source, k.topology, k.derived?.from, k.derived?.plane.unclassified], ["von_mises_stress", "element", c.topology, ["stress_xx", "stress_yy", "stress_xy"], c.unclassified]);
+    assert.equal(k.derived?.warning === null, c.unclassified === 0, `${c.set} ${s.name}: the manifest warns iff an element's zz is left at 0 unclassified`);
     const r = k.extrema.recorded!;
     assert.ok(near(r.min.value, c.min[0]) && near(r.max.value, c.max[0]), `${c.set} ${s.name}: extrema [${r.min.value}, ${r.max.value}], Python [${c.min[0]}, ${c.max[0]}]`);
     assert.deepEqual([r.min[c.holder], r.max[c.holder]], [c.min[1], c.max[1]], `${c.set} ${s.name}: the ${c.holder}s that hold them`);

@@ -43,6 +43,7 @@ import type { BlobStore } from "../state/blobs.ts";
 import { columnOf, gaussCellValues, isNodeTopology, meshFemIds, vertexValues } from "../state/contour.ts";
 import { autoDeformScale } from "../state/deform.ts";
 import { applyPlan, cellLookup, planFor } from "../state/extrapolation.ts";
+import { planeRecoveryMap, planeStatement, type PlaneStatement } from "../state/tensor.ts";
 import { activeCount, contourView, deformView, type ContourView } from "../state/selectors.ts";
 import type { ArtifactInfo, CameraPose, ContourScan, MeshInfo, State } from "../state/types.ts";
 import { bannerLines, describeSet } from "./describe.ts";
@@ -87,8 +88,12 @@ export type ManifestContour =
       difference?: { window: string; compare: string };
       /** VU16, a user result's contour only: the `.user.h5` entry (`field` too) and its basis (A6 judged it current) */
       user?: { name: string; basis: string };
-      /** VA6d, a derived scalar's contour only (`von_mises_stress`): the stored tensor components it is computed from */
-      derived?: { from: string[] };
+      /**
+       * VA6d, a derived scalar's contour only (`von_mises_stress`): the stored tensor components it is
+       * computed from, and what its out-of-plane normal is, by element (state/tensor.ts `planeStatement`);
+       * `warning` names the elements whose zz is left at 0 without the model saying it is 0 (v1 warns on them), else null
+       */
+      derived?: { from: string[]; plane: PlaneStatement; warning: string | null };
       /** element fields: how the values reach the screen (`element_mean`, `gauss_node`, ...); nodal: `nodal` */
       topology: string;
       cmap: string;
@@ -457,6 +462,25 @@ function columnContour(s: State, v: Extract<ContourView, { state: "combination" 
   };
 }
 
+/** VA6d: a derived contour's components and its out-of-plane statement (never silent on a zz left at 0 unclassified). */
+function derivedOf(s: State, v: Extract<ContourView, { state: "element" }>, blobs: BlobStore): NonNullable<Extract<ManifestContour, { drawn: true }>["derived"]> {
+  const t = v.component.derived!.tensor;
+  const groups = t.groups.map((group) => {
+    const g = v.groups.find((x) => x.id === group.id);
+    const eids = g ? blobs.get(g.eids) : undefined;
+    if (!(eids instanceof Float64Array)) throw new Error(`manifest: the element ids of group ${group.id} are not on hand`);
+    return { group, eids };
+  });
+  const plane = planeStatement(t.family, groups, planeRecoveryMap(s.decls));
+  const zz = `${t.family}_zz`;
+  const parts = [
+    ...(plane.unclassified ? [`${plane.unclassified} of ${plane.elements} element(s) could not be classified as plane stress / plane strain`] : []),
+    ...(plane.no_nu ? [`${plane.no_nu} element(s) need Poisson's ratio, which could not be read from their material`] : []),
+  ];
+  const warning = parts.length ? `Out-of-plane ${zz} recovery is incomplete: ${parts.join("; ")}. ${zz} is left at 0 there.` : null;
+  return { from: [...t.components], plane, warning };
+}
+
 function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepValues | null): ManifestContour {
   const at = s.phase.at;
   if (at?.kind !== "results" || !step || step.stage !== at.stage || step.step !== at.step) {
@@ -475,7 +499,7 @@ function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepVal
     label: v.component.label,
     source: v.state === "ready" ? "nodal" : "element",
     // VA6d: a derived scalar names the stored components it was computed from at each Gauss point.
-    ...(v.state === "element" && v.component.derived ? { derived: { from: [...v.component.derived.tensor.components] } } : {}),
+    ...(v.state === "element" && v.component.derived ? { derived: derivedOf(s, v, blobs) } : {}),
     topology: v.state === "ready" ? "nodal" : v.topology,
     cmap: v.cmap,
     range: {

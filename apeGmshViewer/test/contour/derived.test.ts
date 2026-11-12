@@ -4,14 +4,22 @@
 // per-Gauss-point computation (state/tensor.ts `derivedGroupValues`), the
 // history scan, and, for a spec, the one compiler and the manifest.
 //
-// The oracle is apeGmsh.results._derived.compute(name, columns, ndm=2)
-// (`plane=None`: a 2-D element's zz is 0; the strain's engineering shear
-// halved) on the stored Voigt columns Python reads from the same fixtures,
-// reduced as the manifest oracle reduces a stored component
+// The oracle is v1's own default read, `stage.elements.gauss.get(component=name)`
+// (`_composites._compute_derived`, `plane="auto"`: a 2-D element's zz recovered
+// per element by `_plane_recovery.inject_out_of_plane` from its plane type
+// and nu, 0 where the model does not classify it; the strain's engineering
+// shear halved), reduced as the manifest oracle reduces a stored component
 // (tests/viewers/test_agent_manifest_oracle.py `_element_case`: the element
 // mean for `gauss: "cell"`, `extrapolate_gauss_slab_to_nodes` for `"node"`).
-// The script that printed these numbers is in the PR body (#2766); the
-// fixtures are committed and unchanged.
+// `elem_mixed` carries an /opensees zone (quad and tri31, PlaneStrain,
+// ElasticIsotropic nu = 0.2), so its sigma_zz is recovered;
+// `ladruno_quad2d.h5` and `extrap_plane.h5` carry none, so v1 classifies none
+// of their elements (it warns) and zz stays 0 there. Each set is read in a
+// process of its own: `_plane_recovery._CACHE` is keyed on the FEM's
+// snapshot id, which `extrap_plane` shares with `elem_mixed`, so a process that
+// read `elem_mixed` first hands `extrap_plane` its plane map (a v1 cache
+// fault, outside this slice). The script that printed these numbers is in the
+// PR body (#2766); the fixtures are committed and unchanged.
 
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
@@ -95,7 +103,7 @@ test("the catalog offers each complete tensor's von Mises after the stored compo
 });
 
 for (const name of ["von_mises_stress", "von_mises_strain"] as const) {
-  test(`oracle: ${name} on ladruno_quad2d equals Python's _derived.compute at every Gauss point, and its history range`, async () => {
+  test(`oracle: ${name} on ladruno_quad2d equals v1's default read at every Gauss point (no /opensees zone: zz 0), and its history range`, async () => {
     const h = await openSet("ladruno_quad2d.h5", "ladruno_quad2d.ladruno");
     const field = name === "von_mises_stress" ? "stress" : "strain";
     for (const e of [
@@ -150,21 +158,27 @@ function shotOf(shot: Record<string, unknown>): SpecShot {
   return v.spec.shots[0]!;
 }
 
-/** Python, per step: the reduced values' finite min and max and what holds them (element for `cell`, node for `node`). */
+/**
+ * v1, per step: the reduced values' finite min and max and what holds them (element for `cell`, node for `node`),
+ * and the out-of-plane statement the manifest must make (v1 warns "15 of 15 element(s) could not be classified" on
+ * `extrap_plane`).
+ */
 const SPEC_CASES = [
   {
-    name: "elem_mixed, gauss cell (element mean)",
+    name: "elem_mixed, gauss cell (element mean); PlaneStrain nu 0.2, so sigma_zz = nu (sxx + syy)",
     set: "elem_mixed",
     gauss: "cell",
     topology: "gauss_cell",
     steps: [
-      { min: [5.326818938165629, 2], max: [33.3147865068951, 16] },
-      { min: [6.670832032063167, 2], max: [34.63379852109786, 16] },
-      { min: [8.023403267940607, 2], max: [35.95657102672612, 16] },
+      { min: [4.976444513907494, 2], max: [30.63111163506803, 16] },
+      { min: [6.297618597533516, 2], max: [31.93649949509182, 16] },
+      { min: [7.623975340988453, 2], max: [33.24432282360403, 16] },
     ],
+    plane: { elements: 15, recorded: 0, recovered: 15, zero_exact: 0, unclassified: 0, no_nu: 0 },
+    warning: null,
   },
   {
-    name: "extrap_plane, gauss node (derived at the Gauss points, then extrapolated and averaged)",
+    name: "extrap_plane, gauss node (derived at the Gauss points, then extrapolated and averaged); no /opensees zone, so zz = 0",
     set: "extrap_plane",
     gauss: "node",
     topology: "gauss_node",
@@ -173,6 +187,8 @@ const SPEC_CASES = [
       { min: [11.182668882397142, 13], max: [96.39917012090925, 5] },
       { min: [16.774003323595714, 13], max: [144.59875518136386, 5] },
     ],
+    plane: { elements: 15, recorded: 0, recovered: 0, zero_exact: 0, unclassified: 15, no_nu: 0 },
+    warning: "Out-of-plane stress_zz recovery is incomplete: 15 of 15 element(s) could not be classified as plane stress / plane strain. stress_zz is left at 0 there.",
   },
 ] as const;
 
@@ -183,7 +199,10 @@ for (const c of SPEC_CASES) {
     const d = describeSet(h.store.get(), []);
     // --describe offers it, saying what it is computed from.
     const described = d.stages[0]!.fields.find((f) => f.name === "stress" && f.source === "element")!.components.find((x) => x.key === "von_mises_stress");
-    assert.match(described?.derived ?? "", /von Mises equivalent of the stress tensor \(stress_xx, stress_yy, stress_xy\) at each Gauss point; a 2-D element's out-of-plane zz is taken as 0/);
+    assert.match(
+      described?.derived ?? "",
+      /von Mises equivalent of the stress tensor \(stress_xx, stress_yy, stress_xy\) at each Gauss point; stress_zz, not recorded, is recovered per element from its plane type and Poisson's ratio .*left at 0 for an element the model does not classify/,
+    );
     const compiled = compileShot(shot, d);
     assert.ok(compiled.ok, compiled.ok ? "" : compiled.reason);
     if (!compiled.ok) return;
@@ -206,7 +225,9 @@ for (const c of SPEC_CASES) {
     const k = entry.contour;
     assert.ok(k?.drawn, JSON.stringify(k));
     if (!k.drawn) return;
-    assert.deepEqual([k.component, k.label, k.source, k.topology, k.derived], ["von_mises_stress", "von_mises_stress", "element", c.topology, { from: ["stress_xx", "stress_yy", "stress_xy"] }]);
+    assert.deepEqual([k.component, k.label, k.source, k.topology], ["von_mises_stress", "von_mises_stress", "element", c.topology]);
+    // F1: what the out-of-plane normal is, by element; never silent on a zz left at 0 the model does not vouch for.
+    assert.deepEqual(k.derived, { from: ["stress_xx", "stress_yy", "stress_xy"], plane: c.plane, warning: c.warning });
     const want = c.steps[2]!;
     const holder = (p: { node: number | null; element: number | null }) => (c.gauss === "cell" ? p.element : p.node);
     close(k.extrema.recorded!.min.value, want.min[0], "min");

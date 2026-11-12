@@ -9,7 +9,8 @@
 // component positive, so a direction is an axis, never a sense. Pure: tested
 // without a window (state/principal.ts draws the arrows).
 
-import type { GaussGroup } from "./types.ts";
+import type { Param } from "../model/types.ts";
+import type { Decl, DeclPath, GaussGroup } from "./types.ts";
 
 export type Vec3 = [number, number, number];
 
@@ -179,8 +180,6 @@ export type DerivedName = keyof typeof DERIVED_SCALARS;
 
 export const isDerivedName = (name: string): name is DerivedName => Object.hasOwn(DERIVED_SCALARS, name);
 
-const SLOT_NAMES = ["xx", "yy", "zz", "xy", "yz", "xz"] as const;
-
 /**
  * The von Mises equivalent of an assembled Voigt tensor (`assembleTensor`: a
  * strain's shear already halved), as Python's `_von_mises`: J2 = s:s / 2 of
@@ -207,10 +206,11 @@ export type DerivedTensor =
  * value is never drawn from partial components:
  * - a group without the in-plane xx, yy and xy (`tensorFields`' rule, Python's `available_derived`);
  * - a group that names one slot twice (`sigma12` and `sigma21`);
- * - a group with some, not all, of the out-of-plane zz, yz and xz: a 3-D tensor
- *   with a missing component. With none of them the group is a 2-D element,
- *   whose zz is 0 (Python's `plane=None`: exact for a plane-stress stress and a
- *   plane-strain strain);
+ * - a group with one of the out-of-plane shears yz and xz and not the other: a
+ *   3-D tensor with a missing component. With neither, the group is a 2-D
+ *   element: a recorded zz is used (v1's `_assemble_tensor`), and a zz it does
+ *   not record is recovered per element from its plane type and ν
+ *   (`derivedGroupValues`, v1's `plane="auto"`);
  * - a field whose groups do not all make the tensor, or make two.
  */
 export function derivedTensorOf(groups: readonly GaussGroup[], names: readonly string[], family: TensorFamily): DerivedTensor | null {
@@ -221,10 +221,9 @@ export function derivedTensorOf(groups: readonly GaussGroup[], names: readonly s
   const f = fields[0]!;
   if (f.refused.length) return { ok: false, reason: f.refused.join("; ") };
   for (const g of f.groups) {
-    const out = [2, 4, 5].filter((v) => g.slots[v] !== null);
-    if (out.length > 0 && out.length < 3) {
-      const missing = [2, 4, 5].filter((v) => g.slots[v] === null).map((v) => SLOT_NAMES[v]);
-      return { ok: false, reason: `group ${g.id} records ${out.map((v) => SLOT_NAMES[v]).join(", ")} but no ${missing.join(", ")} ${family} component, so its tensor is not known` };
+    if ((g.slots[4] === null) !== (g.slots[5] === null)) {
+      const [has, lacks] = g.slots[4] === null ? ["xz", "yz"] : ["yz", "xz"];
+      return { ok: false, reason: `group ${g.id} records the ${has} but no ${lacks} ${family} component, so its tensor is not known` };
     }
   }
   const missing = groups.filter((g) => !f.groups.some((x) => x.id === g.id)).map((g) => g.id);
@@ -232,14 +231,149 @@ export function derivedTensorOf(groups: readonly GaussGroup[], names: readonly s
   return { ok: true, family, groups: f.groups, components: f.components };
 }
 
+// ---- out-of-plane recovery (VA6d F1): v1's `_plane_recovery`, per element ----------------
+
+/** A 2-D element's plane idealization and its material's Poisson's ratio (null: not read). */
+export interface PlaneOf {
+  plane: "PlaneStrain" | "PlaneStress";
+  nu: number | null;
+}
+
+// `_plane_recovery`'s tables, restated (src/apeGmsh/results/_plane_recovery.py).
+const NU_AT_PARAM1 = new Set(["ElasticIsotropic", "ElasticIsotropicPlaneStrain2D", "ElasticIsotropicPlaneStress2D", "ASDConcrete3D"]);
+const KG_MATERIALS = new Set(["J2Plasticity", "DruckerPrager", "LadrunoJ2", "LadrunoJ2Finite"]);
+const POSITIONAL_PLANE_ELEMENTS = new Set(["quad", "tri31", "tri6n", "BezierTri6"]);
+const FLAG_PLANE_ELEMENTS = new Set(["LadrunoQuad", "LadrunoCST", "LadrunoLST"]);
+const UP_PLANE_ELEMENT = "LadrunoUP";
+
+/** Python's `float(value)`: a number, or a string that parses whole; else null. */
+function asFloat(p: Param | undefined): number | null {
+  if (typeof p === "number") return p;
+  if (typeof p === "string" && p.trim() !== "") {
+    const x = Number(p);
+    return Number.isNaN(x) && p.trim().toLowerCase() !== "nan" ? null : x;
+  }
+  return null;
+}
+
+/** Python's `int(value)` on a tag: an integral number; else null. */
+function asTag(p: Param | undefined): number | null {
+  const x = asFloat(p);
+  return x !== null && Number.isFinite(x) ? Math.trunc(x) : null;
+}
+
+/** `_normalize_plane`: "strain" anywhere in the text is plane strain, else "stress" plane stress. */
+function normalizePlane(p: Param | undefined): PlaneOf["plane"] | null {
+  const s = (typeof p === "string" ? p : String(p)).toLowerCase();
+  return s.includes("strain") ? "PlaneStrain" : s.includes("stress") ? "PlaneStress" : null;
+}
+
+/** `_material_nu`: an nD material's Poisson's ratio, or null. */
+export function materialNu(type: string, params: readonly Param[]): number | null {
+  if (NU_AT_PARAM1.has(type) && params.length >= 2) return asFloat(params[1]);
+  if (KG_MATERIALS.has(type) && params.length >= 2) {
+    const k = asFloat(params[0]), g = asFloat(params[1]);
+    if (k !== null && g !== null && 3 * k + g !== 0) return (3 * k - 2 * g) / (2 * (3 * k + g));
+  }
+  for (let i = 0; i < params.length - 1; i++) if (params[i] === "PoissonsRatio") return asFloat(params[i + 1]);
+  return null;
+}
+
+/** `_element_plane_and_mat`: a 2-D element's plane type and nD material tag, or null. */
+export function elementPlane(type: string, args: readonly Param[]): { plane: PlaneOf["plane"]; mat: number } | null {
+  if (POSITIONAL_PLANE_ELEMENTS.has(type) && args.length >= 3) {
+    const plane = normalizePlane(args[1]);
+    const mat = asTag(args[2]);
+    return plane !== null && mat !== null ? { plane, mat } : null;
+  }
+  if (FLAG_PLANE_ELEMENTS.has(type) && args.length >= 1) {
+    const mat = asTag(args[0]);
+    if (mat === null) return null;
+    let plane: PlaneOf["plane"] = "PlaneStrain"; // the Ladruno default with no -type flag
+    for (let i = 0; i < args.length - 1; i++) {
+      if (args[i] === "-type") {
+        plane = normalizePlane(args[i + 1]) ?? plane;
+        break;
+      }
+    }
+    return { plane, mat };
+  }
+  if (type === UP_PLANE_ELEMENT && args.length >= 1) {
+    // `_up_perm_dim`: 2-D u-p (two permeabilities after -perm / -permH) is plane strain by construction.
+    const at = args.findIndex((a) => a === "-perm" || a === "-permH");
+    if (at < 0) return null;
+    let n = 0;
+    for (const a of args.slice(at + 1)) {
+      if (typeof a === "string") break;
+      n++;
+    }
+    const mat = asTag(args[0]);
+    return n === 2 && mat !== null ? { plane: "PlaneStrain", mat } : null;
+  }
+  return null;
+}
+
+/**
+ * `plane_recovery_map`: `{FEM id: plane type and ν}` for the model's 2-D
+ * elements, from the `/opensees` element rows (`element_meta/*` args) and the
+ * nD materials' params. Empty for a model with no such records (a FEM-only
+ * model.h5): every element's zz then stays 0, and the statement says so.
+ */
+export function planeRecoveryMap(decls: Readonly<Record<DeclPath, Decl>>): Map<number, PlaneOf> {
+  const nuByTag = new Map<number, number>();
+  const elements: Decl[] = [];
+  for (const d of Object.values(decls)) {
+    if (d.kind === "nDMaterial" && d.tag !== null) {
+      const nu = materialNu(d.type, d.params);
+      if (nu !== null) nuByTag.set(d.tag, nu);
+    } else if (d.kind === "element") elements.push(d);
+  }
+  const out = new Map<number, PlaneOf>();
+  for (const d of elements) {
+    const f = d.element;
+    if (!f || f.femId === null || f.femId < 0) continue;
+    for (const m of f.metas) {
+      const p = elementPlane(m.type, m.args);
+      if (p) out.set(f.femId, { plane: p.plane, nu: nuByTag.get(p.mat) ?? null });
+    }
+  }
+  return out;
+}
+
+/** What a group's derived values need beyond its tensor: its element ids (row order) and Gauss count, and the model's plane map. */
+export interface PlaneRecovery {
+  map: ReadonlyMap<number, PlaneOf>;
+  eids: Float64Array;
+  nGauss: number;
+}
+
+/**
+ * The out-of-plane normal `inject_out_of_plane` gives a point whose zz is not
+ * recorded (or recorded as NaN): σzz = ν(σxx + σyy) for a plane-strain element
+ * (a stress), εzz = -ν/(1-ν)(εxx + εyy) for a plane-stress one (a strain); 0
+ * for the other idealization (exact), an element the model does not classify
+ * or one whose ν is not read (v1 warns; the manifest counts them).
+ */
+function recoveredZz(family: TensorFamily, info: PlaneOf | undefined, xx: number, yy: number): number {
+  const nu = info?.nu;
+  if (nu === null || nu === undefined || !Number.isFinite(nu)) return 0;
+  if (family === "stress") return info!.plane === "PlaneStrain" ? nu * (xx + yy) : 0;
+  return info!.plane === "PlaneStress" && nu !== 1 ? (-nu / (1 - nu)) * (xx + yy) : 0;
+}
+
 /**
  * A derived scalar at every Gauss point of one group, (E * G,) element-major,
  * from the group's tensor read with the step (`values`: by component, then
- * group, as main's `tensor` read answers). A point with a non-finite
- * component is NaN (no data). A component the read lacks, or of another
- * length, is an error: never a value from partial components.
+ * group, as main's `tensor` read answers), as v1's default read gives it
+ * (`_composites._compute_derived`, `plane="auto"`): a recorded zz is used; a
+ * zz the group does not record, or a recorded NaN, is recovered per element
+ * (`recoveredZz`), unless the model classifies no element at all, where an
+ * unrecorded zz is 0 and a NaN stays no data (`inject_out_of_plane` returns
+ * early). A point with another non-finite component is NaN (no data). A
+ * component the read lacks, or of another length, is an error: never a value
+ * from partial components.
  */
-export function derivedGroupValues(name: DerivedName, group: TensorGroup, n: number, values: Readonly<Record<string, Readonly<Record<string, Float64Array>>>>): Float64Array {
+export function derivedGroupValues(name: DerivedName, group: TensorGroup, n: number, values: Readonly<Record<string, Readonly<Record<string, Float64Array>>>>, plane: PlaneRecovery): Float64Array {
   const family = DERIVED_SCALARS[name];
   const cols = group.slots.map((c) => {
     if (c === null) return null;
@@ -248,12 +382,58 @@ export function derivedGroupValues(name: DerivedName, group: TensorGroup, n: num
     if (col.length !== n) throw new Error(`${name}: ${c} of group ${group.id} has ${col.length} values, not ${n}`);
     return col;
   });
+  if (plane.eids.length * plane.nGauss !== n) throw new Error(`${name}: group ${group.id} has ${plane.eids.length} element ids at ${plane.nGauss} Gauss points for ${n} values`);
+  const zzCol = cols[2] ?? null;
+  const recover = plane.map.size > 0;
   const out = new Float64Array(n);
   for (let i = 0; i < n; i++) {
-    const t = assembleTensor(family, (v) => cols[v]?.[i] ?? null);
+    let zz: number | null = zzCol ? zzCol[i]! : null;
+    if (recover && (zz === null || !Number.isFinite(zz))) {
+      zz = recoveredZz(family, plane.map.get(plane.eids[Math.floor(i / plane.nGauss)]!), cols[0]![i]!, cols[1]![i]!);
+    }
+    const t = assembleTensor(family, (v) => (v === 2 ? zz : (cols[v]?.[i] ?? null)));
     out[i] = t ? vonMises(t, family) : NaN;
   }
   return out;
+}
+
+/**
+ * What a derived contour's out-of-plane normal is, by element (v1 warns on
+ * the last two): `recorded` (a group that records zz), `recovered` (the
+ * idealization whose zz is not 0, with its ν), `zero_exact` (the idealization
+ * whose zz is 0), `unclassified` (the model does not say plane stress or
+ * plane strain: zz left 0), `no_nu` (it needs ν, which its material does not
+ * give: zz left 0). Every element of the field's groups is counted once.
+ */
+export interface PlaneStatement {
+  elements: number;
+  recorded: number;
+  recovered: number;
+  zero_exact: number;
+  unclassified: number;
+  no_nu: number;
+}
+
+export function planeStatement(family: TensorFamily, groups: readonly { group: TensorGroup; eids: Float64Array }[], map: ReadonlyMap<number, PlaneOf>): PlaneStatement {
+  const seen = new Set<number>();
+  const st: PlaneStatement = { elements: 0, recorded: 0, recovered: 0, zero_exact: 0, unclassified: 0, no_nu: 0 };
+  const needs = family === "stress" ? "PlaneStrain" : "PlaneStress";
+  for (const { group, eids } of groups) {
+    for (const e of eids) {
+      if (seen.has(e)) continue;
+      seen.add(e);
+      st.elements++;
+      if (group.slots[2] !== null) st.recorded++;
+      else {
+        const info = map.get(e);
+        if (!info) st.unclassified++;
+        else if (info.plane !== needs) st.zero_exact++;
+        else if (info.nu === null || !Number.isFinite(info.nu) || (family === "strain" && info.nu === 1)) st.no_nu++;
+        else st.recovered++;
+      }
+    }
+  }
+  return st;
 }
 
 /** The Voigt tensor of one point: `read(slot)` is the file's value (NaN when not finite), 0 for a slot the group does not record; a strain's shear halved. */
