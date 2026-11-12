@@ -218,6 +218,41 @@ def test_a_stock_chain_still_runs_through_run(
     assert any(c[0] == "integrator" for c in stock.calls)
 
 
+@pytest.mark.live
+@pytest.mark.parametrize("site", [
+    "apeGmsh/opensees/apesees.py:apeSees.run",
+    "apeGmsh/opensees/procedures/_modal.py:_ModalMixin.eigen",
+    "apeGmsh/opensees/procedures/_explicit.py:_ExplicitMixin.critical_time_step",
+    "apeGmsh/opensees/procedures/_frf.py:_FrfMixin._run_modal_sweep",
+], ids=lambda s: s.split(":")[1])
+def test_a_refused_site_keeps_the_users_node_on_real_stock(site: str) -> None:
+    """The same contract in the real stock domain: a node the user built
+    with the bridge's own module still answers ``nodeCoord`` after the
+    refusal of ``LadrunoProjection``."""
+    from apeGmsh.opensees.emitter.live import get_backend_info, get_ops
+
+    try:
+        kind = get_backend_info().kind
+    except ImportError:
+        pytest.skip("no in-process OpenSees backend")
+    if kind == "fork":
+        pytest.skip("the fork runs a fork-only chain; nothing is refused")
+    live = get_ops()
+    live.wipe()
+    live.model("basic", "-ndm", 3, "-ndf", 6)
+    live.node(USER_NODE, *USER_XYZ)
+    try:
+        ops = _chain_frame("constraints", "LadrunoProjection", staged=False)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with pytest.raises(RuntimeError,
+                               match="requires the Ladruno fork|fork-only"):
+                SITES[site](ops, False)
+        assert list(live.nodeCoord(USER_NODE)) == USER_XYZ
+    finally:
+        live.wipe()
+
+
 # -- source scan ------------------------------------------------------------
 
 
