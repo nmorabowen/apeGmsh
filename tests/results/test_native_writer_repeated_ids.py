@@ -90,19 +90,26 @@ def test_the_two_element_premise_case_refuses(writer) -> None:
     assert info.value.repeated == {7: [0, 1]}
 
 
-def test_a_node_held_by_two_partitions_is_not_a_repeat(writer) -> None:
-    # A boundary node replicated across partitions is each partition's
-    # own row; the reader checks the copies agree (#2360).
+def test_a_node_in_two_stages_is_not_a_repeat(writer) -> None:
+    # The repeat check is per chunk (stage, partition): the same node in
+    # a second stage is that stage's own row. A second partition in one
+    # stage is refused on its own (ADR 0123 D5,
+    # test_native_single_partition.py); legacy multi-partition reads are
+    # in test_native_repeated_node_ids.py.
     w, sid, path = writer
     w.write_nodes(sid, "partition_0", node_ids=np.array([1, 5]),
                   components={"displacement_x": _values(2)})
-    w.write_nodes(sid, "partition_1", node_ids=np.array([5, 9]),
+    w.end_stage()
+    sid2 = w.begin_stage(name="s2", kind="static", time=_TIME)
+    w.write_nodes(sid2, "partition_0", node_ids=np.array([5, 9]),
                   components={"displacement_x": _values(2)})
     w.end_stage()
     w.close()
     with NativeReader(path) as r:
-        slab = r.read_nodes("stage_0", "displacement_x")
-    np.testing.assert_array_equal(slab.node_ids, [1, 5, 9])
+        np.testing.assert_array_equal(
+            r.read_nodes("stage_0", "displacement_x").node_ids, [1, 5])
+        np.testing.assert_array_equal(
+            r.read_nodes("stage_1", "displacement_x").node_ids, [5, 9])
 
 
 def test_message_shows_five_repeats_then_counts_the_rest(writer) -> None:

@@ -415,6 +415,47 @@ def test_a_staged_deck_text_record_refuses(
             r"are declared, so its \.mpco converts\)")
 
 
+def build_partitioned_cantilever_fem() -> Any:
+    """The cantilever of ``build_cantilever_fem``, in two partitions."""
+    import gmsh
+
+    from apeGmsh import apeGmsh
+
+    with apeGmsh(model_name="r2b_cantilever_np2", verbose=False) as g:
+        geo = g.model.geometry
+        base = geo.add_point(0.0, 0.0, 0.0)
+        tip = geo.add_point(L_BEAM, 0.0, 0.0)
+        line = geo.add_line(base, tip)
+        gmsh.model.mesh.setTransfiniteCurve(line, 5)
+        g.physical.add(1, [line], name="Beam")
+        g.labels.add(0, [base], "base")
+        g.labels.add(0, [tip], "tip")
+        g.mesh.generation.generate(dim=1)
+        g.mesh.partitioning.partition(2)
+        g.mesh.partitioning.renumber(base=1)
+        return g.mesh.queries.get_fem_data(dim=1)
+
+
+def test_a_partitioned_deck_text_record_refuses(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR 0123 slice 3: a partitioned deck's text recorders are written
+    per rank, so ``_classify`` refuses them and names the routes that
+    read a partitioned run. The run writes a well-formed ``tip.out``: the
+    refusal is the deck's partitioning, not a missing or partial file."""
+    fem = build_partitioned_cantilever_fem()
+    assert len(fem.partitions) == 2
+    ops = cantilever_bridge(fem)
+    typed_tip(ops)
+    ran(ops, monkeypatch, write_rows("run/tip.out", [1.0, UY]))
+    refuses(ops, "run/deck.py", run_dir,
+            r"is partitioned; its text recorders are written per rank\. "
+            r"Record a partitioned run with ops\.recorder\.Ladruno on the "
+            r"Ladruno fork build, or with ops\.recorder\.MPCO under declared "
+            r"ops\.stage\(\.\.\.\) blocks on stock OpenSees, or emit it with "
+            r"flat=True\.")
+
+
 def test_mpco_beside_text_records_refuses(
     cantilever: Any, run_dir: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
