@@ -159,8 +159,7 @@ test("G3: a shot with no deform scale states the auto scale it is drawn at, and 
 
 // The render mode's own shot runner (renderer/agentRender.ts `takeShots`) over the app's read path, with a viewport
 // that applies whatever the state asks: a spec with no deform scale renders at the auto scale, and the manifest says so.
-// TODO(VA6c): todo until the card owns src/renderer/agentRender.ts, which must dispatch the auto scale (VA6c report).
-test("G3: the render mode draws a shot with no deform scale at the auto scale, and its entry states it", { todo: "needs src/renderer/agentRender.ts (card amendment)" }, async () => {
+test("G3: the render mode draws a shot with no deform scale at the auto scale, and its entry states it", async () => {
   const h = await setOf("contour_staged");
   const frame = globalThis.requestAnimationFrame;
   globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => setTimeout(() => cb(0), 0)) as unknown as typeof requestAnimationFrame;
