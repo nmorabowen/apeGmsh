@@ -46,7 +46,9 @@ from .._internal.types import (
     NDMaterial,
     Primitive,
     Recorder,
+    Section,
     TimeSeries,
+    UniaxialMaterial,
 )
 from ..analysis.analysis import Static
 from ..node import Node, _iter_tags, _select_nodes
@@ -56,6 +58,7 @@ from ._chain import (
     StageChain,
     algorithm_needs_test,
 )
+from ._parameter_names import ParameterTarget, check_parameter_name
 
 if TYPE_CHECKING:
     from apeGmsh._kernel.records._constraints import (
@@ -1217,6 +1220,10 @@ class _StageBuilder:
                 "dt=) — every stage must declare its analyze loop."
             )
         self._check_chain_against_run()
+        for prec in self._update_parameter_records:
+            # An element spec registered after the call is checked here;
+            # a class already warned about is not warned about again.
+            self._check_parameter_name(prec, stacklevel=3)
         self._check_stage_routes()
         record = StageRecord(
             name=self._name,
@@ -1290,6 +1297,55 @@ class _StageBuilder:
             activations=[
                 *(stage.activated_pgs for stage in bridge._stage_records),
                 self._activated_pgs])
+
+    def _check_parameter_name(
+        self, rec: UpdateParameterRecord, *, stacklevel: int,
+    ) -> None:
+        """#2377: refuse an ``s.update_parameter`` name that no targeted
+        object takes, by element class
+        (:func:`._parameter_names.check_parameter_name`).
+
+        The targets are the registered element specs whose elements meet
+        the record's ``pg=`` / ``elements=``; a spec registered later is
+        checked again at the stage close.  The stage-flag names have
+        their own route checks (:func:`check_stage_routes`)."""
+        if rec.name in STAGE_FLAG_PARAMETERS:
+            return
+        from .._internal.build.pg_expand import (
+            expand_pg_to_elements,
+            expand_spec_to_elements,
+        )
+
+        bridge = self._bridge
+        specs = [p for p in bridge._primitives if isinstance(p, Element)]
+        if not specs:
+            return
+        if rec.elements is not None:
+            wanted = {int(e) for e in rec.elements}
+        else:
+            assert rec.pg is not None  # update_parameter takes one
+            wanted = {int(e) for e in expand_pg_to_elements(
+                bridge.fem, rec.pg).eids}
+        targets: list[ParameterTarget] = []
+        for spec in specs:
+            if wanted.intersection(
+                    int(e) for e in expand_spec_to_elements(
+                        bridge.fem, spec).eids):
+                mats = tuple(
+                    (type(dep).__name__, bridge.tag_for(dep))
+                    for dep in spec.dependencies()
+                    if isinstance(dep, (NDMaterial, UniaxialMaterial,
+                                        Section)))
+                targets.append(ParameterTarget(
+                    cls=type(spec).__name__, ndm=bridge._ndm,
+                    materials=mats))
+        where = (f"pg {rec.pg!r}" if rec.elements is None
+                 else f"elements {list(rec.elements)!r}")
+        check_parameter_name(
+            f"Stage {self._name!r}: s.update_parameter({rec.name!r}, "
+            f"{rec.value}) on {where}",
+            rec.name, rec.mat_tag, targets, owner=bridge,
+            stacklevel=stacklevel)
 
     def _check_chain_against_run(self) -> None:
         """Stage-close checks that need both ``analysis`` and ``run``.
@@ -2535,9 +2591,13 @@ class _StageBuilder:
         ``OPS_addToParameter``), so a material is unreachable without an
         element that hosts it.
 
-        No registry of known parameter names — the element's /
-        material's own ``setParameter`` is the authority, and a name it
-        does not recognise already errors there.
+        A name that no object takes is lost in OpenSees with only a
+        printed warning, so the name is checked against the targeted
+        element classes (``stage/_parameter_names.py``, #2377): a
+        catalogued class that does not take it, and does not forward it
+        to a catalogued material that does, is refused; an uncatalogued
+        element or material class warns once
+        (:class:`UncataloguedParameterWarning`) and the update emits.
 
         Parameters
         ----------
@@ -2569,7 +2629,10 @@ class _StageBuilder:
             ``"materialState"`` with no ``material=``, or with one whose
             class is not in :data:`MATERIAL_STATE_CLASSES` (no object
             would take it).  The stage close refuses the other stage-flag
-            routes that reach nothing or the wrong material.
+            routes that reach nothing or the wrong material.  Or a
+            catalogued element class it targets takes no ``name``
+            (#2377), here or, for an element registered later, at the
+            stage close.
         """
         if not name:
             raise ValueError(
@@ -2630,6 +2693,7 @@ class _StageBuilder:
             ),
             mat_tag=mat_tag,
         )
+        self._check_parameter_name(record, stacklevel=3)
         self._bridge._declare_record(  # K1-6
             record, "update_parameter", None)
         self._update_parameter_records.append(record)
