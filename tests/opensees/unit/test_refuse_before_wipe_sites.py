@@ -17,10 +17,6 @@ Two layers:
   function by the refusal, or is one of the named exemptions below.  A new
   site fails here until it is guarded and has a behaviour row in
   :data:`SITES`.
-
-One wiping site is still unguarded and named in :data:`OUT_OF_SCOPE`: it
-sits outside #2449's owned files.  Its behaviour row is a strict xfail, so
-the follow-up that guards it must also move it to :data:`SITES`.
 """
 from __future__ import annotations
 
@@ -111,6 +107,9 @@ SITES: dict[str, Callable[[Any, bool], Any]] = {
         lambda o, tr: o.residual_modes([1], num_modes=1),
     "apeGmsh/opensees/procedures/_modal.py:_ModalMixin.ritz_vectors":
         lambda o, tr: o.ritz_vectors(1, dirs=[1]),
+    "apeGmsh/opensees/procedures/_gravity_modal.py:"
+    "_GravityModalMixin._run_gravity_modal":
+        lambda o, tr: o.modal_after_gravity(1),
     "apeGmsh/opensees/procedures/_frf.py:_FrfMixin._run_modal_sweep":
         lambda o, tr: o.frequency_response(
             f_min=0.0, f_max=10.0, n_freq=2, node=2, dof=1, num_modes=1,
@@ -125,20 +124,14 @@ RSA_GATED = frozenset({
     "apeGmsh/opensees/procedures/_modal.py:_ModalMixin.ritz_vectors",
 })
 
-#: Wiping sites still unguarded, each with its driver, the fork kinds that
-#: reach its wipe, and why it is not fixed here.  Those behaviour rows are
-#: strict xfails; a kind the site refuses first for its own reason (the
-#: gravity preload needs a Static LoadControl, so ExplicitBathe never gets
-#: that far) has no row.
-OUT_OF_SCOPE: dict[
-    str, tuple[Callable[[Any, bool], Any], frozenset[str], str]] = {
-    "apeGmsh/opensees/procedures/_gravity_modal.py:"
-    "_GravityModalMixin._run_gravity_modal": (
-        lambda o, tr: o.modal_after_gravity(1),
-        frozenset({"LadrunoProjection", "LadrunoContact", "Pardiso"}),
-        "ops.modal_after_gravity / ops.spectrum_after_gravity (SLE series) "
-        "wipe before the chain refusal; _gravity_modal.py is not an owned "
-        "file of #2449"),
+#: Rows a site refuses first by its own rule, before the chain refusal and
+#: before the wipe, with that rule's message: the gravity preload needs a
+#: Static LoadControl, so a Transient ExplicitBathe frame never gets as far
+#: as the chain.  The domain must survive these too.
+OWN_RULE_FIRST: dict[tuple[str, str], str] = {
+    ("apeGmsh/opensees/procedures/_gravity_modal.py:"
+     "_GravityModalMixin._run_gravity_modal", "ExplicitBathe"):
+        "the gravity preload needs ops.analysis.Static",
 }
 
 #: Wiping sites that do not call ``refuse_fork_chain_before_wipe``, each
@@ -163,16 +156,8 @@ REFUSAL = "refuse_fork_chain_before_wipe"
 
 
 def _site_params() -> list[Any]:
-    out: list[Any] = [
-        pytest.param(s, f, r, id=f"{s.split(':')[1]}-{f}-{r}")
-        for s in sorted(SITES) for f, r in FORK_KINDS]
-    for s, (_drive, kinds, why) in sorted(OUT_OF_SCOPE.items()):
-        out += [pytest.param(
-            s, f, r, id=f"{s.split(':')[1]}-{f}-{r}",
-            marks=pytest.mark.xfail(strict=True, raises=AssertionError,
-                                    reason=why))
-            for f, r in FORK_KINDS if r in kinds]
-    return out
+    return [pytest.param(s, f, r, id=f"{s.split(':')[1]}-{f}-{r}")
+            for s in sorted(SITES) for f, r in FORK_KINDS]
 
 
 @pytest.mark.parametrize("site, family, row", _site_params())
@@ -188,14 +173,14 @@ def test_a_refused_site_keeps_the_users_node(
     monkeypatch.setattr(live_mod, "_get_ops", lambda: stock)
     if site in RSA_GATED:
         monkeypatch.setattr(target_mod, "require_rsa_feature", lambda f: None)
-    drive = SITES[site] if site in SITES else OUT_OF_SCOPE[site][0]
+    match = OWN_RULE_FIRST.get(
+        (site, row), "requires the Ladruno fork|fork-only")
     ops = _chain_frame(family, row, staged=False)
     transient = family == "integrator" and row in _TRANSIENT
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        with pytest.raises(RuntimeError,
-                           match="requires the Ladruno fork|fork-only"):
-            drive(ops, transient)
+        with pytest.raises(RuntimeError, match=match):
+            SITES[site](ops, transient)
     assert stock.nodes.get(USER_NODE) == USER_XYZ, stock.calls[:5]
     assert ("wipe",) not in stock.calls, stock.calls[:5]
 
@@ -224,6 +209,8 @@ def test_a_stock_chain_still_runs_through_run(
     "apeGmsh/opensees/procedures/_modal.py:_ModalMixin.eigen",
     "apeGmsh/opensees/procedures/_explicit.py:_ExplicitMixin.critical_time_step",
     "apeGmsh/opensees/procedures/_frf.py:_FrfMixin._run_modal_sweep",
+    "apeGmsh/opensees/procedures/_gravity_modal.py:"
+    "_GravityModalMixin._run_gravity_modal",
 ], ids=lambda s: s.split(":")[1])
 def test_a_refused_site_keeps_the_users_node_on_real_stock(site: str) -> None:
     """The same contract in the real stock domain: a node the user built
@@ -330,10 +317,8 @@ def test_every_wiping_site_refuses_before_the_wipe() -> None:
             need, _why = EXEMPT[key]
             if need is not None and need not in called:
                 unguarded.append(f"{key} (exempt, but no {need} first)")
-        elif REFUSAL not in called and key not in OUT_OF_SCOPE:
+        elif REFUSAL not in called:
             unguarded.append(key)
-        elif REFUSAL in called and key in OUT_OF_SCOPE:
-            unguarded.append(f"{key} (guarded now: move it to SITES)")
     assert not unguarded, (
         "LiveOpsEmitter(wipe=True) constructed with no "
         f"{REFUSAL}(bm) before it: {unguarded}")
@@ -343,9 +328,9 @@ def test_the_site_tables_match_the_source() -> None:
     """Every guarded site has a behaviour row, and no row or exemption
     names a site that is gone."""
     sites = set(_wiping_sites())
-    assert sites - set(EXEMPT) - set(OUT_OF_SCOPE) == set(SITES)
-    assert set(EXEMPT) | set(OUT_OF_SCOPE) <= sites, (
-        (set(EXEMPT) | set(OUT_OF_SCOPE)) - sites)
+    assert sites - set(EXEMPT) == set(SITES)
+    assert set(EXEMPT) <= sites, set(EXEMPT) - sites
+    assert {s for s, _r in OWN_RULE_FIRST} <= set(SITES)
 
 
 def test_the_scan_sees_each_wipe_form() -> None:
