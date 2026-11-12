@@ -119,6 +119,41 @@ class NativeWriteRepeatedId(ValueError):
         )
 
 
+class NativeSecondPartition(ValueError):
+    """A :class:`NativeWriter` write names a second partition in a stage
+    (ADR 0123 D5).
+
+    A native ``results.h5`` stage holds at most one partition: no native
+    writer in apeGmsh produces more, the viewer refuses a stage with
+    several, and native carries no partition-reduction rule (D2). A
+    partitioned run reduces where it lands, in a ``.ladruno`` or MPCO
+    part set (D3). The rule is about count, not name: a stage whose only
+    partition is ``partition_3`` is legal, and further writes into that
+    same partition are too.
+
+    ``file`` and ``stage_id`` name the stage, ``existing`` the partition
+    it already holds and ``refused`` the id this write named. The writer
+    raises before creating any group, so the file keeps its one partition.
+    """
+
+    def __init__(
+        self, file: Path, stage_id: str, existing: str, refused: str,
+    ) -> None:
+        self.file = file
+        self.stage_id = stage_id
+        self.existing = existing
+        self.refused = refused
+        super().__init__(
+            f"{file}: stage {stage_id!r} already holds partition "
+            f"{existing!r}; this write names partition {refused!r}. A native "
+            f"results.h5 stage holds one partition (ADR 0123 D5): write "
+            f"every result of the stage into {existing!r}, or record a "
+            f"partitioned run as a part set (one history file per rank, "
+            f"e.g. MPCO), whose readers reduce across ranks. Nothing of "
+            f"this write reached the file."
+        )
+
+
 #: Root attrs naming the OpenSees build that produced the results
 #: (``architecture/h5-schema.md``, results root attrs). Additive and
 #: optional: absent means unknown.
@@ -1096,10 +1131,22 @@ class NativeWriter:
             )
 
     def _require_partition(self, stage_id: str, partition_id: str) -> Any:
+        """The stage's one partition group, created on first use.
+
+        Raises :class:`NativeSecondPartition` before creating anything
+        when the stage already holds a partition named otherwise (ADR
+        0123 D5). Re-entry with the same id is how a stage's nodes,
+        element groups and element ids land, and stays legal.
+        """
         h5 = self._require_open()
         partitions_grp = h5.require_group(
             _native.partitions_path(stage_id)[1:],
         )
+        others = sorted(k for k in partitions_grp.keys() if k != partition_id)
+        if others:
+            raise NativeSecondPartition(
+                self._path, stage_id, others[0], partition_id,
+            )
         return partitions_grp.require_group(partition_id)
 
     def _require_element_subgroup(

@@ -27,9 +27,10 @@
 //   another field name so a caller cannot join them to /model/elements by
 //   accident.
 //
-// One partition only: every writer in src/ writes `partition_0`; a file with
-// several is refused ("unsupported"), not merged (the doc's union rule is a
-// follow-up for the real reader).
+// One partition per stage, of any name: NativeWriter refuses a second one
+// (ADR 0123 D5). A legacy stage with several is refused ("unsupported"),
+// never merged (ADR 0123 D6): native carries no partition-reduction rule,
+// and a partitioned run is read as a .ladruno or MPCO part set.
 
 import { LINE_STATION_COMPONENTS, type LineStationComponent, type UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits } from "../state/units.ts";
