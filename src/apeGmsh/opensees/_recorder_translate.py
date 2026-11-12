@@ -444,9 +444,11 @@ def model_h5_rotation_roles(
 #: whose family it is (:data:`~._readback._CLASS_FOR_TOKEN`), so a live
 #: domain the bridge did not build classifies its rotational DOF slots by
 #: the same family tables. Each name is what stock openseespy
-#: 3.7.1 answers for an element that token makes; a class not listed is
-#: unknown, and blocks the rotational slots of the nodes it touches and
-#: of element-less nodes, as an unknown token does.
+#: 3.7.1 answers for an element that token makes; a class not listed here,
+#: in :data:`_ROTATION_TOKEN_FOR_LIVE_CLASS` or in
+#: :data:`_ROTATION_NEUTRAL_LIVE_CLASSES` is unknown, and blocks the
+#: rotational slots of the nodes it touches and of element-less nodes, as
+#: an unknown token does.
 #:
 #: The second block holds catalogued classes the bridge builds no element
 #: of. Each takes the token of its family's bridge class, so the token
@@ -502,6 +504,50 @@ _TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
     "CorotTruss2": "CorotTruss",
     "ModElasticBeam2d": "elasticBeamColumn",
 }
+
+#: ``ops.eleType`` class name -> the ``element`` token of its rotation
+#: family, for the rotation roles only (:meth:`LiveDomainFacts.rotation_roles`,
+#: #2407 / #2414). Each is a stock openseespy 3.7.1 beam-column whose
+#: nodes carry ``ux uy rz`` (ndf 3, 2-D) or ``ux..rz`` (ndf 6, 3-D), so a
+#: node it touches holds a rotation in those slots. They are kept out of
+#: :data:`_TOKEN_FOR_LIVE_CLASS`: no catalog entry types their responses
+#: (``ElasticForceBeamColumn2d/3d`` write an empty ``section force`` file),
+#: so :meth:`LiveDomainFacts.pair_elements` still refuses them by name.
+#: The token types the rotation family alone. Each one has a stock live
+#: oracle in ``tests/opensees/live/test_live_modes_live.py`` (its eleType,
+#: and modes read back equal to the live ``nodeEigenvector``). The census
+#: left out ``DispBeamColumnWarping3d`` (a warping DOF), and
+#: ``dispBeamColumnInt`` / ``gradientInelasticBeamColumn``, which it could
+#: not build; they stay unknown, and block.
+_ROTATION_TOKEN_FOR_LIVE_CLASS: "dict[str, str]" = {
+    "MixedBeamColumn2d": "forceBeamColumn",
+    "MixedBeamColumn3d": "forceBeamColumn",
+    "MixedBeamColumnAsym3d": "forceBeamColumn",
+    "ForceBeamColumnCBDI3d": "forceBeamColumn",
+    "ElasticForceBeamColumn2d": "forceBeamColumn",
+    "ElasticForceBeamColumn3d": "forceBeamColumn",
+    "ForceBeamColumn2dThermal": "forceBeamColumn",
+    "ForceBeamColumn3dThermal": "forceBeamColumn",
+    "DispBeamColumnNL2d": "dispBeamColumn",
+    "DispBeamColumnNL3d": "dispBeamColumn",
+    "DispBeamColumnAsym3d": "dispBeamColumn",
+    "DispBeamColumn2dThermal": "dispBeamColumn",
+    "DispBeamColumn3dThermal": "dispBeamColumn",
+    "TimoshenkoBeamColumn2d": "dispBeamColumn",
+    "TimoshenkoBeamColumn3d": "dispBeamColumn",
+    "ModElasticBeam3d": "elasticBeamColumn",
+}
+
+#: ``ops.eleType`` classes that neither give nor take away a rotation at
+#: the nodes they touch, as a truss does not (#2407).
+#: ``ASDEmbeddedNodeElement`` ties a node to a solid's translations, and
+#: with ``-rot`` its rotation to the solid's rotation: it constrains the
+#: slot a beam made a rotation, it does not change what that slot holds.
+#: A node it alone touches is touched by no rotational element, so its
+#: rotation slots still refuse.
+_ROTATION_NEUTRAL_LIVE_CLASSES: "frozenset[str]" = frozenset({
+    "ASDEmbeddedNodeElement",
+})
 
 #: Live class -> the slot of the FEM (Gmsh) connectivity each of its
 #: ``eleNodes`` holds, for a class whose node order is not Gmsh's. The
@@ -650,7 +696,7 @@ class LiveDomainFacts:
     Each fact is read from the live domain, never inferred from the
     FEMData: ``getNDM()``, ``getNDF(node)`` for each node a record names,
     and ``eleType`` / ``eleNodes`` of every element for the rotation
-    roles (:data:`_TOKEN_FOR_LIVE_CLASS`). Each recorded node's
+    roles (:meth:`rotation_roles`). Each recorded node's
     ``nodeCoord`` must be the FEM node's first ``ndm`` coordinates, so the
     tag names the same node in both. ``lineage`` is the archive's, so the
     snapshot check is the archive's own.
@@ -1036,23 +1082,40 @@ class LiveDomainFacts:
 
     def rotation_roles(self, node_ids: "Iterable[int]") -> "RotationRoles":
         """The rotation roles of ``node_ids`` under the live domain's
-        element classes, by the family tables the bridge path uses."""
+        element classes, by the family tables the bridge path uses.
+
+        A class is typed by :data:`_TOKEN_FOR_LIVE_CLASS`, else by
+        :data:`_ROTATION_TOKEN_FOR_LIVE_CLASS`; any other class is unknown
+        and blocks, except a :data:`_ROTATION_NEUTRAL_LIVE_CLASSES` one,
+        whose nodes count as touched and nothing more."""
+        import dataclasses
+
         import numpy as np
 
         from ._readback import _CLASS_FOR_TOKEN, _roles_from_rows
 
         ops = self._ops
+        node_ids = [int(n) for n in node_ids]
         by_class: "dict[str, list[int]]" = {}
         for tag in ops.getEleTags():  # type: ignore[attr-defined]
             name = str(ops.eleType(int(tag)))  # type: ignore[attr-defined]
             by_class.setdefault(name, []).extend(
                 int(n) for n in ops.eleNodes(int(tag)))  # type: ignore[attr-defined]
         rows = []
+        neutral: "set[int]" = set()
         for name, nodes in by_class.items():
-            token = _TOKEN_FOR_LIVE_CLASS.get(name)
+            if name in _ROTATION_NEUTRAL_LIVE_CLASSES:
+                neutral.update(nodes)
+                continue
+            token = (_TOKEN_FOR_LIVE_CLASS.get(name)
+                     or _ROTATION_TOKEN_FOR_LIVE_CLASS.get(name))
             cls = None if token is None else _CLASS_FOR_TOKEN[token]
             rows.append((cls, name, np.unique(np.asarray(nodes, dtype=np.int64))))
-        return _roles_from_rows(rows, node_ids)
+        roles = _roles_from_rows(rows, node_ids)
+        hit = neutral.intersection(node_ids)
+        if not hit:
+            return roles
+        return dataclasses.replace(roles, touched=roles.touched | hit)
 
     def node_deck_dofs(
         self, slot_dofs: tuple[int, ...], node_ids: tuple[int, ...], *,
