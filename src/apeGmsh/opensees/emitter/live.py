@@ -319,7 +319,7 @@ def captured_engine_output(*, echo: bool) -> Iterator[EngineOutput]:
 #:   ``BezierTet10``, ``LadrunoBrick``, ``LadrunoBrick20``) and ``WARNING
 #:   LadrunoQuad -- ignoring unknown option <x>`` (unquoted; also
 #:   ``LadrunoCST``, ``LadrunoLST``): the build **creates the element
-#:   without the option** (#2524), so the gate reads the output on success
+#:   without the option**, so the gate reads the output on success
 #:   too.
 _UNKNOWN_OPTION = re.compile(
     r"unknown (?:option|flag) '([^']+)'|ignoring unknown option (\S+)")
@@ -394,9 +394,9 @@ def _fork_option_rejected(
     """The refusal of a rejected option (or option value) of ``ele_type``.
 
     ``created`` is False when the build failed the call or created no
-    element, and True when it went on without the option: the case #2524
-    refuses, since the model would otherwise run without what the user
-    asked for and nothing would say so.
+    element, and True when it went on without the option, which is refused
+    too: the model would otherwise run without what the user asked for and
+    nothing would say so.
     """
     opt, value, line = rejected
     which = f"Ladruno build {build}" if build else "unstamped build"
@@ -1416,13 +1416,13 @@ class LiveOpsEmitter:
         not the value given to one, the error names it instead of claiming
         the element is unknown (#2498). That line is read on success too:
         several classes print it and still create the element without the
-        option (:data:`_UNKNOWN_OPTION`), which is refused (#2524).
+        option (:data:`_UNKNOWN_OPTION`), which is refused.
 
         A class that prints nothing for an unknown option cannot be caught
         here. At FORK_PIN every gated class prints; LadrunoDispBeamColumn
         started to (and to fail the call) at fork 34df942c7 (WP-200), and
         a build before it drops the option in silence. No known-options
-        table restates the fork's parsers here (#2524)."""
+        table restates the fork's parsers here: it would drift from them."""
         try:
             with captured_engine_output(echo=True) as printed:
                 self._ops.element(ele_type, tag, *args)
