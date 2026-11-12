@@ -195,6 +195,27 @@ class TestRefusals:
         with pytest.raises(BridgeError, match="'Tri31'.*'FourNodeQuad'"):
             _recorders(ops)
 
+    def test_refusals_name_fem_ids_not_opensees_tags(self) -> None:
+        """The user selects FEM ids (``ids=``, the mesh); a refusal names
+        those, never the OpenSees tags they were translated to (the
+        material takes tag 1, so every element tag is shifted)."""
+        ops = _ops(quad=True)
+        tags = _element_tags(ops)
+        assert tags["quad"] != [4]  # the shift this test relies on
+        ops.recorder.declare(gauss=STRAIN, ids=(1, 4), name="s")
+        with pytest.raises(BridgeError) as ei:
+            _recorders(ops)
+        msg = str(ei.value)
+        assert "'Tri31' (element 1)" in msg, msg
+        assert "'FourNodeQuad' (element 4)" in msg, msg
+
+        ops = _ops(quad=True)
+        ops.recorder.declare(gauss=STRAIN, pg="Quad", name="s",
+                             element_class_name="Tri31")
+        with pytest.raises(BridgeError) as ei:
+            _recorders(ops)
+        assert "'FourNodeQuad' (element 4)" in str(ei.value), str(ei.value)
+
     def test_explicit_class_contradicting_a_tri_pg_refuses(self) -> None:
         ops = _ops()
         ops.recorder.declare(gauss=STRAIN, pg="TriA", name="s",

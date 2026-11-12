@@ -780,8 +780,8 @@ def _record_element_classes(
     by_ops_tag: bool,
     where: str,
 ) -> "dict[str, int]":
-    """``{C++ class: first element of it}`` over ``elem_ids``, from the
-    plan specs whose rows hold them.
+    """``{C++ class: FEM eid of its first element}`` over ``elem_ids``,
+    from the plan specs whose rows hold them.
 
     ``elem_ids`` are emitted OpenSees tags when ``by_ops_tag`` (the
     bridge translated them), else FEM eids. An element in no planned
@@ -811,10 +811,15 @@ def _record_element_classes(
         py_name = type(spec).__name__
         cap = element_capability(py_name)
         name = py_name if cap is Unknown else (cap.cpp_class_name or py_name)
-        out.setdefault(name, int(ids[hit][0]))
+        if name not in out:
+            # Report the FEM eid the user selects by (``ids=``, the mesh),
+            # never the OpenSees tag it was translated to.
+            row = int(np.flatnonzero(keys == ids[hit][0])[0])
+            out[name] = int(rows.eids[row])
     if not covered.all():
+        what = "OpenSees element tag" if by_ops_tag else "element"
         raise BridgeError(
-            f"{where}: element {int(ids[~covered][0])} belongs to no "
+            f"{where}: {what} {int(ids[~covered][0])} belongs to no "
             "planned element spec, so its class, and whether it records "
             "strain element-level or per Gauss point, is unknown."
         )
