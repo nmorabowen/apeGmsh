@@ -28,6 +28,7 @@ import {
 } from "../src/state/selectors.ts";
 import { initialState, reduce, Store, type State } from "../src/state/store.ts";
 import type { EventType } from "../src/state/types.ts";
+import { opened } from "./contour/harness.ts";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 const shoeModel = await openModel(join(fixtures, "shoebuckle.h5"));
@@ -713,5 +714,28 @@ test("Show Nodes: Enter and Alt+Enter both toggle the markers, as every display 
   for (const events of [item.events, item.altEvents ?? []]) {
     const next = events.reduce((st, e) => reduce(st, e), loaded);
     assert.equal(next.nodes.on, true, "both turn the markers on from off");
+  }
+});
+
+test("VA6d (#2766): the contour-field palette lists a derived scalar from the picker's catalog, and picking it sets the same contour", async () => {
+  const fx = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
+  const h = await opened(fx("elem_mixed.h5"), fx("elem_mixed.results.h5"));
+  try {
+    let s = reduce(h.store.get(), { type: "setPhase", at: { kind: "results", stage: 0, step: 1 } });
+    s = reduce(s, { type: "openSpotlight" });
+    s = reduce(s, { type: "setSpotlightMode", mode: "contourField" });
+    const items = spotlightViewOf(s).items.filter((i) => i.id.startsWith("val:cfield-elem-stress-"));
+    assert.deepEqual(
+      items.map((i) => i.id),
+      ["stress_xx", "stress_xy", "stress_yy", "von_mises_stress"].map((k) => `val:cfield-elem-stress-${k}`),
+    );
+    const vm = items.at(-1)!;
+    assert.equal(vm.title, "stress · von_mises_stress");
+    assert.equal(vm.detail, "Element Gauss contour, derived from stress_xx, stress_yy, stress_xy");
+    const next = vm.action.events.reduce((st, e) => reduce(st, e), s);
+    assert.deepEqual([next.contour.source, next.contour.field, next.contour.component], ["element", "stress", "von_mises_stress"]);
+  } finally {
+    h.effects.dispose();
+    h.host.close();
   }
 });

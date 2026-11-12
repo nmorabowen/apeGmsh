@@ -198,6 +198,37 @@ test("D2: a field or a component the stage does not have is refused, naming it a
   refusal({ stage: "base", contour: { field: "displacement", component: "x", source: "element" } }, d, /has no element field "displacement"/);
 });
 
+test("VA6d: a derived scalar compiles to the pick the window makes; one the tensor cannot give is refused by its name, with why", async () => {
+  const h = await open(`${FIX}elem_mixed.h5`, `${FIX}elem_mixed.results.h5`);
+  const d = describe(h.store.get());
+  const shot = shotOf({ stage: "load", step: 1, contour: { field: "stress", component: "von_mises_stress", gauss: "node" } });
+  const p = plan(shot, d);
+  assert.deepEqual(p.contour, { field: "stress", component: "von_mises_stress", label: "von_mises_stress", source: "element" });
+  assert.deepEqual(
+    p.events.filter((e) => e.type === "setContourField" || e.type === "setContourGauss").slice(-2),
+    [
+      { type: "setContourField", field: "stress", component: "von_mises_stress", source: "element" },
+      { type: "setContourGauss", mode: "node" },
+    ],
+  );
+  // The reducer takes the pick the compiler made (it checks the same catalog).
+  for (const e of p.events) h.store.dispatch(e);
+  assert.equal(h.store.get().contour.component, "von_mises_stress");
+  // A stress field offers no strain scalar: an unknown component, listed with what there is.
+  refusal({ stage: "load", contour: { field: "stress", component: "von_mises_strain" } }, d, /element field "stress" of stage "load" has no component "von_mises_strain"; its components are stress_xx \(xx\), stress_xy \(xy\), stress_yy \(yy\), von_mises_stress$/);
+  // An ambiguous or incomplete tensor: the description's refusal, by name (state/tensor.ts `derivedTensorOf` writes it).
+  const ambiguous: SetDescription = {
+    ...d,
+    stages: d.stages.map((st) => ({
+      ...st,
+      fields: st.fields.map((f) =>
+        f.name === "stress" ? { ...f, components: f.components.filter((c) => !c.derived), refusedComponents: [{ key: "von_mises_stress", reason: "group g: its components name one stress slot twice" }] } : f,
+      ),
+    })),
+  };
+  refusal({ stage: "load", contour: { field: "stress", component: "von_mises_stress" } }, ambiguous, /^element field "stress" of stage "load" cannot give "von_mises_stress": group g: its components name one stress slot twice$/);
+});
+
 test("D2: a physical group the model does not have is refused", async () => {
   const d = describe((await open(STAGED, STAGED_RESULTS)).store.get());
   refusal({ isolate: ["mesh/physical_group/Beams"] }, d, /the model has no physical group mesh\/physical_group\/Beams; its groups are mesh\/physical_group\/Col/);

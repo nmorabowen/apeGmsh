@@ -20,7 +20,8 @@ import { spectrumSource, type CaseQuantityName, type CaseRead, type SpectraStale
 import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
-import { columnOf, combinedColumn, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isNodeTopology, joinElements, type CombinedColumn } from "./state/contour.ts";
+import { columnOf, combinedColumn, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isNodeTopology, joinElements, type CombinedColumn, type ElementComponent } from "./state/contour.ts";
+import { derivedGroupValues, planeDigestOf, planeMapOf, type DerivedName, type PlaneRecovery, type TensorGroup } from "./state/tensor.ts";
 import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
@@ -33,7 +34,7 @@ import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
 import { applyTheme } from "./theme/tokens.ts";
 import { membersOf } from "./state/workspace.ts";
 import type { CombinationDraft, CombinationEdit, CombinationSaveIn, DraftCheck } from "./state/types.ts";
-import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ResultsInfo, StageElements, State, WorkspaceEdit, WorkspaceIn, WorkspacePageEdit, WorkspaceSaveIn, ZoneStatus } from "./state/types.ts";
+import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ResultsInfo, ResultsStage, StageElements, State, WorkspaceEdit, WorkspaceIn, WorkspacePageEdit, WorkspaceSaveIn, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
 
@@ -367,7 +368,10 @@ export interface StepData {
   stage: number;
   step: number;
   nodal: Record<string, Float64Array>;
-  /** V4c2a: the element component fetched with the step, or null; and its values by gauss group, (E * G,) element-major */
+  /**
+   * V4c2a: the element component fetched with the step, or null; and its values by gauss group, (E * G,) element-major.
+   * VA6d: a derived scalar's key (`von_mises_stress`), its values computed from the step's tensor read.
+   */
   element: string | null;
   gauss: Record<string, Float64Array>;
   /** The Principal card's tensor components fetched with the step, by component then group; absent with none asked */
@@ -380,6 +384,42 @@ export interface StepData {
   springs?: LadrunoSpringStep | null;
   /** Why the springs' read failed */
   springsError?: string | null;
+}
+
+/**
+ * VA6d: what a derived scalar reads with a step: its tensor components, and
+ * for each group its tensor slots, value count and the out-of-plane recovery
+ * (its element ids and the model's plane map, F1).
+ */
+interface DerivedRead {
+  name: DerivedName;
+  components: string[];
+  groups: { group: TensorGroup; n: number; plane: PlaneRecovery }[];
+}
+
+/** The read a derived element component needs, or null for a stored one; a group the stage does not list, or without its element ids, is an error. */
+function derivedReadOf(component: ElementComponent, st: ResultsStage, s: State, blobs: BlobStore): DerivedRead | null {
+  const d = component.derived;
+  if (!d) return null;
+  const map = planeMapOf(s.decls);
+  return {
+    name: d.name,
+    components: d.tensor.components,
+    groups: d.tensor.groups.map((group) => {
+      const g = st.gauss.find((x) => x.id === group.id);
+      if (!g) throw new Error(`${d.name}: stage ${st.id} has no gauss group ${group.id}`);
+      const eids = g.elementIds ? blobs.get(g.elementIds) : undefined;
+      if (!(eids instanceof Float64Array)) throw new Error(`${d.name}: the element ids of group ${group.id} are not loaded`);
+      return { group, n: g.nElements * g.nGauss, plane: { map, eids, nGauss: g.nGauss } };
+    }),
+  };
+}
+
+/** A derived scalar's values by gauss group, from one step's tensor read (state/tensor.ts `derivedGroupValues`). */
+function derivedBlocks(d: DerivedRead, tensor: Readonly<Record<string, Readonly<Record<string, Float64Array>>>>): Record<string, Float64Array> {
+  const out: Record<string, Float64Array> = {};
+  for (const { group, n, plane } of d.groups) out[group.id] = derivedGroupValues(d.name, group, n, tensor, plane);
+  return out;
 }
 
 export class Effects {
@@ -901,7 +941,10 @@ export class Effects {
     }
     // V4c2b: a node-located topology's history scan carries the plan, so main measures the values drawn.
     const plan = v.state === "element" && isNodeTopology(v.topology) ? planFor({ ...v, topology: v.topology }, s, this.blobs) : undefined;
-    this.startScan(s, want, v.component.datasets, v.component.magnitude, v.state === "element", plan);
+    // VA6d: main's scan reads stored components only, so a derived scalar's history is scanned here, step by step.
+    const derived = v.state === "element" ? derivedReadOf(v.component, s.results!.stages[(s.phase.at as { stage: number }).stage]!, s, this.blobs) : null;
+    if (v.state === "element" && derived !== null) this.startDerivedScan(s, want, derived, v.groups, plan);
+    else this.startScan(s, want, v.component.datasets, v.component.magnitude, v.state === "element", plan);
   }
 
   /** The join last checked (its key); a re-read, another field or mesh checks again. */
@@ -936,6 +979,73 @@ export class Effects {
       ? { key, ok: true, rows: j.rows, extrapolation: extrapolationVerdict(groups, cellLookup(s.decls, s.blocks, this.blobs)) }
       : { key, ok: false, code: j.code, reason: j.reason };
     queueMicrotask(() => this.store.dispatch({ type: "contourElementJoin", verdict }));
+  }
+
+  /**
+   * VA6d: the history range of a derived scalar. Main's scan reads one stored
+   * component, so this reads each step's tensor through the step reader (the
+   * read `fetchStep` makes), computes the scalar at every Gauss point and
+   * measures what is drawn: the element means, or the plan's node values for a
+   * node-located topology, as main's element scan does. One step at a time; a
+   * cancelled or replaced scan stops at its next step and never lands.
+   */
+  private startDerivedScan(s: State, key: string, d: DerivedRead, groups: readonly { id: string; nElements: number; nGauss: number }[], plan?: ExtrapPlan): void {
+    const info = s.results!;
+    const at = s.phase.at as { kind: "results"; stage: number };
+    const st = info.stages[at.stage]!;
+    const id = ++this.scanSeq;
+    this.scanRun = { id, key };
+    const total = st.time.length;
+    const report = (scan: ContourScan) => this.store.dispatch({ type: "contourScan", scan });
+    const fail = (error: string) => {
+      this.scanRun = null;
+      report({ key, status: "failed", done: 0, total, min: null, max: null, error });
+    };
+    const bridge = this.bridge;
+    queueMicrotask(async () => {
+      if (this.scanRun?.id !== id) return;
+      report({ key, status: "running", done: 0, total, min: null, max: null, error: null });
+      if (typeof bridge.readResultsStep !== "function") return fail("this build has no results reader");
+      let lo = Infinity;
+      let hi = -Infinity;
+      let lastProgress = performance.now();
+      for (let k = 0; k < total; k++) {
+        const res = await bridge
+          .readResultsStep({ path: info.path, stage: st.id, step: k, seq: -id, tensor: d.components })
+          .catch((err: unknown) => ({ ok: false as const, seq: -id, error: err instanceof Error ? err.message : String(err) }));
+        if (this.scanRun?.id !== id) return;
+        if (!res.ok) {
+          fail(res.error);
+          if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path: info.path });
+          return;
+        }
+        let r: { min: number; max: number } | null;
+        try {
+          const blocks = derivedBlocks(d, res.tensor ?? {});
+          const ordered = groups.map((g) => {
+            const b = blocks[g.id];
+            if (!b) throw new Error(`${d.name}: no values for group ${g.id}`);
+            return b;
+          });
+          r = plan ? planRange(applyPlan(plan, ordered)) : finiteRangeOf(ordered.map((b, i) => gaussCellValues(b, groups[i]!.nElements, groups[i]!.nGauss)));
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : String(err));
+        }
+        if (r && r.min < lo) lo = r.min;
+        if (r && r.max > hi) hi = r.max;
+        const now = performance.now();
+        if (k + 1 < total && now - lastProgress >= 100) {
+          lastProgress = now;
+          report({ key, status: "running", done: k + 1, total, min: null, max: null, error: null });
+        }
+      }
+      this.scanRun = null;
+      const finite = lo <= hi;
+      const min = finite ? lo : null;
+      const max = finite ? hi : null;
+      this.scanCache.set(key, { min, max, total });
+      report({ key, status: "done", done: total, total, min, max, error: null });
+    });
   }
 
   private startScan(s: State, key: string, components: string[], magnitude: boolean, element = false, plan?: ExtrapPlan): void {
@@ -1115,6 +1225,9 @@ export class Effects {
     // rows joined the mesh of a verified file: `contourView` is `element` for no other).
     const v = contourView(s);
     const element = v.state === "element" ? v.component.key : null;
+    // VA6d: a derived scalar is no dataset: its tensor components are read with the step (the Principal card's
+    // `tensor` read) and the scalar computed at every Gauss point when the step lands (`fetchStep`).
+    const derived = v.state === "element" ? derivedReadOf(v.component, st, s, this.blobs) : null;
     // The Gauss markers place beam stations from any one component's slab (the stations do not depend on it).
     const lineDiagram =
       s.lineDiagram.on && s.lineDiagram.component !== null && st.lineStations?.includes(s.lineDiagram.component)
@@ -1123,10 +1236,12 @@ export class Effects {
           ? (st.lineStations?.[0] ?? null)
           : null;
     // The Principal card reads the components of its tensor field (a verified file's only: `principalFieldOf`).
-    const components = s.principal.on ? principalFieldOf(s)?.components : undefined;
-    const tensor = components?.length ? components : null;
+    const components = [...new Set([...((s.principal.on ? principalFieldOf(s)?.components : undefined) ?? []), ...(derived?.components ?? [])])];
+    const tensor = components.length ? components : null;
     const springs = s.springs.on && (st.springs ?? 0) > 0;
-    const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
+    // VA6d: a derived scalar's step also names the model's plane map, so a model re-read that changes it is fetched again.
+    const plane = derived !== null ? `|plane:${planeDigestOf(s.decls)}` : "";
+    const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}${plane}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
     const key = `${base}|${springs ? "springs" : ""}`;
     // The card turned off keeps the step fetched with its springs: they are only not drawn, and nothing is re-read.
     if (key === this.stepKey || (!springs && this.stepKey === `${base}|springs`)) return;
@@ -1134,7 +1249,7 @@ export class Effects {
     const seq = ++this.stepSeq;
     this.step = null;
     // Not from inside this listener: the other listeners have not seen `s` yet.
-    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor, springs));
+    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor, springs, derived));
   }
 
   private async fetchStep(
@@ -1147,6 +1262,7 @@ export class Effects {
     lineDiagram: LineStationComponent | null = null,
     tensor: string[] | null = null,
     springs = false,
+    derived: DerivedRead | null = null,
   ): Promise<void> {
     if (seq !== this.stepSeq) return;
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "loading", error: null } });
@@ -1160,7 +1276,8 @@ export class Effects {
         stage: stageId,
         step,
         seq,
-        ...(element !== null ? { element } : {}),
+        // A derived scalar is computed here from the tensor read, never asked of main by name.
+        ...(element !== null && derived === null ? { element } : {}),
         ...(lineDiagram !== null ? { lineDiagram } : {}),
         ...(tensor !== null ? { tensor } : {}),
         ...(springs ? { springs } : {}),
@@ -1174,12 +1291,22 @@ export class Effects {
       if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path });
       return;
     }
+    let gauss = res.gauss ?? {};
+    if (derived !== null) {
+      // VA6d: the derived scalar at every Gauss point of each group, where the element component would be.
+      try {
+        gauss = derivedBlocks(derived, res.tensor ?? {});
+      } catch (err) {
+        this.store.dispatch({ type: "resultStep", status: { stage, step, status: "failed", error: err instanceof Error ? err.message : String(err) } });
+        return;
+      }
+    }
     this.step = {
       stage,
       step,
       nodal: res.nodal,
       element,
-      gauss: res.gauss ?? {},
+      gauss,
       ...(res.tensor ? { tensor: res.tensor } : {}),
       lineDiagram: res.lineDiagram ?? null,
       lineDiagramError: res.lineDiagramError ?? null,

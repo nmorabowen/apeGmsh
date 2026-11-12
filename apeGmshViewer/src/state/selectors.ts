@@ -18,6 +18,7 @@ import {
   componentOf,
   contourKeysOf,
   elementComponentOf,
+  elementContourFields,
   gaussFields,
   elementTopology,
   fieldsOf,
@@ -822,7 +823,8 @@ export function contourView(s: State): ContourView {
 
 /**
  * The field picker's rows: the nodal fields of the results stage shown, and
- * the refused components; V4c2a: its element fields (a refused one says why),
+ * the refused components; V4c2a: its element fields (a refused one says why;
+ * VA6d: with the derived scalars of each field's tensor, `elementContourFields`),
  * and whether the file's element rows are verified.
  */
 export function contourFieldsOf(s: State): {
@@ -838,7 +840,7 @@ export function contourFieldsOf(s: State): {
     return f.ok ? { fields: f.fields, refused: [], elements: [], elementsVerified: false } : null;
   }
   const st = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
-  return st ? { fields: fieldsOf(st), refused: st.refusedNodal, elements: gaussFields(st.gauss), elementsVerified: elementVerdictOf(s.results!).verified } : null;
+  return st ? { fields: fieldsOf(st), refused: st.refusedNodal, elements: elementContourFields(st.gauss), elementsVerified: elementVerdictOf(s.results!).verified } : null;
 }
 
 // -- V4d: the deformed shape ----------------------------------------------------
