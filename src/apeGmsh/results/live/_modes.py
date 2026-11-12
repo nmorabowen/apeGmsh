@@ -77,8 +77,11 @@ def capture_live_modes(
     rotation. A rotation slot the live classes cannot settle (a class the
     tables do not know touches the node, or no rotational element does)
     refuses by node, slot and class, rather than writing 0.0 over a
-    rotation (#2407), unless ``ops.getFixedDOFs`` lists every rotation DOF
-    of the node: a fixed DOF's modal value is 0, so 0.0 is written there.
+    rotation (#2407), unless every rotation DOF of the node is fixed
+    (``ops.getFixedDOFs``) with no equation (``ops.nodeDOFs`` -1, as under
+    no handler, ``Plain`` or ``Transformation``): its modal value is then
+    exactly 0, and 0.0 is written there. Under ``Penalty`` or ``Lagrange``
+    a fixed DOF keeps an equation and moves, so it refuses.
 
     The file is stamped (``INFO/PROVENANCE``) against the model archive:
     a bridge archive with both ``model_hash`` and ``fem_hash``, a bare
@@ -269,8 +272,8 @@ def _capture(
 
     layouts, rotations, unresolved = _live_slots(facts, node_ids, ndf_of, ndm)
     layout_of = dict(zip((int(n) for n in node_ids), layouts))
-    # A rotation slot a single-point constraint fixes has a 0 modal value
-    # whatever it means, so the 0.0 written there is the live value.
+    # A rotation slot fixed with no equation has a 0 modal value whatever
+    # it means, so the 0.0 written there is the live value.
     unresolved = [(n, why) for n, why in unresolved
                   if not _rotations_fixed(ops, n, layout_of[n])]
     _refuse_unresolved(unresolved, layout_of)
@@ -290,14 +293,19 @@ def _capture(
 
 
 def _rotations_fixed(ops: Any, node: int, layout: "tuple[int, ...]") -> bool:
-    """Whether ``ops.getFixedDOFs(node)`` lists every DOF of ``node`` that
-    its layout lays on a rotation slot. A fixed DOF's eigenvector entry is
-    0, so writing 0.0 there is exact. A slot an ``equalDOF`` or
-    ``rigidLink`` ties is not fixed, and is not settled here. Asked only
-    of a node whose slot is otherwise unsettled."""
-    dofs = {d + 1 for d, slot in enumerate(layout) if slot >= 3}
+    """Whether every DOF of ``node`` that its layout lays on a rotation
+    slot is fixed and has no equation: ``ops.getFixedDOFs(node)`` lists it
+    and ``ops.nodeDOFs(node)`` numbers it -1. Only then is its eigenvector
+    entry exactly 0, so writing 0.0 there is exact (no handler, ``Plain``
+    or ``Transformation``). Under ``Penalty`` or ``Lagrange`` a fixed DOF
+    keeps an equation and moves in the modes, and a slot an ``equalDOF``
+    or ``rigidLink`` ties is not fixed: neither is settled here. Asked
+    after the solve, of a node whose slot is otherwise unsettled."""
+    dofs = [d + 1 for d, slot in enumerate(layout) if slot >= 3]
     fixed = {int(v) for v in np.asarray(ops.getFixedDOFs(int(node))).ravel()}
-    return bool(dofs) and dofs <= fixed
+    eqs = [int(v) for v in np.asarray(ops.nodeDOFs(int(node))).ravel()]
+    return bool(dofs) and all(
+        d in fixed and d <= len(eqs) and eqs[d - 1] == -1 for d in dofs)
 
 
 def _refuse_unresolved(

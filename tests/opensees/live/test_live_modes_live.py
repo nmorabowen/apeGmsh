@@ -525,6 +525,74 @@ def test_a_tied_rotation_slot_still_refuses(tie: str, opspy: Any, tmp_path: Path
     assert np.abs(np.array([ops.nodeEigenvector(4, k)[3:] for k in range(1, 5)])).max() > 0.0
 
 
+def _bearing_tail(ops: Any) -> FEMData:
+    """Delta review F1: a 2-D cantilever 1-2-3, a beam 3-5 and an
+    ``elastomericBearingPlasticity`` 5-4 with node 4 fixed. Node 5 is in
+    the live domain only; node 4 is a FEM node whose rz the unknown
+    bearing class alone touches."""
+    xy = np.array([[0.0, 0.0], [1.5, 0.0], [3.0, 0.0], [3.0, -0.7]])
+    fem = _fem(xy, {1: ("Line 2", 1, [[1, 2], [2, 3]], [1, 2])}, "live_modes_bearing")
+    _cantilever_2d(ops, xy[:3])
+    ops.node(5, 3.0, -0.5)
+    ops.node(4, 3.0, -0.7)
+    ops.element("elasticBeamColumn", 4, 3, 5, A, E, I_Z, 1)
+    ops.uniaxialMaterial("Elastic", 1, 1.0e6)
+    ops.element("elastomericBearingPlasticity", 3, 5, 4, 1.0e6, 1.0e3, 0.05,
+                0.0, 1.0, "-P", 1, "-Mz", 1)
+    ops.fix(4, 1, 1, 1)
+    return fem
+
+
+def _refuses_node_4_rz(fem: FEMData, ops: Any, tmp: Path) -> None:
+    out = tmp / "modes.ladruno"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match=(
+                r"capture_live_modes: node 4's rotation slots \['rotation_z'\] "
+                r"cannot be settled: a ElastomericBearingPlasticity2d touches it")):
+            capture_live_modes(fem, 2, out, ops=ops, solver="-fullGenLapack")
+    assert not out.exists()
+
+
+def test_a_fixed_slot_with_no_equation_reads_its_zero(opspy: Any, tmp_path: Path) -> None:
+    """The bearing tail with no handler: node 4 is fixed and numbered -1,
+    so its rz is 0 in every mode, and the capture writes it."""
+    ops = opspy
+    fem = _bearing_tail(ops)
+    p, archive, spy = _capture(fem, ops, 2, tmp_path)
+    assert list(ops.nodeDOFs(4)) == [-1, -1, -1]
+    _check_file(p, archive, spy, ops, 2, rotation_nodes={1, 2, 3, 4}, ndm=2)
+
+
+def test_a_fixed_slot_under_penalty_refuses(opspy: Any, tmp_path: Path) -> None:
+    """Delta review F1: under ``constraints Penalty`` a fixed DOF keeps an
+    equation (``nodeDOFs`` is no -1) and moves in the modes: node 4's live
+    rz is not 0, so the capture refuses it rather than writing 0.0."""
+    ops = opspy
+    fem = _bearing_tail(ops)
+    ops.constraints("Penalty", 1.0e8, 1.0e8)
+    _refuses_node_4_rz(fem, ops, tmp_path)
+    assert -1 not in list(ops.nodeDOFs(4))
+    assert abs(ops.nodeEigenvector(4, 1)[2]) > 0.0
+
+
+def test_a_fixed_slot_under_lagrange_refuses(opspy: Any, tmp_path: Path) -> None:
+    """Delta review F1: ``constraints Lagrange`` also keeps an equation
+    (a multiplier) at a fixed DOF, so the slot is not settled by the fix
+    and refuses."""
+    from apeGmsh.opensees.emitter.live import get_backend_info
+
+    if get_backend_info().kind == "stock":
+        pytest.skip("stock openseespy 3.7.1 exits the process in eigen under "
+                    "constraints Lagrange (DOF_Group::setNodeAccel: 0 Node "
+                    "Pointer); the fake-ops case covers it there")
+    ops = opspy
+    fem = _bearing_tail(ops)
+    ops.constraints("Lagrange")
+    _refuses_node_4_rz(fem, ops, tmp_path)
+    assert -1 not in list(ops.nodeDOFs(4))
+
+
 # ---------------------------------------------------------------------------
 # Refusals
 # ---------------------------------------------------------------------------

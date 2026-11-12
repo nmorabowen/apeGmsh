@@ -87,6 +87,8 @@ class FakeOps:
         self.solved: "list[int]" = []
         #: ``{node: [dof, ...]}`` the ``fix`` commands hold (1-based).
         self.fixed: "dict[int, list[int]]" = {}
+        #: The handler keeps an equation at a fixed DOF (Penalty, Lagrange).
+        self.fixed_keep_equations = False
         #: The arguments of each ``eigen`` call.
         self.calls: "list[tuple[Any, ...]]" = []
 
@@ -113,6 +115,13 @@ class FakeOps:
 
     def getFixedDOFs(self, n: int) -> list[int]:
         return list(self.fixed.get(n, []))
+
+    def nodeDOFs(self, n: int) -> list[int]:
+        """-1 at a fixed DOF (no equation) unless the handler keeps one;
+        some equation number elsewhere."""
+        fixed = set(self.fixed.get(n, []))
+        return [-1 if d + 1 in fixed and not self.fixed_keep_equations
+                else 100 * n + d for d in range(self.ndf[n])]
 
     def eigen(self, *args: Any) -> list[float]:
         self.calls.append(args)
@@ -327,13 +336,19 @@ def test_a_fixed_rotation_slot_is_written_as_zero(tmp_path: Path) -> None:
                 assert comps[f"rotation_{a}"][n] == float(ops.vectors[(n, k)][3 + d])
 
 
-@pytest.mark.parametrize("fixed", [[], [1, 2, 3], [1, 2, 3, 4, 5]],
-                         ids=["none", "translations", "two-rotations"])
+@pytest.mark.parametrize("fixed, keep", [
+    ([], False), ([1, 2, 3], False), ([1, 2, 3, 4, 5], False),
+    ([1, 2, 3, 4, 5, 6], True),
+], ids=["none", "translations", "two-rotations", "fixed-with-equations"])
 def test_a_rotation_slot_not_all_fixed_still_refuses(
-    fixed: "list[int]", tmp_path: Path,
+    fixed: "list[int]", keep: bool, tmp_path: Path,
 ) -> None:
+    """Delta review F1: a fixed DOF the handler keeps an equation for
+    (Penalty, Lagrange: ``nodeDOFs`` is no -1) moves in the modes, so it
+    refuses like an unfixed one."""
     fem, ops = _truss_tail()
     ops.fixed[11] = fixed
+    ops.fixed_keep_equations = keep
     _refuses(fem, ops, tmp_path / "modes.ladruno",
              rf"node 11's rotation slots {_ROT3} cannot be settled")
 
