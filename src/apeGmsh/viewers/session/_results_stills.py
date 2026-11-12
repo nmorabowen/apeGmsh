@@ -44,6 +44,7 @@ from apeGmsh.results.readers._ladruno_element_io import (
     parse_blocks,
     resolve_generic_gauss_blocks,
 )
+from apeGmsh.results.readers._ladruno_multi import discover_partition_files
 
 from .._stills import _DEFAULT_WINDOW, _SKIP_ENV, _env_skips
 from ..render import (
@@ -140,12 +141,8 @@ def render_results_pack(
     ``reactions.png`` (static stages with reactions), ``history.png``
     (matplotlib, at the extrema node).
 
-    An unscoped multi-stage Results packs its last stage and warns
-    once (#1750).
-
-    On Windows the pack is ONE ``apegmsh-view/1`` spec drawn by
-    apeGmshViewer (:func:`app_pack`, G5), from the ``.ladruno``
-    :attr:`Results.path` names (R22b).
+    An unscoped multi-stage Results packs its last stage and warns once
+    (#1750). On Windows it is ONE ``apegmsh-view/1`` spec (:func:`app_pack`, G5).
     """
     if _app_backend():
         files = None if _env_skips() else results_files(results, "render_pack")
@@ -639,28 +636,36 @@ def _app_contour(results: Any, stage_id: str, component: str) -> dict[str, str]:
 def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
     """R16b: the app names a ``.ladruno`` Gauss column ``<token>/<label>`` (the file's own
     COMP_NAMES label) in the element field ``<token>`` (``reader/ladrunoElements.ts``):
-    the column this reader reads as ``component`` (``_block_canonicals``), one in the
-    file or refused. The mode is v1's averaged still: ``gauss_cell_averaged`` at one
-    Gauss point, else ``gauss_node``. Any other source reaches here only under
-    ``APEGMSH_SKIP_VIEWER=1`` (``results_files`` refuses it), so nothing is drawn."""
+    the column this reader reads as ``component`` (``_block_canonicals``), one in every
+    part of the set the app opens, or refused. A block renamed in place (the shell
+    families, ``_name_shell_blocks``) keeps the file's label at the same position. The
+    mode is v1's averaged still: ``gauss_cell_averaged`` at one Gauss point, else
+    ``gauss_node``. Any other source is drawn nothing, so it passes only under the skip."""
     import h5py
 
     if results.path is None or Path(results.path).suffix.lower() != ".ladruno":
+        if not _env_skips():
+            raise ContourDataError(f"a stored Gauss component is drawn from a .ladruno only (R22b); {results.path} is not one")
         return {"field": component, "component": component, "source": "element"}
     hits: set[tuple[str, str, bool]] = set()
     n_gauss = 0
-    with h5py.File(results.path, "r") as h5:
-        for stage in (h5[k] for k in h5 if k.startswith("MODEL_STAGE[")):
-            on = stage["RESULTS/ON_ELEMENTS"] if "RESULTS/ON_ELEMENTS" in stage else {}
-            for token, key in ((t, k) for t in on if not is_fiber_token(t) for k in on[t]):
-                try:
-                    blocks = parse_blocks(on[token][key])
-                except (KeyError, ValueError):
-                    continue
-                gauss = [b for b in resolve_generic_gauss_blocks(blocks, token=token, bucket_key=key) if b.gauss_id >= 0]
-                for b, label in ((b, n) for b in gauss for n, c in zip(b.comp_names, _block_canonicals(token, b)) if c == component):
-                    hits.add((token, label, b.catalog_named))
-                    n_gauss = max(n_gauss, len(gauss))
+    for part in discover_partition_files(results.path):
+        with h5py.File(part, "r") as h5:
+            for stage in (h5[k] for k in h5 if k.startswith("MODEL_STAGE[")):
+                on = stage["RESULTS/ON_ELEMENTS"] if "RESULTS/ON_ELEMENTS" in stage else {}
+                for token, key in ((t, k) for t in on if not is_fiber_token(t) for k in on[t]):
+                    try:
+                        blocks = parse_blocks(on[token][key])
+                    except (KeyError, ValueError):
+                        continue
+                    filed = {(o.col_start, o.gauss_id): o.comp_names for o in blocks}
+                    gauss = [b for b in resolve_generic_gauss_blocks(blocks, token=token, bucket_key=key) if b.gauss_id >= 0]
+                    for b in gauss:
+                        own = filed.get((b.col_start, b.gauss_id)) if b.catalog_named else b.comp_names
+                        own = own if own is not None and len(own) == len(b.comp_names) else None
+                        for i in (i for i, c in enumerate(_block_canonicals(token, b)) if c == component):
+                            hits.add((token, own[i] if own else b.comp_names[i], own is None))
+                            n_gauss = max(n_gauss, len(gauss))
     if len(hits) != 1 or next(iter(hits))[2]:
         raise ContourDataError(
             f"stored Gauss component {component!r} is not one column the app names in "
@@ -792,13 +797,9 @@ def app_pack_spec(
     camera: str,
     window_size: tuple[int, int],
 ) -> dict[str, Any]:
-    """G5: the canned pack as ONE ``apegmsh-view/1`` spec (R23-R28).
-
-    ``mesh``, then ``contour`` and ``deformed`` at the last step of the
-    pack's stage with the default component; ``deformed`` only when a
-    displacement is recorded. ``reactions`` is dropped (G1, R26), and
-    ``history.png`` stays matplotlib (G6, R27), outside the spec.
-    """
+    """G5: the canned pack as ONE ``apegmsh-view/1`` spec (R23-R28): ``mesh``, then
+    ``contour`` and ``deformed`` (only with a displacement) at the last step with the
+    default component. No ``reactions`` (G1); ``history.png`` stays matplotlib (G6)."""
     shots = [app_shot_for_view(
         results, name="mesh", view="mesh", component=None, step=-1,
         deform=None, camera=camera,
@@ -839,13 +840,9 @@ def app_pack(
     camera: Optional[str] = None,
     window_size: tuple[int, int] = _DEFAULT_WINDOW,
 ) -> tuple[Path, ...]:
-    """``results.render_pack`` drawn by apeGmshViewer from ``files`` (Windows).
-
-    Writes ``<shot>.png`` per shot of :func:`app_pack_spec`, the app's
-    ``manifest.json`` (the record of what was drawn, ADR 0128 D3), and
-    ``history.png``. Returns the PNG paths in pack order; ``()`` only
-    under ``APEGMSH_SKIP_VIEWER=1``.
-    """
+    """``results.render_pack`` drawn by apeGmshViewer from ``files`` (Windows): a PNG
+    per shot of :func:`app_pack_spec`, the app's ``manifest.json`` (ADR 0128 D3) and
+    ``history.png``; the PNG paths in pack order, ``()`` only under the skip."""
     _warn_if_unscoped(results, "render_pack")
     _require_fem(results, "render_pack")
     if files is None or _env_skips():

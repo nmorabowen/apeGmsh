@@ -151,6 +151,79 @@ def test_a_column_in_two_tokens_is_refused(app_backend, quad_set, tmp_path):
     assert app_backend.specs == []
 
 
+_SHELL_LABELS = ("p11", "p22", "p12", "m11", "m22", "m12", "q1", "q2")
+
+
+def _add_shell_resultants(path: Path) -> None:
+    """The quad as a ShellMITC4 whose only element result is ``stresses``: the shell
+    resultant family the fork's shells tag per Gauss point (``p11..q2``), which the
+    reader renames in place to the catalog's names."""
+    shell, quad = "53-ShellMITC4[201:0", "31-FourNodeQuad[201:0"
+    with h5py.File(path, "r+") as f:
+        model = f["MODEL_STAGE[1]/MODEL/ELEMENTS"]
+        model.move(quad + "]", shell + "]")
+        on = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
+        on.move("stress", "stresses")
+        on["stresses"].move(quad + ":0]", shell + ":0]")
+        for token in ("strain", "force"):
+            del on[token]
+        bucket = on["stresses"][shell + ":0]"]
+        bucket["COLUMN_MAP"].attrs["COMP_NAMES"] = np.bytes_("\n".join([",".join(_SHELL_LABELS)] * 4))
+        bucket["COLUMN_MAP/NUM_COMP"][...] = len(_SHELL_LABELS)
+        bucket.attrs["NUM_COLUMNS"] = np.array([4 * len(_SHELL_LABELS)], dtype=np.int32)
+        del bucket["DATA"]
+        bucket["DATA"] = np.arange(2 * 4 * len(_SHELL_LABELS), dtype=float).reshape(2, 1, -1)
+
+
+@pytest.mark.parametrize("component, label", [("membrane_force_xx", "p11"), ("transverse_shear_yz", "q2")])
+def test_shell_resultant_is_the_files_own_label(app_backend, quad_set, tmp_path, component, label):
+    """Review F1: the reader names a shell block by the catalog in place; the app reads
+    the file's label at that position (``stresses/p11``), so the shot names it."""
+    _add_shell_resultants(quad_set)
+    with Results.from_ladruno(quad_set) as r:
+        assert component in r.inspect.components(stage=r.stages[0].id)["gauss"]
+        r.render(tmp_path / "s.png", view="contour", component=component)
+    (shot,) = app_backend.specs[0]["shots"]
+    assert shot["contour"] == {"field": "stresses", "component": f"stresses/{label}", "source": "element", "gauss": "node"}
+
+
+def _strip_elements(path: Path) -> None:
+    with h5py.File(path, "r+") as f:
+        on = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
+        for token in list(on):
+            del on[token]
+
+
+@pytest.mark.parametrize("opened", [0, 1])
+def test_a_partitioned_set_is_scanned_whole(app_backend, quad_set, tmp_path, opened):
+    """Review F2: the app opens every part of the set; the Gauss buckets sit in part 1
+    only, and either part names the same column."""
+    from apeGmsh.viewers.session._results_stills import _app_contour
+
+    parts = [tmp_path / f"q.part-{i}.ladruno" for i in (0, 1)]
+    for i, p in enumerate(parts):
+        shutil.copy(_FIXTURE, p)
+        with h5py.File(p, "r+") as f:
+            f["INFO"].attrs.update({"NUM_PARTITIONS": [2], "PARTITION_ID": [i], "PARTITIONED": [1]})
+    _strip_elements(parts[0])
+    with Results.from_ladruno(parts[opened]) as r:
+        assert _app_contour(r, r.stages[0].id, "stress_xx") == {
+            "field": "stress", "component": "stress/sigma11", "source": "element", "gauss": "node",
+        }
+
+
+def test_shot_for_a_source_the_app_cannot_open_is_refused(quad_set, tmp_path, monkeypatch):
+    """Review F3: ``app_shot_for_view`` is public; without the skip, a Gauss shot of a
+    source that is not a ``.ladruno`` is refused, never a made-up contour."""
+    from apeGmsh.viewers.session._results_stills import app_shot_for_view
+
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    with Results.from_ladruno(quad_set) as r:
+        monkeypatch.setattr(type(r), "path", property(lambda self: tmp_path / "quad.h5"))
+        with pytest.raises(ValueError, match="R22b"):
+            app_shot_for_view(r, name="s", view="contour", component="stress_xx", step=-1, deform=None, camera="iso")
+
+
 def test_skip_viewer_with_a_native_source_draws_nothing_and_does_not_refuse(app_backend, quad_set, tmp_path, monkeypatch, capsys):
     """Under APEGMSH_SKIP_VIEWER=1 any source skips (VA6b); a Gauss shot of a source the
     app cannot open is validated by Python's recorded set and never resolved against a file."""

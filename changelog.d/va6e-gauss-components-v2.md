@@ -6,8 +6,11 @@ instead of being refused (parity plan row R16b, ruled a repoint):
 
 - The shot names the app's element field: the `.ladruno` token and the file's
   own column label (`stress` and `stress/sigma11`), the column Python reads as
-  that component. A component the file holds in two columns, or one named by
-  the response catalog rather than the file, is refused by name.
+  that component. A shell resultant keeps the file's label (`stresses/p11`
+  for `membrane_force_xx`), and every part of a partitioned set is read. A
+  component the file holds in two columns, or one named by the response
+  catalog rather than the file, is refused by name, as is a Gauss shot of a
+  source that is not a `.ladruno` outside `APEGMSH_SKIP_VIEWER=1`.
 - The still keeps v1's averaged picture: `cell_averaged` for one Gauss point,
   `node` (extrapolated to the corners and averaged) for more.
 - A derived scalar such as `von_mises_stress` is still refused (R16c, G10).
