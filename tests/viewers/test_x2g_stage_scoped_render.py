@@ -49,7 +49,10 @@ _WIN = (160, 120)
 # The VTK-scene tests take ``vtk_stills`` (they run where VTK is the
 # platform's still path, G2); the ``test_app_*`` tests draw the same staged
 # run from its ``.ladruno`` on the app path (VA6e #2794 removed VA6b's pin).
-from tests.viewers.test_x2_golden_stills import app_backend, vtk_stills  # noqa: E402,F401
+from tests.viewers import test_x2_golden_stills as _G  # noqa: E402
+
+app_backend = _G.app_backend
+vtk_stills = _G.vtk_stills
 
 
 @pytest.fixture(autouse=True)
@@ -404,8 +407,8 @@ def test_single_stage_stills_are_silent(plate, tmp_path):  # noqa: F811
 # ---------------------------------------------------------------------
 
 
-def _app_shots(app_backend) -> list[dict[str, Any]]:
-    return [s for spec in app_backend.specs for s in spec["shots"] if "stage" in s]
+def _app_shots(fake) -> list[dict[str, Any]]:
+    return [s for spec in fake.specs for s in spec["shots"] if "stage" in s]
 
 
 @pytest.mark.parametrize("stage", _STAGES)

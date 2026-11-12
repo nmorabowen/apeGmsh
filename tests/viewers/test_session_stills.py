@@ -25,7 +25,9 @@ STAGE = "grav"
 # The two parity stills compare against ``results.render``'s VTK path, which
 # Linux keeps (G2); on Windows ``results.render`` is apeGmshViewer's (VA6b),
 # so they run where VTK is the platform's still path (VA6e #2794: no pin).
-from tests.viewers.test_x2_golden_stills import vtk_stills  # noqa: E402,F401
+from tests.viewers import test_x2_golden_stills as _G  # noqa: E402
+
+vtk_stills = _G.vtk_stills
 
 
 @pytest.fixture

@@ -40,7 +40,9 @@ pytest.importorskip("pyvista")
 # The still tests read VTK actors, so they take ``vtk_stills`` and run where
 # VTK is the platform's still path (G2); VA6e #2794 removed VA6b's pin. The
 # animation, session-window and re-step tests never reach the stills backend.
-from tests.viewers.test_x2_golden_stills import vtk_stills  # noqa: E402,F401
+from tests.viewers import test_x2_golden_stills as _G  # noqa: E402
+
+vtk_stills = _G.vtk_stills
 
 
 def _drawn(plotter: Any) -> list[dict[str, Any]]:
