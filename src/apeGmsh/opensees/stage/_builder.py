@@ -1204,8 +1204,8 @@ class _StageBuilder:
             )
         self._check_chain_against_run()
         for prec in self._update_parameter_records:
-            # #2377: an element spec registered after the call is checked
-            # here; one checked at the call warns nothing twice.
+            # An element spec registered after the call is checked here;
+            # a class already warned about is not warned about again.
             self._check_parameter_name(prec, stacklevel=2)
         self._check_stage_routes()
         record = StageRecord(

@@ -146,7 +146,7 @@ _SOIL_SOURCES: dict[str, str] = {
 }
 
 #: Material classes, keyed by the bridge class name.  The five soil
-#: classes come from ``material/nd_soil.SET_PARAMETER_NAMES`` (#2401).
+#: classes come from ``material/nd_soil.SET_PARAMETER_NAMES``.
 MATERIAL_PARAMETER_NAMES: dict[str, MaterialNames] = {
     # ElasticIsotropicPlaneStrain2D / PlaneStress2D / 3D, the copies an
     # element makes, inherit this body.
