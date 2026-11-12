@@ -16,7 +16,8 @@ holds the emit's model, owners included, to the one the replay reads from
 a pre-fix archive.
 
 The fork's constructor reset (#2443) is not a route check: the deck checks
-the build it runs on (#2516, ``stage_emit.MD_STATIC_RESET_GUARD``), and the
+the build it runs on (#2516, ``stage_emit.MD_STATIC_RESET_GUARD``; since
+#2518 it asks for the ``mdStageFlagPreserved`` capability), and the
 replayed deck carries that check as the bridge's deck does.  A carrier of a
 second material of the flipped class-wide group, activated after the flip,
 is a route check since #2534: it enters plastic with no
@@ -570,43 +571,45 @@ def _guard_block(lines: "list[str]", guard: "list[str]") -> str:
     return chr(10).join(guard)
 
 
-def test_the_replayed_guard_runs_at_the_pin_and_stops_on_stale(
+def test_the_replayed_guard_runs_on_the_capability_and_stops_without(
     tmp_path: Path,
 ) -> None:
-    """The replayed deck's check, on stub engines: the pin and stock run
-    on, the stale fork build 79e062367 stops by name."""
+    """The replayed deck's check, on stub engines (#2518): stock and a
+    fork whose ``ladrunoSchema`` v1 lists ``mdStageFlagPreserved`` run on;
+    a fork without it (v0, no ``ladrunoSchema``, every case of the deck
+    test's table) stops with the one message."""
     import types
+
+    from tests.opensees.integration.test_deck_md_static_guard import (
+        SCHEMA_CASES,
+        py_guard_passes,
+        tcl_guard_passes,
+    )
 
     path = tmp_path / "reset.h5"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         _fork_reset("fork").h5(str(path))
-    pin = MD_STATIC_RESET_GUARD.builds[0]
-    stale = "79e0623670c61c768357a01dff1477a4a0ef7e06"
     py = compile(_guard_block(_replay(path, "py").splitlines(), _PY_GUARD),
                  "<guard>", "exec")
     exec(py, {"ops": types.SimpleNamespace()})
-    exec(py, {"ops": types.SimpleNamespace(ladrunoBuild=lambda: pin)})
-    with pytest.raises(SystemExit) as stop:
-        exec(py, {"ops": types.SimpleNamespace(ladrunoBuild=lambda: stale)})
-    assert stop.value.code == MD_STATIC_RESET_GUARD.message
+    assert not py_guard_passes(py, None)
     tkinter = pytest.importorskip("tkinter")
-    tcl, block = tkinter.Tcl(), _guard_block(
+    block = _guard_block(
         _replay(path, "tcl", flat=True).splitlines(), _TCL_GUARD)
-    tcl.eval(block)
-    tcl.eval(f"proc ladrunoBuild {{}} {{ return {pin} }}")
-    tcl.eval(block)
-    tcl.eval(f"proc ladrunoBuild {{}} {{ return {stale} }}")
-    with pytest.raises(tkinter.TclError) as err:
-        tcl.eval(block)
-    assert str(err.value) == MD_STATIC_RESET_GUARD.message
+    tkinter.Tcl().eval(block)
+    assert not tcl_guard_passes(tkinter, block, None)
+    for name, (schema, ok) in SCHEMA_CASES.items():
+        assert py_guard_passes(py, schema) is ok, name
+        assert tcl_guard_passes(tkinter, block, schema) is ok, name
 
 
 @pytest.mark.live
 @pytest.mark.ladruno_fork
 def test_the_replayed_fork_reset_deck_on_the_fork(tmp_path: Path) -> None:
-    """``live-fork``: the replayed deck passes its check at FORK_PIN; on the
-    stale fork build (the local 79e062367) it stops by name."""
+    """``live-fork``: the replayed deck passes its check at FORK_PIN, whose
+    ``ladrunoSchema`` lists ``mdStageFlagPreserved``; on the stale fork
+    build (the local 79e062367) it stops by name."""
     from tests.opensees.integration.test_deck_md_static_guard import (
         run_guarded_head,
     )
