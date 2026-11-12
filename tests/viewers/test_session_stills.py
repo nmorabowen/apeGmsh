@@ -22,13 +22,10 @@ from tests.conftest import _open_model_from_h5
 STAGE = "grav"
 
 
-@pytest.fixture(autouse=True)
-def _vtk_backend(monkeypatch):
-    """The parity stills compare against ``results.render``'s VTK path,
-    which Linux keeps (G2); on Windows it is apeGmshViewer's (VA6b)."""
-    from apeGmsh.viewers import render as render_mod
-
-    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
+# The two parity stills compare against ``results.render``'s VTK path, which
+# Linux keeps (G2); on Windows ``results.render`` is apeGmshViewer's (VA6b),
+# so they run where VTK is the platform's still path (VA6e #2794: no pin).
+from tests.viewers.test_x2_golden_stills import vtk_stills  # noqa: E402,F401
 
 
 @pytest.fixture
@@ -126,7 +123,7 @@ def test_contour_still_writes_png(still_results, tmp_path: Path) -> None:
 
 
 def test_empty_view_still_parity_with_render_results_mesh(
-    still_results, tmp_path: Path, frames_match_or_skip,
+    vtk_stills, still_results, tmp_path: Path, frames_match_or_skip,
 ) -> None:
     """The scene-IR substrate emission reproduces the shipped grey
     still (``results.render(view='mesh')``, raw ``add_mesh``).
@@ -156,7 +153,7 @@ def test_empty_view_still_parity_with_render_results_mesh(
 
 
 def test_contour_still_parity_with_render_results(
-    still_results, tmp_path: Path, frames_match_or_skip,
+    vtk_stills, still_results, tmp_path: Path, frames_match_or_skip,
 ) -> None:
     """Decision-5 pin at the pixel level: the session's one-shot
     realize (pose before extraction, session-authored legend) and
