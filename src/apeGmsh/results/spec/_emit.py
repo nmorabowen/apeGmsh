@@ -1444,7 +1444,10 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
     beam, keeps ``section.force`` only and warns
     (:func:`_warn_line_stations_class_unknown`): any elastic beam in it
     would read empty. Before #2051 elastic beams read empty with no
-    warning.
+    warning. A class given as the OpenSees command a user types
+    (``elasticBeamColumn``, ``forceBeamColumn``, ...) stands for the
+    classes it builds (``LINE_STATION_CLASSES_FOR_COMMAND``); before
+    #2070 it warned "not listed", and ``elasticBeamColumn`` read empty.
 
     A gauss record whose ``element_class_name`` is in
     ``PER_MATERIAL_STRAIN_CLASSES`` (Tri31) records strain as
@@ -1458,6 +1461,7 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
         PER_MATERIAL_STRAIN_CLASSES,
         gauss_keyword_for_canonical,
         is_custom_rule_catalogued,
+        line_station_classes,
         mpco_gauss_group_aliases,
     )
 
@@ -1517,10 +1521,19 @@ def collect_mpco_tokens(records) -> tuple[list[str], list[str]]:
                     f"recorder."
                 )
             cls = rec.element_class_name
-            if line_stations_from_local_force(rec):
+            classes = () if cls is None else line_station_classes(cls)
+            local = {line_stations_from_local_force(
+                replace(rec, element_class_name=c)) for c in classes}
+            if len(local) > 1:
+                raise ValueError(
+                    f"Record {rec.name!r}: element_class_name {cls!r} "
+                    f"stands for classes {list(classes)} that do not share "
+                    f"a line-stations source; name the one class.")
+            if local == {True}:
                 _add(elem_tokens, seen_e, "localForce")
-            elif cls is None or not is_custom_rule_catalogued(
-                    cls, "section_force"):
+            elif not classes or not all(
+                    is_custom_rule_catalogued(c, "section_force")
+                    for c in classes):
                 _warn_line_stations_class_unknown(rec)
             continue
         # other element-level categories
