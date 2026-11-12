@@ -24,7 +24,7 @@ const opt = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`
 const root = opt("dir");
 if (!root) throw new Error("compareDoorsDriver needs --dir=");
 
-const { handlers, pageEvents, ready } = (await import(STUB)) as typeof import("./electronStub.ts");
+const { appEvents, handlers, pageEvents, ready } =(await import(STUB)) as typeof import("./electronStub.ts");
 await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "main.ts")).href);
 
 const study = join(root, "study");
@@ -78,6 +78,16 @@ renameSync(CRACKED.user, `${CRACKED.user}.away`);
 out["gone:userRead"] = plain(await call("compare:userRead", {}));
 out["gone:userReadResult"] = plain(await call("compare:userReadResult", { name: "footfall", component: "ratio" }));
 renameSync(`${CRACKED.user}.away`, CRACKED.user);
+// 4b. The compare row's own model opened as the window set another way than a switch (a second
+// instance's argv; a drop, an offer and macOS open-file take the same openPath) empties the slot (review F1).
+const second = appEvents.get("second-instance") ?? [];
+if (second.length === 0) throw new Error("main.ts listens for no second-instance");
+for (const fn of second) fn({}, [process.execPath, "main.mjs", `--file=${CRACKED.model}`], root, null);
+out["second:set"] = plain(await call("viewer:currentSet"));
+out["second:study"] = plain(await call("variants:current"));
+await all("second");
+await call("variants:switch", 0, "Uncracked");
+await call("variants:compare", 1, "Cracked");
 // 5. compare:close: every compare door refuses again.
 await call("compare:close");
 await all("closed");

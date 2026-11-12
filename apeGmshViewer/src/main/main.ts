@@ -330,8 +330,20 @@ function openPath(path: string, notify: boolean): boolean {
     closeCompare();
     study.close();
   }
+  windowLeavesCompare();
   sendStudy();
   return ok;
+}
+
+/**
+ * INV-6: the window set cannot also be the compare set. Whatever opened the
+ * compare row's own model as the window set (a second instance, a drop, an
+ * offer, macOS open-file, a model the renderer read) empties the compare slot,
+ * as `variants:switch` does, so every compare door then refuses (VU19 review F1).
+ */
+function windowLeavesCompare(): void {
+  const c = study.compare;
+  if (c !== null && study.rowOfModel(session.set?.model ?? null)?.index === c.row.index) closeCompare();
 }
 
 function openStudy(manifest: string, notify: boolean): boolean {
@@ -424,6 +436,10 @@ function kindOf(path: string): Kind | null {
 function followModel(path: string): void {
   if (kindOf(path) === "model") session.rendererOpened(path);
   else session.close();
+  if (study.compare !== null && session.set !== null && study.rowOfModel(session.set.model)?.index === study.compare.row.index) {
+    windowLeavesCompare();
+    sendStudy();
+  }
 }
 
 /**
@@ -751,6 +767,9 @@ ipcMain.handle("compare:model", async (_e, req: unknown) => {
   if (c === null || c.set.model === null) return { ok: false, slot: null, reason: "compare:model: no compare set is open" };
   const slot = slotOf(c);
   const path = c.set.model;
+  // Confined to the study again now, as the user doors are: a folder swapped for a junction since the open is refused.
+  const why = study.confine(path);
+  if (why !== null) return { ok: false, slot, reason: `compare:model: the compare set's model leaves the study: ${why}` };
   let model;
   try {
     model = await openModel(path);

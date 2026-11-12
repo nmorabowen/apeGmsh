@@ -180,6 +180,12 @@ test("the shared namespace, both ways: the window doors refuse the compare file,
   assert.ok(String(goneCol.read.detail).toLowerCase().includes(CRACKED_USER.toLowerCase()), String(goneCol.read.detail));
 });
 
+test("the compare row's own model opened as the window set by a second instance (not a switch) empties the slot: every compare door refuses (review F1)", () => {
+  assert.ok(same((answer("second:set") as { model: string }).model, join(study, "cracked", "plate_cracked.h5")), "precondition: the window set is the compare row's");
+  assert.equal((answer("second:study") as { compare: unknown }).compare, null, "main's study holds no compare row");
+  refusedAll("second", /no compare set is open/);
+});
+
 test("compare:close, a switch onto the compare row and a page load each empty the slot: every compare read is then refused", () => {
   refusedAll("closed", /no compare set is open/);
   assert.equal((answer("switch") as { ok: boolean }).ok, true);
