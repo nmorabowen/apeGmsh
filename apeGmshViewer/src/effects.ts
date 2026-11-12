@@ -21,7 +21,7 @@ import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
 import { columnOf, combinedColumn, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isNodeTopology, joinElements, type CombinedColumn, type ElementComponent } from "./state/contour.ts";
-import { derivedGroupValues, planeRecoveryMap, type DerivedName, type PlaneOf, type PlaneRecovery, type TensorGroup } from "./state/tensor.ts";
+import { derivedGroupValues, planeDigestOf, planeMapOf, type DerivedName, type PlaneRecovery, type TensorGroup } from "./state/tensor.ts";
 import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
@@ -395,14 +395,6 @@ interface DerivedRead {
   name: DerivedName;
   components: string[];
   groups: { group: TensorGroup; n: number; plane: PlaneRecovery }[];
-}
-
-/** The model's plane map (state/tensor.ts `planeRecoveryMap`), once per declarations object: a re-read model is a new object. */
-const planeMaps = new WeakMap<object, Map<number, PlaneOf>>();
-function planeMapOf(decls: State["decls"]): Map<number, PlaneOf> {
-  let m = planeMaps.get(decls);
-  if (!m) planeMaps.set(decls, (m = planeRecoveryMap(decls)));
-  return m;
 }
 
 /** The read a derived element component needs, or null for a stored one; a group the stage does not list, or without its element ids, is an error. */
@@ -1247,7 +1239,9 @@ export class Effects {
     const components = [...new Set([...((s.principal.on ? principalFieldOf(s)?.components : undefined) ?? []), ...(derived?.components ?? [])])];
     const tensor = components.length ? components : null;
     const springs = s.springs.on && (st.springs ?? 0) > 0;
-    const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
+    // VA6d: a derived scalar's step also names the model's plane map, so a model re-read that changes it is fetched again.
+    const plane = derived !== null ? `|plane:${planeDigestOf(s.decls)}` : "";
+    const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}${plane}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
     const key = `${base}|${springs ? "springs" : ""}`;
     // The card turned off keeps the step fetched with its springs: they are only not drawn, and nothing is re-read.
     if (key === this.stepKey || (!springs && this.stepKey === `${base}|springs`)) return;

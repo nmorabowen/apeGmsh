@@ -313,6 +313,31 @@ export function elementPlane(type: string, args: readonly Param[]): { plane: Pla
   return null;
 }
 
+/** `planeRecoveryMap` and its digest, once per declarations object (a re-read model is a new object). */
+const planeCache = new WeakMap<object, { map: Map<number, PlaneOf>; digest: string }>();
+function planeEntry(decls: Readonly<Record<DeclPath, Decl>>): { map: Map<number, PlaneOf>; digest: string } {
+  let e = planeCache.get(decls);
+  if (!e) {
+    const map = planeRecoveryMap(decls);
+    // FNV-1a (32-bit) over the sorted entries: deterministic across processes, unlike a salted hash.
+    let h = 0x811c9dc5;
+    const text = [...map].sort((a, b) => a[0] - b[0]).map(([id, p]) => `${id}:${p.plane}:${p.nu ?? "-"}`).join(";");
+    for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0;
+    planeCache.set(decls, (e = { map, digest: `${map.size}-${h.toString(16)}` }));
+  }
+  return e;
+}
+
+/** The model's plane map, cached per declarations object. */
+export const planeMapOf = (decls: Readonly<Record<DeclPath, Decl>>): Map<number, PlaneOf> => planeEntry(decls).map;
+
+/**
+ * A digest of the model's plane map: it changes whenever the map does (a model
+ * re-read with another plane type or ν), so a derived contour's step and scan
+ * keys, which carry it, are fetched and scanned again (#2921 review).
+ */
+export const planeDigestOf = (decls: Readonly<Record<DeclPath, Decl>>): string => planeEntry(decls).digest;
+
 /**
  * `plane_recovery_map`: `{FEM id: plane type and ν}` for the model's 2-D
  * elements, from the `/opensees` element rows (`element_meta/*` args) and the

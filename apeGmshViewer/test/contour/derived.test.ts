@@ -245,6 +245,48 @@ for (const c of SPEC_CASES) {
   });
 }
 
+// ---- a model re-read that changes the plane map draws, measures and scans again (#2921 review) ----
+
+test("a model re-read with another plane type re-fetches the derived step and re-scans its history; never the old plane's values", async () => {
+  const h = await openSet("elem_mixed.h5", "elem_mixed.results.h5");
+  const shot = shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "von_mises_stress", gauss: "cell" } });
+  const compiled = compileShot(shot, describeSet(h.store.get(), []));
+  assert.ok(compiled.ok);
+  if (!compiled.ok) return;
+  for (const e of compiled.plan.events) h.store.dispatch(e);
+  const shown = () => {
+    const s = h.store.get();
+    const at = s.phase.at;
+    const step = h.effects.currentStep();
+    const here = at?.kind === "results" && step?.stage === at.stage && step.step === at.step;
+    return viewVerdict(s, shot, compiled.plan, { contour: here, deform: true }).kind === "shown";
+  };
+  const entry = () => {
+    const k = manifestEntry(h.store.get(), { shot, png: "s.png", image: [1600, 1000], camera: { eye: [1, 1, 1], target: [0, 0, 0], up: [0, 0, 1], fov: 30 }, layout: null, blobs: h.blobs, step: h.effects.currentStep() }).contour;
+    assert.ok(k?.drawn);
+    return k as Extract<typeof k, { drawn: true }>;
+  };
+  await until(shown, "the plane-strain shot");
+  close(entry().extrema.recorded!.max.value, 33.24432282360403, "plane strain max");
+  // The same model path read again, its quads and triangles now PlaneStress (v1: sigma_zz = 0, max 35.957).
+  const bridge = (h.effects as unknown as { bridge: { openModel: (p: string) => Promise<{ ok: boolean; model?: { opensees?: { elementMeta: { args: (number | string)[][] }[] } } }> } }).bridge;
+  const read = bridge.openModel.bind(bridge);
+  bridge.openModel = async (p: string) => {
+    const r = await read(p);
+    for (const m of r.model?.opensees?.elementMeta ?? []) for (const a of m.args) a[1] = "PlaneStress";
+    return r;
+  };
+  assert.ok(await h.effects.open(fx("elem_mixed.h5")));
+  await until(() => shown() && Math.abs(entry().extrema.recorded!.max.value - 35.95657102672612) < 1e-9, "the plane-stress values after the re-read");
+  const k = entry();
+  close(k.extrema.recorded!.min.value, 8.023403267940607, "plane stress min");
+  assert.deepEqual(k.derived?.plane, { elements: 15, recorded: 0, recovered: 0, zero_exact: 15, unclassified: 0, no_nu: 0 });
+  // The history is scanned again for the new plane map, never the plane-strain range reused.
+  assert.equal(k.range.history_scan.status, "done");
+  close(k.range.min!, 5.326818938165629, "plane stress history min");
+  close(k.range.max!, 35.95657102672612, "plane stress history max");
+});
+
 // ---- refusals: by name, with why; never a value from partial components ----
 
 test("a derived name on a field without a complete tensor is refused by name with why (elem_solid records only stress_xx and stress_yy)", async () => {

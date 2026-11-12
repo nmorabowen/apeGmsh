@@ -23,7 +23,7 @@
 import type { Combined } from "../combination/evaluate.ts";
 import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
 import type { NodeTopology } from "./extrapolation.ts";
-import { DERIVED_SCALARS, derivedTensorOf, type DerivedName, type DerivedTensor, type TensorFamily } from "./tensor.ts";
+import { DERIVED_SCALARS, derivedTensorOf, planeDigestOf, type DerivedName, type DerivedTensor, type TensorFamily } from "./tensor.ts";
 import { CMAP_NAMES, type ContourCmap, type ContourRange, type ContourScan, type ContourSource, type ContourState, type DeclPath, type Decl, type GaussGroup, type GaussMode, type ResultsStage, type State } from "./types.ts";
 export { CMAP_NAMES };
 
@@ -266,7 +266,11 @@ export function contourKeysOf(s: State): { step: string; scan: string } | null {
   const st = s.results.stages[at.stage];
   // V4c2b: a node-located mode names itself too (its range is not the flat cells' range).
   const field = c.source !== "element" ? c.field : c.gauss === "cell" ? `elem:${c.field}` : `elem:${c.field}@${c.gauss}`;
-  return st ? contourKeys(s.results.path, st.id, at.step, field, c.component) : null;
+  // VA6d: a derived scalar's values depend on the model's plane map too (its zz recovery), so its keys name it:
+  // a model re-read with another plane type or ν measures and scans again, never reusing the old range.
+  const derived = st && c.source === "element" ? elementComponentOf(st, c.field, c.component)?.component.derived : undefined;
+  const component = derived ? `${c.component}|plane:${planeDigestOf(s.decls)}` : c.component;
+  return st ? contourKeys(s.results.path, st.id, at.step, field, component) : null;
 }
 
 /** A component key as a sentence names it: `magnitude`, or the dataset name. */
