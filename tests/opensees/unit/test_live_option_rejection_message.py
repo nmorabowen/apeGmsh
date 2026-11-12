@@ -393,8 +393,11 @@ def test_a_refused_element_that_cannot_be_removed_says_so() -> None:
     assert ops.tags == [1]
 
 
+_PIN_SHA = "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe"
+
+
 def test_a_taken_tag_is_not_called_a_missing_fork() -> None:
-    ops = _CreatesAnywayNoRemove(_quad_parser)
+    ops = _CreatesAnywayNoRemove(_quad_parser, build=_PIN_SHA)
     le = _bare_emitter(ops)
     with pytest.raises(RuntimeError):
         le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-bogus")
@@ -403,6 +406,56 @@ def test_a_taken_tag_is_not_called_a_missing_fork() -> None:
     msg = str(info.value)
     assert "already in the domain" in msg
     assert _FORK_REQUIRED not in msg
+
+
+class _StockTagTaken:
+    """A stock build: every fork class is unknown, and tag 7 is taken by a
+    stock element."""
+
+    def element(self, ele_type: str, _tag: int, *_args: Any) -> None:
+        sys.stderr.write(f"WARNING element type {ele_type} is unknown\n")
+        raise RuntimeError("See stderr output")
+
+    def getEleTags(self) -> list[int]:  # noqa: N802 - the OpenSees name
+        return [7]
+
+
+def test_a_taken_tag_on_a_stock_build_still_requires_the_fork() -> None:
+    """On stock the class is unknown whatever the tag: the taken-tag message
+    is a fork-build answer only (delta review D2)."""
+    le = _bare_emitter(_StockTagTaken())
+    with pytest.raises(RuntimeError, match=_FORK_REQUIRED) as info:
+        le.element("LadrunoQuad", 7, 1, 2, 3, 4, 1)
+    assert "already in the domain" not in str(info.value)
+
+
+def test_a_negative_value_after_a_positive_call_is_read_again() -> None:
+    """A parser that clamps a negative coefficient says so on that call
+    only: the sign is part of the key, so the negative call after a
+    verified positive one is still read and refused (delta review D1)."""
+
+    def clamp(args: tuple[Any, ...]) -> str:
+        i = args.index("-bulkViscosity")
+        return ("WARNING LadrunoQuad -- -bulkViscosity b1 < 0; ignoring (b1=0)\n"
+                if args[i + 1] < 0 else "")
+
+    ops = _CreatesAnyway(clamp)
+    le = _bare_emitter(ops)
+    le.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-bulkViscosity", 0.1, 1.2)
+    le.element("LadrunoQuad", 2, 1, 2, 3, 4, 1, "-bulkViscosity", 0.2, 1.2)
+    with pytest.raises(RuntimeError, match="option -bulkViscosity was ignored"):
+        le.element("LadrunoQuad", 3, 1, 2, 3, 4, 1, "-bulkViscosity", -0.1, 1.2)
+    assert ops.tags == [1, 2]
+
+
+def test_the_shape_key_reads_numpy_scalars_and_signs() -> None:
+    import numpy as np
+
+    from apeGmsh.opensees.emitter.live import _fork_signature
+
+    assert (_fork_signature("LadrunoQuad", (np.int64(1), -2, np.float64(-0.5),
+                                            0.0, "-thick", 0.2))
+            == "LadrunoQuad # -# -# # -thick #")
 
 
 def test_a_known_class_that_fails_another_call_is_not_a_missing_fork() -> None:

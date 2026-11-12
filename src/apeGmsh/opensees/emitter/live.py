@@ -420,19 +420,32 @@ def _fork_signature(
     ele_type: str, args: "tuple[int | float | str, ...]",
 ) -> str:
     """The fork gate's verification key: the shape of the call, the type
-    name followed by every argument in place, a string as itself and any
-    other value as ``#`` (``"LadrunoQuad # # # # # -thick #"``).
+    name followed by every argument in place, a string as itself, a
+    negative number as ``-#`` and any other value as ``#``
+    (``"LadrunoQuad # # # # # -thick #"``).
 
     A build can know a class but reject, or build without, one of its
     options, and whether it does depends on more than the flags: a stray
     positional token (a stock-style thickness ``0.2``, ``"PlaneStress"``)
     or a flag's string value (``-enforce al`` against ``penalty``) changes
     what the parser prints. So a call is verified only by an earlier call
-    of the same shape; numbers stay out of the key so a mesh of one element
-    kind is read once.
+    of the same shape. A number's sign is part of the shape, because a
+    parser may clamp a negative value and say so (``-bulkViscosity b1 < 0;
+    ignoring (b1=0)``); its magnitude is not, so a mesh of one element kind
+    is read once.
     """
-    return " ".join(
-        [ele_type, *(a if isinstance(a, str) else "#" for a in args)])
+    return " ".join([ele_type, *(_shape_token(a) for a in args)])
+
+
+def _shape_token(arg: object) -> str:
+    """One argument's place in :func:`_fork_signature`."""
+    if isinstance(arg, str):
+        return arg
+    try:
+        negative = float(arg) < 0  # type: ignore[arg-type]
+    except (TypeError, ValueError):  # not a number: shaped like one anyway
+        return "#"
+    return "-#" if negative else "#"
 
 
 def _fork_option_rejected(
@@ -1516,7 +1529,11 @@ class LiveOpsEmitter:
             if rejected is not None:
                 raise RuntimeError(self._option_refusal(
                     ele_type, rejected, created=False)) from e
-            if tag in (self._ele_tags() or ()):
+            # A taken tag is the cause only on a fork build: a stock build
+            # fails a fork class whatever its tag, so the fork-required
+            # message stands there.
+            if (self._backend().kind == "fork"
+                    and tag in (self._ele_tags() or ())):
                 raise RuntimeError(_fork_tag_taken(ele_type, tag)) from e
             if ele_type in self._fork_verified_types:
                 raise RuntimeError(_fork_call_failed(ele_type, tag)) from e
