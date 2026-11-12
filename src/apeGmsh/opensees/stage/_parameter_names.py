@@ -20,8 +20,11 @@ element class, under the owner ruling of 2026-11-11, "(b) + (c)":
 Every entry cites the C++ ``setParameter`` it was read from (fork checkout,
 ``ladruno`` f37e2ff19; the bodies are upstream's unless the class is a
 fork class).  A name the element matches with ``strstr`` (any name that
-*contains* ``"material"`` or ``"damp"``) is claimed by the element, so it
-is never forwarded; such a name is not decided here.  The stage-flag names
+*contains* ``"material"`` or ``"damp"``) is read as a sub-address: the
+element expects more tokens after it (a damping name, or an integration
+point and a name), which ``s.update_parameter``'s argv (the name, then at
+most a material tag) never supplies.  Such a name reaches nothing, so it
+is refused like any other no-op.  The stage-flag names
 (``materialState``, ``updateMaterialStage``) have their own route checks
 in ``stage/_builder.py`` and are not checked here.
 """
@@ -59,20 +62,18 @@ class UncataloguedParameterWarning(UserWarning):
 class ElementNames:
     """What an element class's ``setParameter`` does with a name.
 
-    ``owns`` are the names it matches with ``strcmp``.  ``claims`` are the
-    substrings it matches with ``strstr``: a name containing one is taken
-    by the element and never forwarded.  ``forwards`` is whether it hands
-    every other name to the materials it carries.  ``source`` is the
-    ``path::Class::setParameter`` it was read from.
+    ``owns`` are the names it matches with ``strcmp``.  ``sub_addresses``
+    are the substrings it matches with ``strstr`` and then reads further
+    tokens for: a name containing one is never forwarded, and with the
+    argv ``s.update_parameter`` writes it reaches nothing.  ``forwards`` is
+    whether it hands every other name to the materials it carries.
+    ``source`` is the ``path::Class::setParameter`` it was read from.
     """
 
     owns: frozenset[str]
-    claims: frozenset[str]
+    sub_addresses: frozenset[str]
     forwards: bool
     source: str
-
-    def takes(self, name: str) -> bool:
-        return name in self.owns or any(s in name for s in self.claims)
 
 
 @dataclass(frozen=True)
@@ -95,13 +96,13 @@ _FOURNODEQUAD = "SRC/element/fourNodeQuad/FourNodeQuad.cpp::FourNodeQuad::setPar
 ELEMENT_PARAMETER_NAMES: dict[str, ElementNames] = {
     "FourNodeQuad": ElementNames(
         owns=frozenset({"pressure"}),
-        claims=frozenset({"damp", "material"}),
+        sub_addresses=frozenset({"damp", "material"}),
         forwards=True,
         source=_FOURNODEQUAD,
     ),
     "Truss": ElementNames(
         owns=frozenset({"A", "rho"}),
-        claims=frozenset({"material"}),
+        sub_addresses=frozenset({"material"}),
         forwards=True,
         source="SRC/element/truss/Truss.cpp::Truss::setParameter",
     ),
@@ -109,7 +110,7 @@ ELEMENT_PARAMETER_NAMES: dict[str, ElementNames] = {
         owns=frozenset({
             "hPerm", "vPerm", "pressureUpperSide", "pressureLowerSide",
             "pressureLeftSide", "pressureRightSide", "b1", "b2"}),
-        claims=frozenset(),
+        sub_addresses=frozenset(),
         forwards=True,
         source="SRC/element/UWelements/SSPquadUP.cpp::SSPquadUP::setParameter",
     ),
@@ -131,20 +132,20 @@ ELEMENT_PARAMETER_NAMES_BY_NDM: dict[str, dict[int, ElementNames]] = {
     "elasticBeamColumn": {
         2: ElementNames(
             owns=frozenset({"E", "A", "I", "rho", "release"}),
-            claims=frozenset({"damp"}), forwards=False, source=_BEAM2D),
+            sub_addresses=frozenset({"damp"}), forwards=False, source=_BEAM2D),
         3: ElementNames(
             owns=frozenset({"E", "A", "Iz", "Iy", "G", "J",
                             "releasez", "releasey"}),
-            claims=frozenset({"damp"}), forwards=False, source=_BEAM3D),
+            sub_addresses=frozenset({"damp"}), forwards=False, source=_BEAM3D),
     },
     "LadrunoUP": {
         2: ElementNames(
             owns=frozenset({"xPerm", "yPerm"}),
-            claims=frozenset({"material"}), forwards=True,
+            sub_addresses=frozenset({"material"}), forwards=True,
             source=_LADRUNO_UP),
         3: ElementNames(
             owns=frozenset({"xPerm", "yPerm", "zPerm"}),
-            claims=frozenset({"material"}), forwards=True,
+            sub_addresses=frozenset({"material"}), forwards=True,
             source=_LADRUNO_UP),
     },
 }
@@ -161,6 +162,7 @@ def element_names(cls: str, ndm: "int | None") -> "ElementNames | None":
     if by_ndm is None or ndm is None:
         return None
     return by_ndm.get(int(ndm))
+
 
 _SOIL_SOURCES: dict[str, str] = {
     "PressureIndependMultiYield": (
@@ -240,6 +242,11 @@ def _material_takes(
     return mat_tag is not None and tag is not None and int(tag) == mat_tag
 
 
+_NOT_CATALOGUED = (
+    "{} is not in the update_parameter name catalogue "
+    "(stage/_parameter_names.py)")
+
+
 def _names(names: Iterable[str]) -> str:
     return ", ".join(sorted(names)) or "none"
 
@@ -262,23 +269,42 @@ def check_parameter_name(
     any warning, so a refused call warns nothing.
     """
     refused: list[str] = []
-    uncatalogued: set[str] = set()
+    # Each key warned about, mapped to why it cannot be decided.
+    uncatalogued: dict[str, str] = {}
     for target in targets:
         entry = element_names(target.cls, target.ndm)
         if entry is None:
-            uncatalogued.add(target.cls)
+            if target.cls not in ELEMENT_PARAMETER_NAMES_BY_NDM:
+                uncatalogued[target.cls] = _NOT_CATALOGUED.format(target.cls)
+            elif target.ndm is None:
+                uncatalogued[f"{target.cls} (ndm unknown)"] = (
+                    f"{target.cls}'s names depend on the model's ndm, "
+                    "which is not declared yet (ops.model)")
+            else:
+                uncatalogued[f"{target.cls} (ndm {target.ndm})"] = (
+                    f"{target.cls}'s names are not catalogued at "
+                    f"ndm={target.ndm}")
             continue
-        if entry.takes(name):
+        if name in entry.owns:
             continue
-        own = (f"{target.cls} takes {_names(entry.owns)}"
-               + (f" and any name containing {_names(entry.claims)}"
-                  if entry.claims else "")
-               + f" ({entry.source})")
+        own = f"{target.cls} takes {_names(entry.owns)} ({entry.source})"
+        sub = sorted(s for s in entry.sub_addresses if s in name)
+        if sub:
+            refused.append(
+                own + f"; it reads a name containing {_names(sub)} as an "
+                "address that needs more tokens after it (a damping name, "
+                "or an integration point and a name), which "
+                "s.update_parameter's argv (the name, then at most a "
+                "material tag) never supplies")
+            continue
         if not entry.forwards:
             refused.append(own + ", and forwards nothing to a material")
             continue
         if not target.materials:
-            uncatalogued.add(f"{target.cls} (no material found to forward to)")
+            key = f"{target.cls} (no material found to forward to)"
+            uncatalogued[key] = (
+                f"{target.cls} forwards {name!r} to its materials, and "
+                "none was found on the spec")
             continue
         known = [(m, t, MATERIAL_PARAMETER_NAMES.get(m))
                  for m, t in target.materials]
@@ -287,7 +313,8 @@ def check_parameter_name(
             continue
         unknown = {m for m, _t, e in known if e is None}
         if unknown:
-            uncatalogued.update(unknown)
+            uncatalogued.update(
+                {m: _NOT_CATALOGUED.format(m) for m in unknown})
             continue
         mats = "; ".join(
             f"{m} takes {_names(e.owns)}"
@@ -312,13 +339,12 @@ def check_parameter_name(
         warned = _WARNED.setdefault(owner, set())
     except TypeError:  # an owner that takes no weak reference
         warned = set()
-    fresh = sorted(uncatalogued - warned)
+    fresh = sorted(set(uncatalogued) - warned)
     warned.update(fresh)
-    for cls in fresh:
+    for key in fresh:
         warnings.warn(
-            f"{call}: {cls} is not in the update_parameter name catalogue "
-            "(stage/_parameter_names.py), so the bridge cannot tell whether "
-            f"its setParameter takes {name!r}.  The update emits; if "
+            f"{call}: {uncatalogued[key]}, so the bridge cannot tell "
+            f"whether {name!r} reaches anything.  The update emits; if "
             "OpenSees prints 'no objects were able to identify parameter', "
             "it was lost.  Warned once per class.",
             UncataloguedParameterWarning,

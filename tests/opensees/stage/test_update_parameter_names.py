@@ -355,6 +355,133 @@ def test_uncatalogued_material_behind_a_forwarding_element_warns() -> None:
     assert len(ops._stage_records[0].update_parameter_records) == 1
 
 
+def test_an_unknown_ndm_is_named_as_the_cause() -> None:
+    """``ops.model`` after the stage closes: the beam's names depend on
+    ndm, so the warning says the ndm is unknown, not that the class is
+    missing from the catalogue."""
+    ops = apeSees(_fem(), default_orientation=None)
+    transf = ops.geomTransf.Linear()
+    ops.element.elasticBeamColumn(
+        pg="bars", transf=transf, A=0.01, E=2e11, Iz=1e-4)
+    with pytest.warns(UncataloguedParameterWarning) as rec:
+        with ops.stage(name="s") as s:
+            s.update_parameter("E", 2.1e11, pg="bars")
+            _close(ops, s)
+    (w,) = [w for w in rec
+            if issubclass(w.category, UncataloguedParameterWarning)]
+    msg = str(w.message)
+    assert "elasticBeamColumn's names depend on the model's ndm" in msg
+    assert "not declared yet (ops.model)" in msg
+    assert "is not in the update_parameter name catalogue" not in msg
+
+
+# ---------------------------------------------------------------------------
+# One-token sub-addresses: damp*, material*
+# ---------------------------------------------------------------------------
+
+
+def test_damp_on_the_quad_is_refused_with_or_without_a_material() -> None:
+    """``FourNodeQuad::setParameter`` reads a name containing ``damp`` as
+    ``damp <sub-name>`` and never forwards it.  With one token it returns
+    -1; with ``material=`` the tag becomes the sub-name, which no damping
+    takes.  Either way the update reaches nothing."""
+    ops, mat = _quad()
+    with ops.stage(name="s") as s:
+        for kw in ({}, {"material": mat}):
+            with pytest.raises(BridgeError, match="containing damp"):
+                s.update_parameter("damp", 1.0, pg="soil", **kw)
+            with pytest.raises(BridgeError, match="containing damp"):
+                s.update_parameter("dampingFactor", 1.0, pg="soil", **kw)
+        _close(ops, s)
+    assert ops._stage_records[0].update_parameter_records == ()
+
+
+def test_damp_on_the_beam_is_refused() -> None:
+    ops = _beam()
+    with ops.stage(name="s") as s:
+        with pytest.raises(BridgeError, match="containing damp"):
+            s.update_parameter("dampingFactor", 0.5, pg="bars")
+        _close(ops, s)
+
+
+def test_material_address_on_the_truss_is_refused() -> None:
+    """``Truss::setParameter`` hands what follows a ``material...`` name
+    to its material; with ``material=`` that is the tag, a name no
+    material takes."""
+    ops = _truss()
+    steel = next(p for p in ops._primitives
+                 if type(p).__name__ == "ElasticMaterial")
+    with ops.stage(name="s") as s:
+        with pytest.raises(BridgeError, match="containing material"):
+            s.update_parameter("materialE", 1.0, pg="bars", material=steel)
+        _close(ops, s)
+
+
+# ---------------------------------------------------------------------------
+# LadrunoUP: zPerm only at ndm=3
+# ---------------------------------------------------------------------------
+
+
+def _hex_fem() -> FEMStub:
+    """One hex8 in ``soil`` (eid 1)."""
+    coords = [(x, y, z) for z in (0.0, 1.0) for y in (0.0, 1.0)
+              for x in (0.0, 1.0)]
+    return FEMStub(
+        nodes=_NodesStub(ids=list(range(1, 9)), coords=coords,
+                         node_pgs={"Base": [1, 2, 3, 4]}),
+        elements=_ElementsStub(elem_pgs={
+            "soil": _ElementGroupView(
+                ids=(1,), connectivity=((1, 2, 4, 3, 5, 6, 8, 7),)),
+        }),
+    )
+
+
+def _ladruno_up(ndm: int) -> apeSees:
+    ops = apeSees(_fem() if ndm == 2 else _hex_fem(),
+                  default_orientation=None)
+    ops.model(ndm=ndm, ndf=ndm + 1)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=2.0)
+    ops.element.LadrunoUP(pg="soil", material=mat, Kf=2.2e6, poro=0.4,
+                          rhoF=1.0, perm=(1e-4,) * ndm)
+    # A pressure datum, so the static deck passes the u-p gate.
+    ops.fix(pg="Left" if ndm == 2 else "Base",
+            dofs=(0,) * ndm + (1,))
+    return ops
+
+
+def _added(ops: apeSees) -> list[str]:
+    """The parameter name of each ``addToParameter`` line the deck writes."""
+    deck = TclEmitter()
+    ops.build().emit(deck)
+    return [ln.split()[4] for ln in deck.lines()
+            if ln.startswith("addToParameter ")]
+
+
+def test_ladruno_up_2d_refuses_zperm_and_hperm() -> None:
+    """``LadrunoUP::setParameter`` takes ``zPerm`` only at ndm 3 (at 2 it
+    returns -1); ``hPerm`` is an SSPquadUP name.  ``xPerm`` is its own,
+    ``E`` reaches ElasticIsotropic through the catch-all."""
+    ops = _ladruno_up(2)
+    with ops.stage(name="s") as s:
+        for name in ("zPerm", "hPerm"):
+            with pytest.raises(BridgeError,
+                               match=r"LadrunoUP takes xPerm, yPerm \("):
+                s.update_parameter(name, 1e-5, pg="soil")
+        with _silent():
+            s.update_parameter("xPerm", 1e-5, pg="soil")
+            s.update_parameter("E", 2e4, pg="soil")
+        _close(ops, s)
+    assert _added(ops) == ["xPerm", "xPerm", "E", "E"]
+
+
+def test_ladruno_up_3d_takes_zperm() -> None:
+    ops = _ladruno_up(3)
+    with _silent(), ops.stage(name="s") as s:
+        s.update_parameter("zPerm", 1e-5, pg="soil")
+        _close(ops, s)
+    assert _added(ops) == ["zPerm"]
+
+
 # ---------------------------------------------------------------------------
 # The catalogue cites its source
 # ---------------------------------------------------------------------------
