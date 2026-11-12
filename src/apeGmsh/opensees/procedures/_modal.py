@@ -47,12 +47,19 @@ def refuse_fork_verb_before_wipe(
     ``LiveOpsEmitter(wipe=True)``; the source scan in
     ``tests/opensees/unit/test_refuse_before_wipe_sites.py`` fails a
     procedure that calls a fork-only emitter method without it.
+
+    ``has_fork`` is one signal, the ``ladrunoBuild`` stamp, so a fork
+    built before that stamp (fork PR #718) is refused here too; the
+    message says so, as the chain refusal does.
     """
     if not host.capabilities().has_fork:
+        from ..emitter.live import _UNSTAMPED_FORK_NOTE
+
         raise RuntimeError(
             f"{verb} requires the Ladruno fork build of OpenSees "
-            f"({feature}); the in-process openseespy is not the fork. "
+            f"({feature}); the in-process build reads as stock. "
             "Nothing was run: the live domain is untouched."
+            + _UNSTAMPED_FORK_NOTE
         )
 
 

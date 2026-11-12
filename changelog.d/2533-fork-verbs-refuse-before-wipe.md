@@ -18,7 +18,10 @@ refuse by name, before the wipe, with the same `has_fork` verdict
 
 The message reads `apeSees.<verb> requires the Ladruno fork build of
 OpenSees (...)`. Argument errors still come first, and the fork skips the
-check. `ops.run()` on a staged model now raises `NotImplementedError`
+check. The verdict is the `ladrunoBuild` stamp, so a fork built before that
+stamp (fork PR #718) is now refused by name too, where some of these verbs
+(`analyze(profile=...)`, for one) used to run on it; the message carries the
+same "rebuild the fork" note as the chain refusal. `ops.run()` on a staged model now raises `NotImplementedError`
 before the wipe, as `ops.eigen()` already did; it used to wipe and then
 fail at the first stage. A source-scan test fails on any wiping site that
 calls a fork-only `LiveOpsEmitter` method without the check.

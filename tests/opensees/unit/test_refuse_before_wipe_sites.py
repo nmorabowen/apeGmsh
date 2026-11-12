@@ -297,10 +297,44 @@ def test_a_fork_verb_refuses_by_name_with_a_stock_chain(
     ops = _chain_frame(family, row, staged=False)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        with pytest.raises(RuntimeError, match=_verb_refusal(verb)):
+        with pytest.raises(RuntimeError, match=_verb_refusal(verb)) as err:
             drive(ops)
+    assert _UNSTAMPED in str(err.value)
     assert stock.nodes.get(USER_NODE) == USER_XYZ, stock.calls[:5]
     assert ("wipe",) not in stock.calls, stock.calls[:5]
+
+
+#: The note every "needs the fork" refusal carries (``live.py``).
+_UNSTAMPED = "predating the ladrunoBuild stamp (fork PR #718"
+
+
+class _PreStampFork(_StockDomain):
+    """A Ladruno build before fork PR #718: it has ``profiler`` but no
+    ``ladrunoBuild``, so the one backend verdict reads it as stock."""
+
+    def profiler(self, *args: Any) -> int:
+        self.calls.append(("profiler", *args))
+        return 0
+
+
+def test_a_pre_stamp_fork_is_refused_by_name_with_the_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``analyze(profile=...)`` ran on a pre-#718 fork before #2533; it is
+    now refused before the wipe, and the message says why (the review's
+    old-fork probe)."""
+    old = _PreStampFork()
+    _stand_in(monkeypatch, old)
+    ops = _chain_frame("integrator", "LoadControl", staged=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(RuntimeError,
+                           match=_verb_refusal("analyze(profile=...)")) as err:
+            ops.analyze(steps=1, profile="p.txt")
+    assert _UNSTAMPED in str(err.value)
+    assert ("wipe",) not in old.calls, old.calls[:5]
+    assert not [c for c in old.calls if c[0] == "profiler"]
+    assert old.nodes.get(USER_NODE) == USER_XYZ
 
 
 class _ForkDomain(_StockDomain):
@@ -520,19 +554,49 @@ UNGATED_FORK_METHODS = {
 }
 
 
-def _fork_emitter_methods() -> set[str]:
-    """The ``LiveOpsEmitter`` methods that need the fork: each that names a
-    ``*_FORK_REQUIRED`` message, each that calls one of those on ``self``,
-    and :data:`UNGATED_FORK_METHODS`."""
+#: Fork-only OpenSees commands no ``getattr(self._ops, ...)`` gate names.
+UNGATED_FORK_COMMANDS = {
+    "criticalTimeStep": "called bare by ``critical_time_step``",
+}
+
+
+def _live_methods() -> dict[str, ast.FunctionDef]:
     path = SRC / "apeGmsh/opensees/emitter/live.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     cls = next(n for n in tree.body
                if isinstance(n, ast.ClassDef) and n.name == "LiveOpsEmitter")
-    methods = {f.name: f for f in cls.body if isinstance(f, ast.FunctionDef)}
+    return {f.name: f for f in cls.body if isinstance(f, ast.FunctionDef)}
+
+
+def _gated(f: ast.AST) -> bool:
+    return any(isinstance(n, ast.Name) and n.id.endswith("_FORK_REQUIRED")
+               for n in ast.walk(f))
+
+
+def _fork_ops_commands() -> set[str]:
+    """The raw fork commands: each ``getattr(self._ops, "<cmd>", ...)`` in a
+    gated ``LiveOpsEmitter`` method, and :data:`UNGATED_FORK_COMMANDS`."""
+    out = set(UNGATED_FORK_COMMANDS)
+    for f in _live_methods().values():
+        if not _gated(f):
+            continue
+        for n in ast.walk(f):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id == "getattr" and len(n.args) >= 2
+                    and isinstance(n.args[1], ast.Constant)
+                    and isinstance(n.args[1].value, str)):
+                out.add(n.args[1].value)
+    return out
+
+
+def _fork_emitter_methods() -> set[str]:
+    """The ``LiveOpsEmitter`` methods that need the fork: each that names a
+    ``*_FORK_REQUIRED`` message, each that calls one of those on ``self``,
+    and :data:`UNGATED_FORK_METHODS`."""
+    methods = _live_methods()
     assert set(UNGATED_FORK_METHODS) <= set(methods)
-    fork = {name for name, f in methods.items() if any(
-        isinstance(n, ast.Name) and n.id.endswith("_FORK_REQUIRED")
-        for n in ast.walk(f))} | set(UNGATED_FORK_METHODS)
+    fork = {name for name, f in methods.items() if _gated(f)} | set(
+        UNGATED_FORK_METHODS)
     while True:
         more = {name for name, f in methods.items() if name not in fork
                 and any(isinstance(n, ast.Attribute) and n.attr in fork
@@ -543,14 +607,73 @@ def _fork_emitter_methods() -> set[str]:
         fork |= more
 
 
-def _touches_fork_method(fn: ast.AST, fork: set[str]) -> bool:
+def _root(node: ast.AST) -> str | None:
+    """The name an attribute chain hangs off (``le`` in ``le.ops.x``)."""
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _fork_attr(node: ast.AST, fork: set[str], raw: set[str]) -> bool:
+    """``x.<fork method>`` or ``x.ops.<fork command>`` / ``x._ops.<...>``."""
+    if not isinstance(node, ast.Attribute):
+        return False
+    if node.attr in fork:
+        return True
+    return (node.attr in raw and isinstance(node.value, ast.Attribute)
+            and node.value.attr in ("ops", "_ops"))
+
+
+def _helper_call(node: ast.AST, helpers: set[str]) -> bool:
+    """``self.<helper>(...)`` or ``<helper>(...)`` with an argument."""
+    if not (isinstance(node, ast.Call) and (node.args or node.keywords)):
+        return False
+    f = node.func
+    return ((isinstance(f, ast.Name) and f.id in helpers)
+            or (isinstance(f, ast.Attribute) and f.attr in helpers
+                and isinstance(f.value, ast.Name) and f.value.id == "self"))
+
+
+def _fork_helpers(trees: list[ast.AST], fork: set[str],
+                  raw: set[str]) -> set[str]:
+    """Functions in ``trees`` that reach a fork method or command through a
+    parameter (``def _h(self, le): le.complex_eigen()``), transitively."""
+    fns = [n for t in trees for n in ast.walk(t)
+           if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    helpers: set[str] = set()
+    while True:
+        more = set()
+        for fn in fns:
+            if fn.name in helpers:
+                continue
+            a = fn.args
+            params = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs}
+            params.discard("self")
+            for n in ast.walk(fn):
+                if (_fork_attr(n, fork, raw) and _root(n) in params) or (
+                        _helper_call(n, helpers) and isinstance(n, ast.Call)
+                        and any(_root(x) in params for x in [
+                            *n.args, *(k.value for k in n.keywords)])):
+                    more.add(fn.name)
+                    break
+        if not more:
+            return helpers
+        helpers |= more
+
+
+def _touches_fork_method(fn: ast.AST, fork: set[str], raw: set[str],
+                         helpers: set[str]) -> bool:
     """``fn`` reads a fork-only emitter method (``x.complex_eigen``, not
-    the bridge's own ``self.<verb>``), or dispatches by a computed name
-    (``getattr(emitter, command)``), which may reach one."""
+    the bridge's own ``self.<verb>``) or a raw fork command off the
+    emitter's module (``x.ops.criticalTimeStep``), hands an argument to a
+    helper that does (:func:`_fork_helpers`), or dispatches by a computed
+    name (``getattr(emitter, command)``), which may reach one."""
     for node in ast.walk(fn):
-        if (isinstance(node, ast.Attribute) and node.attr in fork
-                and not (isinstance(node.value, ast.Name)
-                         and node.value.id == "self")):
+        if _fork_attr(node, fork, raw) and not (
+                isinstance(node.value, ast.Name)
+                and node.value.id == "self"):
+            return True
+        if _helper_call(node, helpers):
             return True
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == "getattr" and len(node.args) >= 2
@@ -559,11 +682,19 @@ def _touches_fork_method(fn: ast.AST, fork: set[str]) -> bool:
     return False
 
 
+def _site_trees() -> list[ast.AST]:
+    """The modules that hold a wiping site, where a site's helpers live."""
+    files = {k.split(":")[0] for k in _wiping_functions()}
+    return [ast.parse((SRC / f).read_text(encoding="utf-8")) for f in
+            sorted(files)]
+
+
 def _fork_verb_sites() -> dict[str, set[str]]:
-    fork = _fork_emitter_methods()
+    fork, raw = _fork_emitter_methods(), _fork_ops_commands()
+    helpers = _fork_helpers(_site_trees(), fork, raw)
     return {key: _called_names(fn, first)
             for key, (fn, first) in _wiping_functions().items()
-            if _touches_fork_method(fn, fork)}
+            if _touches_fork_method(fn, fork, raw, helpers)}
 
 
 def test_every_fork_verb_refuses_before_the_wipe() -> None:
@@ -591,14 +722,42 @@ def test_the_fork_method_scan_sees_each_form() -> None:
             "critical_time_step", "ladruno_contact_force"} <= fork
     assert not {"eigen", "modal_properties", "analyze", "node"} & fork
 
+    raw = _fork_ops_commands()
+    assert {"criticalTimeStep", "complexEigen", "modalResponseHistory",
+            "frequencyResponse", "profiler"} <= raw
+    assert not {"eigen", "modalProperties", "analyze", "wipe"} & raw
+
     def fn(src: str) -> ast.AST:
         return ast.parse(src)
 
-    assert _touches_fork_method(fn("le.complex_eigen(1)"), fork)
-    assert _touches_fork_method(fn("r = getattr(le, command)"), fork)
-    assert not _touches_fork_method(fn("getattr(le, 'eigen')"), fork)
-    assert not _touches_fork_method(fn("self.complex_eigen(1)"), fork)
-    assert not _touches_fork_method(fn("le.eigen(1)"), fork)
+    def touches(src: str, helpers: frozenset[str] = frozenset()) -> bool:
+        return _touches_fork_method(fn(src), fork, raw, set(helpers))
+
+    assert touches("le.complex_eigen(1)")
+    assert touches("r = getattr(le, command)")
+    assert not touches("getattr(le, 'eigen')")
+    assert not touches("self.complex_eigen(1)")
+    assert not touches("le.eigen(1)")
+    # A raw fork command off the emitter's module, and its stock mutant.
+    assert touches("le.ops.criticalTimeStep()")
+    assert touches("le._ops.complexEigen(1)")
+    assert not touches("le.ops.eigen(1)")
+    # A helper handed the emitter: found from its definition, transitively;
+    # a helper that only uses ``self`` or a stock call is not one.
+    mod = fn(
+        "class M:\n"
+        "    def _a(self, le):\n        le.critical_time_step()\n"
+        "    def _b(self, x):\n        self._a(x)\n"
+        "    def _c(self, le):\n        le.ops.criticalTimeStep()\n"
+        "    def _d(self, le):\n        le.eigen(1)\n"
+        "    def _e(self, le):\n        self.complex_eigen(1)\n")
+    helpers = frozenset(_fork_helpers([mod], fork, raw))
+    assert helpers == {"_a", "_b", "_c"}
+    assert touches("self._b(le)", helpers)
+    assert touches("_c(le)", helpers)
+    assert not touches("self._d(le)", helpers)
+    assert not touches("self._b()", helpers)
+    assert not touches("other._a(le)", helpers)
 
 
 def test_every_wiping_site_refuses_before_the_wipe() -> None:
