@@ -304,7 +304,9 @@ def test_a_material_a_later_stage_activates_need_not_be_named() -> None:
     """``B`` is registered before the flip stage closes, but the stage after
     it activates ``B``, so ``B`` is out of the domain at the flip line.  Only
     the final model shows that, which is why no check runs at stage close:
-    one there would refuse this correct model."""
+    one there would refuse this correct model.  ``install`` flips the group
+    again, as #2534 asks of a stage that activates a carrier of a group an
+    earlier stage left plastic."""
     ops = apeSees(_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     with warnings.catch_warnings():
@@ -320,6 +322,7 @@ def test_a_material_a_later_stage_activates_need_not_be_named() -> None:
         with ops.stage(name="install") as s:
             s.activate(pgs=["B"])
             s.fix(nodes=[5, 6], dofs=(0, 1))
+            s.update_material_stage(materials=[mat_a, mat_b], stage=1)
             s.analysis(**_chain(ops))
             s.run(n_increments=1)
     _emit(ops)
@@ -683,14 +686,20 @@ def test_fork_reset_table() -> None:
 
 @pytest.mark.parametrize("cls", sorted(FORK_RESETS_STAGE_STATIC))
 @pytest.mark.parametrize("mode", ["fork", "stock", "auto", None])
-def test_the_stage_close_no_longer_refuses_the_reset(
+def test_the_stage_close_refuses_the_reset_pattern_as_a_late_carrier(
     cls: str, mode: "str | None",
 ) -> None:
-    """#2516: no target refuses the pattern at stage close.  A staged model
-    runs only as a deck, so the deck checks the build it runs on
-    (``tests/opensees/integration/test_deck_md_static_guard.py``)."""
+    """#2516 took the fork reset off the stage close: the deck checks the
+    build it runs on (``tests/opensees/integration/
+    test_deck_md_static_guard.py``).  #2534 refuses this pattern on every
+    target anyway, for another reason: B's material, of the group the flip
+    left plastic, enters plastic with no Elastic2Plastic(), on stock too.
+    Flipping the group again at the activation passes."""
     ops, mat = _staged_bridge(cls, mode)
-    _flip_then_activate(ops, mat)
+    with pytest.raises(BridgeError, match="#2534"):
+        _flip_then_activate(ops, mat)
+    ops, mat = _staged_bridge(cls, mode)
+    _flip_then_activate(ops, mat, reflip=True)
     assert len(ops._stage_records) == 2
 
 
