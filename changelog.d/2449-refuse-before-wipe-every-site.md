@@ -12,6 +12,7 @@ before the wipe too:
   `ops.complex_eigen()`, `ops.modal_response_history()`,
   `ops.response_spectrum_analysis()`, `ops.residual_modes()` and
   `ops.ritz_vectors()`.
+- `ops.modal_after_gravity()` and `ops.spectrum_after_gravity()`.
 - `ops.critical_time_step()` and `ops.analyze_explicit()`.
 - `ops.frequency_response()`, `ops.steady_state_dynamics()` and
   `ops.random_response()`.
@@ -23,5 +24,3 @@ The refusal and its message are unchanged, and the fork skips the check.
 `ops.run()` also keeps the read session of the previous solve when it
 refuses. A source-scan test now fails on any new `LiveOpsEmitter`
 construction that can wipe without the check before it.
-`ops.modal_after_gravity()` and `ops.spectrum_after_gravity()` still wipe
-before they refuse; that test holds them as a known gap.
