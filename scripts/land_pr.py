@@ -21,7 +21,11 @@ alone on any PR, merged ones included.
 Checks 10 and 11 are lesson #1877 (3af31061 merged #1698 into a red ``main``).
 Check 10 refuses while ``main``'s latest completed Tests run is red, when main's
 head H has no run, and, while H's run is in progress, unless the PR's checks ran
-on a base that contains H; a read that fails refuses. The ``fixes-red-main``
+on a base that contains H or the group rule admits it (#2919): the latest
+verified commit G is green, at most GROUP_MAX - 1 commits sit in G..H, none of
+them has reported a red required job, and the PR's files are disjoint from
+G..H's, read by SHA at landing time; ``land`` re-reads main's head before the
+merge and refuses if it moved. A read that fails refuses. The ``fixes-red-main``
 label, for the fix or the revert, overrides it. Check 11 refuses a PR that touches ``tests/`` or a BASELINE file
 when its required checks ran on a merge base more than STALE_COMMITS commits, or
 STALE_HOURS hours, behind ``main``. The base is read from the job log's
@@ -193,6 +197,19 @@ MAIN_JOBS = "repos/{{owner}}/{{repo}}/actions/runs/{run}/jobs?per_page=100"
 MAIN_JOBS_JQ = "{total: .total_count, jobs: [.jobs[] | {name, status, conclusion}]}"
 #: A required job that ended so is red; any other non-success (cancelled, skipped) asks for a re-run.
 RED_CONCLUSIONS = ("failure", "timed_out")
+#: Check 10's group rule (#2919, the owner's ruling of 2026-11-12): while H's run is in progress, a
+#: PR whose checks ran on a base without H may still land as one of at most GROUP_MAX landings on
+#: the last verified commit G. GROUP_MAX - 1 commits may sit in G..H (H counted, G not).
+GROUP_MAX = 3
+#: `compare/G...H`, read at landing time by SHA: the commits (oldest first) and the net changed files.
+GROUP_JQ = (
+    "{status, ahead: .ahead_by, behind: .behind_by, commits: [.commits[].sha], "
+    "files: [.files[] | [.filename, .previous_filename]]}"
+)
+#: The compare API lists at most 300 files; a listing that long may be cut, so it refuses.
+COMPARE_FILES_CAP = 300
+#: Set on the PR record when the group rule admitted it: `land` re-reads main's head before the merge.
+GROUP_TIP = "_group_tip"
 FIXES_RED_MAIN = "fixes-red-main"
 UNVERIFIED = (
     "Merge main and re-run, or wait for main's run; the fix or the revert of a red main lands "
@@ -787,14 +804,63 @@ def _check_bases(number: int, pr: dict[str, Any], gh: Runner, check_no: int) -> 
     return bases
 
 
-def check_main_green(number: int, pr: dict[str, Any], gh: Runner, bases: Bases) -> None:
-    """Check 10 (lesson #1877; T's ruling on #1877). main's latest completed Tests run is
-    green, and a run still in progress on main's head H admits only a PR whose required
-    checks ran on a base that contains H. #1858 and #1866 landed while 3af31061's run was
-    in progress, on bases without it, and the latest completed run (6f66fd23) was green."""
+def _group(
+    number: int, rows: list[FileRow], gh: Runner, order: list[str], latest: str,
+    reported: dict[str, list[tuple[int, str, str, str | None]]],
+) -> tuple[bool, str]:
+    """Check 10's group rule (#2919). G (`latest`) is green, which the caller has proved. The PR
+    lands as landing k+1 on G, where k commits sit in G..H, when no required job in G..H has
+    already failed, k + 1 <= GROUP_MAX, and its files are disjoint from G..H's. G..H is read now,
+    by SHA, and must agree with main's commit order. Returns (admitted, the verdict for the message)."""
+    k = order.index(latest)
+    tip = order[0]
+    where = f"G = {latest[:12]} (green), {k} commit(s) in G..H, so this landing would be {k + 1} of {GROUP_MAX}"
+    for sha in reversed(order[:k]):
+        for run_id, name, _status, conclusion in reported.get(sha, []):
+            if conclusion in RED_CONCLUSIONS:
+                return False, (f"{where}; refused: required job {name!r} of the Tests run on {sha[:12]} "
+                               f"({run_id}) already reported {conclusion}, so G..H is red; files: not read")
+    if k + 1 > GROUP_MAX:
+        return False, f"{where}; refused: the group on G is full; files: not read"
+    try:
+        listing = json.loads(gh(["api", f"repos/{{owner}}/{{repo}}/compare/{latest}...{tip}", "--jq", GROUP_JQ]))
+        commits = [str(sha) for sha in listing["commits"]]
+        if (listing["status"], int(listing["ahead"]), int(listing["behind"]), commits) != (
+            "ahead", k, 0, list(reversed(order[:k]))
+        ):
+            raise ValueError(
+                f"compare reads {listing['status']}, ahead {listing['ahead']}, behind {listing['behind']}, "
+                f"commits {[sha[:12] for sha in commits]}, but main's order puts {k} commit(s) after G"
+            )
+        changed = {str(name) for pair in listing["files"] for name in pair if name}
+        if not changed or len(listing["files"]) >= COMPARE_FILES_CAP:
+            raise ValueError(f"G..H lists {len(listing['files'])} file(s), which cannot be judged")
+    except _UNREADABLE as exc:
+        raise LandError(
+            f"check 10: main unverified at {tip[:12]}: G..H ({latest[:12]}...{tip[:12]}) could not be read "
+            f"({exc!r}), so #{number} cannot land in a group on G. {UNVERIFIED}"
+        ) from exc
+    mine = {name for row in rows for name in (row[0], row[2]) if name}
+    shared = sorted(mine & changed)
+    if shared:
+        more = f" and {len(shared) - 1} more" if len(shared) > 1 else ""
+        return False, f"{where}; refused: files overlap G..H on {shared[0]}{more}"
+    return True, f"{where}; files: disjoint from G..H's {len(changed)}"
+
+
+def check_main_green(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner, bases: Bases) -> None:
+    """Check 10 (lesson #1877; T's ruling on #1877; the group rule, #2919). main's latest
+    completed Tests run, on G, is green. While the run on main's head H is in progress, a PR
+    lands when its required checks ran on a base that contains H, or by the group rule
+    (`_group`): at most GROUP_MAX landings on G, none on a G..H that has already reported a
+    red required job, and each file-disjoint from G..H. #1858 and #1866 landed while
+    3af31061's run was in progress, on bases without it; 3af31061's lock-tests had already
+    failed, so the group rule refuses both too."""
     if FIXES_RED_MAIN in {lab["name"] for lab in pr["labels"]}:
         print(f"check 10: OVERRIDDEN by the {FIXES_RED_MAIN!r} label; main's state is not read.")
         return
+    #: The required jobs read for each commit newer than G, so the group rule needs no second read.
+    reported: dict[str, list[tuple[int, str, str, str | None]]] = {}
     try:
         order = json.loads(gh(["api", MAIN_COMMITS, "--jq", MAIN_COMMITS_JQ]))
         if not order or not all(re.fullmatch(r"[0-9a-f]{40}", str(sha)) for sha in order):
@@ -819,6 +885,7 @@ def check_main_green(number: int, pr: dict[str, Any], gh: Runner, bases: Bases) 
             if {job[1] for job in found} >= set(REQUIRED_CHECKS) and all(job[2] == "completed" for job in found):
                 latest, jobs = sha, [(run_id, name, conclusion) for run_id, name, _status, conclusion in found]
                 break
+            reported[sha] = found
     except _UNREADABLE as exc:
         raise LandError(f"check 10: main unverified: its Tests runs could not be read ({exc!r}). {UNVERIFIED}") from exc
     if latest is None:
@@ -854,15 +921,41 @@ def check_main_green(number: int, pr: dict[str, Any], gh: Runner, bases: Bases) 
         except _UNREADABLE as exc:
             raise LandError(f"check 10: main unverified at {tip[:12]}: compare with {base[:12]} failed ({exc!r}). {UNVERIFIED}") from exc
         if status not in ("ahead", "identical"):
-            raise LandError(
-                f"check 10: main unverified at {tip[:12]}: its Tests run is in progress and #{number}"
-                f"'s required checks in {where} ran on base {base[:12]}, which does not contain it "
-                f"(compare: {status}). {UNVERIFIED}"
+            admitted, verdict = _group(number, rows, gh, order, latest, reported)
+            if not admitted:
+                raise LandError(
+                    f"check 10: main unverified at {tip[:12]}: its Tests run is in progress and #{number}"
+                    f"'s required checks in {where} ran on base {base[:12]}, which does not contain it "
+                    f"(compare: {status}). {UNVERIFIED} Group rule (#2919): {verdict}."
+                )
+            pr[GROUP_TIP] = tip
+            print(
+                f"check 10: main's Tests run on {tip[:12]} is in progress and #{number}'s checks ran on a base "
+                f"without it; admitted by the group rule (#2919): {verdict}."
             )
+            return
     print(
         f"check 10: main's Tests run on {tip[:12]} is in progress; the latest completed one "
         f"({latest[:12]}) is green, and the PR's checks ran on a base that contains {tip[:12]}."
     )
+
+
+def confirm_group_tip(number: int, pr: dict[str, Any], gh: Runner) -> None:
+    """Before a merge the group rule admitted, main's head must still be the H check 10 judged:
+    a landing between check 10 and the merge would leave G..H, and so the group size and the
+    disjointness, stale (#2919). A failed read refuses."""
+    tip = pr.get(GROUP_TIP)
+    if tip is None:
+        return
+    try:
+        now = json.loads(gh(["api", MAIN_COMMITS, "--jq", MAIN_COMMITS_JQ]))[0]
+    except _UNREADABLE as exc:
+        raise LandError(f"check 10: main's head could not be re-read before the merge ({exc!r}); refusing.") from exc
+    if now != tip:
+        raise LandError(
+            f"check 10: main moved from {str(tip)[:12]} to {str(now)[:12]} after check 10 admitted #{number} by "
+            f"the group rule, so its picture of G..H is stale; run land_pr again (#2919)."
+        )
 
 
 def check_fresh_base(number: int, rows: list[FileRow], gh: Runner, bases: Bases) -> None:
@@ -1014,7 +1107,7 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
             found.append(_check_bases(number, pr, gh, check_no))
         return found[0]
 
-    check_main_green(number, pr, gh, bases)
+    check_main_green(number, pr, rows, gh, bases)
     check_fresh_base(number, rows, gh, bases)
     check_fork_pin(number, pr, rows, gh)
     return pr
@@ -1146,6 +1239,7 @@ def land(
     if dry_run:
         print(f"dry-run: #{number} passes checks 1-12 at {head[:12]}; not merging.")
         return 0
+    confirm_group_tip(number, pr, gh)
     gh(["pr", "merge", str(number), "--squash", "--match-head-commit", head])  # never retried
     return prove(number, gh, git, sleep, head, pr["headRefName"])
 

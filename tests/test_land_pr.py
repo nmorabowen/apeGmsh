@@ -172,6 +172,19 @@ def _ancestry_call(tip, base):
     return f"api repos/{{owner}}/{{repo}}/compare/{tip}...{base} --jq .status"
 
 
+def _group_call(g, h):
+    """The group rule's read of G..H (#2919): `compare/G...H`, by SHA."""
+    return f"api repos/{{owner}}/{{repo}}/compare/{g}...{h} --jq {land_pr.GROUP_JQ}"
+
+
+def _group_listing(commits, files, *, status="ahead", ahead=None, behind=0):
+    """One `compare/G...H --jq GROUP_JQ` response: G..H's commits oldest first, and its files
+    as [filename, previous_filename] (a bare name is an unrenamed file)."""
+    pairs = [list(f) if isinstance(f, tuple) else [f, None] for f in files]
+    return json.dumps({"status": status, "ahead": len(commits) if ahead is None else ahead, "behind": behind,
+                       "commits": list(commits), "files": pairs})
+
+
 def _checkout(head, base=FRESH_BASE):
     """The job-log line actions/checkout prints for a pull_request run (check 11 reads it)."""
     return f"2026-10-13T10:00:05.0000000Z HEAD is now at 54b621b Merge {head} into {base}\n"
@@ -1577,6 +1590,18 @@ RUNS_RED_471 = [  # 16:36Z: 471432f3's run is the latest completed, and red
     _run_row(38429723003, SHA_1ACF, "in_progress", None), _run_row(38429075356, SHA_471, "completed", "failure"),
     _run_row(38428776331, SHA_3AF, "completed", "failure"), RUN_6F66,
 ]
+#: The required jobs as they stood at each landing, from the recorded jobs' completed_at
+#: (actions/runs/<id>/jobs, read 2026-11-12): run 38428776331 (3af31061) lock-tests failed at
+#: 16:15:05Z, emit-cost-gate and static-gates passed at 16:15:17Z and 16:15:44Z, live-stock at
+#: 16:18:23Z; run 38429075356 (471432f3) lock-tests failed at 16:17:14Z, static-gates and
+#: emit-cost-gate passed at 16:17:22Z and 16:17:51Z. Suite ran past both landings.
+_RUNNING = {"status": "in_progress", "conclusion": None}
+_FAILED = {"conclusion": "failure"}
+JOBS_AT_1858 = {38428776331: _job_rows(**{"lock-tests": _FAILED, "suite": _RUNNING, "live-stock": _RUNNING})}
+JOBS_AT_1866 = {
+    38428776331: _job_rows(**{"lock-tests": _FAILED, "suite": _RUNNING}),
+    38429075356: _job_rows(**{"lock-tests": _FAILED, "suite": _RUNNING, "live-stock": _RUNNING}),
+}
 #: actions/runs/38429075356/jobs (471432f3), recorded: lock-tests and suite failed.
 JOBS_471 = {"total": 8, "jobs": [
     {"name": name, "status": "completed", "conclusion": "failure" if name in ("lock-tests", "suite") else "success"}
@@ -1666,24 +1691,31 @@ def test_1858_landing_on_an_in_progress_main_is_refused():
     Revert-proof: without the ancestry branch (or `check_main_green`), it merges; check 11
     passes it (9 commits, 8 h behind)."""
     gh, git = _landing(1858, PR_1858, FILES_1858, CARD_1858, BASE_1858, main=RUNS_AT_1858, order=ORDER_AT_1858,
-                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"))
+                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"), jobs=JOBS_AT_1858)
     with pytest.raises(land_pr.LandError, match=(
         r"check 10: main unverified at 3af31061bd34: its Tests run is in progress and #1858's required checks "
         r"in run 38368430040 \(job 115199113581\) ran on base a46fe53964eb, which does not contain it "
         r"\(compare: behind\)\. Merge main and re-run, or wait"
-    )):
+    )) as refused:
         _run(1858, gh, git)
     assert not _merged(gh)
+    # The group rule (#2919) refuses it too: 3af31061's lock-tests had failed at 16:15:05Z.
+    assert ("Group rule (#2919): G = 6f66fd238325 (green), 1 commit(s) in G..H, so this landing would be 2 of 3; "
+            "refused: required job 'lock-tests' of the Tests run on 3af31061bd34 (38428776331) already reported "
+            "failure") in str(refused.value)
+    assert _group_call(MAIN_TIP, SHA_3AF) not in gh.calls
 
 
 def test_1866_landing_on_an_in_progress_main_is_refused():
     """Replay: #1866 landed (16:20:38Z) while 471432f3's and 3af31061's runs were in progress,
     on base 686840f6. Revert-proof: without the ancestry branch, it merges."""
     gh, git = _landing(1866, PR_1866, FILES_1866, CARD_1866, BASE_1866, main=RUNS_AT_1866, order=ORDER_AT_1866,
-                       ancestry="behind", behind=(8, "2026-10-13T16:15:56Z"))
-    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at 471432f39b90: .*686840f602ee"):
+                       ancestry="behind", behind=(8, "2026-10-13T16:15:56Z"), jobs=JOBS_AT_1866)
+    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at 471432f39b90: .*686840f602ee") as refused:
         _run(1866, gh, git)
     assert not _merged(gh)
+    assert ("3 of 3; refused: required job 'lock-tests' of the Tests run on 3af31061bd34 (38428776331) already "
+            "reported failure") in str(refused.value)
 
 
 @pytest.mark.parametrize("ancestry", ["identical", "ahead"])
@@ -1790,7 +1822,11 @@ def test_a_required_job_still_running_keeps_the_head_in_progress():
     gh, git = _recording(1218, PR_1218, SQUASH_1218, main=[_run_row(7, tip, "in_progress", None), RUN_6F66],
                          main_order=(tip, MAIN_TIP), jobs={7: jobs})
     gh.responses[_ancestry_call(tip, FRESH_BASE)] = "behind\n"
-    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at eeeeeeeeeeee: its Tests run is in progress"):
+    gh.responses[_group_call(MAIN_TIP, tip)] = _group_listing([tip], ["src/apeGmsh/studio/_api_index.json"])
+    with pytest.raises(land_pr.LandError, match=(
+        r"check 10: main unverified at eeeeeeeeeeee: its Tests run is in progress.*"
+        r"refused: files overlap G\.\.H on src/apeGmsh/studio/_api_index\.json"
+    )):
         _run(1218, gh, git)
 
 
@@ -1856,6 +1892,180 @@ def test_a_failed_ancestry_read_refuses():
     gh = Flaky(gh.responses, _ancestry_call(SHA_3AF, SHA_3AF), 99)
     with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at 3af31061bd34: compare with .*failed"):
         _run(1218, gh, git)
+
+
+# == The group rule (#2919): up to three file-disjoint landings per verified main run ======
+# The owner's ruling of 2026-11-12 on #2919. The replays reuse the 2026-10-13 sequence: G is
+# 6f66fd23 (green), then 3af31061 (#1698), 471432f3 (#1858) and 1acff395 (#1866) landed on it.
+# G..H below is what `compare/6f66fd23...<H>` returns today, recorded 2026-11-12. The accepted
+# cases are a counterfactual on those SHAs and files: every required job of G..H still running,
+# where in fact 3af31061's lock-tests had already failed (the #1858/#1866 replays above).
+#: compare/6f66fd23...3af31061 and compare/6f66fd23...471432f3, recorded.
+G_TO_3AF = _group_listing([SHA_3AF], FILES_1698)
+G_TO_471 = _group_listing([SHA_3AF, SHA_471], [
+    "AGENTS.md", "architecture/fork-divergence-roster.md", "changelog.d/f3f-sanisand-flip-pin.md",
+    "changelog.d/land-pr-owned-files.md", "internal_docs/program/slice_card.md", "scripts/land_pr.py",
+    "tests/opensees/integration_ladruno/test_ladruno_sanisand_live.py", "tests/test_land_pr.py",
+])
+ORDER_AT_4TH = (SHA_1ACF, SHA_471, SHA_3AF, MAIN_TIP)
+RUNS_AT_4TH = [_run_row(38429723003, SHA_1ACF, "in_progress", None), *RUNS_AT_1866]
+
+
+def _second():
+    """#1858 landing on 3af31061, a group of 2 on G (6f66fd23)."""
+    gh, git = _landing(1858, PR_1858, FILES_1858, CARD_1858, BASE_1858, main=RUNS_AT_1858, order=ORDER_AT_1858,
+                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"))
+    gh.responses[_group_call(MAIN_TIP, SHA_3AF)] = G_TO_3AF
+    return gh, git
+
+
+def test_group_of_one_is_a_landing_on_the_verified_head(capsys):
+    """Landing 1 on G: main's head is G and its run is green, so no G..H is read."""
+    gh, git = _landing(1858, PR_1858, FILES_1858, CARD_1858, BASE_1858, main=[RUN_6F66, RUN_53F1],
+                       order=(MAIN_TIP, SHA_53F), ancestry="behind", behind=(1, "2026-10-13T09:04:47Z"))
+    assert _run(1858, gh, git) == 0
+    assert f"check 10: main's Tests run on its head {MAIN_TIP[:12]} is green." in capsys.readouterr().out
+    assert not any("/compare/" + MAIN_TIP in call for call in gh.calls)
+
+
+def test_group_of_two_lands(capsys):
+    """#1858 on 3af31061, base a46fe539 (without it), files disjoint from #1698's. Revert-proof:
+    without the group rule, check 10 refuses it as in #1877."""
+    gh, git = _second()
+    assert _run(1858, gh, git) == 0
+    assert _merged(gh)
+    assert (
+        "check 10: main's Tests run on 3af31061bd34 is in progress and #1858's checks ran on a base without it; "
+        "admitted by the group rule (#2919): G = 6f66fd238325 (green), 1 commit(s) in G..H, so this landing "
+        "would be 2 of 3; files: disjoint from G..H's 3."
+    ) in capsys.readouterr().out
+
+
+def test_group_of_three_lands(capsys):
+    """#1866 on 471432f3: G..H is 3af31061 and 471432f3, and #1866's files are disjoint from both."""
+    gh, git = _landing(1866, PR_1866, FILES_1866, CARD_1866, BASE_1866, main=RUNS_AT_1866, order=ORDER_AT_1866,
+                       ancestry="behind", behind=(8, "2026-10-13T16:15:56Z"))
+    gh.responses[_group_call(MAIN_TIP, SHA_471)] = G_TO_471
+    assert _run(1866, gh, git) == 0
+    assert "2 commit(s) in G..H, so this landing would be 3 of 3; files: disjoint from G..H's 8." in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_fourth_landing_on_g_is_refused():
+    """1acff395 (#1866) is H, three commits sit in G..H: a src-only, disjoint PR is still refused,
+    and G..H is not read. Revert-proof: with GROUP_MAX unchecked, the unrecorded read fails."""
+    gh, git = _recording(1097, PR_1097, SQUASH_1097, FILES_1097, main=RUNS_AT_4TH, main_order=ORDER_AT_4TH)
+    gh.responses[_ancestry_call(SHA_1ACF, FRESH_BASE)] = "behind\n"
+    with pytest.raises(land_pr.LandError) as refused:
+        _run(1097, gh, git)
+    message = str(refused.value)
+    assert message.startswith("check 10: main unverified at 1acff395a9cf: its Tests run is in progress")
+    assert message.endswith(
+        "Group rule (#2919): G = 6f66fd238325 (green), 3 commit(s) in G..H, so this landing would be 4 of 3; "
+        "refused: the group on G is full; files: not read."
+    )
+    assert not any(call.startswith(f"api repos/{{owner}}/{{repo}}/compare/{MAIN_TIP}") for call in gh.calls)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("row, shared", [
+    pytest.param(_row("scripts/land_pr.py"), "scripts/land_pr.py", id="edits-a-g-h-file"),
+    pytest.param(_row("architecture/roster.md", "renamed", "architecture/fork-divergence-roster.md"),
+                 "architecture/fork-divergence-roster.md", id="renames-a-g-h-file"),
+])
+def test_a_pr_that_overlaps_g_h_is_refused(row, shared):
+    """At the third slot (G..H = 3af31061, 471432f3), a PR that edits or renames a file G..H
+    changed is refused, naming it. Revert-proof: without the disjointness test, both merge."""
+    pr = {**PR_1866, "labels": [], "body": ""}  # not a program PR, so check 9 reads no card
+    gh, git = _landing(1866, pr, FILES_1866, None, BASE_1866, main=RUNS_AT_1866, order=ORDER_AT_1866,
+                       ancestry="behind", behind=(8, "2026-10-13T16:15:56Z"))
+    gh.responses[_files_call(1866)] = "".join(r + "\n" for r in (row, _row("changelog.d/x.md")))
+    gh.responses[_group_call(MAIN_TIP, SHA_471)] = G_TO_471
+    with pytest.raises(land_pr.LandError, match=(
+        rf"would be 3 of 3; refused: files overlap G\.\.H on {re.escape(shared)}\.$"
+    )):
+        _run(1866, gh, git)
+    assert not _merged(gh)
+
+
+def test_a_red_g_refuses_before_the_group_rule():
+    """G is 471432f3, red; H (1acff395) is in progress and the PR's base lacks it. The group rule
+    is never consulted. Revert-proof: a group rule ahead of the red test would read G..H."""
+    gh, git = _recording(1097, PR_1097, SQUASH_1097, FILES_1097, main=RUNS_RED_471, main_order=ORDER_RED,
+                         jobs={38429075356: JOBS_471})
+    gh.responses[_ancestry_call(SHA_1ACF, FRESH_BASE)] = "behind\n"
+    with pytest.raises(land_pr.LandError, match=r"check 10: main is red: required job 'lock-tests'"):
+        _run(1097, gh, git)
+    assert not any(call.endswith(f"--jq {land_pr.GROUP_JQ}") for call in gh.calls)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("response, why", [
+    pytest.param(None, "CalledProcessError", id="read-fails"),
+    pytest.param('{"status": "ahead"}', "KeyError", id="garbled"),
+    pytest.param(_group_listing([SHA_3AF], FILES_1698, status="diverged", behind=1), "compare reads diverged",
+                 id="diverged"),
+    pytest.param(_group_listing([SHA_3AF], FILES_1698, ahead=2), "ahead 2", id="ahead-disagrees-with-order"),
+    pytest.param(_group_listing([SHA_471], FILES_1698), "commits ..471432f39b90..", id="other-commits"),
+    pytest.param(_group_listing([SHA_3AF], []), "lists 0 file", id="no-files"),
+    pytest.param(_group_listing([SHA_3AF], [f"f{i}.py" for i in range(300)]), "lists 300 file", id="capped"),
+])
+def test_an_unreadable_g_h_refuses(response, why):
+    """Fail closed: a G..H that cannot be read, or disagrees with main's commit order, refuses.
+    Revert-proof: without the try/except or the consistency test, these raise a non-LandError or merge."""
+    gh, git = _second()
+    if response is None:
+        gh = Flaky(gh.responses, _group_call(MAIN_TIP, SHA_3AF), 99)
+    else:
+        gh.responses[_group_call(MAIN_TIP, SHA_3AF)] = response
+    with pytest.raises(land_pr.LandError, match=(
+        rf"check 10: main unverified at 3af31061bd34: G\.\.H \(6f66fd238325\.\.\.3af31061bd34\) could not be "
+        rf"read \(.*{why}"
+    )):
+        _run(1858, gh, git)
+    assert not _merged(gh)
+
+
+class Moving(Replay):
+    """main's commit list moves to `later` after its first read: a landing raced the checks."""
+
+    def __init__(self, responses, later):
+        super().__init__(responses)
+        self.later = later
+
+    def __call__(self, args):
+        if " ".join(args) == MAIN_COMMITS_CALL and MAIN_COMMITS_CALL in self.calls:
+            self.calls.append(MAIN_COMMITS_CALL)
+            return json.dumps(list(self.later))
+        return super().__call__(args)
+
+
+def test_main_moving_after_a_group_admission_refuses_the_merge():
+    """471432f3 lands between check 10 (which judged G..H = 3af31061) and #1858's merge: the
+    picture is stale, so the merge is refused. Revert-proof: without `confirm_group_tip`, it merges."""
+    gh, git = _second()
+    gh = Moving(gh.responses, ORDER_AT_1866)
+    with pytest.raises(land_pr.LandError, match=(
+        r"check 10: main moved from 3af31061bd34 to 471432f39b90 after check 10 admitted #1858 by the group "
+        r"rule, so its picture of G\.\.H is stale"
+    )):
+        _run(1858, gh, git)
+    assert not _merged(gh)
+
+
+def test_the_head_is_re_read_only_for_a_group_admission():
+    """A group admission reads main's commits twice (check 10, then before the merge); a dry run and
+    a landing on a green head read them once."""
+    gh, git = _second()
+    assert _run(1858, gh, git, dry_run=True) == 0
+    assert gh.calls.count(MAIN_COMMITS_CALL) == 1
+    gh, git = _second()
+    assert _run(1858, gh, git) == 0
+    assert gh.calls.count(MAIN_COMMITS_CALL) == 2
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    assert _run(1218, gh, git) == 0
+    assert gh.calls.count(MAIN_COMMITS_CALL) == 1
 
 
 def test_only_tests_yml_push_runs_are_read():
