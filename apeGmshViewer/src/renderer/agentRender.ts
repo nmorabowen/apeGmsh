@@ -154,7 +154,7 @@ async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
  * be computed. Called once the view is on screen, so the displacement on hand
  * must be the step's: anything else refuses, never a stale step's scale.
  */
-function autoScaleOf(s: State, effects: Effects, blobs: BlobStore): { ok: true; scale: number } | { ok: false; reason: string } {
+export function autoScaleOf(s: State, effects: Effects, blobs: BlobStore): { ok: true; scale: number } | { ok: false; reason: string } {
   const v = deformView(s);
   if (v.state !== "ready" && v.state !== "partial") return { ok: false, reason: `the auto deform scale needs the deformed shape drawn, and it is ${v.state}` };
   const disp = effects.currentDisplacement();

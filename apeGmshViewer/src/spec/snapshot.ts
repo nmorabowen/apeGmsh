@@ -335,7 +335,8 @@ function shotDocument(s: SpecShot): Record<string, unknown> {
             gauss: c.gauss,
           },
         }),
-    ...(s.deform === null ? {} : { deform: s.deform }),
+    // G3: a scale left to the auto scale is left out, as the spec says it (spec.ts reads a written null as no number).
+    ...(s.deform === null ? {} : { deform: s.deform.scale === null ? { ghost: s.deform.ghost } : s.deform }),
     ...(s.clip.length ? { clip: s.clip } : {}),
     ...(s.isolate.length ? { isolate: s.isolate } : {}),
     chrome: s.chrome,
@@ -473,6 +474,16 @@ export interface AppliedView {
   fold: boolean;
   shot: SpecShot;
   pose: CameraPose;
+  /** G3 (VA6c, #2765): the auto scale the click drew a `deform` with no scale at; null when the offer named its scale or drew no shape */
+  autoScale: number | null;
+}
+
+/** The applied shot as drawn: a deform it left to the auto scale, at the scale the click drew (G3). */
+function drawnShot(applied: AppliedView): SpecShot {
+  const d = applied.shot.deform;
+  if (d === null || d.scale !== null) return applied.shot;
+  if (applied.autoScale === null) throw new Error(`snapshot: applied offer ${applied.shot.name} left the deform scale to the auto scale, and no auto scale was drawn`);
+  return { ...applied.shot, deform: { ...d, scale: applied.autoScale } };
 }
 
 export interface Snapshot {
@@ -503,7 +514,8 @@ export function snapshotOf(s: State, pose: CameraPose | null, size: [number, num
     same(applied.files.model, model, applied.fold) &&
     same(applied.files.results, results, applied.fold) &&
     samePoseWithin(applied.pose, pose) &&
-    sameView(applied.shot, derived, describe(s))
+    // G3: the window draws an auto-scaled deform at the number; the offer's words leave it out, and the manifest recomputes it.
+    sameView(drawnShot(applied), derived, describe(s))
   ) {
     shot = { ...applied.shot, chrome: "app", layers: WINDOW_LAYERS, background: "theme" };
   }
@@ -590,6 +602,13 @@ export interface RunnerDeps {
   pose(): CameraPose | null;
   /** two painted frames */
   settle(): Promise<void>;
+  /**
+   * G3 (VA6c, #2765): the auto deform scale of the step on screen, or why it
+   * cannot be computed (renderer/agentRender.ts `autoScaleOf`, the render
+   * mode's own). A window that hands in none refuses an offer that leaves the
+   * deform scale out, with that reason: it never draws one at another scale.
+   */
+  autoScale?(s: State): { ok: true; scale: number } | { ok: false; reason: string };
   sleep?(ms: number): Promise<unknown>;
   now?(): number;
 }
@@ -698,11 +717,24 @@ export class OfferRunner {
       applyClip(store, c.plan);
       const why = await shownView(this.wait, p.shot, c.plan);
       if (why !== null) return await refuse(why);
+      // G3 (VA6c, #2765), as the render mode does (INV-2): a deform with no scale is drawn at the auto scale
+      // of its step, computed once the step's displacement is on screen, then waited for again.
+      let autoScale: number | null = null;
+      if (c.plan.deform !== null && c.plan.deform.scale === null) {
+        const auto = this.deps.autoScale
+          ? this.deps.autoScale(store.get())
+          : { ok: false as const, reason: "this window cannot read the step's displacement, so it cannot draw the auto deform scale" };
+        if (!auto.ok) return await refuse(auto.reason);
+        store.dispatch({ type: "setDeformScale", scale: auto.scale });
+        const again = await shownView(this.wait, p.shot, c.plan);
+        if (again !== null) return await refuse(again);
+        autoScale = auto.scale;
+      }
       store.dispatch({ type: "setCamera", to: "home" });
       store.dispatch({ type: "setCamera", to: c.plan.camera });
       await this.deps.settle();
       const pose = this.deps.pose();
-      this.applied.push(pose ? { files: p.files, fold: p.fold, shot: p.shot, pose } : null);
+      this.applied.push(pose ? { files: p.files, fold: p.fold, shot: p.shot, pose, autoScale } : null);
       store.dispatch({ type: "offerApplied", id, memo });
     } catch (err) {
       await refuse(`the app refused the view: ${err instanceof Error ? err.message : String(err)}`);

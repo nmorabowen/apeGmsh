@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { arrivalLabel, mountOfferBadge, mountOffers } from "../src/panels/offers.ts";
+import { autoScaleOf } from "../src/renderer/agentRender.ts";
 import { compileShot } from "../src/spec/compile.ts";
 import { describeSet, SPEC_MAGNITUDE } from "../src/spec/describe.ts";
 import { resolveSpecFiles } from "../src/spec/files.ts";
@@ -99,6 +100,7 @@ async function rig(model = STAGED, results = STAGED_RESULTS) {
     onScreen: () => ({ contour: true, deform: true }),
     pose: camera.pose,
     settle: camera.settle,
+    autoScale: (s) => autoScaleOf(s, h.effects, h.blobs),
     sleep: () => new Promise((r) => setTimeout(r, 1)),
     now: () => (t += 50),
   });
@@ -672,6 +674,62 @@ test("D6: the human moves after applying: the snapshot is the view as it is, no 
   assert.equal(scrubbed["name"], "view");
   assert.equal(scrubbed["step"], 1);
   assert.equal(scrubbed["stage"], "unprop");
+});
+
+// G3 (VA6c, #2765; review F1 on #2904): an offer whose deform leaves the scale out is drawn at the auto
+// scale of its step, as the render mode's still of the same shot is (INV-2), and the snapshot still names
+// the offer (INV-3). Python's `_auto_deform_scale` on contour_staged, stage erect, step 1 (test/deform/autoScale.test.ts).
+test("G3: an offer with no deform scale draws the auto scale, as the still does, and the snapshot names the offer", async () => {
+  const PY_AUTO_ERECT_1 = 7.119963311072635;
+  const r = await rig();
+  r.runner.receive(offers([{ name: "auto", stage: "erect", step: 1, deform: {}, camera: "iso" }, { name: "ten", stage: "erect", step: 1, deform: { scale: 10 }, camera: "iso" }]));
+  await r.tick();
+  await r.tick();
+  const shotIn = (x: ReturnType<OfferRunner["snapshot"]>) => {
+    if (!x.ok) throw new Error(x.reason);
+    return (x.snapshot.view["shots"] as Record<string, unknown>[])[0]!;
+  };
+  // The control: a named scale is drawn at that scale and reads back as the offer.
+  await r.click(offerNamed(r.store.get(), "ten").id);
+  assert.equal(offerNamed(r.store.get(), "ten").status, "applied", offerNamed(r.store.get(), "ten").reason ?? "");
+  assert.equal(r.store.get().deform.scale, 10);
+  assert.equal(shotIn(r.runner.snapshot([900, 700]))["name"], "ten");
+  await r.click(offerNamed(r.store.get(), "auto").id);
+  const s = r.store.get();
+  assert.equal(offerNamed(s, "auto").status, "applied", offerNamed(s, "auto").reason ?? "");
+  assert.ok(Math.abs(s.deform.scale - PY_AUTO_ERECT_1) <= 1e-12 * PY_AUTO_ERECT_1, `the window draws at ${s.deform.scale}; Python's auto scale is ${PY_AUTO_ERECT_1}`);
+  const snap = r.runner.snapshot([900, 700]);
+  const shot = shotIn(snap);
+  assert.equal(shot["name"], "auto", "the snapshot names the offer applied");
+  assert.deepEqual(shot["deform"], { ghost: false }, "and keeps its words: the scale left to the auto scale");
+  // The snapshot's manifest states the auto scale, recomputed from the step on screen.
+  assert.ok(snap.ok);
+  if (!snap.ok) return;
+  const m = snapshotManifest(s, snap.snapshot, { image: [900, 700], fov: 30, layout: null, blobs: r.blobs, step: r.effects.currentStep() });
+  const d = m.shots[0]!.deform;
+  assert.ok(d?.state === "ready");
+  assert.equal(d.scale_auto, true);
+  assert.equal(d.scale, s.deform.scale);
+});
+
+test("G3: a window that cannot compute the auto scale refuses an offer with no deform scale, and never draws it at another", async () => {
+  const h = await opened();
+  sets.push(h);
+  h.effects.setThemeTarget({ documentElement: { style: { setProperty() {} }, dataset: {}, setAttribute() {} }, getElementById: () => ({}) } as unknown as Document);
+  const camera = cameraDouble(h.store);
+  await camera.settle();
+  const runner = new OfferRunner({ store: h.store, open: async () => ({ ok: true }), onScreen: () => ({ contour: true, deform: true }), pose: camera.pose, settle: camera.settle, sleep: () => new Promise((ok) => setTimeout(ok, 1)) });
+  after(runner.start());
+  runner.receive(offers([{ name: "auto", stage: "erect", step: 1, deform: {} }]));
+  await new Promise((ok) => setTimeout(ok, 0));
+  await new Promise((ok) => setTimeout(ok, 0));
+  h.store.dispatch({ type: "applyOffer", id: offerNamed(h.store.get(), "auto").id });
+  await new Promise((ok) => setTimeout(ok, 0));
+  await runner.whenIdle();
+  const o = offerNamed(h.store.get(), "auto");
+  assert.equal(o.status, "refused");
+  assert.match(o.reason ?? "", /cannot draw the auto deform scale/);
+  assert.equal(h.store.get().deform.on, false, "the view went back");
 });
 
 test("D6: what the spec cannot say is named, never silently lost", async () => {
