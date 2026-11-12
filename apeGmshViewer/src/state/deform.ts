@@ -313,5 +313,62 @@ export function missingMarkers(base: Float32Array, nodes: Float64Array, missing:
   return out;
 }
 
+/**
+ * G3 (VA6c, #2765): the fraction of the model diagonal the largest
+ * displacement component becomes under the auto scale. Python's
+ * `viewers/session/_realize.py` `_DEFORM_FRACTION` (read as context, never
+ * imported).
+ */
+export const AUTO_DEFORM_FRACTION = 0.12;
+
+/**
+ * The bounding-box diagonal of `xyz` (3 floats per node): Python's
+ * `results/_geometry.py` `model_diagonal`, which is 1 for no node and for a
+ * box that is a point. A coordinate count that is not a multiple of 3 throws:
+ * it is not a list of nodes.
+ */
+export function modelDiagonal(xyz: ArrayLike<number>): number {
+  if (xyz.length % 3 !== 0) throw new RangeError(`modelDiagonal: ${xyz.length} coordinates are not 3 per node`);
+  if (xyz.length === 0) return 1;
+  const lo = [Infinity, Infinity, Infinity];
+  const hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < xyz.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      const x = xyz[i + k]!;
+      if (x < lo[k]!) lo[k] = x;
+      if (x > hi[k]!) hi[k] = x;
+    }
+  }
+  const diag = Math.hypot(hi[0]! - lo[0]!, hi[1]! - lo[1]!, hi[2]! - lo[2]!);
+  return diag > 0 ? diag : 1;
+}
+
+/** The largest finite |u| over the step's x, y and z displacement rows (z null in a 2-D model); 0 when none is finite. */
+export function maxAbsDisplacement(rows: readonly [ArrayLike<number>, ArrayLike<number>, ArrayLike<number> | null]): number {
+  let max = 0;
+  for (const r of rows) {
+    if (r === null) continue;
+    for (let i = 0; i < r.length; i++) {
+      const a = Math.abs(r[i]!);
+      if (Number.isFinite(a) && a > max) max = a;
+    }
+  }
+  return max;
+}
+
+/**
+ * G3: the scale a deformed shape takes when the spec gives none. Python's
+ * `viewers/session/_results_stills.py` `_auto_deform_scale` (the oracle): the
+ * largest finite |u| component of the step drawn, over every node the stage
+ * records (`rows`, as the effects read them), becomes AUTO_DEFORM_FRACTION of
+ * the diagonal of every model node (`xyz`, `MeshInfo.nodes.xyz`); 1 when
+ * either is zero.
+ */
+export function autoDeformScale(rows: readonly [ArrayLike<number>, ArrayLike<number>, ArrayLike<number> | null], xyz: ArrayLike<number>): number {
+  const maxD = maxAbsDisplacement(rows);
+  const diag = modelDiagonal(xyz);
+  return maxD > 0 && diag > 0 ? (AUTO_DEFORM_FRACTION * diag) / maxD : 1;
+}
+
 /** The scale as the legend states it. */
 export const scaleLabel = (scale: number): string => (scale === 1 ? "true scale (×1)" : `scale ×${Number(scale.toPrecision(4))} (not true scale)`);
