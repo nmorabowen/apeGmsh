@@ -31,6 +31,7 @@ import {
   combinationFieldsOf,
   combinationRequestOf,
   deformOf,
+  compareUserRequestOf,
   differencePlanOf,
   elementJoinKey,
   geometryPairing,
@@ -871,12 +872,16 @@ function reduceEvent(s: State, e: Event): State {
     case "variantCompare":
     case "compareOpened":
     case "setDifference":
-    case "differenceRead": {
+    case "differenceRead":
+    case "compareModelRead":
+    case "compareUserRead":
+    case "showCompareUser":
+    case "compareUserResultRead": {
       const differenceKey = () => {
         const p = differencePlanOf(s);
         return p !== null && p.ok ? p.key : null;
       };
-      const variants = reduceVariants(s.variants, e, { differenceKey });
+      const variants = reduceVariants(s.variants, e, { differenceKey, compareUserKey: () => compareUserRequestOf(s)?.key ?? null });
       return variants === s.variants ? s : { ...s, variants };
     }
     case "workspaceReading":

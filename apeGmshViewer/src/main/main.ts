@@ -667,7 +667,7 @@ ipcMain.handle("variants:compare", async (_e, index: unknown, label: unknown) =>
     compareHost.close();
     return { ok: false, reason: `variants:compare: ${set.results} does not pair with ${r.open} (fem_hash and model_hash differ, or are not stamped${a.meta.lineageReason ? `: ${a.meta.lineageReason}` : ""})` };
   }
-  study.compare = { row, set };
+  study.compare = { row, set, lineage: own };
   sendStudy();
   return {
     ok: true,
@@ -697,6 +697,99 @@ ipcMain.handle("compare:readStep", (_e, req: unknown) => {
 ipcMain.handle("compare:close", () => {
   closeCompare();
   sendStudy();
+});
+
+// ---------------------------------------------------------------------------
+// VU19 (#2861; ADR 0132 D9.5, owner ruling on #2845): the compare set's model
+// and `.user.h5`, through compare-slot doors of their own. Each reads only the
+// set main holds in `study.compare`, named by the slot: no door takes a path or
+// a row, so the page cannot name another file, and an answer carries the slot
+// it read, so the page drops one for a slot it no longer shows. None touches
+// `windowSet`, the gesture records, `followModel` or a writer (INV-6): the
+// compare user read never sweeps partials and makes no save token. With no
+// compare slot (`compare:close`, a page load, a switch onto it, a manifest
+// re-read that drops the row: D9.3) every door refuses. The window user doors
+// (`confined`) stay on the window set, so neither side reaches the other's file.
+// ---------------------------------------------------------------------------
+
+/** The compare slot as an answer names it: the row index and label, never a path. */
+const slotOf = (c: NonNullable<Study["compare"]>) => ({ index: c.row.index, label: c.row.label });
+
+/**
+ * The compare slot's `.user.h5`, from its model as main paired it (never the
+ * window set's), confined to the study again now; or why not.
+ */
+function compareUser(door: string): { ok: true; c: NonNullable<Study["compare"]>; user: string } | { ok: false; reason: string } {
+  const c = study.compare;
+  if (c === null) return { ok: false, reason: `${door}: no compare set is open` };
+  const from = c.set.model ?? c.set.results;
+  if (from === null) return { ok: false, reason: `${door}: the compare set has neither a model nor results` };
+  let user: string;
+  try {
+    user = candidates(from).user;
+  } catch (err) {
+    return { ok: false, reason: `${door}: the compare set's ${from} names no user file (${err instanceof Error ? err.message : String(err)})` };
+  }
+  const why = study.confine(user);
+  if (why !== null) return { ok: false, reason: `${door}: the compare set's user file leaves the study: ${why}` };
+  return { ok: true, c, user };
+}
+
+/** A compare door's request: an object with exactly `keys` (a path, or any other key, is refused), or why not. */
+function exactKeys(door: string, req: unknown, keys: readonly string[]): string | null {
+  const got = req !== null && typeof req === "object" && !Array.isArray(req) ? Object.keys(req).sort() : null;
+  if (got === null || got.join(",") !== [...keys].sort().join(",")) return `${door} takes ${keys.length ? `{ ${keys.join(", ")} }` : "{}"} and never a path; got ${shown(req)}`;
+  return null;
+}
+
+// The compare set's model, read as main paired it: its mesh's identity, with the `fem_hash`
+// and `model_hash` checked again against the pairing main made at `variants:compare`.
+ipcMain.handle("compare:model", async (_e, req: unknown) => {
+  const bad = exactKeys("compare:model", req, []);
+  if (bad !== null) return { ok: false, slot: null, reason: bad };
+  const c = study.compare;
+  if (c === null || c.set.model === null) return { ok: false, slot: null, reason: "compare:model: no compare set is open" };
+  const slot = slotOf(c);
+  const path = c.set.model;
+  let model;
+  try {
+    model = await openModel(path);
+  } catch (err) {
+    return { ok: false, slot, reason: `compare:model: ${path} cannot be read (${err instanceof Error ? err.message : String(err)})` };
+  }
+  const own = await modelHashes(path);
+  // A slot closed or replaced while the file was read answers nothing of it.
+  if (study.compare !== c) return { ok: false, slot: null, reason: "compare:model: the compare set changed while its model was read" };
+  if (typeof own === "string") return { ok: false, slot, reason: `compare:model: ${own}` };
+  if (own.femHash !== c.lineage.femHash || own.modelHash !== c.lineage.modelHash) {
+    return { ok: false, slot, reason: `compare:model: ${path} no longer pairs with the compare results (fem_hash ${own.femHash}, model_hash ${own.modelHash}; paired by ${c.lineage.femHash}, ${c.lineage.modelHash})` };
+  }
+  return { ok: true, slot, femHash: own.femHash, modelHash: own.modelHash, nodes: model.nodeIds.length, elements: model.blocks.reduce((n, b) => n + b.ids.length, 0) };
+});
+
+// The compare set's `.user.h5` index, each zone and entry judged by A6 against the compare
+// set's own model and results; `path` is shown only, never sent back.
+ipcMain.handle("compare:userRead", async (_e, req: unknown) => {
+  const bad = exactKeys("compare:userRead", req, []);
+  if (bad !== null) return { slot: null, path: null, read: { ok: false, error: bad } };
+  await h5wasm.ready;
+  const u = compareUser("compare:userRead");
+  if (!u.ok) return { slot: null, path: null, read: { ok: false, error: u.reason } };
+  return { slot: slotOf(u.c), path: u.user, read: readUserSet(h5wasm as unknown as UserH5, u.user, u.c.set.model, u.c.set.results, listDir) };
+});
+
+// One component of a state-free ON_NODES user result of the compare set's `.user.h5`, judged
+// against the compare set's own model and results (A6) before its DATA is read.
+ipcMain.handle("compare:userReadResult", async (_e, req: unknown) => {
+  const bad = exactKeys("compare:userReadResult", req, ["name", "component"]);
+  const r = req as { name?: unknown; component?: unknown };
+  if (bad !== null || typeof r.name !== "string" || typeof r.component !== "string") {
+    return { slot: null, read: { ok: false, reason: "refused", detail: bad ?? `compare:userReadResult takes { name, component } as strings; got ${shown(req)}` } };
+  }
+  await h5wasm.ready;
+  const u = compareUser("compare:userReadResult");
+  if (!u.ok) return { slot: null, read: { ok: false, reason: "refused", detail: u.reason } };
+  return { slot: slotOf(u.c), read: readUserResultColumn(h5wasm as unknown as UserH5, u.user, u.c.set.model, u.c.set.results, listDir, r.name, r.component) };
 });
 
 // A /geometry sibling (./zones.ts): only the window's set's (`setFile`, VU12).

@@ -1,0 +1,213 @@
+{
+ "compare_user": "plate_cracked.user.h5",
+ "window_user": "plate_uncracked.user.h5",
+ "compare_own": {
+  "zones": {
+   "meta": {
+    "stale": false,
+    "reason": ""
+   },
+   "results": {
+    "stale": false,
+    "reason": "by @basis, per entry"
+   },
+   "combinations": {
+    "stale": false,
+    "reason": ""
+   }
+  },
+  "results": {
+   "footfall": {
+    "stale": false,
+    "reason": ""
+   },
+   "drift": {
+    "stale": false,
+    "reason": ""
+   }
+  }
+ },
+ "compare_against_window": {
+  "zones": {
+   "meta": {
+    "stale": false,
+    "reason": ""
+   },
+   "results": {
+    "stale": true,
+    "reason": "by @basis, per entry"
+   },
+   "combinations": {
+    "stale": false,
+    "reason": ""
+   }
+  },
+  "results": {
+   "footfall": {
+    "stale": true,
+    "reason": "model_hash differs: 05337d99b871aed88bc2b3c7a727adb3 here, 194d6d4f42fb8cd722e8ea405a24a29d in the model"
+   },
+   "drift": {
+    "stale": true,
+    "reason": "results_hash differs: rf1:aebddb23d1b1529b9d207826ce348960fa93a0b5a9b73bd745f36b47831df5ac here, rf1:cc30ee356016984d6b7ab34de30fa48de288ce70f4d05fd8eada030df6ab3acf on disk"
+   }
+  }
+ },
+ "window_own": {
+  "zones": {
+   "meta": {
+    "stale": false,
+    "reason": ""
+   },
+   "results": {
+    "stale": false,
+    "reason": "by @basis, per entry"
+   }
+  },
+  "results": {
+   "footfall": {
+    "stale": false,
+    "reason": ""
+   }
+  }
+ },
+ "compare_footfall": {
+  "components": [
+   "ratio"
+  ],
+  "ids": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15
+  ],
+  "data": [
+   [
+    0.2
+   ],
+   [
+    1.4
+   ],
+   [
+    0.30000000000000004
+   ],
+   [
+    1.5
+   ],
+   [
+    0.5
+   ],
+   [
+    0.8
+   ],
+   [
+    1.0999999999999999
+   ],
+   [
+    0.6
+   ],
+   [
+    0.9
+   ],
+   [
+    1.2
+   ],
+   [
+    0.25
+   ],
+   [
+    1.45
+   ],
+   [
+    0.55
+   ],
+   [
+    0.8500000000000001
+   ],
+   [
+    1.15
+   ]
+  ]
+ },
+ "window_footfall": {
+  "components": [
+   "ratio"
+  ],
+  "ids": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15
+  ],
+  "data": [
+   [
+    0.1
+   ],
+   [
+    0.5
+   ],
+   [
+    0.1
+   ],
+   [
+    0.5
+   ],
+   [
+    0.2
+   ],
+   [
+    0.30000000000000004
+   ],
+   [
+    0.4
+   ],
+   [
+    0.2
+   ],
+   [
+    0.30000000000000004
+   ],
+   [
+    0.4
+   ],
+   [
+    0.1
+   ],
+   [
+    0.5
+   ],
+   [
+    0.2
+   ],
+   [
+    0.30000000000000004
+   ],
+   [
+    0.4
+   ]
+  ]
+ },
+ "compare_combinations": 0
+}
