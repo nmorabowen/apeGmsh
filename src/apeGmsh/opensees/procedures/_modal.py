@@ -31,6 +31,38 @@ if TYPE_CHECKING:
 from ._host import _ProcedureHost
 
 
+def refuse_fork_verb_before_wipe(
+    host: _ProcedureHost, verb: str, feature: str,
+) -> None:
+    """Refuse fork-only procedure ``verb`` on a stock build, before it
+    wipes the live domain (#2533).
+
+    A fork-only procedure (``complex_eigen``, ``modal_response_history``,
+    the FRF sweeps, ``critical_time_step``, ...) builds a fresh live
+    domain and only then issues its fork command, so on stock openseespy
+    the refusal at that command came after the user's domain was gone.
+    The verdict is ``capabilities().has_fork``, the resolver's one
+    backend verdict, which :meth:`_ModalMixin.eigen_feast` already read.
+    Call it after the verb's own argument checks and before
+    ``LiveOpsEmitter(wipe=True)``; the source scan in
+    ``tests/opensees/unit/test_refuse_before_wipe_sites.py`` fails a
+    procedure that calls a fork-only emitter method without it.
+
+    ``has_fork`` is one signal, the ``ladrunoBuild`` stamp, so a fork
+    built before that stamp (fork PR #718) is refused here too; the
+    message says so, as the chain refusal does.
+    """
+    if not host.capabilities().has_fork:
+        from ..emitter.live import _UNSTAMPED_FORK_NOTE
+
+        raise RuntimeError(
+            f"{verb} requires the Ladruno fork build of OpenSees "
+            f"({feature}); the in-process build reads as stock. "
+            "Nothing was run: the live domain is untouched."
+            + _UNSTAMPED_FORK_NOTE
+        )
+
+
 class _ModalMixin(_ProcedureHost):
     if TYPE_CHECKING:
         # ADR 0115 D2: the bridge's read session (``apeSees.__init__``);
@@ -684,12 +716,9 @@ class _ModalMixin(_ProcedureHost):
         # missing-attribute gate cannot fire — pre-check the fork probe
         # for the friendly message (a pre-ADR-43 fork build still fails
         # with the OpenSees '-feast' parse error).
-        if not self.capabilities().has_fork:
-            raise RuntimeError(
-                "apeSees.eigen_feast requires the Ladruno fork build of "
-                "OpenSees (fork ADR-43 band-targeted FEAST eigensolver); "
-                "the in-process openseespy is not the fork."
-            )
+        refuse_fork_verb_before_wipe(
+            self, "apeSees.eigen_feast",
+            "fork ADR-43 band-targeted FEAST eigensolver")
 
         from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
@@ -785,6 +814,8 @@ class _ModalMixin(_ProcedureHost):
         if closed_form:
             args.append("-closedForm")
 
+        refuse_fork_verb_before_wipe(
+            self, context, "fork ADR-46 complexEigen")
         bm = self.build()
         self._assert_fork_if_required()
         refuse_fork_chain_before_wipe(bm)
@@ -913,6 +944,8 @@ class _ModalMixin(_ProcedureHost):
                 )
             args.extend(("-modes", *mode_list))
 
+        refuse_fork_verb_before_wipe(
+            self, context, "fork ADR-44 modalResponseHistory")
         bm = self.build()
         self._assert_fork_if_required()
         refuse_fork_chain_before_wipe(bm)
@@ -1070,6 +1103,9 @@ class _ModalMixin(_ProcedureHost):
             require_rsa_feature("responseSpectrumAnalysis -requireMass")
             args.extend(("-requireMass", r_val))
 
+        refuse_fork_verb_before_wipe(
+            self, context,
+            "fork ADR-44 responseSpectrumAnalysis -combine")
         bm = self.build()
         self._assert_fork_if_required()
         refuse_fork_chain_before_wipe(bm)
