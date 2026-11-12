@@ -46,8 +46,7 @@ until v2 can capture headless there.
 
 Stored Gauss components are **not** a gap. v2 draws them through
 `contour.source: "element"` with a `gauss` mode. Their row, R16b, is a
-repoint, ruled 2026-11-02, and shipped in VA6e
-([#2794](https://github.com/nmorabowen/apeGmsh/issues/2794)): see the row.
+repoint, ruled 2026-11-02.
 
 ### R22b, a `Results` held only in memory
 

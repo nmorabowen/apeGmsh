@@ -231,22 +231,20 @@ def test_missing_stem_model_is_refused(app_backend, ladruno_set, tmp_path):
     assert app_backend.specs == []
 
 
-def test_stored_gauss_component_is_a_named_carve_out(app_backend, tmp_path):
-    """R16b stays refused until follow-up slice #2794; the refusal says so.
+def test_stored_gauss_component_draws_as_the_app_element_field(app_backend, tmp_path):
+    """R16b (VA6e #2794): the fork's quad2d stress_xx is the app's stress/sigma11.
 
-    The fork's quad2d fixture records ``stress_xx`` at the Gauss points.
-    Its ``<stem>.h5`` is written from the file's own mesh, so the pair holds.
+    The fixture records ``stress_xx`` at four Gauss points. Its ``<stem>.h5`` is
+    written from the file's own mesh, so the pair holds.
     """
     fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ladruno" / "quad2d.ladruno"
     src = tmp_path / "quad2d.ladruno"
     shutil.copy(fixture, src)
     with Results.from_ladruno(src) as r:
         r.fem.to_h5(str(tmp_path / "quad2d.h5"))
-        stage_id = r.stages[0].id
-        assert "stress_xx" in r.inspect.components(stage=stage_id)["gauss"]
-        with pytest.raises(ValueError, match="#2794"):
-            r.render(tmp_path / "x.png", view="contour", component="stress_xx")
-    assert app_backend.specs == []
+        r.render(tmp_path / "x.png", view="contour", component="stress_xx")
+    (shot,) = app_backend.specs[0]["shots"]
+    assert shot["contour"] == {"field": "stress", "component": "stress/sigma11", "source": "element", "gauss": "node"}
 
 
 def _fem_of_length(tmp_path: Path, length: float):
