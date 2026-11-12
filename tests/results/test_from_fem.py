@@ -12,6 +12,7 @@ import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
+import h5py
 import numpy as np
 import pytest
 
@@ -25,6 +26,9 @@ from apeGmsh.mesh.FEMData import (
 )
 from apeGmsh.results import Results
 from apeGmsh.results._bind import ModelFemMismatchWarning
+from apeGmsh.results.readers._tag_translation import (
+    WarnElementTagPairingMissing,
+)
 from apeGmsh.results.Results import _resolve_results_kind
 from apeGmsh.results.writers import NativeWriter
 from tests.test_results_mpco_model_h5_binding import (
@@ -483,3 +487,110 @@ def test_a_file_without_element_records_binds_silently(
         assert sorted(r.fem.nodes.physical.names()) == [
             "Left", "Plate", "Right",
         ]
+
+
+# ---------------------------------------------------------------------
+# #2907 — fem= with no tag map warns on every element read
+# ---------------------------------------------------------------------
+#
+# With no element tag map the reader passes element ids through
+# untranslated, so a read by the caller's fem ids reads ops tags.  Before
+# #2889 every element read on such a ``Results`` warned
+# ``WarnElementTagPairingMissing``; #2889's check then replaced ``fem=``
+# by the capture's own MODEL group, and the reads went silent although
+# the caller's ids are still fem ids (the live oracle:
+# ``test_tag_translation_live.py::test_oracle_rejects_a_read_without_the_pairing``).
+# Both warnings speak: the mismatch once at open, the pairing at each read.
+
+_NO_PAIRING = "no fem_eid<->ops-tag pairing"
+
+
+def _plate_capture_without_pairing(
+    tmp_path: Path,
+) -> "tuple[Path, Path, FEMData, int]":
+    """A bridge ``model.h5`` with ``element_meta`` deleted, and its capture.
+
+    The capture records the plate's quad under the tag the bridge gave
+    it, which is not its fem id: the read the pairing translated.
+    """
+    model_h5, fem = _write_model_h5(tmp_path / "model.h5")
+    with h5py.File(model_h5, "r+") as f:
+        meta = f["/opensees/element_meta"]
+        pairs = {int(e): int(t) for tok in meta
+                 for t, e in zip(meta[tok]["ids"][...],
+                                 meta[tok]["fem_eids"][...])}
+        del f["/opensees/element_meta"]
+    assert list(pairs) == [1] and pairs[1] != 1          # not vacuous
+    mpco = _write_mpco(tmp_path / "r.mpco", n_stages=2,
+                       elements=[(pairs[1], [1, 2, 3, 4])])
+    return mpco, model_h5, fem, pairs[1]
+
+
+def test_a_read_without_the_pairing_warns_after_the_element_check(
+    tmp_path: Path,
+) -> None:
+    """``from_mpco(fem=, model_h5=<no element_meta>)``: the oracle's read."""
+    mpco, model_h5, fem, tag = _plate_capture_without_pairing(tmp_path)
+    with pytest.warns(ModelFemMismatchWarning,
+                      match=rf"\(e\.g\. {tag} is fem element 1\)"):
+        r = Results.from_mpco(mpco, model_h5=model_h5, fem=fem)
+    with r:
+        # #1408's outcome stands: the capture's own MODEL group binds.
+        assert r.fem is not fem
+        assert [int(e) for e in r.fem.elements.ids] == [tag]
+        assert r.fem.elements.physical.names() == []
+        gauss = r.stage(r.stages[0].name).elements.gauss
+        with pytest.warns(WarnElementTagPairingMissing, match=_NO_PAIRING):
+            gauss.get(ids=[1], component="stress_xx")
+
+
+def _from_fem_route(
+    tmp_path: Path, route: str, *, renumbered: bool,
+) -> "tuple[FEMData, Path, int]":
+    """``(fem, results path, a fem element id)`` for ``Results.from_fem``."""
+    if route == "mpco":
+        tag = 7 if renumbered else 1
+        return _plate_fem(), _write_mpco(
+            tmp_path / "r.mpco", n_stages=1, elements=[(tag, [1, 2, 3, 4])],
+        ), 1
+    path = tmp_path / "truss2d.ladruno"
+    shutil.copyfile(_TRUSS, path)
+    eids = (13, 14) if renumbered else (1, 2)
+    return _truss_fem(eids=eids), path, eids[1]
+
+
+def _element_read(r: Results, route: str, eid: int) -> None:
+    stage = r.stage("stage_0")
+    if route == "mpco":
+        stage.elements.gauss.get(ids=[eid], component="stress_xx")
+    else:
+        stage.elements.get(ids=[eid], component="basicForce")
+
+
+@pytest.mark.parametrize("route", ["mpco", "ladruno"])
+def test_from_fem_renumbered_reads_warn_no_pairing(
+    tmp_path: Path, route: str,
+) -> None:
+    """``from_fem`` writes no tag map: a replaced ``fem=`` still warns."""
+    fem, path, eid = _from_fem_route(tmp_path, route, renumbered=True)
+    with pytest.warns(ModelFemMismatchWarning, match="renumbered"):
+        r = Results.from_fem(fem, path, cache_root=tmp_path)
+    with r:
+        assert r.fem is not fem
+        with pytest.warns(WarnElementTagPairingMissing, match=_NO_PAIRING):
+            _element_read(r, route, eid)
+
+
+@pytest.mark.parametrize("route", ["mpco", "ladruno"])
+def test_from_fem_matching_reads_warn_no_pairing(
+    tmp_path: Path, route: str,
+) -> None:
+    """The control: a ``fem=`` that binds warns at the read, and only there."""
+    fem, path, eid = _from_fem_route(tmp_path, route, renumbered=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ModelFemMismatchWarning)
+        r = Results.from_fem(fem, path, cache_root=tmp_path)
+    with r:
+        assert r.fem is fem
+        with pytest.warns(WarnElementTagPairingMissing, match=_NO_PAIRING):
+            _element_read(r, route, eid)
