@@ -74,9 +74,11 @@ def capture_live_modes(
     the live elements' DOF roles say so (a beam, shell or zero-length
     element touches the node; an ``ASDEmbeddedNodeElement`` neither gives
     nor takes one away); a u-p element's pressure is never written as a
-    rotation. A rotation slot the live classes cannot settle (a class the tables do not
-    know touches the node, or no rotational element does) refuses by
-    node, slot and class, rather than writing 0.0 over a rotation (#2407).
+    rotation. A rotation slot the live classes cannot settle (a class the
+    tables do not know touches the node, or no rotational element does)
+    refuses by node, slot and class, rather than writing 0.0 over a
+    rotation (#2407), unless ``ops.getFixedDOFs`` lists every rotation DOF
+    of the node: a fixed DOF's modal value is 0, so 0.0 is written there.
 
     The file is stamped (``INFO/PROVENANCE``) against the model archive:
     a bridge archive with both ``model_hash`` and ``fem_hash``, a bare
@@ -266,7 +268,12 @@ def _capture(
             "laid out. Nothing was written.")
 
     layouts, rotations, unresolved = _live_slots(facts, node_ids, ndf_of, ndm)
-    _refuse_unresolved(unresolved, dict(zip((int(n) for n in node_ids), layouts)))
+    layout_of = dict(zip((int(n) for n in node_ids), layouts))
+    # A rotation slot a single-point constraint fixes has a 0 modal value
+    # whatever it means, so the 0.0 written there is the live value.
+    unresolved = [(n, why) for n, why in unresolved
+                  if not _rotations_fixed(ops, n, layout_of[n])]
+    _refuse_unresolved(unresolved, layout_of)
     shapes = np.stack([_spatial(rows, layouts) for rows in vectors])
     all_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     # Written and stamped in a staging directory, then moved into place:
@@ -280,6 +287,17 @@ def _capture(
         source="live_modes", opensees_backend=solved_backend(ops),
         stacklevel=4,
     )
+
+
+def _rotations_fixed(ops: Any, node: int, layout: "tuple[int, ...]") -> bool:
+    """Whether ``ops.getFixedDOFs(node)`` lists every DOF of ``node`` that
+    its layout lays on a rotation slot. A fixed DOF's eigenvector entry is
+    0, so writing 0.0 there is exact. A slot an ``equalDOF`` or
+    ``rigidLink`` ties is not fixed, and is not settled here. Asked only
+    of a node whose slot is otherwise unsettled."""
+    dofs = {d + 1 for d, slot in enumerate(layout) if slot >= 3}
+    fixed = {int(v) for v in np.asarray(ops.getFixedDOFs(int(node))).ravel()}
+    return bool(dofs) and dofs <= fixed
 
 
 def _refuse_unresolved(

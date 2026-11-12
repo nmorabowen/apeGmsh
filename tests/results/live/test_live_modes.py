@@ -85,6 +85,8 @@ class FakeOps:
         self.vectors = {(n, k): rng.standard_normal(ndf[n]) * 10.0 ** (k - 3)
                         for n in coords for k in range(1, len(eigenvalues) + 1)}
         self.solved: "list[int]" = []
+        #: ``{node: [dof, ...]}`` the ``fix`` commands hold (1-based).
+        self.fixed: "dict[int, list[int]]" = {}
         #: The arguments of each ``eigen`` call.
         self.calls: "list[tuple[Any, ...]]" = []
 
@@ -108,6 +110,9 @@ class FakeOps:
 
     def eleNodes(self, tag: int) -> list[int]:
         return list(self.elements[tag][1])
+
+    def getFixedDOFs(self, n: int) -> list[int]:
+        return list(self.fixed.get(n, []))
 
     def eigen(self, *args: Any) -> list[float]:
         self.calls.append(args)
@@ -295,6 +300,42 @@ def test_a_node_only_an_embedded_node_element_touches_refuses(tmp_path: Path) ->
     _refuses(fem, ops, tmp_path / "modes.ladruno",
              rf"node 11's rotation slots {_ROT3} cannot be settled: no "
              r"beam-column or shell \(or zero-length\) element touches it")
+
+
+def _truss_tail() -> "tuple[FEMData, FakeOps]":
+    """The solid-and-frame model with beam 3 swapped for a truss: node 11
+    (ndf 6) is touched by no rotational class."""
+    fem, ops = _solid_and_frame()
+    ops.elements[3] = ("Truss", [10, 11])
+    return fem, ops
+
+
+def test_a_fixed_rotation_slot_is_written_as_zero(tmp_path: Path) -> None:
+    """Review F1: node 11's rotation DOFs are all fixed, so their modal
+    value is 0 whatever the slot means, and the capture writes 0.0 there
+    instead of refusing."""
+    fem, ops = _truss_tail()
+    ops.fixed[11] = [1, 2, 3, 4, 5, 6]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
+    for k, comps in _read(p, fem).items():
+        for a in _AXES:
+            assert comps[f"rotation_{a}"][11] == 0.0
+        for n in (9, 10):
+            for d, a in enumerate(_AXES):
+                assert comps[f"rotation_{a}"][n] == float(ops.vectors[(n, k)][3 + d])
+
+
+@pytest.mark.parametrize("fixed", [[], [1, 2, 3], [1, 2, 3, 4, 5]],
+                         ids=["none", "translations", "two-rotations"])
+def test_a_rotation_slot_not_all_fixed_still_refuses(
+    fixed: "list[int]", tmp_path: Path,
+) -> None:
+    fem, ops = _truss_tail()
+    ops.fixed[11] = fixed
+    _refuses(fem, ops, tmp_path / "modes.ladruno",
+             rf"node 11's rotation slots {_ROT3} cannot be settled")
 
 
 @pytest.mark.parametrize("beam_class", ["MixedBeamColumn3d", "ElasticForceBeamColumn3d"])

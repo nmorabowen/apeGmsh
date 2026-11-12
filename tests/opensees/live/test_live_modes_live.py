@@ -356,7 +356,6 @@ def test_a_mixed_beam_cantilever_reads_its_live_rotations(opspy: Any, tmp_path: 
 ROTATION_ONLY: "dict[str, tuple[int, tuple[Any, ...]]]" = {
     "MixedBeamColumn2d": (2, ("mixedBeamColumn", 1, 1)),
     "MixedBeamColumn3d": (3, ("mixedBeamColumn", 1, 1)),
-    "MixedBeamColumnAsym3d": (3, ("mixedBeamColumnAsym", 1, 1)),
     "ForceBeamColumnCBDI3d": (3, ("forceBeamColumnCBDI", 1, 1)),
     "ElasticForceBeamColumn2d": (2, ("elasticForceBeamColumn", 1, 1)),
     "ElasticForceBeamColumn3d": (3, ("elasticForceBeamColumn", 1, 1)),
@@ -364,15 +363,33 @@ ROTATION_ONLY: "dict[str, tuple[int, tuple[Any, ...]]]" = {
     "ForceBeamColumn3dThermal": (3, ("forceBeamColumnThermal", 1, 1)),
     "DispBeamColumnNL2d": (2, ("dispBeamColumnNL", 1, 1)),
     "DispBeamColumnNL3d": (3, ("dispBeamColumnNL", 1, 1)),
-    "DispBeamColumnAsym3d": (3, ("dispBeamColumnAsym", 1, 1)),
     "DispBeamColumn2dThermal": (2, ("dispBeamColumnThermal", 1, 1)),
     "DispBeamColumn3dThermal": (3, ("dispBeamColumnThermal", 1, 1)),
     "TimoshenkoBeamColumn2d": (2, ("timoshenkoBeamColumn", 1, 1)),
     "TimoshenkoBeamColumn3d": (3, ("timoshenkoBeamColumn", 1, 1)),
+    # Built on a FiberAsym section (shear centre off the centroid), as the
+    # Asym elements require: on a plain Elastic section stock prints
+    # "Matrix::operator*: incompatible sizes" or "ProfileSPD aii<0".
+    "MixedBeamColumnAsym3d": (3, ("mixedBeamColumnAsym", 1, 1)),
+    "DispBeamColumnAsym3d": (3, ("dispBeamColumnAsym", 1, 1)),
     # K11, K33, K44 = 4, 4, 2 about both axes: the unmodified rows.
     "ModElasticBeam3d": (3, ("ModElasticBeam3d", A, E, G, J, I_Y, I_Z,
                              4.0, 4.0, 2.0, 4.0, 4.0, 2.0, 1)),
 }
+
+
+#: The classes whose section 1 is the FiberAsym section their docs require.
+_ASYM = frozenset({"MixedBeamColumnAsym3d", "DispBeamColumnAsym3d"})
+#: What stock prints when an element misbehaves on its section.
+_ELEMENT_FAULT = re.compile(r"incompatible sizes|aii\s*<\s*0|failed|error", re.I)
+
+
+def _fiber_asym_section() -> "tuple[Any, ...]":
+    """An L-shaped steel fibre section (two 0.1 x 0.05 legs), shear centre
+    at (0.01, 0.02), with GJ: section 1 of an Asym beam."""
+    return (("section", "FiberAsym", 1, 0.01, 0.02, "-GJ", G * J),
+            ("patch", "rect", 1, 4, 2, -0.05, -0.05, 0.05, 0.0),
+            ("patch", "rect", 1, 2, 4, -0.05, 0.0, 0.0, 0.05))
 
 
 def test_the_rotation_only_oracles_cover_the_table() -> None:
@@ -383,11 +400,13 @@ def test_the_rotation_only_oracles_cover_the_table() -> None:
 
 @pytest.mark.parametrize("cls", list(ROTATION_ONLY))
 def test_a_rotation_only_beam_class_reads_its_live_rotations(
-    cls: str, opspy: Any, tmp_path: Path,
+    cls: str, opspy: Any, tmp_path: Path, capfd: Any,
 ) -> None:
     """#2414 census: a two-element stock cantilever of ``cls`` along x is
     that ``eleType`` with the FEM's node order, and every node reads the
-    live rotations. Dropping the class's row makes the capture refuse."""
+    live rotations. Dropping the class's row makes the capture refuse.
+    The element must behave: stock prints no fault while it is built and
+    solved, and the capture refuses a non-positive eigenvalue."""
     ndm, command = ROTATION_ONLY[cls]
     ops = opspy
     xyz = np.array([[0.0] * ndm, [1.5] + [0.0] * (ndm - 1), [3.0] + [0.0] * (ndm - 1)])
@@ -402,7 +421,12 @@ def test_a_rotation_only_beam_class_reads_its_live_rotations(
     else:
         ops.fix(1, 1, 1, 1, 1, 1, 1)
         ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
-        ops.section("Elastic", 1, E, A, I_Z, I_Y, G, J)
+        if cls in _ASYM:
+            ops.uniaxialMaterial("Elastic", 1, E)
+            for name, *args in _fiber_asym_section():
+                getattr(ops, name)(*args)
+        else:
+            ops.section("Elastic", 1, E, A, I_Z, I_Y, G, J)
     ops.beamIntegration("Lobatto", 1, 1, 3)
     for eid in (1, 2):
         ops.element(command[0], eid, eid, eid + 1, *command[1:])
@@ -414,6 +438,8 @@ def test_a_rotation_only_beam_class_reads_its_live_rotations(
     p, archive, spy = _capture(fem, ops, n_modes, tmp_path)
     _check_file(p, archive, spy, ops, n_modes, rotation_nodes={1, 2, 3}, ndm=ndm)
     _rotations_move(ops, (2, 3), n_modes, ndm=ndm)
+    out, err = capfd.readouterr()
+    assert not _ELEMENT_FAULT.search(out + err), out + err
 
 
 def test_an_unknown_class_at_a_beam_node_refuses_by_name(opspy: Any, tmp_path: Path) -> None:
@@ -440,6 +466,63 @@ def test_an_unknown_class_at_a_beam_node_refuses_by_name(opspy: Any, tmp_path: P
             capture_live_modes(_line_fem(xy), 2, out, ops=ops)
     assert not out.exists()
     assert abs(ops.nodeEigenvector(3, 1)[2]) > 0.0     # a real rotation there
+
+
+def _beams_and_truss_tail(ops: Any) -> FEMData:
+    """Review F1: a 3-D, ndf 6 cantilever (beams 1-2, 2-3) with a ``Truss``
+    2-4; node 4's rotation slots are touched by no rotational class."""
+    xyz = np.array([[0, 0, 0], [1.5, 0, 0], [3.0, 0, 0], [1.5, 1.0, 0]], dtype=float)
+    fem = _fem(xyz, {1: ("Line 2", 1, [[1, 2], [2, 3], [2, 4]], [1, 2, 3])},
+               "live_modes_truss_tail")
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    for n, c in enumerate(xyz, start=1):
+        ops.node(n, *[float(v) for v in c])
+    ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+    for eid, (i, j) in ((1, (1, 2)), (2, (2, 3))):
+        ops.element("elasticBeamColumn", eid, i, j, A, E, G, J, I_Y, I_Z, 1)
+    ops.uniaxialMaterial("Elastic", 1, E)
+    ops.element("Truss", 3, 2, 4, A, 1)
+    for n in (2, 3):
+        ops.mass(n, M, M, M, JM, JM, JM)
+    return fem
+
+
+def test_a_fixed_rotation_slot_reads_its_zero(opspy: Any, tmp_path: Path) -> None:
+    """Review F1: node 4 is fixed in all six DOFs, so its rotations are 0
+    in every mode whatever the slot means. The capture writes that 0.0
+    (the live value) instead of refusing, and nodes 1-3 read theirs."""
+    ops = opspy
+    fem = _beams_and_truss_tail(ops)
+    ops.fix(4, 1, 1, 1, 1, 1, 1)
+    assert {4, 5, 6} <= {int(d) for d in ops.getFixedDOFs(4)}
+    p, archive, spy = _capture(fem, ops, 4, tmp_path)
+    _check_file(p, archive, spy, ops, 4, rotation_nodes={1, 2, 3, 4}, ndm=3)
+    assert all(ops.nodeEigenvector(4, k)[3:] == [0.0, 0.0, 0.0] for k in range(1, 5))
+
+
+@pytest.mark.parametrize("tie", ["equalDOF", "rigidLink"])
+def test_a_tied_rotation_slot_still_refuses(tie: str, opspy: Any, tmp_path: Path) -> None:
+    """Review F1: a slot an ``equalDOF`` or ``rigidLink`` ties to beam node 3
+    is not fixed, and moves with it, so it stays unsettled and refuses."""
+    ops = opspy
+    fem = _beams_and_truss_tail(ops)
+    if tie == "equalDOF":
+        ops.fix(4, 1, 1, 1, 0, 0, 0)
+        ops.equalDOF(3, 4, 4, 5, 6)
+    else:
+        ops.rigidLink("beam", 3, 4)
+    ops.constraints("Transformation")
+    out = tmp_path / "modes.ladruno"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match=(
+                r"capture_live_modes: node 4's rotation slots \['rotation_x', "
+                r"'rotation_y', 'rotation_z'\] cannot be settled: no "
+                r"beam-column or shell")):
+            capture_live_modes(fem, 4, out, ops=ops)
+    assert not out.exists()
+    assert np.abs(np.array([ops.nodeEigenvector(4, k)[3:] for k in range(1, 5)])).max() > 0.0
 
 
 # ---------------------------------------------------------------------------
