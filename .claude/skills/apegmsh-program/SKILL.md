@@ -227,10 +227,16 @@ for a moment once, and check 10 absorbed it (2026-11-10). After a landing, the
 next ready PR may merge `main` at once, so its checks run alongside `main`'s own
 run: check 10 allows a PR whose checks ran on a base containing `main`'s head.
 
-**Landing order.** A `main` Tests run takes about 50 minutes, and check 10 waits
-for it, so serial landings can starve a PR that has been ready longest (3a #2111
-lost three heads in a row, 2026-10-16). Give the oldest ready PR the next green
-head, and tell the other sessions to hold their landings until it lands.
+**Landing order.** A `main` Tests run takes about 50 minutes. Check 10 lets up
+to three file-disjoint PRs land on one green run (#2919): while the run on the
+head is in progress, a PR whose files miss everything landed since the last
+green commit G lands, as long as no more than two commits sit past G and each
+of their runs is a first attempt, still queued or running, with no required
+job finished other than green. A fourth PR, or one that shares a file
+with that group, waits for the next green head, and that wait can starve the PR
+ready longest (3a #2111 lost three heads in a row, 2026-10-16). Give the oldest
+ready PR the next slot, land a group one PR at a time, and tell the other
+sessions to hold their landings until it lands.
 
 **Red `main`.**
 1. Confirm it from `gh run list --branch main` first.
