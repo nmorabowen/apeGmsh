@@ -990,24 +990,30 @@ def _refuse_activation_after_plastic_flip(
         return
     activated = set(activated_pgs)
     carriers = _first_element_only_carriers(model.specs, tags)[0]
+    # A group none of whose elements was live before this stage reached
+    # nothing at the earlier flip: build-time validator V7 refuses that
+    # flip, with its own message.  A carrier a later stage activates
+    # counts as live here, which can only refuse more.  Counted per
+    # group, not per tag (#2534): the flag the earlier flip left plastic
+    # is the group's.
+    earlier_live = {
+        group_of_tag[tag] for tag, specs in carriers.items()
+        if any(spec.pg not in activated for spec in specs)
+    }
     for tag, specs in sorted(carriers.items()):
         new = sorted({spec.where for spec in specs if spec.pg in activated})
-        # A material none of whose elements was live before this
-        # stage reached nothing at the earlier flip: build-time
-        # validator V7 refuses that flip, with its own message.  A
-        # carrier a later stage activates counts as live here, which can
-        # only refuse more.
-        earlier_live = any(spec.pg not in activated for spec in specs)
-        if new and earlier_live:
+        group = group_of_tag[tag]
+        if new and group in earlier_live:
             raise BridgeError(
                 f"Stage {name!r}.activate: {', '.join(new)} "
                 f"carries nDMaterial tag {tag}, whose stage flag an "
-                "earlier stage left plastic.  The new element enters "
+                f"earlier stage left plastic ({group} is one flag for "
+                "every material of the class).  The new element enters "
                 "the plastic stage with no Elastic2Plastic() of its "
-                "own, so its back-stress is never re-seated (issue "
-                "#2445).  Flip the whole group again in this stage "
-                "(the flip runs after the activation and reaches it), "
-                "or activate the element before the flip."
+                "own, so its back-stress is never re-seated (issues "
+                "#2445, #2534).  Flip the whole group again in this "
+                "stage (the flip runs after the activation and reaches "
+                "it), or activate the element before the flip."
             )
 
 
