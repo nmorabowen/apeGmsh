@@ -232,6 +232,19 @@ and the column as `component`, and no `stage`, `step`, `combination`,
 The manifest's contour says `"source": "user"` and names the entry and its
 basis.
 
+**The compare set's own user results.** With a variant open as the compare
+set, the Variants panel also lists that variant's own `.user.h5` (never the
+window set's file, even when an entry has the same name), with each entry's
+staleness judged against the compare variant's own model and results. An
+empty `/combinations` zone and a missing file are said as such. **Draw**
+colours the window's mesh by a state-free nodal entry of the compare file,
+by node id, and only when the two models are one mesh (the same
+`fem_hash`); otherwise it is refused with the reason, and nothing is
+interpolated. The legend names it `<variant>: <entry>`. It is a contour
+only, it replaces Show difference (and the other way round), and Close on
+the compare row ends it. The Draw is in the window only; a `--render` shot
+cannot name a compare user result yet.
+
 ## 7. Entities
 
 The `/entities` of the `.user.h5` draw where they are, with no switch:

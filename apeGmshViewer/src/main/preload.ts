@@ -36,6 +36,9 @@
 //   onOffers(cb) onSnapshotRequest(cb) snapshotReply(id, reply)  ADR 0128 D5, D6 (below)
 //   variants() onVariants(cb) variantsSwitch(i, label) variantsCompare(i, label)
 //   readCompareStep(req) compareClose()  VU10: the study, a switch and the compare set (below)
+//   compareModel() compareUserRead() compareUserReadResult({name, component})
+//                          VU19: the compare set's model and `.user.h5`, judged
+//                          against its own model (A6); never a path or a row
 //   workspaceRead()         VU9a (ADR 0132): the open set's `<stem>.workspace.h5`,
 //                          its tables and each set's verdict (main/workspace.ts);
 //                          it takes no argument, main names the file
@@ -195,6 +198,11 @@ contextBridge.exposeInMainWorld("viewer", {
   variantsCompare: (index: number, label: string) => ipcRenderer.invoke("variants:compare", index, label),
   readCompareStep: (req: { stage: string; step: number; seq: number }) => ipcRenderer.invoke("compare:readStep", { stage: req.stage, step: req.step, seq: req.seq }),
   compareClose: () => ipcRenderer.invoke("compare:close"),
+  // VU19 (ADR 0132 D9.5): the compare set's model and `.user.h5`, through doors of the compare slot. None names a
+  // file or a row: main reads the set it holds in its compare slot, and each answer names the slot it read.
+  compareModel: () => ipcRenderer.invoke("compare:model", {}),
+  compareUserRead: () => ipcRenderer.invoke("compare:userRead", {}),
+  compareUserReadResult: (req: { name: string; component: string }) => ipcRenderer.invoke("compare:userReadResult", { name: req.name, component: req.component }),
   snapshotReply: (id: number, reply: unknown) => ipcRenderer.invoke("viewer:snapshotReply", id, reply),
   // VU9a (ADR 0132 D6, D7; HG9 on #2803): the window set's workspace. Neither door names a file: main reads and writes
   // the set's own `<stem>.workspace.h5`, and refuses an edit with any key its op does not name (a path included).

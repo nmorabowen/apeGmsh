@@ -783,6 +783,8 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
 export function contourView(s: State): ContourView {
   if (s.visibility.colourBy !== "contour") return { state: "off" };
   if (s.variants.difference) return differenceContour(s);
+  // VU19: a compare user result has no state either, so it is shown whatever phase is on screen.
+  if (s.variants.shown !== null) return compareUserContour(s, s.variants.shown);
   if (s.phase.at?.kind === "combination") return combinationContour(s, s.phase.at.name);
   // VU16: a user result has no state, so it is shown whatever phase is on screen, with or without results.
   if (s.contour.source === "user") return userResultContour(s);
@@ -882,6 +884,10 @@ export type DeformView =
 export function deformOf(s: State): { ok: true; draw: DeformDraw } | { ok: false; state: "unavailable" | "refused"; reason: string } {
   // VU10: a difference of two variants is a contour only; it is never offered as a shape, nor is either variant's under it.
   if (s.variants.difference) return { ok: false, state: "refused", reason: "the difference of two variants is shown as a contour only, never as a deformed shape" };
+  // VU19: so is a compare user result, and nothing of the window set's is offered as a shape under it.
+  if (s.visibility.colourBy === "contour" && s.variants.shown !== null) {
+    return { ok: false, state: "refused", reason: "a compare variant's user result is shown as a contour only, never as a deformed shape" };
+  }
   if (s.phase.at?.kind === "combination") return combinationDeform(s, s.phase.at.name);
   // VU16: a user result is a contour only; it is never offered as a shape, nor is a results step's under it.
   if (s.visibility.colourBy === "contour" && s.contour.source === "user") {
@@ -1687,7 +1693,8 @@ export function userResultPickOf(s: State, name: string): { ok: true; entry: Use
 export function userResultRequestOf(s: State): { key: string; path: string; name: string; component: string } | null {
   const c = s.contour;
   if (s.visibility.colourBy !== "contour" || c.source !== "user" || c.field === null || c.component === null) return null;
-  if (s.variants.difference || s.phase.at?.kind === "combination") return null;
+  // VU19: a compare user result drawn is read by its own door; the window's file is not read under it.
+  if (s.variants.difference || s.variants.shown !== null || s.phase.at?.kind === "combination") return null;
   const p = userResultPickOf(s, c.field);
   if (!p.ok || p.entry.stale.stale || !p.entry.components.includes(c.component)) return null;
   const path = s.user!.path;
@@ -1841,6 +1848,116 @@ export function variantRowOf(s: State, label: string): { ok: true; row: { index:
   if (study.active === row.index) return { ok: false, reason: `variant ${quoted(label)} is the window set; a compare set is another variant` };
   const c = s.variants.compare;
   return { ok: true, row: { index: row.index, label: row.label }, open: c !== null && c.status !== "failed" && c.index === row.index && c.label === row.label };
+}
+
+// -- VU19: the compare set's user results (ADR 0132 D9.5) ----------------------------
+
+/**
+ * The compare set's user result `name`, as the compare set's own `.user.h5`
+ * lists it with A6's verdict against the compare set's own model and results
+ * (main's `compare:userRead`), or why there is none. Only a state-free
+ * `ON_NODES` entry can be drawn; staleness is judged by the caller, so a stale
+ * entry is picked and refused with its reason, never silently dropped.
+ */
+export function compareUserPickOf(s: State, name: string): { ok: true; entry: UserResult; label: string } | { ok: false; reason: string } {
+  const c = s.variants.compare;
+  if (c?.status !== "open") return { ok: false, reason: "no compare set is open" };
+  const u = s.variants.compareUser;
+  const of = `the compare variant ${quoted(c.label)}`;
+  if (u === null || u.status === "reading") return { ok: false, reason: `the user file of ${of} is being read` };
+  if (u.status === "none") return { ok: false, reason: `${of} has no .user.h5 (${baseName(u.path)})` };
+  if (u.status === "failed") return { ok: false, reason: `the user file of ${of} is refused: ${u.error}` };
+  const file = baseName(u.path);
+  const r = u.info.results;
+  if (r === null) return { ok: false, reason: `${file} of ${of} holds no /results entry, so it has no user result ${quoted(name)}` };
+  if (!r.ok) return { ok: false, reason: `/results of ${file} of ${of} is refused: ${r.reason}` };
+  const entry = r.items.find((x) => x.name === name);
+  if (!entry) {
+    const why = r.refused.find((x) => x.name === name);
+    return { ok: false, reason: why ? `user result ${quoted(name)} of ${of} is refused: ${why.reason} (${why.detail})` : `${file} of ${of} lists no user result ${quoted(name)}` };
+  }
+  if (entry.target !== "nodes") return { ok: false, reason: `user result ${quoted(name)} of ${of} is on ${entry.target}; this app draws a user result on nodes only` };
+  if (entry.perState) return { ok: false, reason: `user result ${quoted(name)} of ${of} is per state; this app draws a state-free one only` };
+  return { ok: true, entry, label: c.label };
+}
+
+/**
+ * Whether the compare set's values can be placed on the window's mesh: only
+ * when the compare set's model (main's `compare:model`) and the window's model
+ * state one mesh by `fem_hash`, so a node id names one node on both. Two meshes
+ * that do not pair are refused with the reason, never interpolated.
+ */
+export function compareMeshOf(s: State): { ok: true } | { ok: false; reading: boolean; reason: string } {
+  const c = s.variants.compare;
+  if (c?.status !== "open") return { ok: false, reading: false, reason: "no compare set is open" };
+  const m = s.variants.compareModel;
+  if (m === null || m.status === "reading") return { ok: false, reading: true, reason: `the model of the compare variant ${quoted(c.label)} is being read` };
+  if (m.status === "failed") return { ok: false, reading: false, reason: `the model of the compare variant ${quoted(c.label)} is refused: ${m.reason}` };
+  const mine = s.lineage?.femHash ?? null;
+  if (mine === null) return { ok: false, reading: false, reason: `the window's model stamps no fem_hash, so the nodes of ${quoted(c.label)} cannot be placed on it` };
+  if (mine !== m.femHash) {
+    return { ok: false, reading: false, reason: `the two variants' models are not one mesh (fem_hash ${mine} here, ${m.femHash} in ${quoted(c.label)}), so its values are not placed on this mesh; nodes are never interpolated` };
+  }
+  return { ok: true };
+}
+
+/**
+ * What the app reads for the compare user result shown, or null when nothing
+ * is to be read: not colouring by a contour, nothing picked, the difference on,
+ * the two meshes not one, a pick the file cannot give, or a stale entry (A6 by
+ * its own verdict: refused, never read). `key` names the read: the compare row,
+ * its user file, the entry and the component.
+ */
+export function compareUserRequestOf(s: State): { key: string; name: string; component: string } | null {
+  const v = s.variants;
+  const pick = v.shown;
+  if (s.visibility.colourBy !== "contour" || pick === null || v.difference) return null;
+  if (!compareMeshOf(s).ok) return null;
+  const p = compareUserPickOf(s, pick.name);
+  if (!p.ok || p.entry.stale.stale || !p.entry.components.includes(pick.component)) return null;
+  const c = v.compare as Extract<NonNullable<typeof v.compare>, { status: "open" }>;
+  const u = v.compareUser as Extract<NonNullable<typeof v.compareUser>, { status: "ready" }>;
+  return { key: JSON.stringify(["compare", c.index, c.label, u.path, pick.name, pick.component]), name: pick.name, component: pick.component };
+}
+
+/** `contourView` on a compare user result: what its read gave, or why it draws nothing. */
+function compareUserContour(s: State, pick: { name: string; component: string }): ContourView {
+  if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
+  const cmp = s.variants.compare;
+  if (cmp?.status === "opening") return { state: "unavailable", reason: `the compare variant ${quoted(cmp.label)} is being opened` };
+  const label = `user result ${quoted(pick.name)} of the compare variant ${quoted(cmp?.label ?? "")}`;
+  const mesh = compareMeshOf(s);
+  if (!mesh.ok) return mesh.reading ? { state: "unavailable", reason: mesh.reason } : { state: "refused", code: "user", reason: `${label} is not drawn: ${mesh.reason}` };
+  if (s.variants.compareUser?.status === "reading") return { state: "unavailable", reason: `the user file of the compare variant ${quoted(cmp!.label)} is being read` };
+  const p = compareUserPickOf(s, pick.name);
+  if (!p.ok) return { state: "refused", code: "user", reason: p.reason };
+  if (p.entry.stale.stale) return { state: "refused", code: "user", reason: `${label} is stale (A6, against its own model and results): ${p.entry.stale.reason || "no reason given"}` };
+  if (!p.entry.components.includes(pick.component)) {
+    return { state: "refused", code: "user", reason: `${label} has no component ${quoted(pick.component)}; its components are ${p.entry.components.join(", ")}` };
+  }
+  const want = compareUserRequestOf(s)!;
+  const r = s.variants.shownRead;
+  if (!r || r.key !== want.key || r.status === "loading") return { state: "unavailable", reason: `${label} is being read` };
+  if (r.status === "refused") return { state: "refused", code: "user", reason: `${label} is refused: ${r.detail}` };
+  if (r.status === "failed") return { state: "refused", code: "user", reason: `${label} could not be read: ${r.error}` };
+  const c = s.contour;
+  const clim: Clim =
+    c.range === "fixed" ? climOf(c, null, null, "") : { min: r.range?.min ?? null, max: r.range?.max ?? null, mode: c.range, label: "range: this user result (one state, no history)" };
+  // The legend and the manifest name the compare variant with the entry: it is not the window set's file.
+  const shownName = `${p.label}: ${pick.name}`;
+  return {
+    state: "user",
+    name: shownName,
+    field: shownName,
+    component: { key: pick.component, label: pick.component, datasets: [pick.component], magnitude: false },
+    key: r.key,
+    read: r.read,
+    basis: p.entry.basis,
+    clim,
+    cmap: c.cmap,
+    nodes: r.nodes,
+    finite: r.finite,
+  };
 }
 
 /** `contourView` with the difference on: what its read gave, or why it draws nothing. */

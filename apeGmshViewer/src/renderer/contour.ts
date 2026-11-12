@@ -11,10 +11,10 @@ import type { BlobStore } from "../state/blobs.ts";
 import { cellVertexValues, columnOf, differenceColumn, elementCellValues, gaussCellValues, isNodeTopology, joinElements, meshFemIds, NO_DATA_RGB, primitiveColours, vertexValues, type CombinedColumn } from "../state/contour.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners, type NodeTopology } from "../state/extrapolation.ts";
 import type { UserColumnRead } from "../reader/userFile.ts";
-import { combinationRequestOf, combinationTableOf, differencePlanOf, userResultRequestOf, type ContourView } from "../state/selectors.ts";
+import { combinationRequestOf, combinationTableOf, compareUserRequestOf, differencePlanOf, userResultRequestOf, type ContourView } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { SpringStepData } from "../state/springs.ts";
-import type { CombinationRead, CompareIn, DifferenceRead, MeshInfo, State, UserResultRead } from "../state/types.ts";
+import type { CombinationRead, CompareIn, CompareModelAnswer, CompareSlotIn, CompareUserAnswer, DifferenceRead, MeshInfo, State, UserResultRead } from "../state/types.ts";
 
 /** One step's nodal values, as the effects hold them (effects.ts `StepData`). */
 export interface StepValues {
@@ -354,23 +354,34 @@ export class UserResultFeed {
     return Promise.resolve()
       .then(() => this.fetch({ path: want.path, name: want.name, component: want.component }))
       .then((r) => {
-        if (!r.ok) return answered({ key: want.key, status: "refused", reason: r.reason, detail: r.detail }, null);
-        const { ids, values } = r.value;
-        if (!(ids instanceof Float64Array) || !(values instanceof Float64Array) || ids.length !== values.length) {
-          throw new Error("user:readResult answered ids and values that are not two f64 columns of one length");
-        }
-        let min = Infinity, max = -Infinity, finite = 0;
-        for (const v of values) {
-          if (!Number.isFinite(v)) continue;
-          finite++;
-          if (v < min) min = v;
-          if (v > max) max = v;
-        }
-        answered({ key: want.key, status: "ready", read: mine, range: finite ? { min, max } : null, nodes: ids.length, finite }, { ids, values });
+        const a = userColumnAnswer("user:readResult", want.key, mine, r);
+        answered(a.read, a.column);
       })
       // What the read raised (a broken door, a malformed answer) is stated, never a blank view.
       .catch((err: unknown) => answered({ key: want.key, status: "failed", error: err instanceof Error ? err.message : String(err) }, null));
   }
+}
+
+/**
+ * A user-result column door's answer as a read under `key` and the feed's
+ * read `mine`: its range and counts with the column, or the door's refusal.
+ * Ids and values that are not two f64 columns of one length raise, so the
+ * caller states a failed read, never a blank view.
+ */
+function userColumnAnswer(door: string, key: string, mine: number, r: UserColumnRead): { read: UserResultRead; column: { ids: Float64Array; values: Float64Array } | null } {
+  if (!r.ok) return { read: { key, status: "refused", reason: r.reason, detail: r.detail }, column: null };
+  const { ids, values } = r.value;
+  if (!(ids instanceof Float64Array) || !(values instanceof Float64Array) || ids.length !== values.length) {
+    throw new Error(`${door} answered ids and values that are not two f64 columns of one length`);
+  }
+  let min = Infinity, max = -Infinity, finite = 0;
+  for (const v of values) {
+    if (!Number.isFinite(v)) continue;
+    finite++;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return { read: { key, status: "ready", read: mine, range: finite ? { min, max } : null, nodes: ids.length, finite }, column: { ids, values } };
 }
 
 // -- VU10: the difference of two variants (ADR 0132 D9.5) ---------------------------
@@ -421,7 +432,16 @@ export interface VariantDoor {
   variantsCompare(index: number, label: string): Promise<{ ok: true; compare: CompareIn; nodeIds: Record<string, Float64Array> } | { ok: false; reason: string }>;
   compareClose(): Promise<unknown>;
   readCompareStep(req: { stage: string; step: number; seq: number }): Promise<{ ok: true; seq: number; nodal: Record<string, Float64Array> } | { ok: false; seq: number; error: string }>;
+  /** VU19: the compare slot's model (`compare:model`); it names no file and no row */
+  compareModel(): Promise<CompareModelAnswer>;
+  /** VU19: the compare slot's `.user.h5` judged against its own model (`compare:userRead`) */
+  compareUserRead(): Promise<CompareUserAnswer>;
+  /** VU19: one component of a state-free ON_NODES user result of that file (`compare:userReadResult`) */
+  compareUserReadResult(req: { name: string; component: string }): Promise<{ slot: CompareSlotIn | null; read: UserColumnRead }>;
 }
+
+/** The VU19 doors a variant door must have: this build's preload has them, so a missing one is a broken build, never "no user file". */
+const COMPARE_DOORS = ["compareModel", "compareUserRead", "compareUserReadResult"] as const;
 
 /**
  * VU10: the variants panel's side effects. A switch the state asks for goes
@@ -447,8 +467,16 @@ export class VariantRunner {
   private slot: { index: number; label: string; nodeIds: Record<string, Float64Array> } | null = null;
   private seq = 0;
   private asked: string | null = null;
+  /** VU19: the open compare slot whose model and user file this runner asked main for */
+  private slotRead: string | null = null;
+  /** VU19: the compare user result read, as `seq` and `asked` for the difference */
+  private shownSeq = 0;
+  private shownAsked: string | null = null;
 
   constructor(store: Store, blobs: BlobStore, door: VariantDoor, windowStep: () => StepValues | null) {
+    // Fail closed: a door without the compare doors is a broken build, never a compare set with no user file.
+    const missing = COMPARE_DOORS.filter((k) => typeof (door as unknown as Record<string, unknown>)[k] !== "function");
+    if (missing.length) throw new Error(`VariantRunner: the variant door has no ${missing.join(", ")} (VU19's compare doors)`);
     this.store = store;
     this.blobs = blobs;
     this.door = door;
@@ -506,9 +534,93 @@ export class VariantRunner {
       differenceHeld.current = null;
       running.push(this.door.compareClose().then(() => undefined));
     }
+    running.push(...this.compareReads(s));
     const d = this.difference(s);
     if (d) running.push(d);
+    const u = this.compareUserResult(s);
+    if (u) running.push(u);
     return running;
+  }
+
+  /**
+   * VU19: once a compare set is open, its model and its `.user.h5` through the
+   * compare doors, once per slot. An answer for a slot this runner no longer
+   * reads is dropped here; main naming no slot (it closed it) is stated as a
+   * refusal of the slot asked, and the reducer drops an answer for any slot but
+   * the open one.
+   */
+  private compareReads(s: State): Promise<void>[] {
+    const c = s.variants.compare;
+    const key = c?.status === "open" ? `${c.index}|${c.label}` : null;
+    if (key === null || c?.status !== "open") {
+      this.slotRead = null;
+      return [];
+    }
+    if (this.slotRead === key) return [];
+    this.slotRead = key;
+    const asked: CompareSlotIn = { index: c.index, label: c.label };
+    const live = () => this.slotRead === key;
+    const why = (err: unknown) => (err instanceof Error ? err.message : String(err));
+    const model = Promise.resolve()
+      .then(() => this.door.compareModel())
+      .then(
+        (a) => {
+          if (live()) this.store.dispatch({ type: "compareModelRead", answer: a.slot === null ? { ok: false, slot: asked, reason: a.ok ? "compare:model named no slot" : a.reason } : a });
+        },
+        (err: unknown) => {
+          if (live()) this.store.dispatch({ type: "compareModelRead", answer: { ok: false, slot: asked, reason: `compare:model failed: ${why(err)}` } });
+        },
+      );
+    const user = Promise.resolve()
+      .then(() => this.door.compareUserRead())
+      .then(
+        (a) => {
+          if (live()) this.store.dispatch({ type: "compareUserRead", answer: a.slot === null ? { ...a, slot: asked, path: null } : a });
+        },
+        (err: unknown) => {
+          if (live()) this.store.dispatch({ type: "compareUserRead", answer: { slot: asked, path: null, read: { ok: false, error: `compare:userRead failed: ${why(err)}` } } });
+        },
+      );
+    return [model, user];
+  }
+
+  /**
+   * VU19: the compare user result shown, read through `compare:userReadResult`
+   * whenever the state asks for one it does not hold (selectors
+   * `compareUserRequestOf`), kept in `userResultHeld` under its own key (the
+   * viewport draws it as any user result, by node id on the window's mesh,
+   * which the selector has checked is the compare set's mesh too), and reported
+   * (`compareUserResultRead`). An answer for a request no longer wanted, or one
+   * main read from another slot, answers nothing of it.
+   */
+  private compareUserResult(s: State): Promise<void> | null {
+    const want = compareUserRequestOf(s);
+    if (want === null) {
+      if (this.shownAsked !== null) this.shownSeq++;
+      this.shownAsked = null;
+      return null;
+    }
+    if (this.shownAsked === want.key && s.variants.shownRead?.key === want.key) return null;
+    const c = s.variants.compare as Extract<NonNullable<State["variants"]["compare"]>, { status: "open" }>;
+    const mine = ++this.shownSeq;
+    this.shownAsked = want.key;
+    this.store.dispatch({ type: "compareUserResultRead", read: { key: want.key, status: "loading" } });
+    const answered = (read: UserResultRead, column: { ids: Float64Array; values: Float64Array } | null) => {
+      if (mine !== this.shownSeq) return;
+      if (column) userResultHeld.current = { key: want.key, read: mine, ...column };
+      this.store.dispatch({ type: "compareUserResultRead", read });
+    };
+    return Promise.resolve()
+      .then(() => this.door.compareUserReadResult({ name: want.name, component: want.component }))
+      .then((a) => {
+        if (a.slot === null || a.slot.index !== c.index || a.slot.label !== c.label) {
+          const detail = a.slot === null ? (a.read.ok ? "main holds no compare set" : a.read.detail) : `main read the compare variant ${JSON.stringify(a.slot.label)}, not ${JSON.stringify(c.label)}`;
+          return answered({ key: want.key, status: "refused", reason: "refused", detail }, null);
+        }
+        const r = userColumnAnswer("compare:userReadResult", want.key, mine, a.read);
+        answered(r.read, r.column);
+      })
+      .catch((err: unknown) => answered({ key: want.key, status: "failed", error: err instanceof Error ? err.message : String(err) }, null));
   }
 
   private difference(s: ReturnType<Store["get"]>): Promise<void> | null {

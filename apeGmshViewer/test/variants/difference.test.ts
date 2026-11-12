@@ -64,6 +64,10 @@ function compareDoor(path = CRACKED.results) {
       const r = host.readStep({ ...req, path });
       return r.ok ? { ok: true, seq: r.seq, nodal: r.nodal } : { ok: false, seq: r.seq, error: r.error };
     },
+    // VU19: this compare set's model and user file are not under test here; main names no slot for them.
+    compareModel: async () => ({ ok: false, slot: null, reason: "not in this test" }),
+    compareUserRead: async () => ({ slot: null, path: null, read: { ok: false, error: "not in this test" } }),
+    compareUserReadResult: async () => ({ slot: null, read: { ok: false, reason: "refused", detail: "not in this test" } }),
   };
   return { door, asked };
 }

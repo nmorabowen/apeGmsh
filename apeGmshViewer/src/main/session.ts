@@ -125,8 +125,12 @@ export class Study {
   /** the manifest the user opened, and its last read */
   manifest: string | null = null;
   read: VariantsRead | null = null;
-  /** the compare slot: a row and the set paired from it */
-  compare: { row: VariantRow; set: OpenSet } | null = null;
+  /**
+   * The compare slot: a row, the set paired from it, and the `fem_hash` and
+   * `model_hash` its results and model were paired by when main opened it
+   * (VU19: the compare doors check the model against them again at each read).
+   */
+  compare: { row: VariantRow; set: OpenSet; lineage: { femHash: string; modelHash: string } } | null = null;
   /** called after a re-read of the watched manifest */
   onChange: (() => void) | null = null;
 
