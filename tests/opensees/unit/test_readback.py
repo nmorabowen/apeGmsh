@@ -209,7 +209,7 @@ def test_a_dropped_session_names_its_cause(pratt: Any) -> None:
 
 
 @pytest.mark.parametrize("bad", ["displacement", "displacement_w",
-                                 "stress_x", "pore_pressure", "force_x"])
+                                 "stress_x", "force_x"])
 def test_an_unknown_node_component_refuses_first(
     pratt: Any, bad: str,
 ) -> None:
@@ -493,3 +493,91 @@ def test_recorder_element_label_refusals(pratt: Any) -> None:
         ops.recorder.Element(file="d.out", response=("axialForce",),
                              label="Webs")
     assert len(ops._primitives) == before
+
+
+# ---------------------------------------------------------------------------
+# pore_pressure: read where each u-p class keeps it; SSPquadUP reactions
+# ---------------------------------------------------------------------------
+
+
+class ArgsFakeOps(FakeOps):
+    """FakeOps that also keeps each call's arguments."""
+
+    def __init__(self, ndf: int = 3) -> None:
+        super().__init__(ndf)
+        self.args: list[tuple[str, tuple[Any, ...]]] = []
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("__"):
+            raise AttributeError(name)
+
+        def _call(*args: Any) -> Any:
+            self.calls.append(name)
+            self.args.append((name, args))
+            return 3.0
+        return _call
+
+
+def ssp_up_bridge(fem: Any) -> apeSees:
+    """Stock SSPquadUP over the footing plate, ndm=2, ndf=3 (ux, uy, p)."""
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=2.0)
+    ops.element.SSPquadUP(
+        pg="Plate", material=mat, thickness=1.0, fluid_bulk=2.2e6,
+        fluid_density=1.0, perm=(1e-4, 1e-4), void_ratio=0.7, alpha=1e-6)
+    return ops
+
+
+def test_pore_pressure_on_a_truss_node_refuses(pratt: Any) -> None:
+    ops = pratt_bridge(pratt)
+    with_session(ops, FakeOps())
+    with pytest.raises(BridgeError, match="carries no pore pressure"):
+        ops.nodes.one(label="mid").read("pore_pressure")
+
+
+def test_pore_pressure_on_ladruno_up_reads_disp_dof_3(
+    footing_up: Any,
+) -> None:
+    fake = ArgsFakeOps()
+    with_session(footing_up, fake)
+    footing_up.nodes.get(pg="Bottom").read("pore_pressure")
+    node_calls = [(n, a) for n, a in fake.args if n.startswith("node")]
+    assert node_calls and all(n == "nodeDisp" and a[1] == 3
+                              for n, a in node_calls)
+
+
+def test_pore_pressure_on_ssp_quad_up_reads_vel_dof_3() -> None:
+    ops = ssp_up_bridge(build_footing_fem())
+    fake = ArgsFakeOps()
+    with_session(ops, fake)
+    ops.nodes.get(pg="Bottom").read("pore_pressure")
+    node_calls = [(n, a) for n, a in fake.args if n.startswith("node")]
+    assert node_calls and all(n == "nodeVel" and a[1] == 3
+                              for n, a in node_calls)
+
+
+def test_reactions_are_dynamic_on_a_ssp_quad_up_model() -> None:
+    """SSPquadUP keeps Q*p in its damping matrix: a plain ``reactions``
+    misses that share, so the read forms ``reactions -dynamic``."""
+    ops = ssp_up_bridge(build_footing_fem())
+    fake = ArgsFakeOps()
+    with_session(ops, fake)
+    ops.nodes.get(pg="Bottom").read("reaction_force_y")
+    assert ("reactions", ("-dynamic",)) in fake.args
+
+
+def test_reactions_stay_plain_without_a_damping_coupled_class(
+    footing_up: Any,
+) -> None:
+    fake = ArgsFakeOps()
+    with_session(footing_up, fake)
+    footing_up.nodes.get(pg="Bottom").read("reaction_force_y")
+    assert ("reactions", ()) in fake.args
+
+
+def test_every_up_family_has_a_pressure_slot() -> None:
+    assert {c.__name__ for c in _readback._UP_FAMILIES} == set(
+        _readback.UP_PRESSURE_SLOT)
+    assert _readback.DYNAMIC_REACTION_CLASSES <= set(
+        _readback.UP_PRESSURE_SLOT)
