@@ -246,6 +246,61 @@ def test_staged_perm_update_takes_effect(
 
 
 # ---------------------------------------------------------------------------
+# Typed pore pressure and the dynamic reactions (live and deck routes)
+# ---------------------------------------------------------------------------
+
+RHO_SAT = 2.0
+#: Hydrostatic equilibrium: the base carries the whole saturated column,
+#: rho_sat * g * H per unit width; the effective-stress share alone is
+#: (rho_sat - rho_w) * g * H.
+W_TOTAL = RHO_SAT * 9.81 * H
+
+
+@pytest.mark.live
+def test_live_read_pore_pressure_and_total_base_reaction() -> None:
+    pytest.importorskip("openseespy.opensees")
+    with apeGmsh(model_name="sspup_read") as g:
+        fem = _column_fem(g)
+        ops = _column(fem)
+        _declare_chain(ops)
+        assert ops.analyze(steps=50, dt=0.1) == 0
+        base = ops.nodes.get(pg="Base")
+        p_base = base.read("pore_pressure")
+        ry = float(base.read("reaction_force_y").sum())
+    assert p_base == pytest.approx([GAMMA_W * H] * 2, rel=1e-4)
+    # -dynamic: Q*p (in C*v) is in the reaction, so the base holds the
+    # total weight, not the effective-stress share.
+    assert ry == pytest.approx(W_TOTAL, rel=1e-4)
+
+
+@pytest.mark.live
+def test_declared_pore_pressure_and_reaction_through_ops_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    pytest.importorskip("openseespy.opensees")
+    monkeypatch.chdir(tmp_path)
+    with apeGmsh(model_name="sspup_deck_results") as g:
+        fem = _column_fem(g)
+        ops = _column(fem)
+        _declare_chain(ops)
+        ops.recorder.declare(nodes=("pore_pressure", "reaction_force_y"),
+                             pg="Base", file_root=str(tmp_path), name="b")
+        deck = tmp_path / "deck.py"
+        ops.py(str(deck), run=True, analyze_steps=50, analyze_dt=0.1,
+               python=sys.executable)
+        text = deck.read_text(encoding="utf-8")
+        assert "'-dof', 3, 'vel')" in text
+        assert "'reactionIncInertia')" in text
+        r = ops.results(str(deck))
+        p = r.nodes.get(pg="Base", component="pore_pressure").values[-1]
+        ry = r.nodes.get(pg="Base", component="reaction_force_y").values[-1]
+    assert p == pytest.approx([GAMMA_W * H] * 2, rel=1e-4)
+    assert float(ry.sum()) == pytest.approx(W_TOTAL, rel=1e-4)
+
+
+# ---------------------------------------------------------------------------
 # alpha_per_area: per-element stabilization on a graded column
 # ---------------------------------------------------------------------------
 

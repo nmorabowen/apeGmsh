@@ -371,14 +371,29 @@ def test_declared_rotation_on_a_up_node_refuses_on_read(
 def test_a_rotational_slot_no_beam_establishes_refuses(
     run_dir: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DOF 3 of a u-p node at ndm=2, ndf=3 is pore pressure."""
+    """DOF 3 of a u-p node at ndm=2, ndf=3 is no rotation. Under ``vel``
+    on a LadrunoUP node it is the pressure RATE, which has no component."""
+    ops = up_bridge(build_footing_fem())
+    corner = ops.nodes.one(label="corner").tag
+    ops.recorder.Node(file="run/p.out", nodes=(corner,), dofs=(3,),
+                      response="vel", time_format="dt")
+    ran(ops, monkeypatch, write_rows("run/p.out", [1.0, 0.0]))
+    refuses(ops, "run/deck.py", run_dir,
+            r"DOF 3 of node .*LadrunoUP touches it")
+
+
+def test_the_slot_a_up_element_keeps_p_in_reads_as_pore_pressure(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LadrunoUP keeps p in displacement DOF ndm+1: a typed ``disp``
+    record of DOF 3 there is the pore pressure."""
     ops = up_bridge(build_footing_fem())
     corner = ops.nodes.one(label="corner").tag
     ops.recorder.Node(file="run/p.out", nodes=(corner,), dofs=(3,),
                       response="disp", time_format="dt")
-    ran(ops, monkeypatch, write_rows("run/p.out", [1.0, 0.0]))
-    refuses(ops, "run/deck.py", run_dir,
-            r"DOF 3 of node .*LadrunoUP touches it")
+    ran(ops, monkeypatch, write_rows("run/p.out", [1.0, 42.5]))
+    r = ops.results("run/deck.py")
+    assert r.nodes.get(ids=[corner], component="pore_pressure").item() == 42.5
 
 
 def test_a_staged_deck_text_record_refuses(

@@ -255,15 +255,34 @@ def _emit_nodes_record(
     # translator to keep its import scoped to the
     # _emit_recorder_declaration function.
     grouped: dict[str, tuple[int, ...]] = {}
+    pressure: "tuple[str, int] | None" = None
     if record.components:
         if not node_ndf and element_plan is not None:
             # A caller without the bridge's effective map: the inferred
             # one (no ops.ndf overlay is known here).
             node_ndf = _inferred_node_ndf(fem, element_plan, int(decl.ndm))
-        layout = _node_record_layout(
+        comps = layout_components(record.components)
+        if comps:
+            layout = _node_record_layout(
+                record, decl, node_ids, element_plan, node_ndf=node_ndf)
+            raw_groups = group(comps, layout)  # type: ignore[operator]
+            grouped = {deck_node_token(tok, element_plan): dofs
+                       for tok, dofs in raw_groups.items()}
+        pressure = node_pressure_slot(
             record, decl, node_ids, element_plan, node_ndf=node_ndf)
-        grouped = group(record.components, layout)  # type: ignore[operator]
     record_name = record.name or "default"
+    if pressure is not None:
+        # p is one more line, in the slot its u-p class keeps it in; the
+        # file is named for the component, not the response token.
+        response, p_dof = pressure
+        args_p: list[int | float | str] = [
+            "-file", _recorder_file_path(
+                decl.file_root, decl.name, record_name, "pressure"),
+        ]
+        if record.dt is not None:
+            args_p += ["-dT", record.dt]
+        args_p += ["-time", "-node", *node_ids, "-dof", p_dof, response]
+        emitter.recorder("Node", *args_p)
 
     for ops_token, dofs in grouped.items():
         file_path = _recorder_file_path(
@@ -327,6 +346,84 @@ def _node_layout(ndf: int, ndm: int) -> tuple[int, ...]:
     return tuple(range(min(ndf, ndm)))
 
 
+#: The scalar node component a u-p node carries; never a layout slot.
+PORE_PRESSURE = "pore_pressure"
+
+
+def layout_components(components: Iterable[str]) -> tuple[str, ...]:
+    """``components`` without :data:`PORE_PRESSURE`: the ones the node
+    DOF layout places (:func:`_node_record_layout`)."""
+    return tuple(c for c in components if c != PORE_PRESSURE)
+
+
+def node_pressure_slot(
+    record: RecorderRecord,
+    decl: RecorderDeclaration,
+    node_ids: tuple[int, ...],
+    element_plan: "ElementPlan | None",
+    *,
+    node_ndf: "Mapping[int, int] | None" = None,
+) -> "tuple[str, int] | None":
+    """``(response token, DOF)`` of the recorder line that writes
+    ``record``'s ``pore_pressure``, or ``None`` when it records none.
+
+    The u-p class on each node decides where p lives
+    (:data:`~apeGmsh.opensees._readback.UP_PRESSURE_SLOT`): ``LadrunoUP``
+    in DOF ``ndm + 1`` of ``disp``, stock ``SSPquadUP`` in DOF 3 of
+    ``vel``. OpenSees' own ``pressure`` node response is the PFEM
+    pressure constraint, so it is never the one used. Raises a
+    :class:`BridgeError` naming the node when a node carries no p, when
+    the record's nodes keep it in different slots, or when there is no
+    element plan to tell (a hand-written deck).
+    """
+    if PORE_PRESSURE not in record.components:
+        return None
+    from ..._readback import pressure_slot, rotation_roles
+
+    where = f"recorder.declare({decl.name!r})"
+    if element_plan is None:
+        raise BridgeError(
+            f"{where}: {PORE_PRESSURE!r} needs the bridge's element plan to "
+            "know which u-p element keeps p where; record it with "
+            "ops.recorder.Node(response=..., dofs=...) instead."
+        )
+    roles = rotation_roles(element_plan, node_ids)
+    ndf_of = node_ndf or {}
+    slots: dict[tuple[str, int], int] = {}
+    for n in node_ids:
+        try:
+            slot = pressure_slot(
+                roles, n, int(decl.ndm), int(ndf_of.get(n, decl.ndf)))
+        except ValueError as e:
+            raise BridgeError(
+                f"{where}: {e}. Narrow the selector to the u-p nodes that "
+                f"carry p, or drop {PORE_PRESSURE!r}."
+            ) from e
+        slots.setdefault(slot, n)
+    if len(slots) > 1:
+        shown = ", ".join(f"node {n}: {r} DOF {d}"
+                          for (r, d), n in slots.items())
+        raise BridgeError(
+            f"{where}: the record's nodes keep p in different slots "
+            f"({shown}); declare each u-p family in its own record."
+        )
+    return next(iter(slots))
+
+
+def deck_node_token(token: str, element_plan: "ElementPlan | None") -> str:
+    """The node response a deck writes for ``token``: ``reaction``
+    becomes ``reactionIncInertia`` in a model holding a damping-coupled
+    u-p element (:data:`~apeGmsh.opensees._readback.DYNAMIC_REACTION_CLASSES`:
+    SSPquadUP's coupling force sits in C*v, so only the dynamic reaction
+    holds it)."""
+    if token != "reaction" or element_plan is None:
+        return token
+    from ..._readback import needs_dynamic_reactions
+
+    names = (type(spec).__name__ for spec, sub in element_plan if len(sub))
+    return "reactionIncInertia" if needs_dynamic_reactions(names) else token
+
+
 def _node_record_layout(
     record: RecorderRecord,
     decl: RecorderDeclaration,
@@ -351,8 +448,8 @@ def _node_record_layout(
       (:meth:`~apeGmsh.opensees._readback.RotationRoles.refusal`, the
       rule ``.read`` applies): a u-p node's DOF ``ndm + 1`` is pore
       pressure, never a rotation.
-    - ``pore_pressure`` refuses: OpenSees' ``recorder Node ... pressure``
-      response is the PFEM pressure constraint, not a u-p pressure DOF.
+    - ``pore_pressure`` is left out: it is not a slot of the layout, and
+      :func:`node_pressure_slot` places it (its own recorder line).
 
     The layouts ``_load_dof_layout`` names place a spatial slot at the
     same DOF wherever they hold it, so one ``-dof`` list serves every
@@ -367,17 +464,8 @@ def _node_record_layout(
 
     where = f"recorder.declare({decl.name!r})"
     ndm = int(decl.ndm)
-    spatial = {c: node_component_spatial(c) for c in record.components}
-    pressure = [c for c, s in spatial.items() if s is not None and s[1] < 0]
-    if pressure:
-        raise BridgeError(
-            f"{where}: {pressure[0]!r} is not recorded by a declared node "
-            "record: the OpenSees 'pressure' node response is the PFEM "
-            "pressure constraint, not a u-p pressure DOF. Record the u-p "
-            f"pressure DOF ({ndm + 1}) with ops.recorder.Node(response="
-            "'disp', dofs=...) on the u-p vertex nodes, or with "
-            "ops.recorder.MPCO."
-        )
+    comps = layout_components(record.components)
+    spatial = {c: node_component_spatial(c) for c in comps}
 
     if element_plan is None:
         ndfs = {n: int(decl.ndf) for n in node_ids}
@@ -405,8 +493,7 @@ def _node_record_layout(
     first: "tuple[int, dict[str, tuple[int, ...]]] | None" = None
     for n, layout in layouts.items():
         try:
-            grouped = group_node_components_by_ops_token(
-                record.components, layout)
+            grouped = group_node_components_by_ops_token(comps, layout)
         except ValueError as e:
             raise BridgeError(
                 f"{where}: node {n} (ndm={ndm}, ndf={ndfs[n]}) has no DOF "

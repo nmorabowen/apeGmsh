@@ -63,7 +63,8 @@ _MD = dict(
 #: The token each :data:`MATERIAL_STATE_ELEMENTS` class emits.
 _TOKEN_OF = {
     "SixNodeTri": "tri6n", "FourNodeTetrahedron": "FourNodeTetrahedron",
-    "SSPquad": "SSPquad", "SSPbrick": "SSPbrick", "BezierTri6": "BezierTri6",
+    "SSPquad": "SSPquad", "SSPbrick": "SSPbrick", "SSPquadUP": "SSPquadUP",
+    "BezierTri6": "BezierTri6",
     "BezierTet10": "BezierTet10", "LadrunoUP": "LadrunoUP",
     "LadrunoQuad": "LadrunoQuad", "LadrunoCST": "LadrunoCST",
     "LadrunoLST": "LadrunoLST", "LadrunoBrick": "LadrunoBrick",
@@ -149,6 +150,7 @@ def test_a_rank_lists_its_own_and_the_global_carriers() -> None:
     ("BezierTet10", (*range(1, 11), 7, "-rho", 1.0), 7),
     ("SSPquad", (1, 2, 3, 4, 7, "PlaneStrain", 1.0), 7),
     ("SSPbrick", (*range(1, 9), 7, 0.0, 0.0, -9.81), 7),
+    ("SSPquadUP", (1, 2, 3, 4, 7, 1.0, 2.2e6, 1.0, 1e-4, 1e-4, 0.7, 1e-6), 7),
     ("LadrunoUP", (1, 2, 3, 4, 7, "-Kf", 2.2e6), 7),
     ("LadrunoUP", (*range(1, 11), 7, "-thick", 1.0, "-Kf", 2.2e6), 7),
     ("LadrunoQuad", (1, 2, 3, 4, 7, "-formulation", "ssp", "-thick", 1.0), 7),
@@ -193,7 +195,7 @@ def test_the_tables() -> None:
         "ManzariDafalias", "LadrunoSANISAND"}
     assert MATERIAL_STATE_ELEMENTS == {
         "SixNodeTri", "FourNodeTetrahedron", "SSPquad", "SSPbrick",
-        "BezierTri6", "BezierTet10", "LadrunoUP",
+        "SSPquadUP", "BezierTri6", "BezierTet10", "LadrunoUP",
         "LadrunoQuad", "LadrunoCST", "LadrunoLST", "LadrunoBrick",
         "LadrunoBrick20"}
     assert FIRST_ELEMENT_ONLY_PLASTIC_INIT is SWEPT_MATERIAL_CLASSES
@@ -792,7 +794,12 @@ _HEX8 = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
          (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
 
 _PS = "PlaneStrain"
-#: apeGmsh class -> (Tcl token, ndm, node coordinates, argv after the tag).
+#: SSPquadUP's argv after the material tag: t fBulk fDen k1 k2 e alpha.
+_UP_TAIL = (1.0, 2.2e6, 1.0, 1e-4, 1e-4, 0.7, 1e-6)
+#: apeGmsh class -> (Tcl token, ndm, node coordinates, argv after the tag
+#: <, node ndf>). A u-p class's extra DOF (its pore pressure) is held at
+#: zero: the census drives the skeleton, and a static analysis gives the
+#: p rows no stiffness.
 _CLASSES: dict[str, Any] = {
     "SixNodeTri": ("tri6n", 2, _TRI6, lambda n, m: (*n, 1.0, _PS, m)),
     "BezierTri6": ("BezierTri6", 2, _TRI6, lambda n, m: (*n, 1.0, _PS, m)),
@@ -803,6 +810,7 @@ _CLASSES: dict[str, Any] = {
     # them); the census drives the raw tokens the future primitive emits.
     "SSPquad": ("SSPquad", 2, _QUAD4, lambda n, m: (*n, m, _PS, 1.0)),
     "SSPbrick": ("SSPbrick", 3, _HEX8, lambda n, m: (*n, m)),
+    "SSPquadUP": ("SSPquadUP", 2, _QUAD4, lambda n, m: (*n, m, *_UP_TAIL), 3),
     "FourNodeQuad": ("quad", 2, _QUAD4, lambda n, m: (*n, 1.0, _PS, m)),
     "Tri31": ("tri31", 2, _TRI3, lambda n, m: (*n, 1.0, _PS, m)),
     "stdBrick": ("stdBrick", 3, _HEX8, lambda n, m: (*n, m)),
@@ -811,7 +819,7 @@ _CLASSES: dict[str, Any] = {
 #: The table's classes, and whether their census needs the fork.
 _FORWARDING = [
     ("SixNodeTri", "both"), ("FourNodeTetrahedron", "both"),
-    ("SSPquad", "both"), ("SSPbrick", "both"),
+    ("SSPquad", "both"), ("SSPbrick", "both"), ("SSPquadUP", "both"),
     ("BezierTri6", "fork"), ("BezierTet10", "fork"),
 ]
 #: Upstream classes that drop the sweep (on stock and at FORK_PIN alike).
@@ -835,11 +843,12 @@ def _census(cls: str, how: str, mat: str = "ManzariDafalias",
     except ImportError as exc:
         pytest.skip(f"no OpenSees backend resolves: {exc}")
     ops = Deck(backend)
-    token, ndm, coords, argv = _CLASSES[cls]
+    token, ndm, coords, argv, *rest = _CLASSES[cls]
+    ndf = rest[0] if rest else ndm
     eps = (-1e-2, -1.5e-2, 0.0)[:ndm]
     ops.wipe()
     try:
-        ops.model("basic", "-ndm", ndm, "-ndf", ndm)
+        ops.model("basic", "-ndm", ndm, "-ndf", ndf)
         tags = [1, 2] if how == "reference" else [1, 1]
         for t in sorted(set(tags)):
             ops.nDMaterial(mat, t, *MD_ARGS)
@@ -857,6 +866,8 @@ def _census(cls: str, how: str, mat: str = "ManzariDafalias",
                 nodes.append(n)
                 for d in range(ndm):
                     ops.sp(n, d + 1, eps[d] * xyz[d])
+                for d in range(ndm, ndf):
+                    ops.sp(n, d + 1, 0.0)
             carried = t if wrapper is None else 10 + t
             ops.element(token, q + 1, *argv(nodes, carried))
         for t in sorted(set(tags)):
