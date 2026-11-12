@@ -620,7 +620,11 @@ def _param_stage_model() -> apeSees:
 
     Both quads are declared, so nodes 5 and 6 are not orphans and the
     stage's ``analyze`` solves on stock (#2372: with the Fill quad
-    undeclared the system was singular, the #2220 abort)."""
+    undeclared the system was singular, the #2220 abort).
+
+    The element-parameter record names ``pressure``, which
+    ``FourNodeQuad::setParameter`` takes itself; it named ``xPerm``, a
+    ``LadrunoUP`` name no object here takes, which #2377 now refuses."""
     ops = apeSees(_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
@@ -628,7 +632,7 @@ def _param_stage_model() -> apeSees:
     ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mat)
     ops.fix(pg="Base", dofs=(1, 1))
     with ops.stage(name="params") as s:
-        s.update_parameter("xPerm", 1e-5, pg="Rock")
+        s.update_parameter("pressure", 1e-5, pg="Rock")
         s.update_parameter("E", 2e6, pg="Rock", material=mat)
         s.zero_velocities(nodes=[3])
         s.zero_velocities()
