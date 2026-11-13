@@ -41,6 +41,36 @@ test("the scale is a sibling after the banner and the rails, so it paints over t
   assert.ok(at("rail") < at("scale-stack"), "a drag across the right rail must stay on top of it");
   assert.ok(at("scale-stack") < at("viewport-scale") && at("viewport-scale") < at("line-diagram-scale"), "the two scales stack, contour first");
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
-  assert.match(css, /#banner:not\(\[hidden\]\) ~ #scale-stack \{ top: 168px; \}/);
   assert.match(css, /body\[data-still-chrome="model"\] #scale-stack \{ display: none; \}/);
+});
+
+/**
+ * The `top:` of the first style.css rule whose selector list names `selector`,
+ * evaluated with the banner's published variables (panels/banner.ts) in px:
+ * its `max(...)`/`calc(...)` of px terms, as test/state/user.test.ts's cssTop.
+ */
+function topUnderBanner(selector: string, bannerTop: number, bannerH: number): number {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  const rule = new RegExp(`(?:^|[},])\\s*(?:[^{}]*,\\s*)?${selector.replace(/[[\]()~:]/g, "\\$&")}\\s*(?:,[^{}]*)?\\{([^}]*)\\}`, "m").exec(css);
+  assert.ok(rule, `style.css has no rule for ${selector}`);
+  const body = rule[1]!.replace(/\/\*[\s\S]*?\*\//g, "");
+  const m = /(?:^|[\s;])top:\s*([^;]+);/.exec(body);
+  assert.ok(m, `${selector} has no top`);
+  const expr = m[1]!.trim().replace(/var\(--banner-top, 58px\)/g, `${bannerTop}px`).replace(/var\(--banner-h, 0px\)/g, `${bannerH}px`);
+  assert.match(expr, /^[\d\s+.()a-z,-]+$/, `an expression this test can evaluate: ${expr}`);
+  const js = expr.replace(/(\d+(?:\.\d+)?)px/g, "$1").replace(/max\(/g, "Math.max(").replace(/calc\(/g, "(");
+  return Function(`return ${js};`)() as number;
+}
+
+test("#2924 item 7: the colour scales sit 8 px below a shown banner however tall it is drawn, as the left rail does", () => {
+  const scale = "#banner:not([hidden]) ~ #scale-stack";
+  const rail = "#banner:not([hidden]) ~ #left-rail";
+  // A one-line banner (about 30 px at 58 px, or at 106 px under a one-line scrubber bar): 168 px, as before.
+  assert.equal(topUnderBanner(scale, 58, 30), 168);
+  assert.equal(topUnderBanner(scale, 106, 30), 168);
+  // An app-chrome still draws the whole list (#2921 still 2): the scale clears the banner's bottom by 8 px.
+  for (const [top, h] of [[58, 240], [106, 240], [58, 600]] as const) {
+    assert.equal(topUnderBanner(scale, top, h), top + h + 8, `banner at ${top} px, ${h} px tall`);
+    assert.equal(topUnderBanner(scale, top, h), topUnderBanner(rail, top, h), "the scale and the rail clear the banner alike");
+  }
 });

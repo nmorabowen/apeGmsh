@@ -527,7 +527,11 @@ body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(
   position: fixed; left: 324px; top: 102px; pointer-events: none;
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
 }
-#banner:not([hidden]) ~ #scale-stack { top: 168px; }
+#banner:not([hidden]) ~ #scale-stack {
+  /* VF (#2924 item 7): below the banner's measured height, as #left-rail is, so an
+     app-chrome still (which draws the whole list) never covers the legend; never above 168 px. */
+  top: max(168px, calc(var(--banner-top, 58px) + var(--banner-h, 0px) + 8px));
+}
 #scale-stack:not(:has(> :not([hidden]))) { display: none; }
 body[data-still-chrome="model"] #scale-stack { display: none; }
 .vs-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin: 0 0 6px; }
