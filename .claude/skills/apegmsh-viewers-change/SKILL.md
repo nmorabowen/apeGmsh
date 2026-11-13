@@ -153,11 +153,19 @@ The page is not trusted to name a path (owner ruling "option A", #2753). Read th
       the test parses. `preload.test.ts` loads the preload against the same stub. Every path a
       refusal test refuses is a readable file, so the door would read it without the check
       (`setDoors.test.ts` header). Run `npm test` in `apeGmshViewer/`.
-- [ ] **A door onto a second set reads it as a slot of its own.** VU10's compare doors
-      (`variants:compare`, `compare:readStep`, `compare:close`) take a manifest row by index
-      and label (`Study.row`, which resolves and confines it again at open time), never touch
-      `windowSet`, `dropped` or `followModel`, read through their own `ResultsHost`, and are
-      emptied in `pageLoading`. `test/main/variantDoors.test.ts` is the pattern.
+- [ ] **A door onto a second set reads it as a slot of its own.** There are six compare doors.
+      VU10's (`variants:compare`, `compare:readStep`, `compare:close`) take a manifest row by
+      index and label (`Study.row`, which resolves and confines it again at open time), never
+      touch `windowSet`, `dropped` or `followModel`, read through their own `ResultsHost`, and
+      are emptied in `pageLoading`. VU19's (`compare:model`, `compare:userRead`,
+      `compare:userReadResult`) take no row and no path: `exactKeys` refuses any key but
+      `name` and `component` (the last door's only), each reads the set in `study.compare`
+      (confined again by `study.confine`), its answer names the slot it read (`slotOf`), and
+      every one refuses with no compare slot. The compare `.user.h5` is judged against the
+      compare set's own model and results, and nothing is written (INV-6). The tests are the
+      pattern: `test/main/variantDoors.test.ts` (VU10, main's side),
+      `test/main/compareDoors.test.ts` (VU19, main's side, against Python's golden) and
+      `test/variants/doors.test.ts` (the spec, compiler, `Study` and preload around them).
 - [ ] **The one write door is `workspace:save`** (VU9a, #2803; `main/workspace.ts`). It takes
       one edit with closed keys (`parseEdit`: a `path`, or any key the op does not name, is
       `bad-request` before any read) and writes only `windowSet()`'s `<stem>.workspace.h5`;
