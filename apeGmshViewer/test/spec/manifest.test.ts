@@ -295,7 +295,7 @@ test("D3: the pairing is the app's own answer, for a set that pairs and for one 
   const { entry } = await entryOf(h, shotOf({}));
   assert.notEqual(entry.pairing.state, "paired");
   assert.match(entry.pairing.reason!, /model_hash differs/);
-  const refused = refusedEntry(h.store.get(), shotOf({}), "no", null);
+  const refused = refusedEntry(h.store.get(), shotOf({}), "no", null, h.blobs);
   assert.deepEqual(refused.pairing, entry.pairing, "a refused shot states the pairing too");
 });
 
@@ -341,7 +341,7 @@ test("a refused shot's entry: the reason, no still, and no view it never drew", 
   // A view from an earlier shot is on screen, with a banner line; a shot that did not compile must not report it.
   const earlier = await entryOf(h, shotOf({ stage: "erect", step: 1, deform: { scale: 10 } }));
   assert.ok(earlier.entry.banner.length > 0, "the earlier view has a banner line");
-  const e = refusedEntry(h.store.get(), shotOf({ stage: "nope" }), "no stage named nope", null);
+  const e = refusedEntry(h.store.get(), shotOf({ stage: "nope" }), "no stage named nope", null, h.blobs);
   assert.equal(e.status, "refused");
   assert.equal(e.reason, "no stage named nope");
   assert.deepEqual([e.png, e.image, e.camera, e.contour, e.deform, e.stage, e.step, e.time, e.layout], [null, null, null, null, null, null, null, null, null]);
