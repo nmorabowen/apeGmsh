@@ -76,8 +76,11 @@ def test_pre_2_29_reinforce_tie_replay_reuses_the_forward_tie_tags(
     tmp_path: Path,
 ) -> None:
     """A pre-2.29 archive: the replay seeds the element counter past the
-    replayed elements and re-mints the tie tags; they equal the forward
-    tags, which run contiguously above every host element."""
+    replayed elements and re-mints the tie tags, contiguously above every
+    host element: the tags a pre-2.29 writer's forward emit minted. Today's
+    forward emit numbers them above every FEM id instead (ADR 0111 D2, the
+    sequential rule), so on an archive downgraded from it the replay keeps
+    the pre-2.29 numbering and only the count and order match."""
     from tests.opensees.h5.test_reinforce_deck_replay import _reinforced_ops
 
     fwd, replayed = _forward_and_replayed(
@@ -91,9 +94,11 @@ def test_pre_2_29_reinforce_tie_replay_reuses_the_forward_tie_tags(
         int(t) for k, t in _ELEMENT.findall(replayed)
         if k != "LadrunoEmbeddedRebar"]
     assert len(ties_fwd) >= 2
-    assert ties_rep == ties_fwd
+    assert len(ties_rep) == len(ties_fwd)
     top = max(hosts)
     assert ties_rep == list(range(top + 1, top + 1 + len(ties_rep)))
+    assert ties_fwd == list(range(ties_fwd[0], ties_fwd[0] + len(ties_fwd)))
+    assert ties_fwd[0] > top
 
 
 def test_pre_2_27_initial_stress_replay_reuses_the_forward_parameter_tags(

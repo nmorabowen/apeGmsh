@@ -304,8 +304,12 @@ class TestLadrunoMembraneEmitAndBridge:
         mem_calls = [c for c in rec.calls if c[0] == "element" and c[1][0] == "LadrunoMembrane"]
         assert len(mem_calls) == 1
         args = mem_calls[0][1]
-        # Tag 7 (after 2 element-spec seeds and 4 beam elements 3..6)
-        assert args[:2] == ("LadrunoMembrane", 7)
+        # The membrane polygon has no FEM id: its tag clears the snapshot's
+        # largest element id (ADR 0111 D2, the sequential rule), while the
+        # 4 beam elements keep 3..6 after the 2 element-spec seeds.
+        mem_tag = int(np.max(fem.elements.ids)) + 1
+        assert mem_tag > 7
+        assert args[:2] == ("LadrunoMembrane", mem_tag)
         # Outer perimeter loop of 8 nodes (interior node 5 excluded!)
         assert args[2:11] == ("-nodes", 1, 2, 3, 6, 9, 8, 7, 4)
         assert args[11:16] == ("-frames", 3, 4, 5, 6)
@@ -530,11 +534,13 @@ class TestLadrunoMembraneEmitAndBridge:
         rec = RecordingEmitter()
         ops.build().emit(rec)
         ele_load_calls = [c[1] for c in rec.calls if c[0] == "eleLoad"]
+        # The membrane's tag clears the largest FEM id (it has none itself).
+        mem = int(np.max(fem.elements.ids)) + 1
         assert ele_load_calls == [
-            ("-ele", 7, "-type", "-surfaceLoad"),
-            ("-ele", 7, "-type", "-surfaceLoad"),
-            ("-ele", 7, "-type", "-selfWeight", 0.0, 0.0, -9.81),
-            ("-ele", 7, "-type", "-selfWeight", 0.0, 0.0, -9.81),
+            ("-ele", mem, "-type", "-surfaceLoad"),
+            ("-ele", mem, "-type", "-surfaceLoad"),
+            ("-ele", mem, "-type", "-selfWeight", 0.0, 0.0, -9.81),
+            ("-ele", mem, "-type", "-selfWeight", 0.0, 0.0, -9.81),
         ]
 
     def test_readback_preserves_rotational_dofs_on_shared_beam_membrane_nodes(self) -> None:
