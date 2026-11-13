@@ -847,10 +847,10 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_39_0() -> None:
-    """Schema 2.39.0 — the optional ``/opensees/combinations`` group holds
-    the combinations ``apeSees`` declares (ADR 0130 D4, #2685)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 39, 0)
+def test_opensees_reader_version_is_2_40_0() -> None:
+    """Schema 2.40.0 — a stage block stores the ``equationConstraint``
+    lines of the equation ties it claims (#2448)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 40, 0)
 
 
 def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:
