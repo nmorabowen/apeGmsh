@@ -350,32 +350,7 @@ test("a refused shot's entry: the reason, no still, and no view it never drew", 
   assert.equal(e.files.results!.size, statSync(fx("contour_nodata.results.h5")).size);
 });
 
-// ---- VF (#2940): the two #2924 findings decided in the selectors ----
-
-test("VF #2940 (#2924 item 6): a von Mises still of unclassified elements carries the plane-recovery warning in its banner, the manifest's own sentence", async () => {
-  // extrap_plane has no /opensees zone, so none of its 15 elements is classified (test/contour/derived.test.ts, v1 warns).
-  const h = await setOf("extrap_plane");
-  const { entry } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "von_mises_stress", gauss: "node" } }));
-  const k = entry.contour;
-  assert.ok(k?.drawn && k.derived);
-  const w = "Out-of-plane stress_zz recovery is incomplete: 15 of 15 element(s) could not be classified as plane stress / plane strain. stress_zz is left at 0 there.";
-  assert.equal(k.derived.warning, w);
-  assert.ok(entry.banner.includes(w), `the still's banner states it: ${entry.banner.join(" | ")}`);
-  // Once: the banner states each line a single time.
-  assert.equal(entry.banner.filter((b) => b === w).length, 1);
-  // A stored component of the same field is not derived: no plane line.
-  const { entry: stored } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "stress_xx", gauss: "node" } }));
-  assert.ok(!stored.banner.some((b) => b.startsWith("Out-of-plane")), stored.banner.join(" | "));
-});
-
-test("VF #2940 (#2924 item 6): a von Mises still of elements the model classifies has no plane warning in its banner", async () => {
-  // elem_mixed carries an /opensees zone: PlaneStrain, nu 0.2, every element classified.
-  const h = await setOf("elem_mixed");
-  const { entry } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "von_mises_stress", gauss: "cell" } }));
-  assert.ok(entry.contour?.drawn && entry.contour.derived);
-  assert.equal(entry.contour.derived.warning, null);
-  assert.ok(!entry.banner.some((b) => b.startsWith("Out-of-plane")), entry.banner.join(" | "));
-});
+// ---- VF (#2940, #2924 item 2): gauss_node with no natural coordinates falls back to cell_averaged, labelled ----
 
 test("VF #2940 (#2924 item 2): a gauss_node shot on a group with no natural coordinates draws cell_averaged and says so in its topology, its reason and its banner", async () => {
   const h = await opened(fx("extrap_solid.h5"), fx("extrap_solid.results.h5"));

@@ -33,8 +33,7 @@ import {
   type NodalField,
 } from "./contour.ts";
 import { meanFallbackGroups, usesMatrix } from "./extrapolation.ts";
-import { planeRecoveryMap, planeStatement, tensorFields, type PlaneStatement, type TensorField } from "./tensor.ts";
-import type { BlobStore } from "./blobs.ts";
+import { tensorFields, type TensorField } from "./tensor.ts";
 import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 import {
@@ -565,49 +564,6 @@ export function noticesOf(s: State): string[] {
 export function fallbackNotice(v: Extract<ContourView, { state: "element" }>): string {
   if (!v.fallback) throw new Error(`fallbackNotice: element field ${v.field} is drawn as asked (${v.topology})`);
   return `Element contour ${v.field}: ${v.fallback.asked} (extrapolated to the nodes) cannot be drawn, so it is drawn cell_averaged instead (${v.topologyLabel}): ${v.fallback.reason}.`;
-}
-
-/**
- * VA6d: a derived contour's stored components and its out-of-plane statement,
- * by element (state/tensor.ts `planeStatement`), and the warning v1 gives for
- * the elements whose zz is left at 0 without the model saying it is 0, else
- * null. It reads the groups' element ids, so it needs the blobs; it throws when
- * they are not on hand, never answers for a part of the field.
- */
-export function derivedPlaneOf(
-  s: State,
-  v: Extract<ContourView, { state: "element" }>,
-  blobs: BlobStore,
-): { from: string[]; plane: PlaneStatement; warning: string | null } {
-  const d = v.component.derived;
-  if (!d) throw new Error(`derivedPlaneOf: ${v.component.key} is a stored component, not a derived one`);
-  const t = d.tensor;
-  const groups = t.groups.map((group) => {
-    const g = v.groups.find((x) => x.id === group.id);
-    const eids = g ? blobs.get(g.eids) : undefined;
-    if (!(eids instanceof Float64Array)) throw new Error(`derived contour: the element ids of group ${group.id} are not on hand`);
-    return { group, eids };
-  });
-  const plane = planeStatement(t.family, groups, planeRecoveryMap(s.decls));
-  const zz = `${t.family}_zz`;
-  const parts = [
-    ...(plane.unclassified ? [`${plane.unclassified} of ${plane.elements} element(s) could not be classified as plane stress / plane strain`] : []),
-    ...(plane.no_nu ? [`${plane.no_nu} element(s) need Poisson's ratio, which could not be read from their material`] : []),
-  ];
-  const warning = parts.length ? `Out-of-plane ${zz} recovery is incomplete: ${parts.join("; ")}. ${zz} is left at 0 there.` : null;
-  return { from: [...t.components], plane, warning };
-}
-
-/**
- * VF (#2940, #2924 item 6): the notices of the drawn contour that only its
- * element ids can word (the blobs): a derived contour's plane-recovery
- * warning. Empty for any other view.
- */
-export function drawnNotices(s: State, blobs: BlobStore): string[] {
-  const v = contourView(s);
-  if (v.state !== "element" || !v.component.derived) return [];
-  const w = derivedPlaneOf(s, v, blobs).warning;
-  return w === null ? [] : [w];
 }
 
 // -- V4c1: the nodal contour ----------------------------------------------------
