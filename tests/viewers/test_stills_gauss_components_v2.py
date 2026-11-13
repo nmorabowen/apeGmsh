@@ -149,7 +149,7 @@ def test_derived_scalar_is_a_component_of_the_tensor_field(app_backend, quad_set
 def test_a_derived_scalar_the_app_does_not_draw_stays_refused(app_backend, quad_set, tmp_path):
     """Python derives tresca_stress; the app serves von Mises only, so it is refused by name."""
     with Results.from_ladruno(quad_set) as r:
-        with pytest.raises(ValueError, match="tresca_stress.*von_mises_strain / von_mises_stress"):
+        with pytest.raises(ValueError, match="tresca_stress.*von_mises_stress / von_mises_strain"):
             r.render(tmp_path / "x.png", view="contour", component="tresca_stress")
     assert app_backend.specs == []
 
@@ -167,7 +167,7 @@ def test_a_derived_scalar_of_a_split_tensor_is_refused(quad_set, monkeypatch):
 
     monkeypatch.setattr(stills, "_app_gauss_contour", split)
     with Results.from_ladruno(quad_set) as r:
-        with pytest.raises(ValueError, match=r"von_mises_stress.*stress_xy: stress/sigma12.*R16c"):
+        with pytest.raises(ValueError, match=r"von_mises_stress.*R16c.*'stress_xy', 'stress/sigma12'"):
             stills._app_contour(r, r.stages[0].id, "von_mises_stress")
 
 
@@ -210,6 +210,38 @@ def test_tet10_gauss_still_asks_cell_averaged(tmp_path, component, contour):
     with Results.from_ladruno(src) as r:
         assert {len(g.ids) for g in r.fem.elements} == {1}
         assert _app_contour(r, r.stages[0].id, component) == {**contour, "source": "element", "gauss": "cell_averaged"}
+
+
+def _add_quad_bucket(path: Path) -> None:
+    """The quad's four-point ``stress`` bucket beside the tet10's, labelled as the tet10
+    labels its columns (``sigma_xx``, ``sigma_yy``, ``sigma_xy``), so ``stress_xx`` is one
+    app column held by a tet10 group and a FourNodeQuad group."""
+    key = "31-FourNodeQuad[201:0:0]"
+    with h5py.File(_FIXTURE, "r") as quad, h5py.File(path, "r+") as f:
+        stress = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress"]
+        quad.copy(quad["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress"][key], stress, name=key)
+        stress[key]["COLUMN_MAP"].attrs["COMP_NAMES"] = np.bytes_("\n".join(["sigma_xx,sigma_yy,sigma_xy"] * 4))
+
+
+@pytest.mark.parametrize("mixed, mode", [(False, "cell_averaged"), (True, "node")])
+def test_the_gauss_mode_vote_skips_tet10_groups_only(tmp_path, mixed, mode):
+    """The vote for ``node`` ignores BezierTet10 groups and no other: a tet10-only set asks
+    ``cell_averaged``; beside a four-point quad group it asks ``node``, and the app's
+    per-group fallback answers for the tet10 group. The scan reads only ``path``."""
+    from types import SimpleNamespace
+
+    from apeGmsh.viewers.session._results_stills import _app_gauss_contour
+
+    src = tmp_path / "set.ladruno"
+    shutil.copy(_TET10, src)
+    if mixed:
+        _add_quad_bucket(src)
+    with h5py.File(src, "r") as f:
+        assert sorted(f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress"]) == (
+            ["31-FourNodeQuad[201:0:0]", "33001-BezierTet10[1000:1:0]"] if mixed else ["33001-BezierTet10[1000:1:0]"]
+        )
+    shot = _app_gauss_contour(SimpleNamespace(path=src), "stress_xx")
+    assert shot == {"field": "stress", "component": "stress/sigma_xx", "source": "element", "gauss": mode}
 
 
 def test_a_column_in_two_tokens_is_refused(app_backend, quad_set, tmp_path):
