@@ -26,6 +26,7 @@ import type { ResolvedFiles } from "./files.ts";
 import { defaultOpacity } from "../state/reduce.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { MAGNITUDE } from "../state/contour.ts";
+import { compareUserPickOf, compareUserRequestOf } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { CameraPose, DeclPath, Event, Offer, OfferIn, State, Vec3, ViewMemo } from "../state/types.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
@@ -470,6 +471,7 @@ function planKey(p: ShotPlan, groups: readonly string[]): string {
     phase: p.phase,
     events: p.events.filter((e) => !(e.type === "isolate" && everyGroup(e.decls))).map((e) => (e.type === "isolate" ? { ...e, decls: [...e.decls].sort() } : e)),
     contour: p.contour,
+    compareUser: p.compareUser,
     deform: p.deform,
   });
 }
@@ -593,6 +595,46 @@ export interface ShownDeps {
 }
 
 /**
+ * VF2-d (#2956): draw the compare variant's user result a plan names. The
+ * reducer takes `showCompareUser` only once the compare set is open and its
+ * `.user.h5` read, which follow the plan's `variantCompare` from main, so this
+ * waits for them (and for the compare model, whose mesh check decides whether
+ * there is a read at all), refuses an entry or a component the file does not
+ * offer with what it offers, dispatches the pick, and waits for its read to
+ * answer. Null once the pick is drawn or refused by the view itself (a stale
+ * entry, two meshes): ./verdict.ts then gives the app's own sentence.
+ */
+async function drawCompareUser(deps: ShownDeps, want: NonNullable<ShotPlan["compareUser"]>, t0: number): Promise<string | null> {
+  const what = `user result ${JSON.stringify(want.entry)} of the compare variant ${JSON.stringify(want.variant)}`;
+  const late = () => deps.now() - t0 >= SHOW_MS;
+  for (;;) {
+    const v = deps.store.get().variants;
+    const c = v.compare;
+    if (c === null) return `${what} is not drawn: the compare set did not open${v.notice ? ` (${v.notice})` : ""}`;
+    if (c.label !== want.variant) return `${what} is not drawn: the compare set is ${JSON.stringify(c.label)}`;
+    const read = (x: { status: string } | null) => x !== null && x.status !== "reading";
+    if (c.status === "open" && read(v.compareModel) && read(v.compareUser)) break;
+    if (late()) return `${what} is not drawn: the compare set, its model and its user file were not read within ${SHOW_MS / 1000} s`;
+    await deps.sleep(20);
+  }
+  const p = compareUserPickOf(deps.store.get(), want.entry);
+  if (!p.ok) return `${what} cannot be drawn: ${p.reason}`;
+  if (!p.entry.components.includes(want.component)) {
+    return `${what} has no component ${JSON.stringify(want.component)}; its components are ${p.entry.components.map((x) => JSON.stringify(x)).join(", ") || "none"}`;
+  }
+  deps.store.dispatch({ type: "showCompareUser", pick: { name: want.entry, component: want.component } });
+  for (;;) {
+    const s = deps.store.get();
+    const req = compareUserRequestOf(s);
+    // No read is asked for: the view refuses the pick (two meshes, a stale entry), and the verdict says why.
+    if (req === null) return null;
+    const r = s.variants.shownRead;
+    if ((r !== null && r.key === req.key && r.status !== "loading") || late()) return null;
+    await deps.sleep(20);
+  }
+}
+
+/**
  * Wait until the shot's view is on screen; null when it is, else the reason
  * it is refused (./verdict.ts). A contour or deformed shape the app answers
  * with `unavailable` or `refused` is refused with that reason once it has
@@ -601,6 +643,10 @@ export interface ShownDeps {
  */
 export async function shownView(deps: ShownDeps, shot: SpecShot, plan: ShotPlan): Promise<string | null> {
   const t0 = deps.now();
+  if (plan.compareUser !== null) {
+    const refused = await drawCompareUser(deps, plan.compareUser, t0);
+    if (refused !== null) return refused;
+  }
   let lastWhy: string | null = null;
   let since = t0;
   for (;;) {
