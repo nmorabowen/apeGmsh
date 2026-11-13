@@ -441,11 +441,14 @@ class Reader {
         `${g.path}/connectivity has ${connectivity.length} values for ${ids.length} x ${npe}`,
       );
     }
+    const name = a["gmsh_name"];
+    if (name !== undefined && typeof name !== "string") throw new SchemaError(`${g.path}@gmsh_name is not a string`);
     return {
       alias,
       code: num(a["code"], `${g.path}@code`),
       dim: num(a["dim"], `${g.path}@dim`),
       npe,
+      gmshName: name ?? null,
       ids,
       connectivity,
     };
