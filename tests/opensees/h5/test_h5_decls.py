@@ -529,7 +529,11 @@ CLASS: dict[str, str] = {
     **{v: "neutral" for v in (
         "node", "equalDOF", "rigidLink", "rigidDiaphragm", "embeddedNode",
         # K2b: g.reinforce ties, declared by the FEM snapshot.
-        "embedded_rebar")},
+        "embedded_rebar",
+        # An equation tie's lines, declared by the FEM snapshot; an
+        # apeSees.equation_constraint row has its own /opensees/decls
+        # entry, checked against the store's last rows (no rows column).
+        "equationConstraint")},
     **{v: "control" for v in (
         "model", "constraints", "numberer", "system", "test", "algorithm",
         "integrator", "analysis", "analyze", "stage_open", "stage_close",

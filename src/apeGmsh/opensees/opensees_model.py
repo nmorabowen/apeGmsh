@@ -180,8 +180,10 @@ def _fem_element_arity(fem: Any) -> dict[int, int]:
 def _equation_constraint_records(declarations: Any) -> "tuple[Any, ...]":
     """The archive's ``apeSees.equation_constraint`` rows, in call order.
 
-    ``H5Emitter`` ledgers the ``equationConstraint`` verb, so the only
-    record of a row is its declaration's ``/opensees/decl_params`` entry
+    Each row's declaration has a ``/opensees/decl_params`` entry (the only
+    record of the row in an archive below opensees 2.35.0, which stores no
+    ``equationConstraint`` line; the reader checks the stored rows against
+    it from that minor on)
     (K1-7, opensees 2.26.0): an ``EquationConstraintRecord`` with ``cnode``,
     ``cdof``, ``ccoef`` and ``retained``. Each is re-validated by
     ``make_equation_constraint_record``. A declaration whose entry is
@@ -1122,10 +1124,16 @@ class OpenSeesModel:
             self._refuse_stored_solve_refusals(target)
             # A stream the replay cannot write refuses here, before any
             # emitter exists: the live one wipes the domain on creation.
-            from ._internal.compose import refuse_unreplayable_streams
+            from ._internal.compose import (
+                refuse_stage_equation_ghost_fixes,
+                refuse_unreplayable_streams,
+            )
 
             refuse_unreplayable_streams(
                 self._fem, equation_rows=self._equation_tie_rows())
+            refuse_stage_equation_ghost_fixes(
+                stages=self._stages, fixes=self._fixes,
+                partitioned=bool(self._partitions))
         if target == "tcl":
             return self._build_text("tcl", out, flat=flat)
         if target == "py":
@@ -1872,15 +1880,17 @@ class OpenSeesModel:
         return _ReplayOrder(self._program, self._declarations)
 
     def _equation_tie_rows(self) -> "tuple[Any, ...]":
-        """The archived global equation-tie lines: the
+        """The archived equation-tie lines: the global
         ``equationConstraint`` rows of :attr:`_mp_constraints` without the
-        ``apeSees.equation_constraint`` rows, which are the last ones."""
+        ``apeSees.equation_constraint`` rows, which are the last ones, then
+        every stage block's (opensees 2.40.0; a user row is never staged)."""
         from .emitter.h5_reader import EquationConstraintRecordRO
 
         rows = [r for _i, r in self._mp_constraints
                 if isinstance(r, EquationConstraintRecordRO)]
-        return tuple(rows[:len(rows) - _user_equation_count(
-            self._declarations)])
+        staged = [r for st in self._stages for r in st.equation_constraints]
+        return (*rows[:len(rows) - _user_equation_count(self._declarations)],
+                *staged)
 
     def _stores_equation_lines(self) -> bool:
         """Whether the source archive stores its ``equationConstraint``

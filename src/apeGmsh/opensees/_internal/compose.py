@@ -463,8 +463,10 @@ def _stage_mp_keys(stages: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
     """The keys of every MP line the stage blocks of ``stages`` re-emit,
     counted: a multiset, so N equal records need N lines.
 
-    A key is ``(bucket, *what it ties)`` over the four ``StageRecordRO``
-    MP buckets; :func:`_constraint_stage_keys` builds the matching side.
+    A key is ``(bucket, *what it ties)`` over the five ``StageRecordRO``
+    MP buckets (the ``equationConstraint`` lines from opensees 2.40.0);
+    :func:`_constraint_stage_keys` / :func:`_interpolation_stage_keys`
+    build the matching side.
     Keys carry the bucket and the tied nodes, not the declaration name.
     The archived name is no identity: a ``tied_contact`` slave row has
     ``name=None`` (only its parent is named), and a ``rigid_body`` group
@@ -473,7 +475,8 @@ def _stage_mp_keys(stages: "Sequence[Any]") -> "Counter[tuple[Any, ...]]":
     keys: "Counter[tuple[Any, ...]]" = Counter()
     for s in stages:
         keys += _mp_row_keys((*s.equal_dofs, *s.rigid_links,
-                              *s.rigid_diaphragms, *s.embedded_nodes))
+                              *s.rigid_diaphragms, *s.embedded_nodes,
+                              *s.equation_constraints))
     return keys
 
 
@@ -986,11 +989,11 @@ def refuse_unreplayable_streams(
       archive does not store (#2411);
     - an interpolation on the ``enforce="equation"`` route whose
       ``equationConstraint`` lines are not all among ``equation_rows``,
-      the archive's global equation-tie rows (opensees 2.35.0, the
-      ``apeSees.equation_constraint`` rows taken off). An archive below
-      2.35.0 stores none (#2416), and a stage-claimed tie's lines are not
-      archived yet (#2448). A matched record consumes its lines, so N
-      equal ties need N sets of rows.
+      the archive's equation-tie rows: the global ones (opensees 2.35.0,
+      the ``apeSees.equation_constraint`` rows taken off) and the stage
+      blocks' (2.40.0). An archive below 2.35.0 stores no line (#2416),
+      and one below 2.40.0 no stage-claimed tie's line (#2448). A matched
+      record consumes its lines, so N equal ties need N sets of rows.
 
     :meth:`OpenSeesModel.build` calls it for the ``tcl`` / ``py`` /
     ``live`` targets before any emitter is made, so a refused live build
@@ -1026,9 +1029,10 @@ def refuse_unreplayable_streams(
         (phantom, "tie through phantom nodes the archive does not store "
                   "(#2411)"),
         (equation, "are equationConstraint lines the archive does not "
-                   "store (an archive below opensees 2.35.0 stores none, "
-                   "#2416; a stage-claimed tie's lines are not archived "
-                   "yet, #2448)"),
+                   "store (an archive written below opensees 2.35.0, or a "
+                   "to_h5 rewrite of one, stores none, #2416; one written "
+                   "below opensees 2.40.0, or a rewrite of one, stores none "
+                   "of a stage-claimed tie's, #2448)"),
     ):
         if found:
             detail = ", ".join(f"{k}: {n}" for k, n in sorted(found.items()))
@@ -1038,6 +1042,49 @@ def refuse_unreplayable_streams(
             "Deck replay refuses this archive: it carries "
             + "; and ".join(parts) + ". The replay would run untied. Load "
             "FEMData.from_h5(path) and emit it through apeSees(fem).")
+
+
+def refuse_stage_equation_ghost_fixes(
+    *, stages: "Sequence[Any]", fixes: "Sequence[Any]", partitioned: bool,
+) -> None:
+    """Raise :class:`BridgeError` iff a partitioned archive's stage stores
+    ``equationConstraint`` rows and a ``fix`` row on a node that an
+    earlier fix named: a global one, or an earlier stage's, whether or not
+    a ``remove_sp`` released it since.
+
+    The ghost replay of a node on a rank that does not own it (ADR 0027
+    INV-2) re-plays the node's whole SP history into the stage that ghosts
+    it, its fixes and its releases alike. The stage block stores those
+    rows as the stage's own, so the flat replay writes the node's history
+    again, which the bridge's flat deck does not (#2530). Every fix row of
+    the stage is checked, not only those on the nodes of the stored lines:
+    the rank plan ghosts every master of a tie, a zero-weight one
+    included, and the lines leave a zero-weight master out.
+
+    The rule is deliberately coarse: it also refuses a stage that re-fixes,
+    on purpose, a node an earlier stage released (a deck that replays
+    exactly). It is narrowed to the stages with equation rows, which
+    replayed nowhere before opensees 2.40.0, and lifts with #2530. A flat
+    archive never stores a ghost replay, so it passes.
+    """
+    if not partitioned:
+        return
+    from .build.errors import BridgeError
+
+    earlier = {int(r.tag) for r in fixes}
+    for st in stages:
+        repeated = sorted({int(r.tag) for r in st.fixes} & earlier)
+        if repeated and st.equation_constraints:
+            raise BridgeError(
+                f"Deck replay refuses this archive: stage {st.name!r} of this "
+                "partitioned archive holds equationConstraint lines and "
+                f"fixes node(s) {repeated}, which an earlier fix named. That "
+                "is the ghost replay of a rank that does not own them, and "
+                "the flat replay would write their fixes again (#2530). A "
+                "deliberate re-fix after a release refuses too. This "
+                "refusal lifts when #2530 is fixed. Load "
+                "FEMData.from_h5(path) and emit it through apeSees(fem).")
+        earlier |= {int(r.tag) for r in st.fixes}
 
 
 def _warn_skipped_replay_streams(
@@ -2795,12 +2842,15 @@ def _replay_staged_into(
         # equal_dofs[kinematic] → embedded_nodes), so a kinematic
         # equalDOF straddles rigidDiaphragm.  Merge-sort by the captured
         # emit_index to reproduce that exactly; fall back to the fixed
-        # kind order for pre-P2.3 archives that carry no seq.
+        # kind order for pre-P2.3 archives that carry no seq. A stage's
+        # equationConstraint lines (opensees 2.40.0) are the fifth kind;
+        # the reader holds their seq to their rows.
         mp_groups = (
             (st.rigid_links, st.rigid_link_seq),
             (st.equal_dofs, st.equal_dof_seq),
             (st.rigid_diaphragms, st.rigid_diaphragm_seq),
             (st.embedded_nodes, st.embedded_node_seq),
+            (st.equation_constraints, st.equation_constraint_seq),
         )
         have_seq = all(
             len(seq) == len(recs) for recs, seq in mp_groups

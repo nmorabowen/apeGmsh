@@ -186,7 +186,7 @@ test("ADR 0113 floors: the app's table (neutral 2.10, opensees 2.12, geometry 1.
   assert.deepEqual(ZONE_FLOOR, { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0, user_meta: 0, combinations: 0, user_results: 0, modes: 0, spectra: 0, entities: 0 });
 });
 
-test("opensees 2.39.0 is the target: a 2.39 file with a 2.29 embeddedRebar, a 2.35 equationConstraint store, a 2.36 @target_mode and a 2.37 transform jnt_offset opens with no banner", () => {
+test("opensees 2.40.0 is the target: a 2.40 file with a 2.29 embeddedRebar, a 2.35 equationConstraint store, a 2.36 @target_mode, a 2.37 transform jnt_offset and a 2.40 stage equationConstraint store opens with no banner", () => {
   // h5-schema.md: 2.28 adds decl_params `label`, 2.29 the optional
   // /opensees/constraints/embeddedRebar group (replay data the app does not
   // read), 2.30 decl_params `precision`, 2.31 /opensees/program's `decl`
@@ -199,15 +199,31 @@ test("opensees 2.39.0 is the target: a 2.39 file with a 2.29 embeddedRebar, a 2.
   // (replay data, not read here), 2.37 the optional transform `jnt_offset`
   // dataset (a table the scene ignores), 2.38 the Ladruno recorder's
   // decl_params `precision` field (hash-excluded replay data, not read
-  // here), 2.39 the optional /opensees/combinations group (not read here).
-  // A file at the target opens silently;
+  // here), 2.39 the optional /opensees/combinations group (not read here),
+  // 2.40 a stage block's equationConstraint rows and
+  // equationConstraint_emit_index (inside the stage's `constraints`, which
+  // the app lists by name only). A file at the target opens silently;
   // tests/test_app_target_drift.py holds the target equal to the Python
   // writer's SCHEMA_VERSION.
-  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 39 });
-  const path = writeFile("o-239.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.39.0");
+  assert.deepEqual(OPENSEES_TARGET, { major: 2, minor: 40 });
+  const path = writeFile("o-240.h5", v(NEUTRAL_TARGET, NEUTRAL_TARGET.minor), true, "2.40.0");
   const f = new h5wasm.File(path, "a");
   const ops = f.get("opensees") as h5wasm.Group;
   ops.create_attribute("target_mode", "fork");
+  const stages = ops.create_group("stages");
+  stages.create_attribute("n_stages", 1);
+  const st = stages.create_group("stage_000");
+  st.create_attribute("name", "s0");
+  const scons = st.create_group("constraints");
+  const seq = scons.create_group("equationConstraint");
+  seq.create_dataset({ name: "cnode", data: new BigInt64Array([4n]) });
+  seq.create_dataset({ name: "cdof", data: new Int32Array([1]) });
+  seq.create_dataset({ name: "ccoef", data: new Float64Array([1]) });
+  seq.create_dataset({ name: "ret_offsets", data: new Int32Array([0, 1]) });
+  seq.create_dataset({ name: "ret_node", data: new BigInt64Array([2n]) });
+  seq.create_dataset({ name: "ret_dof", data: new Int32Array([1]) });
+  seq.create_dataset({ name: "ret_coef", data: new Float64Array([-1]) });
+  scons.create_dataset({ name: "equationConstraint_emit_index", data: new BigInt64Array([1n]) });
   const cons = ops.create_group("constraints");
   const er = cons.create_group("embeddedRebar");
   er.create_dataset({ name: "ele_tag", data: new BigInt64Array([10n]) });
@@ -229,10 +245,11 @@ test("opensees 2.39.0 is the target: a 2.39 file with a 2.29 embeddedRebar, a 2.
   tr.create_dataset({ name: "jnt_offset", data: new Float64Array([0, 0, -0.3, 0, 0, -0.3]), shape: [1, 6] });
   f.close();
   const m = read(path);
-  assert.equal(m.opensees?.version, "2.39.0");
+  assert.equal(m.opensees?.version, "2.40.0");
   assert.deepEqual(m.warnings, []);
   const geom = m.opensees?.objects.find((o) => o.family === "geomTransf");
   assert.ok(geom !== undefined && "jnt_offset" in geom.tables);
+  assert.deepEqual(m.opensees?.definitions.stages.map((s) => [s.name, s.other]), [["s0", ["constraints"]]]);
   // V4m: a group missing the string and kind columns opens; its ties are unknown, not 0
   assert.deepEqual(m.opensees?.definitions.embeddedRebar, {
     path: "/opensees/constraints/embeddedRebar",
