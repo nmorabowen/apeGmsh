@@ -1864,16 +1864,25 @@ exists; hashed.
   and a file that lost rows. A pre-2.40 archive stores nothing a
   stage-claimed tie's lines could be rebuilt from, so it never replays;
   nor does a `to_h5` rewrite of one, although it is stamped 2.40.0. A
-  partitioned archive whose stage holds equation rows and a `fix` row
-  that repeats an earlier fix's node and DOF mask (global or an earlier
-  stage's, released since or not) also refuses. The ghost replay of a
-  rank that does not own the node (a zero-weight master's included)
-  re-plays each of the node's fixes, mask unchanged, into the stage, and
-  the flat replay would write them again (#2530). A stage that fixes
-  other DOFs of a fixed node replays. A deliberate re-fix with the same
-  mask after a release refuses too, a known over-refusal. Both refusals
-  lift with #2530. A stored `equationConstraint_emit_index` that is not a
-  1-D integer dataset is malformed.
+  stored `equationConstraint_emit_index` that is not a 1-D integer
+  dataset is malformed.
+- **Ghost SP rows (#2530).** A partitioned stage whose MP tie (any kind)
+  crosses ranks declares a ghost of each far node, and the ghost re-plays
+  its owner's SP history into the stage: the global fixes, then each
+  earlier stage's fixes and releases (ADR 0027 INV-2; a zero-weight
+  master's included). The stage's `bcs/fix` and `remove_sp` stores keep
+  those rows. The deck replay drops them by their
+  `/opensees/decls/rows` declaration: a declaration's home is the first
+  scope (global `bcs/fix`, then stage 0, 1, ...) whose `fix` or
+  `remove_sp` rows name it, and a stage row whose declaration's home is
+  an earlier scope is a ghost's. The stage's own rows stay, a deliberate
+  re-fix with an earlier mask after a release included. `to_h5` echoes
+  every row. A partitioned archive with no declaration column for a
+  stage's `fix` or `remove_sp` store (below opensees 2.25.0, or a rewrite
+  of one) refuses with `BridgeError` when a row of that stage repeats an
+  earlier `fix` (node and mask) or `remove_sp` (node and DOF). No schema
+  bump: the writer is unchanged (ADR 0114, amendment note of
+  2026-11-13).
 - **Rewrite.** `OpenSeesModel.to_h5` keeps the rows. A rewrite of a
   pre-2.35 archive stores its `apeSees.equation_constraint` rows and links
   the source's last `K` global `equationConstraint` calls to them; its
