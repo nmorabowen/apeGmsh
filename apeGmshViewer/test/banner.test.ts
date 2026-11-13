@@ -171,19 +171,45 @@ test("VF2: a derived contour on unclassified elements puts the manifest's plane 
   assert.throws(() => mounted(h.store), /mounted without its out-of-plane line/);
 });
 
-test("VF2: a new set that classifies every element (elem_mixed: PlaneStrain, nu 0.2) leaves no stale plane line", async () => {
+test("VF2: the statement is computed once across steps and the manifest, and again for a new set (elem_mixed: PlaneStrain, nu 0.2), which leaves no stale plane line", async () => {
   const h = await openSet("extrap_plane");
-  const b = mounted(h.store, (s) => derivedPlaneOf(s, h.blobs)?.warning ?? null);
+  // planeStatement returns a new object on every run, so the distinct statements seen count its runs (#2952 review).
+  const runs = new Set<object>();
+  let asked = 0;
+  const b = mounted(h.store, (s) => {
+    const d = derivedPlaneOf(s, h.blobs);
+    if (d) {
+      asked++;
+      runs.add(d.plane);
+    }
+    return d?.warning ?? null;
+  });
   try {
-    pick(h, "von_mises_stress", 1);
-    await until(shown(h, "von_mises_stress", 1), "extrap_plane's von_mises_stress");
-    assert.deepEqual(b.lines().filter((l) => PLANE_LINE.test(l)), [EXTRAP_PLANE_LINE]);
+    for (const step of [0, 1, 2, 1]) {
+      pick(h, "von_mises_stress", step);
+      await until(shown(h, "von_mises_stress", step), `extrap_plane's von_mises_stress at step ${step}`);
+      assert.deepEqual(b.lines().filter((l) => PLANE_LINE.test(l)), [EXTRAP_PLANE_LINE]);
+    }
+    const entry = manifestEntry(h.store.get(), {
+      shot: shotOf({ stage: "load", step: 1, contour: { field: "stress", component: "von_mises_stress" } }),
+      png: "s.png",
+      image: [1600, 1000],
+      camera: { eye: [1, 1, 1], target: [0, 0, 0], up: [0, 0, 1], fov: 30 },
+      layout: null,
+      blobs: h.blobs,
+      step: h.effects.currentStep(),
+    });
+    assert.ok(entry.contour?.drawn && entry.contour.derived);
+    runs.add(entry.contour.derived.plane);
+    assert.ok(asked >= 4, `the banner asked ${asked} time(s) over four steps`);
+    assert.equal(runs.size, 1, "one statement for every step, the banner and the manifest");
     // The same window opens another set: its model classifies every quad and triangle, so its zz is recovered.
     assert.ok(await h.effects.open(fx("elem_mixed.h5")));
     assert.ok(await h.effects.openResults(fx("elem_mixed.results.h5")));
     pick(h, "von_mises_stress", 1);
     await until(shown(h, "von_mises_stress", 1), "von_mises_stress at step 1");
     assert.deepEqual(derivedPlaneOf(h.store.get(), h.blobs)?.plane, { elements: 15, recorded: 0, recovered: 15, zero_exact: 0, unclassified: 0, no_nu: 0 });
+    assert.equal(runs.size, 2, "the new set's statement is computed again");
     assert.deepEqual(b.lines().filter((l) => PLANE_LINE.test(l)), [], b.lines().join("\n"));
   } finally {
     b.close();

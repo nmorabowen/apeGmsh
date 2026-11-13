@@ -627,7 +627,8 @@ export function refusedEntry(
     time: at?.time ?? null,
     contour: null,
     deform: null,
-    // No still and no blob store here: the state's lines only (a derived contour's plane line needs the element ids, VF2).
+    // The state's lines only, without a derived contour's plane line (VF2): harmless, since a refused shot writes no
+    // still. Adding it needs the blob store passed in from renderer/agentRender.ts, outside slice #2951.
     banner: at ? bannerLines(s) : [],
     layout: null,
   };

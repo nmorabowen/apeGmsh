@@ -476,6 +476,31 @@ export function planeWarning(family: TensorFamily, st: PlaneStatement): string |
   return parts.length ? `Out-of-plane ${zz} recovery is incomplete: ${parts.join("; ")}. ${zz} is left at 0 there.` : null;
 }
 
+/** `planeStatementOf`'s entries, weakly keyed on the first group's element-id array (a re-read or a new set reads new arrays). */
+const statementCache = new WeakMap<Float64Array, { decls: object; family: TensorFamily; slots: string; eids: readonly Float64Array[]; st: Readonly<PlaneStatement> }[]>();
+
+/**
+ * VF2 review (#2952): `planeStatement` over the model's plane map, once per
+ * (declarations object, family, the groups' slots and element-id arrays). The
+ * step is not in the key: the banner asks on every step, and a 1M-element
+ * statement is ~0.4 s on the main thread. A re-read model is a new
+ * declarations object and a new set reads new element-id arrays, so either
+ * computes it again. The statement is frozen: every caller shares it.
+ */
+export function planeStatementOf(family: TensorFamily, groups: readonly { group: TensorGroup; eids: Float64Array }[], decls: Readonly<Record<DeclPath, Decl>>): Readonly<PlaneStatement> {
+  if (groups.length === 0) return Object.freeze(planeStatement(family, groups, planeMapOf(decls)));
+  const slots = JSON.stringify(groups.map((g) => g.group.slots));
+  const first = groups[0]!.eids;
+  const list = statementCache.get(first) ?? [];
+  const hit = list.find((x) => x.decls === decls && x.family === family && x.slots === slots && x.eids.length === groups.length && x.eids.every((a, i) => a === groups[i]!.eids));
+  if (hit) return hit.st;
+  const st = Object.freeze(planeStatement(family, groups, planeMapOf(decls)));
+  list.push({ decls, family, slots, eids: groups.map((g) => g.eids), st });
+  if (list.length > 8) list.shift(); // re-reads of the model over one results read: keep the latest few
+  statementCache.set(first, list);
+  return st;
+}
+
 /** The Voigt tensor of one point: `read(slot)` is the file's value (NaN when not finite), 0 for a slot the group does not record; a strain's shear halved. */
 export function assembleTensor(family: TensorFamily, read: (voigt: number) => number | null): Float64Array | null {
   const t = new Float64Array(6);

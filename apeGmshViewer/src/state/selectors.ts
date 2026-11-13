@@ -33,7 +33,7 @@ import {
   type NodalField,
 } from "./contour.ts";
 import { meanFallbackGroups, usesMatrix } from "./extrapolation.ts";
-import { planeMapOf, planeStatement, planeWarning, tensorFields, type PlaneStatement, type TensorField } from "./tensor.ts";
+import { planeStatementOf, planeWarning, tensorFields, type PlaneStatement, type TensorField } from "./tensor.ts";
 import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 import {
@@ -575,7 +575,8 @@ export function fallbackNotice(v: Extract<ContourView, { state: "element" }>): s
 /** VA6d / VF2: a derived contour's stored components, its out-of-plane statement by element, and the line it warns with (null: none). */
 export interface DerivedPlane {
   from: string[];
-  plane: PlaneStatement;
+  /** shared and frozen: tensor.ts `planeStatementOf` computes it once per model, set and family, not per step */
+  plane: Readonly<PlaneStatement>;
   warning: string | null;
 }
 
@@ -599,7 +600,7 @@ export function derivedPlaneOf(s: State, blobs: { get(ref: BlobRef): unknown }):
     if (!(eids instanceof Float64Array)) throw new Error(`derivedPlaneOf: the element ids of group ${group.id} are not on hand`);
     return { group, eids };
   });
-  const plane = planeStatement(t.family, groups, planeMapOf(s.decls));
+  const plane = planeStatementOf(t.family, groups, s.decls);
   return { from: [...t.components], plane, warning: planeWarning(t.family, plane) };
 }
 
