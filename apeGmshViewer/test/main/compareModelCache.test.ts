@@ -10,6 +10,7 @@
 //   renderer/contour.ts `VariantRunner.check`) reads the model file once, and the
 //   second answer is the first;
 // - the file touched since is read again;
+// - a file rewritten while it was read is refused and nothing is held;
 // - a file rewritten under the held size and mtime with another model_hash is
 //   refused as no longer paired: the lineage is checked before the held read;
 // - a set change (another row paired, its model read or not) drops it: the first
@@ -49,7 +50,14 @@ async function drive(): Promise<void> {
             source: `import { openModel as read } from ${JSON.stringify(READER)};
 export const reads = [];
 globalThis.__vf3eReads = reads;
-export function openModel(path) { reads.push(path); return read(path); }`,
+export async function openModel(path) {
+  reads.push(path);
+  const model = await read(path);
+  const during = globalThis.__vf3eDuringRead;
+  globalThis.__vf3eDuringRead = null;
+  if (during) during(path);
+  return model;
+}`,
           }
         : next(url, context),
   });
@@ -82,6 +90,16 @@ export function openModel(path) { reads.push(path); return read(path); }`,
   const t = statSync(CRACKED);
   utimesSync(CRACKED, t.atime, new Date(t.mtimeMs + 5000));
   await model("touched");
+  // 2b. A file rewritten while it was read (its mtime bumped once, before openModel returns) is refused and
+  // nothing is held: the next call reads it again.
+  const t2 = statSync(CRACKED);
+  utimesSync(CRACKED, t2.atime, new Date(t2.mtimeMs + 5000));
+  (globalThis as { __vf3eDuringRead?: ((p: string) => void) | null }).__vf3eDuringRead = (p) => {
+    const s = statSync(p);
+    utimesSync(p, s.atime, new Date(s.mtimeMs + 5000));
+  };
+  await model("rewrittenDuring");
+  await model("afterRewrite");
   // 3. Another model_hash under the held size and mtime (Uncracked's file: the same mesh,
   // another material, the same length) is refused as no longer paired, never answered from the held read.
   const held = statSync(CRACKED);
@@ -149,6 +167,17 @@ if (process.env["VF3E_DRIVER"] === "1") {
     const touched = read("touched");
     assert.equal(touched.answer["ok"], true, String(touched.answer["reason"]));
     assert.deepEqual(touched.reads, ["plate_cracked.h5"]);
+  });
+
+  test("a model file rewritten while it was read is refused, and nothing is held: the next call reads it again", () => {
+    const during = read("rewrittenDuring");
+    assert.deepEqual(during.reads, ["plate_cracked.h5"], "precondition: the call read the file");
+    assert.equal(during.answer["ok"], false, `a rewrite during the read must be refused: ${JSON.stringify(during.answer)}`);
+    assert.match(String(during.answer["reason"]), /was rewritten while it was read/);
+    const next = read("afterRewrite");
+    assert.equal(next.answer["ok"], true, String(next.answer["reason"]));
+    assert.deepEqual(next.reads, ["plate_cracked.h5"]);
+    assert.deepEqual({ nodes: next.answer["nodes"], elements: next.answer["elements"] }, PLATE);
   });
 
   test("another model_hash under the held size and mtime is refused as no longer paired, never answered from the held read", () => {
