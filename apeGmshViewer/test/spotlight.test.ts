@@ -3,9 +3,11 @@
 // ledger (`SPOTLIGHT_EVENT_LEDGER`).
 
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import * as h5wasm from "h5wasm/node";
 import { openModel } from "../src/reader/node.ts";
 import { focusOf } from "../src/renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "../src/renderer/visible.ts";
@@ -13,6 +15,7 @@ import { BlobStore } from "../src/state/blobs.ts";
 import { loadModel } from "../src/state/load.ts";
 import {
   clauseLabel,
+  contourView,
   elementsOfDecl,
   hiddenElementsOf,
   indexOf,
@@ -28,7 +31,14 @@ import {
 } from "../src/state/selectors.ts";
 import { initialState, reduce, Store, type State } from "../src/state/store.ts";
 import type { EventType } from "../src/state/types.ts";
-import { opened } from "./contour/harness.ts";
+import { rangeButtonsOf } from "../src/panels/legend.ts";
+import { harness, opened } from "./contour/harness.ts";
+import { readUserResultColumn, readUserSet, type UserH5 } from "../src/reader/userFile.ts";
+import { UserResultFeed } from "../src/renderer/contour.ts";
+import { userEventOf } from "../src/state/reduce.ts";
+
+await h5wasm.ready;
+const H5 = h5wasm as unknown as UserH5;
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 const shoeModel = await openModel(join(fixtures, "shoebuckle.h5"));
@@ -738,4 +748,86 @@ test("VA6d (#2766): the contour-field palette lists a derived scalar from the pi
     h.effects.dispose();
     h.host.close();
   }
+});
+
+test("VF2 (#2949): the palette's contour range list is the legend's, for every contour kind and range mode", () => {
+  // The oracle is the legend's own list (panels/legend.ts rangeButtonsOf, #2902 item 2) for each view the scale
+  // draws. The fixture holds no results, user file or compare set, so contourView (selectors.ts) draws none of
+  // these; each State is pinned to its view by the branch contourView takes, read from what it refuses with.
+  const base: State = reduce(loaded, { type: "setColourBy", by: "contour" });
+  const footfall = { name: "footfall", component: "footfall_ratio" };
+  const combination = { ...base.phase, at: { kind: "combination" as const, name: "ULS" } };
+  const kinds: readonly [string, "ready" | "element" | "user" | "combination" | "difference", State, RegExp][] = [
+    ["a nodal Results field", "ready", { ...base, contour: { ...base.contour, source: "nodal" } }, /^unavailable: no results file pairs/],
+    ["an element Results field", "element", { ...base, contour: { ...base.contour, source: "element" } }, /^unavailable: no results file pairs/],
+    ["a user result", "user", { ...base, contour: { ...base.contour, source: "user", field: "footfall", component: "footfall_ratio" } }, /^refused user: /],
+    ["a compare user result", "user", { ...base, variants: { ...base.variants, shown: footfall } }, /^refused user: .*compare variant/],
+    ["a User Combination", "combination", { ...base, phase: combination }, /^unavailable: the user file is not read/],
+    // The branch order: a compare user result is shown over a combination phase, and the difference over both.
+    ["a compare user result over a combination", "user", { ...base, phase: combination, variants: { ...base.variants, shown: footfall } }, /^refused user: .*compare variant/],
+    ["the difference", "difference", { ...base, variants: { ...base.variants, difference: true } }, /^refused difference: /],
+    ["the difference over a compare user result and a combination", "difference", { ...base, phase: combination, variants: { ...base.variants, shown: footfall, difference: true } }, /^refused difference: /],
+  ];
+  for (const [what, view, k, branch] of kinds) {
+    for (const range of ["history", "step", "fixed"] as const) {
+      // A stored fixed range, so the palette lists "fixed" (it seeds no range of its own: it takes a typed `min max`).
+      const s: State = { ...k, contour: { ...k.contour, range, fixed: { min: -1, max: 2 } }, spotlight: { ...k.spotlight, open: true, mode: "contourRange", query: "" } };
+      const v = contourView(s);
+      const reached = v.state === "refused" ? `refused ${v.code}: ${v.reason}` : v.state === "unavailable" ? `unavailable: ${v.reason}` : v.state;
+      assert.match(reached, branch, `${what}: contourView takes another branch`);
+      const items = spotlightViewOf(s).items;
+      const legend = rangeButtonsOf(view, range);
+      assert.deepEqual(
+        items.map((i) => [i.title, i.active === true]),
+        legend.map((b) => [`Range: ${b.label}`, b.on]),
+        `${what} at ${range}`,
+      );
+      for (const [i, b] of legend.entries()) {
+        // The legend's tooltip, where it has one: it names what the one range is ("this user result's own range").
+        if (b.title !== null) assert.equal(items[i]!.detail, b.title, `${what} at ${range}: ${b.label} tooltip`);
+        // Picking a range does what the legend's button does: the own range leaves a fixed range, and otherwise dispatches nothing.
+        const events = items[i]!.action.events;
+        if (b.own && range !== "fixed") assert.ok(!events.some((e) => e.type === "setContourRange"), `${what} at ${range}: picking ${b.label} sets no range`);
+        else assert.equal(events.reduce(reduce, s).contour.range, b.range, `${what} at ${range}: picking ${b.label}`);
+      }
+      // The root entry names the mode as the list does.
+      const entry = spotlightViewOf({ ...s, spotlight: { ...s.spotlight, mode: "root", query: "contour range" } }).items.find((i) => i.id === "cmd:contour-range");
+      if (entry) assert.equal(entry.title, `Set Contour Range… (currently ${legend.find((b) => b.on)!.label})`, `${what} at ${range}: entry`);
+    }
+  }
+});
+
+test("VF2 (#2949): a user result drawn with no results file (VU16) offers the contour range entry, as the legend does", async (t) => {
+  const entryOf = (s: State) => spotlightViewOf(reduce(s, { type: "openSpotlight", mode: "root", query: "contour range" })).items.find((i) => i.id === "cmd:contour-range");
+  // The plate (test/fixtures/vu16) has no results file; its .user.h5 is read and its footfall ratio drawn, as the legend's test draws it.
+  const vu16 = (name: string) => fileURLToPath(new URL(`./fixtures/vu16/${name}`, import.meta.url));
+  const plate = vu16("plate.h5");
+  const plateUser = vu16("plate.user.h5");
+  const h = harness();
+  t.after(() => h.host.close());
+  assert.ok(await h.effects.open(plate), `plate did not load: ${h.store.get().artifacts.model?.error}`);
+  const list = (d: string) => readdirSync(d);
+  h.store.dispatch({ type: "userOpened", path: plateUser });
+  h.store.dispatch(userEventOf(plateUser, readUserSet(H5, plateUser, plate, null, list)));
+  const feed = new UserResultFeed(h.store, async (req) => readUserResultColumn(H5, req.path, plate, null, list, req.name, req.component));
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  h.store.dispatch({ type: "setContourField", field: "footfall", component: "footfall_ratio", source: "user" });
+  await feed.check();
+  const drawn = h.store.get();
+  assert.equal(contourView(drawn).state, "user", "the user result draws");
+  assert.ok(!drawn.phase.axis.some((k) => k.kind === "results"), "with no results step");
+  for (const range of ["history", "step", "fixed"] as const) {
+    const entry = entryOf({ ...drawn, contour: { ...drawn.contour, range, fixed: { min: -1, max: 2 } } });
+    assert.ok(entry, `a drawn user result at ${range}: the entry is offered`);
+    assert.equal(entry.title, `Set Contour Range… (currently ${rangeButtonsOf("user", range).find((b) => b.on)!.label})`);
+    assert.equal(entry.action.nextMode, "contourRange");
+  }
+  assert.equal(entryOf({ ...drawn, visibility: { ...drawn.visibility, colourBy: loaded.visibility.colourBy } }), undefined, "contours off: no entry");
+
+  // shoebuckle.h5 alone has no .user.h5: the user branch refuses, the legend draws no range buttons, and the palette offers no entry.
+  const contours = reduce(loaded, { type: "setColourBy", by: "contour" });
+  const refused: State = { ...contours, contour: { ...contours.contour, source: "user", field: "footfall", component: "footfall_ratio" } };
+  assert.equal(contourView(refused).state, "refused");
+  assert.equal(entryOf(refused), undefined, "a refused user result: no entry");
+  assert.equal(entryOf({ ...contours, contour: { ...contours.contour, source: "nodal" } }), undefined, "a Results field with no results step: no entry");
 });

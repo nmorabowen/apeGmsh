@@ -546,6 +546,70 @@ export const RANGE_MODES: readonly { range: ContourRange; label: string }[] = [
   { range: "fixed", label: "fixed" },
 ];
 
+/**
+ * What a contour's colours range over (#2902 item 2; VF2 #2949). A user
+ * result and a User Combination have one state (their own range, "one state,
+ * no history"), and a difference ranges over the step shown; every other
+ * contour ranges over its stage's history or the step shown, by the mode.
+ */
+export type RangeKind = "steps" | "user" | "combination" | "difference";
+
+/**
+ * The range kind of the contour `contourView` (selectors.ts) draws, read from
+ * the branches it takes before any Results field: the difference, a compare
+ * user result, a User Combination phase, then a user result. The legend and
+ * the command palette both ask it, so they offer the same range modes.
+ */
+export function rangeKindOf(s: State): RangeKind {
+  if (s.variants.difference) return "difference";
+  if (s.variants.shown !== null) return "user";
+  if (s.phase.at?.kind === "combination") return "combination";
+  if (s.contour.source === "user") return "user";
+  return "steps";
+}
+
+/** One colour-range choice: `own` is a one-range view's own range (on unless the range is fixed). */
+export interface RangeOption {
+  range: ContourRange;
+  own: boolean;
+  label: string;
+  title: string | null;
+  on: boolean;
+}
+
+/**
+ * The colour-range choices for a contour of `kind` with the range mode
+ * `range`, the one rule the legend's scale and the command palette offer. A
+ * one-range kind would show its one range under two names as "history" and
+ * "this step", so it offers it once, `own` (leaving a fixed range sets
+ * `range`, and otherwise it does nothing), beside "fixed". Every other contour
+ * offers RANGE_MODES as they are.
+ */
+export function rangeOptionsOf(kind: RangeKind, range: ContourRange): readonly RangeOption[] {
+  let one: { label: string; title: string; back: ContourRange };
+  switch (kind) {
+    case "steps":
+      return RANGE_MODES.map((m) => ({ range: m.range, own: false, label: m.label, title: null, on: range === m.range }));
+    case "user":
+    case "combination":
+      one = { label: "own range", title: `one state: no history and no step to range over, so the colours span this ${kind === "user" ? "user result" : "combination"}'s own range`, back: "history" };
+      break;
+    case "difference":
+      one = { label: "this step", title: "a difference is read at the step shown only: there is no history to range over", back: "step" };
+      break;
+    default: {
+      const unknown: never = kind;
+      throw new Error(`unknown contour range kind ${JSON.stringify(unknown)}`);
+    }
+  }
+  const fixed = RANGE_MODES.find((m) => m.range === "fixed");
+  if (!fixed) throw new Error("RANGE_MODES has no fixed mode");
+  return [
+    { range: one.back, own: true, label: one.label, title: one.title, on: range !== "fixed" },
+    { range: fixed.range, own: false, label: fixed.label, title: null, on: range === "fixed" },
+  ];
+}
+
 // -- vertices -------------------------------------------------------------------
 
 /** The column of each node id in a field's `_ids`. */

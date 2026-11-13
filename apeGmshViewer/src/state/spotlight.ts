@@ -16,7 +16,7 @@ import { reactionComponentsOf } from "./loads.ts";
 import { springCountOf } from "./springs.ts";
 import { tensorFields } from "./tensor.ts";
 import { vectorFieldOf } from "./vectors.ts";
-import { CMAP_NAMES, elementContourFields, fieldsOf, RANGE_MODES } from "./contour.ts";
+import { CMAP_NAMES, elementContourFields, fieldsOf, rangeKindOf, rangeOptionsOf } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
 import {
   WINDOW_KINDS,
@@ -384,6 +384,25 @@ function drillDownItem(id: string, badge: string, title: string, detail: string,
     detail,
     action: { events: [{ type: "setSpotlightMode", mode }], close: false, nextMode: mode },
   });
+}
+
+/** The root entry to the contour range list, named by the mode the list marks on (VF2 #2949). */
+function contourRangeEntry(s: State): { item: SpotlightItem; keywords: string } {
+  const kind = rangeKindOf(s);
+  const on = rangeOptionsOf(kind, s.contour.range).find((r) => r.on);
+  if (!on) throw new Error(`no contour range option is on for ${kind} at ${s.contour.range}`);
+  return {
+    item: drillDownItem(
+      "cmd:contour-range",
+      "contour",
+      `Set Contour Range… (currently ${on.label})`,
+      kind === "steps"
+        ? "Switch between whole-history, current step, or custom fixed min/max range"
+        : `Switch between this ${kind === "difference" ? "difference's step" : "result's own"} range and a custom fixed min/max range`,
+      "contourRange",
+    ),
+    keywords: "set contour range clim history step fixed min max own",
+  };
 }
 
 function commandItem(
@@ -795,16 +814,7 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       ),
       keywords: "set contour gauss topology mode cell node averaged discrete extrapolation",
     });
-    out.push({
-      item: drillDownItem(
-        "cmd:contour-range",
-        "contour",
-        `Set Contour Range… (currently ${s.contour.range})`,
-        "Switch between whole-history, current step, or custom fixed min/max range",
-        "contourRange",
-      ),
-      keywords: "set contour range clim history step fixed min max",
-    });
+    out.push(contourRangeEntry(s));
     out.push({
       item: drillDownItem(
         "cmd:contour-cmap",
@@ -861,6 +871,14 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       ),
       keywords: "set line diagram beam moment shear axial ribbon mvy mz vy n toggle",
     });
+  } else if (
+    s.visibility.colourBy === "contour" &&
+    rangeKindOf(s) === "user" &&
+    (s.variants.shown !== null ? s.variants.compareUser?.status : s.user?.status) === "ready"
+  ) {
+    // VF2 (#2949): a user result draws with no results file (VU16), and the legend offers its range there too,
+    // once its user file is read; with none read the legend shows the refusal and no range.
+    out.push(contourRangeEntry(s));
   }
 
   if (resStage) {
@@ -1299,20 +1317,24 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
           ),
         );
       }
-      for (const r of RANGE_MODES) {
+      // VF2 (#2949): the legend's rule (state/contour.ts rangeOptionsOf), so a one-range contour offers its own range once.
+      for (const r of rangeOptionsOf(rangeKindOf(s), s.contour.range)) {
         if (r.range === "fixed" && !s.contour.fixed) continue;
+        // As the legend: the own range leaves a fixed range for `r.range`, and otherwise changes nothing (it only closes the palette).
+        const pick: readonly Event[] = r.own && r.on ? [{ type: "closeSpotlight" }] : [{ type: "setContourRange", range: r.range }];
         const it = commandItem(
-          `val:range-${r.range}`,
+          r.own ? "val:range-own" : `val:range-${r.range}`,
           "range",
           `Range: ${r.label}`,
-          r.range === "history"
-            ? "Scale colours across all steps of the stage"
-            : r.range === "step"
-              ? "Scale colours to the min/max of the current step"
-              : `Fixed range [${s.contour.fixed?.min}, ${s.contour.fixed?.max}]`,
-          [{ type: "setContourRange", range: r.range }],
-          s.contour.range === r.range,
-          [{ type: "setContourRange", range: r.range }],
+          r.title ??
+            (r.range === "history"
+              ? "Scale colours across all steps of the stage"
+              : r.range === "step"
+                ? "Scale colours to the min/max of the current step"
+                : `Fixed range [${s.contour.fixed?.min}, ${s.contour.fixed?.max}]`),
+          pick,
+          r.on,
+          pick,
           section,
         );
         if (filter(it)) items.push(it);
