@@ -462,17 +462,33 @@ def _repeated_rows(ids: ndarray) -> "dict[int, list[int]]":
 
     The fork writes ids ascending, so a strictly increasing list (one
     pairwise comparison) is accepted without sorting; any other list is
-    checked with ``np.unique``, so an unsorted list of distinct ids
-    passes. The comparison never subtracts: ``np.diff`` wraps in int64,
-    so ``[0, 2**63 - 1, -2, 0]`` would read as increasing.
+    sorted once, so an unsorted list of distinct ids passes. The
+    comparison never subtracts: ``np.diff`` wraps in int64, so
+    ``[0, 2**63 - 1, -2, 0]`` would read as increasing.
+
+    The ids come out ascending, each with its rows ascending. One stable
+    argsort finds them all, in O(N log N): a run of equal ids in sorted
+    order is one repeated id, and the stable sort keeps its rows in file
+    order (#2363; a scan of ``ids`` per repeated id was O(R·N)).
     """
     if ids.size < 2 or bool((ids[1:] > ids[:-1]).all()):
         return {}
-    uniq, counts = np.unique(ids, return_counts=True)
-    if uniq.size == ids.size:
+    order = np.argsort(ids, kind="stable")
+    ordered = ids[order]
+    same = ordered[1:] == ordered[:-1]
+    if not same.any():
         return {}
+    # A run of equal ids starts where the sorted id changes.
+    starts = np.flatnonzero(np.concatenate(([True], ~same)))
+    ends = np.append(starts[1:], ordered.size)
+    multi = ends - starts > 1
+    rows = order.tolist()
     return {
-        int(n): np.flatnonzero(ids == n).tolist() for n in uniq[counts > 1]
+        int(n): rows[s:e]
+        for n, s, e in zip(
+            ordered[starts[multi]].tolist(),
+            starts[multi].tolist(), ends[multi].tolist(),
+        )
     }
 
 #: Stage subgroups whose result groups carry a node ``ID`` list: the time
