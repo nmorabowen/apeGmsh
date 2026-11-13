@@ -197,17 +197,18 @@ function noCoordinatesRefusal(id: string): string {
   return (
     `group ${id} has no natural coordinates these shape functions can read: a native _natural_coords that is not floating point, ` +
     `a native triangle or tet group whose _natural_coords match neither the Gauss table older apeGmsh versions wrote for its class nor the current one (#2274), ` +
-    `a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]", or a .ladruno group with no QUADRATURE/GP_PARAM ` +
-    `(for the last three, a warning when the file opened names the class or the domain; ` +
-    `a native _natural_coords that is not floating point opens with no warning)`
+    `a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]" (a BezierTri6's or BezierTet10's barycentric points), ` +
+    `or a .ladruno group with no QUADRATURE/GP_PARAM ` +
+    `(a warning when the file opened names the group, the class or the domain)`
   );
 }
 
 /**
- * VF (#2940, the owner's rulings on #2924 item 2): the groups whose only
- * reason a `gauss_node` field cannot be drawn is that they have no natural
- * coordinates (a BezierTet10's barycentric Gauss points, which the reader
- * offers none for), when that is the verdict's whole refusal; null otherwise.
+ * VF (#2940, the owner's rulings on #2924 item 2; VF2 #2950 for BezierTri6):
+ * the groups whose only reason a `gauss_node` field cannot be drawn is that
+ * they have no natural coordinates (a BezierTri6's or BezierTet10's
+ * barycentric Gauss points in a `.ladruno`, which the reader offers none
+ * for), when that is the verdict's whole refusal; null otherwise.
  * Those groups, and only those, are drawn `cell_averaged` (each element's
  * mean on its corners, which needs no coordinates; `buildPlan`'s
  * `meanGroups`); every other group of the field is still extrapolated, and

@@ -669,7 +669,7 @@ def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
                         own = own if own is not None and len(own) == len(b.comp_names) else None
                         for i in (i for i, c in enumerate(_block_canonicals(token, b)) if c == component):
                             hits.add((token, own[i] if own else b.comp_names[i], own is None))
-                            n_gauss = n_gauss if "-BezierTet10[" in key else max(n_gauss, len(gauss))  # barycentric points, not extrapolated by the app: a tet10-only set asks cell_averaged
+                            n_gauss = n_gauss if any(f"-{c}[" in key for c in ("BezierTet10", "BezierTri6")) else max(n_gauss, len(gauss))  # barycentric points ("bary"), not extrapolated by the app: a set of only these asks cell_averaged
     if len(hits) != 1 or next(iter(hits))[2]:
         raise ContourDataError(f"stored Gauss component {component!r} is not one column the app names in {Path(results.path).name}: {sorted(h[:2] for h in hits) or 'none'}"
                                f"{' (named by the response catalog, not by the file)' if any(h[2] for h in hits) else ''} (R16b).")

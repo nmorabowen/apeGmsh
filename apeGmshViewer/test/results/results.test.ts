@@ -529,6 +529,38 @@ test("V4c2a: a gauss group with no Gauss point (G == 0) is refused, every compon
   }
 });
 
+test("VF2 #2950: a non-float _natural_coords offers no coordinates and warns once when the file opens, naming the group; its values still read", () => {
+  const p = oneStageWithElements((e) => {
+    const gp = e.create_group("gauss_points");
+    gaussGroup(gp, "group_float", 3, 2, { stress_xx: [2, 3, 2] });
+    // gaussGroup's layout, with an integer _natural_coords: G = 2, and G = 0 (refused already, so not warned about).
+    for (const [id, G] of [["group_int", 2], ["group_empty", 0]] as const) {
+      const g = gp.create_group(id);
+      g.create_attribute("class_tag", 4);
+      g.create_attribute("int_rule", 0);
+      g.create_dataset({ name: "_element_index", data: BigInt64Array.from([1n, 2n, 3n]) });
+      g.create_dataset({ name: "_natural_coords", data: new Int32Array(G * 2), shape: [G, 2] });
+      g.create_dataset({ name: "stress_xx", data: new Float64Array(2 * 3 * G), shape: [2, 3, G] });
+    }
+  });
+  const r = openResults(H5, p);
+  try {
+    const byId = (id: string) => r.stage(STAGE).gauss.find((g) => g.id === id)!;
+    assert.equal(byId("group_int").naturalCoords, null);
+    assert.deepEqual(byId("group_float").naturalCoords, [[0, 0], [0, 0]]);
+    assert.deepEqual(byId("group_int").components, ["stress_xx"], "the values still read");
+    const named = r.index.warnings.filter((w) => w.includes("_natural_coords"));
+    assert.equal(named.length, 1, named.join("\n"));
+    assert.ok(named[0]!.startsWith(`${p}: Gauss group /stages/${STAGE}/partitions/partition_0/elements/gauss_points/group_int:`), named[0]);
+    assert.match(named[0]!, /_natural_coords is not floating point \(HDF5 class 0, 4 bytes\), so its 2 Gauss points are read per element but not placed, drawn as Gauss points, or extrapolated to nodes$/);
+    // Reading a step does not repeat it: the warning is the open's.
+    r.readGaussStep(STAGE, "group_int", "stress_xx", 0);
+    assert.equal(r.index.warnings.filter((w) => w.includes("_natural_coords")).length, 1);
+  } finally {
+    r.close();
+  }
+});
+
 test("an unknown _ index dataset in a gauss group is refused", () => {
   refuses(
     oneStageWithElements((e) => gaussGroup(e.create_group("gauss_points"), "group_0", 3, 2, { stress_xx: [2, 3, 2] }, ["_weights"])),
