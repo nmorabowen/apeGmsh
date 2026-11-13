@@ -111,7 +111,7 @@ function compareDoor(opts: { userFile?: string } = {}) {
 }
 
 /** The window set (Uncracked) open with its own user file read, the study read, the compare set open and its user file read. */
-async function compared(opts: { userFile?: string } = {}) {
+async function compared(opts: { userFile?: string; study?: VariantsIn } = {}) {
   const h = harness();
   if (!(await h.effects.open(UNCRACKED.model))) throw new Error("the window model did not load");
   if (!(await h.effects.openResults(UNCRACKED.results))) throw new Error("the window results did not load");
@@ -127,7 +127,7 @@ async function compared(opts: { userFile?: string } = {}) {
   const { door, asked } = compareDoor(opts);
   const runner = new VariantRunner(h.store, h.blobs, door, () => h.effects.currentStep());
   const offs = [feed.start(), runner.start()];
-  h.store.dispatch({ type: "variantsRead", study: STUDY });
+  h.store.dispatch({ type: "variantsRead", study: opts.study ?? STUDY });
   h.store.dispatch({ type: "variantCompare", row: SLOT });
   await until(() => h.store.get().variants.compareUser?.status !== "reading" && h.store.get().variants.compareModel?.status === "ready", "the compare set's model and user file");
   return { h, asked, windowReads, off: () => offs.forEach((o) => o()) };
@@ -249,7 +249,7 @@ test("Back's restoreView draws again the compare user result its memo held, and 
   await until(compareDrawn, "the compare user result");
   const model = UNCRACKED.model;
   const memo = viewMemoOf(h.store.get(), null, model);
-  assert.deepEqual(memo.compareUser, PICK, "the memo records the compare user result drawn");
+  assert.deepEqual(memo.compareUser, { set: SLOT, pick: PICK }, "the memo records the compare user result drawn and its compare set");
   // An offer's contour pick ends it (OfferRunner.apply dispatches the plan's setContourField).
   const f = contourFieldsOf(h.store.get())!.fields[0]!;
   h.store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: "nodal" });
@@ -264,9 +264,36 @@ test("Back's restoreView draws again the compare user result its memo held, and 
   // A memo that drew none hides one drawn since.
   restoreView(h.store, { ...memo, compareUser: null });
   assert.equal(h.store.get().variants.shown, null);
-  // A compare set closed since the memo: the reducer refuses the Draw with its reason (putBack reports it).
+  // A compare set closed since the memo: refused with the reason (putBack reports it).
   h.store.dispatch({ type: "variantCompare", row: null });
-  assert.throws(() => restoreView(h.store, memo), /no compare set's user file is read/);
+  assert.throws(() => restoreView(h.store, memo), /Cracked: footfall ratio is not drawn again: no compare set is open/);
+  off();
+});
+
+test("Back draws a compare user result again only on the compare set it was drawn from, never on another holding the same name (#2943 delta review F1)", async () => {
+  const OTHER = { index: 2, label: "Other" };
+  const study: VariantsIn = { ...STUDY, rows: [...STUDY.rows, { index: 2, label: "Other", path: "other/plate_other.h5", params: { "Ie/Ig": 0.5 } }] };
+  const { h, off } = await compared({ study });
+  const PICK = { name: "footfall", component: "ratio" };
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  h.store.dispatch({ type: "showCompareUser", pick: PICK });
+  await until(() => {
+    const v = contourView(h.store.get());
+    return v.state === "user" && v.name === "Cracked: footfall" && userResultOnHand(v) !== null;
+  }, "Cracked's footfall");
+  const memo = viewMemoOf(h.store.get(), null, UNCRACKED.model);
+  // An offer whose shot names `compare: Other` opens that set (spec/compile.ts), and its user file lists footfall too.
+  h.store.dispatch({ type: "variantCompare", row: OTHER });
+  await until(() => {
+    const c = h.store.get().variants.compare;
+    return c?.status === "open" && c.label === "Other";
+  }, "the Other compare set");
+  h.store.dispatch({ type: "compareUserRead", answer: { slot: OTHER, path: CRACKED.user, read: readUserSet(h5, CRACKED.user, CRACKED.model, CRACKED.results, list) } });
+  assert.equal(h.store.get().variants.compareUser?.status, "ready", "precondition: Other's user file is read and lists footfall");
+  // Back: refused with the reason, and nothing of Other is drawn in Cracked's place.
+  assert.throws(() => restoreView(h.store, memo), /Cracked: footfall ratio is not drawn again: the compare set is now Other \(row 2, open\)/);
+  assert.equal(h.store.get().variants.shown, null);
   off();
 });
 
