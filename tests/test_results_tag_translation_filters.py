@@ -639,26 +639,22 @@ def _block_with_springs(path: Path, element_tags: str) -> ElementTagTranslator:
 
 @pytest.mark.parametrize("element_tags", ["sequential", "fem"])
 def test_the_natural_block_with_springs(tmp_path: Path, element_tags) -> None:
-    """Under ``sequential`` tags the bricks are fem 33..96 at ops 7..70 and
-    the springs ops 71..75, so a ``pg="Vol"`` filter (every brick fem id)
-    holds the five shared ids and is refused by name; with ``fem`` tags
-    no id is shared and the same filter reads every brick silently."""
+    """The bricks are fem 33..96 (at ops 7..70 under ``sequential``) and
+    the springs, which have no fem id, are numbered above the largest fem
+    id of the snapshot (216; #2926: ops 217..221) under either mode, so no
+    id is shared and a ``pg="Vol"`` filter (every brick fem id) reads
+    every brick silently. Before #2926 the ``sequential`` springs took ops
+    71..75, the fem ids of five bricks, and the filter was refused."""
     t = _block_with_springs(tmp_path / "model.h5", element_tags)
     assert t.describes_files()
     bricks = np.arange(33, 97, dtype=np.int64)
-    if element_tags == "fem":
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", WarnElementIdCollision)
-            warnings.simplefilter("error", WarnElementFilterUnread)
-            bucket, back = t.read_translation(bricks)
+    springs = np.arange(217, 222, dtype=np.int64)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", WarnElementIdCollision)
+        warnings.simplefilter("error", WarnElementFilterUnread)
+        bucket, back = t.read_translation(bricks)
         np.testing.assert_array_equal(back(bucket), bricks)
-        return
-    with pytest.raises(ValueError, match=(
-        r"\[71 \(fem id of ops tag 45\), 72 .*75 \(fem id of ops tag 49\)\]"
-    )):
-        t.read_translation(bricks)
-    # The bricks below the shared ids still read, under the once-warning.
-    with pytest.warns(WarnElementIdCollision, match=r"\[71 .*75 "):
-        bucket, back = t.read_translation(bricks[:38])
-    np.testing.assert_array_equal(bucket, np.arange(7, 45))
-    np.testing.assert_array_equal(back(bucket), bricks[:38])
+        # The springs read by their ops tags, above every fem id.
+        bucket, back = t.read_translation(springs)
+    np.testing.assert_array_equal(bucket, springs)
+    np.testing.assert_array_equal(back(bucket), springs)
