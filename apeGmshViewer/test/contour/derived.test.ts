@@ -228,6 +228,8 @@ for (const c of SPEC_CASES) {
     assert.deepEqual([k.component, k.label, k.source, k.topology], ["von_mises_stress", "von_mises_stress", "element", c.topology]);
     // F1: what the out-of-plane normal is, by element; never silent on a zz left at 0 the model does not vouch for.
     assert.deepEqual(k.derived, { from: ["stress_xx", "stress_yy", "stress_xy"], plane: c.plane, warning: c.warning });
+    // VF2 (#2924 item 6): the banner says the same line (the manifest's banner list is what is on screen), or none.
+    assert.deepEqual(entry.banner.filter((l) => /^Out-of-plane /.test(l)), c.warning === null ? [] : [c.warning]);
     const want = c.steps[2]!;
     const holder = (p: { node: number | null; element: number | null }) => (c.gauss === "cell" ? p.element : p.node);
     close(k.extrema.recorded!.min.value, want.min[0], "min");

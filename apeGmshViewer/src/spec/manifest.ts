@@ -43,8 +43,8 @@ import type { BlobStore } from "../state/blobs.ts";
 import { columnOf, gaussCellValues, isNodeTopology, meshFemIds, vertexValues } from "../state/contour.ts";
 import { autoDeformScale } from "../state/deform.ts";
 import { applyPlan, cellLookup, planFor } from "../state/extrapolation.ts";
-import { planeRecoveryMap, planeStatement, type PlaneStatement } from "../state/tensor.ts";
-import { activeCount, contourView, deformView, type ContourView } from "../state/selectors.ts";
+import type { PlaneStatement } from "../state/tensor.ts";
+import { activeCount, contourView, deformView, derivedPlaneOf, type ContourView } from "../state/selectors.ts";
 import type { ArtifactInfo, CameraPose, ContourScan, MeshInfo, State } from "../state/types.ts";
 import { bannerLines, describeSet } from "./describe.ts";
 import type { SpecShot, ViewSpec } from "./spec.ts";
@@ -469,23 +469,17 @@ function columnContour(s: State, v: Extract<ContourView, { state: "combination" 
   };
 }
 
-/** VA6d: a derived contour's components and its out-of-plane statement (never silent on a zz left at 0 unclassified). */
-function derivedOf(s: State, v: Extract<ContourView, { state: "element" }>, blobs: BlobStore): NonNullable<Extract<ManifestContour, { drawn: true }>["derived"]> {
-  const t = v.component.derived!.tensor;
-  const groups = t.groups.map((group) => {
-    const g = v.groups.find((x) => x.id === group.id);
-    const eids = g ? blobs.get(g.eids) : undefined;
-    if (!(eids instanceof Float64Array)) throw new Error(`manifest: the element ids of group ${group.id} are not on hand`);
-    return { group, eids };
-  });
-  const plane = planeStatement(t.family, groups, planeRecoveryMap(s.decls));
-  const zz = `${t.family}_zz`;
-  const parts = [
-    ...(plane.unclassified ? [`${plane.unclassified} of ${plane.elements} element(s) could not be classified as plane stress / plane strain`] : []),
-    ...(plane.no_nu ? [`${plane.no_nu} element(s) need Poisson's ratio, which could not be read from their material`] : []),
-  ];
-  const warning = parts.length ? `Out-of-plane ${zz} recovery is incomplete: ${parts.join("; ")}. ${zz} is left at 0 there.` : null;
-  return { from: [...t.components], plane, warning };
+/** VA6d: a derived contour's components and its out-of-plane statement (never silent on a zz left at 0 unclassified), built by selectors `derivedPlaneOf`. */
+function derivedOf(s: State, blobs: BlobStore): NonNullable<Extract<ManifestContour, { drawn: true }>["derived"]> {
+  const d = derivedPlaneOf(s, blobs);
+  if (!d) throw new Error("manifest: the contour drawn is not a derived element contour");
+  return d;
+}
+
+/** VF2 (#2924 item 6): the banner's lines as panels/banner.ts draws them: the state's, then a derived contour's plane line. */
+function bannerOf(s: State, blobs: BlobStore): string[] {
+  const plane = derivedPlaneOf(s, blobs)?.warning ?? null;
+  return [...bannerLines(s), ...(plane === null ? [] : [plane])];
 }
 
 function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepValues | null): ManifestContour {
@@ -506,7 +500,7 @@ function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepVal
     label: v.component.label,
     source: v.state === "ready" ? "nodal" : "element",
     // VA6d: a derived scalar names the stored components it was computed from at each Gauss point.
-    ...(v.state === "element" && v.component.derived ? { derived: derivedOf(s, v, blobs) } : {}),
+    ...(v.state === "element" && v.component.derived ? { derived: derivedOf(s, blobs) } : {}),
     topology: v.state === "ready" ? "nodal" : v.topology,
     // VF (#2940): the groups of a gauss_node pick drawn cell_averaged, and why.
     ...(v.state === "element" && v.fallback ? { topology_fallback: { asked: v.fallback.asked, drawn: v.fallback.drawn, groups: [...v.fallback.groups], reason: v.fallback.reason } } : {}),
@@ -601,7 +595,7 @@ export function manifestEntry(s: State, input: EntryInput): ManifestEntry {
     ...placeOf(s),
     contour: contourOf(s, input.blobs, input.step, input.combination ?? null, input.difference ?? null),
     deform: deformOf(s, input.shot, input.blobs, input.step),
-    banner: bannerLines(s),
+    banner: bannerOf(s, input.blobs),
     layout: input.layout,
   };
 }
@@ -633,6 +627,8 @@ export function refusedEntry(
     time: at?.time ?? null,
     contour: null,
     deform: null,
+    // The state's lines only, without a derived contour's plane line (VF2): harmless, since a refused shot writes no
+    // still. Adding it needs the blob store passed in from renderer/agentRender.ts, outside slice #2951.
     banner: at ? bannerLines(s) : [],
     layout: null,
   };

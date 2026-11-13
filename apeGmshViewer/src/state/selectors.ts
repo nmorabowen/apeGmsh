@@ -33,7 +33,7 @@ import {
   type NodalField,
 } from "./contour.ts";
 import { meanFallbackGroups, usesMatrix } from "./extrapolation.ts";
-import { tensorFields, type TensorField } from "./tensor.ts";
+import { planeStatementOf, planeWarning, tensorFields, type PlaneStatement, type TensorField } from "./tensor.ts";
 import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 import {
@@ -570,6 +570,38 @@ export function fallbackNotice(v: Extract<ContourView, { state: "element" }>): s
     `Element contour ${v.field}: group(s) ${f.groups.join(", ")} cannot be extrapolated to the nodes (gauss_node), so each of their elements ` +
     `gives its mean to its corners (cell_averaged), averaged at the nodes.${rest} Why: ${f.reason}.`
   );
+}
+
+/** VA6d / VF2: a derived contour's stored components, its out-of-plane statement by element, and the line it warns with (null: none). */
+export interface DerivedPlane {
+  from: string[];
+  /** shared and frozen: tensor.ts `planeStatementOf` computes it once per model, set and family, not per step */
+  plane: Readonly<PlaneStatement>;
+  warning: string | null;
+}
+
+/**
+ * VF2 (#2924 item 6): what the derived contour on screen (`von_mises_*`) says
+ * about its out-of-plane normal, built once for the manifest's
+ * `contour.derived` and the banner's warning line (tensor.ts `planeWarning`
+ * words it). Null when the contour is not a drawn derived element contour.
+ * The groups' element ids are blobs, so the caller hands the store's lookup
+ * (a panel never holds the BlobStore: renderer/app.ts closes over it). A
+ * drawn element view has its element ids on hand (its join read them), so one
+ * missing here throws rather than counting fewer elements.
+ */
+export function derivedPlaneOf(s: State, blobs: { get(ref: BlobRef): unknown }): DerivedPlane | null {
+  const v = contourView(s);
+  if (v.state !== "element" || !v.component.derived) return null;
+  const t = v.component.derived.tensor;
+  const groups = t.groups.map((group) => {
+    const g = v.groups.find((x) => x.id === group.id);
+    const eids = g ? blobs.get(g.eids) : undefined;
+    if (!(eids instanceof Float64Array)) throw new Error(`derivedPlaneOf: the element ids of group ${group.id} are not on hand`);
+    return { group, eids };
+  });
+  const plane = planeStatementOf(t.family, groups, s.decls);
+  return { from: [...t.components], plane, warning: planeWarning(t.family, plane) };
 }
 
 // -- V4c1: the nodal contour ----------------------------------------------------

@@ -14,6 +14,8 @@ import {
   materialNu,
   planeRecoveryMap,
   planeStatement,
+  planeStatementOf,
+  planeWarning,
   tensorFields,
   tensorSlotOf,
   vonMises,
@@ -306,4 +308,37 @@ test("F1: zz recovered per element: nu(sxx + syy) on plane strain, -nu/(1-nu)(ex
     { elements: 4, recorded: 0, recovered: 1, zero_exact: 1, unclassified: 1, no_nu: 1 },
   );
   assert.deepEqual(planeStatement("stress", [{ group: nanZz, eids: plane.eids }], map).recorded, 4);
+});
+
+test("VF2 review: planeStatementOf runs once per model, family and element-id arrays; a new model or new arrays run it again", () => {
+  const group: TensorGroup = { id: "g", slots: ["xx", "yy", null, "xy", null, null] };
+  const eids = Float64Array.from([1, 2, 3]);
+  const decls = {} as never;
+  const a = planeStatementOf("stress", [{ group, eids }], decls);
+  assert.deepEqual(a, { elements: 3, recorded: 0, recovered: 0, zero_exact: 0, unclassified: 3, no_nu: 0 });
+  assert.ok(Object.isFrozen(a));
+  assert.equal(planeStatementOf("stress", [{ group, eids }], decls), a, "the same inputs: the same statement, not a new run");
+  assert.notEqual(planeStatementOf("stress", [{ group, eids }], {} as never), a, "a re-read model (new declarations object)");
+  assert.notEqual(planeStatementOf("stress", [{ group, eids: Float64Array.from([1, 2, 3]) }], decls), a, "a new set (new element-id array)");
+  assert.notEqual(planeStatementOf("strain", [{ group, eids }], decls), a, "the other family");
+  const zz: TensorGroup = { id: "g", slots: ["xx", "yy", "zz", "xy", null, null] };
+  assert.equal(planeStatementOf("stress", [{ group: zz, eids }], decls).recorded, 3, "other slots: computed again");
+});
+
+test("VF2: the plane line names the unclassified and no-nu elements by family, and is null when every zz is vouched for", () => {
+  const st = { elements: 9, recorded: 2, recovered: 3, zero_exact: 1, unclassified: 0, no_nu: 0 };
+  // Recorded, recovered and exact-zero elements give no line: the model says what each zz is.
+  assert.equal(planeWarning("stress", st), null);
+  assert.equal(
+    planeWarning("stress", { ...st, unclassified: 2 }),
+    "Out-of-plane stress_zz recovery is incomplete: 2 of 9 element(s) could not be classified as plane stress / plane strain. stress_zz is left at 0 there.",
+  );
+  assert.equal(
+    planeWarning("strain", { ...st, no_nu: 1 }),
+    "Out-of-plane strain_zz recovery is incomplete: 1 element(s) need Poisson's ratio, which could not be read from their material. strain_zz is left at 0 there.",
+  );
+  assert.equal(
+    planeWarning("stress", { ...st, unclassified: 2, no_nu: 1 }),
+    "Out-of-plane stress_zz recovery is incomplete: 2 of 9 element(s) could not be classified as plane stress / plane strain; 1 element(s) need Poisson's ratio, which could not be read from their material. stress_zz is left at 0 there.",
+  );
 });
