@@ -105,7 +105,7 @@ export function mountBanner(store: Store): () => void {
   };
   /**
    * Where the banner is, for style.css: `#left-rail` sits below it (VU3b,
-   * #2737). Its top is the expression above (or the CSS 58 px off the scrubber
+   * #2737), and so does `#scale-stack`, the colour scales (VF, #2924). Its top is the expression above (or the CSS 58 px off the scrubber
    * row), and its drawn height is measured: a still draws a closed banner's
    * whole list, up to the open banner's height limit (style.css), and a wrapped
    * bar moves it down. Only the closed height is

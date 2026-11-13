@@ -524,10 +524,22 @@ body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(
 .viewport-scale[hidden] { display: none; }
 .viewport-scale[data-moved] { position: fixed; }
 #scale-stack {
-  position: fixed; left: 324px; top: 102px; pointer-events: none;
+  /* VF (#2944 review): the stack's box ends 16 px off the bottom, as #left-rail's does.
+     It only sizes the box: the scales keep their height and are not shrunk or clipped
+     (pointer-events: none, no overflow), so the cap on `top` below is what keeps them on screen. */
+  position: fixed; left: 324px; top: 102px; bottom: 16px; pointer-events: none;
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
 }
-#banner:not([hidden]) ~ #scale-stack { top: 168px; }
+#banner:not([hidden]) ~ #scale-stack {
+  /* VF (#2924 item 7): below the banner's measured height, as #left-rail is, so an
+     app-chrome still (which draws the whole list) never covers the legend; never above 168 px.
+     A banner can grow to 100vh - 180px (above), which would put the scales off the
+     bottom: they start by half the height at the latest, over the banner's tail. */
+  top: min(max(168px, calc(var(--banner-top, 58px) + var(--banner-h, 0px) + 8px)), max(168px, 50vh));
+}
+/* VF (#2944 review): over the banner's tail in an app-chrome still, where the banner is
+   drawn open at z-index 20 (above). In the window the open banner stays on top. */
+body[data-still-chrome="app"] #scale-stack { z-index: 21; }
 #scale-stack:not(:has(> :not([hidden]))) { display: none; }
 body[data-still-chrome="model"] #scale-stack { display: none; }
 .vs-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin: 0 0 6px; }

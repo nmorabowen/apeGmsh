@@ -41,6 +41,85 @@ test("the scale is a sibling after the banner and the rails, so it paints over t
   assert.ok(at("rail") < at("scale-stack"), "a drag across the right rail must stay on top of it");
   assert.ok(at("scale-stack") < at("viewport-scale") && at("viewport-scale") < at("line-diagram-scale"), "the two scales stack, contour first");
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
-  assert.match(css, /#banner:not\(\[hidden\]\) ~ #scale-stack \{ top: 168px; \}/);
   assert.match(css, /body\[data-still-chrome="model"\] #scale-stack \{ display: none; \}/);
+});
+
+/**
+ * A px property (`top:`, `bottom:`, `max-height:`) of the first style.css rule
+ * whose selector list names `selector`, evaluated with the banner's published
+ * variables (panels/banner.ts) and a viewport `vh` px tall: its
+ * `min(...)`/`max(...)`/`calc(...)` of px and vh terms, as
+ * test/state/user.test.ts's cssTop. Null when the rule does not set it.
+ */
+function cssPx(selector: string, prop: string, at: { bannerTop?: number; bannerH?: number; vh: number }): number | null {
+  const raw = cssValue(selector, prop);
+  if (raw === null) return null;
+  let expr = raw;
+  if (at.bannerTop !== undefined) expr = expr.replace(/var\(--banner-top, 58px\)/g, `${at.bannerTop}px`);
+  if (at.bannerH !== undefined) expr = expr.replace(/var\(--banner-h, 0px\)/g, `${at.bannerH}px`);
+  expr = expr.replace(/(\d+(?:\.\d+)?)vh/g, (_, n: string) => `${(Number(n) * at.vh) / 100}px`);
+  assert.match(expr, /^[\d\s+.()a-z,-]+$/, `an expression this test can evaluate: ${expr}`);
+  assert.doesNotMatch(expr, /var\(/, `a variable this test does not set: ${expr}`);
+  const js = expr.replace(/(\d+(?:\.\d+)?)px/g, "$1").replace(/max\(/g, "Math.max(").replace(/min\(/g, "Math.min(").replace(/calc\(/g, "(");
+  return Function(`return ${js};`)() as number;
+}
+
+/** A property's text in the first style.css rule whose selector list names `selector`; null when that rule does not set it. */
+function cssValue(selector: string, prop: string): string | null {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  const rule = new RegExp(`(?:^|[},])\\s*(?:[^{}]*,\\s*)?${selector.replace(/[[\]()~:]/g, "\\$&")}\\s*(?:,[^{}]*)?\\{([^}]*)\\}`, "m").exec(css);
+  assert.ok(rule, `style.css has no rule for ${selector}`);
+  const body = rule[1]!.replace(/\/\*[\s\S]*?\*\//g, "");
+  const m = new RegExp(`(?:^|[\\s;])${prop}:\\s*([^;]+);`).exec(body);
+  return m ? m[1]!.trim() : null;
+}
+
+const SCALE = "#banner:not([hidden]) ~ #scale-stack";
+const RAIL = "#banner:not([hidden]) ~ #left-rail";
+
+test("#2924 item 7: the colour scales sit 8 px below a shown banner however tall it is drawn, as the left rail does", () => {
+  const top = (bannerTop: number, bannerH: number, vh = 1000) => cssPx(SCALE, "top", { bannerTop, bannerH, vh });
+  // A one-line banner (about 30 px at 58 px, or at 106 px under a one-line scrubber bar): 168 px, as before.
+  assert.equal(top(58, 30), 168);
+  assert.equal(top(106, 30), 168);
+  // An app-chrome still draws the whole list (#2921 still 2: 2 notices, 136 px): the scale clears the banner's bottom by 8 px.
+  for (const [t, h] of [[58, 136], [58, 240], [106, 240], [106, 380]] as const) {
+    assert.equal(top(t, h), t + h + 8, `banner at ${t} px, ${h} px tall`);
+    assert.equal(top(t, h), cssPx(RAIL, "top", { bannerTop: t, bannerH: h, vh: 1000 }), "the scale and the rail clear the banner alike");
+  }
+});
+
+test("#2944 review: a banner at its height cap never pushes the colour scales off the bottom", () => {
+  // The stack is bounded below as the left rail is.
+  assert.equal(cssPx("#scale-stack", "bottom", { vh: 1000 }), 16);
+  assert.equal(cssPx("#left-rail", "bottom", { vh: 1000 }), 16);
+  // The banner's own cap, as style.css draws it in a still or open.
+  const capped = 'body[data-still-chrome="app"] #banner';
+  for (const vh of [600, 800, 1000, 1400]) {
+    const cap = cssPx(capped, "max-height", { vh });
+    assert.equal(cap, vh - 180, `the banner's cap at ${vh} px`);
+    for (const bannerTop of [58, 106]) {
+      const t: number = cssPx(SCALE, "top", { bannerTop, bannerH: cap!, vh })!;
+      // It starts by half the height (never above 168 px), painting over the banner's tail, and leaves the
+      // horizontal contour scale (131 px drawn in the D7 still) room above the bottom bound.
+      assert.equal(t, Math.max(168, vh / 2), `${vh} px viewport, banner at ${bannerTop} px`);
+      assert.ok(t + 131 <= vh - 16, `${vh} px: the scale's ${t} + 131 px fits above the bottom bound`);
+    }
+  }
+});
+
+test("#2944 delta review: in an app-chrome still the scales paint over the open banner's tail; in the window the open banner stays on top", () => {
+  // Under the cap the scales overlap the banner (a 1600×420 still: top 210 px, banner bottom 242 px), and
+  // the still draws the banner at a z-index, so document order alone leaves the scales under it.
+  const z = (selector: string) => {
+    const v = cssValue(selector, "z-index");
+    assert.ok(v !== null && /^\d+$/.test(v), `${selector} has a numeric z-index: ${v}`);
+    return Number(v);
+  };
+  const stillBanner = z('body[data-still-chrome="app"] #banner');
+  const stillScale = z('body[data-still-chrome="app"] #scale-stack');
+  assert.ok(stillScale > stillBanner, `still: the scales (${stillScale}) over the banner (${stillBanner})`);
+  // The window: the open banner (a click, to read the list) keeps its z-index over a stack that sets none.
+  assert.equal(z("#banner[data-open]"), stillBanner);
+  assert.equal(cssValue("#scale-stack", "z-index"), null, "the stack has no z-index outside a still");
 });

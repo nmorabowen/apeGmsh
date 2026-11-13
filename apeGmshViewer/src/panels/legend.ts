@@ -38,7 +38,7 @@ import {
   type ContourView,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { ColourBy, ContourCmap, ContourSource, GaussMode, LegendEntry, UserResult } from "../state/types.ts";
+import type { ColourBy, ContourCmap, ContourRange, ContourSource, GaussMode, LegendEntry, UserResult } from "../state/types.ts";
 import { isHeadingToggleTarget, toggleCardCollapse } from "../ui/collapse.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 import { fillScale, mountScaleChrome, type ScaleChrome } from "../ui/scaleChrome.ts";
@@ -98,6 +98,35 @@ export function contourLines(
     topology: v.state === "element" ? v.topologyLabel : null,
     axes: v.state === "element" && v.component.local ? "Axes: local (the component's name says so)." : null,
   };
+}
+
+/**
+ * The colour-range buttons the scale offers (#2902 item 2). Three views range
+ * over one set of values whatever the mode (state/selectors.ts): a user result
+ * and a User Combination have one state (their own range, "one state, no
+ * history"), and a difference ranges over the step shown. "history" and "this
+ * step" would show that one range under two names, so these views offer it as
+ * one button, `own` (on unless the range is fixed; leaving a fixed range sets
+ * `range`, and otherwise it does nothing), beside "fixed". Every other contour
+ * offers RANGE_MODES as they are.
+ */
+export function rangeButtonsOf(
+  view: ContourView["state"],
+  range: ContourRange,
+): readonly { range: ContourRange; own: boolean; label: string; title: string | null; on: boolean }[] {
+  const one: { label: string; title: string; back: ContourRange } | null =
+    view === "user" || view === "combination"
+      ? { label: "own range", title: `one state: no history and no step to range over, so the colours span this ${view === "user" ? "user result" : "combination"}'s own range`, back: "history" }
+      : view === "difference"
+        ? { label: "this step", title: "a difference is read at the step shown only: there is no history to range over", back: "step" }
+        : null;
+  if (!one) return RANGE_MODES.map((m) => ({ range: m.range, own: false, label: m.label, title: null, on: range === m.range }));
+  const fixed = RANGE_MODES.find((m) => m.range === "fixed");
+  if (!fixed) throw new Error("RANGE_MODES has no fixed mode");
+  return [
+    { range: one.back, own: true, label: one.label, title: one.title, on: range !== "fixed" },
+    { range: fixed.range, own: false, label: fixed.label, title: null, on: range === "fixed" },
+  ];
 }
 
 /** The element-field draw modes: flat per cell (V4c2a), and carried to the nodes (V4c2b). */
@@ -562,10 +591,13 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     contourCard.append(noDataRow());
 
     const modes = el("div", "legend-mode contour-modes");
-    for (const m of RANGE_MODES) {
-      const b = el("button", s.contour.range === m.range ? "on" : "", m.label);
+    for (const m of rangeButtonsOf(v.state, s.contour.range)) {
+      const b = el("button", m.on ? "on" : "", m.label);
+      if (m.title) b.title = m.title;
       contourUnlisten.push(
         listen(b, "click", () => {
+          // The view's own range: it leaves a fixed range for `m.range`; otherwise there is nothing to change.
+          if (m.own && store.get().contour.range !== "fixed") return;
           if (m.range !== "fixed") return store.dispatch({ type: "setContourRange", range: m.range });
           // A fixed range starts from the range shown, when it has one.
           const c = contourView(store.get());
