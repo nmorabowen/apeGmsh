@@ -103,16 +103,26 @@ def reserve_fem_element_tags(
             f"belongs to exactly one element declaration — split the "
             f"physical groups, or use element_tags='sequential'."
         )
-    top = int(uniq[-1]) if uniq.size else 0
-    # Reserve through the snapshot's largest element id too, not only the
-    # emitted ones: a synthesised tag must not reuse the id of a FEM
-    # element that exists but is not emitted (a point carrier, an
-    # unassigned group), or a results reader keyed by FEM id would take
-    # the synthesised element for it.
+    top = _fem_element_id_ceiling(fem, int(uniq[-1]) if uniq.size else 0)
+    tags.reserve_through("element", top)
+    return top
+
+
+def _fem_element_id_ceiling(fem: "FEMData", emitted_max: int) -> int:
+    """The largest FEM element id an ops-only element tag must clear.
+
+    ``emitted_max`` (the largest FEM id the plan emits), raised to the
+    snapshot's largest element id: a synthesised tag must not reuse the
+    id of a FEM element that exists but is not emitted (a point carrier,
+    an unassigned group), or a results reader keyed by FEM id would take
+    the synthesised element for it (ADR 0111 D2; #2926). A snapshot that
+    exposes no element ids (the unit-test FEM stubs) contributes only
+    ``emitted_max``.
+    """
+    top = int(emitted_max)
     snap_ids = getattr(getattr(fem, "elements", None), "ids", None)
     if snap_ids is not None and len(snap_ids):
         top = max(top, int(np.max(np.asarray(snap_ids, dtype=np.int64))))
-    tags.reserve_through("element", top)
     return top
 
 
@@ -131,6 +141,14 @@ def allocate_element_tags(
     have run on ``tags`` first (``BuiltModel.emit`` does), so the counter
     already sits at or above every FEM id; this function refuses
     otherwise rather than risk a counter tag inside the FEM range.
+
+    Ops-only rows (no FEM id: node-pair specs, a ``LadrunoMembrane``
+    polygon) take their tags after every paired row, above the largest
+    FEM element id, in both modes (#2926). Under ``"sequential"`` this
+    function reserves the counter through that id (and the paired block)
+    before its first mint; under ``"fem"`` the reservation is
+    ``reserve_fem_element_tags``'s. Either way a sentinel tag never
+    equals a FEM id and every later element-kind mint lands above it too.
 
     Returns a list of ``(spec, ElementPlanRows)`` so the per-rank
     fan-out can simply look up each element's pre-allocated tag instead
@@ -157,7 +175,25 @@ def allocate_element_tags(
     ``(eid, conn_tuple, ele_tag)`` triples in the same order as the old
     list-of-tuples form, so every downstream consumer is unchanged.
     """
-    plan: list[tuple[Element, ElementPlanRows]] = []
+    # #2926 (ADR 0111 D2, sequential rule): the plan is made in three
+    # passes over the specs in iteration order. (1) every spec's fan-out
+    # and the per-spec checks; (2) the paired rows (elements with a FEM
+    # id) take their tags, so they stay the contiguous blocks they always
+    # were; (3) the "element" counter is reserved through the largest FEM
+    # id, then the ops-only rows (no FEM id: node-pair specs, a
+    # ``LadrunoMembrane`` polygon) take theirs, still in plan order. Every
+    # later element-kind mint (MP elements, interface ``zeroLength``)
+    # draws from the same counter after this, so no ops-only tag can
+    # equal a FEM id. A plan with no ops-only element mints nothing after
+    # the reserve, so its tags are those of the one-pass plan. The plan
+    # list keeps spec order, and the partitioned emit reads these tags
+    # verbatim (ADR 0027), so every rank sees the same numbering.
+    if element_tags not in ELEMENT_TAG_MODES:
+        raise BridgeError(
+            f"internal: unknown element_tags mode {element_tags!r}; "
+            f"expected one of {ELEMENT_TAG_MODES}.")
+    fanouts: "list[tuple[Element, Any, bool]]" = []
+    emitted_max = 0
     for spec in elements:
         # ADR 0049: node-pair spec (pg=None) -> single synthetic element
         # (MISSING_FEM_ELEMENT_ID, (i, j)) via expand_spec_to_elements.
@@ -183,31 +219,79 @@ def allocate_element_tags(
             # #1327: a quad-only element on a triangle PG fails here,
             # naming the PG, instead of per element inside ``_emit``.
             check_quad_element_on_triangles(spec, fanout)
-        if (
-            element_tags == "fem"
-            and pg is not None
-            and not (n == 1 and int(fanout.eids[0]) == MISSING_FEM_ELEMENT_ID)
-        ):
+        eids = np.asarray(fanout.eids, dtype=np.int64)
+        missing = eids == MISSING_FEM_ELEMENT_ID
+        ops_only = bool(n) and bool(missing.all())
+        if missing.any() and not ops_only:
+            raise BridgeError(
+                f"internal: {type(spec).__name__}(pg={pg!r}) fans out to "
+                f"{int(missing.sum())} element(s) without a FEM id among "
+                f"{n - int(missing.sum())} with one; an element plan row "
+                f"is either paired with a FEM id or ops-only, per spec."
+            )
+        if n and not ops_only:
+            emitted_max = max(emitted_max, int(eids.max()))
+        fanouts.append((spec, fanout, ops_only))
+
+    # The reserve is a seed, made before this plan's first mint, so the
+    # counter's mints still run on without a gap (the plan oracle's
+    # ``test_plan_seed_is_the_emit_seed``). Under ``"sequential"`` the
+    # paired rows take the block just above the seed, positionally and in
+    # spec order (the one-pass plan's tags), and the reserve covers that
+    # block and the largest FEM id. Under ``"fem"`` the reserve is
+    # ``reserve_fem_element_tags``'s, made before this call; it is not
+    # repeated here, so the guard below still refuses a plan made
+    # without it.
+    base = tags.last("element")
+    if element_tags == "sequential":
+        n_paired = sum(len(f) for _s, f, ops_only in fanouts if not ops_only)
+        tags.reserve_through(
+            "element",
+            max(base + n_paired, _fem_element_id_ceiling(fem, emitted_max)),
+        )
+
+    rows: "list[ElementPlanRows | None]" = [None] * len(fanouts)
+    next_tag = base + 1
+    for k, (spec, fanout, ops_only) in enumerate(fanouts):
+        if ops_only:
+            continue
+        if element_tags == "fem":
             eids = np.asarray(fanout.eids, dtype=np.int64)
-            if n and int(eids.max()) > tags.last("element"):
+            if len(fanout) and int(eids.max()) > tags.last("element"):
                 raise BridgeError(
                     "internal: element_tags='fem' but the FEM element-id "
                     "range was not reserved before allocation (call "
                     "reserve_fem_element_tags first); a counter tag "
                     "could collide with a FEM id."
                 )
-            plan.append(
-                (spec, ElementPlanRows(fanout.eids, fanout.conn, 0,
-                                       tags=eids))
-            )
+            rows[k] = ElementPlanRows(fanout.eids, fanout.conn, 0, tags=eids)
             continue
-        tag_start = tags.allocate_block("element", n)
         # Share the fan-out's arrays by reference — they are read-only
         # (memoised) so the plan and the fan-out cache alias one buffer
         # instead of re-boxing connectivity per spec.
-        plan.append(
-            (spec, ElementPlanRows(fanout.eids, fanout.conn, tag_start))
+        rows[k] = ElementPlanRows(fanout.eids, fanout.conn, next_tag)
+        next_tag += len(fanout)
+    if next_tag - 1 > tags.last("element"):
+        raise BridgeError(
+            "internal: element_tags='sequential' planned paired tags up to "
+            f"{next_tag - 1}, above the reserved {tags.last('element')}; "
+            "an ops-only tag could collide with one."
         )
+
+    # The sequential rule (#2926): every ops-only tag, here and in every
+    # later element-kind mint, lands above the largest FEM element id.
+    for k, (spec, fanout, ops_only) in enumerate(fanouts):
+        if not ops_only:
+            continue
+        tag_start = tags.allocate_block("element", len(fanout))
+        rows[k] = ElementPlanRows(fanout.eids, fanout.conn, tag_start)
+
+    plan: list[tuple[Element, ElementPlanRows]] = []
+    for (spec, _fanout, _ops_only), planned in zip(fanouts, rows):
+        if planned is None:
+            raise BridgeError(
+                f"internal: {type(spec).__name__} took no element tags.")
+        plan.append((spec, planned))
     return plan
 
 
