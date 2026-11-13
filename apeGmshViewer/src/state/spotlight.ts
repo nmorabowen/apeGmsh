@@ -871,8 +871,13 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       ),
       keywords: "set line diagram beam moment shear axial ribbon mvy mz vy n toggle",
     });
-  } else if (s.visibility.colourBy === "contour" && rangeKindOf(s) === "user") {
-    // VF2 (#2949): a user result draws with no results file (VU16), and the legend offers its range there too.
+  } else if (
+    s.visibility.colourBy === "contour" &&
+    rangeKindOf(s) === "user" &&
+    (s.variants.shown !== null ? s.variants.compareUser?.status : s.user?.status) === "ready"
+  ) {
+    // VF2 (#2949): a user result draws with no results file (VU16), and the legend offers its range there too,
+    // once its user file is read; with none read the legend shows the refusal and no range.
     out.push(contourRangeEntry(s));
   }
 

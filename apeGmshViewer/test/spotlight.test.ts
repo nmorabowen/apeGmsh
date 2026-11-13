@@ -3,9 +3,11 @@
 // ledger (`SPOTLIGHT_EVENT_LEDGER`).
 
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import * as h5wasm from "h5wasm/node";
 import { openModel } from "../src/reader/node.ts";
 import { focusOf } from "../src/renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "../src/renderer/visible.ts";
@@ -30,7 +32,13 @@ import {
 import { initialState, reduce, Store, type State } from "../src/state/store.ts";
 import type { EventType } from "../src/state/types.ts";
 import { rangeButtonsOf } from "../src/panels/legend.ts";
-import { opened } from "./contour/harness.ts";
+import { harness, opened } from "./contour/harness.ts";
+import { readUserResultColumn, readUserSet, type UserH5 } from "../src/reader/userFile.ts";
+import { UserResultFeed } from "../src/renderer/contour.ts";
+import { userEventOf } from "../src/state/reduce.ts";
+
+await h5wasm.ready;
+const H5 = h5wasm as unknown as UserH5;
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 const shoeModel = await openModel(join(fixtures, "shoebuckle.h5"));
@@ -789,19 +797,37 @@ test("VF2 (#2949): the palette's contour range list is the legend's, for every c
   }
 });
 
-test("VF2 (#2949): a user result drawn with no results file (VU16) offers the contour range entry, as the legend does", () => {
-  // The fixture is a model alone: no results step, so the Results contour entries are not offered.
-  const at = (s: State, range: "history" | "step" | "fixed") =>
-    reduce({ ...s, contour: { ...s.contour, range, fixed: { min: -1, max: 2 } } }, { type: "openSpotlight", mode: "root", query: "contour range" });
-  const entryOf = (s: State) => spotlightViewOf(s).items.find((i) => i.id === "cmd:contour-range");
-  const contours = reduce(loaded, { type: "setColourBy", by: "contour" });
-  const user: State = { ...contours, contour: { ...contours.contour, source: "user", field: "footfall", component: "footfall_ratio" } };
+test("VF2 (#2949): a user result drawn with no results file (VU16) offers the contour range entry, as the legend does", async (t) => {
+  const entryOf = (s: State) => spotlightViewOf(reduce(s, { type: "openSpotlight", mode: "root", query: "contour range" })).items.find((i) => i.id === "cmd:contour-range");
+  // The plate (test/fixtures/vu16) has no results file; its .user.h5 is read and its footfall ratio drawn, as the legend's test draws it.
+  const vu16 = (name: string) => fileURLToPath(new URL(`./fixtures/vu16/${name}`, import.meta.url));
+  const plate = vu16("plate.h5");
+  const plateUser = vu16("plate.user.h5");
+  const h = harness();
+  t.after(() => h.host.close());
+  assert.ok(await h.effects.open(plate), `plate did not load: ${h.store.get().artifacts.model?.error}`);
+  const list = (d: string) => readdirSync(d);
+  h.store.dispatch({ type: "userOpened", path: plateUser });
+  h.store.dispatch(userEventOf(plateUser, readUserSet(H5, plateUser, plate, null, list)));
+  const feed = new UserResultFeed(h.store, async (req) => readUserResultColumn(H5, req.path, plate, null, list, req.name, req.component));
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  h.store.dispatch({ type: "setContourField", field: "footfall", component: "footfall_ratio", source: "user" });
+  await feed.check();
+  const drawn = h.store.get();
+  assert.equal(contourView(drawn).state, "user", "the user result draws");
+  assert.ok(!drawn.phase.axis.some((k) => k.kind === "results"), "with no results step");
   for (const range of ["history", "step", "fixed"] as const) {
-    const entry = entryOf(at(user, range));
-    assert.ok(entry, `a user result at ${range}: the entry is offered`);
+    const entry = entryOf({ ...drawn, contour: { ...drawn.contour, range, fixed: { min: -1, max: 2 } } });
+    assert.ok(entry, `a drawn user result at ${range}: the entry is offered`);
     assert.equal(entry.title, `Set Contour Range… (currently ${rangeButtonsOf("user", range).find((b) => b.on)!.label})`);
     assert.equal(entry.action.nextMode, "contourRange");
   }
-  assert.equal(entryOf(at({ ...user, visibility: { ...user.visibility, colourBy: loaded.visibility.colourBy } }, "history")), undefined, "contours off: no entry");
-  assert.equal(entryOf(at({ ...contours, contour: { ...contours.contour, source: "nodal" } }, "history")), undefined, "a Results field with no results step: no entry");
+  assert.equal(entryOf({ ...drawn, visibility: { ...drawn.visibility, colourBy: loaded.visibility.colourBy } }), undefined, "contours off: no entry");
+
+  // shoebuckle.h5 alone has no .user.h5: the user branch refuses, the legend draws no range buttons, and the palette offers no entry.
+  const contours = reduce(loaded, { type: "setColourBy", by: "contour" });
+  const refused: State = { ...contours, contour: { ...contours.contour, source: "user", field: "footfall", component: "footfall_ratio" } };
+  assert.equal(contourView(refused).state, "refused");
+  assert.equal(entryOf(refused), undefined, "a refused user result: no entry");
+  assert.equal(entryOf({ ...contours, contour: { ...contours.contour, source: "nodal" } }), undefined, "a Results field with no results step: no entry");
 });
