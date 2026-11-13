@@ -52,13 +52,9 @@ test("the scale is a sibling after the banner and the rails, so it paints over t
  * test/state/user.test.ts's cssTop. Null when the rule does not set it.
  */
 function cssPx(selector: string, prop: string, at: { bannerTop?: number; bannerH?: number; vh: number }): number | null {
-  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
-  const rule = new RegExp(`(?:^|[},])\\s*(?:[^{}]*,\\s*)?${selector.replace(/[[\]()~:]/g, "\\$&")}\\s*(?:,[^{}]*)?\\{([^}]*)\\}`, "m").exec(css);
-  assert.ok(rule, `style.css has no rule for ${selector}`);
-  const body = rule[1]!.replace(/\/\*[\s\S]*?\*\//g, "");
-  const m = new RegExp(`(?:^|[\\s;])${prop}:\\s*([^;]+);`).exec(body);
-  if (!m) return null;
-  let expr = m[1]!.trim();
+  const raw = cssValue(selector, prop);
+  if (raw === null) return null;
+  let expr = raw;
   if (at.bannerTop !== undefined) expr = expr.replace(/var\(--banner-top, 58px\)/g, `${at.bannerTop}px`);
   if (at.bannerH !== undefined) expr = expr.replace(/var\(--banner-h, 0px\)/g, `${at.bannerH}px`);
   expr = expr.replace(/(\d+(?:\.\d+)?)vh/g, (_, n: string) => `${(Number(n) * at.vh) / 100}px`);
@@ -66,6 +62,16 @@ function cssPx(selector: string, prop: string, at: { bannerTop?: number; bannerH
   assert.doesNotMatch(expr, /var\(/, `a variable this test does not set: ${expr}`);
   const js = expr.replace(/(\d+(?:\.\d+)?)px/g, "$1").replace(/max\(/g, "Math.max(").replace(/min\(/g, "Math.min(").replace(/calc\(/g, "(");
   return Function(`return ${js};`)() as number;
+}
+
+/** A property's text in the first style.css rule whose selector list names `selector`; null when that rule does not set it. */
+function cssValue(selector: string, prop: string): string | null {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  const rule = new RegExp(`(?:^|[},])\\s*(?:[^{}]*,\\s*)?${selector.replace(/[[\]()~:]/g, "\\$&")}\\s*(?:,[^{}]*)?\\{([^}]*)\\}`, "m").exec(css);
+  assert.ok(rule, `style.css has no rule for ${selector}`);
+  const body = rule[1]!.replace(/\/\*[\s\S]*?\*\//g, "");
+  const m = new RegExp(`(?:^|[\\s;])${prop}:\\s*([^;]+);`).exec(body);
+  return m ? m[1]!.trim() : null;
 }
 
 const SCALE = "#banner:not([hidden]) ~ #scale-stack";
@@ -100,4 +106,20 @@ test("#2944 review: a banner at its height cap never pushes the colour scales of
       assert.ok(t + 131 <= vh - 16, `${vh} px: the scale's ${t} + 131 px fits above the bottom bound`);
     }
   }
+});
+
+test("#2944 delta review: in an app-chrome still the scales paint over the open banner's tail; in the window the open banner stays on top", () => {
+  // Under the cap the scales overlap the banner (a 1600×420 still: top 210 px, banner bottom 242 px), and
+  // the still draws the banner at a z-index, so document order alone leaves the scales under it.
+  const z = (selector: string) => {
+    const v = cssValue(selector, "z-index");
+    assert.ok(v !== null && /^\d+$/.test(v), `${selector} has a numeric z-index: ${v}`);
+    return Number(v);
+  };
+  const stillBanner = z('body[data-still-chrome="app"] #banner');
+  const stillScale = z('body[data-still-chrome="app"] #scale-stack');
+  assert.ok(stillScale > stillBanner, `still: the scales (${stillScale}) over the banner (${stillBanner})`);
+  // The window: the open banner (a click, to read the list) keeps its z-index over a stack that sets none.
+  assert.equal(z("#banner[data-open]"), stillBanner);
+  assert.equal(cssValue("#scale-stack", "z-index"), null, "the stack has no z-index outside a still");
 });
