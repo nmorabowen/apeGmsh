@@ -25,6 +25,7 @@ import { mountSpotlight } from "../panels/spotlight.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
 import { BlobStore } from "../state/blobs.ts";
 import { userEventOf, userPathOf, userReadable } from "../state/reduce.ts";
+import { derivedPlaneOf } from "../state/selectors.ts";
 import { Store } from "../state/store.ts";
 import type { UserReadIn, VariantsIn } from "../state/types.ts";
 import { DEFAULT_PANEL_IDS, mountCollapsibleChrome } from "../ui/collapse.ts";
@@ -88,7 +89,8 @@ const panels = [
   // ADR 0130 D6 (VU7a): the .user.h5 modal table, below the offers, while a mode is shown.
   mountModalTable(store),
   mountHeader(store),
-  mountBanner(store),
+  // VF2 (#2924 item 6): a derived contour's out-of-plane line needs the element-id blobs, which a panel never holds.
+  mountBanner(store, (s) => derivedPlaneOf(s, blobs)?.warning ?? null),
   mountLineDiagram(store, (fn) => viewport.onViewChange(fn)),
   mountLoads(store, (fn) => viewport.onViewChange(fn)),
   mountReactions(store, (fn) => viewport.onViewChange(fn)),

@@ -461,6 +461,21 @@ export function planeStatement(family: TensorFamily, groups: readonly { group: T
   return st;
 }
 
+/**
+ * VF2 (#2924 item 6): the one line a derived contour's statement gives when
+ * some element's zz is left at 0 without the model saying it is 0 (v1 warns on
+ * these), else null. The manifest's `contour.derived.warning` and the banner
+ * (selectors `derivedPlaneOf`) both say it, in these words.
+ */
+export function planeWarning(family: TensorFamily, st: PlaneStatement): string | null {
+  const zz = `${family}_zz`;
+  const parts = [
+    ...(st.unclassified ? [`${st.unclassified} of ${st.elements} element(s) could not be classified as plane stress / plane strain`] : []),
+    ...(st.no_nu ? [`${st.no_nu} element(s) need Poisson's ratio, which could not be read from their material`] : []),
+  ];
+  return parts.length ? `Out-of-plane ${zz} recovery is incomplete: ${parts.join("; ")}. ${zz} is left at 0 there.` : null;
+}
+
 /** The Voigt tensor of one point: `read(slot)` is the file's value (NaN when not finite), 0 for a slot the group does not record; a strain's shear halved. */
 export function assembleTensor(family: TensorFamily, read: (voigt: number) => number | null): Float64Array | null {
   const t = new Float64Array(6);
