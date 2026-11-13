@@ -192,6 +192,33 @@ export interface PlanGroupInput {
 /** An element's cell as the model has it: its gmsh code and its connectivity row (node tags, corners first). */
 export type CellOf = (femId: number) => { code: number; nodes: ArrayLike<number> } | null;
 
+/** The verdict's words for a group with several Gauss points and no natural coordinates (`naturalCoords` null). */
+function noCoordinatesRefusal(id: string): string {
+  return (
+    `group ${id} has no natural coordinates these shape functions can read: a native _natural_coords that is not floating point, ` +
+    `a native triangle or tet group whose _natural_coords match neither the Gauss table older apeGmsh versions wrote for its class nor the current one (#2274), ` +
+    `a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]", or a .ladruno group with no QUADRATURE/GP_PARAM ` +
+    `(the warning shown when the file opened names the class or the domain)`
+  );
+}
+
+/**
+ * VF (#2940, the owner's ruling on #2924 item 2): the groups whose only
+ * reason a `gauss_node` field cannot be drawn is that they have no natural
+ * coordinates (a BezierTet10's barycentric Gauss points, which the reader
+ * offers none for), when that is the verdict's whole refusal; null otherwise.
+ * The caller then draws the field `cell_averaged` (each element's mean,
+ * averaged at the nodes, which needs no coordinates) and says so. The match
+ * is exact: a corner refusal, or any other matrix refusal next to it (too few
+ * columns, a non-finite coordinate, no finite matrix), returns null, so the
+ * field stays refused.
+ */
+export function meanFallbackGroups(groups: readonly { id: string; nGauss: number; naturalCoords: readonly (readonly number[])[] | null }[], v: ExtrapolationVerdict): string[] | null {
+  if (v.corners !== null || v.matrix === null) return null;
+  const ids = groups.filter((g) => g.nGauss > 1 && !g.naturalCoords).map((g) => g.id);
+  return ids.length && v.matrix === ids.map(noCoordinatesRefusal).join("; ") ? ids : null;
+}
+
 /** The verdict on a field's groups (each element's type through `cellOf`). */
 export function extrapolationVerdict(groups: readonly PlanGroupInput[], cellOf: CellOf): ExtrapolationVerdict {
   const corners: string[] = [];
@@ -219,14 +246,7 @@ export function extrapolationVerdict(groups: readonly PlanGroupInput[], cellOf: 
     if (g.nGauss > 1) {
       // #2187: a `.ladruno` group offers none when its QUADRATURE's PARAM_DOMAIN is not the [-1,1] these shape functions read;
       // #2274: a native simplex group offers none when its rows are neither its class's older table nor its current one.
-      if (!g.naturalCoords) {
-        matrix.push(
-          `group ${g.id} has no natural coordinates these shape functions can read: a native _natural_coords that is not floating point, ` +
-            `a native triangle or tet group whose _natural_coords match neither the Gauss table older apeGmsh versions wrote for its class nor the current one (#2274), ` +
-            `a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]", or a .ladruno group with no QUADRATURE/GP_PARAM ` +
-            `(the warning shown when the file opened names the class or the domain)`,
-        );
-      }
+      if (!g.naturalCoords) matrix.push(noCoordinatesRefusal(g.id));
       else {
         for (const code of codes) {
           if (!extrapolationMatrix(code, g.naturalCoords)) {

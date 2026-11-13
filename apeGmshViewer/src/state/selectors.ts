@@ -32,8 +32,9 @@ import {
   type FieldComponent,
   type NodalField,
 } from "./contour.ts";
-import { usesMatrix } from "./extrapolation.ts";
-import { tensorFields, type TensorField } from "./tensor.ts";
+import { meanFallbackGroups, usesMatrix } from "./extrapolation.ts";
+import { planeRecoveryMap, planeStatement, tensorFields, type PlaneStatement, type TensorField } from "./tensor.ts";
+import type { BlobStore } from "./blobs.ts";
 import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 import {
@@ -542,6 +543,8 @@ export function noticesOf(s: State): string[] {
   for (const g of st?.gauss ?? []) for (const r of g.refused) out.push(`Element component ${r.component} of group ${g.id} not read: ${r.reason}.`);
   const ev = contourView(s);
   if (ev.state === "refused") out.push(ev.code === "combination" || ev.code === "difference" || ev.code === "user" ? `Contour not drawn: ${ev.reason}.` : `Element contour refused: ${ev.reason}.`);
+  // VF (#2940): a gauss_node pick drawn cell_averaged says so.
+  if (ev.state === "element" && ev.fallback) out.push(fallbackNotice(ev));
   // VU10: a newer manifest's banner (ADR 0132 D2), and the nodes a difference cannot give a value.
   if (s.variants.study?.newer) out.push(s.variants.study.newer);
   // VU9a (ADR 0132 D2, D6): a newer workspace is shown read-only, and an unreadable one moved aside is named, once per rename.
@@ -556,6 +559,55 @@ export function noticesOf(s: State): string[] {
   const d = deformNotice(s);
   if (d) out.push(d);
   return out;
+}
+
+/** VF (#2940): the banner's line for an element contour drawn `cell_averaged` in place of the `gauss_node` asked. */
+export function fallbackNotice(v: Extract<ContourView, { state: "element" }>): string {
+  if (!v.fallback) throw new Error(`fallbackNotice: element field ${v.field} is drawn as asked (${v.topology})`);
+  return `Element contour ${v.field}: ${v.fallback.asked} (extrapolated to the nodes) cannot be drawn, so it is drawn cell_averaged instead (${v.topologyLabel}): ${v.fallback.reason}.`;
+}
+
+/**
+ * VA6d: a derived contour's stored components and its out-of-plane statement,
+ * by element (state/tensor.ts `planeStatement`), and the warning v1 gives for
+ * the elements whose zz is left at 0 without the model saying it is 0, else
+ * null. It reads the groups' element ids, so it needs the blobs; it throws when
+ * they are not on hand, never answers for a part of the field.
+ */
+export function derivedPlaneOf(
+  s: State,
+  v: Extract<ContourView, { state: "element" }>,
+  blobs: BlobStore,
+): { from: string[]; plane: PlaneStatement; warning: string | null } {
+  const d = v.component.derived;
+  if (!d) throw new Error(`derivedPlaneOf: ${v.component.key} is a stored component, not a derived one`);
+  const t = d.tensor;
+  const groups = t.groups.map((group) => {
+    const g = v.groups.find((x) => x.id === group.id);
+    const eids = g ? blobs.get(g.eids) : undefined;
+    if (!(eids instanceof Float64Array)) throw new Error(`derived contour: the element ids of group ${group.id} are not on hand`);
+    return { group, eids };
+  });
+  const plane = planeStatement(t.family, groups, planeRecoveryMap(s.decls));
+  const zz = `${t.family}_zz`;
+  const parts = [
+    ...(plane.unclassified ? [`${plane.unclassified} of ${plane.elements} element(s) could not be classified as plane stress / plane strain`] : []),
+    ...(plane.no_nu ? [`${plane.no_nu} element(s) need Poisson's ratio, which could not be read from their material`] : []),
+  ];
+  const warning = parts.length ? `Out-of-plane ${zz} recovery is incomplete: ${parts.join("; ")}. ${zz} is left at 0 there.` : null;
+  return { from: [...t.components], plane, warning };
+}
+
+/**
+ * VF (#2940, #2924 item 6): the notices of the drawn contour that only its
+ * element ids can word (the blobs): a derived contour's plane-recovery
+ * warning. Empty for any other view.
+ */
+export function drawnNotices(s: State, blobs: BlobStore): string[] {
+  const v = contourView(s);
+  if (v.state !== "element" || !v.component.derived) return [];
+  const w = derivedPlaneOf(s, v, blobs).warning;
+  return w === null ? [] : [w];
 }
 
 // -- V4c1: the nodal contour ----------------------------------------------------
@@ -602,6 +654,12 @@ export type ContourView =
       topology: ElementTopology;
       /** what the legend states for the topology (the averaging, in words) */
       topologyLabel: string;
+      /**
+       * VF (#2940): `gauss_node` was asked and `topology` is drawn in its place
+       * (`cell_averaged`), with the verdict that refused it; null when the
+       * topology drawn is the one asked. The banner and the manifest state it.
+       */
+      fallback: { asked: "gauss_node"; reason: string } | null;
       nGauss: number[];
       groups: ElementGroupDraw[];
       stageName: string;
@@ -743,7 +801,7 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
     };
   }
   if (hit.field.refused !== null) return { state: "refused", code: "components", reason: `element field ${c.field}: ${hit.field.refused}` };
-  const topology = elementTopology(c.gauss, hit.field.nGauss);
+  let topology = elementTopology(c.gauss, hit.field.nGauss);
   if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
   const groups: ElementGroupDraw[] = [];
   for (const gid of hit.field.groups) {
@@ -756,6 +814,13 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
   if (!j || j.key !== joinKey) return { state: "unavailable", reason: "the element rows are being joined to the mesh" };
   if (!j.ok) return { state: "refused", code: j.code, reason: `element field ${c.field}: ${j.reason}` };
   // V4c2b: a node-located topology the field's types or natural coordinates cannot carry reads "unsupported", never a guess.
+  // VF (#2940, the owner's ruling on #2924 item 2): gauss_node refused only because groups have no natural coordinates
+  // (a BezierTet10's barycentric points) is drawn cell_averaged instead, and the banner and the manifest say so.
+  let fallback: { asked: "gauss_node"; reason: string } | null = null;
+  if (topology === "gauss_node" && meanFallbackGroups(groups, j.extrapolation)) {
+    fallback = { asked: "gauss_node", reason: j.extrapolation.matrix! };
+    topology = elementTopology("cell_averaged", hit.field.nGauss);
+  }
   if (isNodeTopology(topology)) {
     const why = j.extrapolation.corners ?? (usesMatrix(topology) ? j.extrapolation.matrix : null);
     if (why !== null) return { state: "refused", code: "unsupported", reason: `element field ${c.field}: ${topology} is unsupported: ${why}` };
@@ -768,6 +833,7 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
     component: hit.component,
     topology,
     topologyLabel: topologyLabel(topology, hit.field.nGauss),
+    fallback,
     nGauss: hit.field.nGauss,
     groups,
     stageName: label,

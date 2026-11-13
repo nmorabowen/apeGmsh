@@ -8,7 +8,8 @@
 
 import { pairingNotice } from "../state/results.ts";
 import { elementContourFields, fieldsOf, MAGNITUDE, type ElementComponent } from "../state/contour.ts";
-import { noticesOf, refusalsOf, resultsPairing, warningsOf } from "../state/selectors.ts";
+import type { BlobStore } from "../state/blobs.ts";
+import { drawnNotices, noticesOf, refusalsOf, resultsPairing, warningsOf } from "../state/selectors.ts";
 import { CMAP_NAMES, type State } from "../state/types.ts";
 import { THEME_MODES } from "../theme/tokens.ts";
 import { APP_LAYERS, BACKGROUNDS, CHROMES, GAUSS_MODES, MODEL_LAYERS, SPEC_CAMERAS, SPEC_VERSION } from "./spec.ts";
@@ -74,9 +75,21 @@ export interface SetDescription {
 /** The magnitude's name in a spec: the legend's word, never the internal key. */
 export const SPEC_MAGNITUDE = "magnitude";
 
-/** Every banner line of a state, in the banner's order (panels/banner.ts): refusals, notices, warnings. */
-export function bannerLines(s: State): string[] {
+/** The banner lines the state words alone, in the banner's order (panels/banner.ts): refusals, notices, warnings. */
+export function stateBannerLines(s: State): string[] {
   return [...refusalsOf(s), ...noticesOf(s), ...warningsOf(s)];
+}
+
+/**
+ * Every banner line of a drawn view, in the banner's order: the state's
+ * lines, with the notices only the drawn contour's element ids can word
+ * (VF #2940, selectors `drawnNotices`: a derived contour's plane-recovery
+ * warning) after the state's notices. A still's banner and its manifest
+ * entry carry these; the set's description (before any shot) and a refused
+ * shot (nothing drawn) carry `stateBannerLines`.
+ */
+export function bannerLines(s: State, blobs: BlobStore): string[] {
+  return [...refusalsOf(s), ...noticesOf(s), ...drawnNotices(s, blobs), ...warningsOf(s)];
 }
 
 /** The box of a set of position arrays (3 floats per vertex); null when they hold no finite vertex. */
@@ -154,7 +167,7 @@ export function describeSet(s: State, positions: readonly ArrayLike<number>[]): 
       .filter((d) => d.kind === "physical_group")
       .map((d) => ({ path: d.path, name: d.name })),
     bbox: boxOf(positions),
-    banner: bannerLines(s),
+    banner: stateBannerLines(s),
     offers: {
       cameras: SPEC_CAMERAS,
       themes: THEME_MODES,

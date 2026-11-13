@@ -43,10 +43,10 @@ import type { BlobStore } from "../state/blobs.ts";
 import { columnOf, gaussCellValues, isNodeTopology, meshFemIds, vertexValues } from "../state/contour.ts";
 import { autoDeformScale } from "../state/deform.ts";
 import { applyPlan, cellLookup, planFor } from "../state/extrapolation.ts";
-import { planeRecoveryMap, planeStatement, type PlaneStatement } from "../state/tensor.ts";
-import { activeCount, contourView, deformView, type ContourView } from "../state/selectors.ts";
+import type { PlaneStatement } from "../state/tensor.ts";
+import { activeCount, contourView, deformView, derivedPlaneOf, type ContourView } from "../state/selectors.ts";
 import type { ArtifactInfo, CameraPose, ContourScan, MeshInfo, State } from "../state/types.ts";
-import { bannerLines, describeSet } from "./describe.ts";
+import { bannerLines, describeSet, stateBannerLines } from "./describe.ts";
 import type { SpecShot, ViewSpec } from "./spec.ts";
 
 export const MANIFEST_VERSION = "apegmsh-manifest/1";
@@ -96,6 +96,12 @@ export type ManifestContour =
       derived?: { from: string[]; plane: PlaneStatement; warning: string | null };
       /** element fields: how the values reach the screen (`element_mean`, `gauss_node`, ...); nodal: `nodal` */
       topology: string;
+      /**
+       * VF (#2940), only when `topology` is not the one asked: `gauss_node` was asked, and `reason` is why it
+       * cannot be drawn (groups with no natural coordinates, as a BezierTet10's barycentric Gauss points);
+       * `topology` is then the `cell_averaged` drawing (`element_mean_averaged`) put in its place
+       */
+      topology_fallback?: { asked: string; reason: string };
       cmap: string;
       range: {
         min: number | null;
@@ -462,25 +468,6 @@ function columnContour(s: State, v: Extract<ContourView, { state: "combination" 
   };
 }
 
-/** VA6d: a derived contour's components and its out-of-plane statement (never silent on a zz left at 0 unclassified). */
-function derivedOf(s: State, v: Extract<ContourView, { state: "element" }>, blobs: BlobStore): NonNullable<Extract<ManifestContour, { drawn: true }>["derived"]> {
-  const t = v.component.derived!.tensor;
-  const groups = t.groups.map((group) => {
-    const g = v.groups.find((x) => x.id === group.id);
-    const eids = g ? blobs.get(g.eids) : undefined;
-    if (!(eids instanceof Float64Array)) throw new Error(`manifest: the element ids of group ${group.id} are not on hand`);
-    return { group, eids };
-  });
-  const plane = planeStatement(t.family, groups, planeRecoveryMap(s.decls));
-  const zz = `${t.family}_zz`;
-  const parts = [
-    ...(plane.unclassified ? [`${plane.unclassified} of ${plane.elements} element(s) could not be classified as plane stress / plane strain`] : []),
-    ...(plane.no_nu ? [`${plane.no_nu} element(s) need Poisson's ratio, which could not be read from their material`] : []),
-  ];
-  const warning = parts.length ? `Out-of-plane ${zz} recovery is incomplete: ${parts.join("; ")}. ${zz} is left at 0 there.` : null;
-  return { from: [...t.components], plane, warning };
-}
-
 function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepValues | null): ManifestContour {
   const at = s.phase.at;
   if (at?.kind !== "results" || !step || step.stage !== at.stage || step.step !== at.step) {
@@ -499,8 +486,10 @@ function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepVal
     label: v.component.label,
     source: v.state === "ready" ? "nodal" : "element",
     // VA6d: a derived scalar names the stored components it was computed from at each Gauss point.
-    ...(v.state === "element" && v.component.derived ? { derived: derivedOf(s, v, blobs) } : {}),
+    ...(v.state === "element" && v.component.derived ? { derived: derivedPlaneOf(s, v, blobs) } : {}),
     topology: v.state === "ready" ? "nodal" : v.topology,
+    // VF (#2940): a gauss_node pick drawn cell_averaged states what was asked and why it was not drawn.
+    ...(v.state === "element" && v.fallback ? { topology_fallback: { asked: v.fallback.asked, reason: v.fallback.reason } } : {}),
     cmap: v.cmap,
     range: {
       min: v.clim.min,
@@ -592,7 +581,7 @@ export function manifestEntry(s: State, input: EntryInput): ManifestEntry {
     ...placeOf(s),
     contour: contourOf(s, input.blobs, input.step, input.combination ?? null, input.difference ?? null),
     deform: deformOf(s, input.shot, input.blobs, input.step),
-    banner: bannerLines(s),
+    banner: bannerLines(s, input.blobs),
     layout: input.layout,
   };
 }
@@ -624,7 +613,8 @@ export function refusedEntry(
     time: at?.time ?? null,
     contour: null,
     deform: null,
-    banner: at ? bannerLines(s) : [],
+    // No contour is drawn for a refused shot, so its banner has no line of a drawn contour (describe.ts `stateBannerLines`).
+    banner: at ? stateBannerLines(s) : [],
     layout: null,
   };
 }
