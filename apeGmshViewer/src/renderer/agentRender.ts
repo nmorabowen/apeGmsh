@@ -178,14 +178,15 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
     },
   );
   // Nothing was applied: this shot has no view to report, only the reason.
-  if (!compiled.ok) return { entry: refusedEntry(store.get(), shot, compiled.reason, null), ms: performance.now() - t0, shownMs: null };
+  if (!compiled.ok) return { entry: refusedEntry(store.get(), shot, compiled.reason, null, blobs), ms: performance.now() - t0, shownMs: null };
   const plan = compiled.plan;
   const at = {
     stage: plan.stage,
     step: plan.step,
     time: plan.stage && plan.step !== null ? (d.stages[plan.stage.index]?.times[plan.step] ?? null) : null,
   };
-  const refuse = (reason: string): ShotResult => ({ entry: refusedEntry(store.get(), shot, reason, at), ms: performance.now() - t0, shownMs: null });
+  // VF3 (#2959): the blob store, so the entry's banner carries a derived contour's plane line, as an ok entry's does.
+  const refuse = (reason: string): ShotResult => ({ entry: refusedEntry(store.get(), shot, reason, at, blobs), ms: performance.now() - t0, shownMs: null });
   try {
     for (const e of plan.events) store.dispatch(e);
     applyClip(store, plan);
@@ -356,7 +357,7 @@ export async function takeShots(deps: RenderDeps, spec: ViewSpec, d: SetDescript
   let on: SpecVariant | null | "unknown" = null;
   for (const shot of spec.shots) {
     if (failed) {
-      shots.push({ entry: refusedEntry(deps.store.get(), shot, failed, null), ms: 0, shownMs: null });
+      shots.push({ entry: refusedEntry(deps.store.get(), shot, failed, null, deps.blobs), ms: 0, shownMs: null });
       continue;
     }
     // VU18: a shot naming a row always asks main (the manifest is read again for it, D9.3); a shot of the spec's set asks only after another set was drawn.
@@ -372,7 +373,7 @@ export async function takeShots(deps: RenderDeps, spec: ViewSpec, d: SetDescript
       if (!sw.ok) {
         on = "unknown";
         const what = want === null ? "the spec's set" : `variant row ${want.index} (${JSON.stringify(want.label)})`;
-        const refused: ShotResult = { entry: refusedEntry(deps.store.get(), shot, `${what} is not drawn: ${sw.reason}`, null), ms: performance.now() - t0, shownMs: null };
+        const refused: ShotResult = { entry: refusedEntry(deps.store.get(), shot, `${what} is not drawn: ${sw.reason}`, null, deps.blobs), ms: performance.now() - t0, shownMs: null };
         console.info(`apeGmshViewer: render ${shot.name}: refused (${refused.entry.reason})`);
         shots.push(refused);
         continue;
@@ -384,7 +385,7 @@ export async function takeShots(deps: RenderDeps, spec: ViewSpec, d: SetDescript
     try {
       r = await takeShot(deps, spec, shot, d);
     } catch (err) {
-      r = { entry: refusedEntry(deps.store.get(), shot, `the shot failed: ${err instanceof Error ? err.message : String(err)}`, null), ms: 0, shownMs: null };
+      r = { entry: refusedEntry(deps.store.get(), shot, `the shot failed: ${err instanceof Error ? err.message : String(err)}`, null, deps.blobs), ms: 0, shownMs: null };
     }
     console.info(`apeGmshViewer: render ${shot.name}: ${r.entry.status}${r.entry.reason ? ` (${r.entry.reason})` : ""} in ${Math.round(r.ms)} ms`);
     shots.push(r);

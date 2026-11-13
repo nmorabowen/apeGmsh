@@ -533,13 +533,21 @@ body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(
 #banner:not([hidden]) ~ #scale-stack {
   /* VF (#2924 item 7): below the banner's measured height, as #left-rail is, so an
      app-chrome still (which draws the whole list) never covers the legend; never above 168 px.
+     In a still the scales now sit at the box's foot (VF3, below); this top bounds the box.
      A banner can grow to 100vh - 180px (above), which would put the scales off the
      bottom: they start by half the height at the latest, over the banner's tail. */
   top: min(max(168px, calc(var(--banner-top, 58px) + var(--banner-h, 0px) + 8px)), max(168px, 50vh));
 }
 /* VF (#2944 review): over the banner's tail in an app-chrome still, where the banner is
-   drawn open at z-index 20 (above). In the window the open banner stays on top. */
-body[data-still-chrome="app"] #scale-stack { z-index: 21; }
+   drawn open at z-index 20 (above). In the window the open banner stays on top.
+   VF3 (#2959): an app-chrome still draws the banner's whole list, so under it the scales
+   reached into a mesh that a fit frames about the viewport's centre (about 60 px into
+   extrap_plane's 2-D still once the plane line made the banner taller). In a still the
+   scales sit at the foot of the stack's box instead, 64 px off the bottom (clear of the
+   Windows menu, 16 px + about 32 px, as #windows is): the fit leaves that margin as wide
+   as the top one, and no banner grows into it. The box keeps its top, so a stack taller
+   than the box grows upward over the banner's tail, never off the bottom. */
+body[data-still-chrome="app"] #scale-stack { z-index: 21; bottom: 64px; justify-content: flex-end; }
 #scale-stack:not(:has(> :not([hidden]))) { display: none; }
 body[data-still-chrome="model"] #scale-stack { display: none; }
 .vs-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin: 0 0 6px; }

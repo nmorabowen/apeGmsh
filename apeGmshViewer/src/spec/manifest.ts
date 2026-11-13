@@ -607,15 +607,28 @@ export function manifestEntry(s: State, input: EntryInput): ManifestEntry {
 
 /**
  * A refused shot's entry (D2): the app's reason and no still. A shot that
- * compiled names the stage and step it asked for, and the banner of its view;
- * one that did not (`at` null) applied nothing, so it has no view to report.
+ * compiled names the stage and step it asked for, and the banner of its view:
+ * the lines an ok entry states (`bannerOf`, so a derived contour's plane line
+ * too; VF3 #2959). One that did not (`at` null) applied nothing, so it has no
+ * view to report. A banner that cannot be stated (a drawn derived contour's
+ * element ids not on hand) throws, and the message carries the refusal's own
+ * reason, so the caller's catch keeps why the shot was refused.
  */
 export function refusedEntry(
   s: State,
   shot: SpecShot,
   reason: string,
   at: { stage: ManifestEntry["stage"]; step: number | null; time: number | null } | null,
+  blobs: BlobStore,
 ): ManifestEntry {
+  let banner: string[] = [];
+  if (at) {
+    try {
+      banner = bannerOf(s, blobs);
+    } catch (err) {
+      throw new Error(`manifest: the refused shot's banner cannot be stated (${err instanceof Error ? err.message : String(err)}); the shot was refused: ${reason}`);
+    }
+  }
   return {
     name: shot.name,
     status: "refused",
@@ -632,9 +645,7 @@ export function refusedEntry(
     time: at?.time ?? null,
     contour: null,
     deform: null,
-    // The state's lines only, without a derived contour's plane line (VF2): harmless, since a refused shot writes no
-    // still. Adding it needs the blob store passed in from renderer/agentRender.ts, outside slice #2951.
-    banner: at ? bannerLines(s) : [],
+    banner,
     layout: null,
   };
 }
