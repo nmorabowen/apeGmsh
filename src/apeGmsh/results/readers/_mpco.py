@@ -117,6 +117,83 @@ class MPCOGaussDimensionMixed(GaussDimensionMixed):
     """
 
 
+class MPCOLineStationSourcesMixed(UserWarning):
+    """One element reads different station sets for different components
+    (#2070).
+
+    A beam whose sections answer no shear (a ``forceBeamColumn`` over an
+    ``Elastic`` section without ``-alpha``) writes a ``section.force``
+    bucket of ``P, Mz, My, T`` only. Its ``shear_y`` then falls to the
+    next-ranked source, the two ``localForce`` end stations, while its
+    axial force and moments read at every section. Each value is right,
+    so the read answers; the warning names, by element class, the
+    component that changed source, its station count, and the components
+    the ``section.force`` bucket does carry with theirs.
+    """
+
+
+def _section_force_without(
+    bucket_grp: "h5py.Group",
+    model_elements: "h5py.Group",
+    bucket: "_mline._LineBucket",
+    component: str,
+    element_ids: "Optional[ndarray]",
+) -> "dict[int, tuple[str, tuple[str, ...], int]]":
+    """The requested elements of a ``section.force`` bucket that records
+    other components but not ``component``.
+
+    Maps each element id (the file's tag) to ``(class, components,
+    station count)``. Empty when the bucket records ``component`` (its
+    slab was empty for another reason: no requested element, no step).
+    """
+    layout, _gp_x = _mline.resolve_bucket_layout(
+        model_elements, bucket_grp, bucket,
+    )
+    if component in layout.component_layout or "ID" not in bucket_grp:
+        return {}
+    ids = np.asarray(bucket_grp["ID"][...]).flatten().astype(np.int64)
+    if element_ids is not None:
+        ids = ids[np.isin(ids, np.asarray(element_ids, dtype=np.int64))]
+    entry = (bucket.elem_key.class_name, tuple(layout.component_layout),
+             int(layout.n_gauss_points))
+    return {int(e): entry for e in ids}
+
+
+def _warn_mixed_station_sources(
+    mixed: "dict[tuple[str, tuple[str, ...], int], tuple[set[tuple[str, int]], set[int]]]",
+    *, component: str, source: str, index_to_fem: Any,
+) -> None:
+    """One :class:`MPCOLineStationSourcesMixed` for a line-stations read.
+
+    ``mixed`` maps each ``section.force`` bucket's ``(class, components,
+    station count)`` to the ``(source token, station count)`` pairs its
+    elements read ``component`` from instead, and those elements' file
+    tags (``index_to_fem`` names them as the read returns them). An
+    empty map warns nothing. ``stacklevel`` points at the reader
+    method's caller.
+    """
+    if not mixed:
+        return
+    parts = []
+    for (cls, comps, n_sec), (sources, tags) in sorted(mixed.items()):
+        eids = sorted(int(e) for e in index_to_fem(
+            np.array(sorted(tags), dtype=np.int64)))
+        fallback = " and ".join(
+            f"{n} station(s) from {tok}" for tok, n in sorted(sources))
+        parts.append(
+            f"{cls} element(s) {eids[:10]}{' ...' if len(eids) > 10 else ''}"
+            f" read {component!r} at {fallback}, but {list(comps)} at "
+            f"{n_sec} section.force station(s), whose bucket records no "
+            f"{component!r}")
+    warnings.warn(
+        f"MPCO line-stations read of {component!r} in {source} mixes "
+        f"station sets: " + "; ".join(parts) + ". Each value is right, but "
+        f"the element's components do not share stations. A section that "
+        f"answers {component!r} reads every component at the sections.",
+        MPCOLineStationSourcesMixed, stacklevel=3,
+    )
+
+
 class MPCOStrainNotRecorded(ValueError):
     """A gauss strain read covers elements of a class that answers no
     element-level strain, and the file holds no strain rows for them
@@ -1153,6 +1230,12 @@ class MPCOReader:
         element_index_parts: list[ndarray] = []
         station_coord_parts: list[ndarray] = []
         section_force_eids: set[int] = set()
+        # Elements whose section.force bucket records other components
+        # but not this one: id -> (class, components, station count).
+        no_component: dict[int, tuple[str, tuple[str, ...], int]] = {}
+        # (class, components, station count) -> ({(token, count)}, {ids})
+        mixed: dict[tuple[str, tuple[str, ...], int],
+                    tuple[set[tuple[str, int]], set[int]]] = {}
 
         # ── section.force / Custom-rule path ────────────────────────
         token, buckets, scan_skipped = _mline.scan_line_station_buckets(
@@ -1175,6 +1258,10 @@ class MPCOReader:
                     t_idx=t_idx, element_ids=element_ids,
                 )
                 if result is None:
+                    no_component.update(_section_force_without(
+                        bucket_grp, model_elements, bucket, component,
+                        element_ids,
+                    ))
                     continue
                 values, element_index, station_coord = result
                 values_parts.append(values)
@@ -1255,6 +1342,14 @@ class MPCOReader:
                 keep_mask = ~np.isin(element_index, list(covered))
                 if not keep_mask.any():
                     continue
+                kept, counts = np.unique(
+                    element_index[keep_mask], return_counts=True)
+                for eid, n in zip(kept.tolist(), counts.tolist()):
+                    if eid in no_component:
+                        fallback, eids = mixed.setdefault(
+                            no_component[eid], (set(), set()))
+                        fallback.add((src_token, int(n)))
+                        eids.add(int(eid))
                 values_parts.append(values[:, keep_mask])
                 element_index_parts.append(element_index[keep_mask])
                 station_coord_parts.append(station_coord[keep_mask])
@@ -1282,6 +1377,10 @@ class MPCOReader:
         _warn_skipped_buckets(
             skipped + unranked, what="line-stations read",
             source=self._path.name,
+        )
+        _warn_mixed_station_sources(
+            mixed, component=component, source=self._path.name,
+            index_to_fem=index_to_fem,
         )
 
         if not values_parts:

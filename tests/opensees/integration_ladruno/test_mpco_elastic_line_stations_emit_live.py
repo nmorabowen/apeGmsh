@@ -21,6 +21,7 @@ modified-stiffness elastic beams, and the force beam's sections.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Callable
 
@@ -28,7 +29,10 @@ import numpy as np
 import pytest
 
 from apeGmsh.opensees.emitter.live import get_ops
-from apeGmsh.results.readers._mpco import MPCOReader
+from apeGmsh.results.readers._mpco import (
+    MPCOLineStationSourcesMixed,
+    MPCOReader,
+)
 from apeGmsh.results.spec._resolved import (
     ResolvedRecorderRecord,
     ResolvedRecorderSpec,
@@ -181,18 +185,48 @@ def test_elastic_family_reads_its_end_stations(tmp_path: Path, cls: str) -> None
 def test_mixed_elastic_and_force_beam_record_reads_both(tmp_path: Path) -> None:
     """One record over an ElasticBeam3d (tag 1) and a forceBeamColumn (tag 2).
 
-    The force beam reads its four Lobatto sections from ``section.force``,
-    the elastic beam its two ends from ``localForce``.
+    The elastic beam reads every component at its two ends from
+    ``localForce``. The force beam's ``Elastic`` sections answer no shear,
+    so its ``section.force`` bucket holds ``P, Mz, My, T`` only: N, T, My
+    and Mz read at its four Lobatto sections, but ``shear_y`` and
+    ``shear_z`` fall to its two ``localForce`` end stations. Every value
+    matches the closed form; the shear reads warn
+    :class:`MPCOLineStationSourcesMixed`, naming the class and both
+    station counts (#2070), and the other reads stay silent.
     """
     path = tmp_path / "run.mpco"
     _solve(path, 3, [FAMILIES_3D["ElasticBeam3d"], _force_beam_3d],
            (_line("ElasticBeam3d", [1, 2], COMPS_3D), _nodes(2)))
+    shears = ("shear_y", "shear_z")
     with MPCOReader(str(path)) as r:
-        slab = r.read_line_stations(r.stages()[0].id, "bending_moment_z",
-                                    element_ids=np.array([1, 2]))
-        ei = np.asarray(slab.element_index)
-        assert int((ei == 1).sum()) == 2 and int((ei == 2).sum()) == 4
-    _assert_closed_form(path, [1, 2], COMPS_3D, "mixed record")
+        sid = r.stages()[0].id
+        for comp in COMPS_3D:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                slab = r.read_line_stations(sid, comp,
+                                            element_ids=np.array([1, 2]))
+            ei = np.asarray(slab.element_index)
+            assert int((ei == 1).sum()) == 2, comp
+            assert int((ei == 2).sum()) == (2 if comp in shears else 4), comp
+            mixed = [w for w in caught
+                     if issubclass(w.category, MPCOLineStationSourcesMixed)]
+            if comp not in shears:
+                assert not mixed, (comp, [str(w.message) for w in mixed])
+                continue
+            [w] = mixed
+            msg = str(w.message)
+            assert w.filename == __file__, comp        # points at the caller
+            assert f"read of {comp!r}" in msg
+            assert "ForceBeamColumn3d element(s) [2]" in msg
+            assert "2 station(s) from localForce" in msg
+            assert "4 section.force station(s)" in msg
+            assert "ElasticBeam3d" not in msg   # its two ends are its only set
+            for other in ("axial_force", "torsion", "bending_moment_y",
+                          "bending_moment_z"):
+                assert repr(other) in msg, (comp, other)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", MPCOLineStationSourcesMixed)
+        _assert_closed_form(path, [1, 2], COMPS_3D, "mixed record")
 
 
 def test_no_class_warns_and_the_elastic_beam_reads_empty(tmp_path: Path) -> None:
