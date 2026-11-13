@@ -7,7 +7,8 @@ ON_ELEMENTS token and the file's own COMP_NAMES label
 (``apeGmshViewer/src/reader/ladrunoElements.ts``, ``state/contour.ts``
 ``gaussFields``). The still keeps v1's averaged picture: ``gauss_cell_averaged`` at
 one Gauss point, ``gauss_node`` (extrapolated to the corners, averaged) otherwise;
-BezierTet10's barycentric points ask ``cell_averaged`` (#2942). Row R16c names
+BezierTet10's and BezierTri6's barycentric points ask ``cell_averaged`` (#2942,
+#2950). Row R16c names
 ``von_mises_stress`` / ``von_mises_strain`` as a component of the element field
 that holds the tensor.
 
@@ -193,29 +194,36 @@ def test_a_derived_shot_of_a_source_the_app_cannot_open_is_refused(quad_set, tmp
 
 
 _TET10 = _FIXTURE.with_name("bezier_tet10.ladruno")
+_TRI6 = _FIXTURE.with_name("bezier_tri6.ladruno")
+#: fixture -> its one stress bucket (the fork's class key).
+_BEZIER = {_TET10: "33001-BezierTet10[1000:1:0]", _TRI6: "33000-BezierTri6[1000:1:0]"}
 
 
+@pytest.mark.parametrize("fixture", [_TET10, _TRI6], ids=["BezierTet10", "BezierTri6"])
 @pytest.mark.parametrize("component, contour", [
     ("stress_xx", {"field": "stress", "component": "stress/sigma_xx"}),
     ("von_mises_stress", {"field": "stress", "component": "von_mises_stress"}),
 ])
-def test_tet10_gauss_still_asks_cell_averaged(tmp_path, component, contour):
-    """#2924 item 2, owner ruling 2026-11-13: BezierTet10's four Gauss points are
-    barycentric, which the app does not extrapolate, so the still asks
-    ``cell_averaged``; origin/main asked ``node``, which the app refuses."""
+def test_bezier_gauss_still_asks_cell_averaged(tmp_path, fixture, component, contour):
+    """#2924 item 2, owner rulings 2026-11-13: BezierTet10's four and BezierTri6's three
+    Gauss points are barycentric (PARAM_DOMAIN "bary"), which the app does not
+    extrapolate, so the still asks ``cell_averaged``. Before #2942 (tet10) and #2950
+    (tri6) it asked ``node``."""
     from apeGmsh.viewers.session._results_stills import _app_contour
 
-    src = tmp_path / "tet.ladruno"
-    shutil.copy(_TET10, src)
+    src = tmp_path / fixture.name
+    shutil.copy(fixture, src)
+    with h5py.File(src, "r") as f:
+        assert f[f"MODEL_STAGE[1]/MODEL/ELEMENTS/{_BEZIER[fixture][:-3]}]"].attrs["PARAM_DOMAIN"].tobytes() == b"bary"
     with Results.from_ladruno(src) as r:
         assert {len(g.ids) for g in r.fem.elements} == {1}
         assert _app_contour(r, r.stages[0].id, component) == {**contour, "source": "element", "gauss": "cell_averaged"}
 
 
 def _add_quad_bucket(path: Path) -> None:
-    """The quad's four-point ``stress`` bucket beside the tet10's, labelled as the tet10
-    labels its columns (``sigma_xx``, ``sigma_yy``, ``sigma_xy``), so ``stress_xx`` is one
-    app column held by a tet10 group and a FourNodeQuad group."""
+    """The quad's four-point ``stress`` bucket beside the Bezier one, labelled as the Bezier
+    classes label their columns (``sigma_xx``, ``sigma_yy``, ``sigma_xy``), so ``stress_xx``
+    is one app column held by a Bezier group and a FourNodeQuad group."""
     key = "31-FourNodeQuad[201:0:0]"
     with h5py.File(_FIXTURE, "r") as quad, h5py.File(path, "r+") as f:
         stress = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress"]
@@ -223,22 +231,23 @@ def _add_quad_bucket(path: Path) -> None:
         stress[key]["COLUMN_MAP"].attrs["COMP_NAMES"] = np.bytes_("\n".join(["sigma_xx,sigma_yy,sigma_xy"] * 4))
 
 
+@pytest.mark.parametrize("fixture", [_TET10, _TRI6], ids=["BezierTet10", "BezierTri6"])
 @pytest.mark.parametrize("mixed, mode", [(False, "cell_averaged"), (True, "node")])
-def test_the_gauss_mode_vote_skips_tet10_groups_only(tmp_path, mixed, mode):
-    """The vote for ``node`` ignores BezierTet10 groups and no other: a tet10-only set asks
-    ``cell_averaged``; beside a four-point quad group it asks ``node``, and the app's
-    per-group fallback answers for the tet10 group. The scan reads only ``path``."""
+def test_the_gauss_mode_vote_skips_barycentric_groups_only(tmp_path, fixture, mixed, mode):
+    """The vote for ``node`` ignores BezierTet10 and BezierTri6 groups and no other: a set
+    of one of them asks ``cell_averaged``; beside a four-point quad group it asks ``node``,
+    and the app's per-group fallback answers for the Bezier group. The scan reads only ``path``."""
     from types import SimpleNamespace
 
     from apeGmsh.viewers.session._results_stills import _app_gauss_contour
 
     src = tmp_path / "set.ladruno"
-    shutil.copy(_TET10, src)
+    shutil.copy(fixture, src)
     if mixed:
         _add_quad_bucket(src)
     with h5py.File(src, "r") as f:
         assert sorted(f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/stress"]) == (
-            ["31-FourNodeQuad[201:0:0]", "33001-BezierTet10[1000:1:0]"] if mixed else ["33001-BezierTet10[1000:1:0]"]
+            ["31-FourNodeQuad[201:0:0]", _BEZIER[fixture]] if mixed else [_BEZIER[fixture]]
         )
     shot = _app_gauss_contour(SimpleNamespace(path=src), "stress_xx")
     assert shot == {"field": "stress", "component": "stress/sigma_xx", "source": "element", "gauss": mode}
@@ -449,38 +458,44 @@ def test_von_mises_still_draws_through_the_app_and_matches_python(quad_set, tmp_
     assert (contour["range"]["min"], contour["range"]["max"]) == pytest.approx((both.min(), both.max()), rel=1e-9)
 
 
-@pytest.fixture
-def tet_set(tmp_path: Path) -> Path:
-    """``tet.ladruno`` (one BezierTet10, four barycentric Gauss points, one step)
-    beside ``tet.h5``: its nodes and the cell as a gmsh ``Tetrahedron 10``."""
+#: fixture -> the gmsh cell an apeGmsh mesh gives its one element: (code, name, dim, npe).
+_BEZIER_CELL = {_TET10: (11, "Tetrahedron 10", 3, 10), _TRI6: (9, "Triangle 6", 2, 6)}
+
+
+@pytest.fixture(params=[_TET10, _TRI6], ids=["BezierTet10", "BezierTri6"])
+def bezier_set(request, tmp_path: Path) -> Path:
+    """``<stem>.ladruno`` (one BezierTet10 with four, or one BezierTri6 with three,
+    barycentric Gauss points, one step) beside ``<stem>.h5``: its nodes and the cell as
+    the gmsh ``Tetrahedron 10`` or ``Triangle 6`` an apeGmsh mesh gives it."""
     from apeGmsh.mesh._element_types import make_type_info
 
-    src = tmp_path / "tet.ladruno"
-    shutil.copy(_TET10, src)
+    code, name, dim, npe = _BEZIER_CELL[request.param]
+    src = tmp_path / request.param.name
+    shutil.copy(request.param, src)
     with Results.from_ladruno(src) as r:
         (group,) = list(r.fem.elements)
         fem = _make_fem(
             node_ids=np.asarray(r.fem.nodes.ids).tolist(),
             coords=[tuple(p) for p in np.asarray(r.fem.nodes.coords, dtype=float).tolist()],
             groups=[(
-                make_type_info(code=11, gmsh_name="Tetrahedron 10", dim=3, order=2, npe=10, count=1),
+                make_type_info(code=code, gmsh_name=name, dim=dim, order=2, npe=npe, count=1),
                 np.asarray(group.ids).tolist(), np.asarray(group.connectivity).tolist(),
             )],
         )
-    fem.to_h5(str(tmp_path / "tet.h5"))
-    stamp_provenance(src, tmp_path / "tet.h5")
+    fem.to_h5(str(src.with_suffix(".h5")))
+    stamp_provenance(src, src.with_suffix(".h5"))
     with h5py.File(src, "r+") as f:
         f["INFO/PROVENANCE"].attrs["element_index_space"] = "fem"
     return src
 
 
-def test_tet10_still_draws_cell_averaged_through_the_app(tet_set, tmp_path, monkeypatch):
-    """#2924 item 2 (#2942): the tet10 still asks cell_averaged and the app draws it as
-    the element mean averaged at the nodes. One element, so every node holds the mean
-    of the four Gauss values Python reads: min = max = that mean."""
+def test_bezier_still_draws_cell_averaged_through_the_app(bezier_set, tmp_path, monkeypatch):
+    """#2924 item 2 (#2942 tet10, #2950 tri6): the still asks cell_averaged and the app
+    draws it as the element mean averaged at the nodes. One element, so every node holds
+    the mean of the Gauss values Python reads: min = max = that mean."""
     manifests = _app_manifests(monkeypatch)
-    with Results.from_ladruno(tet_set) as r:
-        out = r.render(tmp_path / "tet.png", view="contour", component="stress_xx")
+    with Results.from_ladruno(bezier_set) as r:
+        out = r.render(tmp_path / f"{bezier_set.stem}.png", view="contour", component="stress_xx")
         stage = r.stage(r.stages[0].id)
         mean = float(np.mean(np.asarray(stage.elements.gauss.get(component="stress_xx", time=0).values)[0]))
     assert out.is_file() and out.stat().st_size > 0
