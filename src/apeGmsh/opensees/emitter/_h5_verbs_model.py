@@ -400,22 +400,44 @@ class _H5ModelVerbsMixin(_H5Host):
                 (int(rn), int(rd), float(rc)) for rn, rd, rc in retained),
             name=name,
         )
+        # Two equal records (one ``s.tie(name=...)`` over two equal ties)
+        # are two lines on every rank that writes them, so the key carries
+        # the line's occurrence on its rank: a replica on another
+        # rank repeats ``(line, n)``; the rank's second equal line does not.
         if self._stage_current is not None:
             blk = self._stage_current
-            if self._partition_dup((
+            line: "tuple[Any, ...]" = (
                 "stage_equationConstraint", blk.name, rec.cnode, rec.cdof,
-                rec.ccoef, rec.retained, rec.name,
-            )):
+                rec.ccoef, rec.retained, rec.name)
+            if self._partition_dup((*line, self._rank_occurrence(line))):
                 return
             blk.equation_constraint_seq.append(blk.next_emit_index())
             blk.equation_constraints.append(rec)
             return
-        if self._partition_dup((
-            "equationConstraint", rec.cnode, rec.cdof, rec.ccoef,
-            rec.retained, rec.name,
-        )):
+        line = ("equationConstraint", rec.cnode, rec.cdof, rec.ccoef,
+                rec.retained, rec.name)
+        if self._partition_dup((*line, self._rank_occurrence(line))):
             return
         self._equation_constraints.append(rec)
+
+    def _rank_occurrence(self, line: "tuple[Any, ...]") -> int:
+        """How many times the open partition bracket's rank has already
+        written ``line``, counted over every bracket of that rank: a rank
+        block is resumed once per stage (:meth:`partition_open`), and a
+        stage key names its stage. ``0`` outside a partition bracket,
+        where :meth:`_partition_dup` never dedupes.
+
+        The count lives in ``_partition_seen`` as ``("rank_occurrence",
+        rank, line, n)`` markers, a namespace no dedupe key starts with.
+        """
+        part = self._partition_current
+        if part is None:
+            return 0
+        n = 0
+        while ("rank_occurrence", part.rank, line, n) in self._partition_seen:
+            n += 1
+        self._partition_seen.add(("rank_occurrence", part.rank, line, n))
+        return n
 
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,

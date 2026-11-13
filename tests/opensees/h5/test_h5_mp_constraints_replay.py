@@ -16,6 +16,7 @@ INV-1, and replayed once). An archive that lacks the rows replays with a
 """
 from __future__ import annotations
 
+import copy
 import warnings
 from pathlib import Path
 from typing import Any
@@ -180,11 +181,13 @@ _KINDS: "dict[str, dict[str, list[Any]]]" = {
 
 
 def _streams(kinds: str) -> "dict[str, list[Any]]":
-    """The :data:`_KINDS` streams of the comma-separated ``kinds``."""
+    """The :data:`_KINDS` streams of the comma-separated ``kinds``. A kind
+    named twice adds an equal copy, a record of its own, as two resolved
+    declarations would (#2531)."""
     out: "dict[str, list[Any]]" = {}
     for k in kinds.split(","):
         for stream, recs in _KINDS[k].items():
-            out.setdefault(stream, []).extend(recs)
+            out.setdefault(stream, []).extend(copy.copy(r) for r in recs)
     return out
 
 
@@ -706,6 +709,55 @@ def test_partition_replicas_are_stored_once(tmp_path):
     assert _mp_lines(_replay(part)) == _mp_lines(part_fwd)
 
 
+#: Two equal equation ties (#2531): a named pair, as one ``s.tie(name=...)``
+#: over two equal ties leaves, and an unnamed pair.
+_TWINS = ("tie_equation,tie_equation",
+          "distributing_equation,distributing_equation")
+
+
+@pytest.mark.parametrize("partitioned", [False, True],
+                         ids=["flat", "partitioned"])
+@pytest.mark.parametrize("kinds", _TWINS)
+def test_two_equal_ties_store_a_row_per_line(kinds, partitioned, tmp_path):
+    # Each tie writes one line per tied DOF, so the pair is 2 x len(dofs)
+    # lines. A partitioned emit writes both ties on every rank holding
+    # them: the capture keeps a replica on another rank once, but a rank's
+    # second equal line is a row of its own (#2531), as on the flat emit.
+    from apeGmsh.opensees.emitter.h5_reader import open as open_h5
+
+    (rec,) = _KINDS[kinds.split(",")[0]]["surface_constraints"]
+    fwd, path = _archive(_fem(partitioned=partitioned, **_streams(kinds)),
+                         tmp_path)
+    eq = [ln for ln in _mp_lines(fwd) if ln.startswith("equationConstraint")]
+    assert len(eq) == 2 * len(rec.dofs)
+    with open_h5(str(path)) as model:
+        assert len(model.equation_constraints()) == len(eq)
+    assert _replay(path) == fwd
+
+
+@pytest.mark.parametrize("staged", [False, True], ids=["global", "stage"])
+def test_a_pre_fix_equal_tie_archive_still_refuses(staged, tmp_path,
+                                                    monkeypatch):
+    # The writer before #2531 kept one row of each pair of equal lines (its
+    # key had no occurrence): such an archive refuses by name, never
+    # replays the pair as one tie.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+    from apeGmsh.opensees.emitter._h5_verbs_model import _H5ModelVerbsMixin
+
+    monkeypatch.setattr(_H5ModelVerbsMixin, "_rank_occurrence",
+                        lambda self, line: 0)
+    twins = "tie_equation,tie_equation"
+    if staged:
+        _fwd, path = _staged_archive(twins, True, tmp_path)
+        assert _stage_rows(path) == [3]
+    else:
+        _fwd, path = _archive(_fem(partitioned=True, **_streams(twins)),
+                              tmp_path)
+    model = OpenSeesModel.from_h5(str(path))
+    with pytest.raises(BridgeError, match=r"tie \(enforce='equation'\): 1"):
+        model.build("tcl", flat=True)
+
+
 def test_to_h5_rewrite_keeps_the_lines(tmp_path):
     fwd, path = _mixed_archive(tmp_path)
     rewrite = tmp_path / "rewrite.h5"
@@ -815,6 +867,20 @@ _STAGE_CLAIMS: "dict[str, tuple[str, str, Any]]" = {
     "fixed_equal_dof": ("equal_dof", "node_constraints", NodePairRecord(
         kind="equal_dof", name="st_e14", master_node=1, slave_node=4,
         dofs=[1, 2, 3])),
+    # #2531: a tie only rank 1 holds (nodes 1 and 2), for the twin corpus
+    # row that must solve. Two equal equations make Lagrange's system
+    # singular, so that row runs under Penalty, which refuses a tie copied
+    # across ranks (#1724) but not one a single rank writes.
+    "tie_local": ("tie", "surface_constraints", InterpolationRecord(
+        kind="tie", name="st_loc", slave_node=2, master_nodes=[1],
+        weights=np.array([1.0]), dofs=[1, 2, 3], enforce="equation")),
+}
+
+#: The keyword arguments of a ``handler`` that takes some.
+_HANDLER_KWARGS: "dict[str, dict[str, float]]" = {
+    # Not a whole number: a replay writes a whole-number float alpha
+    # without its ".0", which the bridge deck keeps (a separate defect).
+    "Penalty": {"alpha_sp": 1.0e12 + 0.5, "alpha_mp": 1.0e12 + 0.5},
 }
 
 
@@ -825,7 +891,9 @@ def _staged_mp_bridge(stages: str = "tie_equation",
     :data:`_STAGE_CLAIMS` kinds named by ``stages``: stages split on
     ``;``, the kinds of one stage on ``,``. Each stage declares the
     ``handler`` constraint handler, by default the EQ-capable Lagrange.
-    The R1b oracle's stage corpus rows (#2448, #2530)."""
+    A kind named twice in a stage is two equal records that the one claim
+    by name takes both of (#2531).
+    The R1b oracle's stage corpus rows (#2448, #2530, #2531)."""
     from tests.opensees.h5.test_h5_stages_writer import _chain
 
     plan = [s.split(",") for s in stages.split(";")]
@@ -833,15 +901,16 @@ def _staged_mp_bridge(stages: str = "tie_equation",
     for kinds in plan:
         for k in kinds:
             _claim, stream, rec = _STAGE_CLAIMS[k]
-            streams.setdefault(stream, []).append(rec)
+            streams.setdefault(stream, []).append(copy.copy(rec))
     ops = _bridge(_fem(partitioned=partitioned, **streams))
     for i, kinds in enumerate(plan):
         with ops.stage(name=f"s{i}") as st:
-            for k in kinds:
+            for k in dict.fromkeys(kinds):
                 claim, _stream, rec = _STAGE_CLAIMS[k]
                 getattr(st, claim)(name=rec.name)
             st.analysis(**{**_chain(ops),
-                           "constraints": getattr(ops.constraints, handler)()})
+                           "constraints": getattr(ops.constraints, handler)(
+                               **_HANDLER_KWARGS.get(handler, {}))})
             st.run(n_increments=1, dt=1.0)
     return ops
 
@@ -907,6 +976,20 @@ def test_a_stage_stores_its_lines_once_per_partition_replica(tmp_path):
         sa, sb = a.stages(), b.stages()
         assert len(sa[0].equation_constraints) == 3
         assert sb[0].equation_constraints == sa[0].equation_constraints
+
+
+@pytest.mark.parametrize("partitioned", [False, True],
+                         ids=["flat", "partitioned"])
+def test_a_stage_stores_both_of_two_equal_ties(partitioned, tmp_path):
+    # One ``s.tie(name="st_tie")`` claims two equal ties: the stage writes
+    # 2 x 3 lines on each rank holding them and stores each line once per
+    # tie, not once per pair (#2531).
+    fwd, path = _staged_archive("tie_equation,tie_equation", partitioned,
+                                tmp_path)
+    eq = [ln for ln in _mp_lines(fwd) if ln.startswith("equationConstraint")]
+    assert len(eq) == 6
+    assert _stage_rows(path) == [6]
+    assert _replay(path) == fwd
 
 
 def test_the_stage_merge_keeps_the_bridge_order(tmp_path):
