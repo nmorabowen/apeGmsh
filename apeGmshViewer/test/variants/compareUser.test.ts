@@ -15,7 +15,8 @@
 // - a stale compare entry is refused and offered no Draw; an answer for a
 //   closed or replaced slot is dropped; compare:close and the difference end it;
 // - a legend field pick ends it too and draws the picked field (#2943): the
-//   reducer clears the compare result as Hide does, a refused pick excepted.
+//   reducer clears the compare result as Hide does, a refused pick excepted;
+//   Back's view memo records it and restoreView draws it again.
 
 import assert from "node:assert/strict";
 import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -31,6 +32,7 @@ import { openModel } from "../../src/reader/node.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { readUserResultColumn, readUserSet, type UserH5 } from "../../src/reader/userFile.ts";
 import { UserResultFeed, userResultOnHand, VariantRunner, type VariantDoor } from "../../src/renderer/contour.ts";
+import { restoreView, viewMemoOf } from "../../src/spec/snapshot.ts";
 import { reduce } from "../../src/state/reduce.ts";
 import { compareMeshOf, compareUserRequestOf, contourFieldsOf, contourView, deformOf, userResultRequestOf } from "../../src/state/selectors.ts";
 import type { CompareIn, State, VariantsIn } from "../../src/state/types.ts";
@@ -231,6 +233,40 @@ test("a legend field pick replaces a compare user result drawn, the same field a
   const v = contourView(h.store.get());
   assert.equal(v.state, "ready", `the picked field is drawn: ${JSON.stringify(v)}`);
   assert.deepEqual(v.state === "ready" ? [v.field, v.component.key] : null, [f.name, key]);
+  off();
+});
+
+test("Back's restoreView draws again the compare user result its memo held, and hides one drawn since (#2943 review F1)", async () => {
+  const { h, off } = await compared();
+  const PICK = { name: "footfall", component: "ratio" };
+  const compareDrawn = () => {
+    const v = contourView(h.store.get());
+    return v.state === "user" && v.name === "Cracked: footfall" && userResultOnHand(v) !== null;
+  };
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  h.store.dispatch({ type: "showCompareUser", pick: PICK });
+  await until(compareDrawn, "the compare user result");
+  const model = UNCRACKED.model;
+  const memo = viewMemoOf(h.store.get(), null, model);
+  assert.deepEqual(memo.compareUser, PICK, "the memo records the compare user result drawn");
+  // An offer's contour pick ends it (OfferRunner.apply dispatches the plan's setContourField).
+  const f = contourFieldsOf(h.store.get())!.fields[0]!;
+  h.store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: "nodal" });
+  assert.equal(h.store.get().variants.shown, null, "precondition: the offer's pick ended it");
+  // Back: the memo's view, the compare result included, drawn again.
+  restoreView(h.store, memo);
+  assert.deepEqual(h.store.get().variants.shown, PICK);
+  await until(compareDrawn, "the compare user result after Back");
+  // Restoring an unchanged view (a refused offer's rollback) keeps it.
+  restoreView(h.store, viewMemoOf(h.store.get(), null, model));
+  assert.deepEqual(h.store.get().variants.shown, PICK);
+  // A memo that drew none hides one drawn since.
+  restoreView(h.store, { ...memo, compareUser: null });
+  assert.equal(h.store.get().variants.shown, null);
+  // A compare set closed since the memo: the reducer refuses the Draw with its reason (putBack reports it).
+  h.store.dispatch({ type: "variantCompare", row: null });
+  assert.throws(() => restoreView(h.store, memo), /no compare set's user file is read/);
   off();
 });
 

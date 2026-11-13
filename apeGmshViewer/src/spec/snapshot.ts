@@ -237,6 +237,7 @@ export function viewMemoOf(s: State, pose: CameraPose | null, model: string): Vi
     loads: s.loads.on,
     camera: pose,
     theme: s.theme,
+    compareUser: s.variants.shown,
   };
 }
 
@@ -300,6 +301,10 @@ export function restoreView(store: Store, memo: ViewMemo): void {
   d({ type: "setTheme", theme: memo.theme });
   memo.picks.forEach((pick, i) => d({ type: i === 0 ? "select" : "selectAdd", pick }));
   if (memo.camera) d({ type: "setCamera", to: memo.camera });
+  // VF (#2943): the compare user result the memo drew, or none. The contour pick above ends one
+  // (reduce.ts `withoutCompareUser`), so it is drawn again here. Last, so that a compare set closed
+  // since the memo refuses with the reducer's reason (putBack reports it) once the rest is back.
+  d({ type: "showCompareUser", pick: memo.compareUser });
 }
 
 // ---- the view read back as a spec (D1, D6) -------------------------------------

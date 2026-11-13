@@ -7,6 +7,7 @@ import type { CameraPose } from "./camera.ts";
 import type { ClipPlane } from "./clip.ts";
 import type { ContourCmap, ContourRange, ContourSource, GaussMode, UnitDisplay } from "./contour.ts";
 import type { PhaseKey, Pick, UnitSystemId } from "./model.ts";
+import type { CompareUserPick } from "./variants.ts";
 import type { Visibility } from "./visibility.ts";
 
 /**
@@ -65,6 +66,8 @@ export interface ViewMemo {
   loads: boolean;
   camera: CameraPose | null;
   theme: ThemeMode;
+  /** VF (#2943): the compare user result drawn (`variants.shown`), or null. An offer's contour pick ends it, so Back draws it again. */
+  compareUser: CompareUserPick | null;
 }
 
 /** VA5: offers last for the window session (D5), through any open or failed read. */
