@@ -13,7 +13,10 @@
 //   only when both models state one mesh (fem_hash): two meshes that do not
 //   pair are refused with the reason, never interpolated;
 // - a stale compare entry is refused and offered no Draw; an answer for a
-//   closed or replaced slot is dropped; compare:close and the difference end it.
+//   closed or replaced slot is dropped; compare:close and the difference end it;
+// - a legend field pick ends it too and draws the picked field (#2943): the
+//   reducer clears the compare result as Hide does, a refused pick excepted;
+//   Back's view memo records it and restoreView draws it again.
 
 import assert from "node:assert/strict";
 import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -29,8 +32,9 @@ import { openModel } from "../../src/reader/node.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { readUserResultColumn, readUserSet, type UserH5 } from "../../src/reader/userFile.ts";
 import { UserResultFeed, userResultOnHand, VariantRunner, type VariantDoor } from "../../src/renderer/contour.ts";
+import { restoreView, viewMemoOf } from "../../src/spec/snapshot.ts";
 import { reduce } from "../../src/state/reduce.ts";
-import { compareMeshOf, compareUserRequestOf, contourView, deformOf, userResultRequestOf } from "../../src/state/selectors.ts";
+import { compareMeshOf, compareUserRequestOf, contourFieldsOf, contourView, deformOf, userResultRequestOf } from "../../src/state/selectors.ts";
 import type { CompareIn, State, VariantsIn } from "../../src/state/types.ts";
 import { harness, until } from "../contour/harness.ts";
 
@@ -107,7 +111,7 @@ function compareDoor(opts: { userFile?: string } = {}) {
 }
 
 /** The window set (Uncracked) open with its own user file read, the study read, the compare set open and its user file read. */
-async function compared(opts: { userFile?: string } = {}) {
+async function compared(opts: { userFile?: string; study?: VariantsIn } = {}) {
   const h = harness();
   if (!(await h.effects.open(UNCRACKED.model))) throw new Error("the window model did not load");
   if (!(await h.effects.openResults(UNCRACKED.results))) throw new Error("the window results did not load");
@@ -123,7 +127,7 @@ async function compared(opts: { userFile?: string } = {}) {
   const { door, asked } = compareDoor(opts);
   const runner = new VariantRunner(h.store, h.blobs, door, () => h.effects.currentStep());
   const offs = [feed.start(), runner.start()];
-  h.store.dispatch({ type: "variantsRead", study: STUDY });
+  h.store.dispatch({ type: "variantsRead", study: opts.study ?? STUDY });
   h.store.dispatch({ type: "variantCompare", row: SLOT });
   await until(() => h.store.get().variants.compareUser?.status !== "reading" && h.store.get().variants.compareModel?.status === "ready", "the compare set's model and user file");
   return { h, asked, windowReads, off: () => offs.forEach((o) => o()) };
@@ -188,6 +192,108 @@ test("Draw: the compare file's footfall ratio on the window's mesh by node id, n
   }, "the window's user result again");
   assert.deepEqual(windowReads, ["footfall ratio", "footfall ratio"], "read again through the window's own door");
   assert.deepEqual(Array.from(userResultOnHand(contourView(h.store.get()) as Extract<ReturnType<typeof contourView>, { state: "user" }>)!.values), column(GOLDEN.window_footfall));
+  off();
+});
+
+test("a legend field pick replaces a compare user result drawn, the same field as under it too; a refused pick keeps it (#2943)", async () => {
+  const { h, off } = await compared();
+  const PICK = { name: "footfall", component: "ratio" };
+  const compareDrawn = () => {
+    const v = contourView(h.store.get());
+    return v.state === "user" && v.name === "Cracked: footfall" && userResultOnHand(v) !== null;
+  };
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  // The window's own footfall is the pick under the compare result.
+  h.store.dispatch({ type: "setContourField", field: "footfall", component: "ratio", source: "user" });
+  h.store.dispatch({ type: "showCompareUser", pick: PICK });
+  await until(compareDrawn, "the compare user result");
+  // A pick the reducer refuses changes nothing: the compare result stays drawn.
+  assert.throws(() => h.store.dispatch({ type: "setContourField", field: "no_such_field", component: "x", source: "nodal" }), /is not a nodal field component/);
+  assert.deepEqual(h.store.get().variants.shown, PICK);
+  assert.ok(compareDrawn(), "still the compare result after a refused pick");
+  // The legend picks the field the contour already holds: a pick all the same, so the window's footfall is drawn.
+  h.store.dispatch({ type: "setContourField", field: "footfall", component: "ratio", source: "user" });
+  assert.deepEqual([h.store.get().variants.shown, h.store.get().variants.shownRead], [null, null]);
+  await until(() => {
+    const x = contourView(h.store.get());
+    return x.state === "user" && x.name === "footfall" && userResultOnHand(x) !== null;
+  }, "the window's user result after the pick");
+  const w = contourView(h.store.get()) as Extract<ReturnType<typeof contourView>, { state: "user" }>;
+  assert.deepEqual(Array.from(userResultOnHand(w)!.values), column(GOLDEN.window_footfall));
+  // Draw the compare result again, then pick a nodal field from the legend's own rows.
+  h.store.dispatch({ type: "showCompareUser", pick: PICK });
+  await until(compareDrawn, "the compare user result again");
+  const rows = contourFieldsOf(h.store.get());
+  assert.ok(rows !== null && rows.fields.length > 0, "precondition: the results stage shown offers nodal fields");
+  const f = rows.fields[0]!;
+  const key = f.components[0]!.key;
+  h.store.dispatch({ type: "setContourField", field: f.name, component: key, source: "nodal" });
+  assert.equal(h.store.get().variants.shown, null);
+  const v = contourView(h.store.get());
+  assert.equal(v.state, "ready", `the picked field is drawn: ${JSON.stringify(v)}`);
+  assert.deepEqual(v.state === "ready" ? [v.field, v.component.key] : null, [f.name, key]);
+  off();
+});
+
+test("Back's restoreView draws again the compare user result its memo held, and hides one drawn since (#2943 review F1)", async () => {
+  const { h, off } = await compared();
+  const PICK = { name: "footfall", component: "ratio" };
+  const compareDrawn = () => {
+    const v = contourView(h.store.get());
+    return v.state === "user" && v.name === "Cracked: footfall" && userResultOnHand(v) !== null;
+  };
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  h.store.dispatch({ type: "showCompareUser", pick: PICK });
+  await until(compareDrawn, "the compare user result");
+  const model = UNCRACKED.model;
+  const memo = viewMemoOf(h.store.get(), null, model);
+  assert.deepEqual(memo.compareUser, { set: SLOT, pick: PICK }, "the memo records the compare user result drawn and its compare set");
+  // An offer's contour pick ends it (OfferRunner.apply dispatches the plan's setContourField).
+  const f = contourFieldsOf(h.store.get())!.fields[0]!;
+  h.store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: "nodal" });
+  assert.equal(h.store.get().variants.shown, null, "precondition: the offer's pick ended it");
+  // Back: the memo's view, the compare result included, drawn again.
+  restoreView(h.store, memo);
+  assert.deepEqual(h.store.get().variants.shown, PICK);
+  await until(compareDrawn, "the compare user result after Back");
+  // Restoring an unchanged view (a refused offer's rollback) keeps it.
+  restoreView(h.store, viewMemoOf(h.store.get(), null, model));
+  assert.deepEqual(h.store.get().variants.shown, PICK);
+  // A memo that drew none hides one drawn since.
+  restoreView(h.store, { ...memo, compareUser: null });
+  assert.equal(h.store.get().variants.shown, null);
+  // A compare set closed since the memo: refused with the reason (putBack reports it).
+  h.store.dispatch({ type: "variantCompare", row: null });
+  assert.throws(() => restoreView(h.store, memo), /Cracked: footfall ratio is not drawn again: no compare set is open/);
+  off();
+});
+
+test("Back draws a compare user result again only on the compare set it was drawn from, never on another holding the same name (#2943 delta review F1)", async () => {
+  const OTHER = { index: 2, label: "Other" };
+  const study: VariantsIn = { ...STUDY, rows: [...STUDY.rows, { index: 2, label: "Other", path: "other/plate_other.h5", params: { "Ie/Ig": 0.5 } }] };
+  const { h, off } = await compared({ study });
+  const PICK = { name: "footfall", component: "ratio" };
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  h.store.dispatch({ type: "showCompareUser", pick: PICK });
+  await until(() => {
+    const v = contourView(h.store.get());
+    return v.state === "user" && v.name === "Cracked: footfall" && userResultOnHand(v) !== null;
+  }, "Cracked's footfall");
+  const memo = viewMemoOf(h.store.get(), null, UNCRACKED.model);
+  // An offer whose shot names `compare: Other` opens that set (spec/compile.ts), and its user file lists footfall too.
+  h.store.dispatch({ type: "variantCompare", row: OTHER });
+  await until(() => {
+    const c = h.store.get().variants.compare;
+    return c?.status === "open" && c.label === "Other";
+  }, "the Other compare set");
+  h.store.dispatch({ type: "compareUserRead", answer: { slot: OTHER, path: CRACKED.user, read: readUserSet(h5, CRACKED.user, CRACKED.model, CRACKED.results, list) } });
+  assert.equal(h.store.get().variants.compareUser?.status, "ready", "precondition: Other's user file is read and lists footfall");
+  // Back: refused with the reason, and nothing of Other is drawn in Cracked's place.
+  assert.throws(() => restoreView(h.store, memo), /Cracked: footfall ratio is not drawn again: the compare set is now Other \(row 2, open\)/);
+  assert.equal(h.store.get().variants.shown, null);
   off();
 });
 

@@ -237,7 +237,17 @@ export function viewMemoOf(s: State, pose: CameraPose | null, model: string): Vi
     loads: s.loads.on,
     camera: pose,
     theme: s.theme,
+    compareUser: compareUserMemoOf(s),
   };
+}
+
+/** VF (#2943): the compare user result drawn with the compare set it was drawn from, or null. */
+function compareUserMemoOf(s: State): ViewMemo["compareUser"] {
+  const { shown, compare } = s.variants;
+  if (shown === null) return null;
+  // The variants reducer draws one only on an open compare set and ends it with that set: one without is a broken state.
+  if (compare?.status !== "open") throw new Error(`viewMemoOf: the compare user result ${shown.name} ${shown.component} is drawn with no open compare set`);
+  return { set: { index: compare.index, label: compare.label }, pick: shown };
 }
 
 /** The shot's section planes through the store; each plane's id is the one the reducer gave it (INV-2: the render mode and an offer share this). */
@@ -300,6 +310,23 @@ export function restoreView(store: Store, memo: ViewMemo): void {
   d({ type: "setTheme", theme: memo.theme });
   memo.picks.forEach((pick, i) => d({ type: i === 0 ? "select" : "selectAdd", pick }));
   if (memo.camera) d({ type: "setCamera", to: memo.camera });
+  // VF (#2943): the compare user result the memo drew, or none. The contour pick above ends one
+  // (reduce.ts `withoutCompareUser`), so it is drawn again here, and only on the compare set it was
+  // drawn from: an offer can open another (`compare: <label>`), whose file may hold the same name.
+  // Last, so that a refusal reaches putBack's notice once the rest of the view is back.
+  const m = memo.compareUser;
+  if (m === null) {
+    d({ type: "showCompareUser", pick: null });
+    return;
+  }
+  const set = store.get().variants.compare;
+  if (set?.status !== "open" || set.index !== m.set.index || set.label !== m.set.label) {
+    // Nothing of another set stays drawn in its place.
+    d({ type: "showCompareUser", pick: null });
+    const now = set === null ? "no compare set is open" : `the compare set is now ${set.label} (row ${set.index}, ${set.status})`;
+    throw new Error(`the compare user result ${m.set.label}: ${m.pick.name} ${m.pick.component} is not drawn again: ${now}`);
+  }
+  d({ type: "showCompareUser", pick: m.pick });
 }
 
 // ---- the view read back as a spec (D1, D6) -------------------------------------
