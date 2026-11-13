@@ -1498,8 +1498,17 @@ class H5Model:
                         "come together; the file holds only one of them.")
                 equation_constraints = _read_equation_constraint_rows(
                     cons_g["equationConstraint"], where)
-                equation_constraint_seq = tuple(
-                    int(v) for v in cons_g["equationConstraint_emit_index"][:])
+                import h5py
+                import numpy as np
+
+                seq_ds = cons_g["equationConstraint_emit_index"]
+                if not (isinstance(seq_ds, h5py.Dataset)
+                        and seq_ds.ndim == 1
+                        and np.issubdtype(seq_ds.dtype, np.integer)):
+                    raise MalformedH5Error(
+                        f"{where}_emit_index is not a 1-D integer dataset; "
+                        "the writer stores one int64 entry per row.")
+                equation_constraint_seq = tuple(int(v) for v in seq_ds[()])
                 if len(equation_constraint_seq) != len(equation_constraints):
                     raise MalformedH5Error(
                         f"{where}: {len(equation_constraint_seq)} "

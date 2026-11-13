@@ -1075,6 +1075,80 @@ def test_a_fix_in_the_tie_stage_on_a_new_node_replays(tmp_path):
     assert _replay(path) == fwd
 
 
+def _split_fix_archive(plan: "list[Any]", surface: "list[Any]",
+                       tmp_path: Path) -> "tuple[str, Path]":
+    """The partitioned bridge whose base fix holds the translations only
+    (``fix 1/3 1 1 1 0 0 0``), one stage per callable of ``plan``."""
+    from tests.opensees.h5.test_h5_stages_writer import _chain
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops = apeSees(_fem(partitioned=True, surface_constraints=surface))
+        ops.model(ndm=3, ndf=6)
+        transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+        ops.element.elasticBeamColumn(
+            pg="Cols", transf=transf,
+            A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4)
+        ops.fix(pg="Base", dofs=(1, 1, 1, 0, 0, 0))
+        for i, fn in enumerate(plan):
+            with ops.stage(name=f"s{i}") as st:
+                fn(st)
+                st.analysis(**{**_chain(ops),
+                               "constraints": ops.constraints.Lagrange()})
+                st.run(n_increments=1, dt=1.0)
+        deck = tmp_path / "bridge.tcl"
+        ops.tcl(str(deck), flat=True, progress=False)
+        path = tmp_path / "model.h5"
+        ops.h5(str(path))
+    return deck.read_text(encoding="utf-8"), path
+
+
+_ROT_FIX = (0, 0, 0, 1, 1, 1)
+
+
+def test_a_stage_fix_on_other_dofs_of_a_fixed_node_replays(tmp_path):
+    # #2448 review: the stage fixes the rotations of node 1, which the base
+    # fix left free. That (node, mask) repeats no earlier fix, so it is no
+    # ghost row, and the partitioned replay is the bridge's deck.
+    tie = InterpolationRecord(
+        kind="tie", name="t4", slave_node=4, master_nodes=[2, 3],
+        weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")
+    fwd, path = _split_fix_archive(
+        [lambda st: (st.fix(nodes=[1], dofs=_ROT_FIX), st.tie(name="t4"))],
+        [tie], tmp_path)
+    assert "fix 1 0 0 0 1 1 1" in fwd.splitlines()
+    assert _replay(path) == fwd
+
+
+#: A stage tie that ghosts node 1 after node 1 was fixed twice, with two
+#: masks (the base translations, then the rotations): in a later stage, or
+#: in the stage that adds the rotations.
+_TWO_MASKS_THEN_GHOST = {
+    "later_stage": [lambda st: st.fix(nodes=[1], dofs=_ROT_FIX),
+                    lambda st: st.tie(name="tg")],
+    "same_stage": [lambda st: (st.fix(nodes=[1], dofs=_ROT_FIX),
+                               st.tie(name="tg"))],
+}
+
+
+@pytest.mark.parametrize("plan", sorted(_TWO_MASKS_THEN_GHOST))
+def test_a_ghost_of_a_node_fixed_with_two_masks_refuses(plan, tmp_path,
+                                                        monkeypatch):
+    # The probe of the (node, mask) key: the ghost re-plays each of node
+    # 1's fixes with its own mask, so every ghost row repeats an earlier
+    # fix row exactly and the narrowed rule still refuses.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    tie = InterpolationRecord(
+        kind="tie", name="tg", slave_node=4, master_nodes=[1, 2],
+        weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")
+    fwd, path = _split_fix_archive(_TWO_MASKS_THEN_GHOST[plan], [tie],
+                                   tmp_path)
+    with pytest.raises(BridgeError, match=r"node\(s\) \[1\].*#2530"):
+        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+    assert _unchecked_replay(path, monkeypatch) != fwd
+
+
 def test_to_h5_rewrite_keeps_the_stage_lines(tmp_path):
     from apeGmsh.opensees.emitter.h5_reader import open as open_h5
 
@@ -1169,7 +1243,8 @@ def test_a_rewrite_of_a_pre_2_40_stage_tie_archive_still_refuses(tmp_path):
 
 @pytest.mark.parametrize("damage", ["below_2_40", "seq_length",
                                     "seq_missing", "rows_missing",
-                                    "zero_coef"])
+                                    "zero_coef", "seq_group", "seq_2d",
+                                    "seq_float"])
 def test_a_malformed_stage_store_raises(damage, tmp_path):
     from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
     from tests.fixtures.schema import (
@@ -1190,6 +1265,19 @@ def test_a_malformed_stage_store_raises(damage, tmp_path):
             del cons["equationConstraint_emit_index"]
         elif damage == "rows_missing":
             del cons["equationConstraint"]
+        elif damage in ("seq_group", "seq_2d", "seq_float"):
+            # The emit index is a 1-D integer dataset, one entry per row;
+            # any other shape or dtype is malformed, never truncated.
+            seq = cons["equationConstraint_emit_index"][()]
+            del cons["equationConstraint_emit_index"]
+            if damage == "seq_group":
+                cons.create_group("equationConstraint_emit_index")
+            elif damage == "seq_2d":
+                cons.create_dataset("equationConstraint_emit_index",
+                                    data=seq.reshape(-1, 1))
+            else:
+                cons.create_dataset("equationConstraint_emit_index",
+                                    data=seq.astype(np.float64) + 0.5)
         else:
             coef = cons["equationConstraint/ret_coef"][()]
             coef[0] = 0.0

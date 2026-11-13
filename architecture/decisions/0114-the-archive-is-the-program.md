@@ -341,6 +341,14 @@ since #2415 it refused by name.
    with `BridgeError`. That covers every archive below 2.35.0 and a
    stage-claimed tie in an archive below 2.40.0, which stores nothing the
    lines could be rebuilt from. Such an archive is never replayed untied.
+   One partitioned case also refuses by name until #2530 is fixed. It is a
+   partitioned archive whose stage holds equation rows and a `fix` row
+   that repeats an earlier fix, with the same node and the same DOF mask.
+   The ghost replay of a rank that does not own the node (ADR 0027 INV-2)
+   stores the node's earlier fixes as that stage's rows, and the flat
+   replay would write them again. A stage that fixes other DOFs of a fixed
+   node replays. A deliberate re-fix with the same mask after a
+   `remove_sp` refuses too, because it cannot be told from a ghost row.
 4. **The ledger shrinks from 9 to 8.** `tests/opensees/contract/verbs_ledger.txt`
    drops `equationConstraint` and lowers `N_LEDGER` to 8.
 
@@ -358,9 +366,11 @@ is visible and can only shrink, stand.
 ### Consequences
 
 - On main, every equation-route record round-trips through `model.h5` at
-  every scope: the R1b round-trip oracle carries stage-claimed tie,
-  distributing and embedded rows, flat and partitioned, beside #2447's
-  global ones.
+  global and stage scope, flat and partitioned. The R1b round-trip oracle
+  carries stage-claimed tie, distributing and embedded rows, flat and
+  partitioned, beside #2447's global ones. The one exception is item 3's
+  partitioned carve-out: a stage with equation rows and a fix that
+  repeats an earlier one's node and mask refuses by name until #2530.
 - `H5LedgerWarning` no longer fires for an equation tie, and the
   `_skipped_equation_constraints` counter is gone with the ledger row.
 - Opensees schema 2.40.0 is the additive minor of the stage rows (a 2.39
