@@ -349,3 +349,57 @@ test("a refused shot's entry: the reason, no still, and no view it never drew", 
   assert.equal(e.pairing.state, "paired");
   assert.equal(e.files.results!.size, statSync(fx("contour_nodata.results.h5")).size);
 });
+
+// ---- VF (#2940): the two #2924 findings decided in the selectors ----
+
+test("VF #2940 (#2924 item 6): a von Mises still of unclassified elements carries the plane-recovery warning in its banner, the manifest's own sentence", async () => {
+  // extrap_plane has no /opensees zone, so none of its 15 elements is classified (test/contour/derived.test.ts, v1 warns).
+  const h = await setOf("extrap_plane");
+  const { entry } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "von_mises_stress", gauss: "node" } }));
+  const k = entry.contour;
+  assert.ok(k?.drawn && k.derived);
+  const w = "Out-of-plane stress_zz recovery is incomplete: 15 of 15 element(s) could not be classified as plane stress / plane strain. stress_zz is left at 0 there.";
+  assert.equal(k.derived.warning, w);
+  assert.ok(entry.banner.includes(w), `the still's banner states it: ${entry.banner.join(" | ")}`);
+  // Once: the banner states each line a single time.
+  assert.equal(entry.banner.filter((b) => b === w).length, 1);
+  // A stored component of the same field is not derived: no plane line.
+  const { entry: stored } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "stress_xx", gauss: "node" } }));
+  assert.ok(!stored.banner.some((b) => b.startsWith("Out-of-plane")), stored.banner.join(" | "));
+});
+
+test("VF #2940 (#2924 item 6): a von Mises still of elements the model classifies has no plane warning in its banner", async () => {
+  // elem_mixed carries an /opensees zone: PlaneStrain, nu 0.2, every element classified.
+  const h = await setOf("elem_mixed");
+  const { entry } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "von_mises_stress", gauss: "cell" } }));
+  assert.ok(entry.contour?.drawn && entry.contour.derived);
+  assert.equal(entry.contour.derived.warning, null);
+  assert.ok(!entry.banner.some((b) => b.startsWith("Out-of-plane")), entry.banner.join(" | "));
+});
+
+test("VF #2940 (#2924 item 2): a gauss_node shot on a group with no natural coordinates draws cell_averaged and says so in its topology, its reason and its banner", async () => {
+  const h = await opened(fx("extrap_solid.h5"), fx("extrap_solid.results.h5"));
+  try {
+    // What the reader gives a BezierTet10's barycentric Gauss group: no natural coordinates.
+    h.store.get().results!.stages[0]!.gauss.find((x) => x.id === "hex_G8")!.naturalCoords = null;
+    const { entry } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "stress_xx", gauss: "node" } }));
+    const k = entry.contour;
+    assert.ok(k?.drawn);
+    assert.equal(k.topology, "element_mean_averaged");
+    assert.equal(k.topology_fallback?.asked, "gauss_node");
+    assert.match(k.topology_fallback!.reason, /^group hex_G8 has no natural coordinates these shape functions can read/);
+    const line = entry.banner.find((b) => b.startsWith("Element contour stress:"));
+    assert.ok(line && line.includes("drawn cell_averaged instead") && line.includes(k.topology_fallback!.reason), entry.banner.join(" | "));
+    // The numbers are the cell_averaged shot's own: the substitution draws exactly what cell_averaged draws.
+    const { entry: asked } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "stress_xx", gauss: "cell_averaged" } }));
+    const a = asked.contour;
+    assert.ok(a?.drawn);
+    assert.equal(a.topology, "element_mean_averaged");
+    assert.equal(a.topology_fallback, undefined, "cell_averaged asked: nothing substituted");
+    assert.deepEqual([k.extrema, k.no_data, k.range.min, k.range.max], [a.extrema, a.no_data, a.range.min, a.range.max]);
+    assert.ok(!asked.banner.some((b) => b.startsWith("Element contour stress:")));
+  } finally {
+    h.effects.dispose();
+    h.host.close();
+  }
+});

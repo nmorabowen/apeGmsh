@@ -36,13 +36,14 @@ import {
   cornerVertexValues,
   extrapolationMatrix,
   extrapolationVerdict,
+  meanFallbackGroups,
   pinv,
   planFor,
   shapeOf,
   type ExtrapPlan,
   type PlanValues,
 } from "../../src/state/extrapolation.ts";
-import { contourView } from "../../src/state/selectors.ts";
+import { contourView, fallbackNotice, noticesOf } from "../../src/state/selectors.ts";
 import type { GaussMode, State } from "../../src/state/types.ts";
 import { opened, until } from "./harness.ts";
 
@@ -535,4 +536,108 @@ test("simplex rows that match neither table refuse that group by name: one warni
   } finally {
     rf.close();
   }
+});
+
+// -- VF (#2940): gauss_node with no natural coordinates falls back to cell_averaged, labelled ----------------------
+//   X7 the fallback removed (main before #2940)          -> every VF test below
+//   X8 the fallback taken on any matrix refusal           -> "only the no-coordinates refusal falls back ..."
+//   X9 the fallback taken for gauss_node_discrete too     -> "... node_discrete stays refused"
+
+test("VF #2940: a BezierTet10-like group with no natural coordinates is the verdict's whole refusal, so gauss_node may fall back; any other refusal next to it keeps it refused", () => {
+  // A tet10 (gmsh 11, 10 nodes) group of 4 Gauss points whose points the reader offers no coordinates for (barycentric).
+  const tet10 = { id: "rec_BezierTet10", nElements: 1, nGauss: 4, eids: Float64Array.of(1), naturalCoords: null };
+  const cell = legacyCell(11, 10);
+  const v = extrapolationVerdict([tet10], cell);
+  assert.equal(v.corners, null);
+  assert.deepEqual(meanFallbackGroups([tet10], v), ["rec_BezierTet10"]);
+  // Its element mean draws (the fallback's plan), and the extrapolating topologies still refuse to build.
+  assert.throws(() => buildPlan("gauss_node", [tet10], cell), /buildPlan: group rec_BezierTet10 has no natural coordinates/);
+  const mean = applyPlan(buildPlan("element_mean_averaged", [tet10], cell), [Float64Array.of(1, 2, 3, 6)]);
+  assert.deepEqual([...mean.nodal!], [3, 3, 3, 3], "each corner node takes the element's mean (1 + 2 + 3 + 6) / 4");
+
+  // A group with readable coordinates beside it adds no refusal: the tet10 group alone is named.
+  const g = 1 / Math.sqrt(3);
+  const quad = { id: "quads_G4", nElements: 1, nGauss: 4, eids: Float64Array.of(2), naturalCoords: [[-g, -g], [g, -g], [g, g], [-g, g]] };
+  const cells = (id: number) => (id === 1 ? cell() : { code: 3, nodes: [11, 12, 13, 14] });
+  const both = extrapolationVerdict([quad, tet10], cells);
+  assert.deepEqual(meanFallbackGroups([quad, tet10], both), ["rec_BezierTet10"]);
+
+  // Any other refusal keeps the field refused: too few columns, a non-finite coordinate, a type with no corners.
+  const short = { ...quad, naturalCoords: [[0], [0], [0], [0]] };
+  assert.equal(meanFallbackGroups([short, tet10], extrapolationVerdict([short, tet10], cells)), null);
+  const nan = { ...quad, naturalCoords: [[NaN, -g], [g, -g], [g, g], [-g, g]] };
+  assert.equal(meanFallbackGroups([nan, tet10], extrapolationVerdict([nan, tet10], cells)), null);
+  const pyramid = extrapolationVerdict([tet10], () => ({ code: 7, nodes: [1, 2, 3, 4, 5] }));
+  assert.ok(pyramid.corners);
+  assert.equal(meanFallbackGroups([tet10], pyramid), null);
+  // A verdict with nothing to refuse, or a refusal of other words, never falls back.
+  assert.equal(meanFallbackGroups([quad], extrapolationVerdict([quad], cells)), null);
+  assert.equal(meanFallbackGroups([tet10], { corners: null, matrix: "group rec_BezierTet10: bad" }), null);
+});
+
+test("VF #2940: gauss_node on a group with no natural coordinates draws Python's cell_averaged values and colours, and the banner says it was substituted; node_discrete stays refused", async () => {
+  const h = await opened(fx("extrap_solid.h5"), fx("extrap_solid.results.h5"));
+  // What the reader gives a BezierTet10's barycentric Gauss group (reader/ladrunoElements.ts): no natural coordinates.
+  const grp = h.store.get().results!.stages[0]!.gauss.find((x) => x.id === "hex_G8")!;
+  grp.naturalCoords = null;
+  const o = ORACLE["extrap_solid"]!["stress_xx"]!;
+  const k = 2;
+  const v = await pick(h, "stress_xx", "node", k);
+  assert.equal(v.topology, "element_mean_averaged", "drawn cell_averaged, as the owner ruled (#2924 item 2)");
+  assert.equal(v.fallback?.asked, "gauss_node");
+  assert.match(v.fallback!.reason, /^group hex_G8 has no natural coordinates these shape functions can read/);
+  const a = appValues(h, v);
+  checkAveraged(o.cell_averaged, k, appNodal(a.plan, a.r), "gauss_node fallback");
+  const rc = range(o.cell_averaged.values[k]!);
+  assert.ok(rel(v.clim.min!, rc.min) && rel(v.clim.max!, rc.max), `the step range is of the values drawn: ${v.clim.min}..${v.clim.max} vs ${rc.min}..${rc.max}`);
+  const elems = new Set(o.gauss_node_discrete.element_ids);
+  const cc = checkColours(h, v, (e, n) => (elems.has(e) ? o.cell_averaged.values[k]![o.cell_averaged.node_ids.indexOf(n)]! : null));
+  assert.equal(cc.noData, 0);
+  const line = noticesOf(h.store.get()).find((n) => n.startsWith("Element contour stress:"));
+  assert.equal(line, fallbackNotice(v));
+  assert.match(
+    line!,
+    /^Element contour stress: gauss_node \(extrapolated to the nodes\) cannot be drawn, so it is drawn cell_averaged instead \(element mean of 8 Gauss points, averaged at the nodes across elements\): group hex_G8 has no natural coordinates/,
+  );
+  assert.ok(!noticesOf(h.store.get()).some((n) => n.startsWith("Element contour refused")), "a substitution, not a refusal");
+
+  // The discrete topology asked for no averaging, so it is not substituted: it stays unsupported.
+  h.store.dispatch({ type: "setContourGauss", mode: "node_discrete" });
+  await until(() => contourView(h.store.get()).state === "refused", "node_discrete refused");
+  const d = contourView(h.store.get());
+  assert.ok(d.state === "refused" && d.code === "unsupported" && /gauss_node_discrete is unsupported: group hex_G8 has no natural coordinates/.test(d.reason));
+  // Asked cell_averaged, nothing is substituted, and no substitution line shows.
+  const ca = await pick(h, "stress_xx", "cell_averaged", k);
+  assert.equal(ca.fallback, null);
+  assert.ok(!noticesOf(h.store.get()).some((n) => n.startsWith("Element contour stress:")));
+  h.effects.dispose();
+});
+
+test("VF #2940: only the no-coordinates refusal falls back; other words keep gauss_node refused, and a field that extrapolates draws gauss_node with no substitution", async () => {
+  const h = await opened(fx("extrap_plane.h5"), fx("extrap_plane.results.h5"));
+  const ok = await pick(h, "stress_xx", "node", 0);
+  assert.equal(ok.topology, "gauss_node");
+  assert.equal(ok.fallback, null);
+  const s1 = h.store.get();
+  const j = s1.contour.join!;
+  assert.ok(j.ok);
+  const g = s1.results!.stages[0]!.gauss.find((x) => x.id === "quads_G4")!;
+  // The verdict's own no-coordinates words for quads_G4.
+  const none = extrapolationVerdict([{ id: g.id, nElements: 1, nGauss: g.nGauss, eids: Float64Array.of(1), naturalCoords: null }], () => ({ code: 3, nodes: [1, 2, 3, 4] }));
+  const withVerdict = (matrix: string, coords: number[][] | null): State => ({
+    ...s1,
+    results: { ...s1.results!, stages: s1.results!.stages.map((st, i) => (i ? st : { ...st, gauss: st.gauss.map((x) => (x.id === g.id ? { ...x, naturalCoords: coords } : x)) })) },
+    contour: { ...s1.contour, join: { ...j, extrapolation: { corners: null, matrix } } },
+  });
+  const fb = contourView(withVerdict(none.matrix!, null));
+  assert.ok(fb.state === "element" && fb.topology === "element_mean_averaged" && fb.fallback?.asked === "gauss_node", JSON.stringify(fb.state));
+  // A refusal of any other words (review F1's non-finite coordinate), alone or beside it, stays a refusal.
+  for (const matrix of ["group quads_G4: its _natural_coords hold a non-finite value", `${none.matrix!}; group tris_G1: its _natural_coords hold a non-finite value`]) {
+    const v = contourView(withVerdict(matrix, null));
+    assert.ok(v.state === "refused" && v.code === "unsupported", matrix);
+  }
+  // A group that carries coordinates: the no-coordinates words are not its words, so refused, never substituted.
+  const v = contourView(withVerdict(none.matrix!, g.naturalCoords));
+  assert.ok(v.state === "refused" && v.code === "unsupported");
+  h.effects.dispose();
 });
