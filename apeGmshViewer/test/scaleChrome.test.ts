@@ -93,7 +93,7 @@ test("#2944 review: a banner at its height cap never pushes the colour scales of
     const cap = cssPx(capped, "max-height", { vh });
     assert.equal(cap, vh - 180, `the banner's cap at ${vh} px`);
     for (const bannerTop of [58, 106]) {
-      const t = cssPx(SCALE, "top", { bannerTop, bannerH: cap!, vh })!;
+      const t: number = cssPx(SCALE, "top", { bannerTop, bannerH: cap!, vh })!;
       // It starts by half the height (never above 168 px), painting over the banner's tail, and leaves the
       // horizontal contour scale (131 px drawn in the D7 still) room above the bottom bound.
       assert.equal(t, Math.max(168, vh / 2), `${vh} px viewport, banner at ${bannerTop} px`);
