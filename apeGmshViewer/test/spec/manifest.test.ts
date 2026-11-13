@@ -349,3 +349,33 @@ test("a refused shot's entry: the reason, no still, and no view it never drew", 
   assert.equal(e.pairing.state, "paired");
   assert.equal(e.files.results!.size, statSync(fx("contour_nodata.results.h5")).size);
 });
+
+// ---- VF (#2940, #2924 item 2): gauss_node with no natural coordinates falls back to cell_averaged, labelled ----
+
+test("VF #2940 (#2924 item 2): a gauss_node shot on a group with no natural coordinates draws that group cell_averaged and says so in the manifest (groups, reason) and the banner", async () => {
+  const h = await opened(fx("extrap_solid.h5"), fx("extrap_solid.results.h5"));
+  try {
+    // What the reader gives a BezierTet10's barycentric Gauss group: no natural coordinates.
+    h.store.get().results!.stages[0]!.gauss.find((x) => x.id === "hex_G8")!.naturalCoords = null;
+    const { entry } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "stress_xx", gauss: "node" } }));
+    const k = entry.contour;
+    assert.ok(k?.drawn);
+    assert.equal(k.topology, "gauss_node");
+    assert.deepEqual([k.topology_fallback?.drawn, k.topology_fallback?.groups], ["cell_averaged", ["hex_G8"]]);
+    assert.equal(k.topology_fallback?.asked, "gauss_node");
+    assert.match(k.topology_fallback!.reason, /^group hex_G8 has no natural coordinates these shape functions can read/);
+    const line = entry.banner.find((b) => b.startsWith("Element contour stress:"));
+    assert.ok(line && line.includes("gives its mean to its corners (cell_averaged)") && line.includes(k.topology_fallback!.reason), entry.banner.join(" | "));
+    // The numbers are the cell_averaged shot's own: the substitution draws exactly what cell_averaged draws.
+    const { entry: asked } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "stress_xx", gauss: "cell_averaged" } }));
+    const a = asked.contour;
+    assert.ok(a?.drawn);
+    assert.equal(a.topology, "element_mean_averaged");
+    assert.equal(a.topology_fallback, undefined, "cell_averaged asked: nothing substituted");
+    assert.deepEqual([k.extrema, k.no_data, k.range.min, k.range.max], [a.extrema, a.no_data, a.range.min, a.range.max]);
+    assert.ok(!asked.banner.some((b) => b.startsWith("Element contour stress:")));
+  } finally {
+    h.effects.dispose();
+    h.host.close();
+  }
+});

@@ -16,13 +16,18 @@
 //   M4 an average that drops a point   -> "element_mean: ..." and the gaussCellValues unit test
 
 import assert from "node:assert/strict";
+import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import * as h5wasm from "h5wasm/node";
 import { openModel } from "../../src/reader/node.ts";
+import { applyPlan, planFor } from "../../src/state/extrapolation.ts";
 import { contourShownKey, elementColours, toLinear } from "../../src/renderer/contour.ts";
 import { elementMaskOf, visibleMaps } from "../../src/renderer/visible.ts";
 import { gaussCellValues, gaussFields, joinElements, NO_DATA_RGB, rampT, sampleCmap } from "../../src/state/contour.ts";
-import { contourFieldsOf, contourView, deformView, noticesOf } from "../../src/state/selectors.ts";
+import { contourFieldsOf, contourView, deformView, fallbackNotice, noticesOf } from "../../src/state/selectors.ts";
 import type { GaussGroup, State } from "../../src/state/types.ts";
 import { opened, STAGED, until } from "./harness.ts";
 
@@ -311,4 +316,61 @@ test("joinElements joins by FEM id only: a duplicate row is refused, and an unkn
   assert.ok(!dup.ok && dup.code === "duplicate-id" && /element 5 has two rows/.test(dup.reason));
   const unk = joinElements(decls as never, [{ id: "a", eids: Float64Array.from([5, 1, 2, 3, 4, 6, 7]) }]);
   assert.ok(!unk.ok && unk.code === "unknown-id" && /names 6 element ids the model has no cell for \(1, 2, 3, 4, 6, \.\.\.\)/.test(unk.reason));
+});
+
+// ---- VF (#2940, #2924 item 2): a .ladruno group whose Gauss points are barycentric ----
+
+/**
+ * ladruno_quad2d.ladruno with its element group's PARAM_DOMAIN set to "bary", as the fork writes a BezierTet10's:
+ * reader/ladrunoElements.ts reads the values and offers no natural coordinates. The oracle is Python's own read of
+ * the file's Gauss values (fixtures/ladruno_quad2d.oracle.json, LadrunoReader.read_gauss: element and value of each
+ * point), reduced here as cell_averaged is defined: each element's mean, averaged at its corner nodes. The corners are
+ * the fork run's grid (test/results/ladrunoGauss.test.ts states it: 3 x 2 unit quads, nodes row by row).
+ */
+test("VF #2940: gauss_node on a .ladruno group with PARAM_DOMAIN \"bary\" draws Python's values as cell_averaged, and the banner says so", async () => {
+  const p = join(mkdtempSync(join(tmpdir(), "agv-vf-bary-")), "ladruno_quad2d.ladruno");
+  copyFileSync(fx("ladruno_quad2d.ladruno"), p);
+  await h5wasm.ready;
+  const f = new h5wasm.File(p, "a");
+  try {
+    const g = f.get("/MODEL_STAGE[1]/MODEL/ELEMENTS/31-FourNodeQuad[201:0]") as unknown as { delete_attribute(n: string): number; create_attribute(n: string, v: string): void };
+    g.delete_attribute("PARAM_DOMAIN");
+    g.create_attribute("PARAM_DOMAIN", "bary");
+  } finally {
+    f.close();
+  }
+  const h = await opened(fx("ladruno_quad2d.h5"), p);
+  try {
+    const grp = h.store.get().results!.stages[0]!.gauss.find((x) => x.id.startsWith("stress/"))!;
+    assert.equal(grp.naturalCoords, null, "the reader offers no natural coordinates for a barycentric domain");
+    h.store.dispatch({ type: "setContourGauss", mode: "node" });
+    const v = await pickElement(h, "stress", "stress/sigma11", 0, 1);
+    assert.equal(v.topology, "gauss_node");
+    assert.deepEqual(v.fallback?.groups, [grp.id], "its one group draws its element means");
+    assert.equal(v.fallback?.asked, "gauss_node");
+    assert.match(v.fallback!.reason, /has no natural coordinates .*PARAM_DOMAIN is not "\[-1,1\]"/);
+    assert.ok(noticesOf(h.store.get()).includes(fallbackNotice(v)), noticesOf(h.store.get()).join("\n"));
+
+    // Python's values, reduced as cell_averaged: element means, averaged at the corner nodes.
+    const ORACLE = JSON.parse(readFileSync(fx("ladruno_quad2d.oracle.json"), "utf8")) as { reads: { component: string; step: number; points: { element: number; value: number }[] }[] };
+    const read = ORACLE.reads.find((r) => r.component === "stress/sigma11" && r.step === 1)!;
+    const CONN: Record<number, number[]> = { 1: [1, 2, 6, 5], 2: [2, 3, 7, 6], 3: [3, 4, 8, 7], 4: [5, 6, 10, 9], 5: [6, 7, 11, 10], 6: [7, 8, 12, 11] };
+    const mean = new Map<number, number>();
+    for (const e of Object.keys(CONN).map(Number)) {
+      const vals = read.points.filter((x) => x.element === e).map((x) => x.value);
+      assert.equal(vals.length, 4);
+      mean.set(e, vals.reduce((a, b) => a + b, 0) / 4);
+    }
+    const plan = planFor(v as Parameters<typeof planFor>[0], h.store.get(), h.blobs);
+    const r = applyPlan(plan, v.groups.map((g) => h.effects.currentStep()!.gauss[g.id]!));
+    assert.deepEqual([...plan.nodeIds], Array.from({ length: 12 }, (_, i) => i + 1));
+    plan.nodeIds.forEach((n, i) => {
+      const around = Object.entries(CONN).filter(([, ns]) => ns.includes(n)).map(([e]) => mean.get(Number(e))!);
+      const want = around.reduce((a, b) => a + b, 0) / around.length;
+      assert.ok(Math.abs(r.nodal![i]! - want) <= 1e-12 * Math.max(1, Math.abs(want)), `node ${n}: ${r.nodal![i]} vs ${want}`);
+    });
+  } finally {
+    h.effects.dispose();
+    h.host.close();
+  }
 });

@@ -36,13 +36,14 @@ import {
   cornerVertexValues,
   extrapolationMatrix,
   extrapolationVerdict,
+  meanFallbackGroups,
   pinv,
   planFor,
   shapeOf,
   type ExtrapPlan,
   type PlanValues,
 } from "../../src/state/extrapolation.ts";
-import { contourView } from "../../src/state/selectors.ts";
+import { contourView, elementJoinKey, fallbackNotice, noticesOf } from "../../src/state/selectors.ts";
 import type { GaussMode, State } from "../../src/state/types.ts";
 import { opened, until } from "./harness.ts";
 
@@ -535,4 +536,180 @@ test("simplex rows that match neither table refuse that group by name: one warni
   } finally {
     rf.close();
   }
+});
+
+// -- VF (#2940): gauss_node groups with no natural coordinates draw their element means, per group, labelled -------
+//   X7 the fallback removed (main before #2940)          -> every VF test below
+//   X8 the fallback taken on any matrix refusal           -> "only the no-coordinates refusal falls back ..."
+//   X9 the fallback taken for gauss_node_discrete too     -> "... node_discrete stays refused"
+//   X12 the whole field falls back, not the group         -> "a mixed field ..." (both)
+
+test("VF #2940: a BezierTet10-like group with no natural coordinates is the verdict's whole refusal, so gauss_node may fall back; any other refusal next to it keeps it refused", () => {
+  // A tet10 (gmsh 11, 10 nodes) group of 4 Gauss points whose points the reader offers no coordinates for (barycentric).
+  const tet10 = { id: "rec_BezierTet10", nElements: 1, nGauss: 4, eids: Float64Array.of(1), naturalCoords: null };
+  const cell = legacyCell(11, 10);
+  const v = extrapolationVerdict([tet10], cell);
+  assert.equal(v.corners, null);
+  assert.deepEqual(meanFallbackGroups([tet10], v), ["rec_BezierTet10"]);
+  // A gauss_node plan builds only when it is told to draw exactly that group's element means.
+  assert.throws(() => buildPlan("gauss_node", [tet10], cell), /buildPlan: group rec_BezierTet10 has no natural coordinates/);
+  assert.throws(() => buildPlan("gauss_node", [tet10], cell, ["other"]), /buildPlan: group rec_BezierTet10 has no natural coordinates/);
+  assert.throws(() => buildPlan("gauss_node_discrete", [tet10], cell, ["rec_BezierTet10"]), /buildPlan: group rec_BezierTet10 has no natural coordinates/);
+  const mean = applyPlan(buildPlan("gauss_node", [tet10], cell, ["rec_BezierTet10"]), [Float64Array.of(1, 2, 3, 6)]);
+  assert.deepEqual([...mean.nodal!], [3, 3, 3, 3], "each corner node takes the element's mean (1 + 2 + 3 + 6) / 4");
+
+  // A group with readable coordinates beside it adds no refusal: the tet10 group alone is named.
+  const g = 1 / Math.sqrt(3);
+  const quad = { id: "quads_G4", nElements: 1, nGauss: 4, eids: Float64Array.of(2), naturalCoords: [[-g, -g], [g, -g], [g, g], [-g, g]] };
+  const cells = (id: number) => (id === 1 ? cell() : { code: 3, nodes: [11, 12, 13, 14] });
+  const both = extrapolationVerdict([quad, tet10], cells);
+  assert.deepEqual(meanFallbackGroups([quad, tet10], both), ["rec_BezierTet10"]);
+  // A group the verdict does not refuse is never drawn as a mean.
+  assert.throws(() => buildPlan("gauss_node", [quad, tet10], cells, ["quads_G4", "rec_BezierTet10"]), /buildPlan: /);
+  assert.throws(() => buildPlan("gauss_node", [quad], cells, ["quads_G4"]), /the verdict refuses none of them/);
+
+  // Any other refusal keeps the field refused: too few columns, a non-finite coordinate, a type with no corners.
+  const short = { ...quad, naturalCoords: [[0], [0], [0], [0]] };
+  assert.equal(meanFallbackGroups([short, tet10], extrapolationVerdict([short, tet10], cells)), null);
+  const nan = { ...quad, naturalCoords: [[NaN, -g], [g, -g], [g, g], [-g, g]] };
+  assert.equal(meanFallbackGroups([nan, tet10], extrapolationVerdict([nan, tet10], cells)), null);
+  const pyramid = extrapolationVerdict([tet10], () => ({ code: 7, nodes: [1, 2, 3, 4, 5] }));
+  assert.ok(pyramid.corners);
+  assert.equal(meanFallbackGroups([tet10], pyramid), null);
+  // A verdict with nothing to refuse, or a refusal of other words, never falls back.
+  assert.equal(meanFallbackGroups([quad], extrapolationVerdict([quad], cells)), null);
+  assert.equal(meanFallbackGroups([tet10], { corners: null, matrix: "group rec_BezierTet10: bad" }), null);
+});
+
+test("VF #2940: gauss_node on a field whose one group has no natural coordinates draws Python's cell_averaged values and colours, and the banner names the group; node_discrete stays refused", async () => {
+  const h = await opened(fx("extrap_solid.h5"), fx("extrap_solid.results.h5"));
+  // What the reader gives a BezierTet10's barycentric Gauss group (reader/ladrunoElements.ts): no natural coordinates.
+  const grp = h.store.get().results!.stages[0]!.gauss.find((x) => x.id === "hex_G8")!;
+  grp.naturalCoords = null;
+  const o = ORACLE["extrap_solid"]!["stress_xx"]!;
+  const k = 2;
+  const v = await pick(h, "stress_xx", "node", k);
+  assert.equal(v.topology, "gauss_node");
+  assert.deepEqual([v.fallback?.asked, v.fallback?.drawn, v.fallback?.groups], ["gauss_node", "cell_averaged", ["hex_G8"]], "its one group draws cell_averaged, as the owner ruled (#2924 item 2)");
+  assert.match(v.fallback!.reason, /^group hex_G8 has no natural coordinates these shape functions can read/);
+  assert.match(v.topologyLabel, /; group\(s\) hex_G8: each element's mean \(cell_averaged\), no natural coordinates$/);
+  const a = appValues(h, v);
+  checkAveraged(o.cell_averaged, k, appNodal(a.plan, a.r), "gauss_node fallback");
+  const rc = range(o.cell_averaged.values[k]!);
+  assert.ok(rel(v.clim.min!, rc.min) && rel(v.clim.max!, rc.max), `the step range is of the values drawn: ${v.clim.min}..${v.clim.max} vs ${rc.min}..${rc.max}`);
+  const elems = new Set(o.gauss_node_discrete.element_ids);
+  const cc = checkColours(h, v, (e, n) => (elems.has(e) ? o.cell_averaged.values[k]![o.cell_averaged.node_ids.indexOf(n)]! : null));
+  assert.equal(cc.noData, 0);
+  const line = noticesOf(h.store.get()).find((n) => n.startsWith("Element contour stress:"));
+  assert.equal(line, fallbackNotice(v));
+  assert.match(
+    line!,
+    /^Element contour stress: group\(s\) hex_G8 cannot be extrapolated to the nodes \(gauss_node\), so each of their elements gives its mean to its corners \(cell_averaged\), averaged at the nodes\. Why: group hex_G8 has no natural coordinates .*a native _natural_coords that is not floating point opens with no warning\)\.$/,
+  );
+  assert.ok(!noticesOf(h.store.get()).some((n) => n.startsWith("Element contour refused")), "a substitution, not a refusal");
+
+  // The discrete topology asked for no averaging, so it is not substituted: it stays unsupported.
+  h.store.dispatch({ type: "setContourGauss", mode: "node_discrete" });
+  await until(() => contourView(h.store.get()).state === "refused", "node_discrete refused");
+  const d = contourView(h.store.get());
+  assert.ok(d.state === "refused" && d.code === "unsupported" && /gauss_node_discrete is unsupported: group hex_G8 has no natural coordinates/.test(d.reason));
+  // Asked cell_averaged, nothing is substituted, and no substitution line shows.
+  const ca = await pick(h, "stress_xx", "cell_averaged", k);
+  assert.equal(ca.fallback, null);
+  assert.ok(!noticesOf(h.store.get()).some((n) => n.startsWith("Element contour stress:")));
+  h.effects.dispose();
+});
+
+test("VF #2940: only the no-coordinates refusal falls back; other words keep gauss_node refused, and a field that extrapolates draws gauss_node with no substitution", async () => {
+  const h = await opened(fx("extrap_plane.h5"), fx("extrap_plane.results.h5"));
+  const ok = await pick(h, "stress_xx", "node", 0);
+  assert.equal(ok.topology, "gauss_node");
+  assert.equal(ok.fallback, null);
+  const s1 = h.store.get();
+  const j = s1.contour.join!;
+  assert.ok(j.ok);
+  const g = s1.results!.stages[0]!.gauss.find((x) => x.id === "quads_G4")!;
+  // The verdict's own no-coordinates words for quads_G4.
+  const none = extrapolationVerdict([{ id: g.id, nElements: 1, nGauss: g.nGauss, eids: Float64Array.of(1), naturalCoords: null }], () => ({ code: 3, nodes: [1, 2, 3, 4] }));
+  const withVerdict = (matrix: string, coords: number[][] | null): State => ({
+    ...s1,
+    results: { ...s1.results!, stages: s1.results!.stages.map((st, i) => (i ? st : { ...st, gauss: st.gauss.map((x) => (x.id === g.id ? { ...x, naturalCoords: coords } : x)) })) },
+    contour: { ...s1.contour, join: { ...j, extrapolation: { corners: null, matrix } } },
+  });
+  const fb = contourView(withVerdict(none.matrix!, null));
+  assert.ok(fb.state === "element" && fb.topology === "gauss_node", JSON.stringify(fb.state));
+  assert.deepEqual(fb.fallback?.groups, ["quads_G4"], "the one multi-point group; tris_G1 (one point) needs no coordinates");
+  // A refusal of any other words (review F1's non-finite coordinate), alone or beside it, stays a refusal.
+  for (const matrix of ["group quads_G4: its _natural_coords hold a non-finite value", `${none.matrix!}; group tris_G1: its _natural_coords hold a non-finite value`]) {
+    const v = contourView(withVerdict(matrix, null));
+    assert.ok(v.state === "refused" && v.code === "unsupported", matrix);
+  }
+  // A group that carries coordinates: the no-coordinates words are not its words, so refused, never substituted.
+  const v = contourView(withVerdict(none.matrix!, g.naturalCoords));
+  assert.ok(v.state === "refused" && v.code === "unsupported");
+  h.effects.dispose();
+});
+
+test("VF #2940: a mixed field draws per group: the group with coordinates keeps Python's extrapolated corners, the BezierTet10 group with none gets its element mean (real file values)", () => {
+  // legacy_simplex_capture_tet: a TenNodeTetrahedron and a BezierTet10 group, 4 points each, one element each, from a live solve.
+  // The BezierTet10's coordinates are removed as the reader removes a barycentric group's; the TenNodeTetrahedron keeps its own.
+  const rf = openResults(H5, fx("legacy_simplex_capture_tet.results.h5"));
+  try {
+    const st = rf.index.stages[0]!;
+    const spec = LEGACY["legacy_simplex_capture_tet.results.h5"]!;
+    const ten = st.gauss.find((g) => g.id === "rec_TenNodeTetrahedron_1")!;
+    const bez = st.gauss.find((g) => g.id === "rec_BezierTet10_2")!;
+    // Element 1 on nodes 1..10, element 2 on the same corners 1..4 and nodes 11..16: the two meet at every corner node.
+    const groups = [
+      { id: ten.id, nElements: 1, nGauss: ten.nGauss, eids: Float64Array.of(1), naturalCoords: ten.naturalCoords },
+      { id: bez.id, nElements: 1, nGauss: bez.nGauss, eids: Float64Array.of(2), naturalCoords: null },
+    ];
+    const cells = (id: number) => ({ code: 11, nodes: id === 1 ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] : [1, 2, 3, 4, 11, 12, 13, 14, 15, 16] });
+    assert.deepEqual(meanFallbackGroups(groups, extrapolationVerdict(groups, cells)), [bez.id]);
+    const plan = buildPlan("gauss_node", groups, cells, [bez.id]);
+    const tenRows = rf.elementIds(st.id, ten.id);
+    const py = LEGACY_ORACLE["legacy_simplex_capture_tet.results.h5"]![String((tenRows.mapping === "fem_eid" ? tenRows.ids : tenRows.rawIndex)[0])]!;
+    for (const comp of spec.comps) {
+      const tv = rf.readGaussStep(st.id, ten.id, comp, 0);
+      const bv = rf.readGaussStep(st.id, bez.id, comp, 0);
+      const r = applyPlan(plan, [tv, bv]);
+      const bmean = bv.reduce((a, b) => a + b, 0) / bv.length;
+      const tmean = tv.reduce((a, b) => a + b, 0) / tv.length;
+      for (let c = 0; c < 4; c++) {
+        // Each element's own corner value: the TenNodeTetrahedron's is Python's extrapolation, the BezierTet10's its mean.
+        assert.ok(rel(r.corner[c]!, py[comp]![c]!), `${comp}: TenNodeTetrahedron corner ${c + 1}: ${r.corner[c]} vs Python ${py[comp]![c]}`);
+        assert.ok(rel(r.corner[4 + c]!, bmean), `${comp}: BezierTet10 corner ${c + 1}: ${r.corner[4 + c]} vs its element mean ${bmean}`);
+        // Where it is drawn: the shared node averages the two, and a vertex of either element shows that average.
+        const node = plan.nodeIds.indexOf(c + 1);
+        assert.ok(rel(r.nodal![node]!, (py[comp]![c]! + bmean) / 2), `${comp}: node ${c + 1}`);
+        assert.deepEqual([...cornerVertexValues(plan, r, Int32Array.of(c, 4 + c))], [r.nodal![node]!, r.nodal![node]!]);
+      }
+      // The extrapolated corners are not the TenNodeTetrahedron's own mean, so a whole-field fallback reads differently here.
+      assert.ok([0, 1, 2, 3].some((c) => !rel(r.corner[c]!, tmean)), `${comp}: extrapolation differs from the element mean`);
+    }
+  } finally {
+    rf.close();
+  }
+});
+
+test("VF #2940: a mixed view keeps gauss_node, names only the refused group, and the banner says the others are extrapolated", async () => {
+  const h = await opened(fx("extrap_solid.h5"), fx("extrap_solid.results.h5"));
+  await pick(h, "stress_xx", "node", 0);
+  const s1 = h.store.get();
+  const j = s1.contour.join!;
+  assert.ok(j.ok);
+  const hex = s1.results!.stages[0]!.gauss.find((x) => x.id === "hex_G8")!;
+  // A second multi-point group beside hex_G8 with no coordinates, as the reader gives a BezierTet10's (state only: never drawn here).
+  const tet = { ...hex, id: "rec_BezierTet10", naturalCoords: null };
+  const noCoords = extrapolationVerdict([{ id: tet.id, nElements: 1, nGauss: 4, eids: Float64Array.of(1), naturalCoords: null }], () => ({ code: 11, nodes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }));
+  const mixed: State = { ...s1, results: { ...s1.results!, stages: s1.results!.stages.map((st, i) => (i ? st : { ...st, gauss: [...st.gauss, tet] })) } };
+  // The field reads both groups now, so its join key names both: carry the verdict under that key.
+  const key = elementJoinKey(mixed)!;
+  assert.notEqual(key, j.key);
+  const v = contourView({ ...mixed, contour: { ...mixed.contour, join: { ...j, key, extrapolation: { corners: null, matrix: noCoords.matrix } } } });
+  assert.ok(v.state === "element", JSON.stringify(v));
+  assert.equal(v.topology, "gauss_node", "the extrapolable group stays at the nodes");
+  assert.deepEqual(v.fallback?.groups, ["rec_BezierTet10"]);
+  assert.match(fallbackNotice(v), /^Element contour stress: group\(s\) rec_BezierTet10 cannot be extrapolated .* Group\(s\) hex_G8 are extrapolated to the nodes \(gauss_node\) as asked\. Why: /);
+  h.effects.dispose();
 });

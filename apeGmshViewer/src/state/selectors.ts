@@ -32,7 +32,7 @@ import {
   type FieldComponent,
   type NodalField,
 } from "./contour.ts";
-import { usesMatrix } from "./extrapolation.ts";
+import { meanFallbackGroups, usesMatrix } from "./extrapolation.ts";
 import { tensorFields, type TensorField } from "./tensor.ts";
 import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
@@ -542,6 +542,8 @@ export function noticesOf(s: State): string[] {
   for (const g of st?.gauss ?? []) for (const r of g.refused) out.push(`Element component ${r.component} of group ${g.id} not read: ${r.reason}.`);
   const ev = contourView(s);
   if (ev.state === "refused") out.push(ev.code === "combination" || ev.code === "difference" || ev.code === "user" ? `Contour not drawn: ${ev.reason}.` : `Element contour refused: ${ev.reason}.`);
+  // VF (#2940): a gauss_node pick drawn cell_averaged says so.
+  if (ev.state === "element" && ev.fallback) out.push(fallbackNotice(ev));
   // VU10: a newer manifest's banner (ADR 0132 D2), and the nodes a difference cannot give a value.
   if (s.variants.study?.newer) out.push(s.variants.study.newer);
   // VU9a (ADR 0132 D2, D6): a newer workspace is shown read-only, and an unreadable one moved aside is named, once per rename.
@@ -556,6 +558,18 @@ export function noticesOf(s: State): string[] {
   const d = deformNotice(s);
   if (d) out.push(d);
   return out;
+}
+
+/** VF (#2940): the banner's line for the groups of a `gauss_node` contour drawn `cell_averaged` (their element means). */
+export function fallbackNotice(v: Extract<ContourView, { state: "element" }>): string {
+  const f = v.fallback;
+  if (!f) throw new Error(`fallbackNotice: element field ${v.field} is drawn as asked (${v.topology})`);
+  const extrapolated = v.groups.filter((g) => g.nGauss > 1 && !f.groups.includes(g.id)).map((g) => g.id);
+  const rest = extrapolated.length ? ` Group(s) ${extrapolated.join(", ")} are extrapolated to the nodes (gauss_node) as asked.` : "";
+  return (
+    `Element contour ${v.field}: group(s) ${f.groups.join(", ")} cannot be extrapolated to the nodes (gauss_node), so each of their elements ` +
+    `gives its mean to its corners (cell_averaged), averaged at the nodes.${rest} Why: ${f.reason}.`
+  );
 }
 
 // -- V4c1: the nodal contour ----------------------------------------------------
@@ -602,6 +616,14 @@ export type ContourView =
       topology: ElementTopology;
       /** what the legend states for the topology (the averaging, in words) */
       topologyLabel: string;
+      /**
+       * VF (#2940): `topology` is `gauss_node`, and `groups` have no natural
+       * coordinates, so each of their elements gives its mean to its corners
+       * (`cell_averaged`) while every other group is extrapolated; `reason` is
+       * the verdict that refused them. Null when every group is drawn as asked.
+       * The banner and the manifest state it.
+       */
+      fallback: { asked: "gauss_node"; drawn: "cell_averaged"; groups: string[]; reason: string } | null;
       nGauss: number[];
       groups: ElementGroupDraw[];
       stageName: string;
@@ -756,7 +778,12 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
   if (!j || j.key !== joinKey) return { state: "unavailable", reason: "the element rows are being joined to the mesh" };
   if (!j.ok) return { state: "refused", code: j.code, reason: `element field ${c.field}: ${j.reason}` };
   // V4c2b: a node-located topology the field's types or natural coordinates cannot carry reads "unsupported", never a guess.
-  if (isNodeTopology(topology)) {
+  // VF (#2940, the owner's rulings on #2924 item 2): the groups of a gauss_node field refused only because they have no
+  // natural coordinates (a BezierTet10's barycentric points) draw their element means (cell_averaged), per group; every
+  // other group is still extrapolated, and the banner and the manifest name the groups that were not.
+  const meanGroups = topology === "gauss_node" ? meanFallbackGroups(groups, j.extrapolation) : null;
+  const fallback = meanGroups ? { asked: "gauss_node" as const, drawn: "cell_averaged" as const, groups: meanGroups, reason: j.extrapolation.matrix! } : null;
+  if (isNodeTopology(topology) && !fallback) {
     const why = j.extrapolation.corners ?? (usesMatrix(topology) ? j.extrapolation.matrix : null);
     if (why !== null) return { state: "refused", code: "unsupported", reason: `element field ${c.field}: ${topology} is unsupported: ${why}` };
   }
@@ -767,7 +794,8 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
     field: c.field,
     component: hit.component,
     topology,
-    topologyLabel: topologyLabel(topology, hit.field.nGauss),
+    topologyLabel: topologyLabel(topology, hit.field.nGauss) + (fallback ? `; group(s) ${fallback.groups.join(", ")}: each element's mean (cell_averaged), no natural coordinates` : ""),
+    fallback,
     nGauss: hit.field.nGauss,
     groups,
     stageName: label,

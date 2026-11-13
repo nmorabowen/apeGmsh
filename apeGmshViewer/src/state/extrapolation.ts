@@ -192,6 +192,35 @@ export interface PlanGroupInput {
 /** An element's cell as the model has it: its gmsh code and its connectivity row (node tags, corners first). */
 export type CellOf = (femId: number) => { code: number; nodes: ArrayLike<number> } | null;
 
+/** The verdict's words for a group with several Gauss points and no natural coordinates (`naturalCoords` null). */
+function noCoordinatesRefusal(id: string): string {
+  return (
+    `group ${id} has no natural coordinates these shape functions can read: a native _natural_coords that is not floating point, ` +
+    `a native triangle or tet group whose _natural_coords match neither the Gauss table older apeGmsh versions wrote for its class nor the current one (#2274), ` +
+    `a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]", or a .ladruno group with no QUADRATURE/GP_PARAM ` +
+    `(for the last three, a warning when the file opened names the class or the domain; ` +
+    `a native _natural_coords that is not floating point opens with no warning)`
+  );
+}
+
+/**
+ * VF (#2940, the owner's rulings on #2924 item 2): the groups whose only
+ * reason a `gauss_node` field cannot be drawn is that they have no natural
+ * coordinates (a BezierTet10's barycentric Gauss points, which the reader
+ * offers none for), when that is the verdict's whole refusal; null otherwise.
+ * Those groups, and only those, are drawn `cell_averaged` (each element's
+ * mean on its corners, which needs no coordinates; `buildPlan`'s
+ * `meanGroups`); every other group of the field is still extrapolated, and
+ * the caller says so. The match is exact: a corner refusal, or any other
+ * matrix refusal next to it (too few columns, a non-finite coordinate, no
+ * finite matrix), returns null, so the field stays refused.
+ */
+export function meanFallbackGroups(groups: readonly { id: string; nGauss: number; naturalCoords: readonly (readonly number[])[] | null }[], v: ExtrapolationVerdict): string[] | null {
+  if (v.corners !== null || v.matrix === null) return null;
+  const ids = groups.filter((g) => g.nGauss > 1 && !g.naturalCoords).map((g) => g.id);
+  return ids.length && v.matrix === ids.map(noCoordinatesRefusal).join("; ") ? ids : null;
+}
+
 /** The verdict on a field's groups (each element's type through `cellOf`). */
 export function extrapolationVerdict(groups: readonly PlanGroupInput[], cellOf: CellOf): ExtrapolationVerdict {
   const corners: string[] = [];
@@ -219,14 +248,7 @@ export function extrapolationVerdict(groups: readonly PlanGroupInput[], cellOf: 
     if (g.nGauss > 1) {
       // #2187: a `.ladruno` group offers none when its QUADRATURE's PARAM_DOMAIN is not the [-1,1] these shape functions read;
       // #2274: a native simplex group offers none when its rows are neither its class's older table nor its current one.
-      if (!g.naturalCoords) {
-        matrix.push(
-          `group ${g.id} has no natural coordinates these shape functions can read: a native _natural_coords that is not floating point, ` +
-            `a native triangle or tet group whose _natural_coords match neither the Gauss table older apeGmsh versions wrote for its class nor the current one (#2274), ` +
-            `a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]", or a .ladruno group with no QUADRATURE/GP_PARAM ` +
-            `(the warning shown when the file opened names the class or the domain)`,
-        );
-      }
+      if (!g.naturalCoords) matrix.push(noCoordinatesRefusal(g.id));
       else {
         for (const code of codes) {
           if (!extrapolationMatrix(code, g.naturalCoords)) {
@@ -271,11 +293,21 @@ export interface ExtrapPlan {
 /**
  * The plan of a field: each element's corners (the first `nc` nodes of its
  * row) and matrix. Throws when the verdict says it cannot be built: the
- * caller shows "unsupported" before ever asking for a plan.
+ * caller shows "unsupported" before ever asking for a plan. VF (#2940):
+ * `meanGroups` are the groups a `gauss_node` field draws as each element's
+ * mean (no matrix); they must be exactly `meanFallbackGroups` of the verdict,
+ * else this throws, so a group is never drawn as a mean by accident.
  */
-export function buildPlan(topology: NodeTopology, groups: readonly PlanGroupInput[], cellOf: CellOf): ExtrapPlan {
+export function buildPlan(topology: NodeTopology, groups: readonly PlanGroupInput[], cellOf: CellOf, meanGroups: readonly string[] = []): ExtrapPlan {
   const v = extrapolationVerdict(groups, cellOf);
-  if (v.corners || (usesMatrix(topology) && v.matrix)) throw new Error(`buildPlan: ${v.corners ?? v.matrix}`);
+  if (v.corners) throw new Error(`buildPlan: ${v.corners}`);
+  if (usesMatrix(topology) && v.matrix) {
+    const fb = topology === "gauss_node" ? meanFallbackGroups(groups, v) : null;
+    if (!fb || fb.length !== meanGroups.length || fb.some((id, i) => id !== meanGroups[i])) throw new Error(`buildPlan: ${v.matrix}`);
+  } else if (meanGroups.length) {
+    throw new Error(`buildPlan: groups ${meanGroups.join(", ")} are asked to draw their element means, and the verdict refuses none of them (${topology})`);
+  }
+  const mean = new Set(meanGroups);
   const corners: number[] = [];
   const out: ExtrapPlan["groups"] = [];
   for (const g of groups) {
@@ -291,7 +323,7 @@ export function buildPlan(topology: NodeTopology, groups: readonly PlanGroupInpu
       let k = matOf.get(cell.code);
       if (k === undefined) {
         k = mats.length;
-        mats.push(usesMatrix(topology) && g.nGauss > 1 ? extrapolationMatrix(cell.code, g.naturalCoords!)! : null);
+        mats.push(usesMatrix(topology) && g.nGauss > 1 && !mean.has(g.id) ? extrapolationMatrix(cell.code, g.naturalCoords!)! : null);
         matOf.set(cell.code, k);
       }
       kind[e] = k;
@@ -414,6 +446,8 @@ let planMemo: { key: string; plan: ExtrapPlan } | null = null;
 export interface PlanView {
   joinKey: string;
   topology: NodeTopology;
+  /** VF (#2940): the groups a `gauss_node` field draws as element means (selectors `ContourView`), or null */
+  fallback: { groups: readonly string[] } | null;
   groups: readonly { id: string; nElements: number; nGauss: number; eids: BlobRef; naturalCoords: readonly (readonly number[])[] | null }[];
 }
 
@@ -423,14 +457,14 @@ export interface PlanView {
  * effects (step range, scan) and the viewport (colours) share it.
  */
 export function planFor(view: PlanView, s: { decls: Readonly<Record<DeclPath, Decl>>; blocks: readonly BlockInfo[] }, blobs: BlobStore): ExtrapPlan {
-  const key = `${view.joinKey}|${view.topology}`;
+  const key = `${view.joinKey}|${view.topology}|mean ${view.fallback?.groups.join(",") ?? ""}`;
   if (planMemo?.key === key) return planMemo.plan;
   const groups = view.groups.map((g) => {
     const eids = blobs.get(g.eids);
     if (!(eids instanceof Float64Array)) throw new TypeError(`element contour: ${g.eids.id} is not f64`);
     return { id: g.id, nElements: g.nElements, nGauss: g.nGauss, eids, naturalCoords: g.naturalCoords };
   });
-  const plan = buildPlan(view.topology, groups, cellLookup(s.decls, s.blocks, blobs));
+  const plan = buildPlan(view.topology, groups, cellLookup(s.decls, s.blocks, blobs), view.fallback?.groups ?? []);
   planMemo = { key, plan };
   return plan;
 }
