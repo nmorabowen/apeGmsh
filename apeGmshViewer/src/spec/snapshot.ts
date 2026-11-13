@@ -610,8 +610,9 @@ async function drawCompareUser(deps: ShownDeps, want: NonNullable<ShotPlan["comp
   for (;;) {
     const v = deps.store.get().variants;
     const c = v.compare;
-    if (c === null) return `${what} is not drawn: the compare set did not open${v.notice ? ` (${v.notice})` : ""}`;
+    if (c === null) return `${what} is not drawn: no compare set is open${v.notice ? ` (${v.notice})` : ""}`;
     if (c.label !== want.variant) return `${what} is not drawn: the compare set is ${JSON.stringify(c.label)}`;
+    if (c.status === "failed") return `${what} is not drawn: the compare set did not open: ${c.reason}`;
     const read = (x: { status: string } | null) => x !== null && x.status !== "reading";
     if (c.status === "open" && read(v.compareModel) && read(v.compareUser)) break;
     if (late()) return `${what} is not drawn: the compare set, its model and its user file were not read within ${SHOW_MS / 1000} s`;

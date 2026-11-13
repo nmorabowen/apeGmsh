@@ -478,6 +478,27 @@ test("VF2-d (#2956): a render spec names the compare result by variant plus entr
   h.effects.dispose();
 });
 
+test("VF2-d (#2956): a compare set that does not open refuses the compare result shot with main's reason, at once", async () => {
+  const h = harness();
+  if (!(await h.effects.open(UNCRACKED.model))) throw new Error("the window model did not load");
+  const { door } = compareDoor();
+  const runner = new VariantRunner(h.store, h.blobs, { ...door, variantsCompare: async () => ({ ok: false, reason: "the compare set's results did not open" }) }, () => null);
+  const off = runner.start();
+  h.store.dispatch({ type: "variantsRead", study: STUDY });
+  const v = validateSpec({ spec: "apegmsh-view/1", files: { model: UNCRACKED.model, variants: STUDY.manifest }, shots: [{ name: "s", compare: "Cracked", contour: { field: "footfall", component: "ratio", source: "user" } }] });
+  assert.ok(v.ok);
+  const shot = v.spec.shots[0]!;
+  const c = compileShot(shot, describeSet(h.store.get(), []), undefined, (label) => variantRowOf(h.store.get(), label));
+  assert.ok(c.ok, !c.ok ? c.reason : "");
+  for (const e of c.plan.events) h.store.dispatch(e);
+  const t0 = performance.now();
+  const why = await shownView({ store: h.store, onScreen: () => ({ contour: true, deform: false }), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), now: () => performance.now() }, shot, c.plan);
+  assert.equal(why, `user result "footfall" of the compare variant "Cracked" is not drawn: the compare set did not open: the compare set's results did not open`);
+  assert.ok(performance.now() - t0 < 5000, "refused when main answers, not at the 30 s limit");
+  off();
+  h.effects.dispose();
+});
+
 test("fail closed: a variant door without the compare doors is a broken build", () => {
   const h = harness();
   const { door } = compareDoor();
