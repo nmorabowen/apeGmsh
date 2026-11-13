@@ -431,6 +431,25 @@ def test_only_the_disagreeing_elements_are_named(
     ]
 
 
+@pytest.mark.parametrize("level", list(_LEVELS))
+def test_copies_that_differ_outside_the_time_slice_refuse(
+    tmp_path: Path, level: str,
+) -> None:
+    # g1's element 5 differs from g0's at step 1 only. Copies are compared
+    # over every step, so a read of step 0 alone refuses too (delta
+    # review of #2928).
+    write, cat, _ = _LEVELS[level]
+    path = tmp_path / "run.h5"
+    _write(path, write, [("g0", [5, 6], 1), ("g1", [5, 6], 1)])
+    rows = slice(0, 2) if level in _PER_ROW else slice(0, 1)
+    with h5py.File(path, "r+") as f:
+        f[f"{_P0}/{cat}/g1/{_COMPONENT[level]}"][1, rows] += 1.0
+    for time_slice in (None, [1], [0]):
+        err = _refused(path, level, time_slice=time_slice)
+        assert err.shape == "groups"
+        assert list(err.repeated) == [5]
+
+
 def test_an_element_twice_in_one_group_refuses_even_when_it_agrees(
     tmp_path: Path,
 ) -> None:

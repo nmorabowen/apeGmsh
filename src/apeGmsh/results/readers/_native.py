@@ -1197,7 +1197,9 @@ class NativeReader:
                 )
                 sel_eidx = eidx[elem_sel]
                 full = grp[component][...]                  # (T, E_g, n_gp)
-                values_es = full[t_idx][:, elem_sel, :]
+                # Every step: copies are compared over the whole record,
+                # not just the slice this read returns.
+                values_es = full[:, elem_sel, :]
                 quat = (
                     np.asarray(
                         grp[_native.DSET_LOCAL_AXES_QUATERNION][...],
@@ -1234,7 +1236,9 @@ class NativeReader:
             if c.ids.size and not k.any():
                 continue                # every element a kept copy's twin
             sel_eidx = c.ids[k]
-            values_es = c.values if k.all() else c.values[:, k, :]
+            values_es = c.values[t_idx]
+            if not k.all():
+                values_es = values_es[:, k, :]
             T, E_sel, n_gp = values_es.shape[0], sel_eidx.size, nc.shape[0]
             chunks_v.append(values_es.reshape(T, E_sel * n_gp))
             chunks_eidx.append(np.repeat(sel_eidx, n_gp))
@@ -1385,7 +1389,6 @@ class NativeReader:
                 sel = np.where(mask)[0]
 
                 full = grp[component][...]                   # (T, sum_F)
-                v.append(full[t_idx][:, sel])
                 eidx.append(e[sel])
                 gpi.append(g[sel])
                 ys.append(y[sel])
@@ -1394,14 +1397,17 @@ class NativeReader:
                 mtags.append(m[sel])
                 xis.append(xi[sel] if xi is not None else None)
                 meta = (gpi[-1], ys[-1], zs[-1], areas[-1], mtags[-1])
+                # Every step: copies are compared over the whole record,
+                # not just the slice this read returns.
                 returned.append(_element_chunk(
-                    grp[_native.DSET_ELEMENT_INDEX].name, e, sel, v[-1],
-                    meta if xi is None else (*meta, xis[-1]),
+                    grp[_native.DSET_ELEMENT_INDEX].name, e, sel,
+                    full[:, sel], meta if xi is None else (*meta, xis[-1]),
                 ))
 
         keep = self._dedupe_repeated_elements(
             stage_id, ResultLevel.FIBERS.value, component, returned,
         )
+        v = [c.values[t_idx] for c in returned]
         if not all(k.all() for k in keep):
             v = [x[:, k] for x, k in zip(v, keep)]
             eidx, gpi, ys, zs, areas, mtags = (
@@ -1501,21 +1507,24 @@ class NativeReader:
                     np.stack([e, g, lay, sg], axis=1), sel,
                 )
                 full = grp[component][...]
-                v.append(full[t_idx][:, sel])
                 e_idx.append(e[sel])
                 gp_i.append(g[sel])
                 l_idx.append(lay[sel])
                 sub_gp.append(sg[sel])
                 thk.append(th[sel])
                 quat.append(q[sel])
+                # Every step: copies are compared over the whole record,
+                # not just the slice this read returns.
                 returned.append(_element_chunk(
-                    grp[_native.DSET_ELEMENT_INDEX].name, e, sel, v[-1],
+                    grp[_native.DSET_ELEMENT_INDEX].name, e, sel,
+                    full[:, sel],
                     (gp_i[-1], l_idx[-1], sub_gp[-1], thk[-1], quat[-1]),
                 ))
 
         keep = self._dedupe_repeated_elements(
             stage_id, ResultLevel.LAYERS.value, component, returned,
         )
+        v = [c.values[t_idx] for c in returned]
         if not all(k.all() for k in keep):
             v = [x[:, k] for x, k in zip(v, keep)]
             e_idx, gp_i, l_idx, sub_gp, thk, quat = (
@@ -1587,7 +1596,9 @@ class NativeReader:
 
                 sel_eidx = eidx[elem_sel]
                 full = grp[component][...]                    # (T, E_g, n_st)
-                values_es = full[t_idx][:, elem_sel, :]
+                # Every step: copies are compared over the whole record,
+                # not just the slice this read returns.
+                values_es = full[:, elem_sel, :]
                 returned.append(_ElementChunk(
                     grp[_native.DSET_ELEMENT_INDEX].name, sel_eidx, elem_sel,
                     sel_eidx, values_es,
@@ -1601,7 +1612,9 @@ class NativeReader:
         v, e_idx, snc_rows = [], [], []
         for c, k, snc in zip(returned, keep, group_snc):
             sel_eidx = c.ids[k]
-            values_es = c.values if k.all() else c.values[:, k, :]
+            values_es = c.values[t_idx]
+            if not k.all():
+                values_es = values_es[:, k, :]
             T, E_sel, n_st = values_es.shape[0], sel_eidx.size, snc.size
             v.append(values_es.reshape(T, E_sel * n_st))
             e_idx.append(np.repeat(sel_eidx, n_st))
@@ -1668,9 +1681,11 @@ class NativeReader:
                     elem_sel = np.where(mask)[0]
 
                 sel_eidx = eidx[elem_sel]
+                # Every step: copies are compared over the whole record,
+                # not just the slice this read returns.
                 returned.append(_ElementChunk(
                     grp[_native.DSET_ELEMENT_INDEX].name, sel_eidx, elem_sel,
-                    sel_eidx, full[t_idx][:, elem_sel, :], (),
+                    sel_eidx, full[:, elem_sel, :], (),
                 ))
 
         keep = self._dedupe_repeated_elements(
@@ -1683,7 +1698,8 @@ class NativeReader:
             bucket = combined.setdefault(
                 c.values.shape[2], {"v": [], "e": []},
             )
-            bucket["v"].append(c.values if k.all() else c.values[:, k, :])
+            values_es = c.values[t_idx]
+            bucket["v"].append(values_es if k.all() else values_es[:, k, :])
             bucket["e"].append(c.ids[k])
 
         if not combined:
@@ -1751,7 +1767,9 @@ class _ElementChunk(NamedTuple):
     per-element group, each once for a per-row fibers or layers group),
     at ``rows`` of that dataset. ``col_e`` is the element of each column
     the read returns (axis 1 of ``values``, axis 0 of each ``meta``
-    array): one per element, or one per fiber or layer row.
+    array): one per element, or one per fiber or layer row. ``values``
+    holds every time step, not the read's slice: two copies that agree
+    only inside the slice are not the same copy.
     """
 
     dataset: str
