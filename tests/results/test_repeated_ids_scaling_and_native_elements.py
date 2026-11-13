@@ -13,9 +13,13 @@ refuse a repeated element.
    ``_element_index`` with no repeat check, so one element in two places
    came back as two columns. The writer refuses a repeat within one group
    (#2914) and a second partition (#2918), but takes one element in two
-   groups of one partition; hand-made or legacy files reach the other two
-   shapes. Each read now refuses all three by name, as the MPCO reader
-   does (``MPCOElementInTwoBuckets``).
+   groups of one partition (``RecorderTranscoder`` writes one group per
+   record); hand-made or legacy files reach the other two shapes. A
+   repeat within one group refuses by name, as the MPCO reader does
+   (``MPCOElementInTwoBuckets``). A copy in a second group or partition
+   reads as one when it agrees exactly with the first, values and
+   per-point data, as ``.ladruno`` de-duplicates agreeing Gauss columns;
+   a copy that disagrees refuses (review of #2928).
 """
 from __future__ import annotations
 
@@ -123,8 +127,11 @@ def test_writer_refuses_400k_duplicated_node_ids_well_under_a_second(
 # 2. Native element-side reads refuse a repeated element
 # =====================================================================
 
-def _v(*shape: int) -> np.ndarray:
-    return np.arange(
+def _v(*shape: int, class_tag: int = 1) -> np.ndarray:
+    # A group's values depend only on the row and the class tag: one
+    # element at row 0 of two groups with one tag agrees, and two groups
+    # with different tags disagree.
+    return 1000.0 * class_tag + np.arange(
         len(_TIME) * int(np.prod(shape)), dtype=np.float64,
     ).reshape(len(_TIME), *shape)
 
@@ -133,7 +140,7 @@ def _gauss(w, sid, gid, eidx, class_tag=1):
     w.write_gauss_group(
         sid, "partition_0", gid, class_tag=class_tag, int_rule=1,
         element_index=np.array(eidx), natural_coords=np.zeros((1, 2)),
-        components={"stress_xx": _v(len(eidx), 1)},
+        components={"stress_xx": _v(len(eidx), 1, class_tag=class_tag)},
     )
 
 
@@ -141,7 +148,9 @@ def _elements(w, sid, gid, eidx, class_tag=1):
     w.write_nodal_forces_group(
         sid, "partition_0", gid, class_tag=class_tag, frame="global",
         element_index=np.array(eidx),
-        components={"nodal_resisting_force_x": _v(len(eidx), 2)},
+        components={
+            "nodal_resisting_force_x": _v(len(eidx), 2, class_tag=class_tag),
+        },
     )
 
 
@@ -150,7 +159,7 @@ def _line_stations(w, sid, gid, eidx, class_tag=1):
         sid, "partition_0", gid, class_tag=class_tag,
         element_index=np.array(eidx),
         station_natural_coord=np.array([-1.0, 1.0]),
-        components={"axial_force": _v(len(eidx), 2)},
+        components={"axial_force": _v(len(eidx), 2, class_tag=class_tag)},
     )
 
 
@@ -163,7 +172,7 @@ def _fibers(w, sid, gid, eidx, class_tag=1):
         element_index=e, gp_index=np.zeros(n, dtype=np.int64),
         y=np.tile([-0.1, 0.1], len(eidx)), z=np.zeros(n), area=np.ones(n),
         material_tag=np.ones(n, dtype=np.int64),
-        components={"fiber_stress": _v(n)},
+        components={"fiber_stress": _v(n, class_tag=class_tag)},
     )
 
 
@@ -178,7 +187,7 @@ def _layers(w, sid, gid, eidx, class_tag=1):
         sub_gp_index=np.zeros(n, dtype=np.int64),
         thickness=np.ones(n),
         local_axes_quaternion=np.tile([1.0, 0, 0, 0], (n, 1)),
-        components={"stress_xx": _v(n)},
+        components={"stress_xx": _v(n, class_tag=class_tag)},
     )
 
 
@@ -229,10 +238,22 @@ def _set_index(path: Path, dataset: str, values: list[int]) -> None:
         f[dataset][...] = np.array(values, dtype=np.int64)
 
 
-def _second_partition(path: Path, level: str, elements: list[int]) -> None:
+#: level -> the component its group writer records.
+_COMPONENT = {
+    "gauss": "stress_xx", "elements": "nodal_resisting_force_x",
+    "line_stations": "axial_force", "fibers": "fiber_stress",
+    "layers": "stress_xx",
+}
+
+
+def _second_partition(
+    path: Path, level: str, elements: list[int], *, shift: float = 0.0,
+) -> None:
     """Copy ``partition_0``'s group ``g0`` to a ``partition_1`` with raw
     h5py (the writer refuses a second partition, #2918), then set its
-    ``elements``: a legacy multi-partition file."""
+    ``elements`` and add ``shift`` to its values: a legacy
+    multi-partition file. Row ``r`` keeps row ``r``'s values, so an
+    element at the same row of both reads agreeing when ``shift`` is 0."""
     cat = _LEVELS[level][1]
     rows = np.array(elements, dtype=np.int64)
     if level in _PER_ROW:
@@ -241,6 +262,7 @@ def _second_partition(path: Path, level: str, elements: list[int]) -> None:
         f.create_group(f"{_P1}/{cat}")
         f.copy(f[f"{_P0}/{cat}/g0"], f[f"{_P1}/{cat}"], name="g0")
         f[f"{_P1}/{cat}/g0/_element_index"][...] = rows
+        f[f"{_P1}/{cat}/g0/{_COMPONENT[level]}"][...] += shift
 
 
 def _refused(path: Path, level: str, **kw):
@@ -271,10 +293,11 @@ def test_an_element_twice_in_one_group_refuses(
 
 
 @pytest.mark.parametrize("level", list(_LEVELS))
-def test_an_element_in_two_groups_of_one_partition_refuses(
+def test_an_element_in_two_groups_of_one_partition_that_disagree_refuses(
     tmp_path: Path, level: str,
 ) -> None:
-    # The writer accepts this one: each group is checked on its own.
+    # The writer accepts this one: each group is checked on its own. The
+    # two class tags give element 5 different values in each group.
     write, cat, per = _LEVELS[level]
     path = tmp_path / "run.h5"
     _write(path, write, [("g0", [5, 6], 1), ("g1", [5, 7], 2)])
@@ -286,6 +309,7 @@ def test_an_element_in_two_groups_of_one_partition_refuses(
     ]}
     msg = str(err)
     assert "in two groups of one partition" in msg
+    assert "copies that disagree" in msg
     assert f"{cat}/g0/_element_index" in msg
     assert f"{cat}/g1/_element_index" in msg
     # A filter that leaves element 5 out returns the rest, once each.
@@ -296,13 +320,13 @@ def test_an_element_in_two_groups_of_one_partition_refuses(
 
 
 @pytest.mark.parametrize("level", list(_LEVELS))
-def test_an_element_in_two_partitions_refuses(
+def test_an_element_in_two_partitions_that_disagree_refuses(
     tmp_path: Path, level: str,
 ) -> None:
     write, cat, per = _LEVELS[level]
     path = tmp_path / "run.h5"
     _write(path, write, [("g0", [5, 6], 1)])
-    _second_partition(path, level, [5, 7])
+    _second_partition(path, level, [5, 7], shift=0.5)
     err = _refused(path, level)
     assert err.shape == "partitions"
     assert err.repeated == {5: [
@@ -312,6 +336,185 @@ def test_an_element_in_two_partitions_refuses(
     msg = str(err)
     assert "in two partitions" in msg
     assert "partition_0" in msg and "partition_1" in msg
+
+
+def _expected(level: str, ids: "list[int]") -> np.ndarray:
+    per = _LEVELS[level][2]
+    return np.repeat(np.array(ids, dtype=np.int64), per)
+
+
+@pytest.mark.parametrize("level", list(_LEVELS))
+def test_an_element_in_two_groups_that_agree_reads_once(
+    tmp_path: Path, level: str,
+) -> None:
+    # One class tag: element 5 sits at row 0 of both groups with the same
+    # values and per-point data, as two RecorderTranscoder records over
+    # one element write it. The first copy is kept, in read order.
+    write, cat, per = _LEVELS[level]
+    path = tmp_path / "run.h5"
+    _write(path, write, [("g0", [5, 6], 1), ("g1", [5, 7], 1)])
+    only_g0 = tmp_path / "g0.h5"
+    _write(only_g0, write, [("g0", [5, 6], 1)])
+    with NativeReader(path) as r:
+        slab = _read(level)(r)
+    with NativeReader(only_g0) as r:
+        want = _read(level)(r)
+    np.testing.assert_array_equal(_eidx(level, slab), _expected(level, [5, 6, 7]))
+    # Elements 5 and 6 read exactly as g0 alone holds them; 7 follows.
+    n = 2 * per
+    np.testing.assert_array_equal(slab.values[:, :n], want.values)
+    assert slab.values.shape[1] == 3 * per
+
+
+@pytest.mark.parametrize("level", list(_LEVELS))
+def test_an_element_in_two_partitions_that_agree_reads_once(
+    tmp_path: Path, level: str,
+) -> None:
+    write, cat, per = _LEVELS[level]
+    path = tmp_path / "run.h5"
+    _write(path, write, [("g0", [5, 6], 1)])
+    _second_partition(path, level, [5, 7])
+    with NativeReader(path) as r:
+        slab = _read(level)(r)
+    np.testing.assert_array_equal(_eidx(level, slab), _expected(level, [5, 6, 7]))
+
+
+def test_an_agreeing_copy_holding_nan_reads_once(tmp_path: Path) -> None:
+    # NaN equals NaN for the comparison, as in np.array_equal(equal_nan).
+    path = tmp_path / "run.h5"
+    _write(path, _gauss, [("g0", [5, 6], 1), ("g1", [5, 7], 1)])
+    with h5py.File(path, "r+") as f:
+        for g in ("g0", "g1"):
+            f[f"{_P0}/gauss_points/{g}/stress_xx"][1, 0, 0] = np.nan
+    with NativeReader(path) as r:
+        slab = r.read_gauss("stage_0", "stress_xx")
+    np.testing.assert_array_equal(slab.element_index, [5, 6, 7])
+    assert np.isnan(slab.values[1, 0])
+
+
+@pytest.mark.parametrize(("level", "dataset", "value"), [
+    ("gauss", "_natural_coords", [[0.5, 0.0]]),
+    ("line_stations", "_station_natural_coord", [-1.0, 0.5]),
+    ("fibers", "_y", [-0.1, 0.2, -0.1, 0.1]),
+    ("layers", "_thickness", [1.0, 2.0, 1.0, 1.0]),
+])
+def test_equal_values_at_different_points_refuse(
+    tmp_path: Path, level: str, dataset: str, value: "list",
+) -> None:
+    # The values agree but g1 places them elsewhere: not the same copy.
+    write, cat, _ = _LEVELS[level]
+    path = tmp_path / "run.h5"
+    _write(path, write, [("g0", [5, 6], 1), ("g1", [5, 7], 1)])
+    with h5py.File(path, "r+") as f:
+        f[f"{_P0}/{cat}/g1/{dataset}"][...] = np.array(value)
+    err = _refused(path, level)
+    assert err.shape == "groups"
+    assert list(err.repeated) == [5]
+
+
+@pytest.mark.parametrize("level", list(_LEVELS))
+def test_only_the_disagreeing_elements_are_named(
+    tmp_path: Path, level: str,
+) -> None:
+    # Both groups hold [5, 6] alike; then g1's element 6 is shifted.
+    write, cat, _ = _LEVELS[level]
+    path = tmp_path / "run.h5"
+    _write(path, write, [("g0", [5, 6], 1), ("g1", [5, 6], 1)])
+    rows = slice(2, 4) if level in _PER_ROW else slice(1, 2)
+    with h5py.File(path, "r+") as f:
+        f[f"{_P0}/{cat}/g1/{_COMPONENT[level]}"][:, rows] += 0.5
+    err = _refused(path, level)
+    assert list(err.repeated) == [6]
+    assert err.repeated[6] == [
+        (f"{_P0}/{cat}/g0/_element_index", rows.start),
+        (f"{_P0}/{cat}/g1/_element_index", rows.start),
+    ]
+
+
+def test_an_element_twice_in_one_group_refuses_even_when_it_agrees(
+    tmp_path: Path,
+) -> None:
+    # Within one group a repeat is malformed whatever its values.
+    path = tmp_path / "run.h5"
+    _write(path, _gauss, [("g0", [5, 6], 1)])
+    dataset = f"{_P0}/gauss_points/g0/_element_index"
+    _set_index(path, dataset, [5, 5])
+    with h5py.File(path, "r+") as f:
+        f[f"{_P0}/gauss_points/g0/stress_xx"][:, 1, :] = (
+            f[f"{_P0}/gauss_points/g0/stress_xx"][:, 0, :]
+        )
+    assert _refused(path, "gauss").shape == "group"
+
+
+# The reviewer's reproducer (#2928): RecorderTranscoder writes one gauss
+# group per record, so two records that cover one element put it in two
+# groups of one partition. On main the read returned [10, 20, 20].
+
+def _transcode_two_records(tmp_path: Path, sub_shift: float) -> Path:
+    from apeGmsh.opensees._response_catalog import IntRule, flatten, lookup
+    from apeGmsh.results.spec._resolved import ResolvedRecorderRecord
+    from apeGmsh.results.transcoders._recorder import RecorderTranscoder
+    from tests.test_results_recorder_transcoder_gauss import (
+        _make_spec,
+        _MinimalFem,
+        _write_element_out,
+    )
+
+    layout = lookup("FourNodeTetrahedron", IntRule.Tet_GL_1, "stress")
+    fem = _MinimalFem([1, 2, 3, 4])
+    T, E = 2, 2
+    per_comp = {
+        name: np.array([
+            [[ki * 100.0 + t * 10.0 + e] for e in range(E)] for t in range(T)
+        ])
+        for ki, name in enumerate(layout.component_layout)
+    }
+    flat = flatten(per_comp, layout)                      # (T, E, K)
+    records = [
+        ResolvedRecorderRecord(
+            category="gauss", name=name,
+            components=tuple(layout.component_layout),
+            dt=None, n_steps=None, element_ids=np.array(ids),
+            element_class_name="FourNodeTetrahedron",
+        )
+        for name, ids in (("all_stress", [10, 20]), ("sub_stress", [20]))
+    ]
+    spec = _make_spec(*records, snapshot_id=fem.snapshot_id)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    times = np.array([0.5, 1.0])
+    _write_element_out(out_dir / "all_stress_gauss.out", times=times, flat=flat)
+    _write_element_out(
+        out_dir / "sub_stress_gauss.out", times=times,
+        flat=flat[:, 1:, :] + sub_shift,
+    )
+    target = tmp_path / "transcoded.h5"
+    RecorderTranscoder(
+        spec, out_dir, target, fem, stage_name="static", stage_kind="static",
+    ).run()
+    return target
+
+
+def test_two_transcoded_records_over_one_element_read_once(
+    tmp_path: Path,
+) -> None:
+    target = _transcode_two_records(tmp_path, sub_shift=0.0)
+    with NativeReader(target) as r:
+        sid = r.stages()[0].id
+        slab = r.read_gauss(sid, "stress_xx")
+    np.testing.assert_array_equal(slab.element_index, [10, 20])
+    # stress_xx is component 0: t * 10 + e.
+    np.testing.assert_array_equal(slab.values, [[0.0, 1.0], [10.0, 11.0]])
+
+
+def test_two_transcoded_records_that_disagree_refuse(tmp_path: Path) -> None:
+    target = _transcode_two_records(tmp_path, sub_shift=1.0)
+    with NativeReader(target) as r:
+        sid = r.stages()[0].id
+        with pytest.raises(native_reader.NativeRepeatedElementId) as info:
+            r.read_gauss(sid, "stress_xx")
+    assert info.value.shape == "groups"
+    assert list(info.value.repeated) == [20]
 
 
 @pytest.mark.parametrize("level", list(_LEVELS))

@@ -1,19 +1,23 @@
-### FIXED — native element-side reads refuse an element listed twice, and the repeated-id check is O(N log N) (#2363)
+### FIXED — native element-side reads no longer return an element twice, and the repeated-id check is O(N log N) (#2363)
 
 `read_gauss`, `read_elements`, `read_line_stations`, `read_fibers` and
 `read_layers` on a native `results.h5` joined each group's element list
 with no check, so one element in two places came back as two columns
 without a word. The writer refuses an element twice in one group and a
-second partition, but accepted one element in two groups of one partition
-(two class tags, say); hand-made and legacy multi-partition files reached
-the other shapes. Each read now raises `NativeRepeatedElementId` when an
-element it would return sits twice in one group, in two groups of one
-partition, or in two partitions, naming the stage, the component and each
-dataset and row, as the MPCO reader does. A fibers or layers group lists
-one row per fiber or layer, so there an element repeats within its group
-by design; a layers group whose (element, Gauss point, layer, sub-point)
-row repeats is refused. An `element_ids` filter that leaves the repeat out
-still reads.
+second partition, but accepts one element in two groups of one partition:
+`RecorderTranscoder` writes one group per record, so two records over one
+element do this. Hand-made and legacy multi-partition files reached the
+other shapes. Now an element twice in one group raises
+`NativeRepeatedElementId`. An element in two groups or two partitions
+reads once when every copy agrees exactly with the first (values, NaN
+equal to NaN, and the per-point data: Gauss points, stations, fiber or
+layer rows), as `.ladruno` de-duplicates agreeing Gauss columns; copies
+that disagree raise `NativeRepeatedElementId`, naming the stage, the
+component and each dataset and row. A fibers or layers group lists one
+row per fiber or layer, so there an element repeats within its group by
+design; a layers group whose (element, Gauss point, layer, sub-point)
+row repeats is refused. An `element_ids` filter that leaves the repeat
+out still reads.
 
 The repeated-id check behind `LadrunoRepeatedNodeId`,
 `NativeRepeatedNodeId` and the writer's `NativeWriteRepeatedId` scanned the

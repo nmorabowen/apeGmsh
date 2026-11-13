@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Sequence
+from typing import TYPE_CHECKING, NamedTuple, Optional, Sequence
 
 import numpy as np
 from numpy import ndarray
@@ -97,30 +97,35 @@ class NativeRepeatedNodeId(ValueError):
 
 class NativeRepeatedElementId(ValueError):
     """An element-side read of a native results file would return one
-    element twice (#2363).
+    element twice, or finds two copies of it that disagree (#2363).
 
     Raised by ``read_gauss``, ``read_elements``, ``read_line_stations``,
-    ``read_fibers`` and ``read_layers``. Each element is listed once per
-    stage: in one group of one partition, once in that group's
-    ``_element_index``. The read refuses three shapes of repeat, as the
-    MPCO reader does (``MPCOElementInTwoBuckets``):
+    ``read_fibers`` and ``read_layers``. Three shapes of repeat, named as
+    the MPCO reader names them (``MPCOElementInTwoBuckets``):
 
-    * twice in one group's ``_element_index``;
-    * in two groups of one partition (two class tags, say: the writer
-      checks each group on its own, so it lets this through);
+    * twice in one group's ``_element_index``: always refused;
+    * in two groups of one partition (``RecorderTranscoder`` writes one
+      group per record, so two records over one element do this; the
+      writer checks each group on its own);
     * in two partitions (a legacy multi-partition file).
 
+    The last two read as one when every later copy agrees exactly with
+    the first: its values (NaN equal to NaN) and its per-point data
+    (natural coordinates, stations, fiber or layer rows). The first copy
+    is kept, as ``.ladruno`` keeps one of two agreeing Gauss columns
+    (``_dedupe_gauss_columns``). Copies that disagree refuse.
+
     A fibers or layers group lists one row per fiber or layer, so there
-    an element repeats within its group by design; only the second and
-    third shapes apply, plus, for layers, a repeated (element, Gauss
-    point, layer, sub-point) row, which ``what`` then names. Only the
-    elements the read returns are checked: an ``element_ids`` filter that
-    leaves the repeat out reads.
+    an element repeats within its group by design; a layers group whose
+    (element, Gauss point, layer, sub-point) row repeats refuses, and
+    ``what`` then names the layer row. Only the elements the read returns
+    are checked: an ``element_ids`` filter that leaves the repeat out
+    reads.
 
     ``file``, ``stage_id``, ``level`` (the read's ``ResultLevel`` value)
-    and ``component`` name the read; ``repeated`` maps each repeated id
+    and ``component`` name the read; ``repeated`` maps each refused id
     (a tuple for a layer row) to its ``(dataset, row)`` places, ascending.
-    ``shape`` says where the first repeat sits: ``"group"``,
+    ``shape`` says where the first refused repeat sits: ``"group"``,
     ``"groups"`` or ``"partitions"``.
     """
 
@@ -155,13 +160,24 @@ class NativeRepeatedElementId(ValueError):
             f"; and {len(repeated) - _SHOWN} more"
             if len(repeated) > _SHOWN else ""
         )
+        if self.shape == "group":
+            text = (
+                f"the read would return {what} id(s) more than once; the "
+                f"first sits {where} ({what} {shown}{more}). Each {what} is "
+                f"listed once per group; a repeated id would read as two "
+                f"columns of one {what}. The file is malformed."
+            )
+        else:
+            text = (
+                f"the read finds {what} id(s) in more than one group with "
+                f"copies that disagree; the first sits {where} ({what} "
+                f"{shown}{more}). Copies that agree exactly, values and "
+                f"per-point data, read as one; these differ, so the read "
+                f"cannot pick one. The file is malformed."
+            )
         super().__init__(
             f"{file}: stage {stage_id!r} {level} component {component!r}: "
-            f"the read would return {what} id(s) more than once; the first "
-            f"sits {where} ({what} {shown}{more}). Each {what} is listed "
-            f"once per stage, in one group of one partition; a repeated id "
-            f"would read as two columns of one {what}. The file is "
-            f"malformed."
+            + text
         )
 
 
@@ -410,6 +426,65 @@ class NativeReader:
         raise NativeRepeatedElementId(
             self._path, stage_id, level, component, places,
         )
+
+    def _dedupe_repeated_elements(
+        self, stage_id: str, level: str, component: str,
+        chunks: "list[_ElementChunk]",
+    ) -> "list[ndarray]":
+        """Each chunk's column keep-mask, with agreeing repeats dropped
+        (#2363).
+
+        An element twice in one chunk raises
+        :class:`NativeRepeatedElementId`. An element in several chunks
+        (two groups of one partition, or two partitions) keeps its first
+        chunk's columns, in read order; each later chunk's columns of it
+        must agree exactly with those, values and every ``meta`` array,
+        and are dropped. A disagreeing copy raises, naming every place of
+        each disagreeing element. Mirrors ``.ladruno``'s
+        ``_dedupe_gauss_columns``, with exact equality.
+        """
+        keep = [np.ones(c.col_e.size, dtype=bool) for c in chunks]
+        for c in chunks:
+            self._refuse_repeated_elements(
+                stage_id, level, component, [(c.dataset, c.ids, c.rows)],
+            )
+        if len(chunks) < 2:
+            return keep
+        ids = np.concatenate([c.ids for c in chunks])
+        chunk_of = np.repeat(
+            np.arange(len(chunks)), [c.ids.size for c in chunks],
+        )
+        order = np.lexsort((chunk_of, ids))      # by id, then read order
+        s_ids, s_chunk = ids[order], chunk_of[order]
+        first = np.ones(s_ids.size, dtype=bool)
+        first[1:] = s_ids[1:] != s_ids[:-1]
+        if first.all():
+            return keep
+        run_start = np.maximum.accumulate(
+            np.where(first, np.arange(s_ids.size), 0),
+        )
+        owner = s_chunk[run_start]
+        later = ~first
+        bad: list[ndarray] = []
+        pairs = np.unique(
+            np.stack([owner[later], s_chunk[later]], axis=1), axis=0,
+        )
+        for j, k in pairs.tolist():
+            eids = np.unique(s_ids[later & (owner == j) & (s_chunk == k)])
+            agree = _copies_agree(chunks[j], chunks[k], eids)
+            bad.append(eids[~agree])
+            keep[k] &= ~np.isin(chunks[k].col_e, eids[agree])
+        refused = np.concatenate(bad)
+        if refused.size:
+            self._refuse_repeated_elements(
+                stage_id, level, component,
+                [
+                    (c.dataset, c.ids[m], c.rows[m])
+                    for c in chunks
+                    for m in [np.isin(c.ids, refused)]
+                ],
+            )
+        return keep
 
     def _refuse_repeated_layer_rows(
         self, stage_id: str, component: str, group: str, key: ndarray,
@@ -1082,13 +1157,12 @@ class NativeReader:
             else np.asarray(element_ids, dtype=np.int64)
         )
 
-        chunks_v, chunks_eidx, chunks_nc = [], [], []
-        # (group label, natural-coordinate width) per group read.
-        widths: list[tuple[str, int]] = []
-        chunks_quat: list[ndarray] = []
-        any_quat = False
-        # (``_element_index`` path, ids returned, their rows) per group.
-        returned: list[tuple[str, ndarray, ndarray]] = []
+        # Per group read: its chunk (values (T, E_sel, n_gp)), natural
+        # coordinates, quaternions (or None) and label.
+        returned: list[_ElementChunk] = []
+        group_nc: list[ndarray] = []
+        group_quat: list["ndarray | None"] = []
+        labels: list[str] = []
 
         for pid in self.partitions(stage_id):
             gauss_root_path = (
@@ -1121,42 +1195,55 @@ class NativeReader:
                         dtype=np.float64,
                     ),
                 )
-                n_gp = nc.shape[0]
-
                 sel_eidx = eidx[elem_sel]
-                returned.append((
-                    grp[_native.DSET_ELEMENT_INDEX].name, sel_eidx, elem_sel,
-                ))
                 full = grp[component][...]                  # (T, E_g, n_gp)
-                values_t = full[t_idx]
-                values_es = values_t[:, elem_sel, :]
-                T = values_es.shape[0]
-                E_sel = sel_eidx.size
-                flat = values_es.reshape(T, E_sel * n_gp)
-
-                row_eidx = np.repeat(sel_eidx, n_gp)
-                row_nc = np.tile(nc, (E_sel, 1))
-
-                chunks_v.append(flat)
-                chunks_eidx.append(row_eidx)
-                chunks_nc.append(row_nc)
-                widths.append((
-                    f"class_tag {int(grp.attrs[_native.ATTR_CLASS_TAG])} "
-                    f"({grp.name})",
-                    int(nc.shape[1]),
-                ))
-
-                if _native.DSET_LOCAL_AXES_QUATERNION in grp:
-                    any_quat = True
-                    quat = np.asarray(
+                values_es = full[t_idx][:, elem_sel, :]
+                quat = (
+                    np.asarray(
                         grp[_native.DSET_LOCAL_AXES_QUATERNION][...],
                         dtype=np.float64,
-                    )
-                    chunks_quat.append(np.repeat(quat[elem_sel], n_gp, axis=0))
+                    )[elem_sel]
+                    if _native.DSET_LOCAL_AXES_QUATERNION in grp else None
+                )
+                # A copy of an element in another group must carry the
+                # same values, Gauss points and axes to read as one.
+                meta = (np.broadcast_to(nc, (sel_eidx.size, *nc.shape)),)
+                returned.append(_ElementChunk(
+                    grp[_native.DSET_ELEMENT_INDEX].name, sel_eidx, elem_sel,
+                    sel_eidx, values_es,
+                    meta if quat is None else (*meta, quat),
+                ))
+                group_nc.append(nc)
+                group_quat.append(quat)
+                labels.append(
+                    f"class_tag {int(grp.attrs[_native.ATTR_CLASS_TAG])} "
+                    f"({grp.name})"
+                )
 
-        self._refuse_repeated_elements(
+        keep = self._dedupe_repeated_elements(
             stage_id, ResultLevel.GAUSS.value, component, returned,
         )
+        chunks_v, chunks_eidx, chunks_nc = [], [], []
+        # (group label, natural-coordinate width) per group read.
+        widths: list[tuple[str, int]] = []
+        chunks_quat: list[ndarray] = []
+        any_quat = False
+        for c, k, nc, quat, label in zip(
+            returned, keep, group_nc, group_quat, labels,
+        ):
+            if c.ids.size and not k.any():
+                continue                # every element a kept copy's twin
+            sel_eidx = c.ids[k]
+            values_es = c.values if k.all() else c.values[:, k, :]
+            T, E_sel, n_gp = values_es.shape[0], sel_eidx.size, nc.shape[0]
+            chunks_v.append(values_es.reshape(T, E_sel * n_gp))
+            chunks_eidx.append(np.repeat(sel_eidx, n_gp))
+            chunks_nc.append(np.tile(nc, (E_sel, 1)))
+            widths.append((label, int(nc.shape[1])))
+            if quat is not None:
+                any_quat = True
+                chunks_quat.append(np.repeat(quat[k], n_gp, axis=0))
+
         # One slab holds one natural_coords width: a 2-D-parent group
         # beside a 3-D-parent group refuses by name, as MPCO and .ladruno
         # do, rather than fail in np.concatenate.
@@ -1257,9 +1344,9 @@ class NativeReader:
         # iff at least one group carries real stations; an all-absent
         # read returns ``station_natural_coord=None``.
         xis: list["ndarray | None"] = []
-        # One row per fiber, so an element repeats within its group; it
-        # may not sit in a second group or partition.
-        returned: list[tuple[str, ndarray, ndarray]] = []
+        # One row per fiber, so an element repeats within its group; a
+        # copy in a second group or partition must agree to read as one.
+        returned: list[_ElementChunk] = []
 
         for pid in self.partitions(stage_id):
             root_path = (
@@ -1296,9 +1383,6 @@ class NativeReader:
                 if not mask.any():
                     continue
                 sel = np.where(mask)[0]
-                returned.append(_element_firsts(
-                    grp[_native.DSET_ELEMENT_INDEX].name, e, sel,
-                ))
 
                 full = grp[component][...]                   # (T, sum_F)
                 v.append(full[t_idx][:, sel])
@@ -1309,10 +1393,22 @@ class NativeReader:
                 areas.append(a[sel])
                 mtags.append(m[sel])
                 xis.append(xi[sel] if xi is not None else None)
+                meta = (gpi[-1], ys[-1], zs[-1], areas[-1], mtags[-1])
+                returned.append(_element_chunk(
+                    grp[_native.DSET_ELEMENT_INDEX].name, e, sel, v[-1],
+                    meta if xi is None else (*meta, xis[-1]),
+                ))
 
-        self._refuse_repeated_elements(
+        keep = self._dedupe_repeated_elements(
             stage_id, ResultLevel.FIBERS.value, component, returned,
         )
+        if not all(k.all() for k in keep):
+            v = [x[:, k] for x, k in zip(v, keep)]
+            eidx, gpi, ys, zs, areas, mtags = (
+                [x[k] for x, k in zip(xs, keep)]
+                for xs in (eidx, gpi, ys, zs, areas, mtags)
+            )
+            xis = [None if x is None else x[k] for x, k in zip(xis, keep)]
         if any(x is not None for x in xis):
             station = np.concatenate([
                 x if x is not None
@@ -1367,9 +1463,9 @@ class NativeReader:
         thk: list[ndarray] = []
         quat: list[ndarray] = []
         # One row per (element, Gauss point, layer, sub-point): that row
-        # may not repeat in its group, and an element may not sit in a
-        # second group or partition.
-        returned: list[tuple[str, ndarray, ndarray]] = []
+        # may not repeat in its group; an element's copy in a second group
+        # or partition must agree to read as one.
+        returned: list[_ElementChunk] = []
 
         for pid in self.partitions(stage_id):
             root_path = (
@@ -1404,10 +1500,6 @@ class NativeReader:
                     stage_id, component, grp.name,
                     np.stack([e, g, lay, sg], axis=1), sel,
                 )
-                returned.append(_element_firsts(
-                    grp[_native.DSET_ELEMENT_INDEX].name, e, sel,
-                ))
-
                 full = grp[component][...]
                 v.append(full[t_idx][:, sel])
                 e_idx.append(e[sel])
@@ -1416,10 +1508,20 @@ class NativeReader:
                 sub_gp.append(sg[sel])
                 thk.append(th[sel])
                 quat.append(q[sel])
+                returned.append(_element_chunk(
+                    grp[_native.DSET_ELEMENT_INDEX].name, e, sel, v[-1],
+                    (gp_i[-1], l_idx[-1], sub_gp[-1], thk[-1], quat[-1]),
+                ))
 
-        self._refuse_repeated_elements(
+        keep = self._dedupe_repeated_elements(
             stage_id, ResultLevel.LAYERS.value, component, returned,
         )
+        if not all(k.all() for k in keep):
+            v = [x[:, k] for x, k in zip(v, keep)]
+            e_idx, gp_i, l_idx, sub_gp, thk, quat = (
+                [x[k] for x, k in zip(xs, keep)]
+                for xs in (e_idx, gp_i, l_idx, sub_gp, thk, quat)
+            )
         return LayerSlab(
             component=component,
             values=(
@@ -1458,8 +1560,8 @@ class NativeReader:
             else np.asarray(element_ids, dtype=np.int64)
         )
 
-        v, e_idx, snc_rows = [], [], []
-        returned: list[tuple[str, ndarray, ndarray]] = []
+        returned: list[_ElementChunk] = []
+        group_snc: list[ndarray] = []
         for pid in self.partitions(stage_id):
             root_path = (
                 f"{_native.elements_path(stage_id, pid)}/"
@@ -1474,7 +1576,6 @@ class NativeReader:
                     continue
                 eidx = np.asarray(grp[_native.DSET_ELEMENT_INDEX][...], dtype=np.int64)
                 snc = np.asarray(grp[_native.DSET_STATION_NATURAL_COORD][...], dtype=np.float64)
-                n_st = snc.size
 
                 if eid_filter is None:
                     elem_sel = np.arange(eidx.size)
@@ -1485,23 +1586,27 @@ class NativeReader:
                     elem_sel = np.where(mask)[0]
 
                 sel_eidx = eidx[elem_sel]
-                returned.append((
-                    grp[_native.DSET_ELEMENT_INDEX].name, sel_eidx, elem_sel,
-                ))
                 full = grp[component][...]                    # (T, E_g, n_st)
-                values_t = full[t_idx]
-                values_es = values_t[:, elem_sel, :]
-                T = values_es.shape[0]
-                E_sel = sel_eidx.size
-                flat = values_es.reshape(T, E_sel * n_st)
+                values_es = full[t_idx][:, elem_sel, :]
+                returned.append(_ElementChunk(
+                    grp[_native.DSET_ELEMENT_INDEX].name, sel_eidx, elem_sel,
+                    sel_eidx, values_es,
+                    (np.broadcast_to(snc, (sel_eidx.size, *snc.shape)),),
+                ))
+                group_snc.append(snc)
 
-                v.append(flat)
-                e_idx.append(np.repeat(sel_eidx, n_st))
-                snc_rows.append(np.tile(snc, E_sel))
-
-        self._refuse_repeated_elements(
+        keep = self._dedupe_repeated_elements(
             stage_id, ResultLevel.LINE_STATIONS.value, component, returned,
         )
+        v, e_idx, snc_rows = [], [], []
+        for c, k, snc in zip(returned, keep, group_snc):
+            sel_eidx = c.ids[k]
+            values_es = c.values if k.all() else c.values[:, k, :]
+            T, E_sel, n_st = values_es.shape[0], sel_eidx.size, snc.size
+            v.append(values_es.reshape(T, E_sel * n_st))
+            e_idx.append(np.repeat(sel_eidx, n_st))
+            snc_rows.append(np.tile(snc, E_sel))
+
         return LineStationSlab(
             component=component,
             values=(
@@ -1537,8 +1642,7 @@ class NativeReader:
         # the values shape is (T, E, npe). Mixing different npes would
         # produce ragged arrays. If multiple groups carry the same component,
         # we concat along the element axis only when their npes match.
-        combined: dict[int, dict] = {}    # npe -> {"v": [...], "e": [...]}
-        returned: list[tuple[str, ndarray, ndarray]] = []
+        returned: list[_ElementChunk] = []
 
         for pid in self.partitions(stage_id):
             root_path = (
@@ -1554,7 +1658,6 @@ class NativeReader:
                     continue
                 eidx = np.asarray(grp[_native.DSET_ELEMENT_INDEX][...], dtype=np.int64)
                 full = grp[component][...]                     # (T, E_g, npe)
-                npe = full.shape[2]
 
                 if eid_filter is None:
                     elem_sel = np.arange(eidx.size)
@@ -1565,17 +1668,24 @@ class NativeReader:
                     elem_sel = np.where(mask)[0]
 
                 sel_eidx = eidx[elem_sel]
-                returned.append((
+                returned.append(_ElementChunk(
                     grp[_native.DSET_ELEMENT_INDEX].name, sel_eidx, elem_sel,
+                    sel_eidx, full[t_idx][:, elem_sel, :], (),
                 ))
-                values_es = full[t_idx][:, elem_sel, :]
-                bucket = combined.setdefault(npe, {"v": [], "e": []})
-                bucket["v"].append(values_es)
-                bucket["e"].append(sel_eidx)
 
-        self._refuse_repeated_elements(
+        keep = self._dedupe_repeated_elements(
             stage_id, ResultLevel.ELEMENTS.value, component, returned,
         )
+        combined: dict[int, dict] = {}    # npe -> {"v": [...], "e": [...]}
+        for c, k in zip(returned, keep):
+            if c.ids.size and not k.any():
+                continue                # every element a kept copy's twin
+            bucket = combined.setdefault(
+                c.values.shape[2], {"v": [], "e": []},
+            )
+            bucket["v"].append(c.values if k.all() else c.values[:, k, :])
+            bucket["e"].append(c.ids[k])
+
         if not combined:
             return ElementSlab(
                 component=component,
@@ -1632,13 +1742,70 @@ class NativeReader:
 # Helpers
 # =====================================================================
 
-def _element_firsts(
-    dataset: str, eidx: ndarray, sel: ndarray,
-) -> "tuple[str, ndarray, ndarray]":
-    """A per-row group's chunk for ``_refuse_repeated_elements``: each
-    element among rows ``sel`` of ``eidx`` once, with its first row."""
+class _ElementChunk(NamedTuple):
+    """One group's share of an element-side read, for
+    ``NativeReader._dedupe_repeated_elements`` (#2363).
+
+    ``dataset`` is the group's ``_element_index`` path; ``ids`` the
+    elements the read returns from it, as listed (one per element for a
+    per-element group, each once for a per-row fibers or layers group),
+    at ``rows`` of that dataset. ``col_e`` is the element of each column
+    the read returns (axis 1 of ``values``, axis 0 of each ``meta``
+    array): one per element, or one per fiber or layer row.
+    """
+
+    dataset: str
+    ids: ndarray
+    rows: ndarray
+    col_e: ndarray
+    values: ndarray
+    meta: "tuple[ndarray, ...]"
+
+
+def _element_chunk(
+    dataset: str, eidx: ndarray, sel: ndarray, values: ndarray,
+    meta: "tuple[ndarray, ...]",
+) -> _ElementChunk:
+    """A per-row (fibers, layers) group's chunk: rows ``sel`` of
+    ``eidx``, each element once in ``ids`` with its first row."""
     ids, first = np.unique(eidx[sel], return_index=True)
-    return dataset, ids, sel[first]
+    return _ElementChunk(dataset, ids, sel[first], eidx[sel], values, meta)
+
+
+def _equal_along(a: ndarray, b: ndarray, axis: int) -> ndarray:
+    """Per index along ``axis``: ``a`` and ``b`` equal there exactly,
+    NaN equal to NaN; all False when the shapes differ."""
+    if a.shape != b.shape:
+        return np.zeros(a.shape[axis], dtype=bool)
+    eq = a == b
+    if a.dtype.kind in "fc" and b.dtype.kind in "fc":
+        eq |= np.isnan(a) & np.isnan(b)
+    rest = tuple(i for i in range(eq.ndim) if i != axis)
+    return eq.all(axis=rest) if rest else eq
+
+
+def _copies_agree(a: _ElementChunk, b: _ElementChunk, eids: ndarray) -> ndarray:
+    """Per element of sorted ``eids`` (in both chunks): True when ``b``'s
+    columns of it equal ``a``'s exactly, in order: values and each
+    ``meta`` array."""
+    ca = np.flatnonzero(np.isin(a.col_e, eids))
+    cb = np.flatnonzero(np.isin(b.col_e, eids))
+    ca = ca[np.argsort(a.col_e[ca], kind="stable")]
+    cb = cb[np.argsort(b.col_e[cb], kind="stable")]
+    ea, eb = a.col_e[ca], b.col_e[cb]
+    count_a = np.searchsorted(ea, eids, "right") - np.searchsorted(ea, eids)
+    count_b = np.searchsorted(eb, eids, "right") - np.searchsorted(eb, eids)
+    agree = count_a == count_b
+    if len(a.meta) != len(b.meta):
+        agree[:] = False
+    # With equal counts, the columns of the elements left line up.
+    ca = ca[np.isin(ea, eids[agree])]
+    cb = cb[np.isin(eb, eids[agree])]
+    same = _equal_along(a.values[:, ca], b.values[:, cb], axis=1)
+    for ma, mb in zip(a.meta, b.meta):
+        same &= _equal_along(ma[ca], mb[cb], axis=0)
+    agree &= ~np.isin(eids, a.col_e[ca[~same]])
+    return agree
 
 
 def _concat_or_empty(chunks: list[ndarray], dtype) -> ndarray:
