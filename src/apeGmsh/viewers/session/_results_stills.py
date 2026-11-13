@@ -20,7 +20,9 @@ session is ``ResultsSession(results=...)`` + ``add_view()``, not
 ``app_still`` / ``app_pack`` (VA6b) are the Windows path: each ``view=`` token
 is one ``apegmsh-view/1`` shot drawn by apeGmshViewer (the parity plan) from
 the ``.ladruno`` ``Results.path`` names and its ``<stem>.h5`` (R22b); a stored
-Gauss component is an element field (R16b, VA6e). Linux keeps the session path (G2).
+Gauss component is an element field (R16b, VA6e), and ``von_mises_stress`` /
+``von_mises_strain`` a component of the field holding the tensor (R16c, #2942).
+Linux keeps the session path (G2).
 """
 from __future__ import annotations
 
