@@ -40,6 +40,7 @@ from apeGmsh.agent_view import (
 )
 from apeGmsh.results.readers._ladruno_element_io import (
     _block_canonicals,
+    _class_name,
     is_fiber_token,
     parse_blocks,
     resolve_generic_gauss_blocks,
@@ -413,11 +414,12 @@ class ContourDataError(RuntimeError, ValueError):
     ``viewers.diagrams``, ``test_diagrams_import_guard.py``)."""
 
 
-def _require_contour_data(results: Any, stage_id: str, quantity: str) -> None:
+def _require_contour_data(results: Any, stage_id: str, quantity: str) -> str:
+    """``"nodes"`` or ``"gauss"``: where the stage produces ``quantity``; refused when nowhere."""
     from ._specs import resolve_contour_topology
 
     try:
-        resolve_contour_topology(quantity, results, stage_id)
+        return resolve_contour_topology(quantity, results, stage_id)
     except ValueError as exc:
         raise ContourDataError(str(exc)) from exc
 
@@ -614,23 +616,80 @@ def _stage_index(results: Any, stage_id: str) -> int:
     raise RuntimeError(f"stage {stage_id!r} is not in this results file")
 
 
+#: R16c: the derived scalars apegmsh-view/1 draws, each from one tensor family
+#: (the app's ``state/tensor.ts`` ``DERIVED_SCALARS``). Python derives more
+#: (``_vocabulary.DERIVED_STRESS_SCALARS``); those stay refused.
+_APP_DERIVED = {"von_mises_stress": "stress", "von_mises_strain": "strain"}
+
+#: The Voigt suffixes of a tensor component, either shear order.
+_VOIGT_SUFFIXES = frozenset({"xx", "yy", "zz", "xy", "yx", "yz", "zy", "xz", "zx"})
+
+#: Element classes whose Gauss points are barycentric, so the app does not
+#: extrapolate them to the corners (``reader/ladrunoElements.ts``, PARAM_DOMAIN).
+#: Owner ruling 2026-11-13 (#2924 item 2): a still asks ``cell_averaged`` for them.
+_CELL_AVERAGED_CLASSES = frozenset({"BezierTet10"})
+
+
 def _app_contour(results: Any, stage_id: str, component: str) -> dict[str, str]:
-    """A recorded nodal axis component (R13) or stored Gauss component (R16b) as the
-    app's contour; anything else (a derived scalar, R16c) is refused, never guessed."""
-    _require_contour_data(results, stage_id, component)
+    """A recorded nodal axis component (R13), a stored Gauss component (R16b) or a
+    derived scalar the app draws from a Gauss tensor (R16c) as the app's contour;
+    anything else is refused, never guessed."""
+    topology = _require_contour_data(results, stage_id, component)
     stage = results.stage(stage_id)
     prefix, _, axis = component.rpartition("_")
     table = MODE_FIELDS if stage.kind == "mode" else NODAL_FIELDS
     if component in set(stage.nodes.available_components()) and axis in _AXES and prefix in table:
         return {"field": table[prefix], "component": axis}
-    if component in results.inspect.components(stage=stage_id).get("gauss", ()):
+    gauss = results.inspect.components(stage=stage_id).get("gauss", ())
+    if component in gauss:
         return _app_gauss_contour(results, component)
+    if component in _APP_DERIVED and topology == "gauss":
+        return _app_derived_contour(results, component, gauss)
     raise ContourDataError(
         f"component {component!r} has no apegmsh-view/1 contour here: the Windows "
         f"stills draw a recorded nodal axis component of {sorted(table)} (e.g. "
-        f"displacement_z) or a stored Gauss component (e.g. stress_xx). For another "
+        f"displacement_z), a stored Gauss component (e.g. stress_xx) or "
+        f"{' / '.join(sorted(_APP_DERIVED))} of a Gauss tensor. For another "
         f"one, write a spec and call apeGmsh.agent_view.render_stills."
     )
+
+
+def _app_derived_contour(results: Any, component: str, gauss: Any) -> dict[str, str]:
+    """R16c: the app offers ``von_mises_<family>`` as a component of the element field
+    whose own columns make the family's tensor (``state/contour.ts``
+    ``elementContourFields``), so the field is the one token holding every recorded
+    Voigt component of that family, each as the column R16b names; tensor components
+    split across tokens are refused, since the app would derive from part of it. The
+    ``gauss`` mode is those columns' mode."""
+    stand_in = _non_ladruno_gauss(results, component)
+    if stand_in is not None:
+        return stand_in
+    family = _APP_DERIVED[component]
+    parts = sorted(
+        c for c in gauss
+        if c.rpartition("_")[0] == family and c.rpartition("_")[2] in _VOIGT_SUFFIXES
+    )
+    shots = {c: _app_gauss_contour(results, c) for c in parts}
+    picks = {(s["field"], s["gauss"]) for s in shots.values()}
+    if len(picks) != 1:
+        columns = ", ".join(f"{c}: {s['component']} ({s['gauss']})" for c, s in shots.items())
+        raise ContourDataError(
+            f"{component!r} is derived from the {family} tensor, and the app draws it "
+            f"from one element field holding the whole tensor at one Gauss mode only; "
+            f"its components are the columns {columns or 'none'} (R16c)."
+        )
+    field, mode = next(iter(picks))
+    return {"field": field, "component": component, "source": "element", "gauss": mode}
+
+
+def _non_ladruno_gauss(results: Any, component: str) -> Optional[dict[str, str]]:
+    """R22b: ``None`` for a ``.ladruno`` source; any other is refused, or under the
+    skip given a stand-in contour that is drawn nothing."""
+    if results.path is not None and Path(results.path).suffix.lower() == ".ladruno":
+        return None
+    if not _env_skips():
+        raise ContourDataError(f"a Gauss contour is drawn from a .ladruno only (R22b); {results.path} is not one")
+    return {"field": component, "component": component, "source": "element"}
 
 
 def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
@@ -640,13 +699,14 @@ def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
     part of the set the app opens, or refused. A block renamed in place (the shell
     families, ``_name_shell_blocks``) keeps the file's label at the same position. The
     mode is v1's averaged still: ``gauss_cell_averaged`` at one Gauss point, else
-    ``gauss_node``. Any other source is drawn nothing, so it passes only under the skip."""
+    ``gauss_node``; a class in ``_CELL_AVERAGED_CLASSES`` (barycentric points, which
+    the app does not extrapolate) does not count, so a set of only those asks
+    ``cell_averaged``. Any other source is drawn nothing, so it passes only under the skip."""
     import h5py
 
-    if results.path is None or Path(results.path).suffix.lower() != ".ladruno":
-        if not _env_skips():
-            raise ContourDataError(f"a stored Gauss component is drawn from a .ladruno only (R22b); {results.path} is not one")
-        return {"field": component, "component": component, "source": "element"}
+    stand_in = _non_ladruno_gauss(results, component)
+    if stand_in is not None:
+        return stand_in
     hits: set[tuple[str, str, bool]] = set()
     n_gauss = 0
     for part in discover_partition_files(results.path):
@@ -665,7 +725,8 @@ def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
                         own = own if own is not None and len(own) == len(b.comp_names) else None
                         for i in (i for i, c in enumerate(_block_canonicals(token, b)) if c == component):
                             hits.add((token, own[i] if own else b.comp_names[i], own is None))
-                            n_gauss = max(n_gauss, len(gauss))
+                            if _class_name(key) not in _CELL_AVERAGED_CLASSES:
+                                n_gauss = max(n_gauss, len(gauss))
     if len(hits) != 1 or next(iter(hits))[2]:
         raise ContourDataError(
             f"stored Gauss component {component!r} is not one column the app names in "
