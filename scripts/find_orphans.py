@@ -96,6 +96,21 @@ ACKNOWLEDGED: dict[tuple[int, str], tuple[str, str]] = {
         "post-merge commit a7237433 (-maxSubsteps, convergence-test gate, "
         "ADR 0103) landed as #1099",
     ),
+    (2628, "pushed-after-merge"): (
+        "#2636",
+        "orphaned commit 4e847b8a re-applied in #2636 (be0dc12f4cba); "
+        "lesson #2637",
+    ),
+    (2682, "merged-without-verdict"): (
+        "#2872",
+        "ADR amendment the maintainer merged from the web under the "
+        "standing ADR rule; owner ruling recorded on #2872 (2026-11-13)",
+    ),
+    (2656, "merged-without-verdict"): (
+        "#2872",
+        "VA0p, landed 2026-11-01; owner ruling recorded on #2872 "
+        "(2026-11-13)",
+    ),
 }
 
 
@@ -205,6 +220,8 @@ def find_unreviewed(fetch: Fetch, repo: str, since: datetime,
     findings: list[dict] = []
     for pr in merged_prs(fetch, repo, since):
         if not verdict_required(fetch, repo, pr):
+            continue
+        if (pr["number"], VERDICT_KIND) in ACKNOWLEDGED:
             continue
         if has_head_approval(fetch, repo, pr):
             continue

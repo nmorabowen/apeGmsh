@@ -128,6 +128,25 @@ def test_acknowledged_rows_are_suppressed():
     assert not [f for f in _run() if f["pr"] in (858, 1097)]
 
 
+def test_resolved_2872_rows_are_acknowledged():
+    for key in ((2628, "pushed-after-merge"),
+                (2682, "merged-without-verdict"),
+                (2656, "merged-without-verdict")):
+        assert key in fo.ACKNOWLEDGED
+    # PR 2628 yields two findings: the acknowledged kind is dropped, the
+    # other kind for the same PR is kept.
+    pr = _pr(2628, "pushed after merge", "feature/p2628", "c" * 40, "main",
+             "a2628" + "0" * 35, "2026-09-12T00:00:00Z")
+    COMPARE[pr["merge_commit_sha"]] = "diverged"
+    BRANCHES["feature/p2628"] = "d" * 40
+    try:
+        hits = fo.find_orphans(make_fetch([pr]), REPO, SINCE)
+    finally:
+        COMPARE.pop(pr["merge_commit_sha"])
+        BRANCHES.pop("feature/p2628")
+    assert [(h["pr"], h["kind"]) for h in hits] == [(2628, "not-on-main")]
+
+
 def test_unacknowledged_orphan_still_reports():
     # Same PR as an acknowledged one but a different kind, plus a new PR.
     new = _pr(1300, "new orphan", "feature/new", "a" * 40, "main",
@@ -192,6 +211,20 @@ def _unreviewed(prs, **kw):
 def test_semantic_pr_without_verdict_is_flagged():
     hits = _unreviewed([_vpr(1, ["program", "semantic"])])
     assert [(h["kind"], h["pr"]) for h in hits] == [("merged-without-verdict", 1)]
+
+
+def test_acknowledged_verdict_row_is_skipped_by_find_unreviewed(monkeypatch):
+    # #2872: find_unreviewed itself must honour ACKNOWLEDGED (exact pr+kind).
+    pr = _vpr(2656, ["program", "semantic"])
+    assert (2656, "merged-without-verdict") in fo.ACKNOWLEDGED
+    assert not _unreviewed([pr])
+    _no_acks(monkeypatch)
+    assert [(h["kind"], h["pr"]) for h in _unreviewed([pr])] == [
+        ("merged-without-verdict", 2656)]
+    # An acknowledgement for another kind on the same PR does not suppress it.
+    monkeypatch.setattr(fo, "ACKNOWLEDGED",
+                        {(2656, "not-on-main"): ("x", "y")})
+    assert _unreviewed([pr])
 
 
 def test_approve_at_merged_head_clears_it():
