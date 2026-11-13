@@ -1044,57 +1044,118 @@ def refuse_unreplayable_streams(
             "FEMData.from_h5(path) and emit it through apeSees(fem).")
 
 
-def refuse_stage_equation_ghost_fixes(
-    *, stages: "Sequence[Any]", fixes: "Sequence[Any]", partitioned: bool,
-) -> None:
-    """Raise :class:`BridgeError` iff a partitioned archive's stage stores
-    ``equationConstraint`` rows and a ``fix`` row that repeats an earlier
-    one: the same node and the same DOF mask as a global fix or an earlier
-    stage's, whether or not a ``remove_sp`` released it since.
+def stages_without_ghost_sp_rows(
+    *, stages: "Sequence[Any]", fixes: "Sequence[Any]",
+    declarations: Any, partitioned: bool,
+) -> "tuple[Any, ...]":
+    """``stages`` with the ``fix`` and ``remove_sp`` rows of the ghost
+    replays dropped: the stage rows the bridge's flat deck writes (#2530).
 
-    The ghost replay of a node on a rank that does not own it (ADR 0027
-    INV-2) re-plays the node's whole SP history into the stage that ghosts
-    it, its fixes and its releases alike. The stage block stores those
-    rows as the stage's own, so the flat replay writes the node's history
-    again, which the bridge's flat deck does not (#2530). A ghost row is
-    always an exact repeat: ``emit_ghost_sp_ops`` replays each of the
-    owner's ``fix`` calls with the mask the owner's partitioned fix wrote,
-    so keying on ``(node, mask)`` still refuses every ghost row, and a
-    stage that fixes a fixed node on other DOFs replays. Every fix row of
-    the stage is checked, not only those on the nodes of the stored lines:
-    the rank plan ghosts every master of a tie, a zero-weight one
-    included, and the lines leave a zero-weight master out.
+    A partitioned emit declares a node on a rank that does not own it (a
+    ghost, ADR 0027 INV-2) when a stage-claimed MP tie crosses the ranks,
+    and replays the owner's whole SP history onto it inside that stage:
+    the global fixes, then each earlier stage's fixes and releases, then
+    the stage's own. The archive captures each distinct call once, so the
+    history's earlier calls land as rows of the ghost's stage, and a flat
+    replay that wrote them would fix the node again (for every MP kind)
+    or release it again.
 
-    The rule still refuses a stage that re-fixes, on purpose, a node with
-    the mask an earlier fix used (after a release, a deck that replays
-    exactly): it cannot tell that row from a ghost's. It is narrowed to the
-    stages with equation rows, which replayed nowhere before opensees
-    2.40.0, and lifts with #2530. A flat archive never stores a ghost
-    replay, so it passes.
+    The archive already says which rows those are. Each stage row's
+    ``/opensees/decls/rows`` entry (opensees 2.25.0) names the declaration
+    that made it, and a ghost's row takes the first declaration of its
+    replay order that targets it (``BuiltModel._claim_ghost_fixes``), or
+    its owner's when the owner's call replicates it in the same stage. A
+    declaration's home is the first scope, in emit order (the global
+    ``bcs/fix``, then stage 0, 1, ...), whose ``fix`` or ``remove_sp``
+    rows name it. A stage row whose declaration's home is an earlier scope
+    is a ghost replay of an earlier call, and is dropped; every row of the
+    stage's own declarations stays, a deliberate re-fix with an earlier
+    mask after a release included.
+
+    A flat archive never stores a ghost replay and is returned as is. A
+    partitioned archive that does not record the declarations of its
+    stage rows (written below opensees 2.25.0, or a rewrite of one)
+    cannot tell a ghost's row from the stage's own: if a stage row
+    repeats an earlier ``fix`` (node and DOF mask) or ``remove_sp`` (node
+    and DOF), which every ghost row does, it refuses by name.
     """
-    if not partitioned:
-        return
+    stages = tuple(stages)
+    if not partitioned or not any(st.fixes or st.remove_sps for st in stages):
+        return stages
+    from dataclasses import replace
+
+    rows = None if declarations is None else declarations.rows
+
+    def stores(i: int) -> "tuple[str, str]":
+        base = f"stages/stage_{i:03d}"
+        return f"{base}/bcs/fix", f"{base}/remove_sp"
+
+    def recorded(i: int, st: Any) -> bool:
+        fix_store, rsp_store = stores(i)
+        return rows is not None and all(
+            not recs or len(rows.get(store, ())) == len(recs)
+            for store, recs in ((fix_store, st.fixes),
+                                (rsp_store, st.remove_sps)))
+
+    if not all(recorded(i, st) for i, st in enumerate(stages)):
+        _refuse_unattributed_stage_sp_rows(stages, fixes)
+        return stages
+    assert rows is not None
+    home: dict[int, int] = {}
+    for d in rows.get("bcs/fix", ()):
+        home.setdefault(int(d), -1)
+    for i in range(len(stages)):
+        for store in stores(i):
+            for d in rows.get(store, ()):
+                home.setdefault(int(d), i)
+    out = []
+    for i, st in enumerate(stages):
+        fix_store, rsp_store = stores(i)
+        own_fixes = tuple(
+            r for r, d in zip(st.fixes, rows.get(fix_store, ()))
+            if home[int(d)] == i)
+        own_removals = tuple(
+            r for r, d in zip(st.remove_sps, rows.get(rsp_store, ()))
+            if home[int(d)] == i)
+        if (len(own_fixes), len(own_removals)) == (
+                len(st.fixes), len(st.remove_sps)):
+            out.append(st)
+        else:
+            out.append(replace(st, fixes=own_fixes, remove_sps=own_removals))
+    return tuple(out)
+
+
+def _refuse_unattributed_stage_sp_rows(
+    stages: "Sequence[Any]", fixes: "Sequence[Any]",
+) -> None:
+    """Raise :class:`BridgeError` iff a stage of a partitioned archive with
+    no declaration rows stores a ``fix`` or ``remove_sp`` row that repeats
+    an earlier one (#2530): it may be a ghost's replay, which the flat
+    replay would write again, and nothing in the archive tells it from the
+    stage's own."""
     from .build.errors import BridgeError
 
-    def keys(rows: "Sequence[Any]") -> "set[tuple[int, tuple[int, ...]]]":
-        return {(int(r.tag), tuple(int(d) for d in r.dofs)) for r in rows}
-
-    earlier = keys(fixes)
+    earlier_fix = {(int(r.tag), tuple(int(d) for d in r.dofs)) for r in fixes}
+    earlier_rsp: "set[tuple[int, int]]" = set()
     for st in stages:
-        repeated = keys(st.fixes) & earlier
-        if repeated and st.equation_constraints:
-            nodes = sorted({tag for tag, _dofs in repeated})
+        st_fix = {(int(r.tag), tuple(int(d) for d in r.dofs))
+                  for r in st.fixes}
+        st_rsp = {(int(n), int(d)) for n, d in st.remove_sps}
+        nodes = sorted({t for t, _m in st_fix & earlier_fix}
+                       | {n for n, _d in st_rsp & earlier_rsp})
+        if nodes:
             raise BridgeError(
-                f"Deck replay refuses this archive: stage {st.name!r} of this "
-                "partitioned archive holds equationConstraint lines and "
-                f"fixes node(s) {nodes} with the DOF mask an earlier fix "
-                "used. That is the ghost replay of a rank that does not own "
-                "them, and the flat replay would write their fixes again "
-                "(#2530). A deliberate re-fix with the same mask after a "
-                "release refuses too. This refusal lifts when #2530 is "
-                "fixed. Load FEMData.from_h5(path) and emit it through "
-                "apeSees(fem).")
-        earlier |= keys(st.fixes)
+                f"Deck replay refuses this archive: stage {st.name!r} of "
+                f"this partitioned archive stores fix or remove_sp rows on "
+                f"node(s) {nodes} that repeat an earlier one, and the "
+                "archive has no /opensees/decls rows (written below "
+                "opensees 2.25.0, or a rewrite of one) to tell a ghost "
+                "node's replay of its owner's history (ADR 0027 INV-2) from "
+                "the stage's own rows. The flat replay would write a "
+                "ghost's rows again (#2530). Load FEMData.from_h5(path) and "
+                "emit it through apeSees(fem).")
+        earlier_fix |= st_fix
+        earlier_rsp |= st_rsp
 
 
 def _warn_skipped_replay_streams(
