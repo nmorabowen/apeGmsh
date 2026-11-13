@@ -30,6 +30,7 @@ wrong-but-confident σ_zz corrupts every invariant built on it.
 from __future__ import annotations
 
 import warnings
+from collections import OrderedDict
 from typing import Any, Optional
 
 import numpy as np
@@ -64,6 +65,11 @@ _CACHE: dict[object, dict[int, tuple[Optional[str], Optional[float]]]] = {}
 # Warning dedupe: inject_out_of_plane runs per frame in the viewer, so a
 # raw warnings.warn would fire once per redraw.
 _WARNED: set[tuple] = set()
+# Models keyed by identity (no model_hash), held here so CPython cannot
+# hand their id() to a later model while a _CACHE or _WARNED entry still
+# names it. Bounded: an evicted model takes its entries with it.
+_PINNED: "OrderedDict[tuple, Any]" = OrderedDict()
+_PIN_LIMIT = 8
 
 
 class OutOfPlaneRecoveryWarning(UserWarning):
@@ -78,17 +84,44 @@ class OutOfPlaneRecoveryWarning(UserWarning):
     """
 
 
-def _cache_key(model: Any) -> object:
-    """Content-stable cache key for a model's plane-recovery map.
+def _cache_key(model: Any) -> tuple:
+    """Cache key for a model's plane-recovery map and warning dedupe.
 
-    Keys on the model's ``snapshot_id`` (a content hash), so two brokers
-    over the same archive share one map and — crucially — a recycled
-    ``id()`` after garbage collection can never return a stale map for a
-    *different* model. Falls back to ``id(model)`` only for synthetic /
-    mock models with no snapshot id, whose recovery map is empty anyway.
+    The plane map depends on the ``/opensees`` zone (element plane types,
+    material ν), not only on the mesh. ``snapshot_id`` hashes the mesh
+    alone (``mesh/_femdata_hash.py``), so one mesh run as plane strain and
+    then as plane stress shares it (#2923). The key therefore carries
+    ``lineage.model_hash``, the content hash of the bridge zone chained
+    to the mesh: two brokers over the same archive share one map, and two
+    models on one mesh never do.
+
+    A model with no ``model_hash`` (no lineage, ``None``, or the in-memory
+    compose path where it is the ``snapshot_id`` itself) is keyed by
+    ``id(model)`` and pinned in :data:`_PINNED`, so a recycled ``id``
+    after garbage collection can never return another model's map. O(1).
     """
-    sid = getattr(model, "snapshot_id", None)
-    return sid if sid else id(model)
+    sid = getattr(model, "snapshot_id", None) or ""
+    lineage = getattr(model, "lineage", None)
+    mhash = lineage.model_hash if lineage is not None else None
+    if mhash and mhash != sid:
+        return ("model_hash", sid, mhash)
+    key = ("id", id(model))
+    if _PINNED.get(key) is not model:
+        # Not pinned (first sight, or pins cleared): nothing cached under
+        # this id can belong to this model.
+        _purge(key)
+    _PINNED[key] = model
+    _PINNED.move_to_end(key)
+    while len(_PINNED) > _PIN_LIMIT:
+        old, _ = _PINNED.popitem(last=False)
+        _purge(old)
+    return key
+
+
+def _purge(key: tuple) -> None:
+    """Drop every cache and warning entry filed under ``key``."""
+    _CACHE.pop(key, None)
+    _WARNED.difference_update([w for w in _WARNED if w[0] == key])
 
 
 def _as_float(value: Any) -> Optional[float]:
@@ -177,7 +210,8 @@ def plane_recovery_map(
 ) -> dict[int, tuple[Optional[str], Optional[float]]]:
     """``{fem_eid: (plane_type, nu)}`` for the model's 2-D elements.
 
-    Cached per model object. Empty when the model carries no parseable
+    Cached per :func:`_cache_key` (the model's content, else the
+    object). Empty when the model carries no parseable
     element/material records (e.g. a synthetic results file with no
     ``/opensees`` zone) — callers then fall back to a zero out-of-plane
     component.
