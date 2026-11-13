@@ -22,6 +22,8 @@ import {
   inspectedBatchOf,
   inspectedGroupsOf,
   parseSearchText,
+  rangeKindOf,
+  rangeOptionsOf,
   runSearchTerms,
   searchResultsOf,
   selectedElementsOf,
@@ -29,9 +31,9 @@ import {
   spotlightViewOf,
   windowContentOf,
 } from "../src/state/selectors.ts";
+import { spotlightViewOf as spotlightViewWith } from "../src/state/spotlight.ts";
 import { initialState, reduce, Store, type State } from "../src/state/store.ts";
 import type { EventType } from "../src/state/types.ts";
-import { rangeButtonsOf } from "../src/panels/legend.ts";
 import { harness, opened } from "./contour/harness.ts";
 import { readUserResultColumn, readUserSet, type UserH5 } from "../src/reader/userFile.ts";
 import { UserResultFeed } from "../src/renderer/contour.ts";
@@ -750,14 +752,16 @@ test("VA6d (#2766): the contour-field palette lists a derived scalar from the pi
   }
 });
 
-test("VF2 (#2949): the palette's contour range list is the legend's, for every contour kind and range mode", () => {
-  // The oracle is the legend's own list (panels/legend.ts rangeButtonsOf, #2902 item 2) for each view the scale
-  // draws. The fixture holds no results, user file or compare set, so contourView (selectors.ts) draws none of
-  // these; each State is pinned to its view by the branch contourView takes, read from what it refuses with.
+test("VF2-d (#2956): the palette offers the one range rule the legend offers, for every contour kind and range mode, fixed with or without a stored range", () => {
+  // The oracle is the one rule (state/contour.ts rangeOptionsOf, re-exported through selectors.ts), which
+  // panels/legend.ts now reads too, at the kind of each view the scale draws. The fixture holds no results,
+  // user file or compare set, so contourView (selectors.ts) draws none of these; each State is pinned to its
+  // view by the branch contourView takes, read from what it refuses with, and the view to its range kind.
   const base: State = reduce(loaded, { type: "setColourBy", by: "contour" });
   const footfall = { name: "footfall", component: "footfall_ratio" };
   const combination = { ...base.phase, at: { kind: "combination" as const, name: "ULS" } };
-  const kinds: readonly [string, "ready" | "element" | "user" | "combination" | "difference", State, RegExp][] = [
+  const KIND = { ready: "steps", element: "steps", user: "user", combination: "combination", difference: "difference" } as const;
+  const kinds: readonly [string, keyof typeof KIND, State, RegExp][] = [
     ["a nodal Results field", "ready", { ...base, contour: { ...base.contour, source: "nodal" } }, /^unavailable: no results file pairs/],
     ["an element Results field", "element", { ...base, contour: { ...base.contour, source: "element" } }, /^unavailable: no results file pairs/],
     ["a user result", "user", { ...base, contour: { ...base.contour, source: "user", field: "footfall", component: "footfall_ratio" } }, /^refused user: /],
@@ -770,31 +774,44 @@ test("VF2 (#2949): the palette's contour range list is the legend's, for every c
   ];
   for (const [what, view, k, branch] of kinds) {
     for (const range of ["history", "step", "fixed"] as const) {
-      // A stored fixed range, so the palette lists "fixed" (it seeds no range of its own: it takes a typed `min max`).
-      const s: State = { ...k, contour: { ...k.contour, range, fixed: { min: -1, max: 2 } }, spotlight: { ...k.spotlight, open: true, mode: "contourRange", query: "" } };
-      const v = contourView(s);
-      const reached = v.state === "refused" ? `refused ${v.code}: ${v.reason}` : v.state === "unavailable" ? `unavailable: ${v.reason}` : v.state;
-      assert.match(reached, branch, `${what}: contourView takes another branch`);
-      const items = spotlightViewOf(s).items;
-      const legend = rangeButtonsOf(view, range);
-      assert.deepEqual(
-        items.map((i) => [i.title, i.active === true]),
-        legend.map((b) => [`Range: ${b.label}`, b.on]),
-        `${what} at ${range}`,
-      );
-      for (const [i, b] of legend.entries()) {
-        // The legend's tooltip, where it has one: it names what the one range is ("this user result's own range").
-        if (b.title !== null) assert.equal(items[i]!.detail, b.title, `${what} at ${range}: ${b.label} tooltip`);
-        // Picking a range does what the legend's button does: the own range leaves a fixed range, and otherwise dispatches nothing.
-        const events = items[i]!.action.events;
-        if (b.own && range !== "fixed") assert.ok(!events.some((e) => e.type === "setContourRange"), `${what} at ${range}: picking ${b.label} sets no range`);
-        else assert.equal(events.reduce(reduce, s).contour.range, b.range, `${what} at ${range}: picking ${b.label}`);
+      for (const stored of [{ min: -1, max: 2 }, null]) {
+        const at = `${what} at ${range}, ${stored ? "a stored fixed range" : "no stored fixed range"}`;
+        const s: State = { ...k, contour: { ...k.contour, range, fixed: stored }, spotlight: { ...k.spotlight, open: true, mode: "contourRange", query: "" } };
+        const v = contourView(s);
+        const reached = v.state === "refused" ? `refused ${v.code}: ${v.reason}` : v.state === "unavailable" ? `unavailable: ${v.reason}` : v.state;
+        assert.match(reached, branch, `${what}: contourView takes another branch`);
+        // The rule's kind is the view's: the legend reads rangeKindOf(s) for the view it draws.
+        assert.equal(rangeKindOf(s), KIND[view], `${at}: range kind`);
+        const items = spotlightViewOf(s).items;
+        const rule = rangeOptionsOf(KIND[view], range);
+        // "fixed" is listed whether or not a range is stored, as the legend's scale lists it.
+        assert.deepEqual(
+          items.map((i) => [i.title, i.active === true]),
+          rule.map((b) => [`Range: ${b.label}`, b.on]),
+          at,
+        );
+        for (const [i, b] of rule.entries()) {
+          // The rule's tooltip, where it has one: it names what the one range is ("this user result's own range").
+          if (b.title !== null) assert.equal(items[i]!.detail, b.title, `${at}: ${b.label} tooltip`);
+          // Picking a range does what the legend's button does: the own range leaves a fixed range, and otherwise dispatches nothing;
+          // "fixed" starts from the stored range, and with none and no range shown (nothing is drawn here) changes nothing.
+          const events = items[i]!.action.events;
+          const next = events.reduce(reduce, s);
+          if (b.range === "fixed") {
+            if (stored) assert.deepEqual([next.contour.range, next.contour.fixed], ["fixed", stored], `${at}: picking fixed`);
+            else assert.ok(!events.some((e) => e.type === "setContourRange"), `${at}: picking fixed with nothing to start from sets no range`);
+          } else if (b.own && range !== "fixed") assert.ok(!events.some((e) => e.type === "setContourRange"), `${at}: picking ${b.label} sets no range`);
+          else assert.equal(next.contour.range, b.range, `${at}: picking ${b.label}`);
+        }
+        // The root entry names the mode as the list does.
+        const entry = spotlightViewOf({ ...s, spotlight: { ...s.spotlight, mode: "root", query: "contour range" } }).items.find((i) => i.id === "cmd:contour-range");
+        if (entry) assert.equal(entry.title, `Set Contour Range… (currently ${rule.find((b) => b.on)!.label})`, `${at}: entry`);
       }
-      // The root entry names the mode as the list does.
-      const entry = spotlightViewOf({ ...s, spotlight: { ...s.spotlight, mode: "root", query: "contour range" } }).items.find((i) => i.id === "cmd:contour-range");
-      if (entry) assert.equal(entry.title, `Set Contour Range… (currently ${legend.find((b) => b.on)!.label})`, `${what} at ${range}: entry`);
     }
   }
+  // state/spotlight.ts cannot read the range shown (selectors.ts imports it), so its range list refuses without the hand-in.
+  const s: State = { ...base, spotlight: { ...base.spotlight, open: true, mode: "contourRange", query: "" } };
+  assert.throws(() => spotlightViewWith(s), /needs the range a fixed range starts from/);
 });
 
 test("VF2 (#2949): a user result drawn with no results file (VU16) offers the contour range entry, as the legend does", async (t) => {
@@ -819,10 +836,22 @@ test("VF2 (#2949): a user result drawn with no results file (VU16) offers the co
   for (const range of ["history", "step", "fixed"] as const) {
     const entry = entryOf({ ...drawn, contour: { ...drawn.contour, range, fixed: { min: -1, max: 2 } } });
     assert.ok(entry, `a drawn user result at ${range}: the entry is offered`);
-    assert.equal(entry.title, `Set Contour Range… (currently ${rangeButtonsOf("user", range).find((b) => b.on)!.label})`);
+    assert.equal(entry.title, `Set Contour Range… (currently ${rangeOptionsOf("user", range).find((b) => b.on)!.label})`);
     assert.equal(entry.action.nextMode, "contourRange");
   }
   assert.equal(entryOf({ ...drawn, visibility: { ...drawn.visibility, colourBy: loaded.visibility.colourBy } }), undefined, "contours off: no entry");
+
+  // VF2-d (#2956): with no stored fixed range the list still offers "fixed", and picking it starts from the range shown:
+  // the user result's own min and max (the column's, test/state/userResult.test.ts against W3's golden), as the legend's button does.
+  const v = contourView(drawn);
+  assert.ok(v.state === "user" && v.clim.min !== null && v.clim.max !== null && v.clim.min < v.clim.max, "a finite range is shown");
+  assert.equal(drawn.contour.fixed, null, "precondition: no fixed range is stored");
+  const list2 = spotlightViewOf(reduce(drawn, { type: "openSpotlight", mode: "contourRange", query: "" }));
+  const fixed = list2.items.find((i) => i.title === "Range: fixed");
+  assert.ok(fixed, "fixed is offered with no stored range");
+  assert.equal(fixed.detail, `Fixed range, starting from the range shown [${v.clim.min}, ${v.clim.max}]`);
+  const after = fixed.action.events.reduce(reduce, drawn);
+  assert.deepEqual([after.contour.range, after.contour.fixed], ["fixed", { min: v.clim.min, max: v.clim.max }]);
 
   // shoebuckle.h5 alone has no .user.h5: the user branch refuses, the legend draws no range buttons, and the palette offers no entry.
   const contours = reduce(loaded, { type: "setColourBy", by: "contour" });

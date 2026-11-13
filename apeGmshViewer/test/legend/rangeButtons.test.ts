@@ -12,12 +12,12 @@ import { readdirSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
-import { mountLegend, rangeButtonsOf } from "../../src/panels/legend.ts";
+import { mountLegend } from "../../src/panels/legend.ts";
 import { readUserResultColumn, readUserSet, type UserH5 } from "../../src/reader/userFile.ts";
 import { UserResultFeed, type UserResultFetch } from "../../src/renderer/contour.ts";
 import { RANGE_MODES } from "../../src/state/contour.ts";
-import { userEventOf } from "../../src/state/reduce.ts";
-import { contourView } from "../../src/state/selectors.ts";
+import { reduce, userEventOf } from "../../src/state/reduce.ts";
+import { contourView, rangeOptionsOf, spotlightViewOf } from "../../src/state/selectors.ts";
 import { harness } from "../contour/harness.ts";
 
 await h5wasm.ready;
@@ -27,29 +27,29 @@ const PLATE = at("plate.h5");
 const PLATE_USER = at("plate.user.h5");
 const RATIO = "footfall_ratio";
 
-test("a contour with history and steps offers RANGE_MODES as they are; a view with one range offers it once, and fixed", () => {
+test("the one range rule: a contour with history and steps offers RANGE_MODES as they are; a kind with one range offers it once, and fixed", () => {
+  // VF2-d (#2956): the rule is state/contour.ts rangeOptionsOf, read through selectors.ts by the legend and the palette alike.
   // A Results field (nodal or element) scans its stage's history or reads the step shown, by the mode.
-  for (const view of ["ready", "element"] as const) {
-    for (const range of ["history", "step", "fixed"] as const) {
-      assert.deepEqual(
-        rangeButtonsOf(view, range).map((b) => [b.range, b.own, b.label, b.on]),
-        RANGE_MODES.map((m) => [m.range, false, m.label, m.range === range]),
-        `${view} at ${range}`,
-      );
-    }
+  for (const range of ["history", "step", "fixed"] as const) {
+    assert.deepEqual(
+      rangeOptionsOf("steps", range).map((b) => [b.range, b.own, b.label, b.on]),
+      RANGE_MODES.map((m) => [m.range, false, m.label, m.range === range]),
+      `steps at ${range}`,
+    );
   }
   // A user result and a User Combination: one state, so their own range whatever the mode (selectors.ts
   // userResultContour, combinationClim). A difference: the step shown whatever the mode (differenceContour).
   const own = { user: ["own range", "history"], combination: ["own range", "history"], difference: ["this step", "step"] } as const;
-  for (const [view, [label, back]] of Object.entries(own) as [keyof typeof own, readonly [string, string]][]) {
+  for (const [kind, [label, back]] of Object.entries(own) as [keyof typeof own, readonly [string, string]][]) {
     for (const range of ["history", "step"] as const) {
-      assert.deepEqual(rangeButtonsOf(view, range).map((b) => [b.range, b.own, b.label, b.on]), [[back, true, label, true], ["fixed", false, "fixed", false]], `${view} at ${range}`);
+      assert.deepEqual(rangeOptionsOf(kind, range).map((b) => [b.range, b.own, b.label, b.on]), [[back, true, label, true], ["fixed", false, "fixed", false]], `${kind} at ${range}`);
     }
-    assert.deepEqual(rangeButtonsOf(view, "fixed").map((b) => [b.range, b.own, b.label, b.on]), [[back, true, label, false], ["fixed", false, "fixed", true]], `${view} at fixed`);
-    assert.ok(!rangeButtonsOf(view, "history").some((b) => b.label === "history"), `${view}: no history button`);
+    assert.deepEqual(rangeOptionsOf(kind, "fixed").map((b) => [b.range, b.own, b.label, b.on]), [[back, true, label, false], ["fixed", false, "fixed", true]], `${kind} at fixed`);
+    assert.ok(!rangeOptionsOf(kind, "history").some((b) => b.label === "history"), `${kind}: no history button`);
   }
-  assert.ok(!rangeButtonsOf("user", "history").some((b) => /step/.test(b.label)), "a user result has no step either");
-  assert.ok(!rangeButtonsOf("combination", "history").some((b) => /step/.test(b.label)), "nor has a combination");
+  assert.ok(!rangeOptionsOf("user", "history").some((b) => /step/.test(b.label)), "a user result has no step either");
+  assert.ok(!rangeOptionsOf("combination", "history").some((b) => /step/.test(b.label)), "nor has a combination");
+  assert.throws(() => rangeOptionsOf("history" as never, "history"), /unknown contour range kind "history"/);
 });
 
 /** Enough of the DOM for mountLegend (as test/contour/contour.test.ts's). */
@@ -140,9 +140,16 @@ test("mounted on the plate's footfall ratio, the scale offers 'own range' and 'f
     // Clicking the own range while it is on changes nothing.
     buttons()[0]!.trigger("click");
     assert.equal(h.store.get().contour.range, "history");
-    // "fixed" starts from the range shown: the column's own min and max.
+    // "fixed" starts from the range shown: the column's own min and max. VF2-d (#2956): the palette's "fixed",
+    // offered with no stored range, picked from the same state, lands on the same range (selectors `fixedRangeFrom`).
+    const before = h.store.get();
+    assert.equal(before.contour.fixed, null, "precondition: no fixed range is stored");
+    const palette = spotlightViewOf(reduce(before, { type: "openSpotlight", mode: "contourRange", query: "" })).items.find((i) => i.title === "Range: fixed");
+    assert.ok(palette, "the palette offers fixed with no stored range");
+    const picked = palette.action.events.reduce(reduce, before);
     buttons()[1]!.trigger("click");
     assert.deepEqual([h.store.get().contour.range, h.store.get().contour.fixed], ["fixed", { min: v.clim.min, max: v.clim.max }]);
+    assert.deepEqual([picked.contour.range, picked.contour.fixed], [h.store.get().contour.range, h.store.get().contour.fixed], "the palette's pick is the legend's click");
     assert.deepEqual(shown(), [["own range", false], ["fixed", true]]);
     // And the own range is the way back from a fixed range.
     buttons()[0]!.trigger("click");

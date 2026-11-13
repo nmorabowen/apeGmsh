@@ -86,6 +86,8 @@ import {
 export type { Clim, ElementComponent, ElementField, FieldComponent, NodalField } from "./contour.ts";
 export { GHOST_OPACITY, scaleLabel } from "./deform.ts";
 export { CMAP_NAMES, CMAPS, fmtValue, MAGNITUDE, NO_DATA_RGB, rampCss, RANGE_MODES, sampleCmap } from "./contour.ts";
+// VF2-d (#2956): the one range rule the legend's scale and the command palette both offer.
+export { rangeKindOf, rangeOptionsOf, type RangeKind, type RangeOption } from "./contour.ts";
 export { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
 export { gaussNotesOf, gaussUnavailable } from "./gaussNotes.ts";
 export { legendEntryColour } from "./palette.ts";
@@ -286,11 +288,20 @@ import {
   initialSearch,
   initialSpotlight,
   SPOTLIGHT_EVENT_LEDGER,
-  spotlightViewOf,
+  spotlightViewOf as spotlightViewWith,
   type EventLedgerEntry,
   type SpotlightItem,
   type SpotlightView,
 } from "./spotlight.ts";
+
+/**
+ * What Spotlight (`Ctrl+K`) renders for `s` (state/spotlight.ts), handed the
+ * range a pick of "fixed" starts from (`fixedRangeFrom`): the palette cannot
+ * read the contour view itself, which this module holds (VF2-d, #2956).
+ */
+export function spotlightViewOf(s: State): SpotlightView {
+  return spotlightViewWith(s, fixedRangeFrom);
+}
 
 export {
   clauseLabel,
@@ -305,7 +316,6 @@ export {
   searchResultsOf,
   selectedElementsOf,
   SPOTLIGHT_EVENT_LEDGER,
-  spotlightViewOf,
   type EventLedgerEntry,
   type ModelIndex,
   type SearchSummary,
@@ -879,6 +889,20 @@ export function contourView(s: State): ContourView {
     stepMeasured: measured,
     reads: c.reads,
   };
+}
+
+/**
+ * The range a pick of "fixed" starts from, on the legend's scale and in the
+ * command palette alike (VF2-d, #2956): the stored fixed range, else the range
+ * the contour shows when it is a finite, non-empty one, else null (there is
+ * nothing to start from, and the pick changes nothing).
+ */
+export function fixedRangeFrom(s: State): { min: number; max: number } | null {
+  if (s.contour.fixed) return s.contour.fixed;
+  const c = contourView(s);
+  if (c.state !== "ready" && c.state !== "element" && c.state !== "combination" && c.state !== "difference" && c.state !== "user") return null;
+  const { min, max } = c.clim;
+  return min !== null && max !== null && min < max ? { min, max } : null;
 }
 
 /**
