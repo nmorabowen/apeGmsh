@@ -161,6 +161,9 @@ test("mounted on the plate's footfall ratio, the scale offers 'own range' and 'f
     buttons()[1]!.trigger("click");
     assert.deepEqual([h.store.get().contour.range, h.store.get().contour.fixed], ["fixed", { min: v.clim.min, max: v.clim.max }]);
     assert.deepEqual([picked.contour.range, picked.contour.fixed], [h.store.get().contour.range, h.store.get().contour.fixed], "the palette's pick is the legend's click");
+    // #2957 review item 3: that state stores the range, so the legend's min and max boxes appear, holding it.
+    const box = (cls: string) => scale.all((e) => e.className === cls)[0];
+    assert.deepEqual([box("contour-fixed-min")?.value, box("contour-fixed-max")?.value], [String(v.clim.min), String(v.clim.max)]);
     assert.deepEqual(shown(), [["own range", false], ["fixed", true]]);
     // And the own range is the way back from a fixed range.
     buttons()[0]!.trigger("click");

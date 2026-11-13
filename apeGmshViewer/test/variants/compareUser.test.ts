@@ -45,6 +45,7 @@ import {
   contourFieldsOf,
   contourView,
   deformOf,
+  rangeKindOf,
   userResultPickOf,
   userResultRequestOf,
   variantRowOf,
@@ -451,10 +452,19 @@ test("VF2-d (#2956): a render spec names the compare result by variant plus entr
   const a = entryOf(cmp);
   assert.deepEqual(a.user, { name: SHOWN, basis: "model", compare: { variant: "Cracked", entry: "footfall" } });
 
-  // The window's own entry named "Cracked: footfall": the next shot starts with no compare result (BASE_EVENTS).
+  // The next shot starts with no compare result (BASE_EVENTS' showCompareUser(null)): a shot with no contour
+  // picks no field, so nothing but the base view can end it.
+  const group = shotOf({});
+  assert.equal(await take(group), null);
+  assert.equal(h.store.get().variants.shown, null, "the base view hid the compare result");
+  assert.equal(rangeKindOf(h.store.get()), "steps", "no compare result is left to range over");
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  assert.notEqual(contourView(h.store.get()).state, "user", "turning contours on draws no compare result left over");
+
+  // The window's own entry named "Cracked: footfall".
   const own = shotOf({ contour: { field: SHOWN, component: "ratio", source: "user" } });
   assert.equal(await take(own), null);
-  assert.equal(h.store.get().variants.shown, null, "the base view hid the compare result");
+  assert.equal(h.store.get().variants.shown, null, "the window's own entry, not the compare result");
   assert.deepEqual(values(), column(GOLDEN.window_footfall), "the window file's values");
   const b = entryOf(own);
   assert.deepEqual(b.user, { name: SHOWN, basis: "model" });

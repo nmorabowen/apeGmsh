@@ -31,7 +31,7 @@ import {
   spotlightViewOf,
   windowContentOf,
 } from "../src/state/selectors.ts";
-import { spotlightViewOf as spotlightViewWith } from "../src/state/spotlight.ts";
+import { FIXED_NOTHING_TO_START, spotlightViewOf as spotlightViewWith } from "../src/state/spotlight.ts";
 import { initialState, reduce, Store, type State } from "../src/state/store.ts";
 import type { EventType } from "../src/state/types.ts";
 import { harness, opened } from "./contour/harness.ts";
@@ -799,7 +799,15 @@ test("VF2-d (#2956): the palette offers the one range rule the legend offers, fo
           const next = events.reduce(reduce, s);
           if (b.range === "fixed") {
             if (stored) assert.deepEqual([next.contour.range, next.contour.fixed], ["fixed", stored], `${at}: picking fixed`);
-            else assert.ok(!events.some((e) => e.type === "setContourRange"), `${at}: picking fixed with nothing to start from sets no range`);
+            else {
+              assert.ok(!events.some((e) => e.type === "setContourRange"), `${at}: picking fixed with nothing to start from sets no range`);
+              // #2957 review item 3: the hint says the pick changes nothing and names the way to a fixed range: a typed
+              // `min max` in this list, which stores one, so the legend's min and max boxes then appear (legend.ts).
+              assert.equal(items[i]!.detail, FIXED_NOTHING_TO_START, `${at}: fixed hint`);
+              const typed = spotlightViewOf({ ...s, spotlight: { ...s.spotlight, query: "-1 2" } }).items.find((x) => x.id === "val:range-fixed-custom");
+              assert.ok(typed, `${at}: a typed min max is offered`);
+              assert.deepEqual(typed.action.events.reduce(reduce, s).contour.fixed, { min: -1, max: 2 }, `${at}: the typed range is stored`);
+            }
           } else if (b.own && range !== "fixed") assert.ok(!events.some((e) => e.type === "setContourRange"), `${at}: picking ${b.label} sets no range`);
           else assert.equal(next.contour.range, b.range, `${at}: picking ${b.label}`);
         }

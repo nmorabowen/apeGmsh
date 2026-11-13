@@ -988,6 +988,15 @@ function declSpotlightItem(
  */
 export type FixedRangeFrom = (s: State) => { min: number; max: number } | null;
 
+/**
+ * The palette's "fixed" with no stored range and no range shown: picking it
+ * changes nothing (as the legend's button), and the legend's min and max
+ * boxes appear only once a fixed range is stored, so the way to one is the
+ * typed `min max` this list turns into "Set Fixed Range [min, max]".
+ */
+export const FIXED_NOTHING_TO_START =
+  "No range is shown to start from, so picking this changes nothing: type a min and a max into this list (as `min max`) to set a fixed range";
+
 function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: string, fixedFrom: FixedRangeFrom | undefined): SpotlightItem[] {
   const items: SpotlightItem[] = [];
   const low = q.trim().toLowerCase();
@@ -1349,7 +1358,7 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
               : r.range === "step"
                 ? "Scale colours to the min/max of the current step"
                 : !from
-                  ? "No range is shown to start a fixed range from: type a min and a max"
+                  ? FIXED_NOTHING_TO_START
                   : s.contour.fixed
                     ? `Fixed range [${from.min}, ${from.max}]`
                     : `Fixed range, starting from the range shown [${from.min}, ${from.max}]`),
