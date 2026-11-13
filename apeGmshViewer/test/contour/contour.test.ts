@@ -1,7 +1,8 @@
 // V4c1 (#1756): the contour's pure parts (fields, labels, colormaps, ranges
 // and what the legend says about them), the reducer's guards, and the seams:
 // the history-scan cancel, a reload that loses the field, a partial write
-// refused per component.
+// refused per component. VF-a (#2939): the viewport's contour surfaces (the
+// faces, the frame-extrusion fill) sample the colormap per fragment.
 
 import assert from "node:assert/strict";
 import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
@@ -11,17 +12,23 @@ import { join, relative, sep } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
+import * as THREE from "three";
 import { ResultsHost } from "../../src/main/results.ts";
 import { LadrunoError, openLadruno } from "../../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { mountHeader } from "../../src/panels/header.ts";
 import { contourLines, mountLegend, rampCss } from "../../src/panels/legend.ts";
-import { contourKey } from "../../src/renderer/contour.ts";
-import { CMAPS, CMAP_NAMES, climOf, fieldsOf, gaussFields, LADRUNO_AXIS_MAP, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
+import { colormapTexture, NO_DATA_U, RAMP_TEXELS, shownAt, TEXTURE_WIDTH } from "../../src/renderer/colormapTexture.ts";
+import { contourColours, contourKey, toLinear } from "../../src/renderer/contour.ts";
+import { Viewport } from "../../src/renderer/viewport.ts";
+import { CMAPS, CMAP_NAMES, climOf, columnOf, fieldsOf, gaussFields, LADRUNO_AXIS_MAP, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, rampT, sampleCmap, vertexValues } from "../../src/state/contour.ts";
 import { classifyFieldDimension, contourFieldsOf, contourView, noticesOf, resolveFieldUnits } from "../../src/state/selectors.ts";
 import { Store } from "../../src/state/store.ts";
-import type { ContourScan } from "../../src/state/types.ts";
+import type { ContourCmap, ContourScan, MeshInfo, State } from "../../src/state/types.ts";
 import { opened, STAGED, STAGED_RESULTS, tick, until } from "./harness.ts";
+
+const FRAME3D_MODEL = fileURLToPath(new URL("../../fixtures/ladruno_frame3d.h5", import.meta.url));
+const FRAME3D_LADRUNO = fileURLToPath(new URL("../../fixtures/ladruno_frame3d.ladruno", import.meta.url));
 
 // -- fields and labels ----------------------------------------------------------
 
@@ -925,4 +932,174 @@ test("#2214: every committed .ladruno contours as before (magnitude and axis gro
     }
   }
   assert.deepEqual(got, CONTOUR_GOLDEN);
+});
+
+// -- VF-a (#2939): the surfaces sample the colormap per fragment ------------------------
+
+/** The viewport's mesh-building methods on a minimal receiver: the class needs WebGL to construct, `rebuild` and `recolour` do not. */
+interface ViewportBuild {
+  rebuild(s: State, info: MeshInfo): void;
+  recolour(s: State): void;
+  faces: THREE.Mesh | null;
+  frameFaces: THREE.Mesh | null;
+  drawn: { triMap: Int32Array } | null;
+}
+function viewportOn(h: Awaited<ReturnType<typeof opened>>): ViewportBuild {
+  const v = Object.create(Viewport.prototype) as Record<string, unknown>;
+  Object.assign(v, {
+    store: h.store,
+    blobs: h.blobs,
+    content: new THREE.Group(),
+    highlight: new THREE.Group(),
+    ghost: new THREE.Group(),
+    markers: new THREE.Group(),
+    lineMaterials: [],
+    host: { clientWidth: 800, clientHeight: 600 },
+    activeTheme: "dark",
+    stepSource: () => h.effects.currentStep(),
+    combinationSource: () => null,
+    dispSource: () => null,
+    full: null,
+    drawn: null,
+    contourApplied: null,
+    caps: { setDim: () => {} },
+    requestRender: () => {},
+  });
+  return v as unknown as ViewportBuild;
+}
+
+/** Where a texture coordinate sits on the ramp (the inverse of colormapTexture's `rampU` at a texel centre). */
+const tOfU = (u: number): number => (u * TEXTURE_WIDTH - 0.5) / (RAMP_TEXELS - 1);
+
+/** `got` is the ramp's colour (linear) at `t`, to one texel: the oracle is state/contour.ts `sampleCmap`, never the texture. */
+function onRampAt(got: readonly number[], cmap: ContourCmap, t: number, what: string): void {
+  const i = Math.round(Math.min(1, Math.max(0, t)) * (RAMP_TEXELS - 1));
+  const near = [-1, 0, 1].map((k) => sampleCmap(cmap, Math.min(1, Math.max(0, (i + k) / (RAMP_TEXELS - 1)))).map(toLinear));
+  const err = Math.min(...near.map((w) => Math.max(...w.map((x, c) => Math.abs(x - got[c]!)))));
+  assert.ok(err < 1e-6, `${what}: ${got} is not ${cmap} at ${t} (${err})`);
+}
+
+/** Barycentric points inside a triangle: its centroid, an edge midpoint and an off-centre point. */
+const BARY = [
+  [1 / 3, 1 / 3, 1 / 3],
+  [0.5, 0.5, 0],
+  [0.2, 0.3, 0.5],
+] as const;
+
+/** Every fragment of a contoured mesh shows the ramp at its interpolated ramp position (three points per triangle). */
+function fragmentsOnRamp(mesh: THREE.Mesh, cmap: ContourCmap, what: string): void {
+  const m = mesh.material as THREE.MeshStandardMaterial;
+  assert.equal(m.vertexColors, false, `${what}: no per-vertex RGB`);
+  assert.equal(m.map, colormapTexture(cmap), `${what}: the contour's colormap texture`);
+  const uv = mesh.geometry.getAttribute("uv");
+  assert.ok(uv, `${what}: ramp coordinates`);
+  assert.equal(uv.count, mesh.geometry.getAttribute("position").count, `${what}: one coordinate per vertex`);
+  const map = m.map as THREE.DataTexture;
+  for (let t = 0; t < uv.count / 3; t++) {
+    const u = [0, 1, 2].map((k) => uv.getX(3 * t + k));
+    for (const w of BARY) {
+      const at = w[0] * u[0]! + w[1] * u[1]! + w[2] * u[2]!;
+      onRampAt(shownAt(map, at), cmap, w[0] * tOfU(u[0]!) + w[1] * tOfU(u[1]!) + w[2] * tOfU(u[2]!), `${what} triangle ${t}`);
+    }
+  }
+}
+
+test("VF-a: the viewport's contour faces sample the colormap per fragment at the closed-form value, and a colormap change swaps the texture in place", async () => {
+  const h = await opened();
+  try {
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    h.store.dispatch({ type: "setContourField", field: "displacement", component: "displacement_x" });
+    h.store.dispatch({ type: "setContourRange", range: "step" });
+    await until(() => {
+      const v = contourView(h.store.get());
+      const st = h.effects.currentStep();
+      return v.state === "ready" && v.stepMeasured && st?.stage === 2 && st.step === 1;
+    }, "the step shown, measured");
+    let s = h.store.get();
+    const vp = viewportOn(h);
+    vp.rebuild(s, s.mesh!);
+    const faces = vp.faces!;
+    assert.ok(faces, "the model has faces");
+    fragmentsOnRamp(faces, "jet", "faces");
+    // The vertex positions on the ramp are the closed-form value through the contour's range (oracle.test.ts's oracle).
+    const view = contourView(s);
+    assert.ok(view.state === "ready");
+    const uv = faces.geometry.getAttribute("uv");
+    const step = h.effects.currentStep()!;
+    const triNodes = h.blobs.get(s.mesh!.vertexNodes.tri) as Float64Array;
+    const values = vertexValues(triNodes, columnOf(h.blobs.get(view.nodeIds) as Float64Array), view.component.datasets.map((d) => step.nodal[d]!), false);
+    const triMap = vp.drawn!.triMap; // the stage's active cells
+    assert.equal(uv.count, 3 * triMap.length, "one coordinate per drawn vertex");
+    for (let d = 0; d < triMap.length; d++) {
+      for (let k = 0; k < 3; k++) {
+        const x = values[3 * triMap[d]! + k]!;
+        const t = rampT(x, view.clim.min!, view.clim.max!);
+        assert.ok(Math.abs(tOfU(uv.getX(3 * d + k)) - t) <= 0.5 / (RAMP_TEXELS - 1) + 1e-6, `drawn triangle ${d} vertex ${k}: the ramp position of ${x}`);
+      }
+    }
+    // A colormap change recolours in place: the same mesh, its texture swapped.
+    h.store.dispatch({ type: "setContourCmap", cmap: "viridis" });
+    s = h.store.get();
+    vp.recolour(s);
+    assert.equal(vp.faces, faces, "no rebuild");
+    fragmentsOnRamp(faces, "viridis", "faces after the colormap change");
+  } finally {
+    h.effects.dispose();
+  }
+});
+
+test("VF-a: no data on the faces is the no-data texel on every fragment, never a blend with the ramp", async () => {
+  const h = await opened();
+  try {
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    const s = h.store.get();
+    assert.equal(contourView(s).state, "unavailable", "off the results phases the contour cannot colour");
+    const vp = viewportOn(h);
+    vp.rebuild(s, s.mesh!);
+    const m = vp.faces!.material as THREE.MeshStandardMaterial;
+    const uv = vp.faces!.geometry.getAttribute("uv");
+    const grey = NO_DATA_RGB.map(toLinear);
+    for (let i = 0; i < uv.count; i++) {
+      assert.equal(uv.getX(i), Math.fround(NO_DATA_U), `vertex ${i}: the no-data texel`);
+      assert.deepEqual(shownAt(m.map as THREE.DataTexture, uv.getX(i)).map((x) => Math.round(x * 1e6)), grey.map((x) => Math.round(x * 1e6)));
+    }
+  } finally {
+    h.effects.dispose();
+  }
+});
+
+test("VF-a: the frame-extrusion fill samples the colormap per fragment from its segment's line coordinates", async () => {
+  const h = await opened(FRAME3D_MODEL, FRAME3D_LADRUNO);
+  try {
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 2 } });
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    h.store.dispatch({ type: "toggleExtrudeFrames", on: true });
+    await until(() => {
+      const v = contourView(h.store.get());
+      const st = h.effects.currentStep();
+      return v.state === "ready" && v.stepMeasured && st?.stage === 0 && st.step === 2;
+    }, "the step shown, measured");
+    const s = h.store.get();
+    assert.ok(s.mesh!.frameExtrusion?.hasExtrudableFrames, "the fixture extrudes its frames");
+    const vp = viewportOn(h);
+    vp.rebuild(s, s.mesh!);
+    assert.ok(vp.frameFaces, "the extruded frames are drawn");
+    fragmentsOnRamp(vp.frameFaces, "jet", "frame fill");
+    // Every fill coordinate is one of its beams' end coordinates (the contour's line values), never a colour.
+    const view = contourView(s);
+    assert.ok(view.state === "ready");
+    const drawn = Int32Array.from({ length: s.mesh!.linePositions.shape[0]! }, (_, i) => i);
+    const cc = contourColours(s, view, s.mesh!, h.blobs, h.effects.currentStep(), drawn, new Int32Array(0))!;
+    const ends = new Set(Array.from(cc.lineU));
+    const uv = vp.frameFaces.geometry.getAttribute("uv");
+    let spans = 0;
+    for (let i = 0; i < uv.count; i++) assert.ok(ends.has(uv.getX(i)), `fill vertex ${i}: a beam-end coordinate`);
+    for (let t = 0; t < uv.count / 3; t++) if (new Set([0, 1, 2].map((k) => uv.getX(3 * t + k))).size > 1) spans++;
+    assert.ok(spans > 0, "some fill triangles span two beam ends: the per-fragment lookup is exercised");
+    assert.ok(vp.faces, "and the slabs");
+    fragmentsOnRamp(vp.faces, "jet", "slabs");
+  } finally {
+    h.effects.dispose();
+  }
 });
