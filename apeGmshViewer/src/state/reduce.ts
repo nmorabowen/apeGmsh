@@ -231,7 +231,30 @@ function withLineDiagramPick(s: State, preserveNotice = false): State {
 }
 
 export function reduce(s: State, e: Event): State {
-  return withPickFrame(s, e, reduceEvent(s, e));
+  const next = reduceEvent(s, e);
+  return withPickFrame(s, e, e.type === "setContourField" ? withoutCompareUser(next) : next);
+}
+
+/** The variants reducer's inputs for a Hide: `showCompareUser` with no pick reads none of them. */
+const HIDE_INPUTS = {
+  differenceKey: () => {
+    throw new Error("showCompareUser (Hide) asked for the difference key");
+  },
+  compareUserKey: () => {
+    throw new Error("showCompareUser (Hide) asked for the compare user key");
+  },
+};
+
+/**
+ * VF (#2943, #2902 item 3): a contour field pick replaces a compare user
+ * result drawn, as the panel's Hide does. One contour at a time, and
+ * `contourView` draws the compare result before the pick, so leaving it would
+ * keep it on screen whatever field the legend picked. A pick the reducer
+ * refused threw before this, so the compare result stays.
+ */
+function withoutCompareUser(s: State): State {
+  if (s.variants.shown === null) return s;
+  return { ...s, variants: reduceVariants(s.variants, { type: "showCompareUser", pick: null }, HIDE_INPUTS) };
 }
 
 /**

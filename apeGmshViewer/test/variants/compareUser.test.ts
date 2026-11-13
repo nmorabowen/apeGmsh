@@ -13,7 +13,9 @@
 //   only when both models state one mesh (fem_hash): two meshes that do not
 //   pair are refused with the reason, never interpolated;
 // - a stale compare entry is refused and offered no Draw; an answer for a
-//   closed or replaced slot is dropped; compare:close and the difference end it.
+//   closed or replaced slot is dropped; compare:close and the difference end it;
+// - a legend field pick ends it too and draws the picked field (#2943): the
+//   reducer clears the compare result as Hide does, a refused pick excepted.
 
 import assert from "node:assert/strict";
 import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -30,7 +32,7 @@ import type { ResultsH5 } from "../../src/reader/results.ts";
 import { readUserResultColumn, readUserSet, type UserH5 } from "../../src/reader/userFile.ts";
 import { UserResultFeed, userResultOnHand, VariantRunner, type VariantDoor } from "../../src/renderer/contour.ts";
 import { reduce } from "../../src/state/reduce.ts";
-import { compareMeshOf, compareUserRequestOf, contourView, deformOf, userResultRequestOf } from "../../src/state/selectors.ts";
+import { compareMeshOf, compareUserRequestOf, contourFieldsOf, contourView, deformOf, userResultRequestOf } from "../../src/state/selectors.ts";
 import type { CompareIn, State, VariantsIn } from "../../src/state/types.ts";
 import { harness, until } from "../contour/harness.ts";
 
@@ -188,6 +190,47 @@ test("Draw: the compare file's footfall ratio on the window's mesh by node id, n
   }, "the window's user result again");
   assert.deepEqual(windowReads, ["footfall ratio", "footfall ratio"], "read again through the window's own door");
   assert.deepEqual(Array.from(userResultOnHand(contourView(h.store.get()) as Extract<ReturnType<typeof contourView>, { state: "user" }>)!.values), column(GOLDEN.window_footfall));
+  off();
+});
+
+test("a legend field pick replaces a compare user result drawn, the same field as under it too; a refused pick keeps it (#2943)", async () => {
+  const { h, off } = await compared();
+  const PICK = { name: "footfall", component: "ratio" };
+  const compareDrawn = () => {
+    const v = contourView(h.store.get());
+    return v.state === "user" && v.name === "Cracked: footfall" && userResultOnHand(v) !== null;
+  };
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+  // The window's own footfall is the pick under the compare result.
+  h.store.dispatch({ type: "setContourField", field: "footfall", component: "ratio", source: "user" });
+  h.store.dispatch({ type: "showCompareUser", pick: PICK });
+  await until(compareDrawn, "the compare user result");
+  // A pick the reducer refuses changes nothing: the compare result stays drawn.
+  assert.throws(() => h.store.dispatch({ type: "setContourField", field: "no_such_field", component: "x", source: "nodal" }), /is not a nodal field component/);
+  assert.deepEqual(h.store.get().variants.shown, PICK);
+  assert.ok(compareDrawn(), "still the compare result after a refused pick");
+  // The legend picks the field the contour already holds: a pick all the same, so the window's footfall is drawn.
+  h.store.dispatch({ type: "setContourField", field: "footfall", component: "ratio", source: "user" });
+  assert.deepEqual([h.store.get().variants.shown, h.store.get().variants.shownRead], [null, null]);
+  await until(() => {
+    const x = contourView(h.store.get());
+    return x.state === "user" && x.name === "footfall" && userResultOnHand(x) !== null;
+  }, "the window's user result after the pick");
+  const w = contourView(h.store.get()) as Extract<ReturnType<typeof contourView>, { state: "user" }>;
+  assert.deepEqual(Array.from(userResultOnHand(w)!.values), column(GOLDEN.window_footfall));
+  // Draw the compare result again, then pick a nodal field from the legend's own rows.
+  h.store.dispatch({ type: "showCompareUser", pick: PICK });
+  await until(compareDrawn, "the compare user result again");
+  const rows = contourFieldsOf(h.store.get());
+  assert.ok(rows !== null && rows.fields.length > 0, "precondition: the results stage shown offers nodal fields");
+  const f = rows.fields[0]!;
+  const key = f.components[0]!.key;
+  h.store.dispatch({ type: "setContourField", field: f.name, component: key, source: "nodal" });
+  assert.equal(h.store.get().variants.shown, null);
+  const v = contourView(h.store.get());
+  assert.equal(v.state, "ready", `the picked field is drawn: ${JSON.stringify(v)}`);
+  assert.deepEqual(v.state === "ready" ? [v.field, v.component.key] : null, [f.name, key]);
   off();
 });
 
