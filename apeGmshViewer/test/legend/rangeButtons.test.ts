@@ -8,7 +8,7 @@
 // field keeps RANGE_MODES as they are.
 
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
@@ -50,6 +50,17 @@ test("the one range rule: a contour with history and steps offers RANGE_MODES as
   assert.ok(!rangeOptionsOf("user", "history").some((b) => /step/.test(b.label)), "a user result has no step either");
   assert.ok(!rangeOptionsOf("combination", "history").some((b) => /step/.test(b.label)), "nor has a combination");
   assert.throws(() => rangeOptionsOf("history" as never, "history"), /unknown contour range kind "history"/);
+});
+
+test("VF2-d (#2956): the legend reads the one rule through state/selectors.ts and keeps no copy of it", () => {
+  // VF2-b (#2953) left two copies held equal by a test; the legend's scale must now ask the rule the palette asks
+  // (state/spotlight.ts), and the fixed range's start (`fixedRangeFrom`), so the two cannot drift apart again.
+  const src = readFileSync(fileURLToPath(new URL("../../src/panels/legend.ts", import.meta.url)), "utf8");
+  const imports = /import \{([^}]*)\} from "\.\.\/state\/selectors\.ts";/.exec(src)?.[1] ?? "";
+  for (const name of ["rangeKindOf", "rangeOptionsOf", "fixedRangeFrom"]) assert.match(imports, new RegExp(`\\b${name}\\b`), `legend.ts imports ${name} from selectors.ts`);
+  assert.match(src, /rangeOptionsOf\(rangeKindOf\(s\), s\.contour\.range\)/, "the scale's buttons are the rule's options at the state's kind");
+  assert.doesNotMatch(src, /RANGE_MODES|label: "own range"|function rangeButtonsOf/, "no copy of the rule's modes or labels");
+  assert.doesNotMatch(src, /c\.clim\.min < c\.clim\.max/, "no copy of the fixed range's start");
 });
 
 /** Enough of the DOM for mountLegend (as test/contour/contour.test.ts's). */
