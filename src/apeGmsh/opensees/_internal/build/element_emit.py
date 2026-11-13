@@ -115,7 +115,7 @@ def _fem_element_id_ceiling(fem: "FEMData", emitted_max: int) -> int:
     snapshot's largest element id: a synthesised tag must not reuse the
     id of a FEM element that exists but is not emitted (a point carrier,
     an unassigned group), or a results reader keyed by FEM id would take
-    the synthesised element for it (ADR 0111 D2; #2926). A snapshot that
+    the synthesised element for it (ADR 0111 D2). A snapshot that
     exposes no element ids (the unit-test FEM stubs) contributes only
     ``emitted_max``.
     """
@@ -144,7 +144,7 @@ def allocate_element_tags(
 
     Ops-only rows (no FEM id: node-pair specs, a ``LadrunoMembrane``
     polygon) take their tags after every paired row, above the largest
-    FEM element id, in both modes (#2926). Under ``"sequential"`` this
+    FEM element id, in both modes (ADR 0111 D2). Under ``"sequential"`` this
     function reserves the counter through that id (and the paired block)
     before its first mint; under ``"fem"`` the reservation is
     ``reserve_fem_element_tags``'s. Either way a sentinel tag never
@@ -175,15 +175,15 @@ def allocate_element_tags(
     ``(eid, conn_tuple, ele_tag)`` triples in the same order as the old
     list-of-tuples form, so every downstream consumer is unchanged.
     """
-    # #2926 (ADR 0111 D2, sequential rule): the plan is made in three
-    # passes over the specs in iteration order. (1) every spec's fan-out
-    # and the per-spec checks; (2) the paired rows (elements with a FEM
-    # id) take their tags, so they stay the contiguous blocks they always
-    # were; (3) the "element" counter is reserved through the largest FEM
-    # id, then the ops-only rows (no FEM id: node-pair specs, a
-    # ``LadrunoMembrane`` polygon) take theirs, still in plan order. Every
-    # later element-kind mint (MP elements, interface ``zeroLength``)
-    # draws from the same counter after this, so no ops-only tag can
+    # ADR 0111 D2, the sequential rule: the plan is made in passes over
+    # the specs in iteration order. (1) every spec's fan-out and the
+    # per-spec checks; then the "element" counter is reserved through the
+    # paired run and the largest FEM id; (2) the paired rows (elements
+    # with a FEM id) take the contiguous run just above the seed, spec by
+    # spec; (3) the ops-only rows (no FEM id: node-pair specs, a
+    # ``LadrunoMembrane`` polygon) are minted above the reserve, still in
+    # plan order. Every later element-kind mint (MP elements, interface
+    # ``zeroLength``) draws from the same counter, so no ops-only tag can
     # equal a FEM id. A plan with no ops-only element mints nothing after
     # the reserve, so its tags are those of the one-pass plan. The plan
     # list keeps spec order, and the partitioned emit reads these tags
@@ -278,7 +278,7 @@ def allocate_element_tags(
             "an ops-only tag could collide with one."
         )
 
-    # The sequential rule (#2926): every ops-only tag, here and in every
+    # The sequential rule (ADR 0111 D2): every ops-only tag, here and in every
     # later element-kind mint, lands above the largest FEM element id.
     for k, (spec, fanout, ops_only) in enumerate(fanouts):
         if not ops_only:
