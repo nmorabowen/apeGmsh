@@ -386,6 +386,25 @@ function drillDownItem(id: string, badge: string, title: string, detail: string,
   });
 }
 
+/** The root entry to the contour range list, named by the mode the list marks on (VF2 #2949). */
+function contourRangeEntry(s: State): { item: SpotlightItem; keywords: string } {
+  const kind = rangeKindOf(s);
+  const on = rangeOptionsOf(kind, s.contour.range).find((r) => r.on);
+  if (!on) throw new Error(`no contour range option is on for ${kind} at ${s.contour.range}`);
+  return {
+    item: drillDownItem(
+      "cmd:contour-range",
+      "contour",
+      `Set Contour Range… (currently ${on.label})`,
+      kind === "steps"
+        ? "Switch between whole-history, current step, or custom fixed min/max range"
+        : `Switch between this ${kind === "difference" ? "difference's step" : "result's own"} range and a custom fixed min/max range`,
+      "contourRange",
+    ),
+    keywords: "set contour range clim history step fixed min max own",
+  };
+}
+
 function commandItem(
   id: string,
   badge: string,
@@ -795,16 +814,7 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       ),
       keywords: "set contour gauss topology mode cell node averaged discrete extrapolation",
     });
-    out.push({
-      item: drillDownItem(
-        "cmd:contour-range",
-        "contour",
-        `Set Contour Range… (currently ${s.contour.range})`,
-        "Switch between whole-history, current step, or custom fixed min/max range",
-        "contourRange",
-      ),
-      keywords: "set contour range clim history step fixed min max",
-    });
+    out.push(contourRangeEntry(s));
     out.push({
       item: drillDownItem(
         "cmd:contour-cmap",
@@ -861,6 +871,9 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       ),
       keywords: "set line diagram beam moment shear axial ribbon mvy mz vy n toggle",
     });
+  } else if (s.visibility.colourBy === "contour" && rangeKindOf(s) === "user") {
+    // VF2 (#2949): a user result draws with no results file (VU16), and the legend offers its range there too.
+    out.push(contourRangeEntry(s));
   }
 
   if (resStage) {
@@ -1302,8 +1315,8 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
       // VF2 (#2949): the legend's rule (state/contour.ts rangeOptionsOf), so a one-range contour offers its own range once.
       for (const r of rangeOptionsOf(rangeKindOf(s), s.contour.range)) {
         if (r.range === "fixed" && !s.contour.fixed) continue;
-        // As the legend: the own range leaves a fixed range for `r.range`, and otherwise changes nothing.
-        const pick = [{ type: "setContourRange", range: r.own && r.on ? s.contour.range : r.range }] as const;
+        // As the legend: the own range leaves a fixed range for `r.range`, and otherwise changes nothing (it only closes the palette).
+        const pick: readonly Event[] = r.own && r.on ? [{ type: "closeSpotlight" }] : [{ type: "setContourRange", range: r.range }];
         const it = commandItem(
           r.own ? "val:range-own" : `val:range-${r.range}`,
           "range",

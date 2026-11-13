@@ -747,13 +747,18 @@ test("VF2 (#2949): the palette's contour range list is the legend's, for every c
   // draws. The fixture holds no results, user file or compare set, so contourView (selectors.ts) draws none of
   // these; each State is pinned to its view by the branch contourView takes, read from what it refuses with.
   const base: State = reduce(loaded, { type: "setColourBy", by: "contour" });
+  const footfall = { name: "footfall", component: "footfall_ratio" };
+  const combination = { ...base.phase, at: { kind: "combination" as const, name: "ULS" } };
   const kinds: readonly [string, "ready" | "element" | "user" | "combination" | "difference", State, RegExp][] = [
     ["a nodal Results field", "ready", { ...base, contour: { ...base.contour, source: "nodal" } }, /^unavailable: no results file pairs/],
     ["an element Results field", "element", { ...base, contour: { ...base.contour, source: "element" } }, /^unavailable: no results file pairs/],
     ["a user result", "user", { ...base, contour: { ...base.contour, source: "user", field: "footfall", component: "footfall_ratio" } }, /^refused user: /],
-    ["a compare user result", "user", { ...base, variants: { ...base.variants, shown: { name: "footfall", component: "footfall_ratio" } } }, /^refused user: .*compare variant/],
-    ["a User Combination", "combination", { ...base, phase: { ...base.phase, at: { kind: "combination", name: "ULS" } } }, /^unavailable: the user file is not read/],
+    ["a compare user result", "user", { ...base, variants: { ...base.variants, shown: footfall } }, /^refused user: .*compare variant/],
+    ["a User Combination", "combination", { ...base, phase: combination }, /^unavailable: the user file is not read/],
+    // The branch order: a compare user result is shown over a combination phase, and the difference over both.
+    ["a compare user result over a combination", "user", { ...base, phase: combination, variants: { ...base.variants, shown: footfall } }, /^refused user: .*compare variant/],
     ["the difference", "difference", { ...base, variants: { ...base.variants, difference: true } }, /^refused difference: /],
+    ["the difference over a compare user result and a combination", "difference", { ...base, phase: combination, variants: { ...base.variants, shown: footfall, difference: true } }, /^refused difference: /],
   ];
   for (const [what, view, k, branch] of kinds) {
     for (const range of ["history", "step", "fixed"] as const) {
@@ -769,11 +774,34 @@ test("VF2 (#2949): the palette's contour range list is the legend's, for every c
         legend.map((b) => [`Range: ${b.label}`, b.on]),
         `${what} at ${range}`,
       );
-      // Picking a range does what the legend's button does: the own range leaves a fixed range, and otherwise changes nothing.
       for (const [i, b] of legend.entries()) {
-        const after = items[i]!.action.events.reduce(reduce, s).contour.range;
-        assert.equal(after, b.own && range !== "fixed" ? range : b.range, `${what} at ${range}: picking ${b.label}`);
+        // The legend's tooltip, where it has one: it names what the one range is ("this user result's own range").
+        if (b.title !== null) assert.equal(items[i]!.detail, b.title, `${what} at ${range}: ${b.label} tooltip`);
+        // Picking a range does what the legend's button does: the own range leaves a fixed range, and otherwise dispatches nothing.
+        const events = items[i]!.action.events;
+        if (b.own && range !== "fixed") assert.ok(!events.some((e) => e.type === "setContourRange"), `${what} at ${range}: picking ${b.label} sets no range`);
+        else assert.equal(events.reduce(reduce, s).contour.range, b.range, `${what} at ${range}: picking ${b.label}`);
       }
+      // The root entry names the mode as the list does.
+      const entry = spotlightViewOf({ ...s, spotlight: { ...s.spotlight, mode: "root", query: "contour range" } }).items.find((i) => i.id === "cmd:contour-range");
+      if (entry) assert.equal(entry.title, `Set Contour Range… (currently ${legend.find((b) => b.on)!.label})`, `${what} at ${range}: entry`);
     }
   }
+});
+
+test("VF2 (#2949): a user result drawn with no results file (VU16) offers the contour range entry, as the legend does", () => {
+  // The fixture is a model alone: no results step, so the Results contour entries are not offered.
+  const at = (s: State, range: "history" | "step" | "fixed") =>
+    reduce({ ...s, contour: { ...s.contour, range, fixed: { min: -1, max: 2 } } }, { type: "openSpotlight", mode: "root", query: "contour range" });
+  const entryOf = (s: State) => spotlightViewOf(s).items.find((i) => i.id === "cmd:contour-range");
+  const contours = reduce(loaded, { type: "setColourBy", by: "contour" });
+  const user: State = { ...contours, contour: { ...contours.contour, source: "user", field: "footfall", component: "footfall_ratio" } };
+  for (const range of ["history", "step", "fixed"] as const) {
+    const entry = entryOf(at(user, range));
+    assert.ok(entry, `a user result at ${range}: the entry is offered`);
+    assert.equal(entry.title, `Set Contour Range… (currently ${rangeButtonsOf("user", range).find((b) => b.on)!.label})`);
+    assert.equal(entry.action.nextMode, "contourRange");
+  }
+  assert.equal(entryOf(at({ ...user, visibility: { ...user.visibility, colourBy: loaded.visibility.colourBy } }, "history")), undefined, "contours off: no entry");
+  assert.equal(entryOf(at({ ...contours, contour: { ...contours.contour, source: "nodal" } }, "history")), undefined, "a Results field with no results step: no entry");
 });
