@@ -226,11 +226,13 @@ elements, entities or the whole model, is listed only; its tooltip says
 why.
 
 A `--render` shot names one with `"source": "user"`, the entry as `field`
-and the column as `component`, and no `stage`, `step`, `combination`,
-`compare` or `deform` (the spec refuses each):
+and the column as `component`, and no `stage`, `step`, `combination`
+or `deform` (the spec refuses each):
 `{"name": "ratio", "contour": {"field": "footfall", "component": "footfall_ratio", "source": "user"}}`.
 The manifest's contour says `"source": "user"` and names the entry and its
-basis.
+basis. A shot that also
+sets `compare` draws the compare variant's own user result instead (next
+paragraph).
 
 **The compare set's own user results.** With a variant open as the compare
 set, the Variants panel also lists that variant's own `.user.h5` (never the
@@ -242,8 +244,18 @@ by node id, and only when the two models are one mesh (the same
 `fem_hash`); otherwise it is refused with the reason, and nothing is
 interpolated. The legend names it `<variant>: <entry>`. It is a contour
 only, it replaces Show difference (and the other way round), and Close on
-the compare row ends it. The Draw is in the window only; a `--render` shot
-cannot name a compare user result yet.
+the compare row ends it. The Draw is in the window, and a `--render` shot
+names one too: `"source": "user"` plus `compare`, where `compare` is the
+variant's label, `contour.field` its entry and `contour.component` its
+column, never the legend's `<variant>: <entry>` string:
+`{"name": "ratio_b", "compare": "Cracked", "contour": {"field": "footfall", "component": "footfall_ratio", "source": "user"}}`.
+The shot takes no `stage`, `step`, `combination` or `deform`, and `compare`
+cannot be the shot's own `variant`. The manifest's contour says
+`"source": "user"` with `user.compare: {variant, entry}`; `user.name` is then
+the legend string, which can equal a window entry's name, so tell the two
+apart by `compare`. The shot is refused, with what the file offers, when the
+variant is not in the manifest, the compare set does not open or is not read
+in time, the entry or column is missing, or the entry is stale.
 
 ## 7. Entities
 
