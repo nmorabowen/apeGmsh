@@ -12,7 +12,8 @@ a filter that held those ids.
 
 Now these elements are numbered above the snapshot's largest element id,
 the rule `element_tags="fem"` already used. Physical-group elements keep
-their tags. A deck with no such elements is byte-identical. In a deck with
+their tags, unless a node-pair spec precedes them, in which case they close
+up the gap it used to take. A deck with no such elements is byte-identical. In a deck with
 them, their tags change, and so do the tags of a physical-group element
 declared after a node-pair spec, because the physical-group run no longer
 skips the spring's tag. Partitioned and unpartitioned emits give the same
