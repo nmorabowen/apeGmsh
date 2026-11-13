@@ -637,14 +637,6 @@ def _app_contour(results: Any, stage_id: str, component: str) -> dict[str, str]:
                            "Gauss component (e.g. stress_xx) or von_mises_stress / von_mises_strain of a Gauss tensor. For another one, write a spec and call apeGmsh.agent_view.render_stills.")
 
 
-#: The fork classes whose ``.ladruno`` Gauss points are barycentric (QUADRATURE
-#: PARAM_DOMAIN "bary"): the app offers them no natural coordinates, so it never
-#: extrapolates them and a ``gauss_node`` contour draws their element means
-#: (``state/extrapolation.ts`` ``meanFallbackGroups``). A set holding only these
-#: asks ``cell_averaged`` (#2924 item 2: BezierTet10 in #2942, BezierTri6 in #2950).
-_BARYCENTRIC_GAUSS = ("BezierTet10", "BezierTri6")
-
-
 def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
     """R16b: the app names a ``.ladruno`` Gauss column ``<token>/<label>`` (the file's own
     COMP_NAMES label) in the element field ``<token>`` (``reader/ladrunoElements.ts``):
@@ -652,8 +644,7 @@ def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
     part of the set the app opens, or refused. A block renamed in place (the shell
     families, ``_name_shell_blocks``) keeps the file's label at the same position. The
     mode is v1's averaged still: ``gauss_cell_averaged`` at one Gauss point, else
-    ``gauss_node``; ``_BARYCENTRIC_GAUSS`` groups do not vote for ``gauss_node``. Any
-    other source is drawn nothing, so it passes only under the skip."""
+    ``gauss_node``. Any other source is drawn nothing, so it passes only under the skip."""
     import h5py
 
     if results.path is None or Path(results.path).suffix.lower() != ".ladruno":
@@ -678,7 +669,7 @@ def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
                         own = own if own is not None and len(own) == len(b.comp_names) else None
                         for i in (i for i, c in enumerate(_block_canonicals(token, b)) if c == component):
                             hits.add((token, own[i] if own else b.comp_names[i], own is None))
-                            n_gauss = n_gauss if any(f"-{c}[" in key for c in _BARYCENTRIC_GAUSS) else max(n_gauss, len(gauss))  # not extrapolated by the app: a set of these only asks cell_averaged
+                            n_gauss = n_gauss if any(f"-{c}[" in key for c in ("BezierTet10", "BezierTri6")) else max(n_gauss, len(gauss))  # barycentric points ("bary"), not extrapolated by the app: a set of only these asks cell_averaged
     if len(hits) != 1 or next(iter(hits))[2]:
         raise ContourDataError(f"stored Gauss component {component!r} is not one column the app names in {Path(results.path).name}: {sorted(h[:2] for h in hits) or 'none'}"
                                f"{' (named by the response catalog, not by the file)' if any(h[2] for h in hits) else ''} (R16b).")
