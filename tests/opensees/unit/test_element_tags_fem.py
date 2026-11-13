@@ -190,7 +190,9 @@ def test_fem_tags_survive_the_h5_round_trip(tmp_path: Path) -> None:
 def test_default_still_numbers_sequentially(tmp_path: Path) -> None:
     default = _beam_deck(tmp_path, None)
     assert default == _beam_deck(tmp_path, "sequential")
-    assert [ln.split()[2] for ln in default] == ["3", "4", "5", "6"]
+    # The beams keep tags 3..5; the node-pair spring, which has no FEM
+    # id, lands above the largest FEM id (30), as under "fem" (#2926).
+    assert [ln.split()[2] for ln in default] == ["3", "4", "5", "31"]
 
 
 _NORMAL = NormalLaw(kind="ent", k_per_area=1.0e9)

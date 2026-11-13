@@ -44,6 +44,11 @@ _ELEMENT_LINE = re.compile(
     r"|ops\.element\('(?P<ptype>\w+)', \d+, (?P<pi>\d+), (?P<pj>\d+)\b)"
 )
 
+#: An element line's tag in either deck (``tag`` / ``ptag``).
+_ELEMENT_TAG = re.compile(
+    r"^(?:element \w+ (?P<tag>\d+)\b|ops\.element\('\w+', (?P<ptag>\d+)\b)"
+)
+
 #: The first section of every rebar golden: not an emitted file, so its
 #: header is bracketed (see :func:`_coupling_section`).
 COUPLING_HEADER = "=== <coupling> ==="
@@ -87,8 +92,9 @@ def _artifacts_in(path: Path) -> Iterator[None]:
 
 def build_model(
     placement: str,
-) -> tuple[apeSees, frozenset[int], frozenset[int]]:
-    """Mesh the column; return the bridge model, bar nodes and host nodes.
+) -> tuple[apeSees, frozenset[int], frozenset[int], int]:
+    """Mesh the column; return the bridge model, bar nodes, host nodes and
+    the snapshot's largest element id.
 
     A 0.4 x 0.4 x 1.5 box, a 3x3 cage of #6 bars with #3 ties @ 0.25
     under ``ACI318_seismic`` (the X4-e harness, #1848).  ``conformal``
@@ -96,7 +102,10 @@ def build_model(
     couples through ``LadrunoEmbeddedRebar`` into a transfinite tet host.
     Both auto-emit a ``CorotTruss`` per bar cell.  The bar nodes are every
     node on a bar physical group of the placement; the host nodes are every
-    node the 3-D elements of ``Col`` connect.
+    node the 3-D elements of ``Col`` connect.  The largest element id is
+    the ceiling every bar cell's tag clears: a cell has no FEM id, so the
+    bridge numbers it above every element of the snapshot (ADR 0111 D2,
+    the sequential rule).
     """
     if placement not in PLACEMENTS:
         raise KeyError(f"unknown rebar placement {placement!r}")
@@ -144,7 +153,41 @@ def build_model(
     ops.uniaxialMaterial.Steel02(
         fy=420e6, E=200e9, b=0.01, name=BAR_MATERIAL,
     )
-    return ops, bar_nodes, host_nodes
+    return ops, bar_nodes, host_nodes, int(max(fem.elements.ids))
+
+
+def _offset_bar_tags(text: str, ceiling: int) -> str:
+    """Write each bar ``CorotTruss`` tag as its offset above ``ceiling``.
+
+    A bar cell has no FEM id, so the bridge numbers the cells from the
+    snapshot's largest element id + 1 (ADR 0111 D2). In the conformal
+    cell that id is the last Delaunay tet's, which differs between hosts
+    (gmsh 4.15.0 on Windows gave 3615, 4.15.2 on Linux CI 2332), so the
+    golden pins the offsets, ``<ceiling+k>``. Fail closed: the deck's
+    element tags must be exactly ``ceiling + 1, ceiling + 2, ...`` in deck
+    order, checked against this run's own snapshot, so no tag goes
+    unchecked.
+    """
+    lines = text.split("\n")
+    tags = [int(m["tag"] or m["ptag"]) for line in lines
+            if (m := _ELEMENT_TAG.match(line)) is not None]
+    want = list(range(ceiling + 1, ceiling + 1 + len(tags)))
+    if not tags or tags != want:
+        raise AssertionError(
+            f"conformal deck: bar cell tags {tags[:5]}... are not the run "
+            f"from {ceiling + 1}, one above the snapshot's largest element "
+            f"id {ceiling}"
+        )
+
+    def offset(m: re.Match[str]) -> str:
+        key = "tag" if m["tag"] is not None else "ptag"
+        k = int(m[key]) - ceiling
+        return f"{m.string[:m.start(key)]}<ceiling+{k}>{m.string[m.end(key):]}"
+
+    return "\n".join(
+        offset(m) if (m := _ELEMENT_TAG.match(line)) is not None else line
+        for line in lines
+    )
 
 
 def _bar_nodes_only(text: str, bar_nodes: frozenset[int]) -> str:
@@ -184,14 +227,14 @@ def render_deck(placement: str, output: str, scratch: Path) -> str:
     artifacts.mkdir(parents=True, exist_ok=False)
     deck = str(deck_dir / f"model.{output}")
     with _artifacts_in(artifacts):
-        ops, bar_nodes, host_nodes = build_model(placement)
+        ops, bar_nodes, host_nodes, ceiling = build_model(placement)
         if output == "py":
             ops.py(deck)
         else:
             ops.tcl(deck)
     text = builder._collect(deck_dir)
     if placement == "conformal":
-        text = _bar_nodes_only(text, bar_nodes)
+        text = _offset_bar_tags(_bar_nodes_only(text, bar_nodes), ceiling)
     return _coupling_section(bar_nodes, host_nodes) + text
 
 

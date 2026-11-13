@@ -351,15 +351,32 @@ def test_store_without_neutral_ties_refuses(built, tmp_path: Path) -> None:
 # -- an archive below 2.29.0 ------------------------------------------------
 
 
+def _retagged_ties(deck: str) -> list[str]:
+    """``deck``'s tie lines without their tags."""
+    return [" ".join(ln.split()[:2] + ln.split()[3:]) for ln in _lines(deck, _TIE)]
+
+
 def test_pre_2_29_archive_replays_through_the_fallback(
     built, tmp_path: Path,
 ) -> None:
+    """The fallback rebuilds every tie, numbered by the rule a pre-2.29
+    writer emitted under: contiguous above every replayed element. The
+    bridge now numbers them above every FEM id (ADR 0111 D2, the
+    sequential rule), so on an archive downgraded from today's emit only
+    the tie tags differ."""
     for kw in ({}, {"bond": True}):
         deck, src = built(**kw)
         path = _copy(src, tmp_path, f"old_{len(kw)}.h5")
         downgrade_to_pre_embedded_rebar(path)
         assert _stored(path) == ()
-        assert _replay(path) == deck
+        replayed = _replay(path)
+        assert [ln for ln in replayed.splitlines() if not ln.startswith(_TIE)] == [
+            ln for ln in deck.splitlines() if not ln.startswith(_TIE)]
+        assert _retagged_ties(replayed) == _retagged_ties(deck)
+        ties = _tags(_lines(replayed, _TIE))
+        top = max(
+            t for t in _tags(_lines(replayed, "element ")) if t not in ties)
+        assert ties == list(range(top + 1, top + 1 + len(ties)))
 
 
 def test_pre_2_29_archive_reaches_the_planted_fallback(
@@ -392,13 +409,18 @@ def test_pre_2_29_rewrite_stores_the_replayed_ties(
 ) -> None:
     """A rewrite of an older archive stores the ties its replay derives, so
     the new file replays to the same deck without the fallback."""
-    deck, src = built()
+    _deck, src = built()
     path = _copy(src, tmp_path)
     downgrade_to_pre_embedded_rebar(path)
+    deck = _replay(path)
     out = _rewrite(path, tmp_path)
     with h5py.File(out, "r") as f:
         assert f["meta"].attrs["opensees_schema_version"] == OPENSEES_CURRENT
-    assert _stored(out) == _stored(src)
+    # The stored ties are the source's, under the tags the replay derived
+    # (the pre-2.29 rule; the bridge's own tags now clear every FEM id).
+    assert [(r.args, r.name) for r in _stored(out)] == [
+        (r.args, r.name) for r in _stored(src)]
+    assert [r.ele_tag for r in _stored(out)] == _tags(_lines(deck, _TIE))
     with h5_reader.open(str(out)) as model:
         runs = [r for r in model.program() if r.method == "embedded_rebar"]
     assert runs and all(
