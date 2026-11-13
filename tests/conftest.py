@@ -75,6 +75,41 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             f"requires the Ladruno fork backend (resolved {backend!r}); "
             "set APEGMSH_OPENSEES_BIN to the fork's dist\\bin"
         )
+    if os.environ.get("APEGMSH_FORK_PIN_ENFORCE") == "1":
+        _skip_off_pin()
+
+
+_PIN_FILE = _REPO / "FORK_PIN"
+
+
+def _pinned_sha() -> str:
+    for line in _PIN_FILE.read_text(encoding="utf-8").splitlines():
+        key, sep, val = line.partition("=")
+        if sep and key.strip() == "sha":
+            return val.strip()
+    raise RuntimeError(f"no sha= line in {_PIN_FILE}")
+
+
+def _skip_off_pin() -> None:
+    """``APEGMSH_FORK_PIN_ENFORCE=1`` (the nightly ``live-fork`` lane, or a
+    desk whose fork build is not the pin): a ``ladruno_fork`` test skips
+    unless the imported build stamp equals ``FORK_PIN``'s ``sha``.
+
+    It lives here, not in ``integration_ladruno/conftest.py``, so it covers
+    every ``ladruno_fork`` test: about thirty of them sit in
+    ``tests/opensees/live/``. The skip message is matched by the
+    ``live-fork`` summary step, so keep its first words."""
+    pinned = _pinned_sha()
+    from apeGmsh.opensees.emitter.live import get_backend_build
+    try:
+        imported = get_backend_build()
+    except Exception:
+        imported = None
+    if imported != pinned:
+        pytest.skip(
+            f"fork build mismatch: pinned {pinned[:12]}, "
+            f"imported {imported[:12] if imported else 'none'}"
+        )
 
 
 def pytest_configure(config: pytest.Config) -> None:
