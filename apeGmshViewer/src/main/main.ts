@@ -684,6 +684,8 @@ ipcMain.handle("variants:compare", async (_e, index: unknown, label: unknown) =>
     return { ok: false, reason: `variants:compare: ${set.results} does not pair with ${r.open} (fem_hash and model_hash differ, or are not stamped${a.meta.lineageReason ? `: ${a.meta.lineageReason}` : ""})` };
   }
   study.compare = { row, set, lineage: own };
+  // VF3-e: a set change drops the held compare model read (`compareModelSeen`, below) of another file.
+  if (compareModelSeen !== null && (set.model === null || !samePath(compareModelSeen.path, set.model))) compareModelSeen = null;
   sendStudy();
   return {
     ok: true,
@@ -758,6 +760,22 @@ function exactKeys(door: string, req: unknown, keys: readonly string[]): string 
   return null;
 }
 
+// VF3-e (#2963, #2902 item 4): reading a ~1M-element compare model costs 1.5-1.8 s and
+// ~620 MB of peak RSS, and the page asks for it on every compare open, so a re-open of the
+// same set answers from the last read. Only the answer's counts are held, never the
+// model. The key is the file as it is now (path, size, mtime) and the lineage hashes read
+// from it now (/meta/lineage, ~1 ms) and checked against the pairing first, so a file
+// rewritten since is read again and a re-pairing is refused as before. The page clears a
+// compare set with `compare:close` before it opens one again (renderer/contour.ts
+// `VariantRunner.check`), so the entry outlives the slot; a set change (`variants:compare`
+// pairing another model file) drops it.
+let compareModelSeen: { path: string; key: string; nodes: number; elements: number } | null = null;
+
+/** The compare model file as the cache keys it: its path, size and mtime (`stat`, taken before its lineage is read), and that lineage's hashes. */
+function compareModelKey(path: string, stat: { size: number; mtimeMs: number }, own: { femHash: string; modelHash: string }): string {
+  return JSON.stringify([path, stat.size, stat.mtimeMs, own.femHash, own.modelHash]);
+}
+
 // The compare set's model, read as main paired it: its mesh's identity, with the `fem_hash`
 // and `model_hash` checked again against the pairing main made at `variants:compare`.
 ipcMain.handle("compare:model", async (_e, req: unknown) => {
@@ -770,9 +788,10 @@ ipcMain.handle("compare:model", async (_e, req: unknown) => {
   // Confined to the study again now, as the user doors are: a folder swapped for a junction since the open is refused.
   const why = study.confine(path);
   if (why !== null) return { ok: false, slot, reason: `compare:model: the compare set's model leaves the study: ${why}` };
-  let model;
+  // The file's stat before its lineage is read, so a rewrite after it never keys the held read with the new hashes.
+  let stat: { size: number; mtimeMs: number };
   try {
-    model = await openModel(path);
+    stat = statSync(path);
   } catch (err) {
     return { ok: false, slot, reason: `compare:model: ${path} cannot be read (${err instanceof Error ? err.message : String(err)})` };
   }
@@ -783,7 +802,26 @@ ipcMain.handle("compare:model", async (_e, req: unknown) => {
   if (own.femHash !== c.lineage.femHash || own.modelHash !== c.lineage.modelHash) {
     return { ok: false, slot, reason: `compare:model: ${path} no longer pairs with the compare results (fem_hash ${own.femHash}, model_hash ${own.modelHash}; paired by ${c.lineage.femHash}, ${c.lineage.modelHash})` };
   }
-  return { ok: true, slot, femHash: own.femHash, modelHash: own.modelHash, nodes: model.nodeIds.length, elements: model.blocks.reduce((n, b) => n + b.ids.length, 0) };
+  const answer = (n: { nodes: number; elements: number }) => ({ ok: true, slot, femHash: own.femHash, modelHash: own.modelHash, nodes: n.nodes, elements: n.elements });
+  const key = compareModelKey(path, stat, own);
+  if (compareModelSeen !== null && compareModelSeen.key === key) return answer(compareModelSeen);
+  let model;
+  try {
+    model = await openModel(path);
+  } catch (err) {
+    return { ok: false, slot, reason: `compare:model: ${path} cannot be read (${err instanceof Error ? err.message : String(err)})` };
+  }
+  if (study.compare !== c) return { ok: false, slot: null, reason: "compare:model: the compare set changed while its model was read" };
+  // The counts are of the file whose hashes were checked: one rewritten during the read is refused, never held.
+  let still: string | null;
+  try {
+    still = compareModelKey(path, statSync(path), own);
+  } catch {
+    still = null;
+  }
+  if (still !== key) return { ok: false, slot, reason: `compare:model: ${path} was rewritten while it was read` };
+  compareModelSeen = { path, key, nodes: model.nodeIds.length, elements: model.blocks.reduce((n, b) => n + b.ids.length, 0) };
+  return answer(compareModelSeen);
 });
 
 // The compare set's `.user.h5` index, each zone and entry judged by A6 against the compare
