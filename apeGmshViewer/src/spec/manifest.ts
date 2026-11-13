@@ -97,11 +97,12 @@ export type ManifestContour =
       /** element fields: how the values reach the screen (`element_mean`, `gauss_node`, ...); nodal: `nodal` */
       topology: string;
       /**
-       * VF (#2940), only when `topology` is not the one asked: `gauss_node` was asked, and `reason` is why it
-       * cannot be drawn (groups with no natural coordinates, as a BezierTet10's barycentric Gauss points);
-       * `topology` is then the `cell_averaged` drawing put in its place (`element_mean_averaged`)
+       * VF (#2940), only when some groups are not drawn as `topology` says: `topology` is `gauss_node` (`asked`),
+       * and `groups` have no natural coordinates (as a BezierTet10's barycentric Gauss points), so each of their
+       * elements gives its mean to its corners (`drawn`: `cell_averaged`); every other group is extrapolated.
+       * `reason` is the verdict that refused them
        */
-      topology_fallback?: { asked: string; reason: string };
+      topology_fallback?: { asked: string; drawn: string; groups: string[]; reason: string };
       cmap: string;
       range: {
         min: number | null;
@@ -507,8 +508,8 @@ function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepVal
     // VA6d: a derived scalar names the stored components it was computed from at each Gauss point.
     ...(v.state === "element" && v.component.derived ? { derived: derivedOf(s, v, blobs) } : {}),
     topology: v.state === "ready" ? "nodal" : v.topology,
-    // VF (#2940): a gauss_node pick drawn cell_averaged states what was asked and why it was not drawn.
-    ...(v.state === "element" && v.fallback ? { topology_fallback: { asked: v.fallback.asked, reason: v.fallback.reason } } : {}),
+    // VF (#2940): the groups of a gauss_node pick drawn cell_averaged, and why.
+    ...(v.state === "element" && v.fallback ? { topology_fallback: { asked: v.fallback.asked, drawn: v.fallback.drawn, groups: [...v.fallback.groups], reason: v.fallback.reason } } : {}),
     cmap: v.cmap,
     range: {
       min: v.clim.min,

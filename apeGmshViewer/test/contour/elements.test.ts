@@ -345,7 +345,8 @@ test("VF #2940: gauss_node on a .ladruno group with PARAM_DOMAIN \"bary\" draws 
     assert.equal(grp.naturalCoords, null, "the reader offers no natural coordinates for a barycentric domain");
     h.store.dispatch({ type: "setContourGauss", mode: "node" });
     const v = await pickElement(h, "stress", "stress/sigma11", 0, 1);
-    assert.equal(v.topology, "element_mean_averaged");
+    assert.equal(v.topology, "gauss_node");
+    assert.deepEqual(v.fallback?.groups, [grp.id], "its one group draws its element means");
     assert.equal(v.fallback?.asked, "gauss_node");
     assert.match(v.fallback!.reason, /has no natural coordinates .*PARAM_DOMAIN is not "\[-1,1\]"/);
     assert.ok(noticesOf(h.store.get()).includes(fallbackNotice(v)), noticesOf(h.store.get()).join("\n"));
