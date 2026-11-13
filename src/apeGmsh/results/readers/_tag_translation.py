@@ -52,6 +52,28 @@ A drifted archive (one from a slightly different run) is judged by the
 same rule: it describes the files or passes through. Telling drift from
 an unrelated stub needs provenance the archive does not carry (ADR 0043
 §slice 1.3).
+
+A sentinel ops tag equal to a paired fem id (#2076)
+---------------------------------------------------
+A sentinel element is addressed by its ops tag, a paired element by its
+``fem_eid``, and nothing keeps the two id spaces apart. Under the bridge's
+default ``element_tags="sequential"`` a natural model reaches the overlap:
+a 4x4x4 ``stdBrick`` block with surface physical groups (the boundary
+quads take fem ids 1..32, so the bricks are fem 33..96 at ops 7..70)
+plus five node-pair ``ZeroLength`` springs at ops 71..75. Id 71 then names
+both brick fem 71 and spring ops 71. The model is valid and reads, so the
+translator is still built; for an archive that describes the files:
+
+* the first read warns :class:`WarnElementIdCollision` once, naming the
+  shared ids;
+* a filter holding a shared id is refused with ``ValueError``, by id: it
+  names two elements, and reading either one would be a guess;
+* an unfiltered read whose index carries a shared id warns
+  :class:`WarnElementIdCollision` on every such read, since that label
+  names two elements across the result.
+
+``element_tags="fem"`` gives the paired elements their fem ids as ops
+tags, so the sentinel tags land above them and no id is shared.
 """
 from __future__ import annotations
 
@@ -95,6 +117,19 @@ class WarnElementFilterUnread(UserWarning):
     """
 
 
+class WarnElementIdCollision(UserWarning):
+    """A sentinel element's ops tag equals a paired element's fem id (#2076).
+
+    Raised (as a warning) by an MPCO or ``.ladruno`` element read whose
+    bound ``model.h5`` describes the result files and emitted an element
+    without a mesh id (addressed by its ops tag) under a tag that is also
+    a paired element's ``fem_eid``. That id names two elements. It warns
+    once per result set, and again on each unfiltered read whose returned
+    index carries such an id; a filter that holds one is refused. Emit
+    with ``element_tags="fem"`` to keep the id spaces apart.
+    """
+
+
 class ElementTagTranslator:
     """Bidirectional ``fem_eid`` <-> ops-tag map for one result set.
 
@@ -106,7 +141,7 @@ class ElementTagTranslator:
 
     __slots__ = (
         "_fem_to_ops", "_ops_to_fem", "_ops_only", "_recorded_parts",
-        "_recorded", "_described", "_arrays",
+        "_recorded", "_described", "_arrays", "_shared", "_shared_warned",
     )
 
     def __init__(
@@ -126,6 +161,15 @@ class ElementTagTranslator:
                 f"ElementTagTranslator: ops tags {sorted(clash)[:10]} are "
                 "both paired with a fem_eid and listed without one."
             )
+        # Sentinel ops tags that are also a paired fem id: each names two
+        # elements (see the module docstring). Warned on the first read of
+        # a describing archive, not here: a stub archive never reads
+        # through its pairing, and Results builds a translator more than
+        # once per open.
+        self._shared = np.array(
+            sorted(self._ops_only & self._fem_to_ops.keys()), dtype=np.int64,
+        )
+        self._shared_warned = False
         # Ops tags each attached result file records, one array per file
         # (``None`` until a reader declares one), and their sorted union,
         # built once on the first read: a union per declaration would
@@ -236,9 +280,23 @@ class ElementTagTranslator:
         if not self.describes_files():
             return fem_filter, _identity
         if fem_filter is None:
+            if self._shared.size:
+                return None, self._index_to_fem_checked
             return None, self._index_to_fem
         fem_keys, fem_vals, _, _, ops_only = self._sorted_arrays()
         ids = np.asarray(fem_filter, dtype=np.int64).ravel()
+        if self._shared.size:
+            ambiguous = np.unique(ids[np.isin(ids, self._shared)])
+            if ambiguous.size:
+                raise ValueError(
+                    "Element read: filter ids "
+                    f"{self._name_shared(ambiguous.tolist())} each name two "
+                    "elements of the model archive (model_h5=): a paired "
+                    "element's fem id and the OpenSees tag of an element "
+                    "emitted without a mesh id. The read cannot tell which "
+                    "is meant, so it is refused. " + _FEM_TAGS_HINT
+                )
+            self._warn_shared_once()
         paired, ops = _lookup(fem_keys, fem_vals, ids)
         known = paired | np.isin(ids, ops_only)
         recorded = np.isin(ops, self._require_recorded())
@@ -254,6 +312,52 @@ class ElementTagTranslator:
         _, _, ops_keys, ops_vals, _ = self._sorted_arrays()
         arr = np.asarray(index, dtype=np.int64)
         return _lookup(ops_keys, ops_vals, arr.ravel())[1].reshape(arr.shape)
+
+    def _index_to_fem_checked(self, index: "ndarray") -> "ndarray":
+        """:meth:`_index_to_fem` for an unfiltered read of an archive with
+        shared ids: warn when the relabelled index carries one, since
+        that label names two elements; otherwise warn once."""
+        labels = self._index_to_fem(index)
+        shared = np.intersect1d(labels, self._shared)
+        if not shared.size:
+            self._warn_shared_once()
+            return labels
+        import warnings
+
+        self._shared_warned = True
+        warnings.warn(
+            "Element read: the returned element index carries ids "
+            f"{self._name_shared(shared.tolist())}, each of which names two "
+            "elements of the model archive (model_h5=): a paired element "
+            "relabelled to its fem id, and an element emitted without a "
+            "mesh id, which keeps its OpenSees tag. Rows under one of these "
+            "labels may belong to either. " + _FEM_TAGS_HINT,
+            WarnElementIdCollision,
+            stacklevel=2,
+        )
+        return labels
+
+    def _warn_shared_once(self) -> None:
+        if self._shared_warned:
+            return
+        import warnings
+
+        self._shared_warned = True
+        warnings.warn(
+            "Element reads: the model archive (model_h5=) emitted elements "
+            "without a mesh id under OpenSees tags "
+            f"{self._name_shared(self._shared.tolist())}, which are also "
+            "fem ids of paired elements, so each of these ids names two "
+            "elements. A filter holding one is refused; an unfiltered "
+            "read labels both elements with it. " + _FEM_TAGS_HINT,
+            WarnElementIdCollision,
+            stacklevel=4,
+        )
+
+    def _name_shared(self, ids: "list[int]") -> str:
+        """``[71 (fem id of ops tag 45), ...]``: each shared id with the
+        ops tag of the paired element it is also the fem id of."""
+        return _head([f"{i} (fem id of ops tag {self._fem_to_ops[i]})" for i in ids])
 
     def _sorted_arrays(self) -> "tuple[ndarray, ...]":
         """``(fem keys, their ops, ops keys, their fem, ops_only)``, each
@@ -304,6 +408,12 @@ class ElementTagTranslator:
         return np.array([mapping[int(x)] for x in arr], dtype=np.int64)
 
 
+_FEM_TAGS_HINT = (
+    'Emit the model with apeSees(fem, element_tags="fem"), which keeps the '
+    "two id spaces apart."
+)
+
+
 def _identity(index: "ndarray") -> "ndarray":
     return index
 
@@ -343,7 +453,7 @@ def _warn_unread(unknown: "list[int]", unrecorded: "list[int]") -> None:
     )
 
 
-def _head(ids: "list[int]", n: int = 20) -> str:
+def _head(ids: "list[Any]", n: int = 20) -> str:
     shown = ", ".join(str(i) for i in ids[:n])
     more = f", ... ({len(ids)} in all)" if len(ids) > n else ""
     return f"[{shown}{more}]"
