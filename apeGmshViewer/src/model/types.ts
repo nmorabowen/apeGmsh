@@ -12,6 +12,13 @@ export interface ElementBlock {
   dim: number;
   /** nodes per element (`npe` attr). */
   npe: number;
+  /**
+   * The `gmsh_name` attr: gmsh's type name, or the OpenSees class of a
+   * file-coded (`code = -class_tag`) block. Null when the file has none; a
+   * file-coded block without it is not drawn (mesh/fileCoded.ts). Optional
+   * so a block built in code without one reads as null.
+   */
+  gmshName?: string | null;
   ids: Float64Array;
   /** row-major (ids.length, npe) node tags. */
   connectivity: Float64Array;

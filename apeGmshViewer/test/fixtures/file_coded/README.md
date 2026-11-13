@@ -10,7 +10,8 @@ block by `code = -class_tag`, so each block here is file-coded.
 |---|---|
 | `tri_model.h5` | FourNodeQuad (2, 4), Tri31 (2, 3), SixNodeTri (2, 6), BezierTri6 (2, 6), LadrunoLST (2, 6) |
 | `tet_model.h5` | Brick (3, 8), FourNodeTetrahedron (3, 4), TenNodeTetrahedron (3, 10), BezierTet10 (3, 10) |
-| `file_coded.golden.json` | each block's attributes and the gmsh code Python's `_GMSH_CODE_BY_PARENT_DIM_NPE` gives its `(dim, npe)`; and what Python's Qt viewer scene (`build_fem_scene` over `ViewerData.from_h5` of the same file) draws: its cells by VTK type, the codes it skips, and the triangles of its outer surface (`extract_surface().triangulate()`) |
+| `catalog_parent_dims.golden.json` | Python's `mesh/_femdata_dims.py::_catalog_parent_dims()`: the classes whose `dim` is the catalog's, not a class-name guess. The app draws a file-coded block only for these (`CATALOG_PARENT_DIM`) |
+| `file_coded.golden.json` | each block's attributes (class `gmshName` included) and the gmsh code Python's `_GMSH_CODE_BY_PARENT_DIM_NPE` gives its `(dim, npe)`; and what Python's Qt viewer scene (`build_fem_scene` over `ViewerData.from_h5` of the same file) draws: its cells by VTK type, the codes it skips, and the triangles of its outer surface (`extract_surface().triangulate()`) |
 
 The script below is the whole generator. It imports apeGmsh, so it is kept here as text and
 never as a `.py` file of the app (ADR 0112 D4, `scripts/check_app_wall.py` W1). Save it as
@@ -38,6 +39,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from apeGmsh.mesh._femdata_dims import _catalog_parent_dims
 from apeGmsh.mesh._femdata_ladruno_io import read_fem_from_ladruno
 from apeGmsh.results._gauss_extrapolation import _GMSH_CODE_BY_PARENT_DIM_NPE
 from apeGmsh.viewers.data._viewer_data import ViewerData
@@ -62,6 +64,7 @@ for stem in ("tri", "tet"):
                 "code": int(f["elements"][k].attrs["code"]),
                 "dim": int(f["elements"][k].attrs["dim"]),
                 "npe": int(f["elements"][k].attrs["npe"]),
+                "gmshName": str(f["elements"][k].attrs["gmsh_name"]),
                 "cells": int(f["elements"][k]["ids"].shape[0]),
                 "gmshCode": _GMSH_CODE_BY_PARENT_DIM_NPE.get(
                     (int(f["elements"][k].attrs["dim"]), int(f["elements"][k].attrs["npe"]))
@@ -81,4 +84,7 @@ for stem in ("tri", "tet"):
     }
 (out / "file_coded.golden.json").write_text(json.dumps(golden, indent=2, sort_keys=True) + "\n")
 print(json.dumps(golden, indent=2, sort_keys=True))
+(out / "catalog_parent_dims.golden.json").write_text(
+    json.dumps(_catalog_parent_dims(), indent=2, sort_keys=True) + "\n"
+)
 ```
