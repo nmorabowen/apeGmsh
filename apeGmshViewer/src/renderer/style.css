@@ -524,13 +524,17 @@ body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(
 .viewport-scale[hidden] { display: none; }
 .viewport-scale[data-moved] { position: fixed; }
 #scale-stack {
-  position: fixed; left: 324px; top: 102px; pointer-events: none;
+  /* VF (#2944 review): bounded below as #left-rail is (16 px off the bottom). */
+  position: fixed; left: 324px; top: 102px; bottom: 16px; pointer-events: none;
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
 }
 #banner:not([hidden]) ~ #scale-stack {
   /* VF (#2924 item 7): below the banner's measured height, as #left-rail is, so an
-     app-chrome still (which draws the whole list) never covers the legend; never above 168 px. */
-  top: max(168px, calc(var(--banner-top, 58px) + var(--banner-h, 0px) + 8px));
+     app-chrome still (which draws the whole list) never covers the legend; never above 168 px.
+     A banner can grow to 100vh - 180px (above), which would put the scales off the
+     bottom: they start by half the height at the latest and paint over the banner's
+     tail (#scale-stack follows #banner in index.html). */
+  top: min(max(168px, calc(var(--banner-top, 58px) + var(--banner-h, 0px) + 8px)), max(168px, 50vh));
 }
 #scale-stack:not(:has(> :not([hidden]))) { display: none; }
 body[data-still-chrome="model"] #scale-stack { display: none; }

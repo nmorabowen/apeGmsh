@@ -45,32 +45,59 @@ test("the scale is a sibling after the banner and the rails, so it paints over t
 });
 
 /**
- * The `top:` of the first style.css rule whose selector list names `selector`,
- * evaluated with the banner's published variables (panels/banner.ts) in px:
- * its `max(...)`/`calc(...)` of px terms, as test/state/user.test.ts's cssTop.
+ * A px property (`top:`, `bottom:`, `max-height:`) of the first style.css rule
+ * whose selector list names `selector`, evaluated with the banner's published
+ * variables (panels/banner.ts) and a viewport `vh` px tall: its
+ * `min(...)`/`max(...)`/`calc(...)` of px and vh terms, as
+ * test/state/user.test.ts's cssTop. Null when the rule does not set it.
  */
-function topUnderBanner(selector: string, bannerTop: number, bannerH: number): number {
+function cssPx(selector: string, prop: string, at: { bannerTop?: number; bannerH?: number; vh: number }): number | null {
   const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
   const rule = new RegExp(`(?:^|[},])\\s*(?:[^{}]*,\\s*)?${selector.replace(/[[\]()~:]/g, "\\$&")}\\s*(?:,[^{}]*)?\\{([^}]*)\\}`, "m").exec(css);
   assert.ok(rule, `style.css has no rule for ${selector}`);
   const body = rule[1]!.replace(/\/\*[\s\S]*?\*\//g, "");
-  const m = /(?:^|[\s;])top:\s*([^;]+);/.exec(body);
-  assert.ok(m, `${selector} has no top`);
-  const expr = m[1]!.trim().replace(/var\(--banner-top, 58px\)/g, `${bannerTop}px`).replace(/var\(--banner-h, 0px\)/g, `${bannerH}px`);
+  const m = new RegExp(`(?:^|[\\s;])${prop}:\\s*([^;]+);`).exec(body);
+  if (!m) return null;
+  let expr = m[1]!.trim();
+  if (at.bannerTop !== undefined) expr = expr.replace(/var\(--banner-top, 58px\)/g, `${at.bannerTop}px`);
+  if (at.bannerH !== undefined) expr = expr.replace(/var\(--banner-h, 0px\)/g, `${at.bannerH}px`);
+  expr = expr.replace(/(\d+(?:\.\d+)?)vh/g, (_, n: string) => `${(Number(n) * at.vh) / 100}px`);
   assert.match(expr, /^[\d\s+.()a-z,-]+$/, `an expression this test can evaluate: ${expr}`);
-  const js = expr.replace(/(\d+(?:\.\d+)?)px/g, "$1").replace(/max\(/g, "Math.max(").replace(/calc\(/g, "(");
+  assert.doesNotMatch(expr, /var\(/, `a variable this test does not set: ${expr}`);
+  const js = expr.replace(/(\d+(?:\.\d+)?)px/g, "$1").replace(/max\(/g, "Math.max(").replace(/min\(/g, "Math.min(").replace(/calc\(/g, "(");
   return Function(`return ${js};`)() as number;
 }
 
+const SCALE = "#banner:not([hidden]) ~ #scale-stack";
+const RAIL = "#banner:not([hidden]) ~ #left-rail";
+
 test("#2924 item 7: the colour scales sit 8 px below a shown banner however tall it is drawn, as the left rail does", () => {
-  const scale = "#banner:not([hidden]) ~ #scale-stack";
-  const rail = "#banner:not([hidden]) ~ #left-rail";
+  const top = (bannerTop: number, bannerH: number, vh = 1000) => cssPx(SCALE, "top", { bannerTop, bannerH, vh });
   // A one-line banner (about 30 px at 58 px, or at 106 px under a one-line scrubber bar): 168 px, as before.
-  assert.equal(topUnderBanner(scale, 58, 30), 168);
-  assert.equal(topUnderBanner(scale, 106, 30), 168);
-  // An app-chrome still draws the whole list (#2921 still 2): the scale clears the banner's bottom by 8 px.
-  for (const [top, h] of [[58, 240], [106, 240], [58, 600]] as const) {
-    assert.equal(topUnderBanner(scale, top, h), top + h + 8, `banner at ${top} px, ${h} px tall`);
-    assert.equal(topUnderBanner(scale, top, h), topUnderBanner(rail, top, h), "the scale and the rail clear the banner alike");
+  assert.equal(top(58, 30), 168);
+  assert.equal(top(106, 30), 168);
+  // An app-chrome still draws the whole list (#2921 still 2: 2 notices, 136 px): the scale clears the banner's bottom by 8 px.
+  for (const [t, h] of [[58, 136], [58, 240], [106, 240], [106, 380]] as const) {
+    assert.equal(top(t, h), t + h + 8, `banner at ${t} px, ${h} px tall`);
+    assert.equal(top(t, h), cssPx(RAIL, "top", { bannerTop: t, bannerH: h, vh: 1000 }), "the scale and the rail clear the banner alike");
+  }
+});
+
+test("#2944 review: a banner at its height cap never pushes the colour scales off the bottom", () => {
+  // The stack is bounded below as the left rail is.
+  assert.equal(cssPx("#scale-stack", "bottom", { vh: 1000 }), 16);
+  assert.equal(cssPx("#left-rail", "bottom", { vh: 1000 }), 16);
+  // The banner's own cap, as style.css draws it in a still or open.
+  const capped = 'body[data-still-chrome="app"] #banner';
+  for (const vh of [600, 800, 1000, 1400]) {
+    const cap = cssPx(capped, "max-height", { vh });
+    assert.equal(cap, vh - 180, `the banner's cap at ${vh} px`);
+    for (const bannerTop of [58, 106]) {
+      const t = cssPx(SCALE, "top", { bannerTop, bannerH: cap!, vh })!;
+      // It starts by half the height (never above 168 px), painting over the banner's tail, and leaves the
+      // horizontal contour scale (131 px drawn in the D7 still) room above the bottom bound.
+      assert.equal(t, Math.max(168, vh / 2), `${vh} px viewport, banner at ${bannerTop} px`);
+      assert.ok(t + 131 <= vh - 16, `${vh} px: the scale's ${t} + 131 px fits above the bottom bound`);
+    }
   }
 });

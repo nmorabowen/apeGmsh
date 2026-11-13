@@ -3,7 +3,9 @@
 // its own range under two names. The oracle is the user result's own read: its
 // range is the column's min and max (test/state/userResult.test.ts holds that
 // against W3's golden), and the scale offers it once, as "own range", beside
-// "fixed". Any other contour keeps RANGE_MODES as they are.
+// "fixed". A User Combination (one state) and a difference (the step shown)
+// range over one set of values too, so they offer it once as well. A Results
+// field keeps RANGE_MODES as they are.
 
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
@@ -25,21 +27,29 @@ const PLATE = at("plate.h5");
 const PLATE_USER = at("plate.user.h5");
 const RATIO = "footfall_ratio";
 
-test("a contour with history and steps offers RANGE_MODES as they are; a one-state user result offers its own range and fixed", () => {
-  for (const view of ["ready", "element", "combination", "difference"] as const) {
+test("a contour with history and steps offers RANGE_MODES as they are; a view with one range offers it once, and fixed", () => {
+  // A Results field (nodal or element) scans its stage's history or reads the step shown, by the mode.
+  for (const view of ["ready", "element"] as const) {
     for (const range of ["history", "step", "fixed"] as const) {
       assert.deepEqual(
-        rangeButtonsOf(view, range).map((b) => [b.range, b.label, b.on]),
-        RANGE_MODES.map((m) => [m.range, m.label, m.range === range]),
+        rangeButtonsOf(view, range).map((b) => [b.range, b.own, b.label, b.on]),
+        RANGE_MODES.map((m) => [m.range, false, m.label, m.range === range]),
         `${view} at ${range}`,
       );
     }
   }
-  for (const range of ["history", "step"] as const) {
-    assert.deepEqual(rangeButtonsOf("user", range).map((b) => [b.range, b.label, b.on]), [[null, "own range", true], ["fixed", "fixed", false]], range);
+  // A user result and a User Combination: one state, so their own range whatever the mode (selectors.ts
+  // userResultContour, combinationClim). A difference: the step shown whatever the mode (differenceContour).
+  const own = { user: ["own range", "history"], combination: ["own range", "history"], difference: ["this step", "step"] } as const;
+  for (const [view, [label, back]] of Object.entries(own) as [keyof typeof own, readonly [string, string]][]) {
+    for (const range of ["history", "step"] as const) {
+      assert.deepEqual(rangeButtonsOf(view, range).map((b) => [b.range, b.own, b.label, b.on]), [[back, true, label, true], ["fixed", false, "fixed", false]], `${view} at ${range}`);
+    }
+    assert.deepEqual(rangeButtonsOf(view, "fixed").map((b) => [b.range, b.own, b.label, b.on]), [[back, true, label, false], ["fixed", false, "fixed", true]], `${view} at fixed`);
+    assert.ok(!rangeButtonsOf(view, "history").some((b) => b.label === "history"), `${view}: no history button`);
   }
-  assert.deepEqual(rangeButtonsOf("user", "fixed").map((b) => [b.range, b.label, b.on]), [[null, "own range", false], ["fixed", "fixed", true]]);
-  for (const b of rangeButtonsOf("user", "history")) assert.doesNotMatch(b.label, /history|step/);
+  assert.ok(!rangeButtonsOf("user", "history").some((b) => /step/.test(b.label)), "a user result has no step either");
+  assert.ok(!rangeButtonsOf("combination", "history").some((b) => /step/.test(b.label)), "nor has a combination");
 });
 
 /** Enough of the DOM for mountLegend (as test/contour/contour.test.ts's). */
