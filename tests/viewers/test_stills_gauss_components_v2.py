@@ -132,12 +132,81 @@ def test_deformed_gauss_still_warps_by_displacement(app_backend, quad_set, tmp_p
     assert shot["deform"] == {"scale": 5.0}
 
 
-def test_derived_scalar_stays_refused(app_backend, quad_set, tmp_path):
-    """R16c (G10): a derived scalar is not a recorded column; refused by name."""
+@pytest.mark.parametrize("component, field", [("von_mises_stress", "stress"), ("von_mises_strain", "strain")])
+def test_derived_scalar_is_a_component_of_the_tensor_field(app_backend, quad_set, tmp_path, component, field):
+    """R16c (G10, #2942): the app offers ``von_mises_<family>`` as a component of the
+    element field whose columns make the tensor (``compile.test.ts`` VA6d), at the
+    tensor columns' mode; on origin/main the Python still refused it."""
     with Results.from_ladruno(quad_set) as r:
-        with pytest.raises(ValueError, match="von_mises_stress"):
-            r.render(tmp_path / "x.png", view="contour", component="von_mises_stress")
+        r.render(tmp_path / "v.png", view="contour", component=component)
+    (shot,) = app_backend.specs[0]["shots"]
+    assert shot["contour"] == {"field": field, "component": component, "source": "element", "gauss": "node"}
+
+
+def test_a_derived_scalar_the_app_does_not_draw_stays_refused(app_backend, quad_set, tmp_path):
+    """Python derives tresca_stress; the app serves von Mises only, so it is refused by name."""
+    with Results.from_ladruno(quad_set) as r:
+        with pytest.raises(ValueError, match="tresca_stress.*von_mises_strain / von_mises_stress"):
+            r.render(tmp_path / "x.png", view="contour", component="tresca_stress")
     assert app_backend.specs == []
+
+
+def test_a_derived_scalar_of_a_split_tensor_is_refused(quad_set, monkeypatch):
+    """Fail closed: tensor columns in two element fields give the app no field whose
+    whole tensor it derives from; refused, never one field's part."""
+    from apeGmsh.viewers.session import _results_stills as stills
+
+    real = stills._app_gauss_contour
+
+    def split(results, component):
+        shot = real(results, component)
+        return {**shot, "field": "other"} if component == "stress_xy" else shot
+
+    monkeypatch.setattr(stills, "_app_gauss_contour", split)
+    with Results.from_ladruno(quad_set) as r:
+        with pytest.raises(ValueError, match=r"von_mises_stress.*stress_xy: stress/sigma12.*R16c"):
+            stills._app_contour(r, r.stages[0].id, "von_mises_stress")
+
+
+def test_a_nodal_derived_scalar_is_refused(quad_set, monkeypatch):
+    """The app derives von Mises from an element field only: a stage that derives it
+    at the nodes is refused, never sent as an element contour."""
+    from apeGmsh.viewers.session import _results_stills as stills
+
+    monkeypatch.setattr(stills, "_require_contour_data", lambda *a: "nodes")
+    with Results.from_ladruno(quad_set) as r:
+        with pytest.raises(ValueError, match="no apegmsh-view/1 contour"):
+            stills._app_contour(r, r.stages[0].id, "von_mises_stress")
+
+
+def test_a_derived_shot_of_a_source_the_app_cannot_open_is_refused(quad_set, tmp_path, monkeypatch):
+    from apeGmsh.viewers.session._results_stills import app_shot_for_view
+
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    with Results.from_ladruno(quad_set) as r:
+        monkeypatch.setattr(type(r), "path", property(lambda self: tmp_path / "quad.h5"))
+        with pytest.raises(ValueError, match="R22b"):
+            app_shot_for_view(r, name="s", view="contour", component="von_mises_stress", step=-1, deform=None, camera="iso")
+
+
+_TET10 = _FIXTURE.with_name("bezier_tet10.ladruno")
+
+
+@pytest.mark.parametrize("component, contour", [
+    ("stress_xx", {"field": "stress", "component": "stress/sigma_xx"}),
+    ("von_mises_stress", {"field": "stress", "component": "von_mises_stress"}),
+])
+def test_tet10_gauss_still_asks_cell_averaged(tmp_path, component, contour):
+    """#2924 item 2, owner ruling 2026-11-13: BezierTet10's four Gauss points are
+    barycentric, which the app does not extrapolate, so the still asks
+    ``cell_averaged``; origin/main asked ``node``, which the app refuses."""
+    from apeGmsh.viewers.session._results_stills import _app_contour
+
+    src = tmp_path / "tet.ladruno"
+    shutil.copy(_TET10, src)
+    with Results.from_ladruno(src) as r:
+        assert {len(g.ids) for g in r.fem.elements} == {1}
+        assert _app_contour(r, r.stages[0].id, component) == {**contour, "source": "element", "gauss": "cell_averaged"}
 
 
 def test_a_column_in_two_tokens_is_refused(app_backend, quad_set, tmp_path):
@@ -301,3 +370,89 @@ def test_gauss_contour_draws_through_the_app_and_matches_python(quad_set, tmp_pa
     assert contour["range"]["mode"] == "history"
     assert contour["range"]["min"] == pytest.approx(both.min(), rel=1e-9)
     assert contour["range"]["max"] == pytest.approx(both.max(), rel=1e-9)
+
+
+def _app_manifests(monkeypatch) -> list[dict]:
+    """The Windows path through the source build: every manifest the app writes."""
+    _built_app()
+    import apeGmsh.agent_view as agent_view
+    from apeGmsh.viewers import render as render_mod
+
+    real, manifests = agent_view.render_stills, []
+
+    def spy(spec, out, **kwargs):
+        manifests.append(real(spec, out, **kwargs))
+        return manifests[-1]
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "app")
+    monkeypatch.setattr(agent_view, "render_stills", spy)
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    return manifests
+
+
+def test_von_mises_still_draws_through_the_app_and_matches_python(quad_set, tmp_path, monkeypatch):
+    """R16c (#2942): ``component="von_mises_stress"`` is drawn by the app, and its
+    numbers are Python's: the corner values are the bilinear extrapolation of v1's
+    von Mises at the four Gauss points (``gauss.get``), the range spans both steps."""
+    manifests = _app_manifests(monkeypatch)
+    with Results.from_ladruno(quad_set) as r:
+        out = r.render(tmp_path / "von_mises.png", view="contour", component="von_mises_stress")
+        stage = r.stage(r.stages[0].id)
+        steps = []
+        for k in (0, 1):
+            slab = stage.elements.gauss.get(component="von_mises_stress", time=k)
+            steps.append(_corner_values(np.asarray(slab.natural_coords), np.asarray(slab.values)[0]))
+    assert out.is_file() and out.stat().st_size > 0
+    (entry,) = manifests[0]["shots"]
+    assert entry["status"] == "ok", entry.get("reason")
+    contour = entry["contour"]
+    assert (contour["source"], contour["field"], contour["component"]) == ("element", "stress", "von_mises_stress")
+    assert contour["topology"] == "gauss_node"
+    rec = contour["extrema"]["recorded"]
+    assert (rec["min"]["value"], rec["max"]["value"]) == pytest.approx((steps[1].min(), steps[1].max()), rel=1e-9)
+    both = np.concatenate(steps)
+    assert (contour["range"]["min"], contour["range"]["max"]) == pytest.approx((both.min(), both.max()), rel=1e-9)
+
+
+@pytest.fixture
+def tet_set(tmp_path: Path) -> Path:
+    """``tet.ladruno`` (one BezierTet10, four barycentric Gauss points, one step)
+    beside ``tet.h5``: its nodes and the cell as a gmsh ``Tetrahedron 10``."""
+    from apeGmsh.mesh._element_types import make_type_info
+
+    src = tmp_path / "tet.ladruno"
+    shutil.copy(_TET10, src)
+    with Results.from_ladruno(src) as r:
+        (group,) = list(r.fem.elements)
+        fem = _make_fem(
+            node_ids=np.asarray(r.fem.nodes.ids).tolist(),
+            coords=[tuple(p) for p in np.asarray(r.fem.nodes.coords, dtype=float).tolist()],
+            groups=[(
+                make_type_info(code=11, gmsh_name="Tetrahedron 10", dim=3, order=2, npe=10, count=1),
+                np.asarray(group.ids).tolist(), np.asarray(group.connectivity).tolist(),
+            )],
+        )
+    fem.to_h5(str(tmp_path / "tet.h5"))
+    stamp_provenance(src, tmp_path / "tet.h5")
+    with h5py.File(src, "r+") as f:
+        f["INFO/PROVENANCE"].attrs["element_index_space"] = "fem"
+    return src
+
+
+def test_tet10_still_draws_cell_averaged_through_the_app(tet_set, tmp_path, monkeypatch):
+    """#2924 item 2 (#2942): the tet10 still asks cell_averaged and the app draws it as
+    the element mean averaged at the nodes. One element, so every node holds the mean
+    of the four Gauss values Python reads: min = max = that mean."""
+    manifests = _app_manifests(monkeypatch)
+    with Results.from_ladruno(tet_set) as r:
+        out = r.render(tmp_path / "tet.png", view="contour", component="stress_xx")
+        stage = r.stage(r.stages[0].id)
+        mean = float(np.mean(np.asarray(stage.elements.gauss.get(component="stress_xx", time=0).values)[0]))
+    assert out.is_file() and out.stat().st_size > 0
+    (entry,) = manifests[0]["shots"]
+    assert entry["status"] == "ok", entry.get("reason")
+    contour = entry["contour"]
+    assert (contour["field"], contour["component"]) == ("stress", "stress/sigma_xx")
+    assert contour["topology"] == "element_mean_averaged"
+    rec = contour["extrema"]["recorded"]
+    assert (rec["min"]["value"], rec["max"]["value"]) == pytest.approx((mean, mean), rel=1e-9)
