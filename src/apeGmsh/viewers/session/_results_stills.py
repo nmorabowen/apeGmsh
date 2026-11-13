@@ -413,11 +413,11 @@ class ContourDataError(RuntimeError, ValueError):
     ``viewers.diagrams``, ``test_diagrams_import_guard.py``)."""
 
 
-def _require_contour_data(results: Any, stage_id: str, quantity: str) -> None:
+def _require_contour_data(results: Any, stage_id: str, quantity: str) -> str:
     from ._specs import resolve_contour_topology
 
     try:
-        resolve_contour_topology(quantity, results, stage_id)
+        return resolve_contour_topology(quantity, results, stage_id)
     except ValueError as exc:
         raise ContourDataError(str(exc)) from exc
 
@@ -615,22 +615,26 @@ def _stage_index(results: Any, stage_id: str) -> int:
 
 
 def _app_contour(results: Any, stage_id: str, component: str) -> dict[str, str]:
-    """A recorded nodal axis component (R13) or stored Gauss component (R16b) as the
-    app's contour; anything else (a derived scalar, R16c) is refused, never guessed."""
-    _require_contour_data(results, stage_id, component)
+    """A recorded nodal axis component (R13), a stored Gauss component (R16b) or a von Mises
+    scalar of a Gauss tensor (R16c) as the app's contour; anything else is refused, never guessed."""
+    topology = _require_contour_data(results, stage_id, component)
     stage = results.stage(stage_id)
     prefix, _, axis = component.rpartition("_")
     table = MODE_FIELDS if stage.kind == "mode" else NODAL_FIELDS
     if component in set(stage.nodes.available_components()) and axis in _AXES and prefix in table:
         return {"field": table[prefix], "component": axis}
-    if component in results.inspect.components(stage=stage_id).get("gauss", ()):
+    gauss = results.inspect.components(stage=stage_id).get("gauss", ())
+    if component in gauss:
         return _app_gauss_contour(results, component)
-    raise ContourDataError(
-        f"component {component!r} has no apegmsh-view/1 contour here: the Windows "
-        f"stills draw a recorded nodal axis component of {sorted(table)} (e.g. "
-        f"displacement_z) or a stored Gauss component (e.g. stress_xx). For another "
-        f"one, write a spec and call apeGmsh.agent_view.render_stills."
-    )
+    if topology == "gauss" and component in ("von_mises_stress", "von_mises_strain"):
+        # The app derives it in the one element field holding every Voigt column of the tensor, at one mode (state/contour.ts elementContourFields); a skip's stand-in (R22b) names no mode.
+        cols = {c: _app_gauss_contour(results, c) for c in sorted(gauss) if c.rpartition("_")[0] == axis and c.rpartition("_")[2] in ("xx", "yy", "zz", "xy", "yx", "yz", "zy", "xz", "zx")}
+        picks = {(s["field"], s["gauss"]) for s in cols.values() if "gauss" in s}
+        if len(picks) > 1 or not cols:
+            raise ContourDataError(f"{component!r} is drawn from one element field holding its whole tensor at one Gauss mode only (R16c); its columns are {sorted((c, s['component'], s.get('gauss')) for c, s in cols.items())}")
+        return {**next(iter(cols.values())), "component": component}
+    raise ContourDataError(f"component {component!r} has no apegmsh-view/1 contour here: the Windows stills draw a recorded nodal axis component of {sorted(table)} (e.g. displacement_z), a stored "
+                           "Gauss component (e.g. stress_xx) or von_mises_stress / von_mises_strain of a Gauss tensor. For another one, write a spec and call apeGmsh.agent_view.render_stills.")
 
 
 def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
@@ -665,13 +669,10 @@ def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
                         own = own if own is not None and len(own) == len(b.comp_names) else None
                         for i in (i for i, c in enumerate(_block_canonicals(token, b)) if c == component):
                             hits.add((token, own[i] if own else b.comp_names[i], own is None))
-                            n_gauss = max(n_gauss, len(gauss))
+                            n_gauss = n_gauss if "-BezierTet10[" in key else max(n_gauss, len(gauss))  # barycentric points, not extrapolated by the app: a tet10-only set asks cell_averaged
     if len(hits) != 1 or next(iter(hits))[2]:
-        raise ContourDataError(
-            f"stored Gauss component {component!r} is not one column the app names in "
-            f"{Path(results.path).name}: {sorted(h[:2] for h in hits) or 'none'}"
-            f"{' (named by the response catalog, not by the file)' if any(h[2] for h in hits) else ''} (R16b)."
-        )
+        raise ContourDataError(f"stored Gauss component {component!r} is not one column the app names in {Path(results.path).name}: {sorted(h[:2] for h in hits) or 'none'}"
+                               f"{' (named by the response catalog, not by the file)' if any(h[2] for h in hits) else ''} (R16b).")
     token, label, _ = next(iter(hits))
     mode = "cell_averaged" if n_gauss <= 1 else "node"
     return {"field": token, "component": f"{token}/{label}", "source": "element", "gauss": mode}
