@@ -28,6 +28,7 @@ import {
 } from "../src/state/selectors.ts";
 import { initialState, reduce, Store, type State } from "../src/state/store.ts";
 import type { EventType } from "../src/state/types.ts";
+import { rangeButtonsOf } from "../src/panels/legend.ts";
 import { opened } from "./contour/harness.ts";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
@@ -737,5 +738,28 @@ test("VA6d (#2766): the contour-field palette lists a derived scalar from the pi
   } finally {
     h.effects.dispose();
     h.host.close();
+  }
+});
+
+test("VF2 (#2949): the palette's contour range list is the legend's, for every contour kind and range mode", () => {
+  // The oracle is the legend's own list (panels/legend.ts rangeButtonsOf, #2902 item 2) for each view the
+  // scale draws. Each State below is one contourView (selectors.ts) reads as that view, by its first branches.
+  const base: State = reduce(loaded, { type: "setColourBy", by: "contour" });
+  const kinds: readonly [string, "ready" | "element" | "user" | "combination" | "difference", State][] = [
+    ["a nodal Results field", "ready", { ...base, contour: { ...base.contour, source: "nodal" } }],
+    ["an element Results field", "element", { ...base, contour: { ...base.contour, source: "element" } }],
+    ["a user result", "user", { ...base, contour: { ...base.contour, source: "user" } }],
+    ["a compare user result", "user", { ...base, variants: { ...base.variants, shown: { name: "footfall", component: "footfall_ratio" } } }],
+    ["a User Combination", "combination", { ...base, phase: { ...base.phase, at: { kind: "combination", name: "ULS" } } }],
+    ["the difference", "difference", { ...base, variants: { ...base.variants, difference: true } }],
+  ];
+  for (const [what, view, k] of kinds) {
+    for (const range of ["history", "step", "fixed"] as const) {
+      // A stored fixed range, so the palette lists "fixed" (it seeds no range of its own: it takes a typed `min max`).
+      const s: State = { ...k, contour: { ...k.contour, range, fixed: { min: -1, max: 2 } }, spotlight: { ...k.spotlight, open: true, mode: "contourRange", query: "" } };
+      const palette = spotlightViewOf(s).items.map((i) => [i.title, i.active === true]);
+      const legend = rangeButtonsOf(view, range).map((b) => [`Range: ${b.label}`, b.on]);
+      assert.deepEqual(palette, legend, `${what} at ${range}`);
+    }
   }
 });

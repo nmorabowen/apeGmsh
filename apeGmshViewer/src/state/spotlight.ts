@@ -16,7 +16,7 @@ import { reactionComponentsOf } from "./loads.ts";
 import { springCountOf } from "./springs.ts";
 import { tensorFields } from "./tensor.ts";
 import { vectorFieldOf } from "./vectors.ts";
-import { CMAP_NAMES, elementContourFields, fieldsOf, RANGE_MODES } from "./contour.ts";
+import { CMAP_NAMES, elementContourFields, fieldsOf, rangeKindOf, rangeOptionsOf } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
 import {
   WINDOW_KINDS,
@@ -1299,19 +1299,21 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
           ),
         );
       }
-      for (const r of RANGE_MODES) {
+      // VF2 (#2949): the legend's rule (state/contour.ts rangeOptionsOf), so a one-range contour offers its own range once.
+      for (const r of rangeOptionsOf(rangeKindOf(s), s.contour.range)) {
         if (r.range === "fixed" && !s.contour.fixed) continue;
         const it = commandItem(
-          `val:range-${r.range}`,
+          r.own ? "val:range-own" : `val:range-${r.range}`,
           "range",
           `Range: ${r.label}`,
-          r.range === "history"
-            ? "Scale colours across all steps of the stage"
-            : r.range === "step"
-              ? "Scale colours to the min/max of the current step"
-              : `Fixed range [${s.contour.fixed?.min}, ${s.contour.fixed?.max}]`,
+          r.title ??
+            (r.range === "history"
+              ? "Scale colours across all steps of the stage"
+              : r.range === "step"
+                ? "Scale colours to the min/max of the current step"
+                : `Fixed range [${s.contour.fixed?.min}, ${s.contour.fixed?.max}]`),
           [{ type: "setContourRange", range: r.range }],
-          s.contour.range === r.range,
+          r.on,
           [{ type: "setContourRange", range: r.range }],
           section,
         );
