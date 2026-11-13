@@ -139,7 +139,8 @@ export interface GaussGroupInfo {
   /**
    * V4c2b: `_natural_coords`, one row (its parent-space coordinates) per
    * Gauss point; null when the dataset is not floating point (no
-   * extrapolation is then offered: it reads "unsupported", never a guess).
+   * extrapolation is then offered: it reads "unsupported", never a guess;
+   * the open warns, naming the group, VF2 #2950).
    */
   naturalCoords: number[][] | null;
 }
@@ -817,6 +818,12 @@ export class ResultsFile {
       const D = nc.shape![1]!;
       const flat = toFloat64(nc.value, nc.path);
       naturalCoords = Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * D, (r + 1) * D)));
+    } else if (G > 0) {
+      // VF2 (#2950): the values still read; the positions are never guessed from another dtype, and the open says so, by group.
+      warnings.push(
+        `${this.path}: Gauss group ${g.path}: ${nc.path} is not floating point (HDF5 class ${nc.metadata.type}, ${nc.metadata.size} bytes), ` +
+          `so its ${G} Gauss points are read per element but not placed, drawn as Gauss points, or extrapolated to nodes`,
+      );
     }
     // #2274: a triangle or tet group written before #2238 holds node-0-first rows; they read in gmsh
     // coordinates (legacySimplex.ts), or, matching neither table, offer none and warn once per class.
