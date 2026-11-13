@@ -18,6 +18,7 @@
 // order of its shots, set the same state for each.
 
 import { MAGNITUDE } from "../state/contour.ts";
+import { compareUserName } from "../state/selectors.ts";
 import type { CameraRequest, DeclPath, Event, PhaseKey } from "../state/types.ts";
 import type { DescribedField, DescribedStage, SetDescription } from "./describe.ts";
 import { SPEC_MAGNITUDE } from "./describe.ts";
@@ -34,8 +35,18 @@ export interface ShotPlan {
   events: Event[];
   /** section planes: added by the render mode, which reads back each plane's id */
   clip: SpecClip[];
-  /** the drawn contour, as the store names it; null when the shot draws none. VU16: `user` is a user result (`field` its name) */
+  /**
+   * the drawn contour, as the store names it; null when the shot draws none. VU16: `user` is a user result (`field` its
+   * name); VF2-d: a compare variant's (`compareUser`) has the display string the legend shows as its `field`
+   */
   contour: { field: string; component: string; label: string; source: "nodal" | "element" | "user" } | null;
+  /**
+   * VF2-d (#2956): the compare variant's user result the shot draws, by variant and entry, or null. Its
+   * `showCompareUser` cannot be among `events`: the reducer takes it only once the compare set is open and
+   * its `.user.h5` read, which follow `variantCompare` from main. ./snapshot.ts `shownView` waits for them,
+   * refuses an entry or a component the file does not offer (listing what it offers), then dispatches it.
+   */
+  compareUser: { variant: string; entry: string; component: string } | null;
   /** the shot's deformed shape; `scale` null is G3's auto scale, which the render mode dispatches once the step's displacement is read */
   deform: SpecDeform | null;
   /** applied after the view is drawn: a fit frames what is drawn (the deformed shape, an isolated group) */
@@ -58,6 +69,8 @@ export const BASE_EVENTS: readonly Event[] = [
   { type: "setLineDiagram", on: false },
   // A plane's gizmo is a handle for the hand; a still shows the cut, not the handle.
   { type: "setShowGizmos", on: false },
+  // VF2-d (#2956): no compare user result unless the shot names one (./snapshot.ts `shownView` draws it).
+  { type: "showCompareUser", pick: null },
   // VU10: no difference unless the shot compares (the compare set itself stays open for the next shot that names it).
   { type: "setDifference", on: false },
 ];
@@ -199,7 +212,23 @@ export function compileShot(shot: SpecShot, d: SetDescription, combinationFields
     events.push({ type: "setPhase", at: phase });
   }
   events.push({ type: "setColourBy", by: shot.colour_by });
-  if (shot.contour?.source === "user") {
+  const compare = shot.compare ?? null;
+  let compareUser: ShotPlan["compareUser"] = null;
+  if (shot.contour?.source === "user" && compare !== null) {
+    // VF2-d (#2956): the compare variant's own user result, by variant plus entry (the spec validator held it to
+    // the mesh phase, as a window user result). The variant is found here; the entry and its component once the
+    // compare set's .user.h5 is read (./snapshot.ts `shownView`), which refuses either with what the file offers.
+    const c = shot.contour;
+    if (!variantOf) return { ok: false, reason: `this view has no variants manifest to find variant ${JSON.stringify(compare)} in` };
+    const v = variantOf(compare);
+    if (!v.ok) return v;
+    if (!v.open) events.push({ type: "variantCompare", row: v.row });
+    compareUser = { variant: v.row.label, entry: c.field, component: c.component };
+    contour = { field: compareUserName(v.row.label, c.field), component: c.component, label: c.component, source: "user" };
+    // No setContourField: that names the window's own .user.h5, and a pick ends a compare user result.
+    events.push(c.range.mode === "fixed" ? { type: "setContourRange", range: "fixed", fixed: { min: c.range.min, max: c.range.max } } : { type: "setContourRange", range: c.range.mode });
+    events.push({ type: "setContourCmap", cmap: c.cmap });
+  } else if (shot.contour?.source === "user") {
     // VU16: the spec validator held a user-result shot to the mesh phase: no stage, step, combination, compare or shape.
     const c = shot.contour;
     const label = `user result ${JSON.stringify(c.field)}`;
@@ -236,8 +265,7 @@ export function compileShot(shot: SpecShot, d: SetDescription, combinationFields
     contour = { field: shot.contour.field, component: shot.contour.component, label: shot.contour.component, source: shot.contour.source ?? "nodal" };
   }
   // VU10: the window variant minus the compare variant (the spec validator held it to a nodal contour of a stage).
-  const compare = shot.compare ?? null;
-  if (compare !== null) {
+  if (compare !== null && compareUser === null) {
     if (!variantOf) return { ok: false, reason: `this view has no variants manifest to find variant ${JSON.stringify(compare)} in` };
     const v = variantOf(compare);
     if (!v.ok) return v;
@@ -258,5 +286,5 @@ export function compileShot(shot: SpecShot, d: SetDescription, combinationFields
     events.push({ type: "isolate", decls: shot.isolate as DeclPath[] });
   }
   const camera: CameraRequest = typeof shot.camera === "string" ? shot.camera : { eye: shot.camera.eye, target: shot.camera.target, up: shot.camera.up };
-  return { ok: true, plan: { phase, stage, combination, step, events, clip: shot.clip, contour, deform: shot.deform, camera } };
+  return { ok: true, plan: { phase, stage, combination, step, events, clip: shot.clip, contour, compareUser, deform: shot.deform, camera } };
 }

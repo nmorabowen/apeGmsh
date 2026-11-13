@@ -86,8 +86,13 @@ export type ManifestContour =
       combination?: { name: string; signed: boolean };
       /** VU10, a difference's contour only: the window variant minus the compare variant, by label */
       difference?: { window: string; compare: string };
-      /** VU16, a user result's contour only: the `.user.h5` entry (`field` too) and its basis (A6 judged it current) */
-      user?: { name: string; basis: string };
+      /**
+       * VU16, a user result's contour only: the `.user.h5` entry (`field` too) and its basis (A6 judged it current).
+       * VF2-d (#2956): a compare variant's user result (VU19) states `compare`, its variant and its entry apart;
+       * `name` is then the display string the legend shows (`<variant>: <entry>`), which can equal a window
+       * entry of that literal name, so a reader tells the two apart by `compare`, never by `name`
+       */
+      user?: { name: string; basis: string; compare?: { variant: string; entry: string } };
       /**
        * VA6d, a derived scalar's contour only (`von_mises_stress`): the stored tensor components it is
        * computed from, and what its out-of-plane normal is, by element (state/tensor.ts `planeStatement`);
@@ -423,7 +428,7 @@ function contourOf(s: State, blobs: BlobStore, step: StepValues | null, combinat
     const held = userResultOnHand(v);
     if (!held) throw new Error(`manifest: the user-result column on hand is not the read the view shows (${v.key}, read ${v.read})`);
     const c = columnContour(s, v, blobs, held.ids, held.values);
-    return c.drawn ? { ...c, source: "user", user: { name: v.name, basis: v.basis } } : c;
+    return c.drawn ? { ...c, source: "user", user: { name: v.name, basis: v.basis, ...(v.compare === null ? {} : { compare: { variant: v.compare.variant, entry: v.compare.entry } }) } } : c;
   }
   return drawnContour(s, v, blobs, step);
 }

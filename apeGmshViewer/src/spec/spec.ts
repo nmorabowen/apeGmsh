@@ -63,7 +63,8 @@ export interface SpecContour {
    * null: the field's own kind (a nodal field, else an element field);
    * ./compile.ts refuses a name both kinds have. VU16: `user` names a
    * state-free user result of the set's `.user.h5`; it is never inferred, and
-   * the shot shows no stage, step, combination, compare or deformed shape.
+   * the shot shows no stage, step, combination or deformed shape. With the
+   * shot's `compare` (VF2-d, #2956) it names the compare variant's own one.
    */
   source: "nodal" | "element" | "user" | null;
   range: SpecRange;
@@ -112,7 +113,11 @@ export interface SpecShot {
    * VU10 (ADR 0132 D9.5): a variant of `files.variants`, by label, opened as
    * the compare set; the contour then shows the window variant minus it, at
    * the shot's stage and step. Absent or null: none. Needs a nodal contour of a
-   * stage; never with a combination or a deformed shape.
+   * stage; never with a combination or a deformed shape. VF2-d (#2956): with a
+   * user-result contour (`contour.source: "user"`) it names the compare
+   * variant's own user result instead, `contour.field` its entry and
+   * `contour.component` its column: by variant plus entry, never by the
+   * display string the legend shows (`<variant>: <entry>`).
    */
   compare?: string | null;
   /**
@@ -331,14 +336,17 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
     throw new SpecError(`${key}.step`, comb !== null ? "a User Combination is one state: it has no step" : "needs a stage: a step is a position in a results stage");
   }
   // VU10: a compare names a variant; the shot then shows a difference, of a nodal contour at a stage, never a shape.
+  // VF2-d (#2956): with a user-result contour it names that variant's own user result instead (`contour.field` its entry).
   const cmp = o["compare"] === undefined || o["compare"] === null ? null : text(o["compare"], `${key}.compare`);
   if (cmp !== null) {
     if (!d.variants) throw new SpecError(`${key}.compare`, "names a variant, and the spec has no files.variants to find it in");
     if (comb !== null) throw new SpecError(`${key}.compare`, "a combination across variants is refused: a User Combination is of the window variant's own states");
-    if (st === null) throw new SpecError(`${key}.compare`, "needs a stage: a difference is of a results step");
-    if (!c) throw new SpecError(`${key}.compare`, "needs a contour: a difference is shown as a contour");
-    if (c.source === "element") throw new SpecError(`${key}.compare`, "a difference is of a nodal component; contour.source is \"element\"");
-    if (o["deform"] !== undefined) throw new SpecError(`${key}.deform`, "a difference is never a deformed shape");
+    if (c?.source !== "user") {
+      if (st === null) throw new SpecError(`${key}.compare`, "needs a stage: a difference is of a results step");
+      if (!c) throw new SpecError(`${key}.compare`, "needs a contour: a difference is shown as a contour");
+      if (c.source === "element") throw new SpecError(`${key}.compare`, "a difference is of a nodal component; contour.source is \"element\"");
+      if (o["deform"] !== undefined) throw new SpecError(`${key}.deform`, "a difference is never a deformed shape");
+    }
   }
   // VU18: a variant names the row whose set the shot draws; it needs the manifest, and is never its own compare set.
   const row = o["variant"] === undefined || o["variant"] === null ? null : variantRow(o["variant"], `${key}.variant`);
@@ -347,11 +355,11 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
     if (cmp !== null && cmp === row.label) throw new SpecError(`${key}.compare`, `is ${show(cmp)}, the variant the shot draws; a compare set is another variant`);
   }
   // VU16: a user result is one state of its own file: it is shown at no stage or step, over no combination, never subtracted, never a shape.
+  // VF2-d (#2956): with `compare` it is the compare variant's own user result, still never subtracted from the window's.
   if (c?.source === "user") {
     if (st !== null) throw new SpecError(`${key}.stage`, "a user result has no state: a shot of one names no stage");
     if (o["step"] !== undefined) throw new SpecError(`${key}.step`, "a user result has no state: it has no step");
     if (comb !== null) throw new SpecError(`${key}.combination`, "a shot shows a User Combination or a user result, not both");
-    if (cmp !== null) throw new SpecError(`${key}.compare`, "a user result is not subtracted across variants");
     if (o["deform"] !== undefined) throw new SpecError(`${key}.deform`, "a user result is shown as a contour only, never as a deformed shape");
   }
   const caption = o["caption"] === undefined ? null : text(o["caption"], `${key}.caption`);

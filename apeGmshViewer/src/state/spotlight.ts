@@ -981,7 +981,23 @@ function declSpotlightItem(
   });
 }
 
-function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: string): SpotlightItem[] {
+/**
+ * The range a pick of "fixed" starts from (state/selectors.ts
+ * `fixedRangeFrom`, the legend's too). It reads the contour view, which this
+ * module cannot import (selectors.ts imports it), so selectors.ts hands it in.
+ */
+export type FixedRangeFrom = (s: State) => { min: number; max: number } | null;
+
+/**
+ * The palette's "fixed" with no stored range and no range shown: picking it
+ * changes nothing (as the legend's button), and the legend's min and max
+ * boxes appear only once a fixed range is stored, so the way to one is the
+ * typed `min max` this list turns into "Set Fixed Range [min, max]".
+ */
+export const FIXED_NOTHING_TO_START =
+  "No range is shown to start from, so picking this changes nothing: type a min and a max into this list (as `min max`) to set a fixed range";
+
+function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: string, fixedFrom: FixedRangeFrom | undefined): SpotlightItem[] {
   const items: SpotlightItem[] = [];
   const low = q.trim().toLowerCase();
   const section = MODE_META[mode].label ?? "Options";
@@ -1318,10 +1334,20 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
         );
       }
       // VF2 (#2949): the legend's rule (state/contour.ts rangeOptionsOf), so a one-range contour offers its own range once.
+      // VF2-d (#2956): "fixed" is offered with no stored range too, as the legend offers it, and starts from the same range.
+      if (!fixedFrom) throw new Error("spotlightViewOf: the contour range list needs the range a fixed range starts from; read it through state/selectors.ts spotlightViewOf");
+      const from = fixedFrom(s);
       for (const r of rangeOptionsOf(rangeKindOf(s), s.contour.range)) {
-        if (r.range === "fixed" && !s.contour.fixed) continue;
-        // As the legend: the own range leaves a fixed range for `r.range`, and otherwise changes nothing (it only closes the palette).
-        const pick: readonly Event[] = r.own && r.on ? [{ type: "closeSpotlight" }] : [{ type: "setContourRange", range: r.range }];
+        // As the legend: the own range leaves a fixed range for `r.range`, and otherwise changes nothing (it only closes the palette);
+        // "fixed" starts from the stored range, else the range shown, and with neither changes nothing.
+        const pick: readonly Event[] =
+          r.range === "fixed"
+            ? from
+              ? [{ type: "setContourRange", range: "fixed", fixed: from }]
+              : [{ type: "closeSpotlight" }]
+            : r.own && r.on
+              ? [{ type: "closeSpotlight" }]
+              : [{ type: "setContourRange", range: r.range }];
         const it = commandItem(
           r.own ? "val:range-own" : `val:range-${r.range}`,
           "range",
@@ -1331,7 +1357,11 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
               ? "Scale colours across all steps of the stage"
               : r.range === "step"
                 ? "Scale colours to the min/max of the current step"
-                : `Fixed range [${s.contour.fixed?.min}, ${s.contour.fixed?.max}]`),
+                : !from
+                  ? FIXED_NOTHING_TO_START
+                  : s.contour.fixed
+                    ? `Fixed range [${from.min}, ${from.max}]`
+                    : `Fixed range, starting from the range shown [${from.min}, ${from.max}]`),
           pick,
           r.on,
           pick,
@@ -1700,8 +1730,11 @@ function isDuplicateLabelRow(s: State, r: { kind: DeclKind; name: string }): boo
 
 /**
  * Pure selector returning what Spotlight (`Ctrl+K`) renders for `s`.
+ * `fixedFrom` is the range a pick of "fixed" starts from; the contour range
+ * list refuses to build without it (state/selectors.ts `spotlightViewOf`
+ * hands it in, VF2-d #2956), and no other list reads it.
  */
-export function spotlightViewOf(s: State): SpotlightView {
+export function spotlightViewOf(s: State, fixedFrom?: FixedRangeFrom): SpotlightView {
   const { open, mode, query, clauses } = s.spotlight;
   const meta = MODE_META[mode];
   const clauseViews: SpotlightClauseView[] = clauses.map((c, idx) => ({
@@ -1723,7 +1756,7 @@ export function spotlightViewOf(s: State): SpotlightView {
       query,
       clauses: clauseViews,
       summary: null,
-      items: buildDrillDownItems(s, mode, query),
+      items: buildDrillDownItems(s, mode, query, fixedFrom),
       hint,
     };
   }

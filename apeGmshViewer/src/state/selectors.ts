@@ -86,6 +86,8 @@ import {
 export type { Clim, ElementComponent, ElementField, FieldComponent, NodalField } from "./contour.ts";
 export { GHOST_OPACITY, scaleLabel } from "./deform.ts";
 export { CMAP_NAMES, CMAPS, fmtValue, MAGNITUDE, NO_DATA_RGB, rampCss, RANGE_MODES, sampleCmap } from "./contour.ts";
+// VF2-d (#2956): the one range rule the legend's scale and the command palette both offer.
+export { rangeKindOf, rangeOptionsOf, type RangeKind, type RangeOption } from "./contour.ts";
 export { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
 export { gaussNotesOf, gaussUnavailable } from "./gaussNotes.ts";
 export { legendEntryColour } from "./palette.ts";
@@ -286,11 +288,20 @@ import {
   initialSearch,
   initialSpotlight,
   SPOTLIGHT_EVENT_LEDGER,
-  spotlightViewOf,
+  spotlightViewOf as spotlightViewWith,
   type EventLedgerEntry,
   type SpotlightItem,
   type SpotlightView,
 } from "./spotlight.ts";
+
+/**
+ * What Spotlight (`Ctrl+K`) renders for `s` (state/spotlight.ts), handed the
+ * range a pick of "fixed" starts from (`fixedRangeFrom`): the palette cannot
+ * read the contour view itself, which this module holds (VF2-d, #2956).
+ */
+export function spotlightViewOf(s: State): SpotlightView {
+  return spotlightViewWith(s, fixedRangeFrom);
+}
 
 export {
   clauseLabel,
@@ -305,7 +316,6 @@ export {
   searchResultsOf,
   selectedElementsOf,
   SPOTLIGHT_EVENT_LEDGER,
-  spotlightViewOf,
   type EventLedgerEntry,
   type ModelIndex,
   type SearchSummary,
@@ -709,9 +719,15 @@ export type ContourView =
    */
   | {
       state: "user";
-      /** the user result (`field` too: the legend names it as a field) */
+      /** the user result (`field` too: the legend names it as a field); a compare one's is `compareUserName`'s display string */
       name: string;
       field: string;
+      /**
+       * VF2-d (#2956): a compare variant's user result (VU19) names its variant and
+       * its entry here, apart, since the display string `name` can equal a window
+       * entry of that literal name; null for the window set's own user result
+       */
+      compare: { variant: string; entry: string } | null;
       component: FieldComponent;
       /** `userResultRequestOf(s).key`, and the feed's read under it */
       key: string;
@@ -879,6 +895,20 @@ export function contourView(s: State): ContourView {
     stepMeasured: measured,
     reads: c.reads,
   };
+}
+
+/**
+ * The range a pick of "fixed" starts from, on the legend's scale and in the
+ * command palette alike (VF2-d, #2956): the stored fixed range, else the range
+ * the contour shows when it is a finite, non-empty one, else null (there is
+ * nothing to start from, and the pick changes nothing).
+ */
+export function fixedRangeFrom(s: State): { min: number; max: number } | null {
+  if (s.contour.fixed) return s.contour.fixed;
+  const c = contourView(s);
+  if (c.state !== "ready" && c.state !== "element" && c.state !== "combination" && c.state !== "difference" && c.state !== "user") return null;
+  const { min, max } = c.clim;
+  return min !== null && max !== null && min < max ? { min, max } : null;
 }
 
 /**
@@ -1788,6 +1818,7 @@ function userResultContour(s: State): ContourView {
     state: "user",
     name: c.field,
     field: c.field,
+    compare: null,
     component: { key: c.component, label: c.component, datasets: [c.component], magnitude: false },
     key: r.key,
     read: r.read,
@@ -1936,7 +1967,9 @@ export function compareUserPickOf(s: State, name: string): { ok: true; entry: Us
   const entry = r.items.find((x) => x.name === name);
   if (!entry) {
     const why = r.refused.find((x) => x.name === name);
-    return { ok: false, reason: why ? `user result ${quoted(name)} of ${of} is refused: ${why.reason} (${why.detail})` : `${file} of ${of} lists no user result ${quoted(name)}` };
+    // VF2-d (#2956): a spec names the entry, so an unknown one lists the entries the file offers.
+    const offers = r.items.map((x) => quoted(x.name)).join(", ") || "none";
+    return { ok: false, reason: why ? `user result ${quoted(name)} of ${of} is refused: ${why.reason} (${why.detail})` : `${file} of ${of} lists no user result ${quoted(name)}; its user results are ${offers}` };
   }
   if (entry.target !== "nodes") return { ok: false, reason: `user result ${quoted(name)} of ${of} is on ${entry.target}; this app draws a user result on nodes only` };
   if (entry.perState) return { ok: false, reason: `user result ${quoted(name)} of ${of} is per state; this app draws a state-free one only` };
@@ -1982,6 +2015,16 @@ export function compareUserRequestOf(s: State): { key: string; name: string; com
   return { key: JSON.stringify(["compare", c.index, c.label, u.path, pick.name, pick.component]), name: pick.name, component: pick.component };
 }
 
+/**
+ * The display string of compare variant `variant`'s user result `entry`, as
+ * the legend, the banner, a still's scale and the manifest's `user.name` show
+ * it. It can equal a window entry of that literal name, so it is never read
+ * back as a name: the manifest states `user.compare` apart (VF2-d, #2956).
+ */
+export function compareUserName(variant: string, entry: string): string {
+  return `${variant}: ${entry}`;
+}
+
 /** `contourView` on a compare user result: what its read gave, or why it draws nothing. */
 function compareUserContour(s: State, pick: { name: string; component: string }): ContourView {
   if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
@@ -2006,11 +2049,13 @@ function compareUserContour(s: State, pick: { name: string; component: string })
   const clim: Clim =
     c.range === "fixed" ? climOf(c, null, null, "") : { min: r.range?.min ?? null, max: r.range?.max ?? null, mode: c.range, label: "range: this user result (one state, no history)" };
   // The legend and the manifest name the compare variant with the entry: it is not the window set's file.
-  const shownName = `${p.label}: ${pick.name}`;
+  // VF2-d (#2956): the variant and the entry also stand apart, since the display string can equal a window entry's name.
+  const shownName = compareUserName(p.label, pick.name);
   return {
     state: "user",
     name: shownName,
     field: shownName,
+    compare: { variant: p.label, entry: pick.name },
     component: { key: pick.component, label: pick.component, datasets: [pick.component], magnitude: false },
     key: r.key,
     read: r.read,

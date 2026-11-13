@@ -32,9 +32,24 @@ import { openModel } from "../../src/reader/node.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { readUserResultColumn, readUserSet, type UserH5 } from "../../src/reader/userFile.ts";
 import { UserResultFeed, userResultOnHand, VariantRunner, type VariantDoor } from "../../src/renderer/contour.ts";
-import { restoreView, viewMemoOf } from "../../src/spec/snapshot.ts";
+import { compileShot } from "../../src/spec/compile.ts";
+import { describeSet } from "../../src/spec/describe.ts";
+import { manifestEntry } from "../../src/spec/manifest.ts";
+import { restoreView, shownView, viewMemoOf, type ShownDeps } from "../../src/spec/snapshot.ts";
+import { validateSpec, type SpecShot } from "../../src/spec/spec.ts";
 import { reduce } from "../../src/state/reduce.ts";
-import { compareMeshOf, compareUserRequestOf, contourFieldsOf, contourView, deformOf, userResultRequestOf } from "../../src/state/selectors.ts";
+import {
+  compareMeshOf,
+  compareUserName,
+  compareUserRequestOf,
+  contourFieldsOf,
+  contourView,
+  deformOf,
+  rangeKindOf,
+  userResultPickOf,
+  userResultRequestOf,
+  variantRowOf,
+} from "../../src/state/selectors.ts";
 import type { CompareIn, State, VariantsIn } from "../../src/state/types.ts";
 import { harness, until } from "../contour/harness.ts";
 
@@ -371,6 +386,127 @@ test("an answer for a closed or replaced slot is dropped; compare:close and the 
   assert.equal(reduce(s1, { type: "compareUserRead", answer: { slot: SLOT, path: CRACKED.user, read: readUserSet(h5, CRACKED.user, CRACKED.model, CRACKED.results, list) } }), s1);
   assert.throws(() => reduce(s1, { type: "showCompareUser", pick: { name: "footfall", component: "ratio" } }), /no compare set's user file is read/);
   off();
+});
+
+/** A user read whose entry `from` is renamed `to` (its index and its A6 verdict): a window file holding an entry of that literal name. */
+function renamed(read: ReturnType<typeof readUserSet>, from: string, to: string): ReturnType<typeof readUserSet> {
+  if (!read.ok || !read.user.results.ok) throw new Error("renamed: the user file's /results did not read");
+  const r = read.user.results;
+  const results = { ...r, value: { ...r.value, entries: r.value.entries.map((e) => (e.name === from ? { ...e, name: to } : e)) } };
+  const { [from]: verdict, ...others } = read.staleness.results;
+  if (!verdict) throw new Error(`renamed: no A6 verdict for ${from}`);
+  return { ...read, user: { ...read.user, results }, staleness: { ...read.staleness, results: { ...others, [to]: verdict } } };
+}
+
+test("VF2-d (#2956): a render spec names the compare result by variant plus entry; the manifest states it apart from a window entry of the display string's literal name", async () => {
+  // The window set's own footfall is renamed "Cracked: footfall": the very string the legend shows for Cracked's footfall.
+  const SHOWN = compareUserName("Cracked", "footfall");
+  const h = harness();
+  if (!(await h.effects.open(UNCRACKED.model))) throw new Error("the window model did not load");
+  if (!(await h.effects.openResults(UNCRACKED.results))) throw new Error("the window results did not load");
+  await h5wasm.ready;
+  h.store.dispatch({ type: "userOpened", path: UNCRACKED.user });
+  h.store.dispatch({ type: "userRead", path: UNCRACKED.user, read: renamed(readUserSet(h5, UNCRACKED.user, UNCRACKED.model, UNCRACKED.results, list), "footfall", SHOWN) });
+  const feed = new UserResultFeed(h.store, async (req) => readUserResultColumn(h5, req.path, UNCRACKED.model, UNCRACKED.results, list, req.name === SHOWN ? "footfall" : req.name, req.component));
+  const { door } = compareDoor();
+  const runner = new VariantRunner(h.store, h.blobs, door, () => h.effects.currentStep());
+  const offs = [feed.start(), runner.start()];
+  h.store.dispatch({ type: "variantsRead", study: STUDY });
+  assert.equal(h.store.get().variants.compare, null, "precondition: no compare set is open; the shot opens it");
+
+  const files = { model: UNCRACKED.model, variants: STUDY.manifest };
+  const shotOf = (s: Record<string, unknown>) => {
+    const v = validateSpec({ spec: "apegmsh-view/1", files, shots: [{ name: "s", ...s }] });
+    if (!v.ok) throw new Error(`${v.key}: ${v.reason}`);
+    return v.spec.shots[0]!;
+  };
+  const wait: ShownDeps = { store: h.store, onScreen: () => ({ contour: true, deform: false }), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), now: () => performance.now() };
+  /** Compile as the render mode does (renderer/agentRender.ts), dispatch, and wait for the view: the reason it is refused, or null. */
+  const take = async (shot: SpecShot): Promise<string | null> => {
+    const c = compileShot(
+      shot,
+      describeSet(h.store.get(), []),
+      undefined,
+      (label) => variantRowOf(h.store.get(), label),
+      (name) => {
+        const p = userResultPickOf(h.store.get(), name);
+        return p.ok ? { ok: true, components: p.entry.components } : p;
+      },
+    );
+    if (!c.ok) return c.reason;
+    for (const e of c.plan.events) h.store.dispatch(e);
+    return shownView(wait, shot, c.plan);
+  };
+  const entryOf = (shot: SpecShot) => {
+    const k = manifestEntry(h.store.get(), { shot, png: "s.png", image: [8, 8], camera: { eye: [1, 1, 1], target: [0, 0, 0], up: [0, 0, 1], fov: 30 }, layout: null, blobs: h.blobs, step: h.effects.currentStep() }).contour;
+    assert.ok(k?.drawn, JSON.stringify(k));
+    return k;
+  };
+  const values = () => Array.from(userResultOnHand(contourView(h.store.get()) as Extract<ReturnType<typeof contourView>, { state: "user" }>)!.values);
+
+  // Cracked's footfall, by variant plus entry: the compare set is opened, its file read, and its column drawn.
+  const cmp = shotOf({ compare: "Cracked", contour: { field: "footfall", component: "ratio", source: "user" } });
+  assert.equal(await take(cmp), null);
+  assert.deepEqual(h.store.get().variants.shown, { name: "footfall", component: "ratio" });
+  assert.deepEqual(values(), column(GOLDEN.compare_footfall), "the compare file's values");
+  const a = entryOf(cmp);
+  assert.deepEqual(a.user, { name: SHOWN, basis: "model", compare: { variant: "Cracked", entry: "footfall" } });
+
+  // The next shot starts with no compare result (BASE_EVENTS' showCompareUser(null)): a shot with no contour
+  // picks no field, so nothing but the base view can end it.
+  const group = shotOf({});
+  assert.equal(await take(group), null);
+  assert.equal(h.store.get().variants.shown, null, "the base view hid the compare result");
+  assert.equal(rangeKindOf(h.store.get()), "steps", "no compare result is left to range over");
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  assert.notEqual(contourView(h.store.get()).state, "user", "turning contours on draws no compare result left over");
+
+  // The window's own entry named "Cracked: footfall".
+  const own = shotOf({ contour: { field: SHOWN, component: "ratio", source: "user" } });
+  assert.equal(await take(own), null);
+  assert.equal(h.store.get().variants.shown, null, "the window's own entry, not the compare result");
+  assert.deepEqual(values(), column(GOLDEN.window_footfall), "the window file's values");
+  const b = entryOf(own);
+  assert.deepEqual(b.user, { name: SHOWN, basis: "model" });
+  // One display string, two results: the manifest tells them apart by `compare`, never by `name`.
+  assert.equal(a.user!.name, b.user!.name);
+  assert.notDeepEqual(a.user, b.user);
+
+  // An entry or a component the compare file does not offer is refused, listing what it offers; nothing is drawn.
+  const items = h.store.get().variants.compareUser;
+  const offered = items?.status === "ready" && items.info.results?.ok ? items.info.results.items.map((x) => JSON.stringify(x.name)).join(", ") : "";
+  assert.match(offered, /"footfall"/);
+  const nope = await take(shotOf({ compare: "Cracked", contour: { field: "nope", component: "ratio", source: "user" } }));
+  assert.equal(nope, `user result "nope" of the compare variant "Cracked" cannot be drawn: plate_cracked.user.h5 of the compare variant "Cracked" lists no user result "nope"; its user results are ${offered}`);
+  assert.equal(h.store.get().variants.shown, null);
+  const noComponent = await take(shotOf({ compare: "Cracked", contour: { field: "footfall", component: "nope", source: "user" } }));
+  assert.equal(noComponent, 'user result "footfall" of the compare variant "Cracked" has no component "nope"; its components are "ratio"');
+  // An unknown variant is refused by the compiler with the variants the manifest has.
+  const noVariant = await take(shotOf({ compare: "Bischoff", contour: { field: "footfall", component: "ratio", source: "user" } }));
+  assert.match(noVariant ?? "", /the manifest has no variant "Bischoff"; its variants are "Uncracked", "Cracked"/);
+  offs.forEach((o) => o());
+  h.effects.dispose();
+});
+
+test("VF2-d (#2956): a compare set that does not open refuses the compare result shot with main's reason, at once", async () => {
+  const h = harness();
+  if (!(await h.effects.open(UNCRACKED.model))) throw new Error("the window model did not load");
+  const { door } = compareDoor();
+  const runner = new VariantRunner(h.store, h.blobs, { ...door, variantsCompare: async () => ({ ok: false, reason: "the compare set's results did not open" }) }, () => null);
+  const off = runner.start();
+  h.store.dispatch({ type: "variantsRead", study: STUDY });
+  const v = validateSpec({ spec: "apegmsh-view/1", files: { model: UNCRACKED.model, variants: STUDY.manifest }, shots: [{ name: "s", compare: "Cracked", contour: { field: "footfall", component: "ratio", source: "user" } }] });
+  assert.ok(v.ok);
+  const shot = v.spec.shots[0]!;
+  const c = compileShot(shot, describeSet(h.store.get(), []), undefined, (label) => variantRowOf(h.store.get(), label));
+  assert.ok(c.ok, !c.ok ? c.reason : "");
+  for (const e of c.plan.events) h.store.dispatch(e);
+  const t0 = performance.now();
+  const why = await shownView({ store: h.store, onScreen: () => ({ contour: true, deform: false }), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), now: () => performance.now() }, shot, c.plan);
+  assert.equal(why, `user result "footfall" of the compare variant "Cracked" is not drawn: the compare set did not open: the compare set's results did not open`);
+  assert.ok(performance.now() - t0 < 5000, "refused when main answers, not at the 30 s limit");
+  off();
+  h.effects.dispose();
 });
 
 test("fail closed: a variant door without the compare doors is a broken build", () => {
