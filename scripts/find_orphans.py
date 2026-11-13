@@ -221,6 +221,8 @@ def find_unreviewed(fetch: Fetch, repo: str, since: datetime,
     for pr in merged_prs(fetch, repo, since):
         if not verdict_required(fetch, repo, pr):
             continue
+        if (pr["number"], VERDICT_KIND) in ACKNOWLEDGED:
+            continue
         if has_head_approval(fetch, repo, pr):
             continue
         sha = pr["head"]["sha"]

@@ -213,6 +213,20 @@ def test_semantic_pr_without_verdict_is_flagged():
     assert [(h["kind"], h["pr"]) for h in hits] == [("merged-without-verdict", 1)]
 
 
+def test_acknowledged_verdict_row_is_skipped_by_find_unreviewed(monkeypatch):
+    # #2872: find_unreviewed itself must honour ACKNOWLEDGED (exact pr+kind).
+    pr = _vpr(2656, ["program", "semantic"])
+    assert (2656, "merged-without-verdict") in fo.ACKNOWLEDGED
+    assert not _unreviewed([pr])
+    _no_acks(monkeypatch)
+    assert [(h["kind"], h["pr"]) for h in _unreviewed([pr])] == [
+        ("merged-without-verdict", 2656)]
+    # An acknowledgement for another kind on the same PR does not suppress it.
+    monkeypatch.setattr(fo, "ACKNOWLEDGED",
+                        {(2656, "not-on-main"): ("x", "y")})
+    assert _unreviewed([pr])
+
+
 def test_approve_at_merged_head_clears_it():
     c = {1: [_comment(f"Review-verdict: Opus 5.5 approve {HEAD[:12]}")]}
     assert not _unreviewed([_vpr(1, ["program", "semantic"])], comments=c)
