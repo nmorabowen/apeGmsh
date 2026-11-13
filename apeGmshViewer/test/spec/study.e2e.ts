@@ -218,6 +218,26 @@ assert.deepEqual(manifest2.shots.map((s) => [s.name, s.status]), [["cracked-foot
   assert.equal(e.png, "cracked-footfall.png");
   const still = readPng(readFileSync(join(render2, "cracked-footfall.png")));
   assert.deepEqual([still.width, still.height], [800, 500], "the still is written at the spec's size");
+  // The colours drawn (#2968 review): the top camera fits the 2 x 1 plate to x 202..598, y 150..350 of
+  // the still (4 x 2 cells, grid lines at x = 300, 400, 500 and y = 250). The ramp rises with x, so with
+  // jet the plate is blue near x = 0 and red near x = 2; no plate pixel is the no-data grey
+  // (NO_DATA_RGB, #6B7280, shaded): a grey has its channels within 30 and is brighter than a grid line.
+  const rgb = (x: number, y: number) => Array.from(still.rgba.subarray((y * still.width + x) * 4, (y * still.width + x) * 4 + 3)) as [number, number, number];
+  for (const y of [200, 300]) {
+    const [r, g, b] = rgb(230, y);
+    assert.ok(b > 2 * r && b > 2 * g, `blue near x = 0: (230, ${y}) is ${[r, g, b]}`);
+    const [r2, g2, b2] = rgb(570, y);
+    assert.ok(r2 > 2 * g2 && r2 > 2 * b2, `red near x = 2: (570, ${y}) is ${[r2, g2, b2]}`);
+  }
+  let grey = 0;
+  for (let y = 154; y <= 346; y++) {
+    for (let x = 206; x <= 594; x++) {
+      const c = rgb(x, y);
+      if (Math.max(...c) - Math.min(...c) < 30 && Math.max(...c) > 60) grey++;
+    }
+  }
+  assert.equal(grey, 0, `no plate pixel is the no-data grey; ${grey} are`);
+  log("cracked-footfall still: blue at x = 0, red at x = 2, no no-data grey on the plate");
 }
 
 // 7. Refused: two meshes, by the fem_hash each model stamps; no PNG.
