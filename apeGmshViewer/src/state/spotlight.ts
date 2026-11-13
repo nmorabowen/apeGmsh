@@ -1302,6 +1302,8 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
       // VF2 (#2949): the legend's rule (state/contour.ts rangeOptionsOf), so a one-range contour offers its own range once.
       for (const r of rangeOptionsOf(rangeKindOf(s), s.contour.range)) {
         if (r.range === "fixed" && !s.contour.fixed) continue;
+        // As the legend: the own range leaves a fixed range for `r.range`, and otherwise changes nothing.
+        const pick = [{ type: "setContourRange", range: r.own && r.on ? s.contour.range : r.range }] as const;
         const it = commandItem(
           r.own ? "val:range-own" : `val:range-${r.range}`,
           "range",
@@ -1312,9 +1314,9 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
               : r.range === "step"
                 ? "Scale colours to the min/max of the current step"
                 : `Fixed range [${s.contour.fixed?.min}, ${s.contour.fixed?.max}]`),
-          [{ type: "setContourRange", range: r.range }],
+          pick,
           r.on,
-          [{ type: "setContourRange", range: r.range }],
+          pick,
           section,
         );
         if (filter(it)) items.push(it);
