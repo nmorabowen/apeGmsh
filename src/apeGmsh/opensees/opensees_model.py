@@ -1129,7 +1129,7 @@ class OpenSeesModel:
             refuse_unreplayable_streams(
                 self._fem, equation_rows=self._equation_tie_rows())
             # A partitioned archive that cannot tell a ghost's SP rows
-            # from a stage's own refuses here too (#2530).
+            # from a stage's own refuses here too.
             self._deck_stages()
         if target == "tcl":
             return self._build_text("tcl", out, flat=flat)
