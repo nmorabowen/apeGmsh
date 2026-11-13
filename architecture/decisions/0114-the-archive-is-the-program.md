@@ -375,3 +375,56 @@ is visible and can only shrink, stand.
   `_skipped_equation_constraints` counter is gone with the ledger row.
 - Opensees schema 2.40.0 is the additive minor of the stage rows (a 2.39
   reader refuses a 2.40 file; ADR 0113 D5).
+
+## Amendment note — 2026-11-13 — D1 amended, item 3: the #2530 carve-out is lifted
+
+**Status:** Proposed. This is a human-gate change: the maintainer
+ratifies it and merges the PR. **Program slice:** #2530 (chain issue
+#1201).
+
+Item 3 of the 2026-10-23 amendment kept one partitioned case refused by
+name until #2530: a stage that holds equation rows and a `fix` row that
+repeats an earlier fix's node and DOF mask. That refusal is gone, and so
+is a silent duplicate it did not cover. A stage `equalDOF` from the fixed
+node 1 to a node on another rank wrote `fix 1` twice in the replay, with
+no refusal.
+
+- **Cause.** A stage-claimed MP tie that crosses ranks declares its far
+  nodes on the rank that does not own them, as ghosts (ADR 0027 INV-2).
+  Each ghost re-plays its owner's whole SP history inside that stage: the
+  global fixes, then each earlier stage's fixes and releases. The
+  archive stores those calls as rows of the stage. The flat replay is
+  partition-blind, so it wrote them again, for every MP kind.
+- **The archive already tells them apart.** Every stage `fix` and
+  `remove_sp` row has its `/opensees/decls/rows` declaration (opensees
+  2.25.0). A ghost's row takes the first declaration of its replay order
+  that targets it, or its owner's when the owner's call replicates it in
+  the same stage. A declaration's home is the first scope, in emit order
+  (global `bcs/fix`, then stage 0, 1, ...), whose `fix` or `remove_sp`
+  rows name it. The deck replay (`tcl`, `py`) drops a stage row whose
+  declaration's home is an earlier scope. Every row of the stage's own
+  declarations stays, including a deliberate re-fix with an earlier mask
+  after a release, which item 3 over-refused.
+- **The writer is unchanged.** The archive still stores the ghost rows,
+  and `to_h5` echoes them with their declarations. The partitioned decks
+  still write the ghost replays that INV-2 needs. There is no schema bump:
+  a 2.40 archive written before this change replays exactly by the same
+  rule.
+- **Archives without declaration rows still refuse by name.** A
+  partitioned archive whose global `bcs/fix` or stage `fix` / `remove_sp`
+  store has no declaration column covering its rows was written below
+  2.25.0, or is a rewrite of one. When a row of such a stage repeats an
+  earlier `fix` (node and mask) or `remove_sp` (node and DOF), as every
+  ghost row does, the replay refuses with `BridgeError`. It never writes a
+  ghost row twice. This applies to every MP kind, with or without
+  equation rows. So a pre-2.25 partitioned archive with a deliberate
+  same-mask re-fix after a release now refuses too: item 3 refused that
+  case only beside equation rows, and the stage `equalDOF` duplicate went
+  through.
+- **Scope of the drop.** Only the deck targets (`tcl`, `py`, `live`)
+  replay the filtered stages. The `to_h5` rewrite and its capture helpers
+  walk the stages as stored.
+- **Oracle.** The R1b corpus carries a stage equation tie (Lagrange) and a
+  stage `equalDOF` (Transformation) to the fixed node 1, flat and
+  partitioned. Both replay byte-identical to the bridge deck. With this
+  change reverted, the partitioned rows fail.

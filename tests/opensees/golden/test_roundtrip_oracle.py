@@ -250,6 +250,14 @@ CORPUS: tuple[Model, ...] = (
     # node's element, so the stage emit-index merge is seen for them.
     _m("test_h5_mp_constraints_replay", "_staged_mp_bridge",
        stages="tie_equation,pen_embedded", partitioned=False),
+    # #2530: a stage equation tie and a stage equalDOF across the ranks to
+    # the fixed base node 1, which the partitioned emit ghosts and re-fixes
+    # inside the stage; the replay drops the ghost's row by its declaration.
+    *(_m("test_h5_mp_constraints_replay", "_staged_mp_bridge", stages=s,
+         partitioned=p, handler=h)
+      for s, h in (("tie_fixed_master", "Lagrange"),
+                   ("fixed_equal_dof", "Transformation"))
+      for p in _B),
     # #2440: the ManzariDafalias ``-stage 0`` line is the deck emitter's, so
     # the archive stores none of it and the replay writes it back: before
     # the analyze of the stage that adds the upper quad, then the user's 1.

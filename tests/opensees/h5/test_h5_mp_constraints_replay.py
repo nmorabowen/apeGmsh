@@ -770,12 +770,14 @@ def test_a_stage_claimed_equation_tie_replays_its_lines(tmp_path):
 #: The mixed corpus row ties each DOF once (node 4: the tie on 1-3; node
 #: 2: the equalDOF on 4-5 and the distributing tie on 1-2), so its decks
 #: solve. Every equation tie crosses the ranks (the equalDOF stays on rank
-#: 1: Lagrange refuses a replicated one), and none ghosts the fixed base
-#: node 1, which only rank 1 holds: a partitioned stage that ghosts a fixed
-#: node re-fixes it inside the stage, and the flat replay of that archive
-#: writes the fix twice, for every MP kind (a stage equalDOF from node 1
-#: to node 4 does it on main too; #2530). For the equation rows the replay
-#: refuses that archive by name (``tie_fixed_master``).
+#: 1: Lagrange refuses a replicated one).
+#:
+#: ``tie_fixed_master`` and ``fixed_equal_dof`` tie the fixed base node 1,
+#: which only rank 1 holds, to node 4 on rank 2: a partitioned stage then
+#: ghosts node 1 on rank 2 and re-plays its fix there, and the archive
+#: stores that fix as a row of the stage. The replay drops it by its
+#: declaration (#2530); ``fixed_equal_dof`` runs under Transformation,
+#: which takes the cross-rank equalDOF that Lagrange refuses.
 #:
 #: ``pen_embedded`` is a penalty embedded node (an ASDEmbeddedNodeElement
 #: line): in a stage after ``tie_equation`` it pins the emit-index merge,
@@ -810,16 +812,20 @@ _STAGE_CLAIMS: "dict[str, tuple[str, str, Any]]" = {
     "tie_fixed_master": ("tie", "surface_constraints", InterpolationRecord(
         kind="tie", name="st_tg", slave_node=4, master_nodes=[1, 2],
         weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")),
+    "fixed_equal_dof": ("equal_dof", "node_constraints", NodePairRecord(
+        kind="equal_dof", name="st_e14", master_node=1, slave_node=4,
+        dofs=[1, 2, 3])),
 }
 
 
 def _staged_mp_bridge(stages: str = "tie_equation",
-                      partitioned: bool = False) -> apeSees:
+                      partitioned: bool = False,
+                      handler: str = "Lagrange") -> apeSees:
     """The bridge on :func:`_fem` whose stages claim the
     :data:`_STAGE_CLAIMS` kinds named by ``stages``: stages split on
     ``;``, the kinds of one stage on ``,``. Each stage declares the
-    EQ-capable Lagrange handler. The R1b oracle's stage corpus rows
-    (#2448)."""
+    ``handler`` constraint handler, by default the EQ-capable Lagrange.
+    The R1b oracle's stage corpus rows (#2448, #2530)."""
     from tests.opensees.h5.test_h5_stages_writer import _chain
 
     plan = [s.split(",") for s in stages.split(";")]
@@ -835,7 +841,7 @@ def _staged_mp_bridge(stages: str = "tie_equation",
                 claim, _stream, rec = _STAGE_CLAIMS[k]
                 getattr(st, claim)(name=rec.name)
             st.analysis(**{**_chain(ops),
-                           "constraints": ops.constraints.Lagrange()})
+                           "constraints": getattr(ops.constraints, handler)()})
             st.run(n_increments=1, dt=1.0)
     return ops
 
@@ -844,11 +850,11 @@ _STAGED_ROWS = ("tie_equation", "distributing_equation", "embedded_equation",
                 "tie_equation,rot_equal_dof;top_a_distributing")
 
 
-def _staged_archive(stages: str, partitioned: bool,
-                    tmp_path: Path) -> "tuple[str, Path]":
+def _staged_archive(stages: str, partitioned: bool, tmp_path: Path,
+                    handler: str = "Lagrange") -> "tuple[str, Path]":
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        ops = _staged_mp_bridge(stages, partitioned)
+        ops = _staged_mp_bridge(stages, partitioned, handler)
         deck = tmp_path / "bridge.tcl"
         ops.tcl(str(deck), flat=True, progress=False)
         path = tmp_path / "model.h5"
@@ -925,21 +931,38 @@ def test_the_stage_lines_replay_before_a_later_embedded_element(tmp_path):
     assert _replay(path) == fwd
 
 
-def test_a_partitioned_stage_tie_that_ghosts_a_fixed_node_refuses(tmp_path):
-    # #2530: a stage tie to the fixed base node 1 ghosts it on rank 2,
-    # whose stage re-fixes it; the stage block stores that fix, so a flat
-    # replay would fix node 1 twice. The replay refuses by name; the flat
-    # archive of the same model replays exactly.
-    from apeGmsh.opensees._internal.build.errors import BridgeError
+def _stage_fix_rows(path: Path) -> "list[list[int]]":
+    """The stored stage ``fix`` rows, as node tags, per stage."""
+    from apeGmsh.opensees.emitter.h5_reader import open as open_h5
 
+    with open_h5(str(path)) as m:
+        return [[r.tag for r in st.fixes] for st in m.stages()]
+
+
+#: The stage claims that tie the fixed base node 1 across the ranks, with
+#: the handler each runs under (#2530).
+_GHOSTING_CLAIMS = {"tie_fixed_master": "Lagrange",
+                    "fixed_equal_dof": "Transformation"}
+
+
+@pytest.mark.parametrize("stages", sorted(_GHOSTING_CLAIMS))
+def test_a_partitioned_stage_tie_that_ghosts_a_fixed_node_replays(
+        stages, tmp_path):
+    # #2530: a stage tie to the fixed base node 1 ghosts it on rank 2,
+    # whose stage re-fixes it, and the stage block stores that fix. The
+    # replay drops the row by its declaration (the global fix's), so node 1
+    # is fixed once, as in the bridge's deck, for the equation tie and the
+    # equalDOF alike.
+    handler = _GHOSTING_CLAIMS[stages]
     (tmp_path / "f").mkdir()
     (tmp_path / "p").mkdir()
-    fwd, flat = _staged_archive("tie_fixed_master", False, tmp_path / "f")
+    fwd, flat = _staged_archive(stages, False, tmp_path / "f", handler)
     assert _replay(flat) == fwd
-    pfwd, part = _staged_archive("tie_fixed_master", True, tmp_path / "p")
+    pfwd, part = _staged_archive(stages, True, tmp_path / "p", handler)
     assert sum(ln.startswith("fix 1 ") for ln in pfwd.splitlines()) == 1
-    with pytest.raises(BridgeError, match=r"node\(s\) \[1\].*#2530"):
-        OpenSeesModel.from_h5(str(part)).build("tcl", flat=True)
+    # The ghost's row is in the archive; the replay leaves it out.
+    assert _stage_fix_rows(part) == [[1]]
+    assert _replay(part) == pfwd
 
 
 def _staged_plan_archive(fem: FEMData, plan: "list[Any]",
@@ -964,11 +987,10 @@ def _staged_plan_archive(fem: FEMData, plan: "list[Any]",
     return deck.read_text(encoding="utf-8"), path
 
 
-def test_a_zero_weight_fixed_master_still_refuses(tmp_path):
+def test_a_zero_weight_fixed_master_replays(tmp_path):
     # The lines leave the zero-weight master 1 out, but the rank plan still
-    # ghosts it on rank 2, whose stage re-fixes it (#2530).
-    from apeGmsh.opensees._internal.build.errors import BridgeError
-
+    # ghosts it on rank 2, whose stage re-fixes it (#2530): the archive
+    # stores that row and the replay drops it.
     tie = InterpolationRecord(
         kind="tie", name="zt", slave_node=4, master_nodes=[1, 2],
         weights=np.array([0.0, 1.0]), dofs=[1], enforce="equation")
@@ -982,30 +1004,10 @@ def test_a_zero_weight_fixed_master_still_refuses(tmp_path):
                 if ln.startswith("equationConstraint ")
                 for tok in ln.split()[4::3]}
     assert retained == {"2"}
-    with pytest.raises(BridgeError, match=r"node\(s\) \[1\].*#2530"):
-        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
-
-
-def _unchecked_replay(path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
-    """The replay with the #2530 refusal switched off: the control that
-    shows a refused archive really replays wrong."""
-    from apeGmsh.opensees._internal import compose
-
-    monkeypatch.setattr(compose, "refuse_stage_equation_ghost_fixes",
-                        lambda **_kw: None)
-    return _replay(path)
-
-
-def test_the_zero_weight_case_replays_wrong_unchecked(tmp_path, monkeypatch):
-    tie = InterpolationRecord(
-        kind="tie", name="zt", slave_node=4, master_nodes=[1, 2],
-        weights=np.array([0.0, 1.0]), dofs=[1], enforce="equation")
-    fwd, path = _staged_plan_archive(
-        _fem(partitioned=True, surface_constraints=[tie]),
-        [lambda st: st.tie(name="zt")], tmp_path)
-    rep = _unchecked_replay(path, monkeypatch)
-    assert sum(ln.startswith("fix 1 ") for ln in rep.splitlines()) == 2
-    assert rep != fwd
+    assert _stage_fix_rows(path) == [[1]]
+    rep = _replay(path)
+    assert sum(ln.startswith("fix 1 ") for ln in rep.splitlines()) == 1
+    assert rep == fwd
 
 
 _RELEASE_ALL = [1, 2, 3, 4, 5, 6]
@@ -1024,42 +1026,49 @@ _RELEASE_THEN_TIE = {
 
 
 @pytest.mark.parametrize("plan", sorted(_RELEASE_THEN_TIE))
-def test_a_released_node_a_stage_tie_ghosts_refuses(plan, tmp_path,
-                                                     monkeypatch):
+def test_a_released_node_a_stage_tie_ghosts_replays(plan, tmp_path):
     # The bridge leaves node 1 free after its release; the stage block
-    # stores the ghost's fix of node 1, so a flat replay re-fixes it.
-    from apeGmsh.opensees._internal.build.errors import BridgeError
-
+    # stores the ghost's fix of node 1 (and, two stages on, its replay of
+    # the release), which the replay drops: node 1 is fixed once and
+    # released once, as in the bridge's deck.
     tie = InterpolationRecord(
         kind="tie", name="tg", slave_node=4, master_nodes=[1, 2],
         weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")
     fwd, path = _staged_plan_archive(
         _fem(partitioned=True, surface_constraints=[tie]),
         _RELEASE_THEN_TIE[plan], tmp_path)
-    with pytest.raises(BridgeError, match=r"node\(s\) \[1\].*#2530"):
-        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
-    assert _unchecked_replay(path, monkeypatch) != fwd
+    assert [1] in _stage_fix_rows(path)
+    rep = _replay(path)
+    assert sum(ln.startswith("fix 1 ") for ln in rep.splitlines()) == 1
+    assert sum(ln.startswith("remove sp 1 ") for ln in rep.splitlines()) == 6
+    assert rep == fwd
 
 
-def test_a_re_fix_after_a_full_release_refuses(tmp_path):
-    # Known over-refusal (#2530): s0 releases node 3 on every DOF and s1
-    # fixes it again on purpose and claims a tie on it. The bridge's deck
-    # holds both fixes too, so this archive would replay exactly, but the
-    # check cannot tell a deliberate re-fix from a ghost's and refuses
-    # until #2530 makes the ghost rows distinguishable.
-    from apeGmsh.opensees._internal.build.errors import BridgeError
-
+@pytest.mark.parametrize("node", [3, 1], ids=["owned", "ghosted"])
+def test_a_re_fix_after_a_full_release_replays(node, tmp_path):
+    # s0 releases a base node on every DOF and s1 fixes it again on purpose,
+    # with the base fix's mask, and claims a tie on it. The row is the
+    # stage's own declaration's, so it replays: the deck holds both fixes,
+    # as the bridge's does (the over-refusal #2448 shipped is gone). Node 1
+    # is a master on rank 1 of a slave on rank 2, so rank 2 ghosts it and
+    # re-plays its whole history into s1 (the base fix, the release, the
+    # re-fix): the replay keeps the re-fix and drops the replayed release.
     tie = InterpolationRecord(
-        kind="tie", name="t4", slave_node=4, master_nodes=[2, 3],
+        kind="tie", name="tr", slave_node=4, master_nodes=[2, node],
         weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")
     fwd, path = _staged_plan_archive(
         _fem(partitioned=True, surface_constraints=[tie]),
-        [lambda st: st.remove_sp(nodes=[3], dofs=_RELEASE_ALL),
-         lambda st: (st.fix(nodes=[3], dofs=(1,) * 6), st.tie(name="t4"))],
+        [lambda st: st.remove_sp(nodes=[node], dofs=_RELEASE_ALL),
+         lambda st: (st.fix(nodes=[node], dofs=(1,) * 6),
+                     st.tie(name="tr"))],
         tmp_path)
-    assert sum(ln.startswith("fix 3 ") for ln in fwd.splitlines()) == 2
-    with pytest.raises(BridgeError, match=r"node\(s\) \[3\].*re-fix"):
-        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+    assert sum(ln.startswith(f"fix {node} ")
+               for ln in fwd.splitlines()) == 2
+    assert _stage_fix_rows(path) == [[], [node]]
+    rep = _replay(path)
+    assert sum(ln.startswith(f"remove sp {node} ")
+               for ln in rep.splitlines()) == 6
+    assert rep == fwd
 
 
 def test_a_fix_in_the_tie_stage_on_a_new_node_replays(tmp_path):
@@ -1132,21 +1141,118 @@ _TWO_MASKS_THEN_GHOST = {
 
 
 @pytest.mark.parametrize("plan", sorted(_TWO_MASKS_THEN_GHOST))
-def test_a_ghost_of_a_node_fixed_with_two_masks_refuses(plan, tmp_path,
-                                                        monkeypatch):
-    # The probe of the (node, mask) key: the ghost re-plays each of node
-    # 1's fixes with its own mask, so every ghost row repeats an earlier
-    # fix row exactly and the narrowed rule still refuses.
-    from apeGmsh.opensees._internal.build.errors import BridgeError
-
+def test_a_ghost_of_a_node_fixed_with_two_masks_replays(plan, tmp_path):
+    # The ghost re-plays each of node 1's fixes with its own mask: the
+    # stage holds a row per mask, the stage's own rotation fix among them
+    # in the same stage, and the replay keeps only the stage's own.
     tie = InterpolationRecord(
         kind="tie", name="tg", slave_node=4, master_nodes=[1, 2],
         weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")
     fwd, path = _split_fix_archive(_TWO_MASKS_THEN_GHOST[plan], [tie],
                                    tmp_path)
-    with pytest.raises(BridgeError, match=r"node\(s\) \[1\].*#2530"):
+    assert _stage_fix_rows(path) == {"later_stage": [[1], [1, 1]],
+                                     "same_stage": [[1, 1]]}[plan]
+    rep = _replay(path)
+    assert sum(ln.startswith("fix 1 ") for ln in rep.splitlines()) == 2
+    assert rep == fwd
+
+
+def test_a_rewrite_keeps_the_ghost_rows_and_replays(tmp_path):
+    # to_h5 echoes the stage rows, the ghost's among them, with their
+    # declarations, so the rewrite replays as exactly as its source.
+    from apeGmsh.opensees.emitter.h5_reader import open as open_h5
+
+    fwd, path = _staged_archive("tie_fixed_master", True, tmp_path)
+    rewrite = tmp_path / "rewrite.h5"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        OpenSeesModel.from_h5(str(path)).to_h5(str(rewrite))
+    with open_h5(str(path)) as a, open_h5(str(rewrite)) as b:
+        assert b.stages() == a.stages()
+    assert _stage_fix_rows(rewrite) == [[1]]
+    assert _replay(rewrite) == fwd
+
+
+def _strip_decls(path: Path) -> None:
+    """Make ``path`` read as an archive with no ``/opensees/decls`` (one
+    written below opensees 2.25.0): drop the group and the program's
+    declaration joins into it."""
+    with h5py.File(path, "r+") as f:
+        del f["opensees/decls"]
+        program = f["opensees/program"]
+        rows = program[()]
+        rows["decl"] = -1
+        program[...] = rows
+
+
+def test_a_partitioned_archive_without_decls_refuses_a_repeated_row(
+        tmp_path):
+    # Without the declarations nothing tells the ghost's fix of node 1 from
+    # a stage's own re-fix, so the replay refuses by name rather than fix
+    # node 1 twice (#2530).
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    _fwd, path = _staged_archive("tie_fixed_master", True, tmp_path)
+    _strip_decls(path)
+    with pytest.raises(BridgeError,
+                       match=r"stage 's0'.*node\(s\) \[1\].*/opensees/decls"):
         OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
-    assert _unchecked_replay(path, monkeypatch) != fwd
+
+
+def test_a_missing_global_fix_decl_column_refuses(tmp_path):
+    # Without the global fixes' column the ghost's global-fix declaration
+    # would first show in the stage and pass as the stage's own, so node 1
+    # would be fixed twice; the replay refuses by name instead.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    _fwd, path = _staged_archive("tie_fixed_master", True, tmp_path)
+    with h5py.File(path, "r+") as f:
+        del f["opensees/decls/rows/bcs/fix"]
+    with pytest.raises(BridgeError,
+                       match=r"stage 's0'.*node\(s\) \[1\].*/opensees/decls"):
+        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+
+
+def test_the_rewrite_capture_walks_the_stored_stage_rows(tmp_path):
+    # The to_h5 capture helpers (_echo_param_tags, _echo_embedded_rebars)
+    # walk the archive's stages as stored: the ghost-row refusal is the
+    # deck targets' alone, so an archive without decls still captures.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    _fwd, path = _staged_archive("tie_fixed_master", True, tmp_path)
+    _strip_decls(path)
+    model = OpenSeesModel.from_h5(str(path))
+    capture = RecordingEmitter()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model._populate_emitter(capture)
+    fixes = [c for c in capture.calls if c[0] == "fix" and c[1][0] == 1]
+    assert len(fixes) == 2  # the global fix and the stored stage row
+    with pytest.raises(BridgeError, match=r"/opensees/decls"):
+        model.build("tcl", flat=True)
+
+
+def test_a_partitioned_archive_without_decls_replays_a_new_fix(tmp_path):
+    # A stage fix that repeats no earlier row is no ghost's, decls or not.
+    # (Without decl_params the replay writes untyped numbers, so only the
+    # SP lines are compared.)
+    tie = InterpolationRecord(
+        kind="tie", name="t3", slave_node=4, master_nodes=[2, 3],
+        weights=np.array([0.5, 0.5]), dofs=[1], enforce="equation")
+    fwd, path = _staged_plan_archive(
+        _fem(partitioned=True, surface_constraints=[tie]),
+        [lambda st: (st.fix(nodes=[2], dofs=(0, 0, 0, 0, 0, 1)),
+                     st.tie(name="t3"))], tmp_path)
+    _strip_decls(path)
+
+    def sp(deck: str) -> "list[str]":
+        return [ln for ln in deck.splitlines()
+                if ln.startswith(("fix ", "remove sp "))]
+
+    assert sp(fwd) == ["fix 1 1 1 1 1 1 1", "fix 3 1 1 1 1 1 1",
+                       "fix 2 0 0 0 0 0 1"]
+    assert sp(_replay(path)) == sp(fwd)
 
 
 def test_to_h5_rewrite_keeps_the_stage_lines(tmp_path):

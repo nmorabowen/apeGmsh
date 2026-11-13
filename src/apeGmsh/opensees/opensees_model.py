@@ -1124,16 +1124,13 @@ class OpenSeesModel:
             self._refuse_stored_solve_refusals(target)
             # A stream the replay cannot write refuses here, before any
             # emitter exists: the live one wipes the domain on creation.
-            from ._internal.compose import (
-                refuse_stage_equation_ghost_fixes,
-                refuse_unreplayable_streams,
-            )
+            from ._internal.compose import refuse_unreplayable_streams
 
             refuse_unreplayable_streams(
                 self._fem, equation_rows=self._equation_tie_rows())
-            refuse_stage_equation_ghost_fixes(
-                stages=self._stages, fixes=self._fixes,
-                partitioned=bool(self._partitions))
+            # A partitioned archive that cannot tell a ghost's SP rows
+            # from a stage's own refuses here too.
+            self._deck_stages()
         if target == "tcl":
             return self._build_text("tcl", out, flat=flat)
         if target == "py":
@@ -1310,6 +1307,19 @@ class OpenSeesModel:
         (ADR 0055 P2.3).
         """
         return self._stages
+
+    def _deck_stages(self) -> "tuple[Any, ...]":
+        """The stages the deck targets replay: :meth:`stages` without the
+        ``fix`` / ``remove_sp`` rows a partitioned emit stored for a ghost
+        node's replay of its owner's earlier SP history (#2530). Refuses
+        a partitioned archive that cannot tell those rows apart. ``to_h5``
+        echoes :meth:`stages` unchanged."""
+        from ._internal.compose import stages_without_ghost_sp_rows
+
+        return stages_without_ghost_sp_rows(
+            stages=self._stages, fixes=self._fixes,
+            declarations=self._declarations,
+            partitioned=bool(self._partitions))
 
     def partitions(self) -> "tuple[Any, ...]":
         """Return every emitted partition block (ADR 0027 schema 2.10.0).
@@ -1911,11 +1921,15 @@ class OpenSeesModel:
         return _link_user_equation_calls(
             program, _user_equation_count(self._declarations))
 
-    def _populate_emitter(self, emitter: Any, *, flat: bool = False) -> None:
+    def _populate_emitter(
+        self, emitter: Any, *, flat: bool = False, deck: bool = False,
+    ) -> None:
         """Walk the record graph and drive ``emitter`` through the
         schema-relevant Protocol methods.
 
-        ``flat`` is :meth:`build`'s (``"tcl"`` / ``"py"`` only).
+        ``flat`` is :meth:`build`'s (``"tcl"`` / ``"py"`` only). ``deck``
+        replays :meth:`_deck_stages` (the deck targets) instead of the
+        stored stages, which the ``to_h5`` capture helpers walk as stored.
 
         This is the body of the tcl / py / live :meth:`build` targets.
         Delegates to
@@ -2030,7 +2044,9 @@ class OpenSeesModel:
         # _replay_staged_into.  Non-staged models take the flat path.
         if self._stages:
             _replay_staged_into(
-                emitter, stages=self._stages, commands=self._commands,
+                emitter,
+                stages=self._deck_stages() if deck else self._stages,
+                commands=self._commands,
                 program=self._program, flat=flat,
                 declarations=self._declarations,
                 requires=self.replay_requires(), **replay_kwargs,
@@ -2505,7 +2521,7 @@ class OpenSeesModel:
             from .emitter.py import PyEmitter
 
             emitter = PyEmitter(backend=backend)
-        self._populate_emitter(emitter, flat=flat)
+        self._populate_emitter(emitter, flat=flat, deck=True)
         text = "\n".join(emitter.lines()) + "\n"
         if out is not None:
             Path(out).write_text(text, encoding="utf-8")
@@ -2551,7 +2567,7 @@ class OpenSeesModel:
             pinned=tuple(t for t in requires
                          if t not in self._verbs_replay_requires()))
         emitter = LiveOpsEmitter(wipe=True)
-        self._populate_emitter(emitter)
+        self._populate_emitter(emitter, deck=True)
 
 
 def refuse_live_requires(
