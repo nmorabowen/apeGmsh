@@ -402,7 +402,7 @@ class _H5ModelVerbsMixin(_H5Host):
         )
         # Two equal records (one ``s.tie(name=...)`` over two equal ties)
         # are two lines on every rank that writes them, so the key carries
-        # the line's occurrence on its rank (#2531): a replica on another
+        # the line's occurrence on its rank: a replica on another
         # rank repeats ``(line, n)``; the rank's second equal line does not.
         if self._stage_current is not None:
             blk = self._stage_current
