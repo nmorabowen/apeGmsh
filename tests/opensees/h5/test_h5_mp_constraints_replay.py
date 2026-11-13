@@ -16,6 +16,7 @@ INV-1, and replayed once). An archive that lacks the rows replays with a
 """
 from __future__ import annotations
 
+import copy
 import warnings
 from pathlib import Path
 from typing import Any
@@ -180,11 +181,13 @@ _KINDS: "dict[str, dict[str, list[Any]]]" = {
 
 
 def _streams(kinds: str) -> "dict[str, list[Any]]":
-    """The :data:`_KINDS` streams of the comma-separated ``kinds``."""
+    """The :data:`_KINDS` streams of the comma-separated ``kinds``. A kind
+    named twice adds an equal copy, a record of its own, as two resolved
+    declarations would (#2531)."""
     out: "dict[str, list[Any]]" = {}
     for k in kinds.split(","):
         for stream, recs in _KINDS[k].items():
-            out.setdefault(stream, []).extend(recs)
+            out.setdefault(stream, []).extend(copy.copy(r) for r in recs)
     return out
 
 
@@ -864,6 +867,20 @@ _STAGE_CLAIMS: "dict[str, tuple[str, str, Any]]" = {
     "fixed_equal_dof": ("equal_dof", "node_constraints", NodePairRecord(
         kind="equal_dof", name="st_e14", master_node=1, slave_node=4,
         dofs=[1, 2, 3])),
+    # #2531: a tie only rank 1 holds (nodes 1 and 2), for the twin corpus
+    # row that must solve. Two equal equations make Lagrange's system
+    # singular, so that row runs under Penalty, which refuses a tie copied
+    # across ranks (#1724) but not one a single rank writes.
+    "tie_local": ("tie", "surface_constraints", InterpolationRecord(
+        kind="tie", name="st_loc", slave_node=2, master_nodes=[1],
+        weights=np.array([1.0]), dofs=[1, 2, 3], enforce="equation")),
+}
+
+#: The keyword arguments of a ``handler`` that takes some.
+_HANDLER_KWARGS: "dict[str, dict[str, float]]" = {
+    # Not a whole number: a replay writes a whole-number float alpha
+    # without its ".0", which the bridge deck keeps (a separate defect).
+    "Penalty": {"alpha_sp": 1.0e12 + 0.5, "alpha_mp": 1.0e12 + 0.5},
 }
 
 
@@ -884,7 +901,7 @@ def _staged_mp_bridge(stages: str = "tie_equation",
     for kinds in plan:
         for k in kinds:
             _claim, stream, rec = _STAGE_CLAIMS[k]
-            streams.setdefault(stream, []).append(rec)
+            streams.setdefault(stream, []).append(copy.copy(rec))
     ops = _bridge(_fem(partitioned=partitioned, **streams))
     for i, kinds in enumerate(plan):
         with ops.stage(name=f"s{i}") as st:
@@ -892,7 +909,8 @@ def _staged_mp_bridge(stages: str = "tie_equation",
                 claim, _stream, rec = _STAGE_CLAIMS[k]
                 getattr(st, claim)(name=rec.name)
             st.analysis(**{**_chain(ops),
-                           "constraints": getattr(ops.constraints, handler)()})
+                           "constraints": getattr(ops.constraints, handler)(
+                               **_HANDLER_KWARGS.get(handler, {}))})
             st.run(n_increments=1, dt=1.0)
     return ops
 

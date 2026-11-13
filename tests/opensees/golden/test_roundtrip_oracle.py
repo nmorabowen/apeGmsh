@@ -259,15 +259,18 @@ CORPUS: tuple[Model, ...] = (
                    ("fixed_equal_dof", "Transformation"))
       for p in _B),
     # #2531: two equal equation ties, as one ``s.tie(name=...)`` over two
-    # equal ties leaves: a named pair and an unnamed one, global and claimed
-    # by a stage. The partitioned capture once kept one row of each pair.
+    # equal ties leaves: a named pair and an unnamed one across the ranks
+    # (auto Lagrange, no analyze), and a named pair a stage claims and
+    # solves. The partitioned capture once kept one row of each pair. The
+    # stage pair is rank-local under Penalty: two equal equations make a
+    # Lagrange solve singular, and the live net runs every row.
     *(_m("test_h5_mp_constraints_replay", "_mp_bridge", kinds=k,
          partitioned=p)
       for k in ("tie_equation,tie_equation",
                 "distributing_equation,distributing_equation")
       for p in _B),
     *(_m("test_h5_mp_constraints_replay", "_staged_mp_bridge",
-         stages="tie_equation,tie_equation", partitioned=p)
+         stages="tie_local,tie_local", partitioned=p, handler="Penalty")
       for p in _B),
     # #2440: the ManzariDafalias ``-stage 0`` line is the deck emitter's, so
     # the archive stores none of it and the replay writes it back: before
