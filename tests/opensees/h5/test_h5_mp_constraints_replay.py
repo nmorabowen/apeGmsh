@@ -1199,6 +1199,40 @@ def test_a_partitioned_archive_without_decls_refuses_a_repeated_row(
         OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
 
 
+def test_a_missing_global_fix_decl_column_refuses(tmp_path):
+    # Without the global fixes' column the ghost's global-fix declaration
+    # would first show in the stage and pass as the stage's own, so node 1
+    # would be fixed twice; the replay refuses by name instead.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    _fwd, path = _staged_archive("tie_fixed_master", True, tmp_path)
+    with h5py.File(path, "r+") as f:
+        del f["opensees/decls/rows/bcs/fix"]
+    with pytest.raises(BridgeError,
+                       match=r"stage 's0'.*node\(s\) \[1\].*/opensees/decls"):
+        OpenSeesModel.from_h5(str(path)).build("tcl", flat=True)
+
+
+def test_the_rewrite_capture_walks_the_stored_stage_rows(tmp_path):
+    # The to_h5 capture helpers (_echo_param_tags, _echo_embedded_rebars)
+    # walk the archive's stages as stored: the ghost-row refusal is the
+    # deck targets' alone, so an archive without decls still captures.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    _fwd, path = _staged_archive("tie_fixed_master", True, tmp_path)
+    _strip_decls(path)
+    model = OpenSeesModel.from_h5(str(path))
+    capture = RecordingEmitter()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model._populate_emitter(capture)
+    fixes = [c for c in capture.calls if c[0] == "fix" and c[1][0] == 1]
+    assert len(fixes) == 2  # the global fix and the stored stage row
+    with pytest.raises(BridgeError, match=r"/opensees/decls"):
+        model.build("tcl", flat=True)
+
+
 def test_a_partitioned_archive_without_decls_replays_a_new_fix(tmp_path):
     # A stage fix that repeats no earlier row is no ghost's, decls or not.
     # (Without decl_params the replay writes untyped numbers, so only the

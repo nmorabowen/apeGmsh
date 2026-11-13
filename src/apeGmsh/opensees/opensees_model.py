@@ -1921,11 +1921,15 @@ class OpenSeesModel:
         return _link_user_equation_calls(
             program, _user_equation_count(self._declarations))
 
-    def _populate_emitter(self, emitter: Any, *, flat: bool = False) -> None:
+    def _populate_emitter(
+        self, emitter: Any, *, flat: bool = False, deck: bool = False,
+    ) -> None:
         """Walk the record graph and drive ``emitter`` through the
         schema-relevant Protocol methods.
 
-        ``flat`` is :meth:`build`'s (``"tcl"`` / ``"py"`` only).
+        ``flat`` is :meth:`build`'s (``"tcl"`` / ``"py"`` only). ``deck``
+        replays :meth:`_deck_stages` (the deck targets) instead of the
+        stored stages, which the ``to_h5`` capture helpers walk as stored.
 
         This is the body of the tcl / py / live :meth:`build` targets.
         Delegates to
@@ -2040,7 +2044,9 @@ class OpenSeesModel:
         # _replay_staged_into.  Non-staged models take the flat path.
         if self._stages:
             _replay_staged_into(
-                emitter, stages=self._deck_stages(), commands=self._commands,
+                emitter,
+                stages=self._deck_stages() if deck else self._stages,
+                commands=self._commands,
                 program=self._program, flat=flat,
                 declarations=self._declarations,
                 requires=self.replay_requires(), **replay_kwargs,
@@ -2515,7 +2521,7 @@ class OpenSeesModel:
             from .emitter.py import PyEmitter
 
             emitter = PyEmitter(backend=backend)
-        self._populate_emitter(emitter, flat=flat)
+        self._populate_emitter(emitter, flat=flat, deck=True)
         text = "\n".join(emitter.lines()) + "\n"
         if out is not None:
             Path(out).write_text(text, encoding="utf-8")
@@ -2561,7 +2567,7 @@ class OpenSeesModel:
             pinned=tuple(t for t in requires
                          if t not in self._verbs_replay_requires()))
         emitter = LiveOpsEmitter(wipe=True)
-        self._populate_emitter(emitter)
+        self._populate_emitter(emitter, deck=True)
 
 
 def refuse_live_requires(

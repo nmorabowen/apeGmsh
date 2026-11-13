@@ -1877,11 +1877,14 @@ exists; hashed.
   `remove_sp` rows name it, and a stage row whose declaration's home is
   an earlier scope is a ghost's. The stage's own rows stay, a deliberate
   re-fix with an earlier mask after a release included. `to_h5` echoes
-  every row. A partitioned archive with no declaration column for a
-  stage's `fix` or `remove_sp` store (below opensees 2.25.0, or a rewrite
-  of one) refuses with `BridgeError` when a row of that stage repeats an
-  earlier `fix` (node and mask) or `remove_sp` (node and DOF). No schema
-  bump: the writer is unchanged (ADR 0114, amendment note of
+  every row, and its capture helpers walk the stages as stored. A
+  partitioned archive whose global `bcs/fix` or stage `fix` / `remove_sp`
+  store has no declaration column covering its rows (below opensees
+  2.25.0, or a rewrite of one) refuses with `BridgeError` when a stage row
+  repeats an earlier `fix` (node and mask) or `remove_sp` (node and DOF).
+  That holds for every MP kind, so such an archive with a deliberate
+  same-mask re-fix after a release refuses even without equation rows. No
+  schema bump: the writer is unchanged (ADR 0114, amendment note of
   2026-11-13).
 - **Rewrite.** `OpenSeesModel.to_h5` keeps the rows. A rewrite of a
   pre-2.35 archive stores its `apeSees.equation_constraint` rows and links

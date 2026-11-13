@@ -1074,7 +1074,8 @@ def stages_without_ghost_sp_rows(
 
     A flat archive never stores a ghost replay and is returned as is. A
     partitioned archive that does not record the declarations of its
-    stage rows (written below opensees 2.25.0, or a rewrite of one)
+    global fixes and stage rows (written below opensees 2.25.0, or a
+    rewrite of one)
     cannot tell a ghost's row from the stage's own: if a stage row
     repeats an earlier ``fix`` (node and DOF mask) or ``remove_sp`` (node
     and DOF), which every ghost row does, it refuses by name.
@@ -1097,7 +1098,12 @@ def stages_without_ghost_sp_rows(
             for store, recs in ((fix_store, st.fixes),
                                 (rsp_store, st.remove_sps)))
 
-    if not all(recorded(i, st) for i, st in enumerate(stages)):
+    # A home is only proved when the global fixes carry their column too:
+    # without it a ghost's global-fix declaration first shows in a stage.
+    globals_recorded = rows is not None and (
+        not fixes or len(rows.get("bcs/fix", ())) == len(fixes))
+    if not (globals_recorded
+            and all(recorded(i, st) for i, st in enumerate(stages))):
         _refuse_unattributed_stage_sp_rows(stages, fixes)
         return stages
     assert rows is not None

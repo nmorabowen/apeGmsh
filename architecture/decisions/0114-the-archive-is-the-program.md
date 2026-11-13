@@ -411,11 +411,19 @@ no refusal.
   a 2.40 archive written before this change replays exactly by the same
   rule.
 - **Archives without declaration rows still refuse by name.** A
-  partitioned archive whose stage `fix` or `remove_sp` store has no
-  declaration column was written below 2.25.0, or is a rewrite of one.
-  When a row of such a stage repeats an earlier `fix` (node and mask) or
-  `remove_sp` (node and DOF), as every ghost row does, the replay refuses
-  with `BridgeError`. It never writes a ghost row twice.
+  partitioned archive whose global `bcs/fix` or stage `fix` / `remove_sp`
+  store has no declaration column covering its rows was written below
+  2.25.0, or is a rewrite of one. When a row of such a stage repeats an
+  earlier `fix` (node and mask) or `remove_sp` (node and DOF), as every
+  ghost row does, the replay refuses with `BridgeError`. It never writes a
+  ghost row twice. This applies to every MP kind, with or without
+  equation rows. So a pre-2.25 partitioned archive with a deliberate
+  same-mask re-fix after a release now refuses too: item 3 refused that
+  case only beside equation rows, and the stage `equalDOF` duplicate went
+  through.
+- **Scope of the drop.** Only the deck targets (`tcl`, `py`, `live`)
+  replay the filtered stages. The `to_h5` rewrite and its capture helpers
+  walk the stages as stored.
 - **Oracle.** The R1b corpus carries a stage equation tie (Lagrange) and a
   stage `equalDOF` (Transformation) to the fixed node 1, flat and
   partitioned. Both replay byte-identical to the bridge deck. With this
