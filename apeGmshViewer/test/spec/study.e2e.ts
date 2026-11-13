@@ -224,7 +224,7 @@ assert.deepEqual(manifest2.shots.map((s) => [s.name, s.status]), [["cracked-foot
 {
   const e = entry2("remeshed-footfall");
   const want = `user result "footfall" of the compare variant "Remeshed" is not drawn: the two variants' models are not one mesh (fem_hash ${hashes.Uncracked.fem_hash} here, ${hashes.Remeshed.fem_hash} in "Remeshed"), so its values are not placed on this mesh; nodes are never interpolated`;
-  assert.ok(e.reason?.includes(want), `the refusal names the two meshes: ${e.reason}`);
+  assert.equal(e.reason, `the contour is not drawn: ${want}`, "the refusal names the two meshes");
   assert.equal(e.png, null);
   log(`remeshed-footfall: refused: ${e.reason}`);
 }
