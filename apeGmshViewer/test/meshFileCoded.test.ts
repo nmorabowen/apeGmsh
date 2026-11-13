@@ -27,7 +27,7 @@ const GOLDEN = JSON.parse(readFileSync(here("./fixtures/file_coded/file_coded.go
 
 test("the (dim, npe) table is Python's _GMSH_CODE_BY_PARENT_DIM_NPE, entry for entry", () => {
   const py = readFileSync(here("../../src/apeGmsh/results/_gauss_extrapolation.py"), "utf8");
-  const body = /_GMSH_CODE_BY_PARENT_DIM_NPE:[^=]*=\s*\{([\s\S]*?)\n\}/.exec(py);
+  const body = py.match(/_GMSH_CODE_BY_PARENT_DIM_NPE:[^=]*=\s*\{([\s\S]*?)\n\}/);
   assert.ok(body, "the Python table is no longer where this test reads it");
   const pyTable: Record<string, number> = {};
   for (const m of body[1]!.matchAll(/\((\d+),\s*(\d+)\):\s*(\d+)/g)) pyTable[`${m[1]},${m[2]}`] = Number(m[3]);
