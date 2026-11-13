@@ -860,6 +860,7 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   // VU10 (#2694): the synthetic variant pair.
   "plate_uncracked.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "plate_cracked.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "plate_remeshed.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
 };
 
 /** The repository root, and the directories the golden below scans for `.ladruno` files. */
@@ -870,6 +871,7 @@ const CONTOUR_GOLDEN_DIRS: readonly URL[] = [
   new URL("tests/fixtures/simplex_gp/", REPO_ROOT),
   new URL("apeGmshViewer/test/fixtures/vu10/", REPO_ROOT),
   new URL("apeGmshViewer/test/fixtures/vu10/cracked/", REPO_ROOT),
+  new URL("apeGmshViewer/test/fixtures/compare_render/remeshed/", REPO_ROOT),
 ];
 
 /** `git ls-files '*.ladruno'` at the repo root (sorted, `/`-separated), or the reason git could not answer. */
