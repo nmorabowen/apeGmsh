@@ -12,7 +12,8 @@
 // - the file touched since is read again;
 // - a file rewritten under the held size and mtime with another model_hash is
 //   refused as no longer paired: the lineage is checked before the held read;
-// - a set change (another row paired) drops it: the first set opened again is read again.
+// - a set change (another row paired, its model read or not) drops it: the first
+//   set opened again is read again.
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -100,6 +101,12 @@ export function openModel(path) { reads.push(path); return read(path); }`,
   await call("variants:switch", 0, "Uncracked");
   out["back"] = await call("variants:compare", 1, "Cracked");
   await model("afterSetChange");
+  // 4b. A set change the page never read the model of drops it too.
+  await call("variants:switch", 1, "Cracked");
+  out["otherUnread"] = await call("variants:compare", 0, "Uncracked");
+  await call("variants:switch", 0, "Uncracked");
+  out["backUnread"] = await call("variants:compare", 1, "Cracked");
+  await model("afterUnreadSetChange");
   process.stdout.write(`COMPARE_MODEL_CACHE ${JSON.stringify(out)}\n`);
   process.exit(0);
 }
@@ -166,5 +173,11 @@ if (process.env["VF3E_DRIVER"] === "1") {
     const back = read("afterSetChange");
     assert.equal(back.answer["ok"], true, String(back.answer["reason"]));
     assert.deepEqual(back.reads, ["plate_cracked.h5"]);
+    // Pairing the other row drops the held read even when its own model was never asked for.
+    opened("otherUnread");
+    opened("backUnread");
+    const unread = read("afterUnreadSetChange");
+    assert.equal(unread.answer["ok"], true, String(unread.answer["reason"]));
+    assert.deepEqual(unread.reads, ["plate_cracked.h5"]);
   });
 }
