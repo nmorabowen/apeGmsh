@@ -6,7 +6,10 @@ gauss}``. The app names a ``.ladruno`` Gauss column ``<token>/<label>``: the
 ON_ELEMENTS token and the file's own COMP_NAMES label
 (``apeGmshViewer/src/reader/ladrunoElements.ts``, ``state/contour.ts``
 ``gaussFields``). The still keeps v1's averaged picture: ``gauss_cell_averaged`` at
-one Gauss point, ``gauss_node`` (extrapolated to the corners, averaged) otherwise.
+one Gauss point, ``gauss_node`` (extrapolated to the corners, averaged) otherwise;
+BezierTet10's barycentric points ask ``cell_averaged`` (#2942). Row R16c names
+``von_mises_stress`` / ``von_mises_strain`` as a component of the element field
+that holds the tensor.
 
 The pair is the fork's ``quad2d.ladruno`` (one FourNodeQuad, four Gauss points,
 two steps) beside a ``<stem>.h5`` holding the same node ids, coordinates and
