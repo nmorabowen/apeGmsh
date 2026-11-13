@@ -1,13 +1,13 @@
 {
  "about": "ADR 0113 D8 schema corpus. One entry per minor from each zone's floor to its current minor; status 'gap' entries carry the reason no real file exists. Built by scripts/build_schema_corpus.py.",
- "base": "b8cb3c25a810177ceccf9e9488e39bcd7589b361",
+ "base": "d35ed72adaaee0276975146fa12f9eaf1ba0321e",
  "floors": {
   "neutral": "2.10.0",
   "opensees": "2.12.0"
  },
  "current": {
   "neutral": "2.36.0",
-  "opensees": "2.39.0"
+  "opensees": "2.40.0"
  },
  "entries": [
   {
@@ -1580,18 +1580,18 @@
   {
    "zone": "opensees",
    "minor": "2.39",
-   "sha": "a34ed9afc3d680340d41086c82b63dcfdef286ca",
-   "date": "2026-11-01",
+   "sha": "d35ed72adaaee0276975146fa12f9eaf1ba0321e",
+   "date": "2026-11-12",
    "version": "2.39.0",
    "bump_commits": [
-    "a34ed9afc3d680340d41086c82b63dcfdef286ca"
+    "9f15eede998e88c7fde3e9a0b77aaa69a188fca7"
    ],
    "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
    "status": "ok",
    "files": {
     "h5": {
      "name": "opensees_2.39.h5",
-     "sha256": "cd64d378a992874bd9a462b10494346b51126ff81ddcceb0023fb30c567b5c94"
+     "sha256": "08bfb1fe2588224a97fbd4af92143662fe5ed08ffd56fd62e44cf958ac7aef72"
     },
     "dump": {
      "name": "opensees_2.39.dump.json",
@@ -1605,6 +1605,36 @@
    "stamps": {
     "neutral": "2.36.0",
     "opensees": "2.39.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.40",
+   "sha": "199fd1428bc0d7f4a0e880e733bb6bb3fc0f9500",
+   "date": "2026-11-12",
+   "version": "2.40.0",
+   "bump_commits": [
+    "90bf4abc8c3657038d8584cd9252318dcd71aa22"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.40.h5",
+     "sha256": "ac1f38e3b5dda635784092a4ae667ccac0127f78f4abd4685056d4f4a1027790"
+    },
+    "dump": {
+     "name": "opensees_2.40.dump.json",
+     "sha256": "5802e572de3378f82fb243c46030feade77968053d8cf3d95c5f23ace0f0fd90"
+    },
+    "tcl": {
+     "name": "opensees_2.40.tcl",
+     "sha256": "1456e16f037e2e406c0310b4fac0f1e23991bed9cfd7370624eef7d2f336121f"
+    }
+   },
+   "stamps": {
+    "neutral": "2.36.0",
+    "opensees": "2.40.0"
    }
   }
  ]
