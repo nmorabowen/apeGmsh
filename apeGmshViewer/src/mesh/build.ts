@@ -6,10 +6,13 @@
 // Pure: no three.js and no DOM, so the tests run it in Node. Cells are
 // recognised by their gmsh element-type `code` (gmsh's own numbering,
 // stored on every /elements block); only corner nodes are drawn. Solids
-// draw their boundary faces only. An unknown code is a loud warning.
+// draw their boundary faces only. A file-coded block (code = -class_tag)
+// is drawn as the shape its dim and npe resolve to (./fileCoded.ts). An
+// unknown code, or a file-coded block no shape resolves, is a loud warning.
 
 import type { ElementRef } from "../chain/resolve.ts";
 import type { ModelFile } from "../model/types.ts";
+import { gmshCodeOfFileCoded, isFileCoded } from "./fileCoded.ts";
 
 type Shape = "point" | "line" | "tri" | "quad" | "tet" | "hex" | "prism" | "pyramid";
 
@@ -134,9 +137,17 @@ export function buildMesh(model: ModelFile): MeshBuffers {
   const solidFaces = new Map<string, { ids: number[]; ref: ElementRef; n: number }>();
 
   model.blocks.forEach((b, blockIndex) => {
-    const shape = GMSH_SHAPE[b.code];
+    // A file-coded block (code = -class_tag, a model rebuilt from a .ladruno
+    // or MPCO file) is drawn as the gmsh shape its dim and npe resolve to.
+    const fileCoded = isFileCoded(b.code);
+    const code = fileCoded ? gmshCodeOfFileCoded(b.dim, b.npe) : b.code;
+    const shape = code === null ? undefined : GMSH_SHAPE[code];
     if (shape === undefined) {
-      warnings.push(`/elements/${b.alias}: gmsh type code ${b.code} is not drawn (${b.ids.length} cells)`);
+      warnings.push(
+        fileCoded
+          ? `/elements/${b.alias}: file-coded type code ${b.code} (dim ${b.dim}, npe ${b.npe}) resolves to no gmsh shape; not drawn (${b.ids.length} cells)`
+          : `/elements/${b.alias}: gmsh type code ${b.code} is not drawn (${b.ids.length} cells)`,
+      );
       return;
     }
     const nc = CORNERS[shape];
