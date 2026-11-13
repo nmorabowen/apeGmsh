@@ -627,8 +627,8 @@ _APP_DERIVED = {"von_mises_stress": "stress", "von_mises_strain": "strain"}
 _VOIGT_SUFFIXES = frozenset({"xx", "yy", "zz", "xy", "yx", "yz", "zy", "xz", "zx"})
 
 #: Element classes whose Gauss points are barycentric, so the app does not
-#: extrapolate them to the corners (``reader/ladrunoElements.ts``, PARAM_DOMAIN).
-#: Owner ruling 2026-11-13 (#2924 item 2): a still asks ``cell_averaged`` for them.
+#: extrapolate them to the corners (``reader/ladrunoElements.ts``, PARAM_DOMAIN);
+#: a still asks ``cell_averaged`` for them, by the owner's ruling.
 _CELL_AVERAGED_CLASSES = frozenset({"BezierTet10"})
 
 
