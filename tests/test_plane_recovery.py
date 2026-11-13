@@ -30,9 +30,11 @@ def _mat(token, tag, params):
 def _clear_cache():
     pr._CACHE.clear()
     pr._WARNED.clear()
+    pr._PINNED.clear()
     yield
     pr._CACHE.clear()
     pr._WARNED.clear()
+    pr._PINNED.clear()
 
 
 # ---------------------------------------------------------------------
