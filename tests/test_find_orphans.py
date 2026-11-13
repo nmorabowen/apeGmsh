@@ -133,12 +133,18 @@ def test_resolved_2872_rows_are_acknowledged():
                 (2682, "merged-without-verdict"),
                 (2656, "merged-without-verdict")):
         assert key in fo.ACKNOWLEDGED
-    kept = fo._drop_acknowledged(
-        [{"pr": 2628, "kind": "pushed-after-merge"},
-         {"pr": 2628, "kind": "not-on-main"}]
-    ) if hasattr(fo, "_drop_acknowledged") else None
-    if kept is not None:
-        assert [f["kind"] for f in kept] == ["not-on-main"]
+    # PR 2628 yields two findings: the acknowledged kind is dropped, the
+    # other kind for the same PR is kept.
+    pr = _pr(2628, "pushed after merge", "feature/p2628", "c" * 40, "main",
+             "a2628" + "0" * 35, "2026-09-12T00:00:00Z")
+    COMPARE[pr["merge_commit_sha"]] = "diverged"
+    BRANCHES["feature/p2628"] = "d" * 40
+    try:
+        hits = fo.find_orphans(make_fetch([pr]), REPO, SINCE)
+    finally:
+        COMPARE.pop(pr["merge_commit_sha"])
+        BRANCHES.pop("feature/p2628")
+    assert [(h["pr"], h["kind"]) for h in hits] == [(2628, "not-on-main")]
 
 
 def test_unacknowledged_orphan_still_reports():
