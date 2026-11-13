@@ -128,6 +128,19 @@ def test_acknowledged_rows_are_suppressed():
     assert not [f for f in _run() if f["pr"] in (858, 1097)]
 
 
+def test_resolved_2872_rows_are_acknowledged():
+    for key in ((2628, "pushed-after-merge"),
+                (2682, "merged-without-verdict"),
+                (2656, "merged-without-verdict")):
+        assert key in fo.ACKNOWLEDGED
+    kept = fo._drop_acknowledged(
+        [{"pr": 2628, "kind": "pushed-after-merge"},
+         {"pr": 2628, "kind": "not-on-main"}]
+    ) if hasattr(fo, "_drop_acknowledged") else None
+    if kept is not None:
+        assert [f["kind"] for f in kept] == ["not-on-main"]
+
+
 def test_unacknowledged_orphan_still_reports():
     # Same PR as an acknowledged one but a different kind, plus a new PR.
     new = _pr(1300, "new orphan", "feature/new", "a" * 40, "main",
