@@ -8,3 +8,6 @@
   "this step" and "fixed" for a Results field. Picking the own range
   leaves a fixed range and otherwise changes nothing, as the legend's
   button does.
+- A user result drawn with no results file now has the "Set Contour
+  Range…" entry too, and the entry names the mode as the list does
+  ("currently own range", not "currently history").
