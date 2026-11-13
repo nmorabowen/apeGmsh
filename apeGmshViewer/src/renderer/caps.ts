@@ -15,6 +15,9 @@
 //   modes), through the same join and plan as the surfaces. The cap's clim,
 //   colormap and no-data colour are the contour's. No data stays no data
 //   (state/slice.ts), never 0. With no contour the cap is one flat fill.
+//   VF-a (#2939): as the surfaces, a cap samples the colormap per fragment
+//   from per-vertex ramp coordinates (renderer/colormapTexture.ts), so a
+//   coarse cut shows only ramp colours, never an RGB blend between corners.
 // - Trim and exemption: each cap is cut by the other active planes
 //   geometrically (`sliceSolids`' trims) and is clip-exempt (the stamping in
 //   renderer/clip.ts skips its subtree): it lies on its own plane, where the
@@ -28,14 +31,15 @@
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
 import { cutsOf, type Cut } from "../state/clip.ts";
-import { columnOf, elementCellValues, gaussCellValues, isNodeTopology, NO_DATA_RGB, primitiveColours, vertexValues } from "../state/contour.ts";
+import { columnOf, elementCellValues, gaussCellValues, isNodeTopology, vertexValues } from "../state/contour.ts";
 import { vertexDisplacements } from "../state/deform.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners } from "../state/extrapolation.ts";
 import { activationNow, contourView, deformView, hiddenElementsOf, NO_SOLID_CELLS, type ContourView } from "../state/selectors.ts";
 import { SOLID_CORNERS, SOLID_SHAPES, sliceSolids, sliceExtent, solidShapeOf, type Slice, type Solids } from "../state/slice.ts";
 import type { Decl, DeclPath, State } from "../state/types.ts";
 import { DARK_ROLE } from "../theme/tokens.ts";
-import { differenceHeld, elementJoinAt, toLinear, userResultOnHand, type CombinationColumnOf, type StepValues } from "./contour.ts";
+import { colormapTexture, noDataRamp, primitiveRamp, rampUv, toLinear } from "./colormapTexture.ts";
+import { differenceHeld, elementJoinAt, userResultOnHand, type CombinationColumnOf, type StepValues } from "./contour.ts";
 
 /** How far a cap steps into the discarded half: a fraction of its own extent (the Qt S3 measurement: less speckles against the gizmo quad). */
 export const CAP_STEP = 1e-3;
@@ -44,6 +48,18 @@ export const CAP_STEP = 1e-3;
 export const CAP_FILL: readonly [number, number, number] = (() => {
   const n = parseInt(DARK_ROLE.concrete.slice(1), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+})();
+
+/** The flat fill as a one-texel texture (linear): a cap with no contour samples it as a contoured cap samples its colormap. */
+export const CAP_FILL_TEXTURE: THREE.DataTexture = (() => {
+  const t = new THREE.DataTexture(Float32Array.from([...CAP_FILL.map(toLinear), 1]), 1, 1, THREE.RGBAFormat, THREE.FloatType);
+  t.name = "cap fill";
+  t.colorSpace = THREE.NoColorSpace;
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  return t;
 })();
 
 /** Why a model gets no cap (the panel shows it: selectors `cutFaceNote`). */
@@ -338,21 +354,32 @@ export function capInputs(s: State, blobs: BlobStore, step: StepValues | null, c
   return { solids: sub.solids, fem: sub.fem, xyz, values, cuts: cutsOf(s.clip) };
 }
 
-/** The linear vertex colours of a cap: the contour's ramp, clim and no-data rule, or the flat fill. */
-export function capColours(slice: Slice, view: ContourView): Float32Array {
+/**
+ * How a cap is shaded (VF-a): per-vertex texture coordinates and the texture
+ * they index. A contour's are its ramp coordinates (the contour's clim and
+ * no-data rule) into its colormap; no contour is the flat fill.
+ */
+export function capShade(slice: Slice, view: ContourView): { u: Float32Array; texture: THREE.DataTexture } {
   const n = slice.cell.length;
-  let rgb: Float32Array;
-  if (view.state === "off") {
-    rgb = new Float32Array(9 * n);
-    for (let i = 0; i < rgb.length; i += 3) rgb.set(CAP_FILL, i);
-  } else if (view.state === "ready" || view.state === "element" || view.state === "combination" || view.state === "difference" || view.state === "user") {
-    rgb = primitiveColours(slice.values!, Int32Array.from({ length: n }, (_, i) => i), 3, view.clim, view.cmap).rgb;
-  } else {
-    rgb = new Float32Array(9 * n);
-    for (let i = 0; i < rgb.length; i += 3) rgb.set(NO_DATA_RGB, i);
+  switch (view.state) {
+    case "off":
+      return { u: new Float32Array(3 * n).fill(0.5), texture: CAP_FILL_TEXTURE };
+    case "ready":
+    case "element":
+    case "combination":
+    case "difference":
+    case "user":
+      return { u: primitiveRamp(slice.values!, Int32Array.from({ length: n }, (_, i) => i), 3, view.clim).u, texture: colormapTexture(view.cmap) };
+    case "unavailable":
+    case "refused":
+    case "not-yet":
+      // No data: the no-data texel, which every colormap's texture has.
+      return { u: noDataRamp(3 * n), texture: colormapTexture("jet") };
+    default: {
+      const unknown: never = view;
+      throw new Error(`caps: unknown contour view ${JSON.stringify(unknown)}`);
+    }
   }
-  for (let i = 0; i < rgb.length; i++) rgb[i] = toLinear(rgb[i]!);
-  return rgb;
 }
 
 /** One cap drawn: its plane, its slice and its mesh. */
@@ -371,8 +398,8 @@ export class CapLayer {
   note: string | null = null;
   private caps: Cap[] = [];
   private keys: { cuts: string; slice: string; colour: string } | null = null;
-  /** One material for every cap (a re-slice makes geometry only); its colour dims them with the model. */
-  private readonly material = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.75, metalness: 0 });
+  /** One material for every cap (a re-slice makes geometry only); its colour dims them with the model, its map is the shade's texture. */
+  private readonly material = new THREE.MeshStandardMaterial({ map: CAP_FILL_TEXTURE, side: THREE.DoubleSide, roughness: 0.75, metalness: 0 });
 
   constructor() {
     this.root.name = "section caps";
@@ -453,7 +480,7 @@ export class CapLayer {
       if (!slice) return; // the plane cuts no drawn cell: no cap, never an empty one
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(Float32Array.from(slice.positions), 3));
-      g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(slice.positions.length), 3));
+      g.setAttribute("uv", new THREE.BufferAttribute(new Float32Array((2 * slice.positions.length) / 3), 2));
       // Flat: every vertex has the plane's normal (lit the same from either side: the material is double-sided).
       const normal = new Float32Array(slice.positions.length);
       for (let k = 0; k < normal.length; k += 3) normal.set(cut.normal, k);
@@ -493,9 +520,11 @@ export class CapLayer {
   }
 
   private paint(c: Cap, view: ContourView): void {
-    const a = c.mesh.geometry.getAttribute("color") as THREE.BufferAttribute;
-    (a.array as Float32Array).set(capColours(c.slice, view));
+    const shade = capShade(c.slice, view);
+    const a = c.mesh.geometry.getAttribute("uv") as THREE.BufferAttribute;
+    (a.array as Float32Array).set(rampUv(shade.u));
     a.needsUpdate = true;
+    this.material.map = shade.texture;
   }
 
   private clear(): void {

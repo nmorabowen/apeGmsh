@@ -19,7 +19,8 @@ import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import type { LadrunoLineStationStep } from "../reader/ladruno.ts";
 import { contourView, geometryPairing, gizmoPlanes, legendEntryColour, selectedElementsOf } from "../state/selectors.ts";
-import { combinationColours, contourColours, contourShownKey, differenceColours, elementColours, noDataColours, toLinear, userResultColours, type CombinationColumnOf, type StepValues } from "./contour.ts";
+import { colormapTexture, NO_DATA_U, rampUv } from "./colormapTexture.ts";
+import { combinationColours, contourColours, contourShownKey, differenceColours, elementColours, noDataShades, toLinear, userResultColours, type CombinationColumnOf, type ContourShades, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
@@ -880,13 +881,13 @@ export class Viewport {
    * data and range are here, no data everywhere when nothing can be coloured
    * (the legend says why), else null (the step is still loading).
    */
-  private contourFor(s: State, info: MeshInfo, drawn: Drawn): { line: Float32Array; tri: Float32Array; key: string } | null {
+  private contourFor(s: State, info: MeshInfo, drawn: Drawn): ContourShades | null {
     const v = contourView(s);
     if (v.state === "off") throw new Error("viewport: contour colours while not colouring by contour");
     // V4c2a: a refused element field (an unverified file, disagreeing groups, rows that do not join) and a topology
     // not built yet are drawn as no data, never coloured "with a warning".
     if (v.state === "unavailable" || v.state === "refused" || v.state === "not-yet") {
-      return { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: `no-data:${v.reason}` };
+      return noDataShades(drawn.lineMap, drawn.triMap, `no-data:${v.reason}`);
     }
     if (v.state === "element") return elementColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
     if (v.state === "combination") return combinationColours(v, info, this.blobs, this.combinationSource(), drawn.lineMap, drawn.triMap);
@@ -895,8 +896,11 @@ export class Viewport {
     return contourColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
   }
 
-  /** Map per-segment start/end contour colours (`lineColours` on `drawnLineMap`) onto extruded prism triangles (`frameTriMap`). */
-  private frameTriContourColours(info: MeshInfo, drawnLineMap: Int32Array, lineColours: Float32Array, frameTriMap: Int32Array): Float32Array {
+  /**
+   * Map per-segment start/end contour ramp coordinates (`lineU` on `drawnLineMap`, 2 per segment) onto the
+   * extruded prism triangles (`frameTriMap`, 3 per triangle): the fill samples the colormap per fragment (VF-a).
+   */
+  private frameTriContourU(info: MeshInfo, drawnLineMap: Int32Array, lineU: Float32Array, frameTriMap: Int32Array): Float32Array {
     const fe = info.frameExtrusion!;
     const nSegs = info.linePositions.shape[0]!;
     const segToDrawn = new Int32Array(nSegs).fill(-1);
@@ -906,21 +910,15 @@ export class Viewport {
     const lineNodes = this.blobs.get(info.vertexNodes.line) as Float64Array;
     const triSegs = this.blobs.i32(fe.triSegments);
     const triNodes = this.blobs.get(fe.triNodes) as Float64Array;
-    const out = new Float32Array(frameTriMap.length * 9);
+    // A triangle of a segment that is not drawn stays no data (frameTriMap holds only drawn segments' triangles).
+    const out = new Float32Array(frameTriMap.length * 3).fill(NO_DATA_U);
     for (let dTri = 0; dTri < frameTriMap.length; dTri++) {
       const t = frameTriMap[dTri]!;
       const seg = triSegs[t]!;
       const d = segToDrawn[seg]!;
       if (d < 0) continue;
       const nodeI = lineNodes[2 * seg]!;
-      for (let v = 0; v < 3; v++) {
-        const isI = triNodes[3 * t + v] === nodeI;
-        const srcOff = 6 * d + (isI ? 0 : 3);
-        const dstOff = 9 * dTri + 3 * v;
-        out[dstOff] = lineColours[srcOff]!;
-        out[dstOff + 1] = lineColours[srcOff + 1]!;
-        out[dstOff + 2] = lineColours[srcOff + 2]!;
-      }
+      for (let v = 0; v < 3; v++) out[3 * dTri + v] = lineU[2 * d + (triNodes[3 * t + v] === nodeI ? 0 : 1)]!;
     }
     return out;
   }
@@ -949,16 +947,9 @@ export class Viewport {
     if (contourShownKey(v) === this.contourApplied) return;
     const c = this.contourFor(s, info, this.drawn);
     if (!c || c.key === this.contourApplied) return;
-    if (this.faces) {
-      const a = this.faces.geometry.getAttribute("color") as THREE.BufferAttribute;
-      (a.array as Float32Array).set(c.tri);
-      a.needsUpdate = true;
-    }
-    if (this.frameFaces && this.frameTriMap) {
-      const a = this.frameFaces.geometry.getAttribute("color") as THREE.BufferAttribute;
-      (a.array as Float32Array).set(this.frameTriContourColours(info, this.drawn.lineMap, c.line, this.frameTriMap));
-      a.needsUpdate = true;
-    }
+    // VF-a: the surfaces take the ramp coordinates and sample the colormap per fragment.
+    if (this.faces) this.setRamp(this.faces, c.triU, c);
+    if (this.frameFaces && this.frameTriMap) this.setRamp(this.frameFaces, this.frameTriContourU(info, this.drawn.lineMap, c.lineU, this.frameTriMap), c);
     if (this.lines) {
       // LineSegmentsGeometry keeps the colours as one interleaved buffer, 6 floats per segment (start rgb, end rgb).
       const attr = this.lines.geometry.getAttribute("instanceColorStart") as THREE.InterleavedBufferAttribute;
@@ -967,6 +958,15 @@ export class Viewport {
     }
     this.contourApplied = c.key;
     this.requestRender();
+  }
+
+  /** A contour surface's ramp coordinates, in place, and its material's colormap (VF-a). */
+  private setRamp(mesh: THREE.Mesh, u: Float32Array, c: ContourShades): void {
+    const a = mesh.geometry.getAttribute("uv") as THREE.BufferAttribute | undefined;
+    if (!a || a.count !== u.length) throw new Error(`viewport: a contour surface has ${a?.count ?? "no"} ramp coordinates for ${u.length} vertices`);
+    (a.array as Float32Array).set(rampUv(u));
+    a.needsUpdate = true;
+    (mesh.material as THREE.MeshStandardMaterial).map = colormapTexture(c.cmap);
   }
 
   /**
@@ -1199,10 +1199,13 @@ export class Viewport {
     const drawn = this.visible(s, info);
     this.drawn = drawn;
     const t = themeTokens(this.activeTheme);
-    // V4c1: a contour colours per vertex from the step on screen; until its
-    // data is here, every drawn primitive is no data (never a group colour).
+    // V4c1: a contour colours from the step on screen; until its data is
+    // here, every drawn primitive is no data (never a group colour). VF-a: the
+    // surfaces sample the colormap per fragment from per-vertex ramp
+    // coordinates (a `uv` attribute and the colormap texture as `map`); the
+    // group and role colours stay vertex colours.
     const contour = s.visibility.colourBy === "contour";
-    const cc = contour ? (this.contourFor(s, info, drawn) ?? { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: "no-data:loading" }) : null;
+    const cc = contour ? (this.contourFor(s, info, drawn) ?? noDataShades(drawn.lineMap, drawn.triMap, "no-data:loading")) : null;
     this.contourApplied = cc?.key ?? null;
     const source = contour ? { legend: [], line: new Int32Array(0), tri: new Int32Array(0), edge: toHexNumber(t.edge) } : this.colourSource(s, info);
     // V4d: the positions drawn are the deformed ones when the deformed shape
@@ -1215,10 +1218,12 @@ export class Viewport {
     if (tri.length) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
-      g.setAttribute("color", new THREE.BufferAttribute(cc ? cc.tri : this.colours(source.legend, source.tri, drawn.triMap, 3), 3));
+      if (cc) g.setAttribute("uv", new THREE.BufferAttribute(rampUv(cc.triU), 2));
+      else g.setAttribute("color", new THREE.BufferAttribute(this.colours(source.legend, source.tri, drawn.triMap, 3), 3));
       g.computeVertexNormals();
       const m = new THREE.MeshStandardMaterial({
-        vertexColors: true,
+        vertexColors: !cc,
+        map: cc ? colormapTexture(cc.cmap) : null,
         side: THREE.DoubleSide,
         flatShading: true,
         roughness: 0.75,
@@ -1265,20 +1270,19 @@ export class Viewport {
       if (fTri.length) {
         const fg = new THREE.BufferGeometry();
         fg.setAttribute("position", new THREE.BufferAttribute(fTri, 3));
-        let fCol: Float32Array;
         if (cc) {
-          fCol = this.frameTriContourColours(info, drawn.lineMap, cc.line, frameTriMap);
+          fg.setAttribute("uv", new THREE.BufferAttribute(rampUv(this.frameTriContourU(info, drawn.lineMap, cc.lineU, frameTriMap)), 2));
         } else if (s.visibility.colourBy === "role") {
           const r = roleColouring(s)!;
           const roleTri = Int32Array.from(this.blobs.i32(fe.triElement), (e) => r.byElement[e]!);
-          fCol = this.colours(r.legend, roleTri, frameTriMap, 3);
+          fg.setAttribute("color", new THREE.BufferAttribute(this.colours(r.legend, roleTri, frameTriMap, 3), 3));
         } else {
-          fCol = this.colours(source.legend, this.blobs.i32(fe.triGroup), frameTriMap, 3);
+          fg.setAttribute("color", new THREE.BufferAttribute(this.colours(source.legend, this.blobs.i32(fe.triGroup), frameTriMap, 3), 3));
         }
-        fg.setAttribute("color", new THREE.BufferAttribute(fCol, 3));
         fg.computeVertexNormals();
         const fm = new THREE.MeshStandardMaterial({
-          vertexColors: true,
+          vertexColors: !cc,
+          map: cc ? colormapTexture(cc.cmap) : null,
           side: THREE.DoubleSide,
           flatShading: true,
           roughness: 0.72,

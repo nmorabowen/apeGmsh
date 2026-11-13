@@ -3,12 +3,17 @@
 // colours come from state/contour.ts (pure, tested in Node); this module
 // picks the step data the effects fetched, checks it is the step the state
 // shows, and converts the sRGB ramp to the linear colours three.js expects
-// for a vertex colour attribute (it writes sRGB on output). The GPU then
-// interpolates the colours inside each primitive.
+// for a vertex colour attribute (it writes sRGB on output). VF-a (#2939): the
+// surfaces take each vertex's ramp coordinate instead (`triU`, `lineU`) and
+// sample the colormap texture per fragment (renderer/colormapTexture.ts), so
+// a coarse element shows only ramp colours; the beams' lines still
+// interpolate their vertex colours (`line`).
 
 import type { CombinationTable } from "../combination/evaluate.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { cellVertexValues, columnOf, differenceColumn, elementCellValues, gaussCellValues, isNodeTopology, joinElements, meshFemIds, NO_DATA_RGB, primitiveColours, vertexValues, type CombinedColumn } from "../state/contour.ts";
+import type { ContourCmap } from "../state/types/contour.ts";
+import { noDataRamp, primitiveRamp, toLinear } from "./colormapTexture.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners, type NodeTopology } from "../state/extrapolation.ts";
 import type { UserColumnRead } from "../reader/userFile.ts";
 import { combinationRequestOf, combinationTableOf, compareUserRequestOf, differencePlanOf, userResultRequestOf, type ContourView } from "../state/selectors.ts";
@@ -30,8 +35,7 @@ export interface StepValues {
   springs?: SpringStepData | null;
 }
 
-/** sRGB (0..1) to linear, per channel (the sRGB transfer function). */
-export const toLinear = (c: number): number => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+export { toLinear };
 
 function linearise(rgb: Float32Array): Float32Array {
   for (let i = 0; i < rgb.length; i++) rgb[i] = toLinear(rgb[i]!);
@@ -44,6 +48,64 @@ export function noDataColours(map: Int32Array, perPrim: number): Float32Array {
   const c = NO_DATA_RGB.map(toLinear);
   for (let i = 0; i < out.length; i += 3) out.set(c, i);
   return out;
+}
+
+/**
+ * What a contour draws on the primitives on screen (VF-a, #2939). The faces
+ * and the frame-extrusion fill sample the colormap per fragment from the ramp
+ * coordinates (`triU`, `lineU`: renderer/colormapTexture.ts); the beams'
+ * lines interpolate their vertex colours (`line`).
+ */
+export interface ContourShades {
+  /** linear RGB per drawn line vertex (the beams) */
+  line: Float32Array;
+  /** the ramp coordinate per drawn line vertex (the frame-extrusion fill) */
+  lineU: Float32Array;
+  /** the ramp coordinate per drawn triangle vertex (the faces) */
+  triU: Float32Array;
+  /** linear RGB per drawn triangle vertex: the ramp at each vertex, made on first read (the faces draw `triU`) */
+  readonly tri: Float32Array;
+  /** the colormap the coordinates index */
+  cmap: ContourCmap;
+  key: string;
+}
+
+/** The shades of per-vertex values (original primitive order) through a range and a colormap: one no-data rule for both. */
+function shades(
+  lineValues: Float64Array,
+  triValues: Float64Array,
+  lineMap: Int32Array,
+  triMap: Int32Array,
+  clim: { min: number | null; max: number | null },
+  cmap: ContourCmap,
+  key: string,
+): ContourShades {
+  let tri: Float32Array | null = null;
+  return {
+    line: linearise(primitiveColours(lineValues, lineMap, 2, clim, cmap).rgb),
+    lineU: primitiveRamp(lineValues, lineMap, 2, clim).u,
+    triU: primitiveRamp(triValues, triMap, 3, clim).u,
+    get tri() {
+      return (tri ??= linearise(primitiveColours(triValues, triMap, 3, clim, cmap).rgb));
+    },
+    cmap,
+    key,
+  };
+}
+
+/** Every drawn primitive no data (the coordinates index the no-data texel, which every colormap's texture has). */
+export function noDataShades(lineMap: Int32Array, triMap: Int32Array, key: string): ContourShades {
+  let tri: Float32Array | null = null;
+  return {
+    line: noDataColours(lineMap, 2),
+    lineU: noDataRamp(lineMap.length * 2),
+    triU: noDataRamp(triMap.length * 3),
+    get tri() {
+      return (tri ??= noDataColours(triMap, 3));
+    },
+    cmap: "jet",
+    key,
+  };
 }
 
 let columnMemo: { ids: Float64Array; column: Map<number, number> } | null = null;
@@ -68,7 +130,7 @@ export function contourColours(
   step: StepValues | null,
   lineMap: Int32Array,
   triMap: Int32Array,
-): { line: Float32Array; tri: Float32Array; key: string } | null {
+): ContourShades | null {
   const at = s.phase.at;
   if (at?.kind !== "results" || !step || step.stage !== at.stage || step.step !== at.step || !view.stepMeasured) return null;
   const rows = view.component.datasets.map((d) => step.nodal[d]);
@@ -82,9 +144,9 @@ export function contourColours(
   const lineNodes = blobs.get(vn.line) as Float64Array;
   const triNodes = blobs.get(vn.tri) as Float64Array;
   const clim = { min: view.clim.min, max: view.clim.max };
-  const line = primitiveColours(vertexValues(lineNodes, columnMemo.column, rows, view.component.magnitude), lineMap, 2, clim, view.cmap).rgb;
-  const tri = primitiveColours(vertexValues(triNodes, columnMemo.column, rows, view.component.magnitude), triMap, 3, clim, view.cmap).rgb;
-  return { line: linearise(line), tri: linearise(tri), key: contourKey(view) };
+  const lineValues = vertexValues(lineNodes, columnMemo.column, rows, view.component.magnitude);
+  const triValues = vertexValues(triNodes, columnMemo.column, rows, view.component.magnitude);
+  return shades(lineValues, triValues, lineMap, triMap, clim, view.cmap, contourKey(view));
 }
 
 // -- V4c2a: element (Gauss) contours, flat per cell -------------------------------
@@ -145,15 +207,15 @@ export function combinationColours(
   held: CombinationColumnOf | null,
   lineMap: Int32Array,
   triMap: Int32Array,
-): { line: Float32Array; tri: Float32Array; key: string } | null {
+): ContourShades | null {
   if (!held || held.key !== view.key) return null;
   const column = columnOf(held.column.ids);
   const vn = mesh.vertexNodes;
   const clim = { min: view.clim.min, max: view.clim.max };
   const rows = [held.column.values];
-  const line = primitiveColours(vertexValues(blobs.get(vn.line) as Float64Array, column, rows, false), lineMap, 2, clim, view.cmap).rgb;
-  const tri = primitiveColours(vertexValues(blobs.get(vn.tri) as Float64Array, column, rows, false), triMap, 3, clim, view.cmap).rgb;
-  return { line: linearise(line), tri: linearise(tri), key: combinationContourKey(view) };
+  const lineValues = vertexValues(blobs.get(vn.line) as Float64Array, column, rows, false);
+  const triValues = vertexValues(blobs.get(vn.tri) as Float64Array, column, rows, false);
+  return shades(lineValues, triValues, lineMap, triMap, clim, view.cmap, combinationContourKey(view));
 }
 
 /** What the feed asks for one read: `userCombinationColumn`'s request (effects.ts), without the bridge. */
@@ -277,16 +339,16 @@ export function userResultColours(
   blobs: BlobStore,
   lineMap: Int32Array,
   triMap: Int32Array,
-): { line: Float32Array; tri: Float32Array; key: string } | null {
+): ContourShades | null {
   const held = userResultOnHand(view);
   if (!held) return null;
   const column = columnOf(held.ids);
   const vn = mesh.vertexNodes;
   const clim = { min: view.clim.min, max: view.clim.max };
   const rows = [held.values];
-  const line = primitiveColours(vertexValues(blobs.get(vn.line) as Float64Array, column, rows, false), lineMap, 2, clim, view.cmap).rgb;
-  const tri = primitiveColours(vertexValues(blobs.get(vn.tri) as Float64Array, column, rows, false), triMap, 3, clim, view.cmap).rgb;
-  return { line: linearise(line), tri: linearise(tri), key: userResultContourKey(view) };
+  const lineValues = vertexValues(blobs.get(vn.line) as Float64Array, column, rows, false);
+  const triValues = vertexValues(blobs.get(vn.tri) as Float64Array, column, rows, false);
+  return shades(lineValues, triValues, lineMap, triMap, clim, view.cmap, userResultContourKey(view));
 }
 
 /** What the feed asks main for one read (`user:readResult`, effects.ts `userResultColumn`). */
@@ -415,15 +477,15 @@ export function differenceColours(
   blobs: BlobStore,
   lineMap: Int32Array,
   triMap: Int32Array,
-): { line: Float32Array; tri: Float32Array; key: string } | null {
+): ContourShades | null {
   const held = differenceHeld.current;
   if (!held || held.key !== view.key) return null;
   const column = columnOf(held.ids);
   const vn = mesh.vertexNodes;
   const clim = { min: view.clim.min, max: view.clim.max };
-  const line = primitiveColours(vertexValues(blobs.get(vn.line) as Float64Array, column, [held.values], false), lineMap, 2, clim, view.cmap).rgb;
-  const tri = primitiveColours(vertexValues(blobs.get(vn.tri) as Float64Array, column, [held.values], false), triMap, 3, clim, view.cmap).rgb;
-  return { line: linearise(line), tri: linearise(tri), key: differenceContourKey(view) };
+  const lineValues = vertexValues(blobs.get(vn.line) as Float64Array, column, [held.values], false);
+  const triValues = vertexValues(blobs.get(vn.tri) as Float64Array, column, [held.values], false);
+  return shades(lineValues, triValues, lineMap, triMap, clim, view.cmap, differenceContourKey(view));
 }
 
 /** Main's variant doors, as the preload exposes them (main.ts `variants:*`, `compare:*`): a row by index and label, never a path. */
@@ -707,7 +769,7 @@ export function elementColours(
   step: StepValues | null,
   lineMap: Int32Array,
   triMap: Int32Array,
-): { line: Float32Array; tri: Float32Array; key: string } | null {
+): ContourShades | null {
   const at = s.phase.at;
   if (at?.kind !== "results" || !step || step.stage !== at.stage || step.step !== at.step || !view.stepMeasured) return null;
   if (step.element !== view.component.key || !step.gauss) return null;
@@ -721,9 +783,7 @@ export function elementColours(
   });
   const values = elementCellValues(femMemo.ids, join, perGroup);
   const clim = { min: view.clim.min, max: view.clim.max };
-  const line = primitiveColours(cellVertexValues(values, blobs.i32(mesh.lineElement), 2), lineMap, 2, clim, view.cmap).rgb;
-  const tri = primitiveColours(cellVertexValues(values, blobs.i32(mesh.triElement), 3), triMap, 3, clim, view.cmap).rgb;
-  return { line: linearise(line), tri: linearise(tri), key: elementContourKey(view) };
+  return shades(cellVertexValues(values, blobs.i32(mesh.lineElement), 2), cellVertexValues(values, blobs.i32(mesh.triElement), 3), lineMap, triMap, clim, view.cmap, elementContourKey(view));
 }
 
 // -- V4c2b: element fields carried to the nodes -------------------------------------
@@ -745,7 +805,7 @@ function nodeColours(
   gauss: Record<string, Float64Array>,
   lineMap: Int32Array,
   triMap: Int32Array,
-): { line: Float32Array; tri: Float32Array; key: string } {
+): ContourShades {
   const plan = planFor(view, s, blobs);
   const key = `${view.joinKey}|${view.topology}|${mesh.triElement.id}`;
   if (!cornerMemo || cornerMemo.key !== key || cornerMemo.femIds !== femMemo!.ids) {
@@ -767,7 +827,5 @@ function nodeColours(
     }),
   );
   const clim = { min: view.clim.min, max: view.clim.max };
-  const line = primitiveColours(cornerVertexValues(plan, r, cornerMemo.line), lineMap, 2, clim, view.cmap).rgb;
-  const tri = primitiveColours(cornerVertexValues(plan, r, cornerMemo.tri), triMap, 3, clim, view.cmap).rgb;
-  return { line: linearise(line), tri: linearise(tri), key: elementContourKey(view) };
+  return shades(cornerVertexValues(plan, r, cornerMemo.line), cornerVertexValues(plan, r, cornerMemo.tri), lineMap, triMap, clim, view.cmap, elementContourKey(view));
 }
