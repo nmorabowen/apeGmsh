@@ -1010,3 +1010,74 @@ four-component read. The count is 2 for its 2 parts and 3 for a scratch
 3-part copy. With the per-component loop restored, the count is 4 for
 `DISPLACEMENT`'s two components on 2 parts. A timed row needs a partitioned
 run as large as V4L-c's `block.ladruno`.
+
+## MPM particles: the points layer (ADR 0134 D5, M2-S4 #2983)
+
+The row ADR 0134 D5 asks for, at 10⁵ and 10⁶ particles: the time to the first
+frame, the rate of a scrub through the outputs, and the memory. ADR 0112's
+data server is considered only if these numbers demand it.
+
+### Machine (not the P0 machine above)
+
+| Item | Value |
+|---|---|
+| OS | Windows 11 IoT Enterprise LTSC 2024 10.0.26100 |
+| CPU / RAM | Intel Core i7-13700KF, 64 GB |
+| GPU | NVIDIA GeForce RTX 3070 |
+| Window | 1280 x 800 page (`PARTICLE_WINDOW`, src/main/modes/measure.ts), hidden, 60 Hz vsync |
+| Stack | Electron 44.5.1, three.js r186, h5wasm 0.10.3, Node 24.14 |
+
+### Method
+
+- **Files.** `node scripts/mpmScale.ts <particles> 10 <out.ladruno>` grows the
+  fork's fixture `tests/fixtures/mpm/particles_v1m2.ladruno` to a 2-D block of
+  N particles, 10 outputs, every particle in every output (S = 10 N rows),
+  POSITION and `STATE_eqPlasticStrain` (NaN on one particle in four) float64,
+  chunked one output per chunk as the fork writes them. The script reads the
+  file back through reader/ladruno.ts before it keeps it. 10⁵: 32.8 MB;
+  10⁶: 328.1 MB.
+- **Run.** `npm run measure -- <file.ladruno>` (src/main/modes/measure.ts
+  `particleRun`): the page opens the file as a human's window would, with no
+  model, coloured by POSITION/y.
+- **first frame**: from the launcher starting Electron to the first particle
+  frame on screen (two animation frames after the effects pushed it). It
+  includes Electron start-up, the index read, one output's hyperslab read in
+  main, the IPC copy and the buffer fill.
+- **scrub**: `setParticleOutput` to the next output, wait until its frame is
+  read and pushed (**read**), then until it is on screen (**on screen**), for
+  6 s, cycling the 10 outputs. The rate is outputs on screen per second; it is
+  capped at 30 by the two-animation-frame wait at 60 Hz.
+- **memory**: working sets (main + renderer) and the GPU process, at the first
+  frame and after the scrub (`app.getAppMetrics`).
+
+### Rows
+
+Commit e0771b95a (the slice branch). The 10⁵ file measured twice (the first
+run cold, after the file was written), the 10⁶ file twice.
+
+| date | file | size (MB) | particles | outputs | colour | first frame (ms) | scrub (outputs/s) | median output read / on screen (ms) | memory MB main+renderer at first frame | after scrub |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-11-14 | mpm_1e5.ladruno | 32.8 | 100,000 | 10 | POSITION/1 | 1020 | 29.9 (180 in 6011 ms) | 22.4 / 33.3 | 270 (159 + 111), GPU 101 | 343 (210 + 133), GPU 103 |
+| 2026-11-14 | mpm_1e5.ladruno | 32.8 | 100,000 | 10 | POSITION/1 | 489 | 29.9 (180 in 6011 ms) | 22.6 / 33.3 | 272 (159 + 113), GPU 101 | 344 (206 + 138), GPU 103 |
+| 2026-11-14 | mpm_1e6.ladruno | 328.1 | 1,000,000 | 10 | POSITION/1 | 872 | 3.5 (22 in 6277 ms) | 275.9 / 283.5 | 545 (334 + 210), GPU 132 | 533 (305 + 228), GPU 135 |
+| 2026-11-14 | mpm_1e6.ladruno | 328.1 | 1,000,000 | 10 | POSITION/1 | 866 | 3.5 (21 in 6043 ms) | 277.2 / 283.6 | 552 (342 + 210), GPU 133 | 536 (308 + 229), GPU 133 |
+
+### Reading
+
+- **10⁵ is interactive.** The scrub runs at the 30 outputs/s ceiling of the
+  wait; an output is read and pushed in about 22 ms.
+- **10⁶ scrubs at 3.5 outputs/s, and the read is the cost.** Of the 283 ms
+  an output takes, 276 ms is before the frame is pushed and about 7 ms is
+  drawing it. Timed alone in Node (`ResultsHost.readParticleOutput` on the
+  same file), the main-process read is 197 to 217 ms for POSITION, and 405
+  to 420 ms with a second field, because each field's `readOutput` reads and
+  checks the output's `ID` slab again (the int64 ids read as BigInt, each
+  safe-checked, then looked up in the registry). The rest is the IPC copy of
+  16 MB and the buffer fill.
+- **Memory stays at one output.** 10x the particles costs about 2x the
+  renderer working set (111 to 210 MB) and the scrub does not grow it: the
+  layer reuses its buffers, and no history is held.
+- **No data server yet.** The 10⁶ cost is the id path of the reader, which
+  can read the ids once per output for all fields asked and convert them
+  without BigInt; that is a reader change, measured again before ADR 0112's
+  data server is weighed.

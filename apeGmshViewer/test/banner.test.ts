@@ -28,7 +28,7 @@ import type { ResultsH5 } from "../src/reader/results.ts";
 import { pairingNotice, pairResults } from "../src/state/results.ts";
 import { Effects, type Bridge } from "../src/effects.ts";
 import { BlobStore } from "../src/state/blobs.ts";
-import { failureOf } from "../src/state/selectors.ts";
+import { failureOf, noticesOf } from "../src/state/selectors.ts";
 
 class FakeEl {
   className = "";
@@ -336,20 +336,25 @@ test("M2-S3: a <stem>.particles.h5 with no model reads the particle sentence; wi
   assert.equal(pairResults({ lineage: null, openseesVersion: null, programDecl: null }, info).state, "unpairable");
 });
 
-// #2985 finding 1: a <stem>.particles.h5 opened alone opened an empty, silent window (openSet
-// closed every artifact). It now fails closed through the model's failure, the path a file that
-// is not a model takes, naming the file and saying drawing it alone comes later (M2-S4).
-test("M2-S3: a particle set opened alone is refused by name in the window, never an empty, silent one", () => {
+// #2985 finding 1: a <stem>.particles.h5 opened alone opened an empty, silent window. M2-S3 refused
+// it by name until the points layer could draw it; M2-S4 (#2983) draws it, with the banner's
+// "particle set open without a model" line and no load failure (test/state/particles.test.ts
+// checks the frame drawn). A bridge that cannot read the set says so in the banner, never silently.
+test("M2-S4: a particle set opened alone is drawn with its banner line, never an empty, silent window", async () => {
   const store = new Store();
   const effects = new Effects(store, new BlobStore(), {} as Bridge);
   try {
     effects.openSet({ model: null, geometry: null, results: null, particles: "C:/runs/case1.particles.h5" });
-    const failure = failureOf(store.get());
-    assert.ok(failure, "the window states a failure instead of opening empty");
-    assert.match(failure, /case1\.particles\.h5 is a particle set \(ADR 0134\), not a model: drawing a particle set alone comes in a later version/);
-    // A set naming nothing still closes the model, as before: only a lone particle set is refused.
+    await until(() => store.get().particles?.status === "failed", "the set's read to fail");
+    assert.equal(failureOf(store.get()), null, "the set is no failed model");
+    assert.ok(
+      noticesOf(store.get()).includes("Particles not drawn: case1.particles.h5: this build's bridge has no particle-set reader (main's particles:set)."),
+      noticesOf(store.get()).join("\n"),
+    );
+    // A set naming nothing closes the particles too.
     effects.openSet({ model: null, geometry: null, results: null, particles: null });
-    assert.equal(failureOf(store.get()), null, "a set with nothing closes the model, as before");
+    await until(() => store.get().particles === null, "the particles to close");
+    assert.equal(failureOf(store.get()), null);
   } finally {
     effects.dispose();
   }
