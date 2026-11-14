@@ -18,6 +18,7 @@
 
 import { rmSync } from "node:fs";
 import * as h5wasm from "h5wasm/node";
+import { createH5, openH5, type H5Creatable, type H5Openable } from "../src/reader/h5open.ts";
 import { openLadruno } from "../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../src/reader/results.ts";
 
@@ -69,8 +70,9 @@ function copyGroup(from: h5wasm.Group, to: h5wasm.Group): void {
   }
 }
 
-const src = new h5wasm.File(FIXTURE.pathname.replace(/^\/([A-Za-z]:)/, "$1"), "r");
-const f = new h5wasm.File(out, "w");
+// Through reader/h5open.ts (lesson #2260): exact file ids; the measure file is created exclusively, never over another.
+const src = openH5(h5wasm as unknown as H5Openable<h5wasm.File>, FIXTURE.pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+const f = createH5(h5wasm as unknown as H5Creatable<h5wasm.File>, out);
 const t0 = performance.now();
 try {
   copyAttrs(src.get("INFO") as h5wasm.Group, f.create_group("INFO"));
