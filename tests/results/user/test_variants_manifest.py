@@ -45,6 +45,7 @@ EXPECTED = {
     "invalid/variants.path-folder-trailing-space.json": (2, "bad-path"),
     "invalid/variants.path-leaves-folder.json": (2, "bad-path"),
     "invalid/variants.path-not-model.json": (1, "bad-path"),
+    "invalid/variants.path-particles-sibling.json": (1, "bad-path"),
     "invalid/variants.path-user-sibling-uppercase.json": (1, "bad-path"),
     "invalid/variants.path-workspace-sibling.json": (1, "bad-path"),
     "invalid/variants.version-number.json": ("file", "bad-version"),
