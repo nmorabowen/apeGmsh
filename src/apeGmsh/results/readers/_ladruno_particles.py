@@ -392,12 +392,14 @@ class ParticleStage:
             _dataset(self._model, "MATERIAL_TAG", where, ("<i4",), 1)[...])
         mass = np.asarray(
             _dataset(self._model, "MASS", where, ("<f8",), 1)[...])
-        # The registry is appended to during a stage; a crash can leave
-        # its columns at different lengths. Rows past the shortest column
-        # are not committed.
-        m = min(ids.size, body.size, mat.size, mass.size)
-        ids, body, mat, mass = ids[:m], body[:m], mat[:m], mass[:m]
-        if m > 1 and not bool(np.all(np.diff(ids) > 0)):
+        sizes = {"ID": ids.size, "BODY_ID": body.size,
+                 "MATERIAL_TAG": mat.size, "MASS": mass.size}
+        if len(set(sizes.values())) != 1:
+            raise ParticleFormatError(
+                f"{where}: the registry columns differ in length {sizes}; "
+                "every column has one row per particle (C2-REG)."
+            )
+        if ids.size > 1 and not bool(np.all(np.diff(ids) > 0)):
             raise ParticleFormatError(
                 f"{where}/ID is not strictly increasing (C2-REG)."
             )
@@ -447,6 +449,14 @@ class ParticleStage:
                 raise ParticleFormatError(
                     f"{where}/DATA has {data.shape[1]} columns but "
                     f"COMPONENTS names {len(labels)} (C2-COMP)."
+                )
+            _attr_number(item.attrs, "TYPE", where)      # required (C2-ATTR)
+            reduction = _attr_text(item.attrs, "PARTITION_REDUCTION", where,
+                                   required=True)
+            if reduction != "NONE":
+                raise ParticleFormatError(
+                    f"{where}@PARTITION_REDUCTION is {reduction!r}; a serial "
+                    "particle field writes 'NONE' (C2-RED)."
                 )
             out[name] = ParticleField(
                 name=name,
@@ -565,6 +575,41 @@ class ParticleStage:
             f"Fields: {sorted(fields)}; components: {self.components()}."
         )
 
+    def _check_output_ids(
+        self, pids: ndarray, local: ndarray, ks: ndarray, registry_ids: ndarray,
+    ) -> None:
+        """C2-ID on the rows a read already holds, before any selection:
+        each id is a safe integer, in the registry, and strictly increasing
+        within its output. Checked per read, never as a whole-file scan of
+        ``ID``, whose length grows with the run."""
+        where = f"{self._where} RESULTS/ON_PARTICLES/ID"
+        if pids.size == 0:
+            return
+        _require_safe_ids(pids, where)
+        pos = np.searchsorted(registry_ids, pids)
+        found = (pos < registry_ids.size) & (
+            registry_ids[np.minimum(pos, max(registry_ids.size - 1, 0))] == pids
+            if registry_ids.size else np.zeros(pids.size, dtype=bool)
+        )
+        if not bool(found.all()):
+            raise ParticleFormatError(
+                f"{where} names particle id(s) "
+                f"{np.unique(pids[~found])[:10].tolist()} that the stage "
+                "registry does not hold (C2-ID)."
+            )
+        # Row i continues row i - 1's output unless an output starts at i.
+        starts = np.zeros(pids.size, dtype=bool)
+        first = np.asarray(local[:-1], dtype=np.int64)
+        starts[first[first < pids.size]] = True
+        bad = np.flatnonzero(~starts[1:] & (np.diff(pids) <= 0)) + 1
+        if bad.size:
+            k = int(ks[np.searchsorted(local, bad[0], side="right") - 1])
+            raise ParticleFormatError(
+                f"{where}: output {k}'s ids repeat or are not sorted (id "
+                f"{int(pids[bad[0]])} follows {int(pids[bad[0] - 1])}); "
+                "each output's ids strictly increase (C2-ID)."
+            )
+
     def read(
         self,
         component: str,
@@ -603,6 +648,7 @@ class ParticleStage:
                     else np.zeros((0, ncomp), dtype=data_ds.dtype))
             local = np.cumsum(counts, dtype=np.int64)
         registry_ids = self.registry().ids
+        self._check_output_ids(pids, local, ks, registry_ids)
         if ids is not None:
             keep = np.isin(pids, ids)
             cum = np.concatenate(([0], np.cumsum(keep, dtype=np.int64)))

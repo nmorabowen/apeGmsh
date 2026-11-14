@@ -623,5 +623,48 @@ def test_a_refused_stage_is_never_reported_as_read(copy_of, opened) -> None:
     assert r.stage("MODEL_STAGE[0]").nodes.available_components()
 
 
+@pytest.mark.parametrize("row, value, match", [
+    (11, 2 ** 60, "safe integer"),          # unsafe, and in no registry
+    (11, 99, r"\[99\].*C2-ID"),              # not in the registry
+    (13, None, "repeat or are not sorted.*C2-ID"),   # repeats its neighbour
+], ids=["unsafe", "unregistered", "repeated"])
+@pytest.mark.parametrize("body", [None, "soil"], ids=["all", "soil"])
+def test_output_ids_are_checked_on_the_rows_read(copy_of, opened, row, value, match, body) -> None:
+    """C2-ID on what get() reads: a bad output id refuses the read, with
+    or without a body selection that would otherwise drop its row."""
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        ds = f[f"{ON_P}/ID"]
+        ids = ds[...]
+        ids[row] = ids[row - 1] if value is None else value
+        ds[...] = ids
+    r = opened(p)
+    with pytest.raises(ParticleFormatError, match=match):
+        r.particles.get(component="POSITION", body=body)
+
+
+def test_registry_columns_of_unequal_length_refuse(copy_of, opened) -> None:
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        _resize(f[f"{REG}/MASS"], f[f"{REG}/MASS"].shape[0] - 2)
+    r = opened(p)
+    with pytest.raises(ParticleFormatError, match="differ in length.*C2-REG"):
+        r.particles.registry()
+
+
+@pytest.mark.parametrize("edit, match", [
+    (lambda a: a.__setitem__("PARTITION_REDUCTION", np.bytes_("SUM")), "C2-RED"),
+    (lambda a: a.__delitem__("PARTITION_REDUCTION"), "C2-ATTR"),
+    (lambda a: a.__delitem__("TYPE"), "'TYPE' is missing.*C2-ATTR"),
+], ids=["reduction-SUM", "reduction-absent", "type-absent"])
+def test_field_attributes_are_checked(copy_of, opened, edit, match) -> None:
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        edit(f[f"{ON_P}/VELOCITY"].attrs)
+    r = opened(p)
+    with pytest.raises(ParticleFormatError, match=match):
+        r.particles.components()
+
+
 def test_result_level_has_particles() -> None:
     assert ResultLevel("particles") is ResultLevel.PARTICLES
