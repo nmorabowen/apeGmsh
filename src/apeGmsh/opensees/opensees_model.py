@@ -122,6 +122,8 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
     from ._target import BackendInfo, TargetMode
     from .emitter.base import Emitter
     from .emitter.h5 import H5Emitter
+    from .emitter.py import PyEmitter
+    from .emitter.tcl import TclEmitter
 
 
 __all__ = ["OpenSeesModel"]
@@ -2512,7 +2514,23 @@ class OpenSeesModel:
         # The archive keeps the target's mode, never its machine paths
         # (opensees 2.36.0): the rebuilt deck stamps as the bridge's did.
         backend = deck_backend(OpenSeesTarget(mode=self._target_mode))
-        emitter: "Emitter"
+        # ADR 0134 D1/D2: an archive with ``mpm`` rows replays its particle
+        # set too, seeded from the stored rows and the neutral-zone mesh,
+        # beside the deck it writes and checked before either is written.
+        mpm_rows = self._mpm_rows()
+        particles = None
+        if mpm_rows:
+            if out is None:
+                raise ValueError(
+                    f"OpenSeesModel.build({kind!r}): the archive declares mpm "
+                    "members, whose particle set is written beside the deck "
+                    "as <deck stem>.particles.h5 (ADR 0134 D1); pass out= "
+                    "for the deck's path.")
+            from .mpm import prepare_particle_set
+
+            particles = prepare_particle_set(
+                self._fem, mpm_rows, str(out), model_units=self.units)
+        emitter: "TclEmitter | PyEmitter"
         if kind == "tcl":
             from .emitter.tcl import TclEmitter
 
@@ -2521,11 +2539,24 @@ class OpenSeesModel:
             from .emitter.py import PyEmitter
 
             emitter = PyEmitter(backend=backend)
+        if particles is not None:
+            emitter.bind_particle_set(str(particles.path))
         self._populate_emitter(emitter, flat=flat, deck=True)
         text = "\n".join(emitter.lines()) + "\n"
+        if particles is not None:
+            from ._mpm import write_particle_set
+
+            write_particle_set(particles)
         if out is not None:
             Path(out).write_text(text, encoding="utf-8")
         return text
+
+    def _mpm_rows(self) -> "tuple[tuple[int | float | str, ...], ...]":
+        """The archived ``mpm`` rows (ADR 0134 D2), the arguments after
+        the token, in emit order."""
+        return tuple(
+            tuple(c.positional) for c in self._commands
+            if c.method == "command" and c.token == "mpm")
 
     def _build_live(self) -> None:
         """Drive an in-process :class:`LiveOpsEmitter` over the deck.
@@ -2547,8 +2578,17 @@ class OpenSeesModel:
                 "raises). Use build('tcl') / build('py') for staged "
                 "decks."
             )
-        from .emitter.live import LiveOpsEmitter, get_backend_info
+        from .emitter.live import (
+            MPM_LIVE_REFUSAL,
+            LiveOpsEmitter,
+            get_backend_info,
+        )
 
+        # ADR 0134 D1/D7: MPM is deck-only; refuse before the wipe.
+        if self._mpm_rows():
+            raise RuntimeError(
+                "OpenSeesModel.build('live'): " + MPM_LIVE_REFUSAL.format(
+                    what="mpm rows"))
         # ADR 0114 D6: a model whose flat replay needs the fork, an MPCO
         # build or an MPI system cannot be built into this domain; refuse
         # before the wipe, naming the gap. The flat replay's own need, not

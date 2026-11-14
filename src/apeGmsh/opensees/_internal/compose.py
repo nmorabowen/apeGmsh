@@ -2169,7 +2169,8 @@ def _replay_into(
         units.append((
             None if order is None else int(cmd.emit_index), "command",
             lambda cmd=cmd: _replay_command(
-                emitter, cmd, _GLOBAL_COMMAND_METHODS),
+                emitter, cmd, _GLOBAL_COMMAND_METHODS,
+                _GLOBAL_COMMAND_TOKENS),
         ))
 
     # 9b. Top-level regions: the archived row is the resolved OpenSees
@@ -2594,10 +2595,20 @@ def _region_is_scoped(args: "Sequence[Any]") -> bool:
 _GLOBAL_COMMAND_METHODS: "frozenset[str]" = frozenset(
     {"rayleigh", "eigen", "modal_damping"})
 _STAGE_COMMAND_METHODS: "frozenset[str]" = frozenset({"profiler"})
+#: The ``command()`` tokens the global slot replays: the ``mpm`` block
+#: (ADR 0134 D2), which the bridge emits after the model and the archive
+#: stores as global ``command`` rows. Any other token raises.
+_GLOBAL_COMMAND_TOKENS: "frozenset[str]" = frozenset({"mpm"})
 
 
-def _replay_command(emitter: Any, cmd: Any, methods: "frozenset[str]") -> None:
+def _replay_command(
+    emitter: Any, cmd: Any, methods: "frozenset[str]",
+    tokens: "frozenset[str]" = frozenset(),
+) -> None:
     """Re-emit one ``/opensees/commands`` row (a reader ``CommandRecordRO``)."""
+    if cmd.method == "command" and cmd.token in tokens:
+        emitter.command(cmd.token, *cmd.positional)
+        return
     if cmd.method not in methods:
         raise NotImplementedError(
             f"replay: a {cmd.method!r} command row (stage {cmd.stage}) has "

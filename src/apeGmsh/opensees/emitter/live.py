@@ -550,8 +550,33 @@ def _fork_chain_message(family: str, c_type: str) -> str:
     return _fork_chain_required(family, c_type)
 
 
+#: ADR 0134 D1/D7: the live route's refusal of an MPM model, on every build.
+MPM_LIVE_REFUSAL = (
+    "the model declares {what} (the Ladruno fork's mpm engine). MPM is "
+    "deck-only (ADR 0134 D1, D7): the live route refuses it on every build, "
+    "fork or stock. Emit the deck with ops.tcl(path) / ops.py(path), which "
+    "seed <deck stem>.particles.h5 beside it, and run it on the fork."
+)
+
+
+def refuse_mpm_before_wipe(bm: Any) -> None:
+    """Refuse a model with ``mpm`` declarations before a live emitter wipes
+    the domain (ADR 0134 D1: MPM is deck-only)."""
+    from .._internal.types import MPM
+
+    found = sorted({type(p).__name__ for p in bm.primitives if isinstance(p, MPM)})
+    if found:
+        raise RuntimeError(
+            "live route: " + MPM_LIVE_REFUSAL.format(
+                what="mpm members " + ", ".join(found)))
+
+
 def refuse_fork_chain_before_wipe(bm: Any) -> None:
     """Refuse a fork-only chain type before a live emitter wipes the domain.
+
+    First, a model with ``mpm`` declarations is refused on every build
+    (:func:`refuse_mpm_before_wipe`, ADR 0134 D1): every live route calls
+    this gate before the wipe.
 
     In-process ``apeSees.analyze`` on a stock build (it refuses staged
     models, so the chain is the flat one).  The chain types are read from
@@ -563,6 +588,7 @@ def refuse_fork_chain_before_wipe(bm: Any) -> None:
     verdict (:func:`get_backend_info`), so a stock chain never imports
     OpenSees here and a fork build passes.
     """
+    refuse_mpm_before_wipe(bm)
     from .._internal.tag_resolution import set_tag_resolver
     from .._internal.types import (
         ConstraintHandler,
@@ -2329,6 +2355,14 @@ class LiveOpsEmitter:
 
     def command(self, verb: str, *args: int | float | str) -> None:
         row = command_row(verb)
+        if verb == "mpm":
+            # ADR 0134 D1/D7: deck-only, on every build. The bridge's live
+            # routes refuse earlier (``refuse_mpm_before_wipe``); this is the
+            # floor for any other caller.
+            sub = args[0] if args else ""
+            raise RuntimeError(
+                "LiveOpsEmitter.command('mpm'): "
+                + MPM_LIVE_REFUSAL.format(what=f"mpm {sub}"))
         # The token's binding is looked up by its own name, the way the
         # typed fork verbs probe theirs (``profiler``,
         # ``modal_response_history``); a missing attribute means this
