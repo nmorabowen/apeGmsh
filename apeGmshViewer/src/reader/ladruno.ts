@@ -408,6 +408,13 @@ export class LadrunoFile {
       const at = unread.indexOf(PARTICLES_UNREAD);
       if (at >= 0) unread[at] = `ON_PARTICLES (particles refused, not read: ${r.reason})`;
     }
+    for (const r of this.particles?.skipped ?? []) {
+      // A stage torn at opening holds no output: it is named, never silently dropped, and never claimed as read.
+      warnings.push(`${r.group}: its particles are skipped: ${r.reason}`);
+      const unread = hosts.find((h) => h.stage.id === r.stageId)!.stage.unread;
+      const at = unread.indexOf(PARTICLES_UNREAD);
+      if (at >= 0) unread[at] = `ON_PARTICLES (particles skipped, not read: ${r.reason})`;
+    }
     for (const s of this.particles?.stages ?? []) {
       if (s.torn !== null) warnings.push(`${s.group}/RESULTS/ON_PARTICLES: ${s.nOutputs} output${s.nOutputs === 1 ? "" : "s"} read; ${s.torn}`);
       for (const x of s.refusedFields) warnings.push(`${s.group}/RESULTS/ON_PARTICLES/${x.field}: refused and not read: ${x.reason}`);

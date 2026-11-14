@@ -270,14 +270,22 @@ function copyAttrs(from: h5wasm.Group | h5wasm.Dataset, to: h5wasm.Group | h5was
  * (null: contiguous). `skip` leaves out the links with these paths (relative to the stage),
  * and `dtype` writes a dataset (same relative path) with another dtype: the review's repros.
  */
-function rewritten(name: string, chunks: number | null, opts: { skip?: string[]; dtype?: Record<string, string> } = {}): string {
+function rewritten(name: string, chunks: number | null, opts: { skip?: string[]; dtype?: Record<string, string>; stages?: number } = {}): string {
   const path = join(tmp, name);
   const src = new h5wasm.File(ALL, "r");
   const out = new h5wasm.File(path, "w");
   try {
     const info = out.create_group("INFO");
     copyAttrs(src.get("INFO") as h5wasm.Group, info);
-    const stage = out.create_group("MODEL_STAGE[0]");
+    // `stages` copies of the fixture's particle stage, MODEL_STAGE[0] .. [stages - 1].
+    for (let k = 0; k < (opts.stages ?? 1); k++) writeStage(out.create_group(`MODEL_STAGE[${k}]`));
+  } finally {
+    out.close();
+    src.close();
+  }
+  return path;
+
+  function writeStage(stage: h5wasm.Group): void {
     copyAttrs(src.get("MODEL_STAGE[1]") as h5wasm.Group, stage);
     const rel = (path: string) => path.replace(/^\/MODEL_STAGE\[1\]\//, "");
     const copyTree = (from: h5wasm.Group, to: h5wasm.Group) => {
@@ -312,11 +320,7 @@ function rewritten(name: string, chunks: number | null, opts: { skip?: string[];
     copyTree(src.get("MODEL_STAGE[1]/MODEL/PARTICLES") as h5wasm.Group, model.create_group("PARTICLES"));
     const results = stage.create_group("RESULTS");
     copyTree(src.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES") as h5wasm.Group, results.create_group("ON_PARTICLES"));
-  } finally {
-    out.close();
-    src.close();
   }
-  return path;
 }
 
 for (const [label, chunks] of [["contiguous datasets", null], ["5-row chunks", 5]] as const) {
@@ -519,15 +523,51 @@ test("#2987 follow-up: a field group with no TYPE, or with PARTITION_REDUCTION o
   }
 });
 
-test("#2987 follow-up: registry columns of unequal length refuse the stage (C2-REG)", () => {
+test("#2987 follow-up: registry columns of unequal length beside a committed output refuse the stage (C2-REG): no writer leaves that", () => {
   assertRefusedStage(
     editedCopy("short_mass.ladruno", (w) => (w.get("MODEL_STAGE[1]/MODEL/PARTICLES/MASS") as h5wasm.Dataset).resize([11])),
-    /MASS has 11 rows and the registry ID 12 \(C2-REG\)/,
+    /registry columns differ in length \(ID 12, BODY_ID 12, MATERIAL_TAG 12, MASS 11\), and the stage holds 3 committed outputs, so it is no torn opening \(C2-REG\)/,
   );
   assertRefusedStage(
     editedCopy("short_body.ladruno", (w) => (w.get("MODEL_STAGE[1]/MODEL/PARTICLES/BODY_ID") as h5wasm.Dataset).resize([11])),
-    /BODY_ID has 11 rows; expected 12 \(C2-REG\)/,
+    /registry columns differ in length \(ID 12, BODY_ID 11, MATERIAL_TAG 12, MASS 12\), and the stage holds 3 committed outputs.*\(C2-REG\)/,
   );
+});
+
+test("#2983 contract follow-up: a stage torn at opening (registry columns of unequal length, no committed output) is skipped by name; the file opens and its other stages read", () => {
+  // Two copies of the fixture's particle stage; the second one's writer died inside the registry write at opening,
+  // so its MASS is short and nothing of ON_PARTICLES was appended.
+  const path = rewritten("torn_opening.ladruno", 5, { stages: 2 });
+  const w = new h5wasm.File(path, "a");
+  try {
+    (w.get("MODEL_STAGE[1]/MODEL/PARTICLES/MASS") as h5wasm.Dataset).resize([7]);
+    const on = "MODEL_STAGE[1]/RESULTS/ON_PARTICLES";
+    for (const ds of ["STEP", "TIME", "OFFSETS", "ID"]) (w.get(`${on}/${ds}`) as h5wasm.Dataset).resize([0]);
+    for (const g of (w.get(on) as h5wasm.Group).keys()) {
+      const d = w.get(`${on}/${g}/DATA`);
+      if (d instanceof h5wasm.Dataset) d.resize([0, d.shape![1]!]);
+    }
+  } finally {
+    w.close();
+  }
+  const f = openLadruno(H5, path);
+  try {
+    const p = f.particles!;
+    assert.deepEqual(p.refused, [], "a torn opening is no contract break");
+    assert.deepEqual(p.stages.map((s) => s.stageId), ["stage_0"], "the other stage reads");
+    assertFixtureStage(p.stages[0]!, p);
+    assert.equal(p.skipped.length, 1, "the torn stage is named, not dropped");
+    assert.equal(p.skipped[0]!.stageId, "stage_1");
+    assert.match(p.skipped[0]!.reason, /MODEL_STAGE\[1\]\/MODEL\/PARTICLES: torn at opening: the registry columns differ in length \(ID 12, BODY_ID 12, MATERIAL_TAG 12, MASS 7\) and no output was committed/);
+    assert.throws(() => p.stage("stage_1"), /stage stage_1's particles are skipped: .*torn at opening/);
+    assert.ok(f.index.warnings.some((x) => /MODEL_STAGE\[1\]: its particles are skipped: .*torn at opening/.test(x)), "the index warns");
+    const unread = f.stage("stage_1").unread;
+    assert.ok(!unread.includes(PARTICLES_UNREAD), "a skipped stage never lists its particles as read");
+    assert.ok(unread.some((u) => /^ON_PARTICLES \(particles skipped, not read: .*torn at opening/.test(u)), unread.join("\n"));
+    assert.equal(particlesOnly(metaOf(f)), false, "the banner does not claim every stage's particles read");
+  } finally {
+    f.close();
+  }
 });
 
 test("#2987 follow-up: outputIds checks each output's ids as readOutput does: sorted and unique within the output, and in the registry (C2-ID)", () => {

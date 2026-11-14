@@ -82,6 +82,14 @@ export interface PCtors {
   Dataset: abstract new (...args: never[]) => unknown;
 }
 
+/**
+ * A stage torn at opening (the fork's contract follow-up, #2983): `MODEL/PARTICLES` is
+ * written once, when the stage opens, so registry columns of unequal length mean the
+ * writer stopped inside that write, before any output could commit. Such a stage is
+ * skipped, by name, and the file's other stages still read; it is not a contract break.
+ */
+export class ParticleStageTorn extends Error {}
+
 /** A contract break: the rule code of the fork's page, and what was found. */
 export class ParticleContractError extends Error {
   readonly code: string;
@@ -181,6 +189,8 @@ export interface ParticleRead {
   stages: ParticleStage[];
   /** a stage whose particle groups break the contract, by name, with why */
   refused: { stageId: string; group: string; reason: string }[];
+  /** a stage torn at opening (`ParticleStageTorn`): skipped, by name, with why; it holds no committed output */
+  skipped: { stageId: string; group: string; reason: string }[];
 }
 
 /** Whether a stage group names a particle group, of any HDF5 kind (either half of the pair, C2-PAIR): a malformed one is refused, never skipped. */
@@ -196,6 +206,7 @@ export function hasParticleGroups(stage: PGroup, ctors: PCtors): boolean {
 export class LadrunoParticles {
   readonly stages: ParticleStage[];
   readonly refused: ParticleRead["refused"];
+  readonly skipped: ParticleRead["skipped"];
   private readonly ctors: PCtors;
   private readonly root: PGroup;
 
@@ -204,25 +215,29 @@ export class LadrunoParticles {
     this.root = root;
     const read: ParticleStage[] = [];
     const refused: ParticleRead["refused"] = [];
+    const skipped: ParticleRead["skipped"] = [];
     for (const s of stages) {
       if (!hasParticleGroups(s.group, ctors)) continue;
       try {
         read.push(this.readStage(s.id, s.group, s.fileKind, ndm));
       } catch (err) {
-        if (!(err instanceof ParticleContractError)) throw err;
-        refused.push({ stageId: s.id, group: s.group.path, reason: err.message });
+        if (err instanceof ParticleStageTorn) skipped.push({ stageId: s.id, group: s.group.path, reason: err.message });
+        else if (err instanceof ParticleContractError) refused.push({ stageId: s.id, group: s.group.path, reason: err.message });
+        else throw err;
       }
     }
     this.stages = read;
     this.refused = refused;
+    this.skipped = skipped;
   }
 
   stage(stageId: string): ParticleStage {
     const s = this.stages.find((x) => x.stageId === stageId);
     if (!s) {
       const why = this.refused.find((r) => r.stageId === stageId);
+      const torn = this.skipped.find((r) => r.stageId === stageId);
       throw new RangeError(
-        why ? `stage ${stageId}'s particles are refused: ${why.reason}` : `stage ${stageId} holds no particles; particle stages: ${this.stages.map((x) => x.stageId).join(", ") || "none"}`,
+        why ? `stage ${stageId}'s particles are refused: ${why.reason}` : torn ? `stage ${stageId}'s particles are skipped: ${torn.reason}` : `stage ${stageId} holds no particles; particle stages: ${this.stages.map((x) => x.stageId).join(", ") || "none"}`,
       );
     }
     return s;
@@ -306,7 +321,7 @@ export class LadrunoParticles {
     for (const [k, v] of Object.entries(units)) if (k !== "system" && v === "") throw new ParticleContractError("C2-UNIT", `${model.path}@UNIT_${k.toUpperCase()} is empty`);
     const grid = readGrid(requiredGroup(model, "GRID", this.ctors, "C2-GRID"), ndm, "C2-GRID");
     const bodies = readBodies(requiredGroup(model, "BODIES", this.ctors, "C2-BODY"), this.ctors, "C2-BODY");
-    const registry = this.readRegistry(model, bodies);
+    const registry = this.readRegistry(model, bodies, on);
     const outputs = this.readOutputs(on, ndm);
     return {
       stageId,
@@ -326,10 +341,22 @@ export class LadrunoParticles {
     };
   }
 
-  private readRegistry(model: PGroup, bodies: ParticleBody[]): ParticleRegistry {
+  private readRegistry(model: PGroup, bodies: ParticleBody[], on: PGroup): ParticleRegistry {
     const ds = (name: string) => requiredDataset(model, name, this.ctors, "C2-REG");
     const idDs = ds("ID");
     exactInt(idDs, 8, "C2-REG");
+    // The registry is written once, at the stage's opening: columns of unequal length are an opening the writer
+    // never finished, so the stage holds no output and is skipped (ParticleStageTorn). The same columns beside a
+    // committed output cannot come from that writer, so they still refuse the stage (C2-REG).
+    const lengths = (["ID", "BODY_ID", "MATERIAL_TAG", "MASS"] as const).map((n) => ({ n, rows: oneD(ds(n), "C2-REG") }));
+    if (lengths.some((l) => l.rows !== lengths[0]!.rows)) {
+      const said = lengths.map((l) => `${l.n} ${l.rows}`).join(", ");
+      const committed = committedIndex(on, this.ctors);
+      if (committed > 0) {
+        throw new ParticleContractError("C2-REG", `${model.path}: the registry columns differ in length (${said}), and the stage holds ${committed} committed output${committed === 1 ? "" : "s"}, so it is no torn opening`);
+      }
+      throw new ParticleStageTorn(`${model.path}: torn at opening: the registry columns differ in length (${said}) and no output was committed`);
+    }
     const ids = readIds(idDs, 0, oneD(idDs, "C2-REG"));
     for (let i = 1; i < ids.length; i++) if (!(ids[i]! > ids[i - 1]!)) throw new ParticleContractError("C2-REG", `${idDs.path} is not strictly increasing at row ${i}`);
     const bodyIds = int32s(ds("BODY_ID"), ids.length, "C2-REG");
@@ -441,6 +468,18 @@ export class LadrunoParticles {
       torn: notes.length > 0 ? `a torn tail (§2.5 crash rule): ${notes.join("; ")}` : null,
     };
   }
+}
+
+/** `min(len(STEP), len(TIME), len(OFFSETS) - 1)` of ON_PARTICLES as stored (0 for a missing dataset): whether any output may have committed. */
+function committedIndex(on: PGroup, ctors: PCtors): number {
+  const rows = (name: string): number => {
+    if (!on.keys().includes(name)) return 0;
+    const d = on.get(name);
+    if (!(d instanceof ctors.Dataset)) return 0;
+    const shape = (d as unknown as PDataset).shape;
+    return shape && shape.length >= 1 ? shape[0]! : 0;
+  };
+  return Math.max(0, Math.min(rows("STEP"), rows("TIME"), rows("OFFSETS") - 1));
 }
 
 /** The row count of a field group's `DATA`, whatever else the group breaks; null when it has no DATA dataset with a shape. */
