@@ -32,7 +32,7 @@ const expect = () => {
   const path = resolve(ws);
   return createHash("sha256").update(`${process.platform === "win32" || process.platform === "darwin" ? path.toLowerCase() : path}\0${bytes}`).digest("hex");
 };
-const set: OpenSet = { model: join(dir, "frame.h5"), geometry: null, results: null, user: null, workspace: null };
+const set: OpenSet = { model: join(dir, "frame.h5"), geometry: null, results: null, user: null, workspace: null, particles: null };
 if (process.argv.includes("--loop")) {
   process.stdout.write("LOOPING\n");
   for (let i = 0; ; i++) {
