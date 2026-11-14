@@ -221,11 +221,20 @@ jobs:
             *)
               echo "${{ github.event_name }}: running the app checks"; exit 0 ;;
           esac
+          # Everything the app's tests read from outside apeGmshViewer/ (#2995). Each
+          # path is read by a test under apeGmshViewer/test/ (list: the PR body of #2995):
+          #   architecture/schemas/      test/variants/manifest.test.ts (schema + examples)
+          #   tests/fixtures/ladruno/    test/reader/userFile.test.ts (truss2d.ladruno)
+          #   tests/fixtures/mpm/        test/reader/mpmBaseline.test.ts
+          #   tests/fixtures/simplex_gp/ test/contour/extrapolation.test.ts
+          #   tests/fixtures/user_results/ test/reader/userConformance.test.ts
+          #   tests/results/user/test_user_fingerprint.py   test/reader/rf1.test.ts
+          #   src/apeGmsh/results/_gauss_extrapolation.py   test/meshFileCoded.test.ts
+          #   examples/shoebuckle_arch.py                   test/zones/provenance.test.ts
+          #   *.ladruno anywhere (git ls-files)             test/contour/contour.test.ts
           # The pairing oracle (#2129) runs here too: it fires on its test, its
           # input fixture and stamp_provenance, the Python half of what it checks.
-          changed=$(git diff --name-only "$range" -- apeGmshViewer/ .github/workflows/tests.yml \
-            tests/test_app_ladruno_pairing_oracle.py tests/fixtures/ladruno/truss2d.ladruno \
-            src/apeGmsh/results/readers/_ladruno_provenance.py)
+          changed=$(git diff --name-only "$range" -- apeGmshViewer/ .github/workflows/tests.yml             architecture/schemas/             tests/fixtures/ladruno/ tests/fixtures/mpm/ tests/fixtures/simplex_gp/             tests/fixtures/user_results/ tests/results/user/test_user_fingerprint.py             src/apeGmsh/results/_gauss_extrapolation.py examples/shoebuckle_arch.py             '*.ladruno'             tests/test_app_ladruno_pairing_oracle.py             src/apeGmsh/results/readers/_ladruno_provenance.py)
           if [ -z "$changed" ]; then
             echo "app=false" >> "$GITHUB_OUTPUT"
             echo "apeGmshViewer/ unchanged in $range; nothing to check"
