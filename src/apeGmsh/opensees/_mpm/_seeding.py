@@ -362,6 +362,7 @@ def _seed_body(
             raise MPMSeedError(
                 f"body {body.name!r}: element {e} of physical group {body.pg!r} extends "
                 f"outside the grid box [{grid.lo.tolist()}, {grid.hi.tolist()}]")
+        tester: _SimplexTester | _IsoTester
         if fam in ("tri3", "tet4"):
             tester = _SimplexTester(verts, eids, body)
         else:
@@ -485,7 +486,8 @@ class _IsoTester:
 
     def _jacobian(self, e: IntArray, xi: FloatArray) -> FloatArray:
         _, dn = self._shape(xi)
-        return np.einsum("pai,paj->pij", self._verts[e], dn)
+        jac: FloatArray = np.einsum("pai,paj->pij", self._verts[e], dn)
+        return jac
 
     def inside(self, e: IntArray, pts: FloatArray) -> NDArray[np.bool_]:
         npts, ndm = pts.shape
@@ -530,7 +532,7 @@ class _IsoTester:
             raise MPMSeedError(
                 f"body {self._body.name!r}: the inverse isoparametric map did not converge "
                 f"in element {int(self._eids[e[i]])} at point {pts[i].tolist()}")
-        inside = converged & ~outside
+        inside: NDArray[np.bool_] = converged & ~outside
         inside &= np.all(np.abs(xi) <= 1.0 + _INSIDE_TOL, axis=1)
         return inside
 
