@@ -1,0 +1,3 @@
+### apeGmshViewer draws MPM particles
+
+apeGmshViewer now draws the particles of a `.ladruno` and the seeded `<stem>.particles.h5` set as a points layer (ADR 0134 D5). One output is read at a time, so the history is never held in memory. The points are coloured by any field component through the contour colormap, and a particle with no value (NaN) is drawn in the no-value colour. The grid can be drawn as a wire box. A particle set opened alone is now drawn, with a "particle set open without a model" notice, where before it was refused. A particle stage torn at opening (registry columns of unequal length, no committed output) is skipped and named, and the file's other stages still read. `MEASUREMENTS.md` has rows at 10⁵ and 10⁶ particles.

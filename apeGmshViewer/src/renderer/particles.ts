@@ -188,9 +188,11 @@ export class ParticleLayer {
       // Another stage (or a re-read): its buffers go before the new ones are made; a larger output grows them.
       this.disposePoints();
       const cap = Math.max(n, 1);
-      const pts = makeNodePoints(new Float32Array(cap * 3), particleSize(n), 0xffffff, look.rim);
+      const pts = makeNodePoints(new Float32Array(cap * 3), particleSize(n), look.plain, look.rim);
       pts.geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(cap * 3), 3));
       const m = pts.material as THREE.PointsMaterial;
+      // The vertex colour is the whole colour: the material's own is the identity it multiplies by.
+      m.color.setRGB(1, 1, 1);
       m.vertexColors = true;
       m.needsUpdate = true;
       pts.name = "particles";
