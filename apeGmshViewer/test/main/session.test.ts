@@ -18,7 +18,7 @@ function harness(...files: string[]) {
   const session = new OpenSession({
     exists: (path) => disk.has(path),
     watch: (opened, sink): SessionWatcher => {
-      const w = { opened, closed: false, sink, set: { model: null, geometry: null, results: null, user: null, workspace: null } as OpenSet, close: () => (w.closed = true) };
+      const w = { opened, closed: false, sink, set: { model: null, geometry: null, results: null, user: null, workspace: null, particles: null } as OpenSet, close: () => (w.closed = true) };
       watchers.push(w);
       return w;
     },
@@ -32,7 +32,7 @@ function harness(...files: string[]) {
 test("open pairs the file, watches its set and, when asked, tells the renderer", () => {
   const { session, watchers, log } = harness("a.h5", "a.geometry.h5");
   assert.ok(session.open(p("a.h5"), true));
-  assert.deepEqual(session.set, { model: p("a.h5"), geometry: p("a.geometry.h5"), results: null, user: null, workspace: null });
+  assert.deepEqual(session.set, { model: p("a.h5"), geometry: p("a.geometry.h5"), results: null, user: null, workspace: null, particles: null });
   assert.equal(watchers.length, 1);
   assert.equal(log.length, 1);
   assert.match(log[0]!, /^open /);
@@ -59,7 +59,7 @@ test("a renderer-opened file that cannot be paired ends the old set", () => {
   assert.match(log.join("\n"), /note not watching .*b\.hdf5/);
   // A late report from the closed watcher reaches nobody.
   watchers[0]!.sink.changed(p("a.h5"));
-  watchers[0]!.sink.reopened({ model: p("a.h5"), geometry: null, results: null, user: null, workspace: null });
+  watchers[0]!.sink.reopened({ model: p("a.h5"), geometry: null, results: null, user: null, workspace: null, particles: null });
   assert.equal(log.filter((l) => !l.startsWith("note")).length, 0);
 });
 
@@ -67,7 +67,7 @@ test("a renderer-opened model of another stem becomes the open set", () => {
   const { session, watchers } = harness("a.h5", "b.h5", "b.geometry.h5");
   session.open(p("a.h5"), false);
   session.rendererOpened(p("b.h5"));
-  assert.deepEqual(session.set, { model: p("b.h5"), geometry: p("b.geometry.h5"), results: null, user: null, workspace: null });
+  assert.deepEqual(session.set, { model: p("b.h5"), geometry: p("b.geometry.h5"), results: null, user: null, workspace: null, particles: null });
   assert.equal(watchers[0]!.closed, true);
   assert.equal(watchers.length, 2);
 });
@@ -83,8 +83,34 @@ test("the renderer re-reading the open model changes nothing", () => {
 test("a reopen from the live watcher updates the set and tells the renderer", () => {
   const { session, watchers, log } = harness("a.h5");
   session.open(p("a.h5"), false);
-  const next = { model: p("a.h5"), geometry: p("a.geometry.h5"), results: null, user: null, workspace: null };
+  const next = { model: p("a.h5"), geometry: p("a.geometry.h5"), results: null, user: null, workspace: null, particles: null };
   watchers[0]!.sink.reopened(next);
   assert.deepEqual(session.set, next);
   assert.deepEqual(log, [`open ${JSON.stringify(next)}`]);
+});
+
+// -- M2-S3 (#2982): a particle set or an all-particle .ladruno opens without a model (ADR 0134 D1, D3) --
+
+test("a <stem>.particles.h5 opened alone opens a set with no model, watched, and the renderer is told", () => {
+  const { session, watchers, log } = harness("seed.particles.h5", "slab.h5");
+  assert.ok(session.open(p("seed.particles.h5"), true));
+  const want = { model: null, geometry: null, results: null, user: null, workspace: null, particles: p("seed.particles.h5") };
+  assert.deepEqual(session.set, want, "another stem's model is not paired");
+  assert.equal(watchers.length, 1);
+  assert.equal(watchers[0]!.opened, p("seed.particles.h5"));
+  assert.deepEqual(log, [`open ${JSON.stringify(want)}`]);
+});
+
+test("a <stem>.particles.h5 beside its model opens the model's set; the renderer reading that model keeps it", () => {
+  const { session, watchers } = harness("slab.h5", "slab.ladruno", "slab.particles.h5");
+  assert.ok(session.open(p("slab.particles.h5"), false));
+  assert.deepEqual(session.set, { model: p("slab.h5"), geometry: null, results: p("slab.ladruno"), user: null, workspace: null, particles: p("slab.particles.h5") });
+  session.rendererOpened(p("slab.h5"));
+  assert.equal(watchers.length, 1, "the model on screen is the set's: no new set");
+});
+
+test("an all-particle .ladruno opened alone opens a set with results and no model", () => {
+  const { session } = harness("run.ladruno");
+  assert.ok(session.open(p("run.ladruno"), false));
+  assert.deepEqual(session.set, { model: null, geometry: null, results: p("run.ladruno"), user: null, workspace: null, particles: null });
 });

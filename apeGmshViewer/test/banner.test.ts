@@ -21,6 +21,14 @@ import { contourFieldsOf, contourView, derivedPlaneOf } from "../src/state/selec
 import { Store } from "../src/state/store.ts";
 import type { Event } from "../src/state/types.ts";
 import { opened, until } from "./contour/harness.ts";
+import * as h5wasm from "h5wasm/node";
+import { metaOf } from "../src/main/results.ts";
+import { openLadruno } from "../src/reader/ladruno.ts";
+import type { ResultsH5 } from "../src/reader/results.ts";
+import { pairingNotice, pairResults } from "../src/state/results.ts";
+import { Effects, type Bridge } from "../src/effects.ts";
+import { BlobStore } from "../src/state/blobs.ts";
+import { failureOf } from "../src/state/selectors.ts";
 
 class FakeEl {
   className = "";
@@ -270,5 +278,79 @@ test("VF2: the statement is computed once across steps and the manifest, and aga
     assert.deepEqual(b.lines().filter((l) => PLANE_LINE.test(l)), [], b.lines().join("\n"));
   } finally {
     b.close();
+  }
+});
+
+// ---- M2-S3 (#2982): particles read without a model (ADR 0134 D1, D3) ----
+// Before this slice an all-particle .ladruno opened alone said "Results not drawn: no model
+// is open". The info is the one main hands the renderer (main/results.ts `metaOf`) of the
+// fork's fixtures; the banner is mounted on a real store with no model open.
+
+await h5wasm.ready;
+const mpm = (name: string) => fileURLToPath(new URL(`../../tests/fixtures/mpm/${name}`, import.meta.url));
+
+function metaOfFixture(name: string) {
+  const f = openLadruno(h5wasm as unknown as ResultsH5, mpm(name));
+  try {
+    return metaOf(f);
+  } finally {
+    f.close();
+  }
+}
+
+/** The banner rows of a store that has read `info` as its results, with no model open. */
+function bannerLines(info: ReturnType<typeof metaOfFixture>): string[] {
+  const store = new Store();
+  store.dispatch({ type: "fileOpened", artifact: "results", path: info.path } as Event);
+  store.dispatch({ type: "resultsLoaded", info, sizeBytes: 0, readMs: 0, warnings: [] } as Event);
+  const b = mounted(store as never);
+  try {
+    return b.lines();
+  } finally {
+    b.close();
+  }
+}
+
+const PARTICLES_ONLY = (name: string) => `No model is open for ${name}: it holds particles only, and particles read without a model (ADR 0134).`;
+
+test("M2-S3: an all-particle .ladruno opened with no model says its particles read without one, not \"Results not drawn\"", () => {
+  const info = metaOfFixture("particles_v1m2.ladruno");
+  assert.deepEqual(pairResults(null, info), { state: "noModel", particlesOnly: true });
+  const lines = bannerLines(info);
+  assert.ok(lines.includes(PARTICLES_ONLY("particles_v1m2.ladruno")), lines.join("\n"));
+  assert.ok(!lines.some((l) => /Results not drawn/.test(l)), lines.join("\n"));
+});
+
+test("M2-S3: a .ladruno with an FE stage keeps today's sentence: its FE results need the model", () => {
+  const info = metaOfFixture("particles_mixed_v1m2.ladruno");
+  assert.deepEqual(pairResults(null, info), { state: "noModel" });
+  const lines = bannerLines(info);
+  assert.ok(lines.includes("Results not drawn: no model is open for particles_mixed_v1m2.ladruno; open the model.h5 the run was emitted from."), lines.join("\n"));
+});
+
+test("M2-S3: a <stem>.particles.h5 with no model reads the particle sentence; with a model the pairing is the lineage's, as before", () => {
+  assert.equal(pairingNotice({ state: "noModel" }, "case1.particles.h5"), PARTICLES_ONLY("case1.particles.h5"));
+  assert.equal(pairingNotice({ state: "noModel" }, "Case1.PARTICLES.H5"), PARTICLES_ONLY("Case1.PARTICLES.H5"));
+  // A model open: particlesOnly never applies (pairing is the lineage's; this unstamped fixture is unpairable).
+  const info = metaOfFixture("particles_v1m2.ladruno");
+  assert.equal(pairResults({ lineage: null, openseesVersion: null, programDecl: null }, info).state, "unpairable");
+});
+
+// #2985 finding 1: a <stem>.particles.h5 opened alone opened an empty, silent window (openSet
+// closed every artifact). It now fails closed through the model's failure, the path a file that
+// is not a model takes, naming the file and saying drawing it alone comes later (M2-S4).
+test("M2-S3: a particle set opened alone is refused by name in the window, never an empty, silent one", () => {
+  const store = new Store();
+  const effects = new Effects(store, new BlobStore(), {} as Bridge);
+  try {
+    effects.openSet({ model: null, geometry: null, results: null, particles: "C:/runs/case1.particles.h5" });
+    const failure = failureOf(store.get());
+    assert.ok(failure, "the window states a failure instead of opening empty");
+    assert.match(failure, /case1\.particles\.h5 is a particle set \(ADR 0134\), not a model: drawing a particle set alone comes in a later version/);
+    // A set naming nothing still closes the model, as before: only a lone particle set is refused.
+    effects.openSet({ model: null, geometry: null, results: null, particles: null });
+    assert.equal(failureOf(store.get()), null, "a set with nothing closes the model, as before");
+  } finally {
+    effects.dispose();
   }
 });

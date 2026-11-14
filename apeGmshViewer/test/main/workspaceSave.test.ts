@@ -43,7 +43,7 @@ function folder(withWorkspace = false): { dir: string; set: OpenSet; ws: string 
   mkdirSync(dir);
   copyFileSync(FIX("frame.h5"), join(dir, "frame.h5"));
   if (withWorkspace) copyFileSync(FIX("frame.workspace.h5"), join(dir, "frame.workspace.h5"));
-  return { dir, set: { model: join(dir, "frame.h5"), geometry: null, results: null, user: null, workspace: null }, ws: join(dir, "frame.workspace.h5") };
+  return { dir, set: { model: join(dir, "frame.h5"), geometry: null, results: null, user: null, workspace: null, particles: null }, ws: join(dir, "frame.workspace.h5") };
 }
 
 const deps = (over: Partial<WorkspaceDeps> = {}): WorkspaceDeps => ({ ...nodeDeps(H5, h5wasm.ready, "apeGmshViewer test"), ...over });

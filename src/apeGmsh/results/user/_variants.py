@@ -57,7 +57,8 @@ _TOP_KEYS = frozenset({"format", "version", "variants"})
 _ROW_KEYS = frozenset({"label", "path", "params"})
 #: The schema's path rules, one per clause of ``$defs/path`` (case-insensitive suffixes).
 _MODEL_FILE = re.compile(r"(^|/)[^/]+\.h5\Z", re.IGNORECASE)
-_RESERVED = re.compile(r"\.(geometry|results|user|workspace)\.h5\Z", re.IGNORECASE)
+#: ADR 0134 D1 adds ``.particles.h5`` (the seeded particle set), as apeGmshViewer's reader/variants.ts does.
+_RESERVED = re.compile(r"\.(geometry|results|user|workspace|particles)\.h5\Z", re.IGNORECASE)
 _FORBIDDEN = re.compile(r"[\\:\x00-\x1f\x7f]")
 _DOT_SEGMENT = re.compile(r"(^|/)\.{1,2}(/|$)")
 _BOM = b"\xef\xbb\xbf"
@@ -137,7 +138,7 @@ def path_problem(path: Any) -> Optional[str]:
     if not _MODEL_FILE.search(path):
         return "its last segment is not a non-empty stem and .h5"
     if _RESERVED.search(path):
-        return "it names a sibling file (.geometry.h5, .results.h5, .user.h5 or .workspace.h5)"
+        return "it names a sibling file (.geometry.h5, .results.h5, .user.h5, .workspace.h5 or .particles.h5)"
     return None
 
 
