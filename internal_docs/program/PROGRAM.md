@@ -153,6 +153,7 @@ The full link specs are in the chain issues.
 | S1 → S3 | `_StageBuilder` + procedures → `build/` layers → `nd`/compose/h5io | C2 + C3; S1 must need ≤1 fix in 7 days |
 | K0 → K4 | `VERBS` design → archive completeness → round-trip oracle → fork loader (KC1–6) → dated flip | C1 + C2; F2 for K3 |
 | R0 → R6 | Silent-defect follow-ups → read-back-by-label ADR (architect pair) → implement it → stage/solver ergonomics · advisory model-script lint → re-cut the rule card → validation loop | R1 ratified and the `apesees.py` lock free for R2; R2 + R3 for R5; human gate at R6 |
+| M1 → M3 | MPM particle sets and particle results, the apeGmsh half of the fork's MPM driver program (chain issue #2972): the ADR → lattice seeding, `.ladruno` particle readers and the viewer points layer → the `FORK_PIN` bump and the bridge primitives | the fork hands T the ADR draft for M1; M1 ratified and accepted for M2; the fork slice released for M3; `live-fork` green and owner D7 on the stills |
 
 **Waves:**
 
