@@ -268,14 +268,34 @@ def test_body_with_no_lattice_point_is_refused_by_name():
         seed(fem, GRID2, [MPMBody("sliver", "sliver", 1.0)], n=1)
 
 
+@pytest.mark.parametrize("family", ["tri3", "quad4"])
+def test_clockwise_2d_elements_seed_like_counter_clockwise_ones(family):
+    """A surface meshed with its normal along -z numbers every element clockwise: all
+    corner Jacobians negative. That is an orientation, not an inversion: the clockwise mesh
+    seeds exactly the particles of the counter-clockwise one (here with points on the
+    tri3 diagonals and on the quad4 face x = 1/2 at n = 3)."""
+    nodes, ids = M.grid_nodes([2, 2], [0, 0], [1, 1])
+    ccw = M.tris(ids) if family == "tri3" else M.quads(ids)
+    cw = [(fam, [c[0], *reversed(c[1:])]) for fam, c in ccw]
+    grid = MPMGrid((0.0, 0.0), (0.25, 0.25), (4, 4))
+    body = [MPMBody("b", "b", 1.0)]
+    for n in (2, 3):
+        want = seed(M.make_fem(nodes, {"b": ccw}), grid, body, n=n)
+        got = seed(M.make_fem(nodes, {"b": cw}), grid, body, n=n)
+        assert got.num_particles == (4 * n) ** 2
+        np.testing.assert_array_equal(got.position, want.position)
+        np.testing.assert_array_equal(got.volume, want.volume)
+
+
 @pytest.mark.parametrize("family,conn", [
-    ("tri3", [1, 3, 2]),                       # clockwise
     ("tri3", [1, 2, 5]),                       # collinear: zero area
-    ("quad4", [1, 4, 3, 2]),                   # clockwise
-    ("quad4", [1, 2, 4, 3]),                   # bow-tie
+    ("tri3", [1, 5, 2]),                       # collinear, the other way round
+    ("quad4", [1, 2, 4, 3]),                   # bow-tie: mixed-sign corners
+    ("quad4", [1, 3, 4, 2]),                   # bow-tie, the other way round
+    ("quad4", [1, 2, 6, 4]),                   # non-convex (dart): mixed-sign corners
 ])
 def test_non_positive_jacobian_is_refused_2d(family, conn):
-    nodes = {1: (0, 0), 2: (1, 0), 3: (1, 1), 4: (0, 1), 5: (0.5, 0)}
+    nodes = {1: (0, 0), 2: (1, 0), 3: (1, 1), 4: (0, 1), 5: (0.5, 0), 6: (0.2, 0.2)}
     fem = M.make_fem(nodes, {"b": [(family, conn)]})
     with pytest.raises(MPMSeedError, match=r"element 1 has a non-positive Jacobian"):
         seed(fem, GRID2, [MPMBody("b", "b", 1.0)], n=1)
@@ -294,21 +314,30 @@ def test_non_positive_jacobian_is_refused_3d(family, conn):
                      [MPMBody("b", "b", 1.0)], n=1)
 
 
-def test_overlapping_bodies_are_refused_by_name():
+def test_overlapping_bodies_are_refused_naming_both_and_the_count():
+    """Two bodies on the same unit square, 2 x 2 cells at n = 2: all 16 points shared."""
     nodes, els = box_mesh("quad4", per_axis=1)
-    fem = M.make_fem(nodes, {"a": els, "b": els})
-    with pytest.raises(MPMSeedError, match="bodies 'a' and 'b' both hold 4 lattice"):
-        seed(fem, GRID2, [MPMBody("a", "a", 1.0), MPMBody("b", "b", 1.0)], n=1)
+    fem = M.make_fem(nodes, {"fill": els, "rock": els})
+    with pytest.raises(MPMSeedError) as exc:
+        seed(fem, GRID2, [MPMBody("fill", "fill", 1.0), MPMBody("rock", "rock", 1.0)], n=2)
+    msg = str(exc.value)
+    assert "bodies 'fill' and 'rock' share 16 lattice points at n=2;" in msg
 
 
-def test_interface_through_a_sub_cell_centre_is_refused():
-    """Two bodies meet at x = 0.5, which is the centre of the single cell at n = 1."""
+def test_interface_through_a_sub_cell_centre_is_refused_naming_both_and_the_count():
+    """Two bodies meet at x = 0.5; at n = 3 in one unit cell the column x = 0.5 holds 3
+    sub-cell centres (y = 1/6, 1/2, 5/6), each inside both bodies."""
     nodes, ids = M.grid_nodes([2, 1], [0, 0], [1, 1])
     els = M.quads(ids)
-    fem = M.make_fem(nodes, {"a": [els[0]], "b": [els[1]]})
+    fem = M.make_fem(nodes, {"left": [els[0]], "right": [els[1]]})
     grid = MPMGrid((0.0, 0.0), (1.0, 1.0), (1, 1))
-    with pytest.raises(MPMSeedError, match=re.escape("e.g. [0.5, 0.5]")):
-        seed(fem, grid, [MPMBody("a", "a", 1.0), MPMBody("b", "b", 1.0)], n=1)
+    with pytest.raises(MPMSeedError) as exc:
+        seed(fem, grid, [MPMBody("left", "left", 1.0), MPMBody("right", "right", 1.0)], n=3)
+    msg = str(exc.value)
+    assert "bodies 'left' and 'right' share 3 lattice points at n=3;" in msg
+    assert re.search(r"e\.g\. \[0\.5, 0\.16666", msg)
+    with pytest.raises(MPMSeedError, match=r"share 1 lattice point at n=1;"):
+        seed(fem, grid, [MPMBody("left", "left", 1.0), MPMBody("right", "right", 1.0)], n=1)
 
 
 def test_mesh_outside_the_grid_is_refused():

@@ -198,6 +198,24 @@ def test_guard_accepts_fixed_length_apegmsh_attrs(tmp_path):
     check_overwrite(out)
 
 
+@pytest.mark.parametrize("kind", ["foreign_h5", "text"])
+def test_write_rechecks_the_guard_after_the_preflight(tmp_path, kind):
+    """The path was free at preflight; a foreign file appears before the write. The write
+    refuses it by name and leaves it byte-identical, with no temp file left behind."""
+    out = tmp_path / "case1.particles.h5"
+    prepared = preflight_particle_set(out, seeded_box("quad4"), material_tags={"core": 7},
+                                      units=UNITS, provenance=PROV)
+    if kind == "foreign_h5":
+        _foreign_h5(out, FORMAT=FORMAT, GENERATOR="my_seeder.py")
+    else:
+        out.write_text("my notes\n")
+    before = out.read_bytes()
+    with pytest.raises(ParticleSetOverwriteRefused, match="refusing to overwrite .*case1"):
+        write_particle_set(prepared)
+    assert out.read_bytes() == before
+    assert listing(tmp_path) == ["case1.particles.h5"]
+
+
 def test_guard_refuses_a_directory(tmp_path):
     out = tmp_path / "case1.particles.h5"
     out.mkdir()

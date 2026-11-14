@@ -362,6 +362,8 @@ def _seed_body(
             raise MPMSeedError(
                 f"body {body.name!r}: element {e} of physical group {body.pg!r} extends "
                 f"outside the grid box [{grid.lo.tolist()}, {grid.hi.tolist()}]")
+        if ndm == 2:
+            verts = _counter_clockwise(verts)
         tester: _SimplexTester | _IsoTester
         if fam in ("tri3", "tet4"):
             tester = _SimplexTester(verts, eids, body)
@@ -371,6 +373,27 @@ def _seed_body(
     if not found:
         return np.empty(0, dtype=np.int64)
     return np.unique(np.concatenate(found))
+
+
+def _counter_clockwise(verts: FloatArray) -> FloatArray:
+    """tri3/quad4 vertices with each clockwise element's node order reversed.
+
+    A surface meshed with its normal along -z numbers its elements clockwise, so every
+    corner Jacobian is negative. That is an orientation, not an inverted element: lattice
+    seeding needs no sign (ADR 0134 D2 keeps the signed check for Gauss seeding). The
+    reversal is local, by the shoelace area; a bow-tie or a degenerate element has mixed
+    signs or a near-zero Jacobian in either order and the tester still refuses it.
+    """
+    x = verts[..., 0]
+    y = verts[..., 1]
+    area2 = np.sum(x * np.roll(y, -1, axis=1) - np.roll(x, -1, axis=1) * y, axis=1)
+    cw = area2 < 0.0
+    if not cw.any():
+        return verts
+    out = verts.copy()
+    order = [0, *range(verts.shape[1] - 1, 0, -1)]
+    out[cw] = verts[cw][:, order, :]
+    return out
 
 
 def _scan(
@@ -553,7 +576,7 @@ def _refuse_shared_points(
                 spacing = np.asarray(grid.cell_size, dtype=np.float64) / n
                 x = grid.lo + (idx + 0.5) * spacing
                 raise MPMSeedError(
-                    f"bodies {bodies[i].name!r} and {bodies[j].name!r} both hold "
-                    f"{both.size} lattice point(s), e.g. {x.tolist()}; a particle needs "
-                    f"one body (overlapping bodies, or an interface through a sub-cell "
-                    f"centre)")
+                    f"bodies {bodies[i].name!r} and {bodies[j].name!r} share {both.size} "
+                    f"lattice point{'s' if both.size != 1 else ''} at n={n}; e.g. "
+                    f"{x.tolist()}; a particle needs one body (overlapping bodies, or an "
+                    f"interface through a sub-cell centre)")
