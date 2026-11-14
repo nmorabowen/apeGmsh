@@ -1035,9 +1035,11 @@ class LadrunoReader:
                 f"{self.particle_stage_ids()}."
             )
         if stage_id not in self._particle_stages:
-            self._particle_stages[stage_id] = ParticleStage(
-                grp, where=f"{self._path.name} {name}",
-            )
+            stage = ParticleStage(grp, where=f"{self._path.name} {name}")
+            # A stage the contract refuses is never cached: every access
+            # re-raises, and nothing of it is read in part.
+            stage.validate()
+            self._particle_stages[stage_id] = stage
         return self._particle_stages[stage_id]
 
     def _resolve_stage_group(self, stage_id: str) -> "h5py.Group":

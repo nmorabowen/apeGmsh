@@ -21,8 +21,14 @@ What this module accepts and refuses, by the contract:
 * a file a crash left open reads its committed outputs (§2.5's crash
   rule): ``T' = min(len(STEP), len(TIME), len(OFFSETS) - 1)``, then only
   the outputs whose ``OFFSETS[k + 1]`` fits in ``len(ID)`` and in every
-  field's ``len(DATA)``. No full-file shape is trusted, and nothing
-  depends on the chunk shape: reads are hyperslabs.
+  field's ``len(DATA)``. The writer appends ``OFFSETS`` last, so only
+  its last entry can be torn: a last entry smaller than its predecessor
+  (an extension still holding its fill) drops that output, and a
+  decrease anywhere earlier refuses the stage (C2-OFF). No full-file
+  shape is trusted, and nothing depends on the chunk shape: reads are
+  hyperslabs.
+* a stage the contract refuses is never cached or listed as readable:
+  :meth:`ParticleStage.validate` runs before the reader hands it out.
 """
 from __future__ import annotations
 
@@ -307,6 +313,19 @@ class ParticleStage:
         self._fields: "Optional[dict[str, ParticleField]]" = None
         self._committed: "Optional[tuple[ndarray, ndarray, ndarray]]" = None
 
+    def validate(self) -> None:
+        """Read every metadata record and apply the crash rule once.
+
+        The reader calls it before it hands the stage out, so a stage
+        the contract refuses raises on every access and is never listed,
+        or read in part, as if it were readable.
+        """
+        self.info()
+        self.grid()
+        self.registry()
+        self.fields()
+        self.committed()
+
     # -- metadata -----------------------------------------------------
 
     def info(self) -> ParticleStageInfo:
@@ -467,12 +486,26 @@ class ParticleStage:
         time_ds = _dataset(res, "TIME", where, ("<f8",), 1)
         off_ds = _dataset(res, "OFFSETS", where, ("<i8",), 1)
         id_ds = _dataset(res, "ID", where, ("<i8",), 1)
+        reduction = _attr_text(res.attrs, "PARTITION_REDUCTION", where,
+                               required=True)
+        if reduction != "NONE":
+            raise ParticleFormatError(
+                f"{where}@PARTITION_REDUCTION is {reduction!r}; a serial "
+                "particle group writes 'NONE' (C2-RED)."
+            )
         fields = self.fields()
         n_out = max(0, min(len(step_ds), len(time_ds), len(off_ds) - 1))
         offsets = (
             np.asarray(off_ds[: n_out + 1], dtype=np.int64)
             if len(off_ds) else np.zeros(1, dtype=np.int64)
         )
+        if n_out >= 1 and offsets[-1] < offsets[-2]:
+            # OFFSETS was extended for the in-flight output but its value
+            # not yet written (the fill is 0): that output is torn, and
+            # the outputs before it are committed. A decrease anywhere
+            # else refuses the stage, below.
+            offsets = offsets[:-1]
+            n_out -= 1
         if offsets[0] != 0 or bool(np.any(np.diff(offsets) < 0)):
             raise ParticleFormatError(
                 f"{where}/OFFSETS does not start at 0 or decreases "
@@ -486,6 +519,15 @@ class ParticleStage:
         offsets = offsets[: kept + 1]
         step = np.asarray(step_ds[:kept], dtype=np.int32)
         time = np.asarray(time_ds[:kept], dtype=np.float64)
+        if kept > 1 and not bool(np.all(np.diff(step) > 0)):
+            raise ParticleFormatError(
+                f"{where}/STEP is not strictly increasing over its "
+                f"committed outputs ({step.tolist()}) (C2-AXES)."
+            )
+        if not bool(np.all(np.isfinite(time))):
+            raise ParticleFormatError(
+                f"{where}/TIME holds a non-finite value (C2-AXES)."
+            )
         tail = (
             len(step_ds) > kept or len(time_ds) > kept
             or len(off_ds) > kept + 1 or len(id_ds) > offsets[-1]

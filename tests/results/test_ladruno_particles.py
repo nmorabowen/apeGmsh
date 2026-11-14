@@ -500,5 +500,125 @@ def test_a_zero_output_stage_reads_empty(copy_of, opened) -> None:
         r.particles.get(component="POSITION", time=0)
 
 
+def test_an_extended_but_unwritten_offset_is_a_torn_output(copy_of, opened) -> None:
+    """The writer extended OFFSETS for output 3 (fill 0) after STEP and
+    TIME: the last OFFSETS entry decreases. That output is torn; the three
+    before it read."""
+    raw = _raw(PARTICLES)
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        for name in ("STEP", "TIME"):
+            _resize(f[f"{ON_P}/{name}"], 4)
+        f[f"{ON_P}/STEP"][3] = 30
+        f[f"{ON_P}/TIME"][3] = 0.003
+        _resize(f[f"{ON_P}/OFFSETS"], 5)
+        f[f"{ON_P}/OFFSETS"][4] = 0
+    r = opened(p)
+    with pytest.warns(ParticleOutputsTruncatedWarning, match="3 output"):
+        s = r.particles.get(component="POSITION")
+    np.testing.assert_array_equal(s.offsets, raw["OFFSETS"])
+    np.testing.assert_array_equal(s.step, raw["STEP"])
+    np.testing.assert_array_equal(s.values, raw["DATA"]["POSITION"])
+
+
+def test_a_torn_entry_after_empty_outputs_reads_as_one_more_empty(copy_of, opened) -> None:
+    """Every output so far is empty (all offsets 0): a torn OFFSETS
+    entry (fill 0) equals its predecessor, so it cannot be told from a
+    committed empty output and reads as one. That is accepted, not
+    refused (the fork's rule, adopted with item (c))."""
+    raw = _raw(PARTICLES)
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        _resize(f[f"{ON_P}/ID"], 0)
+        for n in FIELDS:
+            _resize(f[f"{ON_P}/{n}/DATA"], 0)
+        # Two committed empty outputs, then output 2's STEP and TIME and
+        # an OFFSETS extension that still holds its fill.
+        f[f"{ON_P}/OFFSETS"][...] = np.zeros(4, dtype=np.int64)
+    r = opened(p)
+    s = r.particles.get(component="POSITION")
+    assert s.n_outputs == 3
+    np.testing.assert_array_equal(s.offsets, [0, 0, 0, 0])
+    np.testing.assert_array_equal(s.step, raw["STEP"])
+    assert s.values.shape == (0, 2)
+    assert np.isnan(s.dense()).all()
+
+
+@pytest.mark.parametrize("offsets, n_steps", [
+    ([0, 12, 5, 35], 3),          # a decrease before the last entry
+    ([0, 12, 5, 35, 0], 4),       # the same, under a torn last entry
+    ([3, 12, 24, 35], 3),         # does not start at 0
+], ids=["mid-decrease", "mid-decrease-and-torn", "nonzero-start"])
+def test_a_decrease_before_the_last_offset_refuses(copy_of, opened, offsets, n_steps) -> None:
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        for name in ("STEP", "TIME"):
+            _resize(f[f"{ON_P}/{name}"], n_steps)
+        f[f"{ON_P}/STEP"][...] = np.arange(n_steps, dtype=np.int32) * 10
+        _resize(f[f"{ON_P}/OFFSETS"], len(offsets))
+        f[f"{ON_P}/OFFSETS"][...] = np.asarray(offsets, dtype=np.int64)
+    r = opened(p)
+    with pytest.raises(ParticleFormatError, match="C2-OFF"):
+        r.particles.get(component="POSITION")
+
+
+@pytest.mark.parametrize("dtype", [np.int32, np.uint64], ids=["int32", "uint64"])
+def test_registry_ids_must_be_int64(copy_of, opened, dtype) -> None:
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        ids = f[f"{REG}/ID"][...]
+        del f[f"{REG}/ID"]
+        f[REG].create_dataset("ID", data=ids.astype(dtype))
+    r = opened(p)
+    with pytest.raises(ParticleFormatError, match=r"MODEL/PARTICLES/ID is .*int64"):
+        r.particles.registry()
+
+
+@pytest.mark.parametrize("value", [None, "SUM"], ids=["absent", "SUM"])
+def test_partition_reduction_must_be_none(copy_of, opened, value) -> None:
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        attrs = f[ON_P].attrs
+        if value is None:
+            del attrs["PARTITION_REDUCTION"]
+        else:
+            attrs["PARTITION_REDUCTION"] = np.bytes_(value)
+    r = opened(p)
+    with pytest.raises(ParticleFormatError, match="C2-RED|C2-ATTR"):
+        r.particles.get(component="POSITION")
+
+
+def test_step_must_strictly_increase(copy_of, opened) -> None:
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        f[f"{ON_P}/STEP"][...] = np.array([0, 10, 10], dtype=np.int32)
+    r = opened(p)
+    with pytest.raises(ParticleFormatError, match="STEP is not strictly increasing.*C2-AXES"):
+        r.particles.get(component="POSITION")
+
+
+def test_a_refused_stage_is_never_reported_as_read(copy_of, opened) -> None:
+    """Every access to a refused stage raises, every time: no component
+    listing, registry or partial read survives the first refusal."""
+    p = copy_of(MIXED)
+    with h5py.File(p, "r+") as f:
+        f[f"{ON_P}/STEP"][...] = np.array([0, 20, 10], dtype=np.int32)
+    r = opened(p)
+    sid = _particle_stage_id(r)
+    for _ in range(2):
+        for access in (
+            lambda: r.particles.components(),
+            lambda: r.particles.registry(),
+            lambda: r.particles.bodies(),
+            lambda: r.particles.get(component="POSITION"),
+            lambda: r._reader.available_components(sid, ResultLevel.PARTICLES),
+            lambda: r.inspect.components(stage=sid),
+        ):
+            with pytest.raises(ParticleFormatError, match="C2-AXES"):
+                access()
+    # The FE stage of the same file still reads.
+    assert r.stage("MODEL_STAGE[0]").nodes.available_components()
+
+
 def test_result_level_has_particles() -> None:
     assert ResultLevel("particles") is ResultLevel.PARTICLES
