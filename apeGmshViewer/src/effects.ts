@@ -1747,13 +1747,16 @@ export class Effects {
     const bridge = this.bridge;
     if (typeof bridge.particleHarnessDone !== "function" || typeof bridge.particleHarnessStill !== "function") throw new Error("this build's bridge has no particle harness doors");
     this.openSet(job.set);
-    const frameReady = async (ms: number): Promise<State> => {
-      const s = await this.until((x) => {
+    const frameRead = (ms: number): Promise<State> =>
+      this.until((x) => {
         const p = x.particles;
         if (p?.status === "failed") throw new Error(`the particles did not read: ${p.error}`);
         if (p?.frame?.status === "failed") throw new Error(`the particle frame did not read: ${p.frame.error}`);
         return p?.status === "ready" && p.frame?.status === "ready" && p.frame.stage === p.stage && p.frame.output === p.output;
       }, ms);
+    /** The frame the state names read and pushed, then on screen (two animation frames). */
+    const frameReady = async (ms: number): Promise<State> => {
+      const s = await frameRead(ms);
       await painted();
       return s;
     };
@@ -1782,16 +1785,24 @@ export class Effects {
     const memFirst = typeof bridge.metrics === "function" ? await bridge.metrics() : null;
     const t0 = performance.now();
     const frames: number[] = [];
+    const reads: number[] = [];
     let k = p.output;
     while (performance.now() - t0 < job.scrubMs && st.nOutputs > 1) {
       k = (k + 1) % st.nOutputs;
       const a = performance.now();
       this.store.dispatch({ type: "setParticleOutput", output: k });
-      await frameReady(60000);
+      // The read (main's hyperslab, the copy, the buffer fill) apart from the paint that follows it.
+      await frameRead(60000);
+      reads.push(performance.now() - a);
+      await painted();
       frames.push(performance.now() - a);
     }
     const scrubMs = performance.now() - t0;
     const memScrub = await bridge.metrics();
+    const median = (xs: number[]): number | null => {
+      const v = [...xs].sort((x, y) => x - y);
+      return v.length ? v[Math.floor(v.length / 2)]! : null;
+    };
     const sorted = [...frames].sort((x, y) => x - y);
     await bridge.particleHarnessDone({
       file: p.path,
@@ -1800,7 +1811,7 @@ export class Effects {
       outputs: st.nOutputs,
       colour: p.colour,
       firstFrameMs,
-      scrub: { frames: frames.length, ms: scrubMs, fps: frames.length / (scrubMs / 1000), medianFrameMs: sorted.length ? sorted[Math.floor(sorted.length / 2)]! : null },
+      scrub: { frames: frames.length, ms: scrubMs, fps: frames.length / (scrubMs / 1000), medianFrameMs: sorted.length ? sorted[Math.floor(sorted.length / 2)]! : null, medianReadMs: median(reads) },
       memory: { first: memFirst, scrub: memScrub },
     });
   }

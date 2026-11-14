@@ -586,7 +586,7 @@ interface ParticleMeasure {
   outputs: number;
   colour: { field: string; component: number } | null;
   firstFrameMs: number;
-  scrub: { frames: number; ms: number; fps: number; medianFrameMs: number | null };
+  scrub: { frames: number; ms: number; fps: number; medianFrameMs: number | null; medianReadMs: number | null };
   memory: { first: { mainMB: number; rendererMB: number; gpuProcessMB: number } | null; scrub: { mainMB: number; rendererMB: number; gpuProcessMB: number } };
 }
 
@@ -597,10 +597,10 @@ function printParticleRow(r: ParticleMeasure): void {
     m ? `${f0(m.mainMB + m.rendererMB)} (${f0(m.mainMB)} + ${f0(m.rendererMB)}), GPU ${f0(m.gpuProcessMB)}` : "n/a";
   const size = statSync(r.file).size / 1048576;
   process.stdout.write(
-    "| date | file | size (MB) | particles | outputs | colour | first frame (ms) | scrub (outputs/s) | median output (ms) | memory MB main+renderer at first frame | after scrub |\n" +
+    "| date | file | size (MB) | particles | outputs | colour | first frame (ms) | scrub (outputs/s) | median output read / on screen (ms) | memory MB main+renderer at first frame | after scrub |\n" +
       "|---|---|---|---|---|---|---|---|---|---|---|\n" +
       `| ${new Date().toISOString().slice(0, 10)} | ${r.file.split(/[\\/]/).pop()} | ${size.toFixed(1)} | ${r.particles.toLocaleString("en-US")} | ${r.outputs} | ` +
       `${r.colour ? `${r.colour.field}/${r.colour.component}` : "plain"} | ${f0(r.firstFrameMs)} | ${f1(r.scrub.fps)} (${r.scrub.frames} in ${f0(r.scrub.ms)} ms) | ` +
-      `${r.scrub.medianFrameMs === null ? "n/a" : f1(r.scrub.medianFrameMs)} | ${mem(r.memory.first)} | ${mem(r.memory.scrub)} |\n`,
+      `${r.scrub.medianReadMs === null ? "n/a" : f1(r.scrub.medianReadMs)} / ${r.scrub.medianFrameMs === null ? "n/a" : f1(r.scrub.medianFrameMs)} | ${mem(r.memory.first)} | ${mem(r.memory.scrub)} |\n`,
   );
 }
