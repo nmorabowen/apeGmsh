@@ -4,7 +4,7 @@
 //   node scripts/launch.mjs measure  <model.h5>          prints one MEASUREMENTS row
 //   node scripts/launch.mjs capture  <model.h5> <out.png>
 //   node scripts/launch.mjs measure  <x.ladruno | x.particles.h5> [--scrub-ms=N]     ADR 0134 D5: the particle row
-//   node scripts/launch.mjs capture  <x.ladruno | x.particles.h5> <out.png> [--colour=FIELD/COMPONENT] [--output=K]
+//   node scripts/launch.mjs capture  <x.ladruno | x.particles.h5> <out.png> [--colour=FIELD/COMPONENT] [--output=K] [--grid=1]
 //   node scripts/launch.mjs render   <spec.json> <outdir>  ADR 0128 D3, D4: one PNG per shot + manifest.json
 //   node scripts/launch.mjs describe <file.h5> <outdir>    ADR 0128 D4: describe.json
 //   node scripts/launch.mjs present  <spec.json>           ADR 0128 D5: offer the spec to the running window
@@ -40,12 +40,12 @@ const badFlag = flags.find(
   (f) =>
     !(f === "--uncapped" && mode === "measure") &&
     !(f.startsWith("--pick=") && f.length > "--pick=".length && mode === "capture") &&
-    !(particleFile && mode === "capture" && (f === passed("colour") || f === passed("output"))) &&
+    !(particleFile && mode === "capture" && (f === passed("colour") || f === passed("output") || f === "--grid=1")) &&
     !(particleFile && mode === "measure" && f === passed("scrub-ms")),
 );
 if (badFlag) {
   console.error(
-    `unknown flag ${badFlag}; only "measure ... --uncapped", "capture ... --pick=<type>", and on a particle file "capture ... --colour=FIELD/COMPONENT --output=K" or "measure ... --scrub-ms=N" take one`,
+    `unknown flag ${badFlag}; only "measure ... --uncapped", "capture ... --pick=<type>", and on a particle file "capture ... --colour=FIELD/COMPONENT --output=K --grid=1" or "measure ... --scrub-ms=N" take one`,
   );
   process.exit(2);
 }
@@ -111,7 +111,7 @@ function runViewMeasureCapture() {
   if (file) args.push(`--file=${resolve(file)}`);
   if (uncapped) args.push("--uncapped=1");
   if (pick) args.push(`--pick=${pick}`);
-  for (const name of ["colour", "output", "scrub-ms"]) if (passed(name)) args.push(passed(name));
+  for (const name of ["colour", "output", "scrub-ms", "grid"]) if (passed(name)) args.push(passed(name));
   if (out) args.push(`--out=${out}`);
 
   const child = spawn(electronBinary, args, { stdio: "inherit" });

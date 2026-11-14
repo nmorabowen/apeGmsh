@@ -50,7 +50,7 @@ export interface ParticleLook {
 
 /** Point size in pixels by count: big enough to read a few points, small enough not to merge a million. */
 export function particleSize(n: number): number {
-  return n <= 1e3 ? 9 : n <= 1e4 ? 6 : n <= 1e5 ? 4 : n <= 5e5 ? 3 : 2;
+  return n <= 100 ? 16 : n <= 1e3 ? 10 : n <= 1e4 ? 6 : n <= 1e5 ? 4 : n <= 5e5 ? 3 : 2;
 }
 
 /** `positions` (n * ndm) into xyz (n * 3) at `out`, z = 0 in 2-D. */

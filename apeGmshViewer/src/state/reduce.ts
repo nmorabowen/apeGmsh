@@ -796,7 +796,9 @@ function reduceEvent(s: State, e: Event): State {
       return { ...s, view: { frameSeq: s.view.frameSeq + 1 } };
     case "setCamera":
     case "cameraMoved": {
-      const camera = reduceCamera(s.camera, e, { drawn: s.mesh !== null || s.geometry !== null, nothingSelected: () => selectedElementsOf(s).length === 0 });
+      // ADR 0134 D5: particles drawn with no mesh are something to frame too (renderer/viewport.ts `fitParticles`).
+      const particles = s.particles?.status === "ready" && s.particles.on && s.particles.stages.length > 0;
+      const camera = reduceCamera(s.camera, e, { drawn: s.mesh !== null || s.geometry !== null || particles, nothingSelected: () => selectedElementsOf(s).length === 0 });
       return camera === s.camera ? s : { ...s, camera };
     }
     case "setTheme":

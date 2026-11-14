@@ -70,6 +70,8 @@ export interface ParticleHarnessJob {
   colour: { field: string; component: number } | null;
   /** the output to show, or null for the default (the last) */
   output: number | null;
+  /** draw the grid's wire box (capture) */
+  grid: boolean;
   /** when the launcher started the app (Date.now()), for the time to first frame */
   t0: number;
   /** how long the scrub of outputs runs (measure) */
@@ -1759,8 +1761,18 @@ export class Effects {
     const firstFrameMs = Date.now() - job.t0;
     if (job.colour) this.store.dispatch({ type: "setParticleColour", colour: job.colour });
     if (job.output !== null) this.store.dispatch({ type: "setParticleOutput", output: job.output });
+    if (job.grid) this.store.dispatch({ type: "setParticleGrid", on: true });
     s = await frameReady(60000);
+    // A still is framed on what is drawn now (the grid's box too), as the fit view frames it.
     if (job.op === "capture") {
+      this.store.dispatch({ type: "setCamera", to: "fit" });
+      await painted();
+    }
+    if (job.op === "capture") {
+      // The still states what it shows: the banner's particle lines (field, unit, range, the particles with no value), opened.
+      const summary = typeof document === "undefined" ? null : document.querySelector<HTMLButtonElement>("#banner .banner-summary");
+      if (summary && document.getElementById("banner")?.dataset["open"] !== "true") summary.click();
+      await painted();
       await bridge.particleHarnessStill();
       await bridge.particleHarnessDone({ ok: true, notices: s.particles });
       return;

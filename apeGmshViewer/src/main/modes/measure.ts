@@ -552,7 +552,9 @@ export function registerParticleHarness(host: { headlessEnd: (reason: string) =>
       if (output !== undefined && !/^[0-9]+$/.test(output)) throw new Error(`--output=${output}: expected an output index`);
       const scrub = arg("scrub-ms");
       if (scrub !== undefined && !/^[1-9][0-9]*$/.test(scrub)) throw new Error(`--scrub-ms=${scrub}: expected milliseconds above 0`);
-      return { op: mode, set, colour: colourArg(), output: output === undefined ? null : Number(output), t0, scrubMs: scrub === undefined ? 6000 : Number(scrub) };
+      const grid = arg("grid");
+      if (grid !== undefined && grid !== "1") throw new Error(`--grid=${grid}: expected 1`);
+      return { op: mode, set, colour: colourArg(), output: output === undefined ? null : Number(output), grid: grid === "1", t0, scrubMs: scrub === undefined ? 6000 : Number(scrub) };
     } catch (err) {
       headlessEnd(`the particle run: ${errText(err)}`);
       return null;

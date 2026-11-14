@@ -77,7 +77,9 @@ export function mountBanner(store: Store, planeLine?: PlaneLineOf): () => void {
       s.workspace.aside === prev.workspace.aside &&
       // VF2: the derived contour's plane line follows the model's plane map and what the contour view is.
       s.decls === prev.decls &&
-      s.variants === prev.variants
+      s.variants === prev.variants &&
+      // ADR 0134 D5: the particle lines (selectors `noticesOf`) follow the particle slice.
+      s.particles === prev.particles
     ) return;
     const refusals = refusalsOf(s);
     const notices = noticesOf(s);
