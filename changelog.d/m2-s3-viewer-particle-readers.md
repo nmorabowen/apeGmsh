@@ -25,5 +25,9 @@ particle set; Contract 2, the `.ladruno` particle group).
   by stem only with `<stem>.h5` and `<stem>.ladruno`; a set at another stem
   opens without a model.
 - **Banner.** An all-particle `.ladruno` opened with no model now says its
-  particles read without one, instead of "Results not drawn". The same
-  sentence is ready for a particle set, which the points layer shows.
+  particles read without one, instead of "Results not drawn". A stage whose
+  particles were refused never claims they read. A particle set opened alone
+  is refused by name, saying that drawing one alone comes in a later version,
+  so the window never opens empty and silent.
+- **Variants.** A variant row cannot name a `.particles.h5` as its model, in
+  apeGmshViewer and in Python alike.
