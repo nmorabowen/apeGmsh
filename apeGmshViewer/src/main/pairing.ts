@@ -11,6 +11,11 @@
 //   <stem>.workspace.h5  what the user makes: named sets, plot and view
 //                        definitions (ADR 0132 D1; read on request by
 //                        ./workspace.ts, the one file the app writes)
+//   <stem>.particles.h5  the MPM particle set the deck emitter seeded beside
+//                        the deck (ADR 0134 D1, the fork's contract §1; read by
+//                        reader/particleSet.ts). It is never a model or a results
+//                        file: a set it opens alone has no model, and the
+//                        particles read without one
 //
 // A set has one results slot (#2127; the T ruling of 2026-10-16): when both
 // results files sit beside the model, the file the user opened wins if it is
@@ -37,7 +42,7 @@
 import { readdirSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
-export type Kind = "model" | "geometry" | "results" | "user" | "workspace";
+export type Kind = "model" | "geometry" | "results" | "user" | "workspace" | "particles";
 
 /** The artifacts of one stem. `null` means absent on disk. */
 export interface OpenSet {
@@ -47,13 +52,17 @@ export interface OpenSet {
   user: string | null;
   /** ADR 0132 D1: the `<stem>.workspace.h5` beside the model, or null */
   workspace: string | null;
+  /** ADR 0134 D1: the `<stem>.particles.h5` (Contract 1, the seeded set), or null */
+  particles: string | null;
 }
 
 /** The one path each kind can have for a stem, present or not. */
 export type Candidates = Record<Kind, string>;
 
-// Longest suffix first: `.geometry.h5`, `.results.h5`, `.user.h5` and `.workspace.h5` must win over `.h5`.
+// Longest suffix first: `.geometry.h5`, `.results.h5`, `.user.h5`, `.workspace.h5` and
+// `.particles.h5` must win over `.h5`, so `case1.particles.h5` is never a model of stem `case1.particles`.
 const SUFFIXES: readonly (readonly [string, Kind])[] = [
+  [".particles.h5", "particles"],
   [".geometry.h5", "geometry"],
   [".results.h5", "results"],
   [".user.h5", "user"],
@@ -86,7 +95,7 @@ export function classify(path: string): { kind: Kind; stem: string } {
       return { kind, stem: path.slice(0, path.length - suffix.length) };
     }
   }
-  throw new Error(`apeGmshViewer opens <stem>.h5, <stem>.geometry.h5, <stem>.ladruno, <stem>.results.h5, <stem>.user.h5 or <stem>.workspace.h5; got ${path}`);
+  throw new Error(`apeGmshViewer opens <stem>.h5, <stem>.geometry.h5, <stem>.ladruno, <stem>.results.h5, <stem>.user.h5, <stem>.workspace.h5 or <stem>.particles.h5; got ${path}`);
 }
 
 /** The kind of the opened file, for each Candidates `candidates` made. */
@@ -98,7 +107,7 @@ const openedKind = new WeakMap<Candidates, Kind>();
    */
 export function candidates(opened: string): Candidates {
   const { kind, stem } = classify(opened);
-  const c: Candidates = { model: `${stem}.h5`, geometry: `${stem}.geometry.h5`, results: `${stem}.results.h5`, user: `${stem}.user.h5`, workspace: `${stem}.workspace.h5` };
+  const c: Candidates = { model: `${stem}.h5`, geometry: `${stem}.geometry.h5`, results: `${stem}.results.h5`, user: `${stem}.user.h5`, workspace: `${stem}.workspace.h5`, particles: `${stem}.particles.h5` };
   c[kind] = opened;
   // The results slot's rule needs to know whether the results were opened;
   // kept beside the object, so `Object.values(c)` (watch.ts) stays the paths.
@@ -158,7 +167,7 @@ export function stemSet(c: Candidates, exists: (p: string) => boolean, list: (di
   const first = (ps: string[]) => ps.map(has).find((p) => p !== null) ?? null;
   const others = otherResults(c.results, exists, list);
   const results = kind === "results" ? first([c.results, ...others]) : first([...others, c.results]);
-  return { model: has(c.model), geometry: has(c.geometry), results, user: has(c.user), workspace: has(c.workspace) };
+  return { model: has(c.model), geometry: has(c.geometry), results, user: has(c.user), workspace: has(c.workspace), particles: has(c.particles) };
 }
 
 /**
@@ -186,13 +195,14 @@ export function sameSet(a: OpenSet | null, b: OpenSet | null, fold: boolean = FO
     samePath(a.geometry, b.geometry, fold) &&
     samePath(a.results, b.results, fold) &&
     samePath(a.user, b.user, fold) &&
-    samePath(a.workspace, b.workspace, fold)
+    samePath(a.workspace, b.workspace, fold) &&
+    samePath(a.particles, b.particles, fold)
   );
 }
 
 /** Whether `path` is one of the set's files. */
 export function inSet(set: OpenSet, path: string, fold: boolean = FOLD_CASE): boolean {
-  return [set.model, set.geometry, set.results, set.user, set.workspace].some((p) => samePath(p, path, fold));
+  return [set.model, set.geometry, set.results, set.user, set.workspace, set.particles].some((p) => samePath(p, path, fold));
 }
 
 /**

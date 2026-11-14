@@ -158,6 +158,14 @@ test("the path form: the schema's rules, case-folded suffixes, .ladruno and part
   }
 });
 
+// #2985 review, finding 5: a variant row named a seeded particle set (ADR 0134 D1) as its model.
+test("the path form: a <stem>.particles.h5 is a sibling of a set, never a model file, whatever its case", () => {
+  for (const no of ["a.particles.h5", "sub/a.PARTICLES.H5", "a.Particles.h5"]) {
+    assert.match(pathProblem(no) ?? "", /names a sibling of a set \(.*\.particles\.h5.*\), not a model file/, no);
+  }
+  assert.equal(pathProblem("particles.h5"), null, "a model whose stem is `particles` is still a model");
+});
+
 test("rowOf: the page names a row by index and label; a mismatch, a refused row or a path is refused", () => {
   const valid = JSON.parse(readFileSync(join(EXAMPLES, "variants.valid.json"), "utf8"));
   valid.variants[1].params = { x: null };
