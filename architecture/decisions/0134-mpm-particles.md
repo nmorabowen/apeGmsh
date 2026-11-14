@@ -59,26 +59,48 @@ An eighth follows from ADR 0121 D4: the `mpm` primitives and verbs grow two froz
 
 ### D1 — The deck emitter writes the particle set beside the deck it emits
 
-There is one rule for the stem, the folder, the path in the deck, and the live path.
+There is one rule for the stem, the folder, the path in the deck, overwrites, and the live path.
 
 - **Who writes it.** Every deck emitter of `apeSees` — `tcl(path)`, `py(path)` and the others that
   write a deck — writes the particle set whenever the model declares MPM bodies. It writes it **next
-  to the deck it emits**, as `<deck stem>.particles.h5`. Emitting `ops.tcl("runs/case1.tcl")`
-  writes `runs/case1.particles.h5`.
-- **What the deck says.** The deck names the file by its bare name, brace-quoted:
-  `mpm particles -file {case1.particles.h5}`. The fork resolves a relative `-file` path from the
-  directory of the deck that names it, not from the process's working directory (contract §1). The
-  deck and its particle set therefore move together.
-- **Its stem is the deck's.** `model.h5` keeps its own path (the script stem or `save_to=`) and need
-  not share this stem. The two files pair through the particle file's provenance (below), not
-  through their names.
-- **Overwrites** follow `src/apeGmsh/_artifact_policy.py`:
-  - P3: a file from another run is replaced only under P3's provenance rule;
-  - P4: a file from this run is kept, or replaced with a warning, as P4 says;
-  - under MPI only rank 0 writes, as for the deck.
-- **No live path.** Live runs are flat FE only ([ADR 0121](0121-charter-v2-b-with-amendments.md),
-  the charter fix of D7). MPM is therefore deck-only, and the bridge refuses a model that declares
-  MPM bodies on the live path, by name.
+  to the deck it emits**, as `<deck stem>.particles.h5`, **in the same call** that writes the deck.
+  Emitting `ops.tcl("runs/case1.tcl")` writes `runs/case1.particles.h5`. The set follows its deck's
+  explicit-path semantics.
+- **What the deck says.** Each deck emitter generates the `mpm particles -file …` line itself, for
+  its own target. The line **anchors the path to the deck's own folder**, so the deck and its
+  particle set move together whatever the working directory:
+  - Tcl: `mpm particles -file [file join [file dirname [info script]] {case1.particles.h5}]`
+    (the pattern `emitter/tcl.py` already uses for per-rank decks);
+  - Python: `os.path.join(os.path.dirname(os.path.abspath(__file__)), "case1.particles.h5")`
+    (`emitter/py.py` has no `__file__` anchoring today; this adds it).
+
+  The fork opens the path exactly as given; a relative path resolves from the working directory
+  (contract §1).
+- **Not an archive row.** The `-file` line is not a `command()` row. It depends on the deck's stem,
+  which the archive does not know, so it stays out of `/opensees/commands` and out of `model_hash`.
+  The archive carries the MPM declarations (D2). A replay re-emits the line for its own target and
+  reproduces the particle **content**, under a new `SET_ID`. It does not reproduce a byte-identical
+  file.
+- **Its stem is the deck's, and it should be the model's** (the owner's ruling on #2976,
+  2026-11-14: "Yes, same stem"). The viewer pairs by stem only. A particle set pairs with its
+  model only when the deck stem equals the model stem, so `ops.tcl("slab.tcl")` beside `slab.h5`
+  writes `slab.particles.h5`. A deck, or a particle set, at another stem opens without a model,
+  under the viewer's existing "no model is open" banner. M2 builds no discovery by hash.
+- **Overwrites: a rule of its own.** `src/apeGmsh/_artifact_policy.py` cannot govern this file.
+  Its `is_apegmsh_artifact` needs `/meta` zone keys, which a Contract-1 file does not have, and its
+  P4 never replaces a file. The emitter therefore overwrites an existing `<deck stem>.particles.h5`
+  only when that file carries this contract's provenance: `FORMAT = "ladruno-mpm-particles"` and
+  `GENERATOR = "apeGmsh"`, written by an apeGmsh emit. Any other file at that path refuses the emit,
+  by name.
+- **Together or not at all.** When the particle set is refused, **no deck is written**. Both are
+  checked before either is written, so a re-emit never pairs a new deck with a stale set.
+- **Serial only, one writer.** MPM decks are serial: the fork refuses `mpm` in OpenSeesSP and
+  OpenSeesMP. The emitter therefore refuses, by name, a model with MPM bodies on a partitioned or a
+  per-rank emit (for example `tcl(per_rank=True)`). The emit has a single writer, and no rank gate is
+  needed.
+- **No live path. MPM is deck-only by this ADR's decision.** It follows
+  [ADR 0121](0121-charter-v2-b-with-amendments.md) D2, which makes emission the official path. The
+  bridge refuses a model that declares MPM bodies on the live path, by name.
 
 **The format.** The layout is Contract 1 (`FORMAT = "ladruno-mpm-particles"`,
 `FORMAT_VERSION = 1`). The fork owns it, as it owns `.ladruno` (ADR 0122 D4): the fork's reader
@@ -87,9 +109,13 @@ a fork PR.
 
 **Pairing.** The file's `PROVENANCE` group carries:
 
-- `session_id`, equal to the archive's `/meta/session_id`;
+- `session_id`;
 - `apegmsh_version` and `apegmsh_commit`;
-- `fem_hash` and `model_hash`, copied byte-equal when the archive has them.
+- `fem_hash` and `model_hash`, when the session has them.
+
+The emitter takes these values from the **in-memory lineage** at emit, not from `model.h5`, which may
+not be on disk yet (the deck and its set are written before `after_emit` writes the archive). They
+record where the set came from. Pairing is by stem (above), not by these values.
 
 `SET_ID`, a uuid4 at the file's root, is copied by the fork into the `.ladruno` it writes
 (`MODEL/PARTICLES@SOURCE_SET_ID`). The results then name the exact particle set they came from.
@@ -114,14 +140,14 @@ D1's `.workspace.h5`:
 - The open set (`OpenSet`, `candidates`) gains a `particles` slot.
 - `classify`'s refusal message lists the new suffix.
 - `<s>.particles.h5` pairs by stem with `<s>.ladruno` and `<s>.h5` when they are present. The fork
-  writes `<s>.ladruno` beside the deck when the deck names it so. A model archive at another stem is
-  paired through the provenance hashes, not by name.
+  writes `<s>.ladruno` beside the deck when the deck names it so. Pairing is by stem only: a file at
+  another stem opens without a model, under the existing "no model is open" banner.
 
 ### D2 — Where seeding runs: in the bridge's emitter, from FEMData alone
 
 Seeding runs in the bridge, at emit, from the `FEMData` the bridge was built on, with no session and
-no gmsh. Charter P3 says the bridge takes a `FEMData`, not a session; P9 keeps `gmsh` out of
-`apeGmsh.opensees`.
+no gmsh. Charter P3 keeps `gmsh.*` out of the bridge (no gmsh imports; testable without booting
+gmsh), and P9 lets `apeGmsh.opensees` depend only on `apeGmsh.mesh.FEMData`.
 
 - **Lattice seeding** is the v1 method. The bridge places `n` points per grid cell per axis, at the
   cell's sub-cell centres. It keeps a point when the point falls **inside an element of the body's
@@ -146,7 +172,7 @@ no gmsh. Charter P3 says the bridge takes a `FEMData`, not a session; P9 keeps `
   ([ADR 0114](0114-the-archive-is-the-program.md): `command()` is the archive's escape for a verb
   with no typed method, and its rows are archived under `/opensees/commands`). The declarations are
   the grid, the bodies, the particles per cell and the basis. A replay that emits from `model.h5`
-  therefore writes the same particle file. Contract 1 refuses zero or negative volumes, and apeGmsh
+  therefore reproduces the particle content, under a new `SET_ID` (D1). Contract 1 refuses zero or negative volumes, and apeGmsh
   never writes one.
 
 ### D3 — Particle results are the `.ladruno` particle group, read at `FORMAT_MINOR_VERSION ≥ 2`
@@ -263,7 +289,7 @@ public API asks for a tag.
   - capability probes that return `None` when they are inconclusive.
 - **The member stays Inventory** until its warrant-row test *passes*, not skips, in the nightly
   `live-fork` lane (ADR 0121 ruling 1; ruling 3 for skips).
-- **MPM is deck-only (D1).** A staged MPM run, for example a K0 start followed by a plastic stage,
+- **MPM is deck-only (D1; ADR 0121 D2).** A staged MPM run, for example a K0 start followed by a plastic stage,
   uses `parameter … pattern <mpmTag>` and `updateParameter` in the emitted deck. The live route
   refuses any model with MPM bodies, by name.
 - Paths in emitted Tcl are brace-quoted.
@@ -298,7 +324,8 @@ verb, or another family.
 ## Consequences
 
 - A deck with MPM bodies leaves one more file, `<deck stem>.particles.h5`, which can be large (about
-  100 bytes per particle before compression). Re-emitting from `model.h5` regenerates it.
+  100 bytes per particle before compression). Re-emitting from `model.h5` regenerates its content,
+  under a new `SET_ID`.
 - **Reading particle results with today's apeGmsh:**
   - a fork file with at least one FE stage opens with its particles ignored;
   - an all-particle file needs `model_h5=` in Python;
@@ -326,7 +353,10 @@ verb, or another family.
   deck, avoids that.
 - **Seeding with Gmsh's inside test.** It needs a live gmsh/OCC session in `apeGmsh.opensees`
   (P3, P9), and it cannot be replayed from `model.h5`.
-- **A live MPM path.** Live runs are flat FE only (ADR 0121).
+- **A live MPM path.** This ADR keeps MPM deck-only (D1; ADR 0121 D2 makes emission the official
+  path).
+- **Governing the particle file by `_artifact_policy`.** That policy needs `/meta` zone keys the file
+  does not have, and its P4 never replaces a file. D1 gives the file a rule of its own.
 - **A new results file for particles**, or particles in native `results.h5`. ADRs 0122 and 0131 allow
   one results format and no new native writer.
 - **A `.ladruno` `FORMAT_VERSION` bump to 2.** Every new fork file would become unreadable by today's
