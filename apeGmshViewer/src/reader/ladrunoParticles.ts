@@ -228,11 +228,11 @@ export class LadrunoParticles {
     return s;
   }
 
-  /** The ids of output `k` (its `ID` hyperslab). */
+  /** The ids of output `k` (its `ID` hyperslab), checked as `readOutput` checks them (C2-ID). */
   outputIds(stageId: string, k: number): Float64Array {
     const s = this.stage(stageId);
     const [a, b] = this.rows(s, k);
-    return readIds(this.dataset(`${s.group}/RESULTS/ON_PARTICLES/ID`), a, b);
+    return this.checkedIds(s, k, a, b).ids;
   }
 
   /** Output `k` of `field` (as the file spells it: `POSITION`, `STATE_<token>`): one hyperslab of `ID` and one of `DATA`. */
@@ -245,12 +245,7 @@ export class LadrunoParticles {
     }
     const [a, b] = this.rows(s, k);
     const on = `${s.group}/RESULTS/ON_PARTICLES`;
-    const idDs = this.dataset(`${on}/ID`);
-    const ids = readIds(idDs, a, b);
-    for (let i = 1; i < ids.length; i++) {
-      if (!(ids[i]! > ids[i - 1]!)) throw new ParticleContractError("C2-ID", `${idDs.path}: output ${k}'s ids are not strictly increasing at row ${a + i}`);
-    }
-    const rows = registryRows(s.registry.ids, ids, `${idDs.path} (output ${k})`);
+    const { ids, rows } = this.checkedIds(s, k, a, b);
     const nComp = f.components.length;
     const dataDs = this.dataset(`${on}/${field}/DATA`);
     const values = b === a ? new Float64Array(0) : floats(dataDs.slice([[a, b], [0, nComp]]), dataDs.path);
@@ -264,6 +259,16 @@ export class LadrunoParticles {
       throw new RangeError(`output ${k} is outside stage ${s.stageId} (${s.nOutputs} outputs${s.torn ? `; ${s.torn}` : ""})`);
     }
     return [s.offsets[k]!, s.offsets[k + 1]!];
+  }
+
+  /** Rows `a..b` of `ID` (output `k`): each a safe integer, strictly increasing within the output, and in the stage registry (C2-ID). */
+  private checkedIds(s: ParticleStage, k: number, a: number, b: number): { ids: Float64Array; rows: Int32Array } {
+    const idDs = this.dataset(`${s.group}/RESULTS/ON_PARTICLES/ID`);
+    const ids = readIds(idDs, a, b);
+    for (let i = 1; i < ids.length; i++) {
+      if (!(ids[i]! > ids[i - 1]!)) throw new ParticleContractError("C2-ID", `${idDs.path}: output ${k}'s ids are not strictly increasing at row ${a + i}`);
+    }
+    return { ids, rows: registryRows(s.registry.ids, ids, `${idDs.path} (output ${k})`) };
   }
 
   private dataset(path: string): PDataset {
@@ -387,10 +392,14 @@ export class LadrunoParticles {
         refusedFields.push({ field: name, reason: `${on.path}/${name} is neither a group nor a dataset (C2-UNKNOWN)` });
         continue;
       }
+      // Every field group's DATA bounds the committed outputs, a refused field's too, as the fork's
+      // `committed_outputs` reads it (#2985 review follow-up): a group that breaks the contract by an
+      // attribute still had its rows appended by the writer, and its length still says where it stopped.
+      const g = item as unknown as PGroup;
+      const dataRows = groupDataRows(g, this.ctors);
+      if (dataRows !== null) bounds.push({ what: `${on.path}/${name}/DATA`, rows: dataRows });
       try {
-        const { field, rows } = readField(item as unknown as PGroup, name, ndm, this.ctors);
-        fields.push(field);
-        bounds.push({ what: `${on.path}/${name}/DATA`, rows });
+        fields.push(readField(g, name, ndm, this.ctors));
       } catch (err) {
         if (!(err instanceof ParticleContractError)) throw err;
         refusedFields.push({ field: name, reason: err.message });
@@ -434,8 +443,17 @@ export class LadrunoParticles {
   }
 }
 
-/** One field group: its attributes, checked (C2-ATTR, C2-COMP, C2-NAME, C2-CAT, C2-DTYPE), and its DATA's row count. */
-function readField(g: PGroup, name: string, ndm: 2 | 3, ctors: PCtors): { field: ParticleField; rows: number } {
+/** The row count of a field group's `DATA`, whatever else the group breaks; null when it has no DATA dataset with a shape. */
+function groupDataRows(g: PGroup, ctors: PCtors): number | null {
+  if (!g.keys().includes("DATA")) return null;
+  const d = g.get("DATA");
+  if (!(d instanceof ctors.Dataset)) return null;
+  const shape = (d as unknown as PDataset).shape;
+  return shape && shape.length >= 1 ? shape[0]! : null;
+}
+
+/** One field group: its attributes, checked (C2-ATTR, C2-COMP, C2-NAME, C2-CAT, C2-DTYPE). */
+function readField(g: PGroup, name: string, ndm: 2 | 3, ctors: PCtors): ParticleField {
   if (!FIELD_NAME.test(name) && !STATE_NAME.test(name)) throw new ParticleContractError("C2-NAME", `${g.path}: a field name matches ^[A-Z][A-Z0-9_]*$ or ^STATE_[A-Za-z0-9_]+$`);
   for (const a of ["DISPLAY_NAME", "COMPONENTS", "TYPE", "DATA_TYPE", "PARTITION_REDUCTION"]) {
     if (g.attrs[a] === undefined) throw new ParticleContractError("C2-ATTR", `${g.path} has no @${a}`);
@@ -465,16 +483,13 @@ function readField(g: PGroup, name: string, ndm: 2 | 3, ctors: PCtors): { field:
   }
   if (name === "POSITION" && data.metadata.size !== 8) throw new ParticleContractError("C2-DTYPE", `${data.path} is float32; POSITION is always float64`);
   return {
-    field: {
-      name,
-      displayName,
-      components,
-      dimension: optionalText(g, "DIMENSION"),
-      description: optionalText(g, "DESCRIPTION"),
-      dataType,
-      dtype: data.metadata.size === 8 ? "f64" : "f32",
-    },
-    rows: shape[0]!,
+    name,
+    displayName,
+    components,
+    dimension: optionalText(g, "DIMENSION"),
+    description: optionalText(g, "DESCRIPTION"),
+    dataType,
+    dtype: data.metadata.size === 8 ? "f64" : "f32",
   };
 }
 
