@@ -864,6 +864,8 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   // M2-S0 (#2979): the fork's MPM fixtures. A particle-only stage has no FE contour.
   "particles_v1m2.ladruno": "-",
   "particles_mixed_v1m2.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | -",
+  // M2-S6 (#2990): the fork's torn file (a fourth output whose OFFSETS entry holds the fill).
+  "particles_torn_v1m2.ladruno": "-",
 };
 
 /** The repository root, and the directories the golden below scans for `.ladruno` files. */
