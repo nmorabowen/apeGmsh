@@ -21,7 +21,6 @@ from numpy import ndarray
 
 if TYPE_CHECKING:
     from ._slabs import ParticleSlab
-    from .readers._ladruno import LadrunoReader
     from .readers._ladruno_particles import (
         ParticleGrid,
         ParticleRegistry,
@@ -50,27 +49,18 @@ class ParticleResultsComposite:
 
     # -- stage resolution ---------------------------------------------
 
-    def _ladruno(self) -> "LadrunoReader":
-        from .readers._ladruno import LadrunoReader
+    def _source(self):
+        """The reader, when it can answer particle reads; else a refusal."""
+        from .readers._ladruno_particles import require_particle_reader
 
-        reader = self._r._reader
-        if not isinstance(reader, LadrunoReader):
-            raise ValueError(
-                f"results.particles reads the particle group of a single "
-                f".ladruno file (ADR 0134 D3); these Results read "
-                f"{self._r._reader_path()} through "
-                f"{type(reader).__name__}, which carries no particles "
-                f"(a native or MPCO file, a partitioned .ladruno set, or "
-                f"a to_units view)."
-            )
-        return reader
+        return require_particle_reader(self._r._reader, self._r._reader_path())
 
     def stages(self) -> list[str]:
         """The stage ids that hold particles, in stage order."""
-        return self._ladruno().particle_stage_ids()
+        return self._source().particle_stage_ids()
 
     def _stage(self, stage: Optional[str]) -> ParticleStage:
-        reader = self._ladruno()
+        reader = self._source()
         if stage is not None:
             sid = self._r._resolve_stage(stage)
         elif self._r._stage_id is not None:

@@ -157,6 +157,22 @@ def _require_safe_ids(ids: ndarray, where: str) -> None:
         )
 
 
+def require_particle_reader(reader: Any, where: str) -> Any:
+    """``reader`` when it is a one-file ``LadrunoReader``, the only reader
+    with particle results (ADR 0134 D3); otherwise a refusal by name."""
+    from ._ladruno import LadrunoReader
+
+    if not isinstance(reader, LadrunoReader):
+        raise ValueError(
+            f"results.particles reads the particle group of a single "
+            f".ladruno file (ADR 0134 D3); these Results read {where} "
+            f"through {type(reader).__name__}, which carries no particles "
+            f"(a native or MPCO file, a partitioned .ladruno set, or a "
+            f"to_units view)."
+        )
+    return reader
+
+
 # ---------------------------------------------------------------------
 # File-level scan (run when a LadrunoReader opens)
 # ---------------------------------------------------------------------
