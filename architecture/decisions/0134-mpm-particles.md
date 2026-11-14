@@ -2,8 +2,7 @@
 
 **Status:** Accepted (2026-11-13; drafted by the fork's MPM program (WP-232a), ratified by the
 owner on #2976, "Yes, ratify"). Merging the PR that flips this Status (`human-gate`) is the
-acceptance. The pointer in ADR 0112 lands with it (ADR 0121 D5); the pointers in ADRs 0023 and 0113
-are not added, the maintainer's call.
+acceptance. The pointers in ADRs 0112, 0023 and 0113 land with it (ADR 0121 D5).
 
 **Owner:** nmora
 

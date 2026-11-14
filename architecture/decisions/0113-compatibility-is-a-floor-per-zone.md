@@ -639,3 +639,10 @@ Until slice 10 every one of them holds as written. The neutral, opensees,
 geometry and provenance zones keep their floors and every clause that
 governs them, and the section-document amendment of 2026-10-04 is not
 affected.
+
+## Pointer (2026-11-13): ADR 0134
+
+[ADR 0134](0134-mpm-particles.md) (Accepted 2026-11-13) keeps the
+particle-set file `<deck stem>.particles.h5` outside this ADR's rule. Its
+version is an integer `FORMAT_VERSION` that the fork owns (ADR 0134 D1), not
+a semver key per zone. It therefore has no floor, no shim ledger and no schema corpus. The decision text above is unchanged.

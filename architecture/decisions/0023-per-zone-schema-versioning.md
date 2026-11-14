@@ -410,3 +410,10 @@ model (ADR 0113 D9); it no longer expires through `/model`. The same
 rule applies to the other embedded zone: an embedded `/opensees` below
 its floor opens `/stages` read-only and flagged. An embedded zone newer
 than the reader still refuses (INV-4).
+
+## Pointer (2026-11-13): ADR 0134
+
+[ADR 0134](0134-mpm-particles.md) (Accepted 2026-11-13) keeps the
+particle-set file `<deck stem>.particles.h5` outside this ADR's rule. Its
+version is an integer `FORMAT_VERSION` that the fork owns (ADR 0134 D1), not
+a semver key per zone. The decision text above is unchanged.
