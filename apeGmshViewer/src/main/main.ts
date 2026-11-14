@@ -256,7 +256,7 @@ function rowSet(open: string): { ok: true; set: OpenSet } | { ok: false; reason:
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
-  for (const p of [set.results, set.geometry, set.user, set.workspace]) {
+  for (const p of [set.results, set.geometry, set.user, set.workspace, set.particles]) {
     const why = study.confine(p);
     if (why !== null) return { ok: false, reason: `a file of the variant's set leaves the study: ${why}` };
   }
@@ -515,7 +515,7 @@ function windowSet(): OpenSet | { reason: string } {
   // VU18: the set the shot in progress draws, the spec's or a variant row's (./modes/render.ts `render:variant`).
   if (mode === "render") {
     const d = drawnSet();
-    return d ? { ...d, user: null, workspace: null } : { reason: "the render job was refused" };
+    return d ? { ...d, user: null, workspace: null, particles: null } : { reason: "the render job was refused" };
   }
   if ((mode === "describe" || mode === "capture" || mode === "measure") && file) {
     try {

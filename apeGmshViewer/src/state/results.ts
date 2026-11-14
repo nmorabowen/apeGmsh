@@ -13,6 +13,12 @@
 // from the model.h5. An unstamped file (a recorder's output before the stamp,
 // or one still being written) is `unpairable`, and the reason names the
 // remedy. Which reader read the file is main's dispatch, by the suffix.
+//
+// Particles (ADR 0134 D1, D3) read without a model: a `<stem>.particles.h5` (the
+// seeded set), or a `.ladruno` whose every stage holds particles only, opened with
+// no model is `noModel` with `particlesOnly`, and the banner says the particles read
+// without one, not "Results not drawn". A `.ladruno` with an FE stage keeps today's
+// sentence: its FE results need the model.
 
 import type { Lineage, ProgramDecls, ResultsInfo } from "./types.ts";
 
@@ -22,14 +28,42 @@ export type ResultsPairing =
   | { state: "paired"; by: "model_hash" | "fem_hash" }
   /** the results belong to another model: nothing of them is drawn on this one */
   | { state: "mismatch"; reason: string }
-  /** a results file is open with no model loaded; its embedded /model is not drawn (V4b) */
-  | { state: "noModel" }
+  /**
+   * a results file is open with no model loaded; its embedded /model is not drawn (V4b).
+   * `particlesOnly`: the file holds particles only (`particlesOnly(info)`), which read
+   * without a model (ADR 0134 D3); absent for every other file
+   */
+  | { state: "noModel"; particlesOnly?: true }
   /** the results file carries no hash to pair by */
   | { state: "unpairable"; reason: string };
+
+/**
+ * A `.ladruno` stage's `unread` entry for its RESULTS/ON_PARTICLES bucket when the
+ * file is read at FORMAT_MINOR_VERSION >= 2 and the stage's particles were read
+ * (reader/ladruno.ts writes it): the FE stage does not read them,
+ * reader/ladrunoParticles.ts does (ADR 0134 D3). A stage whose particles were
+ * refused lists `ON_PARTICLES (particles refused, not read: <why>)` instead, so
+ * `particlesOnly` never claims particles that did not read (#2985 review).
+ */
+export const PARTICLES_UNREAD = "ON_PARTICLES (particle results: read by the particle reader, not as FE results)";
 
 const short = (h: string): string => h.slice(0, 8);
 /** main/results.ts reads a path with this suffix with reader/ladruno.ts. */
 const LADRUNO = /\.ladruno$/i;
+/** The seeded particle set (ADR 0134 D1; main/pairing.ts's `particles` slot). */
+const PARTICLE_SET = /\.particles\.h5$/i;
+
+/**
+ * Whether a results info holds particles only: a `.ladruno` with at least one stage,
+ * every stage listing its ON_PARTICLES bucket as PARTICLES_UNREAD and holding no FE
+ * result (nodal, Gauss, line-station or spring). Such a file reads without a model.
+ */
+export function particlesOnly(info: Pick<ResultsInfo, "path" | "stages">): boolean {
+  if (!LADRUNO.test(info.path) || info.stages.length === 0) return false;
+  return info.stages.every(
+    (s) => s.unread.includes(PARTICLES_UNREAD) && s.nodal.length === 0 && s.gauss.length === 0 && (s.lineStations?.length ?? 0) === 0 && (s.springs ?? 0) === 0,
+  );
+}
 
 /**
  * The first opensees minor whose hashed `/opensees/program` `decl` column
@@ -167,7 +201,7 @@ export function pairResults(
   results: ResultsInfo | null,
 ): ResultsPairing {
   if (!results) return { state: "none" };
-  if (!model) return { state: "noModel" };
+  if (!model) return particlesOnly(results) ? { state: "noModel", particlesOnly: true } : { state: "noModel" };
   const r = results.lineage;
   if (!r && LADRUNO.test(results.path)) {
     const why = results.lineageReason ?? "INFO/PROVENANCE carries no model_hash and fem_hash";
@@ -204,6 +238,16 @@ export function pairResults(
   return { state: "unpairable", reason: "the results' /meta/lineage has neither model_hash nor fem_hash, so it cannot be paired with a model by content" };
 }
 
+/**
+ * Why a `<stem>.particles.h5` opened with no model, geometry or results is refused
+ * (#2985 finding 1): it fails closed, named, until the points layer (M2-S4) draws a
+ * particle set alone. effects.ts `openSet` shows it as the model's load failure.
+ */
+export function particleSetAloneRefusal(path: string): string {
+  const name = path.split(/[\\/]/).pop() ?? path;
+  return `${name} is a particle set (ADR 0134), not a model: drawing a particle set alone comes in a later version of apeGmshViewer. Open the model.h5 of the same stem, or the run's .ladruno.`;
+}
+
 /** The banner sentence for a pairing that does not draw results, or null. */
 export function pairingNotice(p: ResultsPairing, resultsName: string): string | null {
   switch (p.state) {
@@ -214,6 +258,9 @@ export function pairingNotice(p: ResultsPairing, resultsName: string): string | 
     case "mismatch":
       return `Results not drawn: ${resultsName} does not belong to this model (${p.reason}).`;
     case "noModel":
+      if (p.particlesOnly === true || PARTICLE_SET.test(resultsName)) {
+        return `No model is open for ${resultsName}: it holds particles only, and particles read without a model (ADR 0134).`;
+      }
       if (LADRUNO.test(resultsName)) return `Results not drawn: no model is open for ${resultsName}; open the model.h5 the run was emitted from.`;
       return `Results not drawn: no model is open for ${resultsName}. Its embedded /model is not drawn by this version; open the model.h5 it was written from.`;
     case "unpairable":
