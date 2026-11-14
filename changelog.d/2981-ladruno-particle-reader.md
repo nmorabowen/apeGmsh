@@ -25,7 +25,17 @@ An all-particle file now opens without `model_h5=`. Its `fem` is `None`,
 and a node, element or Gauss read of a particle-only stage raises
 `ValueError` that names the stage. A file a run left open reads every
 committed output and ignores a torn tail (contract §2.5), with
-`ParticleOutputsTruncatedWarning`. A part file with particles, a
-particle group in a minor-1 file, half a particle group and an inexact
-dtype are refused with the contract's rule code.
+`ParticleOutputsTruncatedWarning`. A torn tail includes a last `OFFSETS`
+entry that is smaller than the one before it. The reader refuses each of
+these with the contract's rule code:
+
+- a part file with particles;
+- a particle group in a minor-1 file;
+- half a particle group;
+- an inexact dtype;
+- a `PARTITION_REDUCTION` other than `NONE`;
+- a `STEP` that does not strictly increase;
+- an `OFFSETS` that decreases before its last entry.
+
+A refused stage raises on every access.
 `LADRUNO_SUPPORTED_FORMAT_VERSIONS` stays `(1,)`.
