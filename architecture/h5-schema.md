@@ -3253,7 +3253,7 @@ otherwise name one folder. It has no backslash, colon, control character or
 leading `/`, so it cannot be absolute or name a drive. Its last segment is a
 non-empty stem followed by `.h5` (`.h5` alone and `x/.h5` refuse). It is a model
 file: it ends in none of the reserved suffixes `.geometry.h5`, `.results.h5`,
-`.user.h5`, `.workspace.h5` or `.ladruno` (nor a `.part-<N>.ladruno`). Every suffix
+`.user.h5`, `.workspace.h5`, `.particles.h5` or `.ladruno` (nor a `.part-<N>.ladruno`). Every suffix
 is matched case-insensitively, as the app's `classify` matches them, so
 `slab.USER.h5` refuses too. The schema checks this form. A reader then joins it to the manifest's
 folder, resolves links and junctions, and requires the result to lie inside the
