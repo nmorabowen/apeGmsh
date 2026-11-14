@@ -1,0 +1,3 @@
+### TESTS — the fork's MPM contract fixtures and validators are vendored, and today's readers are pinned on them (#2979)
+
+ADR 0134 D3 asks for the fork's fixtures before the particle reader work starts. `tests/fixtures/mpm/` now holds byte-identical copies of the three fixtures and three validators (fork commit `55f1831f2`, each file's blob sha in its README). `Results.from_ladruno` opens the mixed fixture and reads its FE stage with nothing particle-shaped exposed, and refuses the all-particle one for want of a MODEL group; the viewer reader opens both and reports no particles. No code changes.
