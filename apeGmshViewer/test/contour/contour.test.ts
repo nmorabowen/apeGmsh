@@ -861,6 +861,9 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "plate_uncracked.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "plate_cracked.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "plate_remeshed.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  // M2-S0 (#2979): the fork's MPM fixtures. A particle-only stage has no FE contour.
+  "particles_v1m2.ladruno": "-",
+  "particles_mixed_v1m2.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | -",
 };
 
 /** The repository root, and the directories the golden below scans for `.ladruno` files. */
@@ -872,6 +875,7 @@ const CONTOUR_GOLDEN_DIRS: readonly URL[] = [
   new URL("apeGmshViewer/test/fixtures/vu10/", REPO_ROOT),
   new URL("apeGmshViewer/test/fixtures/vu10/cracked/", REPO_ROOT),
   new URL("apeGmshViewer/test/fixtures/compare_render/remeshed/", REPO_ROOT),
+  new URL("tests/fixtures/mpm/", REPO_ROOT),
 ];
 
 /** `git ls-files '*.ladruno'` at the repo root (sorted, `/`-separated), or the reason git could not answer. */
