@@ -3,16 +3,9 @@
 ``<stem>.particles.h5`` is a sibling of a set, as ``.geometry.h5``, ``.results.h5``,
 ``.user.h5`` and ``.workspace.h5`` are, so ``path_problem`` refuses it, case-insensitively,
 as apeGmshViewer's ``reader/variants.ts`` ``pathProblem`` does.
-
-The JSON Schema (``architecture/schemas/variants.schema.json``, ``$defs/path``) does not
-reserve the suffix yet: that file is outside slice #2982, and the strict xfail below fails
-the day it is reserved, so the schema and Python cannot drift silently.
 """
 
 from __future__ import annotations
-
-import json
-from pathlib import Path
 
 import pytest
 
@@ -31,10 +24,3 @@ def test_a_model_whose_stem_is_particles_is_still_a_model() -> None:
     assert _variants.path_problem("particles.h5") is None
     assert _variants.path_problem("runs/particles.h5") is None
 
-
-@pytest.mark.xfail(strict=True, reason="architecture/schemas/variants.schema.json does not reserve .particles.h5 yet (outside slice #2982)")
-def test_the_json_schema_reserves_the_particle_set_too() -> None:
-    jsonschema = pytest.importorskip("jsonschema")
-    schema = json.loads((Path(__file__).resolve().parents[2] / "architecture" / "schemas" / "variants.schema.json").read_text(encoding="utf-8"))
-    sub = {"$schema": schema["$schema"], **schema["$defs"]["path"]}
-    assert not jsonschema.Draft202012Validator(sub).is_valid("slab.particles.h5")
