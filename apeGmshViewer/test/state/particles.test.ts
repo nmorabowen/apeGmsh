@@ -140,9 +140,9 @@ test("the lines say what is drawn, the particles with no value, an all-NaN outpu
     source: "results",
     path: "x.ladruno",
     stages: [],
-    unread: [{ stage: "/MODEL_STAGE[1]", reason: "skipped: torn at opening" }],
+    unread: [{ stage: "/MODEL_STAGE[1]", reason: "refused: the registry columns differ in length (C2-REG)" }],
   });
-  assert.deepEqual(particleNotices(unread), ["Particles of /MODEL_STAGE[1] not drawn: skipped: torn at opening."]);
+  assert.deepEqual(particleNotices(unread), ["Particles of /MODEL_STAGE[1] not drawn: refused: the registry columns differ in length (C2-REG)."]);
 });
 
 // -- the effects, through the real main-side host ---------------------------------------

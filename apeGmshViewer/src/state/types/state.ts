@@ -80,7 +80,7 @@ export interface ParticlesState {
   status: "loading" | "ready" | "failed";
   error: string | null;
   stages: ParticleStageInfo[];
-  /** particle stages refused or skipped, by group, with why (the notice names them) */
+  /** particle stages refused, by group, with why (the notice names them) */
   unread: { stage: string; reason: string }[];
   /** index into `stages` */
   stage: number;

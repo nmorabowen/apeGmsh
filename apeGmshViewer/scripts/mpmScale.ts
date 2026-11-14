@@ -143,7 +143,7 @@ const rf = openLadruno(h5wasm as unknown as ResultsH5, out);
 try {
   const p = rf.particles;
   const s = p?.stages[0];
-  if (!p || p.refused.length || p.skipped.length || !s || s.nOutputs !== T || s.offsets[T] !== N * T) {
+  if (!p || p.refused.length || !s || s.nOutputs !== T || s.offsets[T] !== N * T) {
     throw new Error(`${out}: the reader does not read it back as ${N} particles in ${T} outputs (${JSON.stringify(p?.refused ?? "no particles")})`);
   }
   const o = p.readOutput(s.stageId, T - 1, "STATE_eqPlasticStrain");

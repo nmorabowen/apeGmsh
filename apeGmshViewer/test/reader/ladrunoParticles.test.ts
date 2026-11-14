@@ -523,21 +523,21 @@ test("#2987 follow-up: a field group with no TYPE, or with PARTITION_REDUCTION o
   }
 });
 
-test("#2987 follow-up: registry columns of unequal length beside a committed output refuse the stage (C2-REG): no writer leaves that", () => {
+test("#2987 follow-up: registry columns of unequal length refuse the stage by name (C2-REG), as the fork's merged contract and the Python reader do", () => {
   assertRefusedStage(
     editedCopy("short_mass.ladruno", (w) => (w.get("MODEL_STAGE[1]/MODEL/PARTICLES/MASS") as h5wasm.Dataset).resize([11])),
-    /registry columns differ in length \(ID 12, BODY_ID 12, MATERIAL_TAG 12, MASS 11\), and the stage holds 3 committed outputs, so it is no torn opening \(C2-REG\)/,
+    /^stage stage_0 \(\/MODEL_STAGE\[1\]\/MODEL\/PARTICLES\): the registry columns differ in length \(ID 12, BODY_ID 12, MATERIAL_TAG 12, MASS 11\) \(C2-REG\)$/,
   );
   assertRefusedStage(
     editedCopy("short_body.ladruno", (w) => (w.get("MODEL_STAGE[1]/MODEL/PARTICLES/BODY_ID") as h5wasm.Dataset).resize([11])),
-    /registry columns differ in length \(ID 12, BODY_ID 11, MATERIAL_TAG 12, MASS 12\), and the stage holds 3 committed outputs.*\(C2-REG\)/,
+    /^stage stage_0 \(\/MODEL_STAGE\[1\]\/MODEL\/PARTICLES\): the registry columns differ in length \(ID 12, BODY_ID 11, MATERIAL_TAG 12, MASS 12\) \(C2-REG\)$/,
   );
 });
 
-test("#2983 contract follow-up: a stage torn at opening (registry columns of unequal length, no committed output) is skipped by name; the file opens and its other stages read", () => {
-  // Two copies of the fixture's particle stage; the second one's writer died inside the registry write at opening,
-  // so its MASS is short and nothing of ON_PARTICLES was appended.
-  const path = rewritten("torn_opening.ladruno", 5, { stages: 2 });
+test("#2983 (T ruling): a stage whose registry columns differ and that holds no committed output is still refused by name (C2-REG), never skipped; the file's other stages read", () => {
+  // Two copies of the fixture's particle stage; the second one's MASS is short and nothing of ON_PARTICLES was appended.
+  // A skip for such a stage waits on the fork's contract (OpenSees#1081, #2991); until then both readers refuse it.
+  const path = rewritten("short_registry_no_output.ladruno", 5, { stages: 2 });
   const w = new h5wasm.File(path, "a");
   try {
     (w.get("MODEL_STAGE[1]/MODEL/PARTICLES/MASS") as h5wasm.Dataset).resize([7]);
@@ -553,18 +553,16 @@ test("#2983 contract follow-up: a stage torn at opening (registry columns of une
   const f = openLadruno(H5, path);
   try {
     const p = f.particles!;
-    assert.deepEqual(p.refused, [], "a torn opening is no contract break");
     assert.deepEqual(p.stages.map((s) => s.stageId), ["stage_0"], "the other stage reads");
     assertFixtureStage(p.stages[0]!, p);
-    assert.equal(p.skipped.length, 1, "the torn stage is named, not dropped");
-    assert.equal(p.skipped[0]!.stageId, "stage_1");
-    assert.match(p.skipped[0]!.reason, /MODEL_STAGE\[1\]\/MODEL\/PARTICLES: torn at opening: the registry columns differ in length \(ID 12, BODY_ID 12, MATERIAL_TAG 12, MASS 7\) and no output was committed/);
-    assert.throws(() => p.stage("stage_1"), /stage stage_1's particles are skipped: .*torn at opening/);
-    assert.ok(f.index.warnings.some((x) => /MODEL_STAGE\[1\]: its particles are skipped: .*torn at opening/.test(x)), "the index warns");
+    assert.equal(p.refused.length, 1);
+    assert.equal(p.refused[0]!.stageId, "stage_1");
+    assert.equal(p.refused[0]!.reason, "stage stage_1 (/MODEL_STAGE[1]/MODEL/PARTICLES): the registry columns differ in length (ID 12, BODY_ID 12, MATERIAL_TAG 12, MASS 7) (C2-REG)");
+    assert.throws(() => p.stage("stage_1"), /stage stage_1's particles are refused: stage stage_1 .*\(C2-REG\)/);
+    assert.ok(f.index.warnings.some((x) => /MODEL_STAGE\[1\]: its particles are refused and not read: stage stage_1 .*\(C2-REG\)/.test(x)), "the index warns");
     const unread = f.stage("stage_1").unread;
-    assert.ok(!unread.includes(PARTICLES_UNREAD), "a skipped stage never lists its particles as read");
-    assert.ok(unread.some((u) => /^ON_PARTICLES \(particles skipped, not read: .*torn at opening/.test(u)), unread.join("\n"));
-    assert.equal(particlesOnly(metaOf(f)), false, "the banner does not claim every stage's particles read");
+    assert.ok(!unread.includes(PARTICLES_UNREAD), "a refused stage never lists its particles as read");
+    assert.equal(particlesOnly(metaOf(f)), false);
   } finally {
     f.close();
   }

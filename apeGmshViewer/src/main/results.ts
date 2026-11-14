@@ -714,8 +714,8 @@ export class ResultsHost {
 
   /**
    * ADR 0134 D5: the particle stages of the indexed `.ladruno` (metadata only;
-   * reader/ladrunoParticles.ts read them at open), and the stages it refused or
-   * skipped, by group, with why. A file that is not one `.ladruno` read at
+   * reader/ladrunoParticles.ts read them at open), and the stages it refused,
+   * by group, with why. A file that is not one `.ladruno` read at
    * FORMAT_MINOR_VERSION >= 2 holds no particles this app reads: refused, by name.
    */
   particleIndex(path: string): ParticleIndexAnswer {
@@ -728,7 +728,7 @@ export class ResultsHost {
         ok: true,
         path,
         stages: p.stages.map(particleStageInfo),
-        unread: [...p.refused.map((r) => ({ stage: r.group, reason: `refused: ${r.reason}` })), ...p.skipped.map((r) => ({ stage: r.group, reason: `skipped: ${r.reason}` }))],
+        unread: p.refused.map((r) => ({ stage: r.group, reason: `refused: ${r.reason}` })),
       };
     } catch (err) {
       return { ok: false, error: message(err) };
