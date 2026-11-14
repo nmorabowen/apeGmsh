@@ -14,9 +14,12 @@ MPM_FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "mpm"
 _VENDORED = ("mpm_contracts", "ladruno_format", "ladruno_basis")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def contracts() -> Iterator[ModuleType]:
     """The vendored ``mpm_contracts`` module, with ``sys.path``/``sys.modules`` restored.
+
+    Module scope, not session: the bare names must be gone before any later module runs
+    (``tests/test_import_namespacing.py`` refuses a test module left under a bare name).
 
     The copies patch ``sys.path`` from their own location, so they are loaded by putting
     their directory on ``sys.path``, never by editing them (``tests/fixtures/mpm/README.md``).
