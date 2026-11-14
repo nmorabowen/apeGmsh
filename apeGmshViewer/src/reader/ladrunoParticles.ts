@@ -324,6 +324,7 @@ export class LadrunoParticles {
   private readRegistry(model: PGroup, bodies: ParticleBody[]): ParticleRegistry {
     const ds = (name: string) => requiredDataset(model, name, this.ctors, "C2-REG");
     const idDs = ds("ID");
+    exactInt(idDs, 8, "C2-REG");
     const ids = readIds(idDs, 0, oneD(idDs, "C2-REG"));
     for (let i = 1; i < ids.length; i++) if (!(ids[i]! > ids[i - 1]!)) throw new ParticleContractError("C2-REG", `${idDs.path} is not strictly increasing at row ${i}`);
     const bodyIds = int32s(ds("BODY_ID"), ids.length, "C2-REG");
@@ -341,6 +342,8 @@ export class LadrunoParticles {
 
   /** The index datasets and the fields, under the crash rule of §2.5. */
   private readOutputs(on: PGroup, ndm: 2 | 3): Pick<ParticleStage, "nOutputs" | "steps" | "time" | "offsets" | "fields" | "refusedFields" | "torn"> {
+    const reduction = requiredText(on, "PARTITION_REDUCTION", "C2-RED");
+    if (reduction !== "NONE") throw new ParticleContractError("C2-RED", `${on.path}@PARTITION_REDUCTION = ${JSON.stringify(reduction)}; expected "NONE" (serial only in minor 2)`);
     const stepDs = requiredDataset(on, "STEP", this.ctors, "C2-AXES");
     const timeDs = requiredDataset(on, "TIME", this.ctors, "C2-AXES");
     const offDs = requiredDataset(on, "OFFSETS", this.ctors, "C2-OFF");
@@ -355,7 +358,21 @@ export class LadrunoParticles {
     const nId = oneD(idDs, "C2-ID");
     const offsets = nOff === 0 ? new Float64Array(0) : readIds(offDs, 0, nOff);
     if (nOff > 0 && offsets[0] !== 0) throw new ParticleContractError("C2-OFF", `${offDs.path}[0] = ${offsets[0]}; expected 0`);
-    for (let i = 1; i < nOff; i++) if (offsets[i]! < offsets[i - 1]!) throw new ParticleContractError("C2-OFF", `${offDs.path} decreases at ${i}`);
+    // §2.5's crash rule as the fork's writer confirms it (#2985 review; the fork adopts it as the
+    // contract rule): DATA, ID, STEP and TIME are appended before OFFSETS, which commits the output
+    // last, so an entry the writer has extended but not yet filled (it reads as the
+    // fill value, 0) can only be the last one. A decrease there is the output in flight: it is
+    // not counted, and the outputs committed before it read. A decrease anywhere earlier is a
+    // malformed table and refuses the stage (C2-OFF). A torn entry equal to the one before it (every
+    // output so far empty) is no decrease: it reads as one more empty output, which the fork accepts.
+    let nOffUsed = nOff;
+    let inFlight: string | null = null;
+    for (let i = 1; i < nOff; i++) {
+      if (offsets[i]! >= offsets[i - 1]!) continue;
+      if (i !== nOff - 1) throw new ParticleContractError("C2-OFF", `${offDs.path} decreases at ${i}`);
+      nOffUsed = nOff - 1;
+      inFlight = `${offDs.path}[${i}] = ${offsets[i]} is below the entry before it, so it is the output being written and is not counted`;
+    }
     // The fields, checked against the contract; each one's DATA length bounds the outputs.
     const fields: ParticleField[] = [];
     const refusedFields: { field: string; reason: string }[] = [];
@@ -384,7 +401,7 @@ export class LadrunoParticles {
       throw new ParticleContractError("C2-POS", why ? `${on.path}/POSITION is refused: ${why.reason}` : `${on.path} has no POSITION field`);
     }
     // §2.5: T' from the index datasets, then the committed prefix every dataset holds.
-    const tPrime = Math.max(0, Math.min(nStep, nTime, nOff - 1));
+    const tPrime = Math.max(0, Math.min(nStep, nTime, nOffUsed - 1));
     let n = tPrime;
     let short: { what: string; rows: number } | null = null;
     while (n > 0) {
@@ -396,12 +413,14 @@ export class LadrunoParticles {
     }
     const notes: string[] = [];
     if (nOff === 0) notes.push(`${offDs.path} is empty: no output was committed`);
-    if (nStep !== tPrime || nTime !== tPrime || nOff - 1 !== tPrime) notes.push(`STEP holds ${nStep}, TIME ${nTime} and OFFSETS ${nOff} entries, so ${tPrime} output${tPrime === 1 ? " is" : "s are"} committed`);
+    if (inFlight !== null) notes.push(inFlight);
+    if (nStep !== tPrime || nTime !== tPrime || nOffUsed - 1 !== tPrime) notes.push(`STEP holds ${nStep}, TIME ${nTime} and OFFSETS ${nOff} entries, so ${tPrime} output${tPrime === 1 ? " is" : "s are"} committed`);
     if (n < tPrime) notes.push(`${short!.what} holds ${short!.rows} rows, short of output ${n}'s end ${offsets[n + 1]}, so ${tPrime - n} committed output${tPrime - n === 1 ? " is" : "s are"} dropped`);
     const used = nOff === 0 ? 0 : offsets[n]!;
     const longer = bounds.filter((b) => b.rows > used);
     if (longer.length > 0) notes.push(`rows past ${used} (${longer.map((b) => `${b.what}: ${b.rows}`).join(", ")}) are a partial output and are not read`);
     const steps = n === 0 ? new Float64Array(0) : readIds(stepDs, 0, n);
+    for (let k = 1; k < n; k++) if (!(steps[k]! > steps[k - 1]!)) throw new ParticleContractError("C2-AXES", `${stepDs.path} is not strictly increasing at output ${k} (${steps[k - 1]}, then ${steps[k]})`);
     const time = n === 0 ? new Float64Array(0) : floats(timeDs.slice([[0, n]]), timeDs.path);
     return {
       nOutputs: n,

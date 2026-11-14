@@ -23,6 +23,8 @@ import * as h5wasm from "h5wasm/node";
 import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
 import type { LadrunoParticles, ParticleStage } from "../../src/reader/ladrunoParticles.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
+import { metaOf } from "../../src/main/results.ts";
+import { pairingNotice, pairResults, particlesOnly, PARTICLES_UNREAD } from "../../src/state/results.ts";
 
 await h5wasm.ready;
 const H5 = h5wasm as unknown as ResultsH5;
@@ -263,8 +265,12 @@ function copyAttrs(from: h5wasm.Group | h5wasm.Dataset, to: h5wasm.Group | h5was
   }
 }
 
-/** The fixture's particle stage rewritten into a fresh file, with `chunks` rows per chunk (null: contiguous). */
-function rewritten(name: string, chunks: number | null): string {
+/**
+ * The fixture's particle stage rewritten into a fresh file, with `chunks` rows per chunk
+ * (null: contiguous). `skip` leaves out the links with these paths (relative to the stage),
+ * and `dtype` writes a dataset (same relative path) with another dtype: the review's repros.
+ */
+function rewritten(name: string, chunks: number | null, opts: { skip?: string[]; dtype?: Record<string, string> } = {}): string {
   const path = join(tmp, name);
   const src = new h5wasm.File(ALL, "r");
   const out = new h5wasm.File(path, "w");
@@ -273,20 +279,29 @@ function rewritten(name: string, chunks: number | null): string {
     copyAttrs(src.get("INFO") as h5wasm.Group, info);
     const stage = out.create_group("MODEL_STAGE[0]");
     copyAttrs(src.get("MODEL_STAGE[1]") as h5wasm.Group, stage);
+    const rel = (path: string) => path.replace(/^\/MODEL_STAGE\[1\]\//, "");
     const copyTree = (from: h5wasm.Group, to: h5wasm.Group) => {
       copyAttrs(from, to);
       for (const k of from.keys()) {
         const item = from.get(k);
+        const at = rel(`${from.path}/${k}`);
+        if (opts.skip?.includes(at)) continue;
+        const retyped = opts.dtype?.[at];
         if (item instanceof h5wasm.Group) copyTree(item, to.create_group(k));
         else if (item instanceof h5wasm.Dataset) {
           const shape = item.shape!;
           const strings = item.metadata.type === 3;
-          const data = strings ? (item.value as string[]).map((x) => x.replace(/\0+$/, "")) : (item.value as never);
+          const value = item.value as unknown;
+          const data = strings
+            ? (value as string[]).map((x) => x.replace(/\0+$/, ""))
+            : retyped === "<Q"
+              ? BigUint64Array.from(value as BigInt64Array, (x) => BigInt.asUintN(64, x))
+              : (value as never);
           const ds = to.create_dataset({
             name: k,
-            data,
+            data: data as never,
             shape,
-            ...(strings ? {} : { dtype: item.dtype as never }),
+            ...(strings ? {} : { dtype: (retyped ?? item.dtype) as never }),
             ...(chunks === null || strings || shape[0] === 0 ? {} : { chunks: [Math.min(chunks, shape[0]!), ...shape.slice(1)], maxshape: [null, ...shape.slice(1)] }),
           });
           copyAttrs(item, ds);
@@ -323,3 +338,97 @@ for (const [label, chunks] of [["contiguous datasets", null], ["5-row chunks", 5
     });
   });
 }
+
+// -- #2985 review: findings 2, 3 and 4 ---------------------------------------------
+
+/** The review's refused stage: the file still opens, the refusal is said, and nothing claims the particles read. */
+function assertRefusedStage(path: string, code: RegExp): void {
+  const f = openLadruno(H5, path);
+  try {
+    assert.equal(f.particles!.stages.length, 0);
+    assert.equal(f.particles!.refused.length, 1);
+    assert.match(f.particles!.refused[0]!.reason, code);
+    const unread = f.index.stages[0]!.unread;
+    assert.ok(!unread.includes(PARTICLES_UNREAD), "a refused stage never lists its particles as read");
+    assert.ok(unread.some((u) => /^ON_PARTICLES \(particles refused, not read: /.test(u)), unread.join("\n"));
+    assert.ok(f.index.warnings.some((w) => /its particles are refused and not read/.test(w)), "the index warns");
+    const meta = metaOf(f);
+    assert.equal(particlesOnly(meta), false);
+    assert.deepEqual(pairResults(null, meta), { state: "noModel" }, "the banner does not say the particles read");
+    assert.doesNotMatch(pairingNotice(pairResults(null, meta), "x.ladruno")!, /particles only/);
+  } finally {
+    f.close();
+  }
+}
+
+test("finding 2: an all-particle file whose POSITION is missing refuses its stage (C2-POS), and the banner does not claim the particles read", () => {
+  assertRefusedStage(rewritten("no_position.ladruno", null, { skip: ["RESULTS/ON_PARTICLES/POSITION"] }), /has no POSITION field \(C2-POS\)/);
+});
+
+test("finding 3: a registry ID stored as uint64 is refused (C2-REG), never read as int64", () => {
+  assertRefusedStage(rewritten("uint64_registry.ladruno", null, { dtype: { "MODEL/PARTICLES/ID": "<Q" } }), /MODEL\/PARTICLES\/ID is not int64 .*unsigned.*\(C2-REG\)/);
+});
+
+test("finding 3: ON_PARTICLES@PARTITION_REDUCTION other than NONE is refused (C2-RED)", () => {
+  const path = join(tmp, "reduction.ladruno");
+  copyFileSync(ALL, path);
+  const w = new h5wasm.File(path, "a");
+  try {
+    const on = w.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES") as h5wasm.Group;
+    on.delete_attribute("PARTITION_REDUCTION");
+    on.create_attribute("PARTITION_REDUCTION", "SUM");
+  } finally {
+    w.close();
+  }
+  assertRefusedStage(path, /ON_PARTICLES@PARTITION_REDUCTION = "SUM"; expected "NONE".*\(C2-RED\)/);
+});
+
+test("finding 3: a STEP that does not strictly increase is refused (C2-AXES)", () => {
+  const path = join(tmp, "step.ladruno");
+  copyFileSync(ALL, path);
+  const w = new h5wasm.File(path, "a");
+  try {
+    (w.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES/STEP") as h5wasm.Dataset).write_slice([[2, 3]], new Int32Array([10]));
+  } finally {
+    w.close();
+  }
+  assertRefusedStage(path, /STEP is not strictly increasing at output 2 \(10, then 10\) \(C2-AXES\)/);
+});
+
+test("finding 4: an OFFSETS entry extended but not yet filled (0, below the one before it) is the output in flight; the committed outputs read", () => {
+  // The writer appended output 3's DATA, ID, STEP and TIME, then extended OFFSETS, and was killed before it wrote the entry.
+  const path = tornCopy("torn_offsets.ladruno", { OFFSETS: 5, STEP: 4, TIME: 4 });
+  withFile(path, (f, p) => {
+    const s = p.stage("stage_0");
+    assert.equal(s.nOutputs, 3, "the three committed outputs");
+    assert.deepEqual(Array.from(s.offsets), [0, 12, 24, 35]);
+    assert.match(s.torn!, /OFFSETS\[4\] = 0 is below the entry before it, so it is the output being written and is not counted/);
+    assert.deepEqual(Array.from(p.outputIds("stage_0", 2)), IDS_FULL.slice(0, 11));
+    assert.ok(f.index.warnings.some((w) => /ON_PARTICLES: 3 outputs read; a torn tail/.test(w)));
+  });
+});
+
+test("the fork's edge case: when every output so far is empty, a torn OFFSETS entry equals the one before it and reads as one more empty output", () => {
+  const empty: Record<string, number> = { ID: 0, OFFSETS: 3, STEP: 2, TIME: 2 };
+  for (const field of ["POSITION", "VELOCITY", "STRESS", "STRAIN", "VOLUME", "DEFORMATION_GRADIENT", "STATE_eqPlasticStrain"]) empty[`${field}/DATA`] = 0;
+  const path = tornCopy("all_empty.ladruno", empty);
+  const w = new h5wasm.File(path, "a");
+  try {
+    (w.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES/OFFSETS") as h5wasm.Dataset).write_slice([[1, 3]], new BigInt64Array([0n, 0n]));
+  } finally {
+    w.close();
+  }
+  withFile(path, (_f, p) => {
+    assert.deepEqual(p.refused, []);
+    const s = p.stage("stage_0");
+    assert.equal(s.nOutputs, 2, "the committed empty output and the torn one, read as one more empty output");
+    assert.deepEqual(Array.from(s.offsets), [0, 0, 0]);
+    assert.equal(s.torn, null);
+    for (const k of [0, 1]) {
+      assert.equal(p.outputIds("stage_0", k).length, 0);
+      const o = p.readOutput("stage_0", k, "POSITION");
+      assert.equal(o.ids.length, 0);
+      assert.equal(o.values.length, 0);
+    }
+  });
+});

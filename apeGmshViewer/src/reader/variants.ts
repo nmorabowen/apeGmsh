@@ -106,8 +106,8 @@ export function nameProblem(v: unknown): string | null {
   return null;
 }
 
-/** The reserved sibling suffixes (D8): a variant's path names a model file, never one of these. */
-const RESERVED = /\.(geometry|results|user|workspace)\.h5$/i;
+/** The reserved sibling suffixes (D8): a variant's path names a model file, never one of these (ADR 0134 D1 adds `.particles.h5`). */
+const RESERVED = /\.(geometry|results|user|workspace|particles)\.h5$/i;
 
 /** Why `p` is not a D8 path form (the schema's checks), or null. */
 export function pathProblem(p: unknown): string | null {
@@ -122,7 +122,7 @@ export function pathProblem(p: unknown): string | null {
   }
   const last = segs[segs.length - 1]!;
   if (!/\.h5$/i.test(last) || last.length <= 3) return `must name a model file <stem>.h5 with a non-empty stem: ${show(p)}`;
-  if (/\.ladruno$/i.test(last) || RESERVED.test(last)) return `names a sibling of a set (.geometry.h5, .results.h5, .user.h5, .workspace.h5 or .ladruno), not a model file: ${show(p)}`;
+  if (/\.ladruno$/i.test(last) || RESERVED.test(last)) return `names a sibling of a set (.geometry.h5, .results.h5, .user.h5, .workspace.h5, .particles.h5 or .ladruno), not a model file: ${show(p)}`;
   return null;
 }
 

@@ -401,7 +401,13 @@ export class LadrunoFile {
     this.particles = readsParticles
       ? new LadrunoParticles(ctors, f as unknown as PGroup, stageGroups.map((s, i) => ({ id: s.id, group: s.group as unknown as PGroup, fileKind: hosts[i]!.fileKind })), dim)
       : null;
-    for (const r of this.particles?.refused ?? []) warnings.push(`${r.group}: its particles are refused and not read: ${r.reason}`);
+    for (const r of this.particles?.refused ?? []) {
+      warnings.push(`${r.group}: its particles are refused and not read: ${r.reason}`);
+      // PARTICLES_UNREAD says the particles read (state/results.ts `particlesOnly`); a refused stage says why it did not.
+      const unread = hosts.find((h) => h.stage.id === r.stageId)!.stage.unread;
+      const at = unread.indexOf(PARTICLES_UNREAD);
+      if (at >= 0) unread[at] = `ON_PARTICLES (particles refused, not read: ${r.reason})`;
+    }
     for (const s of this.particles?.stages ?? []) {
       if (s.torn !== null) warnings.push(`${s.group}/RESULTS/ON_PARTICLES: ${s.nOutputs} output${s.nOutputs === 1 ? "" : "s"} read; ${s.torn}`);
       for (const x of s.refusedFields) warnings.push(`${s.group}/RESULTS/ON_PARTICLES/${x.field}: refused and not read: ${x.reason}`);

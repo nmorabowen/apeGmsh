@@ -39,8 +39,11 @@ export type ResultsPairing =
 
 /**
  * A `.ladruno` stage's `unread` entry for its RESULTS/ON_PARTICLES bucket when the
- * file is read at FORMAT_MINOR_VERSION >= 2 (reader/ladruno.ts writes it): the FE
- * stage does not read the particles, reader/ladrunoParticles.ts does (ADR 0134 D3).
+ * file is read at FORMAT_MINOR_VERSION >= 2 and the stage's particles were read
+ * (reader/ladruno.ts writes it): the FE stage does not read them,
+ * reader/ladrunoParticles.ts does (ADR 0134 D3). A stage whose particles were
+ * refused lists `ON_PARTICLES (particles refused, not read: <why>)` instead, so
+ * `particlesOnly` never claims particles that did not read (#2985 review).
  */
 export const PARTICLES_UNREAD = "ON_PARTICLES (particle results: read by the particle reader, not as FE results)";
 
