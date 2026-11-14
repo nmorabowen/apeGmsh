@@ -322,3 +322,14 @@ the app writes one zone of `.user.h5` and one whole file,
 `<stem>.workspace.h5`. ADR 0132 now governs `<stem>.workspace.h5` and the
 variants manifest `<study>.variants.json`. The decision text above is
 unchanged.
+
+## Pointer (2026-11-13): ADR 0134
+
+[ADR 0134](0134-mpm-particles.md) (Accepted 2026-11-13) amends D1's
+artifact table by one row: `<deck stem>.particles.h5`, the particle set. The
+deck emitter writes it next to the deck it emits, in the same call. The fork
+owns its format, as it owns `.ladruno`. It has an overwrite rule of its own,
+which `src/apeGmsh/_artifact_policy.py` does not govern, and it pairs with
+its model by stem only. Like `.user.h5` and `.workspace.h5`, it is a file of
+the set, not a zone of `model.h5`. ADR 0134 D1 governs the file. The decision
+text above is unchanged.
