@@ -1,8 +1,9 @@
 # ADR 0134 — MPM in apeGmsh: the particle set beside the deck, particle results in `.ladruno`, a three.js points layer
 
-**Status:** Proposed (2026-11-13). Drafted by the fork's MPM program (WP-232a). The maintainer
-accepts it by merging the PR that lands it (`human-gate`). Until then it admits nothing
-(ADR 0121 D4, D5).
+**Status:** Accepted (2026-11-13; drafted by the fork's MPM program (WP-232a), ratified by the
+owner on #2976, "Yes, ratify"). Merging the PR that flips this Status (`human-gate`) is the
+acceptance. The pointers in ADRs 0112, 0023 and 0113 are owed to a follow-up, because those files
+are outside this slice's card (ADR 0121 D5).
 
 **Owner:** nmora
 
