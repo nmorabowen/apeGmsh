@@ -70,6 +70,18 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   zoneRefused: { kind: "system", reason: "dispatched by the loader when a schema zone version is refused" },
   sourceResult: { kind: "system", reason: "dispatched by effects with the outcome of a go-to-source request" },
   resultsLoaded: { kind: "system", reason: "dispatched by effects when results metadata finishes reading" },
+  // ADR 0134 D5 (M2-S4 #2983): the particle points layer. The effects read the index and push each frame; the
+  // set* events have no panel control yet (a follow-up): the particle harness dispatches them.
+  particlesOpened: { kind: "system", reason: "dispatched by effects when the set's particles start reading" },
+  particlesLoaded: { kind: "system", reason: "dispatched by effects with the particle index as read" },
+  particlesFailed: { kind: "system", reason: "dispatched by effects when the particle index cannot be read" },
+  particlesClosed: { kind: "system", reason: "dispatched by effects when the open set holds no particles" },
+  particleFrame: { kind: "system", reason: "dispatched by effects to report the particle frame pushed to the viewport" },
+  setParticleStage: { kind: "gesture", reason: "the particle stage shown; no panel control yet (ADR 0134 D5 follow-up), the particle harness picks it" },
+  setParticleOutput: { kind: "gesture", reason: "the particle output scrub; no panel control yet (ADR 0134 D5 follow-up), the particle harness scrubs it" },
+  setParticleColour: { kind: "gesture", reason: "the particle colour field; no panel control yet (ADR 0134 D5 follow-up), the particle harness picks it" },
+  setParticleGrid: { kind: "gesture", reason: "the particle grid wire box; no panel control yet (ADR 0134 D5 follow-up)" },
+  setParticlesOn: { kind: "gesture", reason: "the particle layer's visibility; no panel control yet (ADR 0134 D5 follow-up)" },
   userOpened: { kind: "system", reason: "dispatched by the app's user-file feed when the set's .user.h5 is read" },
   userRead: { kind: "system", reason: "dispatched by the app's user-file feed with the user:read answer" },
   combinationRead: { kind: "system", reason: "dispatched by the app's combination feed with the evaluator's answer for the User Combination shown" },

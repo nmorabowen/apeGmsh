@@ -12,15 +12,15 @@
 // folder is another one when it runs unbundled, VH3 #2868).
 
 import { app, BrowserWindow, ipcMain } from "electron";
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import * as h5wasm from "h5wasm/node";
 import { openH5, type H5Openable } from "../../reader/h5open.ts";
 import { LadrunoFile, openLadruno } from "../../reader/ladruno.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../../reader/results.ts";
-import { arg, file, mode, out } from "../args.ts";
-import { pairSet } from "../pairing.ts";
+import { arg, file, mode, out, t0 } from "../args.ts";
+import { pairSet, type OpenSet } from "../pairing.ts";
 import type { ResultsHost } from "../results.ts";
 
 /** What the measurement harness takes from main.ts, handed over once (`registerMeasure`). */
@@ -511,5 +511,94 @@ function printResultsRow(r: Awaited<ReturnType<typeof measureOpen>>): void {
       `scrub round trip ${f2(r.transfer.nodalRoundTripMs)} ms (read in main ${f2(r.transfer.nodalReadInMainMs)} ms); ` +
       `gauss step transfer ${(r.transfer.gaussBytes / 1024).toFixed(0)} KB in ${f2(r.transfer.gaussTransferMs)} ms; ` +
       `eager nodal ${MB(r.eagerBytes.nodal)} MB + gauss ${MB(r.eagerBytes.gauss)} MB; GPU "${r.gpu}"\n`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ADR 0134 D5 (M2-S4 #2983): the particle layer's measure and capture runs.
+// `--mode=measure` or `--mode=capture` on a `.ladruno` or a `<stem>.particles.h5`
+// runs the page as the human's window would (main tells it "view" and no file,
+// so it never reads a model), and the page asks `particles:harness` for its job:
+// it opens the set, waits for the first particle frame on screen, then scrubs
+// every output (measure) or shows `--colour=FIELD/COMPONENT` at `--output=K`
+// (capture). Main writes the still or the JSON to `--out`, prints the
+// MEASUREMENTS row, and exits; a failure ends the run through `headlessEnd`.
+// ---------------------------------------------------------------------------
+
+/** Whether this run is a particle run: measure or capture on a file whose set holds particles and no model. */
+export const particleRun = (mode === "measure" || mode === "capture") && !!file && /\.(ladruno|particles\.h5)$/i.test(file);
+
+/** The page size of a particle run's window (a still is the window's content). */
+export const PARTICLE_WINDOW: readonly [number, number] = [1280, 800];
+
+/** `--colour=FIELD/COMPONENT` (the component's index), or null; a malformed one ends the run. */
+function colourArg(): { field: string; component: number } | null {
+  const c = arg("colour");
+  if (c === undefined) return null;
+  const m = /^([A-Za-z][A-Za-z0-9_]*)\/([0-9]+)$/.exec(c);
+  if (!m) throw new Error(`--colour=${c}: expected FIELD/COMPONENT, the component by index (POSITION/1)`);
+  return { field: m[1]!, component: Number(m[2]) };
+}
+
+/** Register the particle run's doors. `set` is the window's set (main.ts `windowSet`). */
+export function registerParticleHarness(host: { headlessEnd: (reason: string) => void; errText: (err: unknown) => string; set: () => OpenSet | { reason: string } }): void {
+  const { headlessEnd, errText } = host;
+  ipcMain.handle("particles:harness", () => {
+    if (!particleRun) return null;
+    try {
+      const set = host.set();
+      if ("reason" in set) throw new Error(set.reason);
+      const output = arg("output");
+      if (output !== undefined && !/^[0-9]+$/.test(output)) throw new Error(`--output=${output}: expected an output index`);
+      const scrub = arg("scrub-ms");
+      if (scrub !== undefined && !/^[1-9][0-9]*$/.test(scrub)) throw new Error(`--scrub-ms=${scrub}: expected milliseconds above 0`);
+      return { op: mode, set, colour: colourArg(), output: output === undefined ? null : Number(output), t0, scrubMs: scrub === undefined ? 6000 : Number(scrub) };
+    } catch (err) {
+      headlessEnd(`the particle run: ${errText(err)}`);
+      return null;
+    }
+  });
+  ipcMain.handle("particles:harnessStill", async (e) => {
+    if (!particleRun || mode !== "capture" || !out) throw new Error("particles:harnessStill: only a particle capture run writes a still");
+    const w = BrowserWindow.fromWebContents(e.sender);
+    if (!w) throw new Error("particles:harnessStill: the page has no window");
+    const png = (await w.webContents.capturePage()).toPNG();
+    mkdirSync(dirname(resolve(out)), { recursive: true });
+    writeFileSync(out, png);
+    return out;
+  });
+  ipcMain.handle("particles:harnessDone", (_e, result: unknown) => {
+    if (!particleRun || !out) throw new Error("particles:harnessDone: this is no particle run");
+    if (mode === "measure") {
+      writeFileSync(out, JSON.stringify(result, null, 2));
+      printParticleRow(result as ParticleMeasure);
+    }
+    app.quit();
+  });
+}
+
+interface ParticleMeasure {
+  file: string;
+  stage: string;
+  particles: number;
+  outputs: number;
+  colour: { field: string; component: number } | null;
+  firstFrameMs: number;
+  scrub: { frames: number; ms: number; fps: number; medianFrameMs: number | null };
+  memory: { first: { mainMB: number; rendererMB: number; gpuProcessMB: number } | null; scrub: { mainMB: number; rendererMB: number; gpuProcessMB: number } };
+}
+
+function printParticleRow(r: ParticleMeasure): void {
+  const f0 = (x: number) => (Number.isFinite(x) ? x.toFixed(0) : "n/a");
+  const f1 = (x: number) => (Number.isFinite(x) ? x.toFixed(1) : "n/a");
+  const mem = (m: { mainMB: number; rendererMB: number; gpuProcessMB: number } | null) =>
+    m ? `${f0(m.mainMB + m.rendererMB)} (${f0(m.mainMB)} + ${f0(m.rendererMB)}), GPU ${f0(m.gpuProcessMB)}` : "n/a";
+  const size = statSync(r.file).size / 1048576;
+  process.stdout.write(
+    "| date | file | size (MB) | particles | outputs | colour | first frame (ms) | scrub (outputs/s) | median output (ms) | memory MB main+renderer at first frame | after scrub |\n" +
+      "|---|---|---|---|---|---|---|---|---|---|---|\n" +
+      `| ${new Date().toISOString().slice(0, 10)} | ${r.file.split(/[\\/]/).pop()} | ${size.toFixed(1)} | ${r.particles.toLocaleString("en-US")} | ${r.outputs} | ` +
+      `${r.colour ? `${r.colour.field}/${r.colour.component}` : "plain"} | ${f0(r.firstFrameMs)} | ${f1(r.scrub.fps)} (${r.scrub.frames} in ${f0(r.scrub.ms)} ms) | ` +
+      `${r.scrub.medianFrameMs === null ? "n/a" : f1(r.scrub.medianFrameMs)} | ${mem(r.memory.first)} | ${mem(r.memory.scrub)} |\n`,
   );
 }

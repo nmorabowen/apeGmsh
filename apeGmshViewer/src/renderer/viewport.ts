@@ -30,6 +30,7 @@ import { EntitiesLayer } from "./entities.ts";
 import { LoadsLayer, PrincipalLayer, ReactionsLayer, SupportsLayer, VectorsLayer } from "./loads.ts";
 import { SpringsLayer } from "./springs.ts";
 import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
+import { particleBounds, ParticleLayer, type ParticleFrame, type ParticleLook } from "./particles.ts";
 import { deformedPositions } from "../state/deform.ts";
 import { dropUnplaced, gaussBasePositions, gaussDisplacements, gaussLayoutOf, type GaussLayout, type StationPoints } from "../state/gaussPoints.ts";
 import type { State, Store } from "../state/store.ts";
@@ -160,6 +161,10 @@ export class Viewport {
   readonly supports = new SupportsLayer();
   /** VU8: the `/entities` of the set's `.user.h5` (renderer/entities.ts). */
   readonly entities = new EntitiesLayer();
+  /** ADR 0134 D5: the MPM particles (renderer/particles.ts), filled per output by the effects (`showParticles`). */
+  readonly particles = new ParticleLayer();
+  /** the last particle frame shown, so a theme change can recolour it; null with none */
+  private particleFrame: ParticleFrame | null = null;
   /** V4d: every primitive's positions as drawn now (undeformed, or deformed at the step and scale its key names). */
   private full: FullPositions | null = null;
   /** V4d: the reference ghost (the undeformed mesh, faint) and the markers of drawn nodes with no displacement. */
@@ -214,6 +219,8 @@ export class Viewport {
     this.perspCamera.add(this.keyLight);
     this.lineDiagram = new LineDiagramLayer(this.camera);
     this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.vectors.root, this.principal.root, this.springs.root, this.supports.root, this.entities.root);
+    // ADR 0134 D5: after the node layer's group (`content`), as the card asks.
+    this.scene.add(this.particles.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers, this.gaussGroup);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
@@ -288,6 +295,7 @@ export class Viewport {
     this.springs.setTheme(mode);
     this.supports.setTheme(mode);
     this.entities.setTheme(mode);
+    if (this.particleFrame) this.particles.show({ ...this.particleFrame, fit: false }, this.particleLook());
     const s = this.store.get();
     if (this.geometryInfo) {
       this.setGeometry(this.geometryInfo);
@@ -310,6 +318,7 @@ export class Viewport {
     const s = this.store.get();
     if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, null);
     else if (s.mesh) this.frame(s.mesh, null, null);
+    else this.fitParticles(null);
   }
 
   /**
@@ -322,6 +331,7 @@ export class Viewport {
     const s = this.store.get();
     if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, heading);
     else if (s.mesh) this.frame(s.mesh, heading, frameFocus(this.full, s.mesh, this.blobs, this.drawn, null, null));
+    else this.fitParticles(heading);
   }
 
   /**
@@ -532,6 +542,7 @@ export class Viewport {
     this.springs.dispose();
     this.supports.dispose();
     this.entities.dispose();
+    this.particles.dispose();
     this.halo.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
@@ -703,6 +714,38 @@ export class Viewport {
     const t = themeTokens(this.activeTheme);
     this.nodePoints = makeNodePoints(nodePositions(this.nodeVertices, full.line, full.tri), s.nodes.size ?? NODE_SIZE_FALLBACK, toHexNumber(t.text), toHexNumber(t.bg0));
     this.content.add(this.nodePoints);
+  }
+
+  /** ADR 0134 D5: the particle layer's colours from the theme (the node markers' plain colour and rim). */
+  private particleLook(): ParticleLook {
+    const t = themeTokens(this.activeTheme);
+    return { plain: toHexNumber(t.accent), rim: toHexNumber(t.bg0), grid: toHexNumber(t.muted) };
+  }
+
+  /**
+   * ADR 0134 D5: the effects' particle frame (effects.ts, through `FrameTarget`), or
+   * null to draw none. The first frame of a set with no mesh and no geometry frames
+   * the camera on the particles.
+   */
+  showParticles(frame: ParticleFrame | null): void {
+    this.particleFrame = frame;
+    this.particles.show(frame, this.particleLook());
+    if (frame?.fit) this.fitParticles(null);
+    this.requestRender();
+  }
+
+  /**
+   * Fit the camera to the particles drawn (the scene has nothing else to frame: `home`,
+   * `fit`, a set's first frame); false when none is drawn. `fit` reads plan or
+   * isometric from the z extent of `pos`: a 2-D stage lies at z = 0.
+   */
+  private fitParticles(heading: Heading | null): boolean {
+    const f = this.particleFrame;
+    const b = f ? particleBounds(f.positions, f.ndm) : null;
+    if (!f || !b) return false;
+    const z = f.ndm === 2 ? [0, 0] : [b.center[2] - b.radius, b.center[2] + b.radius];
+    this.fit(b.center, b.radius, new Float32Array([0, 0, z[0]!, 0, 0, z[1]!]), heading);
+    return true;
   }
 
   /** Where the 3-D line diagram's step data comes from (app.ts wires the effects). */

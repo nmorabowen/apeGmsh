@@ -18,6 +18,82 @@ import type { Visibility } from "./visibility.ts";
 import type { Layout, SearchState, SpotlightState } from "./windows.ts";
 import type { WorkspaceState } from "./workspace.ts";
 
+/** One particle field as the points layer offers it (ADR 0134 D5): spelled as the file spells it. */
+export interface ParticleFieldInfo {
+  name: string;
+  displayName: string;
+  components: string[];
+  /** the field's DIMENSION ("" dimensionless or absent); POSITION's is the stage's length unit */
+  dimension: string;
+}
+
+/**
+ * One particle stage as the store keeps it: metadata only, plain arrays. A `.ladruno`
+ * particle stage (reader/ladrunoParticles.ts), or the seeded set (reader/particleSet.ts)
+ * as one stage of one output.
+ */
+export interface ParticleStageInfo {
+  /** the `.ladruno` stage id (`stage_<i>`), or `set` for the seeded set */
+  id: string;
+  /** what the notice names it by: the stage group, or the set's file name */
+  name: string;
+  ndm: 2 | 3;
+  units: { length: string; force: string; time: string; system: string };
+  grid: { origin: number[]; cellSize: number[]; numCells: number[]; basis: "gimp" | "linear" };
+  bodies: { id: number; name: string }[];
+  nOutputs: number;
+  /** (nOutputs,) the Domain commit tag of each output (the set: [0]) */
+  steps: number[];
+  /** (nOutputs,) the Domain time (the set: [0]) */
+  time: number[];
+  /** (nOutputs,) how many particles each output holds */
+  counts: number[];
+  fields: ParticleFieldInfo[];
+  /** fields the reader refused, by name, with why: never offered */
+  refusedFields: { field: string; reason: string }[];
+  /** what the crash rule dropped, or null */
+  torn: string | null;
+}
+
+/** The particle frame the effects last pushed to the viewport (the arrays never enter the store). */
+export interface ParticleFrameInfo {
+  stage: number;
+  output: number;
+  status: "loading" | "ready" | "failed";
+  error: string | null;
+  /** particles drawn */
+  count: number;
+  /** of them, how many have no value for the colour (NaN): drawn in the no-value colour */
+  noValue: number;
+  /** the finite range of the colour component over this output, or null (no colour, or no finite value) */
+  range: { min: number; max: number } | null;
+}
+
+/**
+ * ADR 0134 D5: the particles the points layer draws. `source` says where they come
+ * from: the open `.ladruno`'s particle stages (`results`), or the set's seeded
+ * `<stem>.particles.h5` (`set`, shown before a run and when a set holds nothing else).
+ */
+export interface ParticlesState {
+  source: "results" | "set";
+  path: string;
+  status: "loading" | "ready" | "failed";
+  error: string | null;
+  stages: ParticleStageInfo[];
+  /** particle stages refused or skipped, by group, with why (the notice names them) */
+  unread: { stage: string; reason: string }[];
+  /** index into `stages` */
+  stage: number;
+  /** the output shown, 0 .. nOutputs - 1 of the stage */
+  output: number;
+  /** the field and component the points are coloured by; null: one plain colour */
+  colour: { field: string; component: number } | null;
+  /** the grid drawn as a wire box */
+  grid: boolean;
+  on: boolean;
+  frame: ParticleFrameInfo | null;
+}
+
 export interface State {
   artifacts: Record<ArtifactKind, ArtifactInfo | null>;
   /** keyed by declaration path; a null-prototype record, so no path collides with `Object.prototype` */
@@ -131,4 +207,6 @@ export interface State {
   theme: ThemeMode;
   /** VA5 (ADR 0128 D5): the views agents offered, and the way back from one the human applied */
   offers: OffersState;
+  /** ADR 0134 D5: the particles the points layer draws; null when the set has none */
+  particles: ParticlesState | null;
 }

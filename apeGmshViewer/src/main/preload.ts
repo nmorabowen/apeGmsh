@@ -211,4 +211,14 @@ contextBridge.exposeInMainWorld("viewer", {
   // VU9b (ADR 0130 A4; HG9 on #2693): one combination edit (`{op: add, row, expect}` or `{op: revert, expect}`) into
   // the window set's own `<stem>.user.h5`; it never names a file, and main refuses any key the op does not name.
   combinationsSave: (edit: unknown) => ipcRenderer.invoke("combinations:save", edit),
+  // ADR 0134 D5 (M2-S4 #2983): the particles. The index and one output of the window set's results file (main checks the
+  // path is that file, as for `results:*`), and the set's own `<stem>.particles.h5`, which the door names itself (no path).
+  particleIndex: (path: string) => ipcRenderer.invoke("particles:index", path),
+  readParticleOutput: (req: { path: string; stage: string; output: number; field: string | null; seq: number }) =>
+    ipcRenderer.invoke("particles:readOutput", { path: req.path, stage: req.stage, output: req.output, field: req.field, seq: req.seq }),
+  particleSet: () => ipcRenderer.invoke("particles:set"),
+  // The particle measure and capture run (main/modes/measure.ts): its job (null in every other run), its still, its end.
+  particleHarness: () => ipcRenderer.invoke("particles:harness"),
+  particleHarnessStill: () => ipcRenderer.invoke("particles:harnessStill"),
+  particleHarnessDone: (result: unknown) => ipcRenderer.invoke("particles:harnessDone", result),
 });

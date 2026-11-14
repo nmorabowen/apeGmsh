@@ -14,6 +14,7 @@
 // `withLineDiagramPick`, `syncLineDiagramDerived`).
 
 import { reduceClip } from "./clip.ts";
+import { reduceParticles } from "./results.ts";
 import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";
 import { defaultLineDiagramComponent, lineDiagramKeysOf } from "./lineDiagram.ts";
 import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
@@ -384,6 +385,8 @@ function reduceEvent(s: State, e: Event): State {
         results: s.results,
         // ADR 0130: the .user.h5 is the set's; renderer/app.ts opens and closes it with the set.
         user: s.user,
+        // ADR 0134 D5: the particles are the set's, not the model's (a particle set draws with no model).
+        particles: s.particles,
         contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
@@ -428,6 +431,7 @@ function reduceEvent(s: State, e: Event): State {
         geometry: s.geometry,
         results: s.results,
         user: s.user,
+        particles: s.particles,
         contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
@@ -888,6 +892,19 @@ function reduceEvent(s: State, e: Event): State {
       // VU7b-2: another user file state leaves a User Combination shown that the file no longer lists (withPhase); off a combination the phase is not touched.
       const fileChanged = e.type === "userOpened" || e.type === "userRead" || e.type === "userClosed";
       return fileChanged && s.phase.at?.kind === "combination" ? withPhase(t) : t;
+    }
+    case "particlesOpened":
+    case "particlesLoaded":
+    case "particlesFailed":
+    case "particlesClosed":
+    case "setParticleStage":
+    case "setParticleOutput":
+    case "setParticleColour":
+    case "setParticleGrid":
+    case "setParticlesOn":
+    case "particleFrame": {
+      const particles = reduceParticles(s.particles, e);
+      return particles === s.particles ? s : { ...s, particles };
     }
     case "variantsRead":
     case "variantSwitch":

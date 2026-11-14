@@ -27,7 +27,7 @@ import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplace
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
 import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
-import { particleSetAloneRefusal } from "./state/results.ts";
+import { componentOf, particleRange, type ParticleFrame } from "./renderer/particles.ts";
 import { contourView, deformView, draftJudgedOf, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
@@ -35,14 +35,19 @@ import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
 import { applyTheme } from "./theme/tokens.ts";
 import { membersOf } from "./state/workspace.ts";
 import type { CombinationDraft, CombinationEdit, CombinationSaveIn, DraftCheck } from "./state/types.ts";
-import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ResultsInfo, ResultsStage, StageElements, State, WorkspaceEdit, WorkspaceIn, WorkspacePageEdit, WorkspaceSaveIn, ZoneStatus } from "./state/types.ts";
+import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ParticleStageInfo, ResultsInfo, ResultsStage, StageElements, State, WorkspaceEdit, WorkspaceIn, WorkspacePageEdit, WorkspaceSaveIn, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
+
+/** Two animation frames: what was pushed before the call is on screen after it (the particle harness). */
+const painted = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 
 /** What the frame effect moves: the viewport (or a test double). `null` frames the whole model. */
 export interface FrameTarget {
   frameTo(focus: Focus | null): void;
   viewNormal?(): [number, number, number];
+  /** ADR 0134 D5: draw one particle frame, or none (renderer/viewport.ts `showParticles`) */
+  showParticles?(frame: ParticleFrame | null): void;
 }
 
 export interface OpenSet {
@@ -50,11 +55,25 @@ export interface OpenSet {
   geometry: string | null;
   results: string | null;
   /**
-   * ADR 0134 D1: the set's `<stem>.particles.h5` (main/pairing.ts). Not drawn yet (M2-S4);
-   * a set that holds nothing else is refused through the model's failure (`openSet`).
+   * ADR 0134 D1: the set's `<stem>.particles.h5` (main/pairing.ts), drawn by the points
+   * layer (D5) when the set's results hold no particle stage, alone or beside a model.
    * Absent from a bridge older than M2-S3, which never pairs one.
    */
   particles?: string | null;
+}
+
+/** ADR 0134 D5: a measure or capture run of the particle layer, as main hands it (main/modes/measure.ts `particleHarnessJob`). */
+export interface ParticleHarnessJob {
+  op: "measure" | "capture";
+  set: OpenSet;
+  /** the colour to show, or null for the default (POSITION's vertical component) */
+  colour: { field: string; component: number } | null;
+  /** the output to show, or null for the default (the last) */
+  output: number | null;
+  /** when the launcher started the app (Date.now()), for the time to first frame */
+  t0: number;
+  /** how long the scrub of outputs runs (measure) */
+  scrubMs: number;
 }
 
 /** `window.viewer`, as preload.ts exposes it; the optional members arrive with V2f. */
@@ -149,6 +168,21 @@ export interface Bridge {
   workspaceSave?(edit: WorkspaceEdit): Promise<WorkspaceSaveIn>;
   /** VU9b (ADR 0130 A4): one combination edit into the window set's `.user.h5` (main's `combinations:save`; never a path) */
   combinationsSave?(edit: CombinationEdit): Promise<CombinationSaveIn>;
+  /** ADR 0134 D5: the particle stages of the open results file (main's `particles:index`; main/results.ts `ParticleIndexAnswer`) */
+  particleIndex?(path: string): Promise<{ ok: true; path: string; stages: ParticleStageInfo[]; unread: { stage: string; reason: string }[] } | { ok: false; error: string; changed?: true }>;
+  /** ADR 0134 D5: one output of one particle stage (main's `particles:readOutput`; main/results.ts `ParticleOutputAnswer`) */
+  readParticleOutput?(req: { path: string; stage: string; output: number; field: string | null; seq: number }): Promise<
+    | { ok: true; seq: number; stage: string; output: number; step: number; time: number; ids: Float64Array; positions: Float64Array; values: Float64Array | null; nComp: number }
+    | { ok: false; seq: number; error: string; changed?: true }
+  >;
+  /** ADR 0134 D5: the window set's `<stem>.particles.h5`, read whole (main's `particles:set`; it takes no path) */
+  particleSet?(): Promise<{ ok: true; path: string; stage: ParticleStageInfo; ids: Float64Array; positions: Float64Array; values: Record<string, Float64Array> } | { ok: false; error: string }>;
+  /** ADR 0134 D5: main's particle measure or capture run, or null (every other run) */
+  particleHarness?(): Promise<ParticleHarnessJob | null>;
+  /** the capture run's still of the window as it shows now; main writes it to `--out` */
+  particleHarnessStill?(): Promise<string>;
+  /** the run's result (measure) or its end (capture); main writes it and exits */
+  particleHarnessDone?(result: unknown): Promise<void>;
 }
 
 /**
@@ -575,6 +609,9 @@ export class Effects {
       // The node markers' size, chosen when they turn on and the size is automatic.
       this.store.subscribe((s) => this.syncNodeSize(s)),
       this.store.subscribe((s) => this.syncGaussSize(s)),
+      // ADR 0134 D5: the particle index the set calls for, then the frame the state names.
+      this.store.subscribe((s) => this.syncParticles(s)),
+      this.store.subscribe((s) => this.syncParticleFrame(s)),
     );
     if (typeof this.bridge.onScanProgress === "function") {
       const off = this.bridge.onScanProgress((p) => {
@@ -615,6 +652,8 @@ export class Effects {
   /** Attach what `frameSelection` moves (the viewport). */
   setFrameTarget(target: FrameTarget | null): void {
     this.frameTarget = target;
+    // A particle frame pushed before the target was attached is drawn now.
+    if (target !== null && this.particleShown !== null) this.pushParticles(this.particleShown);
   }
 
   private readingGeometry = false;
@@ -1519,15 +1558,271 @@ export class Effects {
       this.store.dispatch({ type: "fileClosed", artifact: "results" });
     }
     if (set.model) void this.open(set.model);
-    else if (set.particles && !set.geometry && !set.results) {
-      // #2985 finding 1: a particle set alone would open an empty, silent window. It fails
-      // closed through the model's failure, the path a file that is not a model takes, so the
-      // window says which file and why (selectors `failureOf`). Drawing it is M2-S4's.
-      this.openToken++;
-      this.reading = false;
-      this.store.dispatch({ type: "fileOpened", artifact: "model", path: set.particles });
-      this.store.dispatch({ type: "fileFailed", artifact: "model", path: set.particles, error: particleSetAloneRefusal(set.particles) });
-    } else this.store.dispatch({ type: "fileClosed", artifact: "model" });
+    else this.store.dispatch({ type: "fileClosed", artifact: "model" });
+    // ADR 0134 D5 (M2-S4 #2983, replacing #2985's refusal): the set's `<stem>.particles.h5` is drawn when
+    // its results hold no particle stage, a set that holds nothing else too, with its notice (`syncParticles`).
+    this.particleSetPath = set.particles ?? null;
+    this.syncParticles(this.store.get());
+  }
+
+  // -- ADR 0134 D5: the particles -----------------------------------------------
+
+  /** the set's `<stem>.particles.h5`, from the last `openSet`; null when the set has none */
+  private particleSetPath: string | null = null;
+  /** what the particle index was read for: the source, path and results index (a re-read results file is re-indexed) */
+  private particleFor: { source: "results" | "set"; path: string; results: ResultsInfo | null } | null = null;
+  private particleToken = 0;
+  /** the seeded set, read whole: served here, one output, never asked of main again */
+  private particleSetData: { path: string; ids: Float64Array; positions: Float64Array; values: Record<string, Float64Array> } | null = null;
+  /** the particle frame pushed or being read: its key, request number, and the read generation (a re-read disposes the stage's buffers) */
+  private particleKey: string | null = null;
+  private particleSeq = 0;
+  private particleGen = 0;
+  /** the source and path whose first frame was fitted (a set with no mesh frames the camera on its particles once) */
+  private particleFitted: string | null = null;
+  /** the frame pushed last (null: none drawn), kept for a target attached after it */
+  private particleShown: ParticleFrame | null = null;
+
+  /** Which particles the store should hold: the results' particle stages, else the set's seeded set, else none. */
+  private particleSource(s: State): { source: "results" | "set"; path: string } | null | "wait" {
+    const r = s.artifacts.results;
+    if (r && (r.status === "opened" || (r.status === "ready" && r.stale))) return "wait";
+    if (r?.status === "ready" && s.results && s.results.stages.some((st) => st.unread.some((u) => u.startsWith("ON_PARTICLES")))) return { source: "results", path: s.results.path };
+    if (this.particleSetPath !== null) return { source: "set", path: this.particleSetPath };
+    return null;
+  }
+
+  /** Read the particle index the set calls for, when it is not the one read (latest wins). */
+  private syncParticles(s: State): void {
+    const want = this.particleSource(s);
+    if (want === "wait") return;
+    const had = this.particleFor;
+    if (want === null) {
+      if (had === null && s.particles === null) return;
+      this.particleFor = null;
+      this.particleToken++;
+      this.particleSetData = null;
+      queueMicrotask(() => {
+        if (this.store.get().particles !== null) this.store.dispatch({ type: "particlesClosed" });
+      });
+      return;
+    }
+    const results = want.source === "results" ? s.results : null;
+    if (had && had.source === want.source && had.path === want.path && had.results === results) return;
+    this.particleFor = { ...want, results };
+    const token = ++this.particleToken;
+    queueMicrotask(() => void this.readParticleIndex(want.source, want.path, token));
+  }
+
+  private async readParticleIndex(source: "results" | "set", path: string, token: number): Promise<void> {
+    if (token !== this.particleToken) return;
+    this.store.dispatch({ type: "particlesOpened", source, path });
+    const failed = (error: string) => {
+      if (token === this.particleToken) this.store.dispatch({ type: "particlesFailed", path, error });
+    };
+    const caught = (err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) });
+    if (source === "results") {
+      if (typeof this.bridge.particleIndex !== "function") return failed("this build's bridge has no particle reader (main's particles:index)");
+      const res = await this.bridge.particleIndex(path).catch(caught);
+      if (token !== this.particleToken) return;
+      if (!res.ok) {
+        failed(res.error);
+        // The file is not the one indexed: it is re-indexed, then its particles are read again.
+        if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path });
+        return;
+      }
+      this.particleSetData = null;
+      this.particleGen++;
+      this.store.dispatch({ type: "particlesLoaded", source, path, stages: res.stages, unread: res.unread });
+      return;
+    }
+    if (typeof this.bridge.particleSet !== "function") return failed("this build's bridge has no particle-set reader (main's particles:set)");
+    const res = await this.bridge.particleSet().catch(caught);
+    if (token !== this.particleToken) return;
+    if (!res.ok) return failed(res.error);
+    this.particleSetData = { path: res.path, ids: res.ids, positions: res.positions, values: res.values };
+    this.particleGen++;
+    this.store.dispatch({ type: "particlesLoaded", source, path, stages: [res.stage], unread: [] });
+  }
+
+  /** Push the particle frame the state names to the viewport when it is not the one pushed (latest wins). */
+  private syncParticleFrame(s: State): void {
+    const p = s.particles;
+    const st = p?.status === "ready" ? p.stages[p.stage] : undefined;
+    if (!p || !st || !p.on || st.nOutputs === 0) {
+      if (this.particleKey !== null || this.particleShown !== null) {
+        this.particleKey = null;
+        this.particleSeq++;
+        this.pushParticles(null);
+      }
+      return;
+    }
+    const colour = p.colour;
+    const key = `${p.source}|${p.path}|${this.particleGen}|${st.id}|${p.output}|${colour ? `${colour.field}/${colour.component}` : "plain"}|${p.grid}|${s.contour.cmap}`;
+    if (key === this.particleKey) return;
+    this.particleKey = key;
+    const seq = ++this.particleSeq;
+    queueMicrotask(() => void this.fetchParticleFrame(seq, p.source, p.path, p.stage, st, p.output, colour, p.grid, s.contour.cmap, s.mesh === null && s.geometry === null));
+  }
+
+  private async fetchParticleFrame(
+    seq: number,
+    source: "results" | "set",
+    path: string,
+    stage: number,
+    st: ParticleStageInfo,
+    output: number,
+    colour: { field: string; component: number } | null,
+    grid: boolean,
+    cmap: State["contour"]["cmap"],
+    noScene: boolean,
+  ): Promise<void> {
+    if (seq !== this.particleSeq) return;
+    const report = (status: "loading" | "ready" | "failed", error: string | null, count = 0, noValue = 0, range: { min: number; max: number } | null = null) =>
+      this.store.dispatch({ type: "particleFrame", frame: { stage, output, status, error, count, noValue, range } });
+    report("loading", null);
+    let positions: Float64Array;
+    let values: Float64Array | null = null;
+    let nComp = 0;
+    try {
+      if (source === "set") {
+        const d = this.particleSetData;
+        if (!d || d.path !== path) throw new Error(`the particle set ${path} is not read`);
+        positions = d.positions;
+        if (colour) {
+          values = d.values[colour.field] ?? null;
+          if (values === null) throw new Error(`the particle set has no ${colour.field}`);
+          nComp = values.length / (d.ids.length || 1);
+        }
+      } else {
+        if (typeof this.bridge.readParticleOutput !== "function") throw new Error("this build's bridge has no particle reader (main's particles:readOutput)");
+        const res = await this.bridge.readParticleOutput({ path, stage: st.id, output, field: colour?.field ?? null, seq });
+        if (seq !== this.particleSeq || res.seq !== seq) return;
+        if (!res.ok) {
+          report("failed", res.error);
+          if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path });
+          return;
+        }
+        positions = res.positions;
+        values = res.values;
+        nComp = res.nComp;
+      }
+      if (seq !== this.particleSeq) return;
+      const scalar = colour && values ? componentOf(values, nComp, colour.component) : null;
+      const r = scalar ? particleRange(scalar) : { range: null, noValue: 0 };
+      const fitKey = `${source}|${path}`;
+      const fit = noScene && this.particleFitted !== fitKey;
+      if (fit) this.particleFitted = fitKey;
+      const frame: ParticleFrame = { stageKey: `${source}|${path}|${this.particleGen}|${st.id}`, ndm: st.ndm, positions, scalar, range: r.range, cmap, grid: grid ? st.grid : null, fit };
+      this.pushParticles(frame);
+      report("ready", null, positions.length / st.ndm, r.noValue, r.range);
+    } catch (err) {
+      if (seq === this.particleSeq) report("failed", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** Hand a particle frame (or none) to the frame target; a target that cannot draw particles fails loudly. */
+  private pushParticles(frame: ParticleFrame | null): void {
+    this.particleShown = frame;
+    const t = this.frameTarget;
+    if (t === null) return;
+    if (typeof t.showParticles !== "function") throw new Error("the frame target draws no particles (renderer/viewport.ts showParticles)");
+    t.showParticles(frame);
+  }
+
+  /** The particle frame pushed last (tests, the harness), or null. */
+  currentParticles(): ParticleFrame | null {
+    return this.particleShown;
+  }
+
+  /**
+   * ADR 0134 D5: main's particle measure or capture run (main/modes/measure.ts). It
+   * opens the job's set, waits for the first frame on screen, then either captures the
+   * still (capture) or scrubs every output for `scrubMs` and reports the time to first
+   * frame, the scrub rate and the memory (measure). Runs only in the Electron page.
+   */
+  async runParticleHarness(job: ParticleHarnessJob): Promise<void> {
+    const bridge = this.bridge;
+    if (typeof bridge.particleHarnessDone !== "function" || typeof bridge.particleHarnessStill !== "function") throw new Error("this build's bridge has no particle harness doors");
+    this.openSet(job.set);
+    const frameReady = async (ms: number): Promise<State> => {
+      const s = await this.until((x) => {
+        const p = x.particles;
+        if (p?.status === "failed") throw new Error(`the particles did not read: ${p.error}`);
+        if (p?.frame?.status === "failed") throw new Error(`the particle frame did not read: ${p.frame.error}`);
+        return p?.status === "ready" && p.frame?.status === "ready" && p.frame.stage === p.stage && p.frame.output === p.output;
+      }, ms);
+      await painted();
+      return s;
+    };
+    let s = await frameReady(120000);
+    const firstFrameMs = Date.now() - job.t0;
+    if (job.colour) this.store.dispatch({ type: "setParticleColour", colour: job.colour });
+    if (job.output !== null) this.store.dispatch({ type: "setParticleOutput", output: job.output });
+    s = await frameReady(60000);
+    if (job.op === "capture") {
+      await bridge.particleHarnessStill();
+      await bridge.particleHarnessDone({ ok: true, notices: s.particles });
+      return;
+    }
+    const p = s.particles!;
+    const st = p.stages[p.stage]!;
+    const memFirst = typeof bridge.metrics === "function" ? await bridge.metrics() : null;
+    const t0 = performance.now();
+    const frames: number[] = [];
+    let k = p.output;
+    while (performance.now() - t0 < job.scrubMs && st.nOutputs > 1) {
+      k = (k + 1) % st.nOutputs;
+      const a = performance.now();
+      this.store.dispatch({ type: "setParticleOutput", output: k });
+      await frameReady(60000);
+      frames.push(performance.now() - a);
+    }
+    const scrubMs = performance.now() - t0;
+    const memScrub = await bridge.metrics();
+    const sorted = [...frames].sort((x, y) => x - y);
+    await bridge.particleHarnessDone({
+      file: p.path,
+      stage: st.name,
+      particles: Math.max(...st.counts),
+      outputs: st.nOutputs,
+      colour: p.colour,
+      firstFrameMs,
+      scrub: { frames: frames.length, ms: scrubMs, fps: frames.length / (scrubMs / 1000), medianFrameMs: sorted.length ? sorted[Math.floor(sorted.length / 2)]! : null },
+      memory: { first: memFirst, scrub: memScrub },
+    });
+  }
+
+  /** The store state once `pred` holds (it may throw to fail the wait), or a timeout error after `ms`. */
+  private until(pred: (s: State) => boolean, ms: number): Promise<State> {
+    return new Promise((resolve, reject) => {
+      let done = false;
+      let off: () => void = () => {};
+      const check = (s: State) => {
+        if (done) return;
+        try {
+          if (!pred(s)) return;
+        } catch (err) {
+          done = true;
+          off();
+          clearTimeout(timer);
+          reject(err);
+          return;
+        }
+        done = true;
+        off();
+        clearTimeout(timer);
+        resolve(s);
+      };
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        off();
+        reject(new Error(`the particle harness waited ${ms} ms`));
+      }, ms);
+      off = this.store.subscribe((s) => check(s));
+      check(this.store.get());
+    });
   }
 
   /** Detach everything `attach` and the bridge subscriptions registered. */
@@ -1701,6 +1996,13 @@ export class Effects {
     }
     // VU9a: the window set's workspace follows the model on screen.
     this.followWorkspace();
+    // ADR 0134 D5: main's particle measure or capture run, if this is one (main answers null to every other).
+    if (typeof this.bridge.particleHarness === "function") {
+      void this.bridge
+        .particleHarness()
+        .then((job) => (job ? this.runParticleHarness(job) : undefined))
+        .catch((err: unknown) => void this.bridge.fail(`the particle harness: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`));
+    }
     return () => this.dispose();
   }
 

@@ -45,7 +45,9 @@ import { unopenedSibling } from "./pairing.ts";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
 import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
-import type { CompareStageIn, ModeFacts, UnitSystemId } from "../state/types.ts";
+import type { CompareStageIn, ModeFacts, ParticleStageInfo, UnitSystemId } from "../state/types.ts";
+import type { ParticleStage } from "../reader/ladrunoParticles.ts";
+import { openParticleSet, type ParticleSet } from "../reader/particleSet.ts";
 import type { ProgramDecls } from "../model/types.ts";
 
 /** A `.ladruno` as main reads it: one file, or a part set read as one (#2188). */
@@ -225,6 +227,111 @@ export interface ScanProgress {
   scanId: number;
   done: number;
   total: number;
+}
+
+// -- ADR 0134 D5: the particles, read here and sent one output at a time ---------
+
+/** The particle index of the indexed `.ladruno` (metadata only), or why it cannot be read. */
+export type ParticleIndexAnswer =
+  | { ok: true; path: string; stages: ParticleStageInfo[]; unread: { stage: string; reason: string }[] }
+  | { ok: false; error: string; changed?: true };
+
+/** One output of one particle stage: POSITION always, and the colour field when one is asked (and is not POSITION). */
+export interface ParticleOutputRequest {
+  path: string;
+  stage: string;
+  output: number;
+  field: string | null;
+  seq: number;
+}
+
+export type ParticleOutputAnswer =
+  /** `positions` (n * ndm) and `values` (n * nComp, null with no field) row-major, one row per particle of the output */
+  | { ok: true; seq: number; stage: string; output: number; step: number; time: number; ids: Float64Array; positions: Float64Array; values: Float64Array | null; nComp: number }
+  | { ok: false; seq: number; error: string; changed?: true };
+
+/** The seeded set (`<stem>.particles.h5`, Contract 1) as one stage of one output, with every per-particle array to colour by. */
+export type ParticleSetAnswer =
+  | { ok: true; path: string; stage: ParticleStageInfo; ids: Float64Array; positions: Float64Array; values: Record<string, Float64Array> }
+  | { ok: false; error: string };
+
+/** A `.ladruno` particle stage as the store keeps it. */
+export function particleStageInfo(s: ParticleStage): ParticleStageInfo {
+  return {
+    id: s.stageId,
+    name: s.group,
+    ndm: s.ndm,
+    units: { ...s.units },
+    grid: { origin: [...s.grid.origin], cellSize: [...s.grid.cellSize], numCells: [...s.grid.numCells], basis: s.grid.basis },
+    bodies: s.bodies.map((b) => ({ ...b })),
+    nOutputs: s.nOutputs,
+    steps: Array.from(s.steps),
+    time: Array.from(s.time),
+    counts: Array.from({ length: s.nOutputs }, (_, k) => s.offsets[k + 1]! - s.offsets[k]!),
+    fields: s.fields.map((f) => ({ name: f.name, displayName: f.displayName, components: [...f.components], dimension: f.dimension })),
+    refusedFields: s.refusedFields.map((r) => ({ ...r })),
+    torn: s.torn,
+  };
+}
+
+/** The fields a seeded set offers to colour by (Contract 1 §1.4): the per-particle datasets read, one component per column. */
+const SET_FIELDS = (set: ParticleSet): { info: ParticleStageInfo["fields"]; values: Record<string, Float64Array> } => {
+  const axes = set.ndm === 3 ? ["x", "y", "z"] : ["x", "y"];
+  const mass = set.massSource === "mass" ? "MASS" : "DENSITY";
+  return {
+    info: [
+      { name: "POSITION", displayName: "Position", components: axes, dimension: "L" },
+      { name: "VOLUME", displayName: "Volume", components: ["V"], dimension: "L^3" },
+      { name: mass, displayName: set.massSource === "mass" ? "Mass" : "Density", components: [set.massSource === "mass" ? "m" : "rho"], dimension: set.massSource === "mass" ? "F*t^2/L" : "F*t^2/L^4" },
+      { name: "GIMP_HALF_LENGTH", displayName: "GIMP half length", components: axes.map((a) => `l${a}`), dimension: "L" },
+      { name: "BODY_ID", displayName: "Body", components: ["body"], dimension: "" },
+      { name: "MATERIAL_TAG", displayName: "Material tag", components: ["tag"], dimension: "" },
+    ],
+    values: {
+      POSITION: set.positions,
+      VOLUME: set.volume,
+      [mass]: set.mass,
+      GIMP_HALF_LENGTH: set.gimpHalfLength,
+      BODY_ID: Float64Array.from(set.bodyIds),
+      MATERIAL_TAG: Float64Array.from(set.materialTags),
+    },
+  };
+};
+
+/** The particle reader of a results file, or why it holds no particles this app reads. */
+function particlesOf(rf: AnyResultsFile, path: string): NonNullable<LadrunoFile["particles"]> {
+  if (!(rf instanceof LadrunoFile)) {
+    throw new Error(`${baseName(path)} holds no particle results this app reads: particles are read from one .ladruno file (ADR 0134 D3)${rf instanceof LadrunoPartSet ? "; a partitioned run is serial-only for particles (C2-PART)" : ""}`);
+  }
+  if (rf.particles === null) throw new Error(`${baseName(path)} holds no particle results this app reads: its INFO@FORMAT_MINOR_VERSION is below 2 (C2-MINOR)`);
+  return rf.particles;
+}
+
+/** Read `<stem>.particles.h5` whole (it is the seeded set, read whole by reader/particleSet.ts) as the points layer draws it. */
+export async function readParticleSet(h5: ResultsH5, ready: Promise<unknown>, path: string): Promise<ParticleSetAnswer> {
+  try {
+    await ready;
+    const set = openParticleSet(h5, path);
+    const fields = SET_FIELDS(set);
+    const stage: ParticleStageInfo = {
+      id: "set",
+      name: baseName(path),
+      ndm: set.ndm,
+      units: { ...set.units },
+      grid: { origin: [...set.grid.origin], cellSize: [...set.grid.cellSize], numCells: [...set.grid.numCells], basis: set.grid.basis },
+      bodies: set.bodies.map((b) => ({ ...b })),
+      nOutputs: 1,
+      steps: [0],
+      time: [0],
+      counts: [set.count],
+      fields: fields.info,
+      refusedFields: [],
+      torn: null,
+    };
+    return { ok: true, path, stage, ids: set.ids, positions: set.positions, values: fields.values };
+  } catch (err) {
+    return { ok: false, error: message(err) };
+  }
 }
 
 /** How long the handle stays open after the last read (the D5 revisit trigger's 30 steps/s is 33 ms a step). */
@@ -600,6 +707,62 @@ export class ResultsHost {
         ...(springs !== undefined ? { springs } : {}),
         ...(springsError !== undefined ? { springsError } : {}),
       };
+    } catch (err) {
+      return { ok: false, seq: req.seq, error: message(err) };
+    }
+  }
+
+  /**
+   * ADR 0134 D5: the particle stages of the indexed `.ladruno` (metadata only;
+   * reader/ladrunoParticles.ts read them at open), and the stages it refused or
+   * skipped, by group, with why. A file that is not one `.ladruno` read at
+   * FORMAT_MINOR_VERSION >= 2 holds no particles this app reads: refused, by name.
+   */
+  particleIndex(path: string): ParticleIndexAnswer {
+    try {
+      const rf = this.handle(path);
+      if (!rf) return { ok: false, changed: true, error: `${path} changed on disk since it was indexed; it is read again before its particles are shown` };
+      this.armIdle();
+      const p = particlesOf(rf, path);
+      return {
+        ok: true,
+        path,
+        stages: p.stages.map(particleStageInfo),
+        unread: [...p.refused.map((r) => ({ stage: r.group, reason: `refused: ${r.reason}` })), ...p.skipped.map((r) => ({ stage: r.group, reason: `skipped: ${r.reason}` }))],
+      };
+    } catch (err) {
+      return { ok: false, error: message(err) };
+    }
+  }
+
+  /**
+   * ADR 0134 D5: output `req.output` of particle stage `req.stage`: POSITION, and
+   * the colour field when one is asked, each by one hyperslab (`readOutput`): one
+   * output is in memory, never the history. Another path is refused; a changed file
+   * answers `changed`.
+   */
+  readParticleOutput(req: ParticleOutputRequest): ParticleOutputAnswer {
+    try {
+      const rf = this.handle(req.path);
+      if (!rf) return { ok: false, seq: req.seq, changed: true, error: `${req.path} changed on disk since it was indexed; it is read again before any output is shown` };
+      this.armIdle();
+      const p = particlesOf(rf, req.path);
+      const ndm = p.stage(req.stage).ndm;
+      const pos = p.readOutput(req.stage, req.output, "POSITION");
+      if (pos.nComp !== ndm) throw new Error(`stage ${req.stage}: POSITION has ${pos.nComp} components and the stage is ${ndm}-D`);
+      let values: Float64Array | null = null;
+      let nComp = 0;
+      if (req.field === "POSITION") {
+        values = pos.values;
+        nComp = pos.nComp;
+      } else if (req.field !== null) {
+        const o = p.readOutput(req.stage, req.output, req.field);
+        // The same rows of ID were read for both: the same particles, in the same order.
+        if (o.ids.length !== pos.ids.length) throw new Error(`stage ${req.stage} output ${req.output}: ${req.field} read ${o.ids.length} particles and POSITION ${pos.ids.length}`);
+        values = o.values;
+        nComp = o.nComp;
+      }
+      return { ok: true, seq: req.seq, stage: req.stage, output: req.output, step: pos.step, time: pos.time, ids: pos.ids, positions: pos.values, values, nComp };
     } catch (err) {
       return { ok: false, seq: req.seq, error: message(err) };
     }

@@ -11,7 +11,7 @@ import { pairSessions } from "../reader/geometry.ts";
 import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
 import { activationNotice, activationOf, type Activation } from "./activation.ts";
-import { pairingNotice, pairResults, type ResultsPairing } from "./results.ts";
+import { pairingNotice, pairResults, particleNotices, type ResultsPairing } from "./results.ts";
 import {
   climOf,
   componentName,
@@ -567,6 +567,8 @@ export function noticesOf(s: State): string[] {
   // V4d: drawn nodes the deformed shape leaves undeformed, or why it is not drawn.
   const d = deformNotice(s);
   if (d) out.push(d);
+  // ADR 0134 D5: the particles drawn, how they are coloured, and what of them is not drawn.
+  out.push(...particleNotices(s));
   return out;
 }
 
