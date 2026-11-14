@@ -432,3 +432,39 @@ test("the fork's edge case: when every output so far is empty, a torn OFFSETS en
     }
   });
 });
+
+// -- §2.5's crash rule, step by step (the fork's final text, fork commit 7b949e58d) --------
+
+/** A fixture copy whose OFFSETS rows `[from, from + values.length)` are `values` (after the resizes `rows` names). */
+function offsetsCopy(name: string, rows: Record<string, number>, from: number, values: bigint[]): string {
+  const path = tornCopy(name, rows);
+  const w = new h5wasm.File(path, "a");
+  try {
+    (w.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES/OFFSETS") as h5wasm.Dataset).write_slice([[from, from + values.length]], new BigInt64Array(values));
+  } finally {
+    w.close();
+  }
+  return path;
+}
+
+test("crash rule step 1: OFFSETS[0] other than 0 refuses the stage (C2-OFF)", () => {
+  assertRefusedStage(offsetsCopy("step1.ladruno", {}, 0, [5n]), /OFFSETS\[0\] = 5; expected 0 \(C2-OFF\)/);
+});
+
+test("crash rule step 3: a decrease before the torn last entry still refuses the stage, though step 2 dropped that entry", () => {
+  // OFFSETS [0, 30, 24, 0]: step 2 drops the torn last entry, and [0, 30, 24] still decreases.
+  assertRefusedStage(offsetsCopy("step3.ladruno", {}, 1, [30n, 24n, 0n]), /OFFSETS decreases at 2 \(C2-OFF\)/);
+});
+
+test("crash rule: T' is bounded by a short STEP as by a short TIME", () => {
+  withFile(tornCopy("short_step.ladruno", { STEP: 2 }), (_f, p) => {
+    const s = p.stage("stage_0");
+    assert.equal(s.nOutputs, 2);
+    assert.match(s.torn!, /STEP holds 2, TIME 3 and OFFSETS 4 entries, so 2 outputs are committed/);
+  });
+  withFile(tornCopy("short_time.ladruno", { TIME: 1 }), (_f, p) => {
+    const s = p.stage("stage_0");
+    assert.equal(s.nOutputs, 1);
+    assert.match(s.torn!, /STEP holds 3, TIME 1 and OFFSETS 4 entries, so 1 output is committed/);
+  });
+});

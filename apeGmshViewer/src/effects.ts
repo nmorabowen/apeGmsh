@@ -27,6 +27,7 @@ import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplace
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
 import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
+import { particleSetAloneRefusal } from "./state/results.ts";
 import { contourView, deformView, draftJudgedOf, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
@@ -48,6 +49,12 @@ export interface OpenSet {
   model: string | null;
   geometry: string | null;
   results: string | null;
+  /**
+   * ADR 0134 D1: the set's `<stem>.particles.h5` (main/pairing.ts). Not drawn yet (M2-S4);
+   * a set that holds nothing else is refused through the model's failure (`openSet`).
+   * Absent from a bridge older than M2-S3, which never pairs one.
+   */
+  particles?: string | null;
 }
 
 /** `window.viewer`, as preload.ts exposes it; the optional members arrive with V2f. */
@@ -1512,7 +1519,15 @@ export class Effects {
       this.store.dispatch({ type: "fileClosed", artifact: "results" });
     }
     if (set.model) void this.open(set.model);
-    else this.store.dispatch({ type: "fileClosed", artifact: "model" });
+    else if (set.particles && !set.geometry && !set.results) {
+      // #2985 finding 1: a particle set alone would open an empty, silent window. It fails
+      // closed through the model's failure, the path a file that is not a model takes, so the
+      // window says which file and why (selectors `failureOf`). Drawing it is M2-S4's.
+      this.openToken++;
+      this.reading = false;
+      this.store.dispatch({ type: "fileOpened", artifact: "model", path: set.particles });
+      this.store.dispatch({ type: "fileFailed", artifact: "model", path: set.particles, error: particleSetAloneRefusal(set.particles) });
+    } else this.store.dispatch({ type: "fileClosed", artifact: "model" });
   }
 
   /** Detach everything `attach` and the bridge subscriptions registered. */

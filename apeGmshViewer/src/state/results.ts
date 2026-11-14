@@ -238,6 +238,16 @@ export function pairResults(
   return { state: "unpairable", reason: "the results' /meta/lineage has neither model_hash nor fem_hash, so it cannot be paired with a model by content" };
 }
 
+/**
+ * Why a `<stem>.particles.h5` opened with no model, geometry or results is refused
+ * (#2985 finding 1): it fails closed, named, until the points layer (M2-S4) draws a
+ * particle set alone. effects.ts `openSet` shows it as the model's load failure.
+ */
+export function particleSetAloneRefusal(path: string): string {
+  const name = path.split(/[\\/]/).pop() ?? path;
+  return `${name} is a particle set (ADR 0134), not a model: drawing a particle set alone comes in a later version of apeGmshViewer. Open the model.h5 of the same stem, or the run's .ladruno.`;
+}
+
 /** The banner sentence for a pairing that does not draw results, or null. */
 export function pairingNotice(p: ResultsPairing, resultsName: string): string | null {
   switch (p.state) {

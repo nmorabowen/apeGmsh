@@ -26,6 +26,9 @@ import { metaOf } from "../src/main/results.ts";
 import { openLadruno } from "../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../src/reader/results.ts";
 import { pairingNotice, pairResults } from "../src/state/results.ts";
+import { Effects, type Bridge } from "../src/effects.ts";
+import { BlobStore } from "../src/state/blobs.ts";
+import { failureOf } from "../src/state/selectors.ts";
 
 class FakeEl {
   className = "";
@@ -331,4 +334,23 @@ test("M2-S3: a <stem>.particles.h5 with no model reads the particle sentence; wi
   // A model open: particlesOnly never applies (pairing is the lineage's; this unstamped fixture is unpairable).
   const info = metaOfFixture("particles_v1m2.ladruno");
   assert.equal(pairResults({ lineage: null, openseesVersion: null, programDecl: null }, info).state, "unpairable");
+});
+
+// #2985 finding 1: a <stem>.particles.h5 opened alone opened an empty, silent window (openSet
+// closed every artifact). It now fails closed through the model's failure, the path a file that
+// is not a model takes, naming the file and saying drawing it alone comes later (M2-S4).
+test("M2-S3: a particle set opened alone is refused by name in the window, never an empty, silent one", () => {
+  const store = new Store();
+  const effects = new Effects(store, new BlobStore(), {} as Bridge);
+  try {
+    effects.openSet({ model: null, geometry: null, results: null, particles: "C:/runs/case1.particles.h5" });
+    const failure = failureOf(store.get());
+    assert.ok(failure, "the window states a failure instead of opening empty");
+    assert.match(failure, /case1\.particles\.h5 is a particle set \(ADR 0134\), not a model: drawing a particle set alone comes in a later version/);
+    // A set naming nothing still closes the model, as before: only a lone particle set is refused.
+    effects.openSet({ model: null, geometry: null, results: null, particles: null });
+    assert.equal(failureOf(store.get()), null, "a set with nothing closes the model, as before");
+  } finally {
+    effects.dispose();
+  }
 });

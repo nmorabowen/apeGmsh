@@ -357,22 +357,22 @@ export class LadrunoParticles {
     const nOff = oneD(offDs, "C2-OFF");
     const nId = oneD(idDs, "C2-ID");
     const offsets = nOff === 0 ? new Float64Array(0) : readIds(offDs, 0, nOff);
+    // §2.5's crash rule, the fork's final text (fork commit 7b949e58d), c = len(OFFSETS). The writer
+    // appends DATA, ID, STEP and TIME, then OFFSETS last, flushing after each output, so only the
+    // last OFFSETS entry can be torn (extended, still the fill value 0). A torn entry equal to the
+    // one before it (every output so far empty) is no decrease: it reads as one more empty output.
+    // (1) OFFSETS[0] != 0 refuses.
     if (nOff > 0 && offsets[0] !== 0) throw new ParticleContractError("C2-OFF", `${offDs.path}[0] = ${offsets[0]}; expected 0`);
-    // §2.5's crash rule as the fork's writer confirms it (#2985 review; the fork adopts it as the
-    // contract rule): DATA, ID, STEP and TIME are appended before OFFSETS, which commits the output
-    // last, so an entry the writer has extended but not yet filled (it reads as the
-    // fill value, 0) can only be the last one. A decrease there is the output in flight: it is
-    // not counted, and the outputs committed before it read. A decrease anywhere earlier is a
-    // malformed table and refuses the stage (C2-OFF). A torn entry equal to the one before it (every
-    // output so far empty) is no decrease: it reads as one more empty output, which the fork accepts.
+    // (2) c >= 2 and OFFSETS[c-1] < OFFSETS[c-2]: the last entry is a torn extension; that output is dropped.
     let nOffUsed = nOff;
     let inFlight: string | null = null;
-    for (let i = 1; i < nOff; i++) {
-      if (offsets[i]! >= offsets[i - 1]!) continue;
-      if (i !== nOff - 1) throw new ParticleContractError("C2-OFF", `${offDs.path} decreases at ${i}`);
+    if (nOff >= 2 && offsets[nOff - 1]! < offsets[nOff - 2]!) {
       nOffUsed = nOff - 1;
-      inFlight = `${offDs.path}[${i}] = ${offsets[i]} is below the entry before it, so it is the output being written and is not counted`;
+      inFlight = `${offDs.path}[${nOff - 1}] = ${offsets[nOff - 1]} is below the entry before it, so it is the output being written and is not counted`;
     }
+    // (3) OFFSETS still decreasing anywhere in what remains refuses the stage.
+    for (let i = 1; i < nOffUsed; i++) if (offsets[i]! < offsets[i - 1]!) throw new ParticleContractError("C2-OFF", `${offDs.path} decreases at ${i}`);
+    // Then T' = min(len(STEP), len(TIME), len(OFFSETS) - 1), and the ID and DATA bounds apply to what remains.
     // The fields, checked against the contract; each one's DATA length bounds the outputs.
     const fields: ParticleField[] = [];
     const refusedFields: { field: string; reason: string }[] = [];
