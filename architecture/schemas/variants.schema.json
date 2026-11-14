@@ -27,12 +27,12 @@
       "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f](?:[^\\u0000-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u001f\\u007f-\\u009f])?$"
     },
     "path": {
-      "description": "The variant's model file <stem>.h5, relative to the folder that holds the manifest, with / as the separator. Subfolders are allowed. No segment is empty, '.' or '..'; no folder segment ends in a dot or a space (Windows strips them); no backslash, colon, control character or leading slash. The last segment is a non-empty stem and .h5, and the path ends in none of the reserved sibling suffixes .geometry.h5, .results.h5, .user.h5 or .workspace.h5. Suffixes match case-insensitively, as the app's classify does.",
+      "description": "The variant's model file <stem>.h5, relative to the folder that holds the manifest, with / as the separator. Subfolders are allowed. No segment is empty, '.' or '..'; no folder segment ends in a dot or a space (Windows strips them); no backslash, colon, control character or leading slash. The last segment is a non-empty stem and .h5, and the path ends in none of the reserved sibling suffixes .geometry.h5, .results.h5, .user.h5, .workspace.h5 or .particles.h5. Suffixes match case-insensitively, as the app's classify does.",
       "type": "string",
       "allOf": [
         { "pattern": "^[^/]" },
         { "pattern": "(^|/)[^/]+\\.[hH]5$" },
-        { "not": { "pattern": "\\.([gG][eE][oO][mM][eE][tT][rR][yY]|[rR][eE][sS][uU][lL][tT][sS]|[uU][sS][eE][rR]|[wW][oO][rR][kK][sS][pP][aA][cC][eE])\\.[hH]5$" } },
+        { "not": { "pattern": "\\.([gG][eE][oO][mM][eE][tT][rR][yY]|[rR][eE][sS][uU][lL][tT][sS]|[uU][sS][eE][rR]|[wW][oO][rR][kK][sS][pP][aA][cC][eE]|[pP][aA][rR][tT][iI][cC][lL][eE][sS])\\.[hH]5$" } },
         { "not": { "pattern": "[\\\\:\\u0000-\\u001f\\u007f]" } },
         { "not": { "pattern": "(^|/)\\.{1,2}(/|$)" } },
         { "not": { "pattern": "//" } },

@@ -20,6 +20,7 @@ FiberSlab         ``(T, sum_F)``            ``element_index, gp_index, y, z, are
                                             ``station_natural_coord: (sum_F,) | None``
 LayerSlab         ``(T, sum_L)``            ``element_index, gp_index, layer_index,
                                             sub_gp_index, thickness: (sum_L,)``
+ParticleSlab      ``(S, nComp)`` ragged     ``particle_ids: (S,)``, ``offsets: (T+1,)``
 ================  ========================  =================================================
 
 ``GaussCensus`` is not a slab: it is the subset of ONE ``GaussSlab``
@@ -254,6 +255,98 @@ class LayerSlab:
     thickness: ndarray           # (sum_L,)
     local_axes_quaternion: ndarray  # (sum_L, 4)
     time: ndarray                # (T,)
+
+
+@dataclass(frozen=True)
+class ParticleSlab:
+    """Particle values in the file's own ragged layout (ADR 0134 D4).
+
+    Particles move, appear and disappear, so an output's particle count
+    varies. The slab keeps the ``.ladruno`` CSR layout (contract 232a
+    §2.5): output ``k`` is rows ``offsets[k]:offsets[k + 1]`` of
+    ``values`` and ``particle_ids``.
+
+    ================  =============================================
+    ``values``        ``(S, nComp)``, concatenated over outputs
+    ``particle_ids``  ``(S,)``, sorted within each output
+    ``offsets``       ``(T + 1,)``, ``offsets[0] = 0``, ``offsets[T] = S``
+    ``time``          ``(T,)`` the Domain time; it may restart in a stage
+    ``step``          ``(T,)`` the Domain commit tag, strictly increasing
+    ``registry_ids``  ``(M,)`` the stage registry rows this read covers
+    ``components``    ``nComp`` labels, as the file spells them
+    ================  =============================================
+
+    Outputs are keyed by index or ``step``, never by ``time``.
+    """
+
+    component: str
+    values: ndarray              # (S, nComp)
+    particle_ids: ndarray        # (S,)
+    offsets: ndarray             # (T + 1,)
+    time: ndarray                # (T,)
+    step: ndarray                # (T,)
+    registry_ids: ndarray        # (M,)
+    components: tuple[str, ...]
+
+    @property
+    def n_outputs(self) -> int:
+        return int(np.asarray(self.offsets).size - 1)
+
+    def output(self, k: int) -> "tuple[ndarray, ndarray]":
+        """Output ``k``'s ``(particle_ids (n,), values (n, nComp))``."""
+        n = self.n_outputs
+        if not -n <= k < n:
+            raise IndexError(
+                f"ParticleSlab.output({k}): {self.component!r} holds {n} "
+                "output(s)."
+            )
+        k = k % n
+        a, b = int(self.offsets[k]), int(self.offsets[k + 1])
+        return self.particle_ids[a:b], self.values[a:b]
+
+    def dense(self) -> ndarray:
+        """``(T, M, nComp)`` aligned to :attr:`registry_ids`, ``NaN`` where a
+        particle is absent from an output."""
+        values = np.asarray(self.values)
+        reg = np.asarray(self.registry_ids, dtype=np.int64)
+        ids = np.asarray(self.particle_ids, dtype=np.int64)
+        out = np.full(
+            (self.n_outputs, reg.size, values.shape[1]), np.nan,
+            dtype=np.result_type(values.dtype, np.float32),
+        )
+        if ids.size == 0:
+            return out
+        pos = np.searchsorted(reg, ids)
+        bad = (pos >= reg.size) | (reg[np.minimum(pos, reg.size - 1)] != ids)
+        if bool(bad.any()):
+            raise ValueError(
+                f"ParticleSlab.dense(): {self.component!r} holds particle "
+                f"id(s) {np.unique(ids[bad])[:10].tolist()} that are not "
+                "in its registry (contract C2-ID)."
+            )
+        rows = np.repeat(np.arange(self.n_outputs), np.diff(self.offsets))
+        out[rows, pos, :] = values
+        return out
+
+    def item(self) -> float:
+        """The slab's one value, as a ``float`` (ADR 0115 D3).
+
+        Raises :class:`ValueError` unless ``values`` holds exactly one
+        value: one particle, one component, one output. Narrow the read
+        by particle (``ids=``), component (``"FIELD/label"``) and output
+        (``time=-1``) first.
+        """
+        values = np.asarray(self.values)
+        if values.size != 1:
+            raise ValueError(
+                f"ParticleSlab.item(): {self.component!r} holds "
+                f"{values.size} values ({self.n_outputs} output(s), "
+                f"{values.shape[0]} row(s) x {values.shape[1] if values.ndim == 2 else 1} "
+                "component(s)); item() needs exactly one. Narrow the read "
+                "to one particle (ids=), one component ('FIELD/label') "
+                "and one output (time=-1)."
+            )
+        return float(values.reshape(-1)[0])
 
 
 @dataclass(frozen=True)
