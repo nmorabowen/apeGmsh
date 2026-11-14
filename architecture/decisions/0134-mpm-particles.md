@@ -82,7 +82,7 @@ There is one rule for the stem, the folder, the path in the deck, overwrites, an
   reproduces the particle **content**, under a new `SET_ID`. It does not reproduce a byte-identical
   file.
 - **Its stem is the deck's, and it should be the model's** (the owner's ruling on #2976,
-  2026-11-14: "Yes, same stem"). The viewer pairs by stem only. A particle set pairs with its
+  2026-11-13: "Yes, same stem"). The viewer pairs by stem only. A particle set pairs with its
   model only when the deck stem equals the model stem, so `ops.tcl("slab.tcl")` beside `slab.h5`
   writes `slab.particles.h5`. A deck, or a particle set, at another stem opens without a model,
   under the viewer's existing "no model is open" banner. M2 builds no discovery by hash.
@@ -113,8 +113,8 @@ a fork PR.
 - `apegmsh_version` and `apegmsh_commit`;
 - `fem_hash` and `model_hash`, when the session has them.
 
-The emitter takes these values from the **in-memory lineage** at emit, not from `model.h5`, which may
-not be on disk yet (the deck and its set are written before `after_emit` writes the archive). They
+The emitter takes these values from the **in-memory lineage** at emit, not from `model.h5`, because
+`model.h5` may not be on disk yet, or may hold a previous run's lineage. They
 record where the set came from. Pairing is by stem (above), not by these values.
 
 `SET_ID`, a uuid4 at the file's root, is copied by the fork into the `.ladruno` it writes
