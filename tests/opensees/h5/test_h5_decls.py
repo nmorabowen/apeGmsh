@@ -521,7 +521,7 @@ CLASS: dict[str, str] = {
         "update_material_stage", "addToParameter", "step_hook_ramp",
         "flip_element_stage", "rayleigh", "modal_damping", "eigen",
         "profiler", "command", "update_parameter", "set_node_vel",
-        "set_node_accel", "residualModes", "ritzVectors")},
+        "set_node_accel", "residualModes", "ritzVectors", "mpm")},
     **{v: "part" for v in (
         "section_close", "patch", "fiber", "layer", "pattern_close", "load",
         "eleLoad", "sp", "recorder_declaration_begin",
@@ -559,6 +559,7 @@ ROWS_STORE: dict[str, tuple[str, ...]] = {
     "modal_damping": ("commands",), "eigen": ("commands",),
     "profiler": ("commands",), "command": ("commands",),
     "residualModes": ("commands",), "ritzVectors": ("commands",),
+    "mpm": ("commands",),
 }
 
 #: ``tagged`` stores: group path below a scope -> allocator kind.
@@ -695,8 +696,18 @@ def _all_verb_models() -> list[apeSees]:
         s.profile()                                     # stage commands rows
         s.analysis(**_chain(prof))
         s.run(n_increments=1)
+    # The ``mpm`` block (ADR 0134 D2): global ``command`` rows, each under
+    # its member's declaration.
+    mpm = apeSees(_two_quad_fem(), default_orientation=None, units="N_m_s")
+    mpm.model(ndm=2, ndf=2)
+    mmat = mpm.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    mpm.fix(pg="Base", dofs=(1, 1))
+    mpm.mpm.grid(origin=(0.0, 0.0), h=0.5, cells=(4, 6))
+    mpm.mpm.body("Rock", material=mmat, density=1.0, ppc=2)
+    mpm.mpm.gravity(0.0, -9.81)
+    mpm.mpm.analyze(2, 1.0e-4)
     return [
-        flat, prof, _param_stage_model(), _staged(named=True),
+        flat, prof, mpm, _param_stage_model(), _staged(named=True),
         _build_kitchen_sink_bridge(),
         _build_two_stage_bridge(),
         build_material_stage_bridge(_make_two_quad_fem_stub()),
@@ -759,13 +770,12 @@ def test_every_declaration_verb_has_its_key(tmp_path: Path) -> None:
             assert any(d.family == "equation_constraint"
                        for d in table.decls)
     # Each ``rows`` verb and the region store were exercised.
-    # ``command`` has no bridge caller yet (ADR 0114 Q7): a row of it would
-    # meet no open declaration and refuse at write, which
-    # ``test_tagless_row_without_a_declaration_refuses`` pins for the path.
+    # ``command`` rows come from the ``mpm`` model (ADR 0134 D2); the
+    # column holds the method, so its tokens are seen as ``command``.
     # ``residualModes`` / ``ritzVectors`` (A3a) run only in the live
     # one-shots (``apeSees.residual_modes`` / ``ritz_vectors``), so no
-    # archived model carries one either.
-    unreached = {"command", "residualModes", "ritzVectors"}
+    # archived model carries one.
+    unreached = {"residualModes", "ritzVectors", "mpm"}
     assert set(ROWS_STORE) - unreached <= seen, sorted(
         set(ROWS_STORE) - unreached - seen)
     assert {"region", "rayleigh_region"} <= seen
