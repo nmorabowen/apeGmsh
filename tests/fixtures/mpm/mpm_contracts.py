@@ -217,3 +217,56 @@ def validate_particle_results(path: str) -> list[str]:
         if not r.particle_stages():
             problems.append("C2-PAIR: no MODEL_STAGE holds a particle group")
     return problems
+
+
+class TornStageError(ValueError):
+    """A particle stage whose OFFSETS decrease before the last entry: corruption, not a
+    torn append (232a §2.5). The reader refuses the stage."""
+
+
+def committed_outputs(src, stage: str | None = None) -> int:
+    """The number of committed outputs of a particle stage, by the crash rule (232a §2.5).
+
+    ``src`` is a path to a ``.ladruno`` (then ``stage`` names the MODEL_STAGE, or the file
+    must hold exactly one particle stage), a ``MODEL_STAGE[...]`` group, or its
+    ``RESULTS/ON_PARTICLES`` group. Outputs ``0 .. n-1`` are readable; rows beyond
+    ``OFFSETS[n]`` are ignored. Raises ``TornStageError`` on a decrease before the last
+    ``OFFSETS`` entry. A closed, conformant stage returns ``len(STEP)``.
+    """
+    if isinstance(src, (str, Path)):
+        with h5py.File(src, "r") as f:
+            if stage is None:
+                stages = [s for s in f if s.startswith("MODEL_STAGE[")
+                          and f"{s}/RESULTS/ON_PARTICLES" in f]
+                if len(stages) != 1:
+                    raise ValueError(f"{src}: name the stage; particle stages: {stages}")
+                stage = stages[0]
+            return committed_outputs(f[stage])
+    op = src["RESULTS/ON_PARTICLES"] if "RESULTS/ON_PARTICLES" in src else src
+
+    # step 1: the four index datasets as they stand on disk
+    offs = np.asarray(op["OFFSETS"][...], dtype=np.int64).reshape(-1)
+    n_step = op["STEP"].shape[0]
+    n_time = op["TIME"].shape[0]
+    if offs.size == 0:
+        return 0
+    if offs[0] != 0:
+        raise TornStageError(f"{op.name}: OFFSETS[0] = {offs[0]}, not 0")
+    # step 2: a LAST entry below its predecessor is a torn extension (the HDF5 fill
+    # value 0): drop the in-flight output it would have committed
+    if offs.size >= 2 and offs[-1] < offs[-2]:
+        offs = offs[:-1]
+    # step 3: any remaining decrease is corruption: refuse the stage
+    if np.any(np.diff(offs) < 0):
+        raise TornStageError(f"{op.name}: OFFSETS decrease before the last entry")
+    # step 4: every axis must hold the output
+    n = min(n_step, n_time, offs.size - 1)
+    # step 5: the output's rows must exist in ID and in every field's DATA
+    bound = op["ID"].shape[0]
+    for name in op:
+        item = op[name]
+        if isinstance(item, h5py.Group) and "DATA" in item:
+            bound = min(bound, item["DATA"].shape[0])
+    while n > 0 and offs[n] > bound:
+        n -= 1
+    return int(n)
