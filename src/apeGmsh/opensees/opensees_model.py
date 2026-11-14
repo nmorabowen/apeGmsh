@@ -120,7 +120,6 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
     from ._internal.build.records import InitialStressRecord
     from ._internal.compose import _ReplayOrder
     from ._target import BackendInfo, TargetMode
-    from .emitter.base import Emitter
     from .emitter.h5 import H5Emitter
     from .emitter.py import PyEmitter
     from .emitter.tcl import TclEmitter
