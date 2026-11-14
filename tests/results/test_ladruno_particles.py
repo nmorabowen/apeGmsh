@@ -545,11 +545,14 @@ def test_a_torn_entry_after_empty_outputs_reads_as_one_more_empty(copy_of, opene
 
 
 @pytest.mark.parametrize("offsets, n_steps", [
-    ([0, 12, 5, 35], 3),          # a decrease before the last entry
-    ([0, 12, 5, 35, 0], 4),       # the same, under a torn last entry
-    ([3, 12, 24, 35], 3),         # does not start at 0
-], ids=["mid-decrease", "mid-decrease-and-torn", "nonzero-start"])
+    ([3, 12, 24, 35], 3),         # step (1): OFFSETS[0] is not 0
+    ([0, 12, 5, 35], 3),          # step (3): a decrease before the last entry
+    ([0, 12, 5, 35, 0], 4),       # step (3) after step (2) drops a torn entry
+    ([0, 12, 5, 35], 1),          # step (3) runs on all of OFFSETS, before T'
+], ids=["nonzero-start", "mid-decrease", "mid-decrease-and-torn",
+        "decrease-past-T"])
 def test_a_decrease_before_the_last_offset_refuses(copy_of, opened, offsets, n_steps) -> None:
+    """The fork's §2.5 steps (1) and (3), on OFFSETS as it stands on disk."""
     p = copy_of(PARTICLES)
     with h5py.File(p, "r+") as f:
         for name in ("STEP", "TIME"):

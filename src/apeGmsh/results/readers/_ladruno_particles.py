@@ -494,23 +494,29 @@ class ParticleStage:
                 "particle group writes 'NONE' (C2-RED)."
             )
         fields = self.fields()
-        n_out = max(0, min(len(step_ds), len(time_ds), len(off_ds) - 1))
-        offsets = (
-            np.asarray(off_ds[: n_out + 1], dtype=np.int64)
-            if len(off_ds) else np.zeros(1, dtype=np.int64)
-        )
-        if n_out >= 1 and offsets[-1] < offsets[-2]:
-            # OFFSETS was extended for the in-flight output but its value
-            # not yet written (the fill is 0): that output is torn, and
-            # the outputs before it are committed. A decrease anywhere
-            # else refuses the stage, below.
-            offsets = offsets[:-1]
-            n_out -= 1
-        if offsets[0] != 0 or bool(np.any(np.diff(offsets) < 0)):
+        # The fork's numbered steps (232a §2.5; its reference is
+        # tests/mpm_contracts.py::committed_outputs), over OFFSETS as it
+        # stands on disk (T + 1 int64 entries, a small read).
+        offsets = np.asarray(off_ds[...], dtype=np.int64).reshape(-1)
+        if offsets.size == 0:
+            offsets = np.zeros(1, dtype=np.int64)
+        # (1) the first entry is 0.
+        if offsets[0] != 0:
             raise ParticleFormatError(
-                f"{where}/OFFSETS does not start at 0 or decreases "
+                f"{where}/OFFSETS[0] is {int(offsets[0])}, not 0 (C2-OFF)."
+            )
+        # (2) a last entry below its predecessor is a torn extension
+        # (the HDF5 fill, 0): drop the in-flight output it would commit.
+        if offsets.size >= 2 and offsets[-1] < offsets[-2]:
+            offsets = offsets[:-1]
+        # (3) any remaining decrease is corruption: refuse the stage.
+        if bool(np.any(np.diff(offsets) < 0)):
+            raise ParticleFormatError(
+                f"{where}/OFFSETS decreases before its last entry "
                 "(C2-OFF)."
             )
+        n_out = min(len(step_ds), len(time_ds), offsets.size - 1)
+        offsets = offsets[: n_out + 1]
         rows = min(
             [len(id_ds)]
             + [len(res[name]["DATA"]) for name in fields]
