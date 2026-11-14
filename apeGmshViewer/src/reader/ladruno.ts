@@ -35,8 +35,16 @@
 //   other encoding, or a JSON value of the wrong shape), never coerced. Lineage
 //   exists only when both hashes are present; pairing itself is the next slice.
 //
+// - particles (ADR 0134 D3): at `INFO@FORMAT_MINOR_VERSION >= 2` a stage's
+//   MODEL/PARTICLES and RESULTS/ON_PARTICLES are read by reader/ladrunoParticles.ts
+//   (`particles`), and the stage lists its ON_PARTICLES bucket in `unread` as
+//   state/results.ts's PARTICLES_UNREAD (the FE stage does not read it). Below
+//   minor 2 a particle group is not read, and the index warns (C2-MINOR); a part
+//   file that holds one is refused by name (C2-PART: Contract 2 is serial only).
+//
 // Browser-safe: no Node import.
 
+import { PARTICLES_UNREAD } from "../state/results.ts";
 import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
@@ -45,6 +53,7 @@ import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
 import { collectModelLocalAxes, collectStepLocalAxes, resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
+import { hasParticleGroups, LadrunoParticles, type PCtors, type PGroup } from "./ladrunoParticles.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 import { openH5 } from "./h5open.ts";
 
@@ -52,6 +61,8 @@ export { quaternionToZRec, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 
 /** `INFO@GENERATOR` of every file this reader opens (schema §2, "reader branch key"). */
 export const LADRUNO_GENERATOR = "Ladruno";
+/** The first `INFO@FORMAT_MINOR_VERSION` whose stages may hold particles (the fork's contract §2.1: the minor is the feature flag). */
+export const LADRUNO_PARTICLES_MINOR = 2;
 /** The `INFO@FORMAT_VERSION` values this reader opens; equal to Python's `LADRUNO_SUPPORTED_FORMAT_VERSIONS`. */
 export const LADRUNO_SUPPORTED_FORMAT_VERSIONS: readonly number[] = [1] as const;
 
@@ -332,6 +343,12 @@ export class LadrunoFile {
   private readonly gauss: LadrunoGauss;
   /** Each stage's spring buckets, found once (`springBuckets`). */
   private readonly springs = new Map<string, SpringBucket[]>();
+  /**
+   * The particle stages (ADR 0134 D3; reader/ladrunoParticles.ts), indexed at open
+   * and read by output on request; null below FORMAT_MINOR_VERSION 2, where a
+   * particle group is not read (the index warns).
+   */
+  readonly particles: LadrunoParticles | null;
 
   constructor(h5: ResultsH5, f: LFile, path: string, part = false) {
     this.h5 = h5;
@@ -359,12 +376,35 @@ export class LadrunoFile {
       if (!STAGE_NAME.test(n)) throw new LadrunoError("layout", `/${n}: a MODEL_STAGE whose id is not an integer`);
     }
     stageNames.sort((a, b) => Number(STAGE_NAME.exec(a)![1]) - Number(STAGE_NAME.exec(b)![1]));
-    const hosts = stageNames.map((name, i) => this.readHost(this.group(f, name), `stage_${i}`, warnings));
+    const stageGroups = stageNames.map((name, i) => ({ id: `stage_${i}`, group: this.group(f, name) }));
+    const ctors = h5 as unknown as PCtors;
+    const withParticles = stageGroups.filter((s) => hasParticleGroups(s.group as unknown as PGroup, ctors));
+    if (part && withParticles.length > 0) {
+      throw new LadrunoError(
+        "unsupported",
+        `${path} is one part of a partitioned run and ${withParticles.map((s) => s.group.path).join(", ")} holds particles; particle results are serial only (the fork's MPM contract §2.2, C2-PART)`,
+      );
+    }
+    const readsParticles = formatMinorVersion >= LADRUNO_PARTICLES_MINOR;
+    if (!readsParticles && withParticles.length > 0) {
+      warnings.push(
+        `${withParticles.map((s) => s.group.path).join(", ")} holds a particle group, and INFO@FORMAT_MINOR_VERSION is ${formatMinorVersion}: a file with particles writes minor >= ${LADRUNO_PARTICLES_MINOR} (C2-MINOR), so its particles are not read`,
+      );
+    }
+    const hosts = stageGroups.map((s) => this.readHost(s.group, s.id, warnings, readsParticles));
     const modes = this.layModes(hosts, warnings);
     const stages: StageInfo[] = [];
     for (const h of hosts) {
       stages.push(h.stage);
       for (const m of modes.stages) if (m.host === h.stage.id) stages.push(m.stage);
+    }
+    this.particles = readsParticles
+      ? new LadrunoParticles(ctors, f as unknown as PGroup, stageGroups.map((s, i) => ({ id: s.id, group: s.group as unknown as PGroup, fileKind: hosts[i]!.fileKind })), dim)
+      : null;
+    for (const r of this.particles?.refused ?? []) warnings.push(`${r.group}: its particles are refused and not read: ${r.reason}`);
+    for (const s of this.particles?.stages ?? []) {
+      if (s.torn !== null) warnings.push(`${s.group}/RESULTS/ON_PARTICLES: ${s.nOutputs} output${s.nOutputs === 1 ? "" : "s"} read; ${s.torn}`);
+      for (const x of s.refusedFields) warnings.push(`${s.group}/RESULTS/ON_PARTICLES/${x.field}: refused and not read: ${x.reason}`);
     }
     const provenance = this.readProvenance(info);
     const { lineage, reason } = lineageOf(provenance);
@@ -1016,7 +1056,7 @@ export class LadrunoFile {
 
   // -- stages -----------------------------------------------------------------
 
-  private readHost(g: LGroup, id: string, warnings: string[]): { stage: StageInfo; fileKind: string; onNodes: LGroup | null } {
+  private readHost(g: LGroup, id: string, warnings: string[], readsParticles: boolean): { stage: StageInfo; fileKind: string; onNodes: LGroup | null } {
     const kindAttr = g.attrs["KIND"];
     const kind = kindAttr === undefined ? undefined : oneValue(kindAttr.value);
     if (typeof kind !== "string" || !(kind in KIND_MAP)) {
@@ -1034,7 +1074,8 @@ export class LadrunoFile {
         else if (UNREAD_BUCKETS.has(b)) {
           const bg = this.group(results, b);
           for (const r of bg.keys()) unread.push(`${b}/${r}`);
-        } else unread.push(`${b} (not a RESULTS bucket this reader knows)`);
+        } else if (b === "ON_PARTICLES" && readsParticles) unread.push(PARTICLES_UNREAD);
+        else unread.push(`${b} (not a RESULTS bucket this reader knows)`);
       }
     }
     const refused: NodalInfo["refused"] = [];
