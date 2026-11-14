@@ -84,8 +84,6 @@ __all__ = [
     "OUTPUT_FIELDS",
 ]
 
-#: The command token every member emits through (ADR 0134 D8).
-VERB = "mpm"
 #: Grid faces, per spatial dimension, in the fork's ``faceIndex`` order.
 FACES: dict[int, tuple[str, ...]] = {
     2: ("xmin", "xmax", "ymin", "ymax"),
@@ -184,7 +182,7 @@ class Grid(MPM):
         return tuple(out)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
-        emitter.command(VERB, *self.args(tag))
+        emitter.command("mpm", *self.args(tag))
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -230,7 +228,7 @@ class Body(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args(resolve_tag(emitter, self.material)))
+        emitter.command("mpm", *self.args(resolve_tag(emitter, self.material)))
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.material,)
@@ -257,7 +255,7 @@ class Fix(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args())
+        emitter.command("mpm", *self.args())
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -283,7 +281,7 @@ class Wall(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args())
+        emitter.command("mpm", *self.args())
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -307,7 +305,7 @@ class Gravity(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args())
+        emitter.command("mpm", *self.args())
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -329,7 +327,7 @@ class TimeSeries(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args(resolve_tag(emitter, self.series)))
+        emitter.command("mpm", *self.args(resolve_tag(emitter, self.series)))
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return (self.series,)
@@ -353,7 +351,7 @@ class Damping(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args())
+        emitter.command("mpm", *self.args())
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -384,7 +382,7 @@ class Flip(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args())
+        emitter.command("mpm", *self.args())
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -408,7 +406,7 @@ class MassCutoff(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args())
+        emitter.command("mpm", *self.args())
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -430,7 +428,7 @@ class Safety(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args())
+        emitter.command("mpm", *self.args())
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -469,7 +467,7 @@ class Units(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args())
+        emitter.command("mpm", *self.args())
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -534,7 +532,7 @@ class Output(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args())
+        emitter.command("mpm", *self.args())
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
@@ -559,7 +557,7 @@ class Analyze(MPM):
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
-        emitter.command(VERB, *self.args())
+        emitter.command("mpm", *self.args())
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

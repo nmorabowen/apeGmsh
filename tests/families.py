@@ -25,6 +25,7 @@ from apeGmsh.opensees._internal.types import (
     Integrator,
     LinearSystem,
     ModalBasis,
+    MPM,
     NDMaterial,
     Numberer,
     Pattern,
@@ -102,6 +103,8 @@ FAMILIES: tuple[Family, ...] = (
            _CONTRACT + "test_analysis_contract:ALL_ANALYSES"),
     Family("modal basis", ModalBasis,
            "tests.opensees.parity.test_chain_m_command_parity:ALL_MODAL_BASIS"),
+    Family("mpm", MPM,
+           "tests.opensees.parity.test_mpm_command_parity:ALL_MPM"),
 )
 
 
