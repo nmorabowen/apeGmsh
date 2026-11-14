@@ -42,6 +42,10 @@ class ResultLevel(Enum):
     FIBERS = "fibers"                   # within fiber-section GPs
     LAYERS = "layers"                   # layered shells
     SPRINGS = "springs"                 # zero-length spring force / deformation
+    # MPM particles (ADR 0134 D4): carriers that move, appear and
+    # disappear, never keyed by node or element ids. Only a ``.ladruno``
+    # particle group answers it; ``Results.particles`` reads it.
+    PARTICLES = "particles"
 
 
 @dataclass(frozen=True)

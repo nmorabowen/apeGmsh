@@ -82,6 +82,7 @@ from ._buckets import (
 )
 from ._ladruno_element_io import SpatialDimUnknown
 from ._ladruno_hyperslab import read_hyperslab
+from ._ladruno_particles import ParticleStage, scan_particle_stages
 from ._mpco import MPCOStrainNotRecorded
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
@@ -601,6 +602,10 @@ class LadrunoReader:
             self._validate_identity()
             self._refuse_repeated_node_ids()
             self._refuse_malformed_local_axes()
+            # ADR 0134 D3: the MODEL_STAGE groups holding a particle
+            # group; a file the contract forbids is refused here.
+            self._particle_groups = scan_particle_stages(self._h5, self._path)
+            self._particle_stages: dict[str, ParticleStage] = {}
             self._stage_cache: Optional[list[StageInfo]] = None
             self._stage_to_grp: dict[str, str] = {}
             # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
@@ -998,6 +1003,45 @@ class LadrunoReader:
                 "from it. Read the stage that recorded the analysis steps."
             )
 
+    def _refuse_on_particles(self, stage_id: str, what: str) -> None:
+        """Fail loud on a node or element read of a particle-only stage."""
+        grp = self._resolve_stage_group(stage_id)
+        if stage_id in self._mode_refs:
+            return
+        name = grp.name.lstrip("/")
+        if (name in self._particle_groups
+                and _attr_int(grp.attrs, "EMPTY_PARTITION", default=0) == 1):
+            raise ValueError(
+                f"{self._path.name}: stage {stage_id!r} ({name}) holds MPM "
+                f"particles only, so {what} cannot be read from it. Read "
+                "it with results.particles.get(...) (ADR 0134 D4)."
+            )
+
+    def particle_stage_ids(self) -> list[str]:
+        """The stage ids whose ``MODEL_STAGE`` holds a particle group."""
+        if self._stage_cache is None:
+            self.stages()
+        return [sid for sid, name in self._stage_to_grp.items()
+                if name in self._particle_groups]
+
+    def particle_stage(self, stage_id: str) -> ParticleStage:
+        """The particle group of ``stage_id`` (ADR 0134 D3), or a refusal."""
+        grp = self._resolve_stage_group(stage_id)
+        name = grp.name.lstrip("/")
+        if stage_id in self._mode_refs or name not in self._particle_groups:
+            raise ValueError(
+                f"{self._path.name}: stage {stage_id!r} holds no particle "
+                f"group; the stages with particles are "
+                f"{self.particle_stage_ids()}."
+            )
+        if stage_id not in self._particle_stages:
+            stage = ParticleStage(grp, where=f"{self._path.name} {name}")
+            # A stage the contract refuses is never cached: every access
+            # re-raises, and nothing of it is read in part.
+            stage.validate()
+            self._particle_stages[stage_id] = stage
+        return self._particle_stages[stage_id]
+
     def _resolve_stage_group(self, stage_id: str) -> "h5py.Group":
         if self._stage_cache is None:
             self.stages()
@@ -1151,7 +1195,17 @@ class LadrunoReader:
         """
         fem = self.fem()
         if fem is None:
-            return None
+            if not self._particle_groups:
+                return None
+            # An all-particle file (ADR 0134 D3): every stage is the
+            # recorder's empty stage. The broker wraps that stage's
+            # empty MODEL group, so the file opens without model_h5=,
+            # and its node and element reads refuse by name.
+            from ...mesh.FEMData import FEMData
+            last = self.particle_stage_ids()[-1]
+            fem = FEMData.from_ladruno_model(
+                self._resolve_stage_group(last)["MODEL"])
+            fem.units = self.units
         from types import MappingProxyType
 
         from ...opensees.opensees_model import OpenSeesModel
@@ -1196,6 +1250,10 @@ class LadrunoReader:
         self, stage_id: str, level: ResultLevel,
     ) -> list[str]:
         grp = self._resolve_stage_group(stage_id)
+        if level is ResultLevel.PARTICLES:
+            if stage_id not in self.particle_stage_ids():
+                return []
+            return self.particle_stage(stage_id).components()
         if stage_id in self._mode_refs:
             on_nodes = _child(grp, "RESULTS/ON_NODES")
             if level is not ResultLevel.NODES or on_nodes is None:
@@ -1308,6 +1366,7 @@ class LadrunoReader:
         node_ids: "Optional[ndarray]" = None,
         time_slice: TimeSlice = None,
     ) -> NodeSlab:
+        self._refuse_on_particles(stage_id, f"node component {component!r}")
         slab = self._read_nodes_as_recorded(
             stage_id, component, node_ids=node_ids, time_slice=time_slice,
         )
@@ -1611,6 +1670,7 @@ class LadrunoReader:
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> ElementSlab:
         self._refuse_on_mode(stage_id, f"element component {component!r}")
+        self._refuse_on_particles(stage_id, f"element component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         on_e = self._require_element_results(
@@ -1661,6 +1721,7 @@ class LadrunoReader:
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> LineStationSlab:
         self._refuse_on_mode(stage_id, f"line-station component {component!r}")
+        self._refuse_on_particles(stage_id, f"line-station component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
@@ -1711,6 +1772,7 @@ class LadrunoReader:
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> GaussSlab:
         self._refuse_on_mode(stage_id, f"gauss component {component!r}")
+        self._refuse_on_particles(stage_id, f"gauss component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
@@ -1868,6 +1930,7 @@ class LadrunoReader:
         gp_indices: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> FiberSlab:
         self._refuse_on_mode(stage_id, f"fiber component {component!r}")
+        self._refuse_on_particles(stage_id, f"fiber component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
@@ -1909,6 +1972,7 @@ class LadrunoReader:
         read, and a rank may hold no element.
         """
         self._refuse_on_mode(stage_id, f"layer component {component!r}")
+        self._refuse_on_particles(stage_id, f"layer component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
@@ -1939,6 +2003,7 @@ class LadrunoReader:
         # material stress/strain are already reachable via read_elements
         # (the ``force`` token) and read_gauss (``material.stress`` →
         # stress_xx). No bespoke spring slab. Always empty here.
+        self._refuse_on_particles(stage_id, f"spring component {component!r}")
         time = self.time_vector(stage_id)
         return _empty_spring_slab(
             component, time, resolve_time_slice(time_slice, time),

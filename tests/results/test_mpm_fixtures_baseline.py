@@ -5,15 +5,15 @@ executable validators (see its README). The validators patch ``sys.path`` from t
 location, so they are loaded by putting that directory on ``sys.path`` here, never by
 editing the copies.
 
-These tests pin the behaviour **before** the particle reader lands:
+These tests pin:
 
 1. the vendored validators accept the fixtures;
-2. ``Results.from_ladruno`` opens the mixed fixture, reads its FE stage, and exposes
-   nothing particle-shaped;
-3. ``Results.from_ladruno`` on the all-particle fixture raises the "no MODEL group" error.
+2. ``Results.from_ladruno`` opens the mixed fixture and reads its FE stage as before;
+3. ``Results.from_ladruno`` opens the all-particle fixture without ``model_h5=``
+   (ADR 0134 D3, inverted by M2-S2 #2981: before M2 it raised the "no MODEL group"
+   error).
 
-Pin 3 is meant to be INVERTED by the Python reader slice of M2: once particle-only files
-open, replace it with the new contract.
+The particle values themselves are checked in ``test_ladruno_particles.py``.
 """
 from __future__ import annotations
 
@@ -65,21 +65,24 @@ def test_particle_set_validates(contracts) -> None:
 
 # --- pins 2 and 3: today's Python reader ------------------------------------------------
 
-def test_mixed_fixture_opens_and_fe_stage_reads_without_particles() -> None:
+def test_mixed_fixture_opens_and_fe_stage_reads() -> None:
     r = Results.from_ladruno(MIXED)
     try:
         assert r.stages, "the FE stage must be listed"
         stage = r.stage(r.stages[0].id)
         assert stage.nodes.available_components(), "the FE stage must expose nodal results"
-        # Nothing particle-shaped is exposed by today's reader.
-        for obj in (r, stage):
-            assert not [n for n in dir(obj) if "particle" in n.lower()]
+        # The FE stage holds no particles; the particle stage is the second one.
+        assert r.particles.stages() == [r.stages[1].id]
     finally:
         r.close()
 
 
-def test_particle_only_fixture_is_refused_for_want_of_a_model_group() -> None:
-    # INVERT ME: the Python reader slice of M2 makes a particle-only file open.
-    # This pins the refusal as it stands today (ADR 0134 D3 "Before M2").
-    with pytest.raises(ValueError, match=r"carries no MODEL group .*Pass model_h5="):
-        Results.from_ladruno(PARTICLES)
+def test_particle_only_fixture_opens_without_a_model() -> None:
+    # Pin 3, inverted by M2-S2 (#2981): an all-particle file opens without
+    # model_h5= (ADR 0134 D3) and has no FEM.
+    r = Results.from_ladruno(PARTICLES)
+    try:
+        assert r.fem is None
+        assert r.particles.get(component="POSITION").n_outputs == 3
+    finally:
+        r.close()
