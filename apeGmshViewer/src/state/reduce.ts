@@ -14,7 +14,7 @@
 // `withLineDiagramPick`, `syncLineDiagramDerived`).
 
 import { reduceClip } from "./clip.ts";
-import { reduceParticles } from "./results.ts";
+import { particleSystemOf, reduceParticles } from "./results.ts";
 import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";
 import { defaultLineDiagramComponent, lineDiagramKeysOf } from "./lineDiagram.ts";
 import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
@@ -387,7 +387,7 @@ function reduceEvent(s: State, e: Event): State {
         user: s.user,
         // ADR 0134 D5: the particles are the set's, not the model's (a particle set draws with no model).
         particles: s.particles,
-        contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
+        contour: syncContourUnits(initialState.contour, s.results?.units ?? particleSystemOf(s.particles), false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
         source: { ...initialState.source, seq: s.source.seq },
@@ -432,7 +432,7 @@ function reduceEvent(s: State, e: Event): State {
         results: s.results,
         user: s.user,
         particles: s.particles,
-        contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
+        contour: syncContourUnits(initialState.contour, s.results?.units ?? particleSystemOf(s.particles), false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
         source: { ...initialState.source, seq: s.source.seq },
@@ -906,7 +906,11 @@ function reduceEvent(s: State, e: Event): State {
     case "setParticlesOn":
     case "particleFrame": {
       const particles = reduceParticles(s.particles, e);
-      return particles === s.particles ? s : { ...s, particles };
+      if (particles === s.particles) return s;
+      // The header's Native units: the model's, else the results', else the particle stage's UNIT_SYSTEM (ADR 0134 D5).
+      const declared = s.units ?? s.results?.units ?? particleSystemOf(particles);
+      const contour = declared === s.contour.declaredUnits ? s.contour : syncContourUnits(s.contour, declared, true);
+      return { ...s, particles, contour };
     }
     case "variantsRead":
     case "variantSwitch":

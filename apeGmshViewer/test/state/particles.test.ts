@@ -21,7 +21,7 @@ import type { ResultsH5 } from "../../src/reader/results.ts";
 import type { ParticleFrame } from "../../src/renderer/particles.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
 import { reduce, initialState } from "../../src/state/reduce.ts";
-import { particleNotices, particleUnit } from "../../src/state/results.ts";
+import { dimensionExponents, particleNotices, particleUnit } from "../../src/state/results.ts";
 import { failureOf, noticesOf } from "../../src/state/selectors.ts";
 import { Store } from "../../src/state/store.ts";
 import type { ParticleStageInfo, State } from "../../src/state/types.ts";
@@ -145,17 +145,62 @@ test("the lines say what is drawn, the particles with no value, an all-NaN outpu
   assert.deepEqual(particleNotices(unread), ["Particles of /MODEL_STAGE[1] not drawn: refused: the registry columns differ in length (C2-REG)."]);
 });
 
+// -- #2992 review: the header's Units choice ------------------------------------------
+
+test("dimensionExponents reads the fork's DIMENSION products; anything else is null, never guessed", () => {
+  assert.deepEqual(dimensionExponents(""), { f: 0, l: 0, t: 0 });
+  assert.deepEqual(dimensionExponents("L"), { f: 0, l: 1, t: 0 });
+  assert.deepEqual(dimensionExponents("F/L^2"), { f: 1, l: -2, t: 0 });
+  assert.deepEqual(dimensionExponents("L/t"), { f: 0, l: 1, t: -1 });
+  assert.deepEqual(dimensionExponents("F*t^2/L^4"), { f: 1, l: -4, t: 2 });
+  assert.equal(dimensionExponents("kPa"), null);
+  assert.equal(dimensionExponents("F/L/t"), null);
+});
+
+test("the stage's UNIT_SYSTEM is the header's Native units with no model; a model's own stay first; a model close keeps the particles'", () => {
+  const s = loaded([stage()]);
+  assert.equal(s.contour.declaredUnits, "kN_m_s", "the fixtures' kN_m_s shows as Native, not unknown");
+  assert.equal(s.contour.targetUnits, "kN_m_s");
+  const none = loaded([stage({ units: { length: "m", force: "kN", time: "s", system: "" } })]);
+  assert.equal(none.contour.declaredUnits, null, "a stage naming no known system declares none");
+  const modelFirst = { ...loaded([stage()]), units: "N_mm_s" as const };
+  const again = reduce(reduce(modelFirst, { type: "particlesOpened", source: "results", path: "x.ladruno" }), { type: "particlesLoaded", source: "results", path: "x.ladruno", stages: [stage()], unread: [] });
+  assert.equal(again.contour.declaredUnits, "N_mm_s", "the model's declared units come first");
+  const closed = reduce(reduce(s, { type: "fileOpened", artifact: "model", path: "m.h5" }), { type: "fileClosed", artifact: "model" });
+  assert.equal(closed.contour.declaredUnits, "kN_m_s");
+});
+
+test("the particle lines follow the header's Units choice: labels and values converted, the colours unchanged; as stored shows the stored values", () => {
+  let s = loaded([stage()]);
+  s = reduce(s, { type: "particleFrame", frame: { stage: 0, output: 2, status: "ready", error: null, count: 11, noValue: 0, range: { min: 0.625, max: 1.375 } } });
+  assert.ok(particleNotices(s).includes("Particles: output 3 of 3 (step 20, t = 0.002 s), 11 drawn, coloured by POSITION/y (m): 0.625 to 1.375."));
+  s = reduce(s, { type: "setContourUnits", target: "N_mm_s" });
+  assert.ok(particleNotices(s).includes("Particles: output 3 of 3 (step 20, t = 0.002 s), 11 drawn, coloured by POSITION/y (mm): 625 to 1375."), particleNotices(s).join("\n"));
+  s = reduce(s, { type: "setParticleColour", colour: { field: "STRESS", component: 1 } });
+  s = reduce(s, { type: "particleFrame", frame: { stage: 0, output: 2, status: "ready", error: null, count: 11, noValue: 0, range: { min: -7.3575, max: 0 } } });
+  // kN/m^2 to N/mm^2: 1e3 / 1e6 = 1e-3.
+  assert.ok(particleNotices(s).some((l) => /coloured by STRESS\/sigma22 \(N\/mm\^2\): -0\.007358 to 0\.$/.test(l)), particleNotices(s).join("\n"));
+  s = reduce(s, { type: "setContourUnits", target: "as_stored" });
+  assert.ok(particleNotices(s).some((l) => /coloured by STRESS\/sigma22 \(kN\/m\^2\): -7\.357 to 0\.$/.test(l)), particleNotices(s).join("\n"));
+});
+
 // -- the effects, through the real main-side host ---------------------------------------
 
 /** A bridge whose particle doors call main/results.ts directly, as main's handlers do; a frame target that records. */
-function rig(): { store: Store; effects: Effects; frames: (ParticleFrame | null)[]; host: ResultsHost } {
+/** `delayMs(output)` holds main's answer for that output (a slow read), so a later request can overtake it. */
+function rig(delayMs: (output: number) => number = () => 0): { store: Store; effects: Effects; frames: (ParticleFrame | null)[]; host: ResultsHost } {
   const store = new Store();
   const host = new ResultsHost(H5, h5wasm.ready, { idleMs: 5 });
   const bridge = {
     openModel: async () => ({ ok: false, error: "no model in this test" }),
     openResults: (path: string) => host.open(path),
     particleIndex: async (path: string) => host.particleIndex(path),
-    readParticleOutput: async (req: Parameters<NonNullable<Bridge["readParticleOutput"]>>[0]) => host.readParticleOutput(req),
+    readParticleOutput: async (req: Parameters<NonNullable<Bridge["readParticleOutput"]>>[0]) => {
+      const answer = host.readParticleOutput(req);
+      const ms = delayMs(req.output);
+      if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+      return answer;
+    },
     particleSet: () => readParticleSet(H5, h5wasm.ready, SET),
   } as unknown as Bridge;
   const effects = new Effects(store, new BlobStore(), bridge);
@@ -218,6 +263,34 @@ test("a .ladruno's particles: the last output by default; STATE_eqPlasticStrain'
     assert.equal(s.particles!.frame!.noValue, 4);
     assert.equal(frames.at(-1)!.positions.length, 24);
     assert.equal(frames.at(-1)!.fit, false, "the camera is framed once per set, not per output");
+  } finally {
+    effects.dispose();
+    host.close();
+  }
+});
+
+test("#2992 review: the latest output wins: a slow answer for an output the user has left never paints over the newer one", async () => {
+  // Output 0's read is slow; the user scrubs on to output 1 before it lands. The soil's STATE_eqPlasticStrain
+  // is 0 at output 0 and 1e-4 at output 1 (the fixture), so the frame on screen says which answer painted last.
+  const { store, effects, frames, host } = rig((output) => (output === 0 ? 120 : 0));
+  try {
+    effects.openSet({ model: null, geometry: null, results: ALL, particles: null });
+    await settled(store, frameReady, "the first frame");
+    store.dispatch({ type: "setParticleColour", colour: { field: "STATE_eqPlasticStrain", component: 0 } });
+    await settled(store, (x) => frameReady(x) && frames.at(-1)?.scalar?.[0] === 2e-4, "the eqPlasticStrain frame at output 2");
+    store.dispatch({ type: "setParticleOutput", output: 0 });
+    await new Promise((r) => setTimeout(r, 10));
+    store.dispatch({ type: "setParticleOutput", output: 1 });
+    await settled(store, (x) => frameReady(x) && x.particles!.output === 1, "output 1");
+    // Wait past output 0's late answer.
+    await new Promise((r) => setTimeout(r, 250));
+    const last = frames.at(-1)!;
+    assert.equal(last.scalar![0], 1e-4, "the frame on screen is output 1's, not output 0's late answer");
+    assert.ok(!frames.some((f) => f?.scalar?.[0] === 0), "output 0's late answer was never pushed");
+    const s = store.get();
+    assert.equal(s.particles!.output, 1);
+    assert.equal(s.particles!.frame!.output, 1);
+    assert.equal(s.particles!.frame!.status, "ready");
   } finally {
     effects.dispose();
     host.close();

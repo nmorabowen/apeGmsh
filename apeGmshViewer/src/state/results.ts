@@ -25,7 +25,8 @@
 // effects to the viewport and never enter the store. A set that holds only its
 // `<stem>.particles.h5` draws it, with the "particle set open without a model" notice.
 
-import type { Event, Lineage, ParticleFieldInfo, ParticlesState, ParticleStageInfo, ProgramDecls, ResultsInfo, State } from "./types.ts";
+import type { ContourState, Event, Lineage, ParticleFieldInfo, ParticlesState, ParticleStageInfo, ProgramDecls, ResultsInfo, State, UnitSystemId } from "./types.ts";
+import { parseDeclaredUnits, UNIT_SYSTEMS } from "./units.ts";
 
 export type ResultsPairing =
   /** no results file has been read */
@@ -364,10 +365,60 @@ export function particleUnit(field: ParticleFieldInfo, units: ParticleStageInfo[
   return field.dimension.replace(/\b[LFt]\b/g, (s) => (s === "L" ? units.length : s === "F" ? units.force : units.time));
 }
 
+/** The unit system a particle stage declares (`UNIT_SYSTEM`, e.g. `kN_m_s`), or null when it names none this app knows. */
+export function particleSystemOf(p: ParticlesState | null): UnitSystemId | null {
+  const st = p?.status === "ready" ? p.stages[p.stage] : undefined;
+  return st ? parseDeclaredUnits(st.units.system) : null;
+}
+
+/** The exponents of F, L and t in a DIMENSION (`F/L^2`, `L/t`, `F*t^2/L^4`, "" dimensionless), or null when it is not such a product. */
+export function dimensionExponents(dimension: string): { f: number; l: number; t: number } | null {
+  const e = { f: 0, l: 0, t: 0 };
+  const d = dimension.trim();
+  if (d === "") return e;
+  const parts = d.split("/");
+  if (parts.length > 2) return null;
+  for (const [k, part] of parts.entries()) {
+    for (const tok of part.split("*")) {
+      const m = /^\s*([FLt])(?:\^(\d+))?\s*$/.exec(tok);
+      if (!m) return null;
+      const n = (m[2] === undefined ? 1 : Number(m[2])) * (k === 0 ? 1 : -1);
+      if (m[1] === "F") e.f += n;
+      else if (m[1] === "L") e.l += n;
+      else e.t += n;
+    }
+  }
+  return e;
+}
+
+/**
+ * How a particle field's values are shown under the header's Units choice (`contour.targetUnits`):
+ * the factor from the stored values, and the unit label. "As stored" (or a stage that declares no
+ * known system, or a DIMENSION this cannot read) shows the stored values in the stage's own units.
+ */
+export function particleDisplay(
+  field: ParticleFieldInfo,
+  st: ParticleStageInfo,
+  contour: Pick<ContourState, "targetUnits" | "sourceUnits" | "declaredUnits">,
+): { factor: number; unit: string; converted: boolean } {
+  const stored = { factor: 1, unit: particleUnit(field, st.units), converted: false };
+  const target = contour.targetUnits;
+  if (target === "as_stored") return stored;
+  const from = parseDeclaredUnits(st.units.system) ?? contour.declaredUnits ?? contour.sourceUnits;
+  const dim = dimensionExponents(field.name === "POSITION" ? "L" : field.dimension);
+  if (from === null || dim === null) return stored;
+  const src = UNIT_SYSTEMS[from];
+  const dst = UNIT_SYSTEMS[target];
+  const factor = Math.pow(src.F / dst.F, dim.f) * Math.pow(src.L / dst.L, dim.l) * Math.pow(src.T / dst.T, dim.t);
+  const dimension = field.name === "POSITION" ? "L" : field.dimension;
+  const unit = dimension.replace(/\b[LFt]\b/g, (s) => (s === "L" ? dst.symbols.length : s === "F" ? dst.symbols.force : dst.symbols.time));
+  return { factor, unit, converted: from !== target };
+}
+
 const fmt = (x: number): string => (x === 0 ? "0" : Math.abs(x) >= 1e4 || Math.abs(x) < 1e-3 ? x.toExponential(3) : String(Number(x.toPrecision(4))));
 
 /** The banner's particle lines: what is drawn and how it is coloured, and every particle stage, field or value that is not. */
-export function particleNotices(s: Pick<State, "particles" | "artifacts">): string[] {
+export function particleNotices(s: Pick<State, "particles" | "artifacts" | "contour">): string[] {
   const p = s.particles;
   if (p === null) return [];
   const name = baseName(p.path);
@@ -402,13 +453,14 @@ export function particleNotices(s: Pick<State, "particles" | "artifacts">): stri
     return out;
   }
   const field = st.fields.find((x) => x.name === p.colour!.field)!;
-  const unit = particleUnit(field, st.units);
-  const label = `${field.name}/${field.components[p.colour.component]}${unit ? ` (${unit})` : ""}`;
+  // The header's Units choice: the label and the values (a positive factor: the colours do not change).
+  const shown = particleDisplay(field, st, s.contour);
+  const label = `${field.name}/${field.components[p.colour.component]}${shown.unit ? ` (${shown.unit})` : ""}`;
   if (f?.status !== "ready") {
     out.push(`Particles: ${where}, coloured by ${label}.`);
     return out;
   }
-  const range = f.range ? `${fmt(f.range.min)} to ${fmt(f.range.max)}` : "no finite value";
+  const range = f.range ? `${fmt(f.range.min * shown.factor)} to ${fmt(f.range.max * shown.factor)}` : "no finite value";
   out.push(`Particles: ${where}, ${f.count.toLocaleString()} drawn, coloured by ${label}: ${range}.`);
   if (f.count > 0 && f.noValue === f.count) out.push(`Particles: no particle has a value of ${label} at this output (NaN: their material does not answer it); all are drawn in the no-value colour.`);
   else if (f.noValue > 0) out.push(`Particles: ${f.noValue.toLocaleString()} of ${f.count.toLocaleString()} have no value of ${label} (NaN: their material does not answer it); they are drawn in the no-value colour.`);

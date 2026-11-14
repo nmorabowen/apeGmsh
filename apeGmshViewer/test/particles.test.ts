@@ -104,6 +104,21 @@ test("one Points per stage: an output reuses its buffers; another stage disposes
   assert.equal(layer.drawn, null);
 });
 
+test("#2992 review: the rim follows the theme; the same stage re-shown with another look recolours its rim (and its plain colour)", () => {
+  const layer = new ParticleLayer();
+  layer.show(frame(), LOOK);
+  const pts = layer.drawn!;
+  const rim = () => ((pts.material as THREE.PointsMaterial).userData["nodeUniforms"] as { nodeRim: { value: THREE.Color } }).nodeRim.value.getHex();
+  assert.equal(rim(), new THREE.Color(LOOK.rim).getHex());
+  const light = { plain: 0x0072b2, rim: 0xf4f6f8, grid: 0x454d59 };
+  layer.show(frame({ scalar: null, range: null }), light);
+  assert.equal(layer.drawn, pts, "the same stage: the same Points");
+  assert.equal(rim(), new THREE.Color(light.rim).getHex());
+  const plain = new THREE.Color(light.plain);
+  close((pts.geometry.getAttribute("color") as THREE.BufferAttribute).array.slice(0, 3), [plain.r, plain.g, plain.b]);
+  layer.dispose();
+});
+
 test("the colour attribute carries the ramp, and the material colours by vertex", () => {
   const layer = new ParticleLayer();
   layer.show(frame(), LOOK);

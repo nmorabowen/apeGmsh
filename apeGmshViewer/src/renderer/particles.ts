@@ -213,6 +213,10 @@ export class ParticleLayer {
     col.needsUpdate = true;
     g.setDrawRange(0, n);
     setNodeSize(this.points!, particleSize(n));
+    // The rim is the theme's: a theme change re-shows the same stage with another look.
+    const uniforms = (this.points!.material as THREE.PointsMaterial).userData["nodeUniforms"] as { nodeRim: { value: THREE.Color } } | undefined;
+    if (!uniforms) throw new Error("particle points: makeNodePoints made no nodeUniforms (renderer/nodes.ts)");
+    uniforms.nodeRim.value.setHex(look.rim);
     this.showBox(frame, look);
   }
 
