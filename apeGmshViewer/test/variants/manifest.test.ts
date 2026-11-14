@@ -56,6 +56,8 @@ const EXPECT: Record<string, { file: string } | { row: number; code: string }> =
   "variants.path-not-model.json": { row: 1, code: "bad-path" },
   "variants.path-user-sibling-uppercase.json": { row: 1, code: "bad-path" },
   "variants.path-workspace-sibling.json": { row: 1, code: "bad-path" },
+  // M2-S5 (#2989) added this example to the schema corpus; a .particles.h5 is a set sibling, never a variant's model.
+  "variants.path-particles-sibling.json": { row: 1, code: "bad-path" },
   "variants.version-number.json": { file: "bad-version" },
   "variants.wrong-list-key.json": { file: "bad-envelope" },
 };
