@@ -29,6 +29,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 MPM = FIXTURES / "mpm"
 PARTICLES = MPM / "particles_v1m2.ladruno"
 MIXED = MPM / "particles_mixed_v1m2.ladruno"
+TORN = MPM / "particles_torn_v1m2.ladruno"   # the fork's torn file (M2-S6)
 STAGE = "MODEL_STAGE[1]"           # the particle stage in both fixtures
 ON_P = f"{STAGE}/RESULTS/ON_PARTICLES"
 REG = f"{STAGE}/MODEL/PARTICLES"
@@ -521,6 +522,36 @@ def test_an_extended_but_unwritten_offset_is_a_torn_output(copy_of, opened) -> N
     np.testing.assert_array_equal(s.values, raw["DATA"]["POSITION"])
 
 
+@pytest.mark.parametrize("field", FIELDS)
+def test_fork_torn_fixture_reads_its_three_committed_outputs(opened, field) -> None:
+    """The fork's own torn file (M2-S6 #2990; fork e30872e34, contract
+    §2.5): the all-particle fixture with a fourth output whose OFFSETS
+    entry was extended but never written, ``OFFSETS = [0, 12, 24, 35, 0]``.
+    Its DATA, ID, STEP and TIME rows for that output are on disk. Three
+    outputs read, each equal to a direct h5py read of the committed rows
+    and to the closed fixture; the fourth output's rows never surface."""
+    torn = _raw(TORN)
+    assert torn["OFFSETS"].tolist() == [0, 12, 24, 35, 0]
+    assert torn["STEP"].size == 4
+    assert torn["ID"].size > 35
+    off = torn["OFFSETS"][:4]
+    closed = _raw(PARTICLES)
+    r = opened(TORN)
+    with pytest.warns(ParticleOutputsTruncatedWarning, match="3 output"):
+        s = r.particles.get(component=field)
+    assert s.n_outputs == 3
+    np.testing.assert_array_equal(s.offsets, off)
+    np.testing.assert_array_equal(s.step, torn["STEP"][:3])
+    np.testing.assert_array_equal(s.time, torn["TIME"][:3])
+    np.testing.assert_array_equal(s.particle_ids, torn["ID"][:off[-1]])
+    np.testing.assert_array_equal(s.values, torn["DATA"][field][:off[-1]])
+    np.testing.assert_array_equal(s.registry_ids, torn["REG_ID"])
+    # The torn file is the closed fixture plus one in-flight output.
+    np.testing.assert_array_equal(s.offsets, closed["OFFSETS"])
+    np.testing.assert_array_equal(s.step, closed["STEP"])
+    np.testing.assert_array_equal(s.values, closed["DATA"][field])
+
+
 def test_a_torn_entry_after_empty_outputs_reads_as_one_more_empty(copy_of, opened) -> None:
     """Every output so far is empty (all offsets 0): a torn OFFSETS
     entry (fill 0) equals its predecessor, so it cannot be told from a
@@ -644,6 +675,12 @@ def test_output_ids_are_checked_on_the_rows_read(copy_of, opened, row, value, ma
 
 
 def test_registry_columns_of_unequal_length_refuse(copy_of, opened) -> None:
+    """Contract §2.4 at fork e30872e34: every registry column is ``[M]``,
+    and the registry is extensible, appended during the stage. Unequal
+    columns are C2-REG, and the stage is refused. A rule that skips a
+    stage whose registry was torn while the stage opened is proposed in
+    OpenSees#1081, which has not merged; M2-S6 (#2990) follows the merged
+    contract and keeps this refusal."""
     p = copy_of(PARTICLES)
     with h5py.File(p, "r+") as f:
         _resize(f[f"{REG}/MASS"], f[f"{REG}/MASS"].shape[0] - 2)
