@@ -216,6 +216,9 @@ from ._internal.ns import (
     _TimeSeriesNS,
     _UniaxialMaterialNS,
 )
+from .mpm import Grid as _MPMGrid
+from .mpm import MPMError, _MPMNS, mpm_block
+from .mpm import host_tag as _mpm_host_tag
 from ._internal.tag_allocator import TagAllocator
 from ._internal.tag_plan import (
     TagMode,
@@ -235,6 +238,7 @@ from ._internal.types import (
     Integrator,
     LinearSystem,
     ModalBasis,
+    MPM,
     NDMaterial,
     Numberer,
     Pattern,
@@ -301,6 +305,7 @@ if TYPE_CHECKING:
     from apeGmsh.hpc import Cluster, Job
 
     from .emitter.live import LiveOpsEmitter
+    from ._mpm import PreparedParticleSet
     from ._internal.tag_plan import NamedMembers, NamedRegion, RegionSite
     from apeGmsh._kernel.defs.decoupled import DecoupledNodeSetDef
     from ._internal.spring_bed import OrientValues, SpringBed, SpringValues
@@ -392,6 +397,7 @@ _KIND_BY_FAMILY: tuple[tuple[type[Primitive], str], ...] = (
     (Integrator,       "integrator"),
     (Analysis,         "analysis"),
     (ModalBasis,       "modalBasis"),
+    (MPM,              "mpm"),
 )
 
 
@@ -1056,7 +1062,10 @@ class BuiltModel:
         for p in self.primitives:
             if isinstance(p, Element):
                 continue
-            runs.append((_kind_of(p), int(self.tag_for[id(p)]), 1, decl_of(p)))
+            # ADR 0134: the grid's row is the tag its deck line writes.
+            tag = (self._mpm_host_tag(p) if isinstance(p, _MPMGrid)
+                   else int(self.tag_for[id(p)]))
+            runs.append((_kind_of(p), tag, 1, decl_of(p)))
         for spec, sub in tag_plan.elements.specs:
             decl = decl_of(spec)
             if not len(sub):
@@ -1396,6 +1405,85 @@ class BuiltModel:
             "staged (per-stage patterns) — never both."
         )
 
+    # -- MPM (ADR 0134) -----------------------------------------------------
+
+    def mpm_members(self) -> tuple[MPM, ...]:
+        """The ``mpm`` members in registration order (ADR 0134)."""
+        return tuple(p for p in self.primitives if isinstance(p, MPM))
+
+    def _mpm_host_tag(self, grid: _MPMGrid) -> int:
+        """The grid's emitted tag (:func:`.mpm.host_tag`): above every
+        ``pattern`` tag and every other ``mpm`` member's tag, fixed by the
+        build, so the archive row, the declaration table and the replay
+        carry the one the deck writes."""
+        return _mpm_host_tag(
+            (self.tag_for[id(p)] for p in self.primitives
+             if isinstance(p, Pattern)),
+            (self.tag_for[id(p)] for p in self.primitives
+             if isinstance(p, MPM) and p is not grid))
+
+    def mpm_commands(self) -> tuple[tuple[int | float | str, ...], ...]:
+        """The ``mpm`` rows of this model's emit, as the arguments after
+        the ``mpm`` token, in deck order (the rows ``model.h5`` stores; the
+        particle set is read from them by :func:`.._mpm.plan_from_commands`)."""
+        from .emitter.recording import RecordingEmitter
+
+        block = mpm_block(self.mpm_members(), ndm=self.ndm)
+        probe = RecordingEmitter()
+        set_tag_resolver(probe, lambda p: self.tag_for[id(p)])
+        self._emit_mpm(probe, block)
+        return tuple(tuple(args[1:]) for name, args, _kw in probe.calls
+                     if name == "command" and args and args[0] == "mpm")
+
+    def _mpm_block(
+        self, emitter: Emitter, members: "Sequence[MPM]",
+    ) -> tuple[MPM, ...]:
+        """The refusals of an emit with ``mpm`` members, then their order.
+
+        MPM decks are serial and unstaged (ADR 0134 D1; the fork refuses
+        ``mpm`` in OpenSeesSP / OpenSeesMP): a partitioned model refuses
+        unless it is a composed one emitted flat, and a staged model
+        refuses. The member-set refusals are :func:`.mpm.mpm_block`'s.
+        """
+        if self.stage_records:
+            # A staged MPM run (the fork's ``parameter ... loadPattern``
+            # route; ``updateMaterialStage`` never reaches the particles)
+            # is a follow-up; v1 has no staged MPM emit, so it names none.
+            raise BridgeError(
+                "apeSees: the model declares mpm members and "
+                f"{len(self.stage_records)} ops.stage block(s); MPM in this "
+                "version is deck-only and unstaged: it emits one mpm block "
+                "and no staged MPM run (ADR 0134). Declare the MPM model "
+                "without ops.stage.")
+        if is_partitioned(self.fem) and not self.fem.composed_from:
+            raise BridgeError(
+                "apeSees: the model declares mpm members on a partitioned "
+                "mesh; MPM decks are serial (ADR 0134 D1: the fork refuses "
+                "mpm in OpenSeesSP / OpenSeesMP). Mesh it unpartitioned.")
+        if (is_partitioned(self.fem) and emitter.caps.supports_partitions
+                and not emitter.caps.archival):
+            raise BridgeError(
+                "apeSees: the model declares mpm members and this emit "
+                "partitions it (a composed model's per-rank fan-out); MPM "
+                "decks are serial (ADR 0134 D1). Emit it flat: "
+                "ops.tcl(path, flat=True).")
+        try:
+            return mpm_block(members, ndm=self.ndm)
+        except MPMError as exc:
+            raise BridgeError(f"apeSees: {exc} (ADR 0134).") from None
+
+    def _emit_mpm(self, emitter: Emitter, block: "Sequence[MPM]") -> None:
+        """Emit the ``mpm`` block, each member under its declaration (K1-6)."""
+        cursor = self._decl_cursor(emitter)
+        for m in block:
+            tag = (self._mpm_host_tag(m) if isinstance(m, _MPMGrid)
+                   else int(self.tag_for[id(m)]))
+            cursor.open(m)
+            try:
+                m._emit(emitter, tag)
+            finally:
+                cursor.close()
+
     def emit(self, emitter: Emitter) -> int:
         """Drive ``emitter`` over the model, returning ``analyze``'s exit value.
 
@@ -1493,13 +1581,23 @@ class BuiltModel:
         transforms: list[GeomTransf] = []
         elements:   list[Element]    = []
         rest:       list[Primitive]  = []
+        # ADR 0134: the ``mpm`` members emit as one block after the model.
+        mpm_members: list[MPM] = []
         for p in ordered:
             if isinstance(p, GeomTransf):
                 transforms.append(p)
             elif isinstance(p, Element):
                 elements.append(p)
+            elif isinstance(p, MPM):
+                mpm_members.append(p)
             else:
                 rest.append(p)
+        # Declaration order, not the topological one: a member's
+        # dependency (a material, a series) is emitted before the block
+        # anyway, and the user's order of the settings is the deck's.
+        mpm_order = (
+            self._mpm_block(emitter, self.mpm_members()) if mpm_members
+            else ())
 
         # 3a. Transforms and frame elements are declared under the
         # envelope builder, whose ndf their parsers gate on (not the
@@ -2105,6 +2203,8 @@ class BuiltModel:
                 post_element=post_element,
                 base_resolver=_base_resolver,
             )
+        if mpm_order:
+            self._emit_mpm(emitter, mpm_order)
         if _emitter_is_archival:
             # ADR 0114 R5 (K1-6): a ghost-replayed fix no owner's loop
             # replicated (a node only ghosts carry) takes its record's
@@ -8857,6 +8957,8 @@ class apeSees(
         self.element          = _ElementNS(self)
         self.recorder         = _RecorderNS(self)
         self.profiler         = _ProfilerNS(self)
+        # ADR 0134: the fork's MPM engine (deck-only).
+        self.mpm              = _MPMNS(self)
         self.damping          = _DampingNS(self)
 
         # FEM-aware aggregates (Phase 5A) — query-and-act over fem.nodes.
@@ -10054,6 +10156,23 @@ class apeSees(
             element=element, tol=tol, max_passes=max_passes,
         )
 
+    def _mpm_prepare(
+        self, bm: BuiltModel, path: str, *, per_rank: bool,
+    ) -> "PreparedParticleSet":
+        """Seed and check the particle set of the deck at ``path`` (ADR 0134
+        D1, D2, D6): every refusal runs here, before the deck or the set is
+        written. The set's material tags are the bodies' allocated
+        ``nDMaterial`` tags; its provenance is the in-memory lineage."""
+        from .mpm import prepare_particle_set
+
+        if per_rank:
+            raise BridgeError(
+                "apeSees.tcl(per_rank=True): the model declares mpm members; "
+                "MPM decks are serial, with one writer (ADR 0134 D1: the fork "
+                "refuses mpm in OpenSeesSP / OpenSeesMP). Drop per_rank.")
+        return prepare_particle_set(
+            bm.fem, bm.mpm_commands(), path, model_units=self._units)
+
     def tcl(
         self,
         path: str,
@@ -10138,6 +10257,12 @@ class apeSees(
         siblings promoted atomically on clean completion — a mid-emit
         exception never leaves a half-written deck.
         """
+        from ._mpm import (
+            remove_stale_particle_set,
+            stale_particle_set,
+            write_deck_then_remove,
+            write_particle_set,
+        )
         from .emitter.tcl import TclEmitter, deck_backend
 
         if flat and per_rank:
@@ -10151,6 +10276,17 @@ class apeSees(
         emitter = TclEmitter(backend=deck_backend(self._opensees))
         emitter._emit_progress = bool(progress)
         emitter._run_record = analyze_steps is not None
+        # ADR 0134 D1: an MPM model's particle set is seeded and checked
+        # here, before anything is written; it is written with the deck.
+        # A deck with no mpm members drops the apeGmsh set the deck it
+        # overwrites reads (decided here, removed once the deck is in place).
+        particles = None
+        stale = None
+        if bm.mpm_members():
+            particles = self._mpm_prepare(bm, path, per_rank=per_rank)
+            emitter.bind_particle_set(str(particles.path))
+        else:
+            stale = stale_particle_set(path)
         # ADR 0099 S5: ``per_rank`` is applied around / after ``bm.emit``
         # (live fragment routing under ``stream``, post-hoc span slicing
         # otherwise), so the INV-4 gate inside emit cannot see it. Stamp
@@ -10184,6 +10320,10 @@ class apeSees(
                     "split out. Partition the mesh "
                     "(g.mesh.partitioning) or drop per_rank."
                 )
+            if particles is not None:
+                # The deck emitted whole; the set lands before the deck is
+                # promoted, so no deck exists without its set (ADR 0134 D1).
+                write_particle_set(particles)
             if stream:
                 # Promotion runs INSIDE the guarded region (review
                 # hardening): a failing os.replace mid-promotion
@@ -10217,8 +10357,11 @@ class apeSees(
             # line_buffer(): read-only, no deck-sized copy (ADR 0065 A0).
             _write_per_rank_tcl(path, emitter.line_buffer(), spans)
         elif not stream:
-            with open(path, "w", encoding="utf-8") as f:
-                emitter.write_to(f)
+            # ADR 0134 D1: a stale set goes only once its deck is replaced.
+            write_deck_then_remove(path, emitter.write_to, stale)
+            stale = None
+        # A streamed or per-rank deck is in place now: its stale set goes.
+        remove_stale_particle_set(stale)
         self._artifacts.after_emit(self)
 
         if not run:
@@ -10708,6 +10851,11 @@ class apeSees(
         plan_emit_memory_columnar.md A1–A3); use
         ``ops.tcl(path, stream=True)``.
         """
+        from ._mpm import (
+            stale_particle_set,
+            write_deck_then_remove,
+            write_particle_set,
+        )
         from .emitter.py import PyEmitter
         from .emitter.tcl import deck_backend
 
@@ -10722,11 +10870,22 @@ class apeSees(
         emitter = PyEmitter(backend=deck_backend(self._opensees))
         emitter._emit_progress = bool(progress)
         emitter._run_record = analyze_steps is not None
+        # ADR 0134 D1: as tcl(), the set is checked before anything is
+        # written and written with the deck.
+        particles = None
+        stale = None
+        if bm.mpm_members():
+            particles = self._mpm_prepare(bm, path, per_rank=False)
+            emitter.bind_particle_set(str(particles.path))
+        else:
+            stale = stale_particle_set(path)
         pre_prof, post_prof = self._split_profiler_records()
         emit_deck_tail(self, emitter, bm, pre_prof, post_prof,
                        analyze_steps, analyze_dt, path)
-        with open(path, "w", encoding="utf-8") as f:
-            emitter.write_to(f)
+        if particles is not None:
+            write_particle_set(particles)
+        # ADR 0134 D1: a stale set goes only once its deck is replaced.
+        write_deck_then_remove(path, emitter.write_to, stale)
         self._artifacts.after_emit(self)
 
         if not run:
@@ -11375,8 +11534,21 @@ class apeSees(
         return prim  # type: ignore[return-value]
 
     def tag_for(self, prim: Primitive) -> int | None:
-        """Return ``prim``'s allocated tag, or ``None`` if unregistered."""
-        return self._tags.tag_for(prim)
+        """Return ``prim``'s allocated tag, or ``None`` if unregistered.
+
+        An ``mpm`` grid answers the tag its deck line writes (ADR 0134,
+        :func:`.mpm.host_tag`): a fork load-pattern tag above every
+        registered ``pattern`` tag (and every other ``mpm`` member's tag),
+        so a pattern or member declared later moves it.
+        """
+        tag = self._tags.tag_for(prim)
+        if tag is not None and isinstance(prim, _MPMGrid):
+            return _mpm_host_tag(
+                (self._tags.tag_for(p) for p in self._primitives
+                 if isinstance(p, Pattern)),
+                (self._tags.tag_for(p) for p in self._primitives
+                 if isinstance(p, MPM) and p is not prim))
+        return tag
 
     def _name_records(self) -> tuple[tuple[str, str, int], ...]:
         """Resolve the name-alias table to ``(name, kind, tag)`` records.

@@ -72,6 +72,8 @@ FAMILIES: Final[frozenset[str]] = frozenset({
     "partition",
     # The command channel itself; the fact a token states is its own row's.
     "channel",
+    # The fork's MPM engine (ADR 0134 D8): grid, bodies, settings, analyze.
+    "mpm",
 })
 
 #: The ``op`` and ``what`` vocabularies of ``/sequence.changes``.
@@ -322,6 +324,12 @@ _ROWS: Final[tuple[Verb, ...]] = (
     # ``/opensees/commands`` row.
     _c("residualModes", "modal", "global", "archive", _CMD, requires=_FORK),
     _c("ritzVectors", "modal", "global", "archive", _CMD, requires=_FORK),
+    # The fork's MPM engine (WP-232, ADR 0134 D8), emitted by the members of
+    # ``opensees/mpm.py``: one row per sub-command call (``grid``, ``body``,
+    # ``fix``, ...). A ``body`` row is apeGmsh's: the deck emitters write it
+    # as a comment beside the particle set's ``mpm particles -file`` line,
+    # which is never a row (ADR 0134 D1). The live route refuses the token.
+    _c("mpm", "mpm", "global", "archive", _CMD, requires=_FORK),
 )
 
 #: One row per verb, keyed by verb name.
@@ -342,9 +350,11 @@ SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
         "lines", "line_count", "line_buffer", "write_to", "preamble",
         "stream_to", "stream_fragment_count", "stream_finish",
         "stream_abort", "eigen_feast_parallel", "eigen_parallel",
-        "partition_spans",
+        "partition_spans", "bind_particle_set",
     }),
-    "py": frozenset({"lines", "line_count", "line_buffer", "write_to"}),
+    "py": frozenset({
+        "lines", "line_count", "line_buffer", "write_to", "bind_particle_set",
+    }),
     "live": frozenset({
         "frequency_response", "steady_state_dynamics", "complex_eigen",
         "random_response", "ladruno_projection_tie_force",

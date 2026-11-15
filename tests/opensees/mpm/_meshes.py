@@ -25,10 +25,14 @@ Element = tuple[str, Sequence[int]]  # (family, connectivity)
 
 
 def make_fem(nodes: Mapping[int, Sequence[float]],
-             bodies: Mapping[str, Iterable[Element]]) -> FEMData:
+             bodies: Mapping[str, Iterable[Element]], *,
+             partitions: Mapping[int, Mapping[str, object]] | None = None,
+             composed_from: object = None) -> FEMData:
     """A FEMData whose physical group ``name`` holds ``bodies[name]``'s elements.
 
     Element ids are numbered from 1 in the order given; coordinates are padded to 3-D.
+    ``partitions`` (``{rank: {"node_ids", "element_ids"}}``) and ``composed_from``
+    (a ``ComposeSet``) make it a composed, partitioned model.
     """
     node_ids = np.array(sorted(nodes), dtype=np.int64)
     xyz = np.zeros((node_ids.size, 3))
@@ -70,12 +74,14 @@ def make_fem(nodes: Mapping[int, Sequence[float]],
                                     connectivity=np.array(conns, dtype=np.int64))
     physical = PhysicalGroupSet(pg)
     labels = LabelSet({})
+    parts = None if partitions is None else {int(k): dict(v) for k, v in partitions.items()}
     node_comp = NodeComposite(node_ids=node_ids, node_coords=xyz, physical=physical,
-                              labels=labels)
+                              labels=labels, partitions=parts)
     elem_comp = ElementComposite(groups=groups, physical=physical, labels=labels,
-                                 constraints=None, loads=[])
+                                 constraints=None, loads=[], partitions=parts)
     info = MeshInfo(n_nodes=int(node_ids.size), n_elems=eid, bandwidth=0, types=infos)
-    return FEMData(nodes=node_comp, elements=elem_comp, info=info)
+    return FEMData(nodes=node_comp, elements=elem_comp, info=info,
+                   composed_from=composed_from)  # type: ignore[arg-type]
 
 
 def grid_nodes(shape: Sequence[int], lo: Sequence[float], hi: Sequence[float],

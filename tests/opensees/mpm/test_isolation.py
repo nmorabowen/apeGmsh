@@ -23,7 +23,7 @@ import apeGmsh.opensees._mpm as mpm_pkg
 
 PKG = Path(mpm_pkg.__file__).resolve().parent
 ALLOWED_TOP = {"__future__", "collections", "dataclasses", "datetime", "math", "os",
-               "pathlib", "re", "typing", "uuid", "h5py", "numpy"}
+               "pathlib", "re", "typing", "uuid", "warnings", "h5py", "numpy"}
 
 
 def test_package_runs_with_gmsh_and_apegmsh_unimportable(tmp_path):

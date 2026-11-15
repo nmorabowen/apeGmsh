@@ -59,11 +59,13 @@ def _inject_row(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> Verb:
 # -- the fail-closed allow-list ---------------------------------------------
 
 def test_the_command_rows_are_the_chain_m_verbs() -> None:
-    # The first rows (A3a): the fork's residualModes / ritzVectors.
+    # The first rows (A3a): the fork's residualModes / ritzVectors; then
+    # chain M link M3's ``mpm`` (ADR 0134 D8, a family of its own).
     rows = {k: v for k, v in VERBS.items() if v.via == "command"}
-    assert set(rows) == {"residualModes", "ritzVectors"}
-    for row in rows.values():
-        assert (row.family, row.scope, row.h5) == ("modal", "global", "archive")
+    assert set(rows) == {"residualModes", "ritzVectors", "mpm"}
+    family = {"residualModes": "modal", "ritzVectors": "modal", "mpm": "mpm"}
+    for verb, row in rows.items():
+        assert (row.family, row.scope, row.h5) == (family[verb], "global", "archive")
         assert row.store == "/opensees/commands"
         assert row.requires == frozenset({"fork"})
     assert VERBS["command"].via == "protocol"

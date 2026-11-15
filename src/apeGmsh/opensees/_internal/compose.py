@@ -1431,7 +1431,9 @@ _FLAT_SECTIONS: "dict[str, int]" = {
     "rebar_cells": 11,  # 7b''
     "initial_stress": 13,  # 7d
     "pattern": 14, "recorder": 14,  # 8
-    "analyze": 15,
+    # The ``mpm`` block (ADR 0134) follows the whole model in ``emit``, as
+    # the deck tail's ``analyze`` does; the two keep their emit order.
+    "analyze": 15, "mpm": 15,
 }
 #: 4a, where ``_emit_flat`` writes a user's analysis-chain declarations.
 _USER_CHAIN_SECTION = 1
@@ -2166,10 +2168,15 @@ def _replay_into(
                 "row reached the global slot; route it through "
                 "_replay_staged_into."
             )
+        # An ``mpm`` row (ADR 0134) is its own unit kind: the bridge emits
+        # the block after the whole model, not at slot 7, so a partitioned
+        # archive's flat replay places it in the ``"mpm"`` section.
+        is_mpm = cmd.method == "command" and cmd.token == "mpm"
         units.append((
-            None if order is None else int(cmd.emit_index), "command",
+            None if order is None else int(cmd.emit_index),
+            "mpm" if is_mpm else "command",
             lambda cmd=cmd: _replay_command(
-                emitter, cmd, _GLOBAL_COMMAND_METHODS),
+                emitter, cmd, _GLOBAL_COMMAND_METHODS, mpm=True),
         ))
 
     # 9b. Top-level regions: the archived row is the resolved OpenSees
@@ -2596,8 +2603,18 @@ _GLOBAL_COMMAND_METHODS: "frozenset[str]" = frozenset(
 _STAGE_COMMAND_METHODS: "frozenset[str]" = frozenset({"profiler"})
 
 
-def _replay_command(emitter: Any, cmd: Any, methods: "frozenset[str]") -> None:
-    """Re-emit one ``/opensees/commands`` row (a reader ``CommandRecordRO``)."""
+def _replay_command(
+    emitter: Any, cmd: Any, methods: "frozenset[str]", *, mpm: bool = False,
+) -> None:
+    """Re-emit one ``/opensees/commands`` row (a reader ``CommandRecordRO``).
+
+    ``mpm=True`` (the global slot) also replays the ``command("mpm", ...)``
+    rows of the MPM block (ADR 0134 D2), which the bridge emits after the
+    model; any other ``command`` token raises like an unslotted method.
+    """
+    if mpm and cmd.method == "command" and cmd.token == "mpm":
+        emitter.command("mpm", *cmd.positional)
+        return
     if cmd.method not in methods:
         raise NotImplementedError(
             f"replay: a {cmd.method!r} command row (stage {cmd.stage}) has "

@@ -630,6 +630,11 @@ class PyEmitter:
             header.append(provenance_stamp(backend))
         header += ["import openseespy.opensees as ops", "ops.wipe()"]
         self._lines: _LineBuf = _LineBuf(header)
+        # ADR 0134 D1: the ``mpm particles -file`` line of the particle set
+        # this deck reads (``bind_particle_set``), written after its
+        # ``mpm grid``; unbound, an ``mpm grid`` refuses.
+        self._mpm_particles_line: str | None = None
+        self._mpm_grid_written = False
         # The elements each swept material is on, for its plastic flip.
         self._stage_carriers = MaterialStageCarriers()
         # The elements a 3-D partial -beamUniform may load on any build.
@@ -1775,4 +1780,56 @@ class PyEmitter:
 
     def command(self, verb: str, *args: int | float | str) -> None:
         command_row(verb)
+        if verb == "mpm":
+            self._mpm_command(args)
+            return
         self._lines.append(_ops_call(verb, *args))
+
+    # -- MPM (ADR 0134 D1) ------------------------------------------------
+
+    def bind_particle_set(self, particle_path: str) -> None:
+        """Bind the particle set this deck reads (ADR 0134 D1).
+
+        ``apeSees.py`` and the replay call it with ``<deck stem>.particles.h5``
+        before the emit; the deck's ``mpm grid`` call is then followed by
+        ``import os`` and ``ops.mpm('particles', '-file',
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "<name>"))``,
+        so the set is found beside the deck whatever the working directory.
+        """
+        from .._mpm import py_particles_line
+
+        self._mpm_particles_line = py_particles_line(particle_path)
+
+    def _mpm_command(self, args: tuple[int | float | str, ...]) -> None:
+        """Render one ``mpm`` row: a ``body`` row is a comment (its particles
+        are in the set), ``grid`` is followed by the set's ``-file`` line."""
+        sub = args[0] if args else None
+        if sub == "particles":
+            raise BridgeError(
+                "PyEmitter.command('mpm', 'particles', ...): the particle "
+                "set's -file line is written by the deck emitter for its own "
+                "deck (bind_particle_set), never passed as a row (ADR 0134 D1)."
+            )
+        if sub == "body":
+            self._lines.append("# " + _ops_call("mpm", *args)
+                               + "  (seeded into the particle set)")
+            return
+        if sub == "grid":
+            if self._mpm_particles_line is None:
+                raise BridgeError(
+                    "PyEmitter: an mpm grid needs its deck's particle set, "
+                    "and this emitter has none bound. An MPM model is "
+                    "emitted by apeSees.tcl(path) / apeSees.py(path) (or "
+                    "OpenSeesModel.build('py', out=path)), which seed "
+                    "<deck stem>.particles.h5 beside the deck (ADR 0134 D1)."
+                )
+            if self._mpm_grid_written:
+                raise BridgeError(
+                    "PyEmitter: a second mpm grid; the fork's v1 has one "
+                    "per Domain (ADR 0134).")
+            self._mpm_grid_written = True
+            self._lines.append(_ops_call("mpm", *args))
+            self._lines.append("import os")
+            self._lines.append(self._mpm_particles_line)
+            return
+        self._lines.append(_ops_call("mpm", *args))
