@@ -11,7 +11,10 @@ These tests pin:
 2. ``Results.from_ladruno`` opens the mixed fixture and reads its FE stage as before;
 3. ``Results.from_ladruno`` opens the all-particle fixture without ``model_h5=``
    (ADR 0134 D3, inverted by M2-S2 #2981: before M2 it raised the "no MODEL group"
-   error).
+   error);
+4. the fork's torn file (M2-S6 #2990, fork e30872e34): the closed-file validator
+   refuses it (C2-OFF), the reference ``committed_outputs`` counts 3 outputs, and the
+   Python reader reads exactly that many.
 
 The particle values themselves are checked in ``test_ladruno_particles.py``.
 """
@@ -19,16 +22,19 @@ from __future__ import annotations
 
 import importlib
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
 
 from apeGmsh.results import Results
+from apeGmsh.results.readers._ladruno_particles import ParticleOutputsTruncatedWarning
 
 MPM = Path(__file__).resolve().parents[1] / "fixtures" / "mpm"
 PARTICLE_SET = MPM / "particle_set_v1.h5"
 PARTICLES = MPM / "particles_v1m2.ladruno"
 MIXED = MPM / "particles_mixed_v1m2.ladruno"
+TORN = MPM / "particles_torn_v1m2.ladruno"
 
 _VENDORED = ("mpm_contracts", "ladruno_format", "ladruno_basis")
 
@@ -84,5 +90,32 @@ def test_particle_only_fixture_opens_without_a_model() -> None:
     try:
         assert r.fem is None
         assert r.particles.get(component="POSITION").n_outputs == 3
+    finally:
+        r.close()
+
+
+# --- pin 4: the torn file (contract 232a §2.5, M2-S6 #2990) ------------------------------
+
+def test_torn_fixture_is_refused_by_the_closed_file_validator(contracts) -> None:
+    # The validator checks closed files only: OFFSETS[T] = len(ID) (C2-OFF).
+    errors = contracts.validate_particle_results(str(TORN))
+    assert len(errors) == 1 and errors[0].startswith("C2-OFF"), errors
+
+
+@pytest.mark.parametrize("path, expected", [(PARTICLES, 3), (MIXED, 3), (TORN, 3)],
+                         ids=lambda x: x.name if isinstance(x, Path) else str(x))
+def test_reference_committed_outputs(contracts, path: Path, expected: int) -> None:
+    assert contracts.committed_outputs(str(path), stage="MODEL_STAGE[1]") == expected
+
+
+@pytest.mark.parametrize("path", [PARTICLES, MIXED, TORN], ids=lambda p: p.name)
+def test_python_reader_reads_the_reference_committed_outputs(contracts, path: Path) -> None:
+    expected = contracts.committed_outputs(str(path), stage="MODEL_STAGE[1]")
+    r = Results.from_ladruno(path)
+    try:
+        sid = r.particles.stages()[-1]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ParticleOutputsTruncatedWarning)
+            assert r.particles.get(component="POSITION", stage=sid).n_outputs == expected
     finally:
         r.close()

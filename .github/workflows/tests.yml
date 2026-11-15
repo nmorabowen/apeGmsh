@@ -189,8 +189,9 @@ jobs:
   # releases, which would move the measured count under our feet; bump
   # the pins and re-measure the baseline together, in one PR.
   # apeGmshViewer (ADR 0112): the app's own checks, run when the PR or push
-  # touches apeGmshViewer/ (or this workflow, or the pairing oracle's test,
-  # fixture and stamp_provenance). Not a required check yet: it
+  # touches apeGmshViewer/, this workflow, the pairing oracle's test, fixture and
+  # stamp_provenance, or a path outside apeGmshViewer/ that the viewer's tests read
+  # (#2995; the list is in the filter step). Not a required check yet: it
   # joins the land_pr.py list once the maintainer promotes it.
   app-tests:
     runs-on: ubuntu-latest
@@ -203,7 +204,7 @@ jobs:
       # fails closed: the checks run unless a successful diff against the PR
       # base (merge-base) or the pushed-from commit shows no change; a manual
       # run and any error in here run them (set -e makes an error a red step).
-      - name: Did apeGmshViewer/ change?
+      - name: Did apeGmshViewer/ or a file its tests read change?
         id: changes
         run: |
           set -euo pipefail
@@ -221,10 +222,31 @@ jobs:
             *)
               echo "${{ github.event_name }}: running the app checks"; exit 0 ;;
           esac
+          # Everything the app's tests read from outside apeGmshViewer/ (#2995). Each
+          # path is read by a test under apeGmshViewer/test/ (list: the PR body of #2995):
+          #   architecture/schemas/      test/variants/manifest.test.ts (schema + examples)
+          #   tests/fixtures/ladruno/    test/reader/userFile.test.ts (truss2d.ladruno)
+          #   tests/fixtures/mpm/        test/reader/mpmBaseline.test.ts
+          #   tests/fixtures/simplex_gp/ test/contour/extrapolation.test.ts
+          #   tests/fixtures/user_results/ test/reader/userConformance.test.ts
+          #   tests/results/user/test_user_fingerprint.py   test/reader/rf1.test.ts
+          #   src/apeGmsh/results/_gauss_extrapolation.py   test/meshFileCoded.test.ts
+          #   examples/shoebuckle_arch.py                   test/zones/provenance.test.ts
+          #   *.ladruno anywhere (git ls-files)             test/contour/contour.test.ts
           # The pairing oracle (#2129) runs here too: it fires on its test, its
           # input fixture and stamp_provenance, the Python half of what it checks.
-          changed=$(git diff --name-only "$range" -- apeGmshViewer/ .github/workflows/tests.yml \
-            tests/test_app_ladruno_pairing_oracle.py tests/fixtures/ladruno/truss2d.ladruno \
+          changed=$(git diff --name-only "$range" -- apeGmshViewer/ \
+            .github/workflows/tests.yml \
+            architecture/schemas/ \
+            tests/fixtures/ladruno/ \
+            tests/fixtures/mpm/ \
+            tests/fixtures/simplex_gp/ \
+            tests/fixtures/user_results/ \
+            tests/results/user/test_user_fingerprint.py \
+            src/apeGmsh/results/_gauss_extrapolation.py \
+            examples/shoebuckle_arch.py \
+            '*.ladruno' \
+            tests/test_app_ladruno_pairing_oracle.py \
             src/apeGmsh/results/readers/_ladruno_provenance.py)
           if [ -z "$changed" ]; then
             echo "app=false" >> "$GITHUB_OUTPUT"
