@@ -338,10 +338,12 @@ MPM is **deck-only**. `ops.tcl(path)` and `ops.py(path)` seed the bodies
 and write `<deck stem>.particles.h5` beside the deck, and the deck reads it
 from its own folder. The two are written together or not at all, and an
 existing particle set is replaced only when an apeGmsh emit wrote it. A
-deck with no `mpm` member removes the apeGmsh set of its stem once it has
-emitted whole, so a viewer never pairs it with a stale set; a file there
-that no apeGmsh emit wrote is left in place, and the emit warns
-(`StaleParticleSetWarning`) naming it. The live route (`ops.run()`, `ops.analyze()`, every in-process procedure)
+deck with no `mpm` member written over an MPM deck removes the apeGmsh set
+that deck read, once the new deck is written in its place, so a viewer never
+pairs it with a stale set. Any other file of that stem (a set a sibling deck
+such as `case.tcl` reads while `case.py` is written, or a file no apeGmsh
+emit wrote) is kept, and the emit warns (`StaleParticleSetWarning`) naming
+it. The live route (`ops.run()`, `ops.analyze()`, every in-process procedure)
 refuses a model with an `mpm` member on every build, before the domain is
 touched, and so do a partitioned or per-rank emit and a staged model
 (staged MPM is not in this version). A fork v1 run also needs every FE node fixed: fix the seeding mesh's nodes

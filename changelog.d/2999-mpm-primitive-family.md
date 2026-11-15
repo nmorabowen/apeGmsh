@@ -14,8 +14,9 @@ FEMData and write `<deck stem>.particles.h5` beside the deck. The deck reads
 it with an `mpm particles -file` line anchored to its own folder. The two are
 checked before either is written and written together, and an existing
 particle set is replaced only when an apeGmsh emit wrote it. A deck with no
-`mpm` member removes the apeGmsh particle set of its stem with it, and warns
-by name about any other file there, which it leaves in place. Every
+`mpm` member written over an MPM deck removes the particle set that deck
+read, once the new deck is in place; it keeps any other file of that stem
+(a sibling deck's set included) and warns, naming it. Every
 declaration is a `/opensees/commands` row of `model.h5`, so
 `OpenSeesModel.build("tcl" | "py", out=path)` re-seeds the same particles
 beside the replayed deck, under a new `SET_ID`.
