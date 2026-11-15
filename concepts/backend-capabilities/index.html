@@ -3918,7 +3918,7 @@ so it is worth knowing which you are looking at.</p>
 <tr>
 <td><strong>Gated by apeGmsh</strong></td>
 <td><code>RuntimeError</code> naming the fork, what still works, and the stock alternative</td>
-<td>Elements, integrators, the <code>LadrunoProjection</code> handler, contact, FEAST, profiler, the modal family</td>
+<td>Elements, integrators, the <code>LadrunoProjection</code> handler, contact, FEAST, profiler, the modal family, the <code>mpm</code> family (live route, every build)</td>
 </tr>
 <tr>
 <td><strong>Rejected by the engine</strong></td>
@@ -4127,6 +4127,102 @@ build.</p>
 feature: the fork splits them into <code>material &lt;k&gt; &lt;token&gt;</code> per Gauss point.
 The bare spelling records nothing, so <code>ops.recorder.Ladruno</code> / <code>MPCO</code>
 refuse it and name the prefixed form.</p>
+<h3 id="mpm-the-mpm-engine">MPM (the <code>mpm</code> engine)<a class="headerlink" href="#mpm-the-mpm-engine" title="Permanent link">&para;</a></h3>
+<p>The fork's Material Point Method engine is driven by <code>ops.mpm.*</code>, one
+member per <code>mpm</code> sub-command
+(<a href="https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0134-mpm-particles.md">ADR 0134</a>).
+It needs a fork release that carries <code>mpm</code> (<code>ladruno-v20261114</code>, build
+<code>f0b9a1df6</code>, or later).</p>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Fork line</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ops.mpm.grid(origin=, h=, cells=, basis=)</code></td>
+<td><code>mpm grid &lt;tag&gt; -origin .. -h .. -cells .. [-basis ..]</code></td>
+<td>one per model; its tag is written above every <code>pattern</code> tag and every other member's tag, and <code>ops.tag_for(grid)</code> returns it</td>
+</tr>
+<tr>
+<td><code>ops.mpm.body(pg, material=, density=, ppc=, name=)</code></td>
+<td>none: the body is seeded into the particle set</td>
+<td>lattice seeding of the physical group's <code>tri3</code> / <code>quad4</code> / <code>tet4</code> / <code>hex8</code> elements; every body shares one <code>ppc</code></td>
+</tr>
+<tr>
+<td><code>ops.mpm.fix(face, components)</code></td>
+<td><code>mpm fix &lt;face&gt; &lt;components&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>ops.mpm.wall(face, mu)</code></td>
+<td><code>mpm wall &lt;face&gt; &lt;mu&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>ops.mpm.gravity(*g)</code></td>
+<td><code>mpm gravity &lt;g..&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>ops.mpm.timeSeries(series)</code></td>
+<td><code>mpm timeSeries &lt;tsTag&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>ops.mpm.damping(alpha)</code></td>
+<td><code>mpm damping local &lt;alpha&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>ops.mpm.flip(alpha)</code></td>
+<td><code>mpm flip &lt;alpha&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>ops.mpm.massCutoff(c)</code></td>
+<td><code>mpm massCutoff &lt;c&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>ops.mpm.safety(s)</code></td>
+<td><code>mpm safety &lt;s&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>ops.mpm.units(L, F, T, system=)</code></td>
+<td><code>mpm units &lt;L&gt; &lt;F&gt; &lt;T&gt; [-system ..]</code></td>
+<td>without it the particle set takes the bridge's <code>units=</code>; each symbol, and <code>system</code>, is one word</td>
+</tr>
+<tr>
+<td><code>ops.mpm.output(path, ...)</code></td>
+<td><code>mpm output &lt;path&gt; ...</code></td>
+<td>the particle results, a <code>.ladruno</code> file</td>
+</tr>
+<tr>
+<td><code>ops.mpm.analyze(steps, dt)</code></td>
+<td><code>mpm analyze &lt;n&gt; &lt;dt&gt;</code></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>MPM is <strong>deck-only</strong>. <code>ops.tcl(path)</code> and <code>ops.py(path)</code> seed the bodies
+and write <code>&lt;deck stem&gt;.particles.h5</code> beside the deck, and the deck reads it
+from its own folder. The two are written together or not at all, and an
+existing particle set is replaced only when an apeGmsh emit wrote it. A
+deck with no <code>mpm</code> member written over an MPM deck removes the apeGmsh set
+that deck read, once the new deck is written in its place, so a viewer never
+pairs it with a stale set. Any other file of that stem (a set a sibling deck
+such as <code>case.tcl</code> reads while <code>case.py</code> is written, or a file no apeGmsh
+emit wrote) is kept, and the emit warns (<code>StaleParticleSetWarning</code>) naming
+it. The live route (<code>ops.run()</code>, <code>ops.analyze()</code>, every in-process procedure)
+refuses a model with an <code>mpm</code> member on every build, before the domain is
+touched, and so do a partitioned or per-rank emit and a staged model
+(staged MPM is not in this version). A fork v1 run also needs every FE node fixed: fix the seeding mesh's nodes
+with <code>ops.fix</code>.</p>
 <h2 id="stock-engine-defects">Stock engine defects<a class="headerlink" href="#stock-engine-defects" title="Permanent link">&para;</a></h2>
 <p>Two stock OpenSees behaviours give a converged wrong answer with no warning,
 so the in-process run refuses them on a stock build. Both are fixed on the
