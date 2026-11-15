@@ -74,6 +74,7 @@ def test_body_filling_the_grid_gets_every_lattice_point_once(family, n):
     np.testing.assert_array_equal(s.density, 3.0)
     np.testing.assert_array_equal(s.body_id, 0)
     assert s.body_names == ("rock",)
+    assert s.report.interface_points == {}
 
 
 def _tri_pred(p):
@@ -322,22 +323,201 @@ def test_overlapping_bodies_are_refused_naming_both_and_the_count():
         seed(fem, GRID2, [MPMBody("fill", "fill", 1.0), MPMBody("rock", "rock", 1.0)], n=2)
     msg = str(exc.value)
     assert "bodies 'fill' and 'rock' share 16 lattice points at n=2;" in msg
+    assert "16 of them are not on an interface between the two" in msg
 
 
-def test_interface_through_a_sub_cell_centre_is_refused_naming_both_and_the_count():
+# ---------------------------------------------------------------------------
+# a lattice point two bodies claim (ADR 0134 Amendment 2)
+# ---------------------------------------------------------------------------
+#
+# The lattice below is GRID_I at n = 2: spacing 0.25, points at 0.125, 0.375, 0.625 and
+# 0.875 on each axis, all dyadic. The interfaces sit on x = 0.625 (and y = 0.625), so a
+# column of lattice points lies exactly on them. The bodies are meshed at 0.125, so every
+# lattice point also lies on element facets inside each body: the rule must tell a body's
+# own internal facets from its boundary.
+
+GRID_I = {2: MPMGrid((0.0,) * 2, (0.5,) * 2, (2,) * 2),
+          3: MPMGrid((0.0,) * 3, (0.5,) * 3, (2,) * 3)}
+
+
+def boxes_fem(family, boxes, divisions):
+    """Each body a structured mesh of its own box ``boxes[name] = (lo, hi)``, with its
+    own nodes (two bodies share no node id, so their meshes need not conform)."""
+    nodes, bodies, first = {}, {}, 1
+    for name, (lo, hi) in boxes.items():
+        nd, els = M.box(family, lo, hi, divisions[name], first=first)
+        nodes.update(nd)
+        bodies[name] = els
+        first += len(nd)
+    return M.make_fem(nodes, bodies)
+
+
+def first_body_oracle(grid, n, boxes, order):
+    """Closed form: each lattice point goes to the first body in ``order`` whose closed box
+    holds it. Returns positions and body ids in Contract-1 order and the per-pair count of
+    points a later body gives up to an earlier one."""
+    lattice = full_lattice(grid, n)
+    held = [np.all((lattice >= boxes[b][0]) & (lattice <= boxes[b][1]), axis=1)
+            for b in order]
+    owner = np.full(len(lattice), -1)
+    for k, mask in enumerate(held):
+        owner[(owner < 0) & mask] = k
+    position = np.concatenate([lattice[owner == k] for k in range(len(order))])
+    body_id = np.concatenate([np.full(np.count_nonzero(owner == k), k)
+                              for k in range(len(order))])
+    pairs = {}
+    for j, mask in enumerate(held):
+        for i in range(j):
+            k = int(np.count_nonzero(mask & (owner == i)))
+            if k:
+                pairs[(order[i], order[j])] = k
+    return position, body_id, pairs
+
+
+def _split_box(d):
+    """left = [0, 0.625] x [0, 1]^(d-1), right = [0.625, 1] x [0, 1]^(d-1)."""
+    rest = [0.0] * (d - 1), [1.0] * (d - 1)
+    return {"left": ([0.0, *rest[0]], [0.625, *rest[1]]),
+            "right": ([0.625, *rest[0]], [1.0, *rest[1]])}
+
+
+@pytest.mark.parametrize("conforming", [True, False], ids=["conforming", "nonconforming"])
+@pytest.mark.parametrize("first", ["left", "right"])
+@pytest.mark.parametrize("family", list(FAMILY_DIM))
+def test_a_shared_face_on_the_lattice_goes_to_the_first_declared_body(family, first,
+                                                                      conforming):
+    """Two bodies share the face x = 0.625, which holds (4)^(d-1) lattice points. The
+    model seeds; every one of them belongs to the body declared first, the other body
+    keeps its own points only, the total is the union's lattice count (4^d), and swapping
+    the declaration order swaps the owner. A conforming mesh shares the interface nodes;
+    a non-conforming one meshes the right body coarser, with no node in common."""
+    d = FAMILY_DIM[family]
+    grid = GRID_I[d]
+    boxes = _split_box(d)
+    if conforming:
+        nodes, els = M.box(family, [0.0] * d, [1.0] * d, [8] * d)
+        centre_x = [np.mean([nodes[int(v)][0] for v in conn]) for _, conn in els]
+        fem = M.make_fem(nodes, {
+            "left": [e for e, c in zip(els, centre_x) if c < 0.625],
+            "right": [e for e, c in zip(els, centre_x) if c > 0.625],
+        })
+    else:
+        fem = boxes_fem(family, boxes, {"left": [5] + [8] * (d - 1),
+                                        "right": [1] + [3] * (d - 1)})
+    order = [first, "right" if first == "left" else "left"]
+    s = seed(fem, grid, [MPMBody(b, b, 1.0 + k) for k, b in enumerate(order)], n=2)
+
+    position, body_id, pairs = first_body_oracle(grid, 2, boxes, order)
+    assert pairs == {(order[0], order[1]): 4 ** (d - 1)}
+    assert s.num_particles == 4 ** d
+    np.testing.assert_array_equal(s.position, position)
+    np.testing.assert_array_equal(s.body_id, body_id)
+    np.testing.assert_array_equal(s.density, 1.0 + body_id)
+    on_face = s.position[:, 0] == 0.625
+    assert on_face.sum() == 4 ** (d - 1)
+    np.testing.assert_array_equal(s.body_id[on_face], 0)
+    assert s.report.interface_points == pairs
+    np.testing.assert_array_equal(s.report.counts, np.full((2,) * d, 2 ** d))
+    assert f"interface points kept by the first-declared body: {order[0]!r} over " \
+           f"{order[1]!r}: {4 ** (d - 1)}" in str(s.report)
+
+
+@pytest.mark.parametrize("family", ["quad4", "tri3"])
+def test_four_bodies_meeting_at_a_lattice_point_report_each_pair(family):
+    """Four quadrants meet at (0.625, 0.625), a lattice point all four claim; it goes to
+    the first. Closed form per pair: q00 keeps 3 points from q10, 3 from q01 and the corner
+    from q11; q10 and q01 each keep one point from q11."""
+    a, b = [0.0, 0.625], [0.625, 1.0]
+    boxes = {"q00": ([a[0], a[0]], [a[1], a[1]]), "q10": ([b[0], a[0]], [b[1], a[1]]),
+             "q01": ([a[0], b[0]], [a[1], b[1]]), "q11": ([b[0], b[0]], [b[1], b[1]])}
+    div = {"q00": [5, 5], "q10": [3, 5], "q01": [5, 3], "q11": [3, 3]}
+    fem = boxes_fem(family, boxes, div)
+    order = list(boxes)
+    s = seed(fem, GRID_I[2], [MPMBody(q, q, 1.0) for q in order], n=2)
+    position, body_id, pairs = first_body_oracle(GRID_I[2], 2, boxes, order)
+    assert pairs == {("q00", "q10"): 3, ("q00", "q01"): 3, ("q00", "q11"): 1,
+                     ("q10", "q11"): 1, ("q01", "q11"): 1}
+    assert s.num_particles == 16
+    np.testing.assert_array_equal(s.position, position)
+    np.testing.assert_array_equal(s.body_id, body_id)
+    assert s.report.interface_points == pairs
+
+
+@pytest.mark.parametrize("family", list(FAMILY_DIM))
+def test_an_overlap_whose_points_all_lie_on_element_facets_is_refused(family):
+    """A = [0, 0.625] and B = [0.375, 1] along x overlap on [0.375, 0.625]. Each shared
+    lattice point lies on a facet of both meshes, but on x = 0.375 the facet is internal
+    to A and on x = 0.625 internal to B: inside a body, not on an interface."""
+    d = FAMILY_DIM[family]
+    rest = [0.0] * (d - 1), [1.0] * (d - 1)
+    boxes = {"A": ([0.0, *rest[0]], [0.625, *rest[1]]),
+             "B": ([0.375, *rest[0]], [1.0, *rest[1]])}
+    fem = boxes_fem(family, boxes, {"A": [5] + [8] * (d - 1), "B": [5] + [8] * (d - 1)})
+    shared = 2 * 4 ** (d - 1)
+    with pytest.raises(MPMSeedError) as exc:
+        seed(fem, GRID_I[d], [MPMBody("A", "A", 1.0), MPMBody("B", "B", 1.0)], n=2)
+    assert (f"bodies 'A' and 'B' share {shared} lattice points at n=2; {shared} of them "
+            f"are not on an interface between the two (the bodies overlap there)"
+            in str(exc.value))
+
+
+GRID_S = MPMGrid((0.0, 0.0), (0.5, 0.5), (2, 3))
+
+
+def _sliver_fem(sliver_lo, sliver_hi):
+    """A = [0, 1] x [0, 0.875]; B = a 0.0625-thin sliver on y = 0.875 over x in [0.5, 1]
+    plus a block [0, 1] x [1, 1.5] that holds B's own points."""
+    nodes_a, els_a = M.box("quad4", [0, 0], [1, 0.875], [8, 7])
+    nodes_s, els_s = M.box("quad4", [0.5, sliver_lo], [1, sliver_hi], [4, 1], first=1000)
+    nodes_b, els_b = M.box("quad4", [0, 1.0], [1, 1.5], [2, 2], first=2000)
+    return M.make_fem({**nodes_a, **nodes_s, **nodes_b}, {"A": els_a, "B": els_s + els_b})
+
+
+def test_bodies_on_opposite_sides_of_a_boundary_share_it():
+    """The sliver lies above y = 0.875 (B's facet faces down, A's up): the two lattice
+    points (0.625, 0.875) and (0.875, 0.875) are on the interface and go to A."""
+    s = seed(_sliver_fem(0.875, 0.9375), GRID_S,
+             [MPMBody("A", "A", 1.0), MPMBody("B", "B", 2.0)], n=2)
+    lattice = full_lattice(GRID_S, 2)
+    want_a = lattice[lattice[:, 1] <= 0.875]
+    want_b = lattice[lattice[:, 1] >= 1.0]
+    np.testing.assert_array_equal(s.position, np.concatenate([want_a, want_b]))
+    np.testing.assert_array_equal(s.body_id, [0] * 16 + [1] * 8)
+    assert s.report.interface_points == {("A", "B"): 2}
+
+
+def test_bodies_on_the_same_side_of_a_boundary_are_refused():
+    """The same sliver below y = 0.875 lies inside A: both bodies' facets on y = 0.875 face
+    up, so the two shared points are an overlap, not an interface."""
+    with pytest.raises(MPMSeedError, match=r"bodies 'A' and 'B' share 2 lattice points at "
+                       r"n=2; 2 of them are not on an interface between the two"):
+        seed(_sliver_fem(0.8125, 0.875), GRID_S,
+             [MPMBody("A", "A", 1.0), MPMBody("B", "B", 2.0)], n=2)
+
+
+def test_a_body_left_with_only_interface_points_is_refused():
+    """The sliver alone: both its lattice points go to A, so B holds none of its own."""
+    nodes_a, els_a = M.box("quad4", [0, 0], [1, 0.875], [8, 7])
+    nodes_s, els_s = M.box("quad4", [0.5, 0.875], [1, 0.9375], [4, 1], first=1000)
+    fem = M.make_fem({**nodes_a, **nodes_s}, {"A": els_a, "B": els_s})
+    with pytest.raises(MPMSeedError, match=r"body 'B' \(physical group 'B'\) holds no "
+                       r"lattice point of its own at n=2"):
+        seed(fem, GRID_I[2], [MPMBody("A", "A", 1.0), MPMBody("B", "B", 1.0)], n=2)
+
+
+def test_one_lattice_column_on_a_two_element_interface_seeds_at_n_3():
     """Two bodies meet at x = 0.5; at n = 3 in one unit cell the column x = 0.5 holds 3
-    sub-cell centres (y = 1/6, 1/2, 5/6), each inside both bodies."""
+    sub-cell centres (y = 1/6, 1/2, 5/6). Before Amendment 2 this model was refused; now
+    the 3 points go to 'left', declared first, and 'right' keeps its own 3."""
     nodes, ids = M.grid_nodes([2, 1], [0, 0], [1, 1])
     els = M.quads(ids)
     fem = M.make_fem(nodes, {"left": [els[0]], "right": [els[1]]})
     grid = MPMGrid((0.0, 0.0), (1.0, 1.0), (1, 1))
-    with pytest.raises(MPMSeedError) as exc:
-        seed(fem, grid, [MPMBody("left", "left", 1.0), MPMBody("right", "right", 1.0)], n=3)
-    msg = str(exc.value)
-    assert "bodies 'left' and 'right' share 3 lattice points at n=3;" in msg
-    assert re.search(r"e\.g\. \[0\.5, 0\.16666", msg)
-    with pytest.raises(MPMSeedError, match=r"share 1 lattice point at n=1;"):
-        seed(fem, grid, [MPMBody("left", "left", 1.0), MPMBody("right", "right", 1.0)], n=1)
+    s = seed(fem, grid, [MPMBody("left", "left", 1.0), MPMBody("right", "right", 1.0)], n=3)
+    assert s.num_particles == 9
+    np.testing.assert_array_equal(s.body_id, [0] * 6 + [1] * 3)
+    np.testing.assert_allclose(s.position[s.body_id == 1][:, 0], 5 / 6)
+    assert s.report.interface_points == {("left", "right"): 3}
 
 
 def test_mesh_outside_the_grid_is_refused():

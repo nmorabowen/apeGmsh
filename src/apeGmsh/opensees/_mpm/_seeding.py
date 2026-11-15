@@ -697,8 +697,8 @@ def _resolve_shared_points(
             raise MPMSeedError(
                 f"bodies {bodies[i].name!r} and {bodies[j].name!r} share {both.size} "
                 f"lattice point{'s' if both.size != 1 else ''} at n={n}; {bad.size} of them "
-                f"lie inside a body rather than on the interface between the two, e.g. "
-                f"{x.tolist()}; a particle needs one body (overlapping bodies)")
+                f"{'is' if bad.size == 1 else 'are'} not on an interface between the two "
+                f"(the bodies overlap there), e.g. {x.tolist()}; a particle needs one body")
 
     original = list(kept)
     interface: dict[tuple[str, str], int] = {}
