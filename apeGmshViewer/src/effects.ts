@@ -1766,7 +1766,7 @@ export class Effects {
     if (job.output !== null) this.store.dispatch({ type: "setParticleOutput", output: job.output });
     if (job.grid) this.store.dispatch({ type: "setParticleGrid", on: true });
     s = await frameReady(60000);
-    // A still is framed on what is drawn now (the grid's box too), as the fit view frames it.
+    // A still is framed on the particle cloud, centred (owner D7 on #2992), as the fit view frames it.
     if (job.op === "capture") {
       this.store.dispatch({ type: "setCamera", to: "fit" });
       await painted();

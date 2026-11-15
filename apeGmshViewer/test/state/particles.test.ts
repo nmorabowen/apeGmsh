@@ -9,7 +9,7 @@
 // (main/results.ts), with a bridge that calls it directly, as main's doors do.
 
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -22,7 +22,9 @@ import type { ParticleFrame } from "../../src/renderer/particles.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
 import { reduce, initialState } from "../../src/state/reduce.ts";
 import { dimensionExponents, particleNotices, particleUnit } from "../../src/state/results.ts";
-import { failureOf, noticesOf } from "../../src/state/selectors.ts";
+import { mountParticleScale } from "../../src/panels/particleScale.ts";
+import { NO_DATA_RGB, rampCss } from "../../src/state/contour.ts";
+import { failureOf, noticesOf, particleScaleOf } from "../../src/state/selectors.ts";
 import { Store } from "../../src/state/store.ts";
 import type { ParticleStageInfo, State } from "../../src/state/types.ts";
 
@@ -295,4 +297,149 @@ test("#2992 review: the latest output wins: a slow answer for an output the user
     effects.dispose();
     host.close();
   }
+});
+
+// -- owner D7 on #2992: the particles' colour scale ----------------------------------------
+//
+// The scale is the contour's own (ui/scaleChrome.ts `fillScale`), filled by `particleScaleOf`.
+// Oracles: the ticks rule of the contour scale (panels/legend.ts `contourLines`: five values,
+// or the one value and "(constant)", or "no finite value"), the banner's unit conversion
+// (`particleDisplay`, pinned above), the colormap the effects hand the layer (`frame.cmap`),
+// and the fixture's values as h5py reads them (POSITION/y 0.625 .. 1.375 m; eqPlasticStrain
+// 2e-4 on the soil and NaN on the block's 3 particles at the last output).
+
+const EPS = { name: "STATE_eqPlasticStrain", displayName: "Equivalent plastic strain", components: ["epsPeq"], dimension: "" };
+const withFrame = (s: State, frame: Partial<NonNullable<NonNullable<State["particles"]>["frame"]>>): State =>
+  reduce(s, { type: "particleFrame", frame: { stage: 0, output: 2, status: "ready", error: null, count: 11, noValue: 0, range: null, ...frame } });
+
+test("the scale names the field, component and unit, ticks the range as the contour scale does, and follows the header's Units", () => {
+  let s = loaded([stage()]);
+  // Before the first frame lands the scale is up, saying the output is being read (no flicker during a scrub).
+  assert.deepEqual(particleScaleOf(s), { title: "POSITION · y [m]", tooltip: "as the stage stores it, in m (kN_m_s)", cmap: "jet", ticks: ["reading the output"], range: "range of output 3 of 3", noValue: null });
+  s = withFrame(s, { range: { min: 0.625, max: 1.375 } });
+  assert.deepEqual(particleScaleOf(s)!.ticks, ["0.625", "0.8125", "1", "1.188", "1.375"]);
+  s = reduce(s, { type: "setContourUnits", target: "N_mm_s" });
+  const mm = particleScaleOf(s)!;
+  assert.equal(mm.title, "POSITION · y [mm]");
+  assert.deepEqual(mm.ticks, ["625", "812.5", "1000", "1188", "1375"]);
+  assert.match(mm.tooltip, /^stored in m \(kN_m_s\); shown in the header's Units$/);
+  // The colormap is the one the points are drawn with: effects.ts hands `contour.cmap` to the layer.
+  s = reduce(s, { type: "setContourCmap", cmap: "viridis" });
+  assert.equal(particleScaleOf(s)!.cmap, "viridis");
+  // The seeded set says so; another output says which.
+  assert.equal(particleScaleOf(reduce(withFrame(s, {}), { type: "setParticleOutput", output: 0 }))!.range, "range of output 1 of 3");
+  const set = loaded([stage({ id: "set", nOutputs: 1, steps: [0], time: [0], counts: [12] })], "set", "c.particles.h5");
+  assert.equal(particleScaleOf(set)!.range, "range of the seeded set");
+});
+
+test("the scale with no value (NaN): a constant field keeps its one value; the particles with none are counted beside the no-value chip", () => {
+  let s = reduce(loaded([stage({ fields: [...stage().fields, EPS] })]), { type: "setParticleColour", colour: { field: "STATE_eqPlasticStrain", component: 0 } });
+  s = withFrame(s, { noValue: 3, range: { min: 2e-4, max: 2e-4 } });
+  const v = particleScaleOf(s)!;
+  assert.equal(v.title, "STATE_eqPlasticStrain · epsPeq", "dimensionless: no unit");
+  assert.deepEqual(v.ticks, ["2.000e-4", "(constant)"]);
+  assert.equal(v.noValue, "no value (NaN): 3 of 11 particles");
+  const all = particleScaleOf(withFrame(s, { noValue: 11, range: null }))!;
+  assert.deepEqual([all.ticks, all.noValue], [["no finite value"], "no value (NaN): all 11 particles"]);
+});
+
+test("no scale when the particles are not coloured by a field, not drawn, or their output failed to read", () => {
+  const s = withFrame(loaded([stage()]), { range: { min: 0.625, max: 1.375 } });
+  assert.notEqual(particleScaleOf(s), null);
+  assert.equal(particleScaleOf(reduce(s, { type: "setParticleColour", colour: null })), null, "one plain colour");
+  assert.equal(particleScaleOf(reduce(s, { type: "setParticlesOn", on: false })), null, "particles off");
+  assert.equal(particleScaleOf(withFrame(s, { status: "failed", error: "read failed" })), null, "the banner says why");
+  assert.equal(particleScaleOf(loaded([stage({ nOutputs: 0, steps: [], time: [], counts: [] })])), null, "no output");
+  assert.equal(particleScaleOf(initialState), null);
+  // A colour the stage does not offer is a broken state: refused by name, never a scale skipped.
+  const broken = { ...s, particles: { ...s.particles!, colour: { field: "PRESSURE", component: 0 } } };
+  assert.throws(() => particleScaleOf(broken), /\{"field":"PRESSURE","component":0\} is not a field component of \/MODEL_STAGE\[1\]/);
+});
+
+/** Enough of an element for the scale panel (ui/dom.ts `el`, ui/scaleChrome.ts `fillScale`). */
+class FakeEl {
+  tagName: string;
+  className = "";
+  title = "";
+  type = "";
+  hidden = false;
+  dataset: Record<string, string | undefined> = {};
+  style: Record<string, string> = {};
+  children: (FakeEl | string)[] = [];
+  listeners = new Map<string, (() => void)[]>();
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+  }
+  append(...xs: (FakeEl | string)[]) {
+    this.children.push(...xs);
+  }
+  replaceChildren(...xs: (FakeEl | string)[]) {
+    this.children = [...xs];
+  }
+  addEventListener(type: string, fn: () => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn]);
+  }
+  removeEventListener(type: string, fn: () => void) {
+    this.listeners.set(type, (this.listeners.get(type) ?? []).filter((f) => f !== fn));
+  }
+  get textContent(): string {
+    return this.children.map((c) => (typeof c === "string" ? c : c.textContent)).join("");
+  }
+  set textContent(v: string) {
+    this.children = [v];
+  }
+  all(pred: (e: FakeEl) => boolean): FakeEl[] {
+    const out: FakeEl[] = pred(this) ? [this] : [];
+    for (const c of this.children) if (typeof c !== "string") out.push(...c.all(pred));
+    return out;
+  }
+}
+
+test("mounted on the fixture: the scale shows the eqPlasticStrain field in the points' colormap, its constant value, and the block's 3 particles with no value", async () => {
+  const { store, effects, frames, host } = rig();
+  const scale = new FakeEl("div");
+  const prevDoc = (globalThis as { document?: unknown }).document;
+  (globalThis as { document?: unknown }).document = {
+    createElement: (t: string) => new FakeEl(t),
+    getElementById: (id: string) => (id === "particle-scale" ? scale : null),
+  };
+  let unmount: (() => void) | null = null;
+  try {
+    unmount = mountParticleScale(store);
+    assert.equal(scale.hidden, true, "nothing is open: no scale");
+    effects.openSet({ model: null, geometry: null, results: ALL, particles: null });
+    await settled(store, frameReady, "the first frame");
+    const text = (cls: string) => scale.all((e) => e.className === cls).map((e) => e.textContent);
+    assert.equal(scale.hidden, false, "coloured by POSITION/y: the scale shows");
+    assert.deepEqual(text("vs-title"), ["POSITION · y [m]"]);
+    assert.deepEqual(scale.all((e) => e.className === "vs-ticks")[0]!.children.map((c) => (c as FakeEl).textContent), ["0.625", "0.8125", "1", "1.187", "1.375"], "the fixture's own values put the 3/4 tick just under 1.1875 (the exact ends give 1.188, above)");
+    store.dispatch({ type: "setParticleColour", colour: { field: "STATE_eqPlasticStrain", component: 0 } });
+    await settled(store, (x) => frameReady(x) && frames.at(-1)?.scalar !== null && Number.isNaN(frames.at(-1)!.scalar![8]!), "the eqPlasticStrain frame");
+    assert.deepEqual(text("vs-title"), ["STATE_eqPlasticStrain · epsPeq"]);
+    assert.deepEqual(scale.all((e) => e.className === "vs-ticks")[0]!.children.map((c) => (c as FakeEl).textContent), ["2.000e-4", "(constant)"]);
+    // The bar is the colormap the points were drawn with: the layer's own frame names it.
+    assert.equal(scale.all((e) => e.className === "vs-ramp")[0]!.style["backgroundImage"], rampCss(frames.at(-1)!.cmap));
+    // The no-value row: the contour's no-value chip (#6B7280, the grey the still's block particles read) and the count.
+    const row = scale.all((e) => e.className === "legend-row particle-novalue")[0]!;
+    assert.equal(row.all((e) => e.className === "chip")[0]!.style["backgroundColor"], `rgb(${NO_DATA_RGB.map((c) => Math.round(c * 255)).join(",")})`);
+    assert.equal(row.all((e) => e.className === "chip")[0]!.style["backgroundColor"], "rgb(107,114,128)");
+    assert.deepEqual(text("contour-nodata"), ["no value (NaN): 3 of 11 particles"]);
+    // One plain colour: no scale.
+    store.dispatch({ type: "setParticleColour", colour: null });
+    assert.equal(scale.hidden, true);
+  } finally {
+    unmount?.();
+    (globalThis as { document?: unknown }).document = prevDoc;
+    effects.dispose();
+    host.close();
+  }
+});
+
+test("the page carries the particle scale in the scale stack, after the line diagram's, and app.ts mounts it", () => {
+  const html = readFileSync(new URL("../../src/renderer/index.html", import.meta.url), "utf8");
+  const at = (id: string) => html.indexOf(`id="${id}"`);
+  assert.ok(at("scale-stack") > 0 && at("line-diagram-scale") < at("particle-scale"), "inside the stack, after the line diagram's scale");
+  assert.match(html, /<div id="particle-scale" class="viewport-scale" hidden data-orient="horizontal"><\/div>\s*<\/div>/, "the stack's last child");
+  const app = readFileSync(new URL("../../src/renderer/app.ts", import.meta.url), "utf8");
+  assert.match(app, /^\s*mountParticleScale\(store\),$/m);
 });

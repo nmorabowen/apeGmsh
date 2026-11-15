@@ -30,7 +30,7 @@ import { EntitiesLayer } from "./entities.ts";
 import { LoadsLayer, PrincipalLayer, ReactionsLayer, SupportsLayer, VectorsLayer } from "./loads.ts";
 import { SpringsLayer } from "./springs.ts";
 import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
-import { gridBoxSegments, particleBounds, ParticleLayer, type ParticleFrame, type ParticleLook } from "./particles.ts";
+import { particleBounds, ParticleLayer, type ParticleFrame, type ParticleLook } from "./particles.ts";
 import { deformedPositions } from "../state/deform.ts";
 import { dropUnplaced, gaussBasePositions, gaussDisplacements, gaussLayoutOf, type GaussLayout, type StationPoints } from "../state/gaussPoints.ts";
 import type { State, Store } from "../state/store.ts";
@@ -62,6 +62,28 @@ const INSPECTOR_PX = 470 + 28;
 const NODE_SIZE_FALLBACK = 5;
 /** ADR 0134 D5: the particles are framed in a sphere this much larger than their own, so an open banner leaves them in view. */
 const PARTICLE_FIT_MARGIN = 1.3;
+
+/**
+ * The sphere the camera fits for a particle frame: the cloud's own bounds (owner D7 on
+ * #2992: centred on the cloud, whether the grid's box is drawn or not), PARTICLE_FIT_MARGIN
+ * larger so an open banner leaves the particles in view; null with no particle.
+ */
+export function particleFitSphere(f: { positions: ParticleFrame["positions"]; ndm: ParticleFrame["ndm"] }): { center: [number, number, number]; radius: number } | null {
+  const b = particleBounds(f.positions, f.ndm);
+  return b ? { center: b.center, radius: b.radius * PARTICLE_FIT_MARGIN } : null;
+}
+
+/**
+ * The width kept clear for the right rail, the model framed left of it: none while the
+ * rail is collapsed or the window is narrow. ADR 0134 D5 (owner D7 on #2992): none for
+ * particles drawn alone (no mesh, no geometry) either. The rail's panels (inspector,
+ * section planes, sources) and its chrome (app.ts `mountCollapsibleChrome`) are a
+ * model's, so it shows nothing then, and the cloud is framed in the middle of the window.
+ */
+export function railKeptPx(width: number, railCollapsed: boolean, particlesAlone: boolean): number {
+  if (railCollapsed || particlesAlone) return 0;
+  return width > 1000 ? INSPECTOR_PX : 0;
+}
 
 export { SELECTION_COLOUR } from "./selection.ts";
 /**
@@ -583,6 +605,8 @@ export class Viewport {
     this.settleCaps(s);
     this.onGeometry(s, prev);
     if (!prev || s.mesh !== prev.mesh) {
+      // ADR 0134 D5: a mesh beside particles drawn alone (or its close) changes the rail's width (`panelWidth`).
+      if (this.particleFrame) this.syncCameraFrustum();
       this.setMesh(s.mesh);
       this.applyVisibility(s);
       this.setHighlight(s);
@@ -732,6 +756,8 @@ export class Viewport {
   showParticles(frame: ParticleFrame | null): void {
     this.particleFrame = frame;
     this.particles.show(frame, this.particleLook());
+    // Particles alone keep no width for the right rail (`panelWidth`): drawn or cleared, the frustum follows.
+    this.syncCameraFrustum();
     if (frame?.fit) this.fitParticles(null);
     this.requestRender();
   }
@@ -744,15 +770,10 @@ export class Viewport {
   private fitParticles(heading: Heading | null): boolean {
     const f = this.particleFrame;
     if (!f) return false;
-    // The grid's box too while it is drawn; the banner can overlay the free area's top, so a margin is kept.
-    const box = f.grid ? gridBoxSegments(f.grid, f.ndm) : new Float32Array(0);
-    const pos = new Float64Array(f.positions.length + (box.length / 3) * f.ndm);
-    pos.set(f.positions);
-    for (let i = 0, o = f.positions.length; i < box.length; i += 3) for (let a = 0; a < f.ndm; a++) pos[o++] = box[i + a]!;
-    const b = particleBounds(pos, f.ndm);
+    const b = particleFitSphere(f);
     if (!b) return false;
     const z = f.ndm === 2 ? [0, 0] : [b.center[2] - b.radius, b.center[2] + b.radius];
-    this.fit(b.center, b.radius * PARTICLE_FIT_MARGIN, new Float32Array([0, 0, z[0]!, 0, 0, z[1]!]), heading);
+    this.fit(b.center, b.radius, new Float32Array([0, 0, z[0]!, 0, 0, z[1]!]), heading);
     return true;
   }
 
@@ -1048,6 +1069,8 @@ export class Viewport {
     this.clear(this.geometryLayer);
     this.geometryLayer.visible = false;
     this.geometryInfo = g;
+    // ADR 0134 D5: a geometry beside particles drawn alone (or its close) changes the rail's width (`panelWidth`).
+    if (this.particleFrame) this.syncCameraFrustum();
     if (!g) return;
     const t = themeTokens(this.activeTheme);
     const curves = this.blobs.f32(g.curvePositions);
@@ -1085,9 +1108,8 @@ export class Viewport {
 
   /** Width kept clear for the right rail (inspector, sources): the model is framed left of it. */
   private panelWidth(): number {
-    if (this.railCollapsed) return 0;
-    const w = this.host.clientWidth || 1;
-    return w > 1000 ? INSPECTOR_PX : 0;
+    const alone = this.particleFrame !== null && !this.store.get().mesh && !this.geometryInfo;
+    return railKeptPx(this.host.clientWidth || 1, this.railCollapsed, alone);
   }
 
   private syncCameraFrustum(): void {

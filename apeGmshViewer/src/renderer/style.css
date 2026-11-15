@@ -550,6 +550,10 @@ body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(
 body[data-still-chrome="app"] #scale-stack { z-index: 21; bottom: 64px; justify-content: flex-end; }
 #scale-stack:not(:has(> :not([hidden]))) { display: none; }
 body[data-still-chrome="model"] #scale-stack { display: none; }
+/* ADR 0134 D5 (owner D7 on #2992): the particles' scale sits at the foot of the stack's box,
+   bottom left, clear of a particle cloud the fit frames in the middle of the window. */
+#particle-scale:not([data-moved]) { margin-top: auto; }
+.viewport-scale .particle-novalue { margin-top: 2px; font-size: 12px; }
 .vs-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin: 0 0 6px; }
 .vs-title { font-weight: 600; font-size: 13px; }
 .vs-orient {

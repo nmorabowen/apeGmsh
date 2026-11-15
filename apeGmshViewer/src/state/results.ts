@@ -25,7 +25,7 @@
 // effects to the viewport and never enter the store. A set that holds only its
 // `<stem>.particles.h5` draws it, with the "particle set open without a model" notice.
 
-import type { ContourState, Event, Lineage, ParticleFieldInfo, ParticlesState, ParticleStageInfo, ProgramDecls, ResultsInfo, State, UnitSystemId } from "./types.ts";
+import type { ContourCmap, ContourState, Event, Lineage, ParticleFieldInfo, ParticlesState, ParticleStageInfo, ProgramDecls, ResultsInfo, State, UnitSystemId } from "./types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEMS } from "./units.ts";
 
 export type ResultsPairing =
@@ -466,6 +466,66 @@ export function particleNotices(s: Pick<State, "particles" | "artifacts" | "cont
   else if (f.noValue > 0) out.push(`Particles: ${f.noValue.toLocaleString()} of ${f.count.toLocaleString()} have no value of ${label} (NaN: their material does not answer it); they are drawn in the no-value colour.`);
   if (f.count === 0) out.push(`Particles: output ${p.output + 1} of ${st.name} holds no particle.`);
   return out;
+}
+
+/** What the particles' colour scale in the viewport draws (panels/particleScale.ts, through ui/scaleChrome.ts `fillScale`). */
+export interface ParticleScale {
+  /** the field and component, with the unit the header's Units choice shows: `POSITION · y [m]` */
+  title: string;
+  /** where that unit came from, as the title's tooltip */
+  tooltip: string;
+  /** the colormap the points are drawn with (effects.ts hands `contour.cmap` to the layer) */
+  cmap: ContourCmap;
+  ticks: string[];
+  /** what the range spans: this output (the range is per output) */
+  range: string;
+  /** how many particles have no value (NaN) and are drawn in the no-value colour, or null when all have one */
+  noValue: string | null;
+}
+
+/**
+ * ADR 0134 D5 (owner D7 on #2992): the particles' colour scale, whenever they are drawn
+ * coloured by a field; null when they are not drawn, have one plain colour, or the
+ * output's read failed (the banner says why). Its values follow the header's Units as
+ * the banner's do (`particleDisplay`), and its ticks are the contour scale's
+ * (panels/legend.ts `contourLines`): five, or the one value and "(constant)", or "no
+ * finite value". While an output is read the scale stays, saying so.
+ */
+export function particleScaleOf(s: Pick<State, "particles" | "contour">): ParticleScale | null {
+  const p = s.particles;
+  if (p === null || p.status !== "ready" || !p.on || p.colour === null) return null;
+  const st = p.stages[p.stage];
+  if (!st || st.nOutputs === 0) return null;
+  const field = st.fields.find((x) => x.name === p.colour!.field);
+  const comp = field?.components[p.colour.component];
+  // The reducer only takes a colour the stage offers (`colourOffered`), so a miss is a broken state, not a scale to skip.
+  if (!field || comp === undefined) throw new Error(`particleScaleOf: ${JSON.stringify(p.colour)} is not a field component of ${st.name}`);
+  const shown = particleDisplay(field, st, s.contour);
+  const stored = particleUnit(field, st.units);
+  const f = p.frame !== null && p.frame.stage === p.stage && p.frame.output === p.output ? p.frame : null;
+  if (f?.status === "failed") return null;
+  const r = f?.status === "ready" ? f.range : undefined;
+  // `fmt` is the contour legend's number rule (state/contour.ts `fmtValue`), kept here: importing contour.ts closes a reader cycle.
+  const v = (x: number): string => fmt(x * shown.factor);
+  const ticks =
+    r === undefined ? ["reading the output"] : r === null ? ["no finite value"] : r.min === r.max ? [v(r.min), "(constant)"] : [0, 0.25, 0.5, 0.75, 1].map((t) => v(r.min + (r.max - r.min) * t));
+  const where = p.source === "set" ? "the seeded set" : `output ${p.output + 1} of ${st.nOutputs}`;
+  const noValue =
+    f?.status !== "ready" || f.noValue === 0
+      ? null
+      : f.noValue === f.count
+        ? `no value (NaN): all ${f.count.toLocaleString()} particles`
+        : `no value (NaN): ${f.noValue.toLocaleString()} of ${f.count.toLocaleString()} particles`;
+  return {
+    title: `${field.name} · ${comp}${shown.unit ? ` [${shown.unit}]` : ""}`,
+    tooltip: shown.converted
+      ? `stored in ${stored || "no unit"} (${st.units.system || "no UNIT_SYSTEM"}); shown in the header's Units`
+      : `as the stage stores it${stored ? `, in ${stored}` : ", no unit"} (${st.units.system || "no UNIT_SYSTEM"})`,
+    cmap: s.contour.cmap,
+    ticks,
+    range: `range of ${where}`,
+    noValue,
+  };
 }
 
 const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;

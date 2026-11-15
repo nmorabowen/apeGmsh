@@ -9,6 +9,7 @@ import { test } from "node:test";
 import * as THREE from "three";
 import { toLinear } from "../src/renderer/colormapTexture.ts";
 import { componentOf, fillColours, fillPositions, gridBoxSegments, particleBounds, ParticleLayer, particleRange, type ParticleFrame } from "../src/renderer/particles.ts";
+import { particleFitSphere, railKeptPx } from "../src/renderer/viewport.ts";
 import { NO_DATA_RGB, sampleCmap } from "../src/state/contour.ts";
 
 const LOOK = { plain: 0xe69f00, rim: 0x121418, grid: 0x8b919c };
@@ -128,4 +129,29 @@ test("the colour attribute carries the ramp, and the material colours by vertex"
   close(col.subarray(6, 9), lin(NO_DATA_RGB));
   close(col.subarray(3, 6), lin(sampleCmap("jet", 0.5)));
   layer.dispose();
+});
+
+// -- owner D7 on #2992: the cloud centred, the camera fit to its own bounds -------------
+
+test("particles drawn alone keep no width for the right rail, so the cloud is framed in the middle of the window", () => {
+  // The rail's 470 + 28 px is kept beside a model in a wide window (as before), and never when collapsed or narrow.
+  assert.equal(railKeptPx(1280, false, false), 498);
+  assert.equal(railKeptPx(1280, true, false), 0);
+  assert.equal(railKeptPx(900, false, false), 0);
+  // Particles with no mesh and no geometry: the rail shows nothing, so nothing is kept.
+  assert.equal(railKeptPx(1280, false, true), 0);
+});
+
+test("the camera fits the cloud's own bounds, not the grid's box, whether the box is drawn or not", () => {
+  // A cloud spanning 0.625 .. 1.375 in x and y inside a 0 .. 2 grid: centre (1, 1, 0), radius half the
+  // cloud's diagonal times the 1.3 margin. The box's own sphere would be half of 2·√2 times 1.3.
+  const xy = new Float64Array([0.625, 0.625, 1.375, 0.625, 1, 1, 0.625, 1.375, 1.375, 1.375]);
+  const grid = { origin: [0, 0], cellSize: [0.5, 0.5], numCells: [4, 4] };
+  const radius = (Math.hypot(0.75, 0.75) / 2) * 1.3;
+  for (const g of [null, grid]) {
+    const s = particleFitSphere(frame({ positions: xy, scalar: null, range: null, grid: g }))!;
+    close(s.center, [1, 1, 0]);
+    assert.ok(Math.abs(s.radius - radius) < 1e-12, `grid ${g ? "on" : "off"}: radius ${s.radius}, want ${radius}, the box's ${(Math.hypot(2, 2) / 2) * 1.3}`);
+  }
+  assert.equal(particleFitSphere(frame({ positions: new Float64Array(0), scalar: null, range: null })), null);
 });
