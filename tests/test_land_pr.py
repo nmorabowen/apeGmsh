@@ -21,6 +21,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -2457,6 +2458,14 @@ VIEWER_ROWS = {
     "oracle-fixture": [_row("tests/fixtures/ladruno/truss2d.ladruno", patch=None)],
     "provenance": [_row("src/apeGmsh/results/readers/_ladruno_provenance.py")],
     "provenance-deleted": [_row("src/apeGmsh/results/readers/_ladruno_provenance.py", status="removed", patch=None)],
+    # The paths the viewer's tests read from outside apeGmshViewer/ (#2995); `*.ladruno` is a wildcard.
+    "schemas": [_row("architecture/schemas/examples/variants.valid.json")],
+    "fixtures-mpm": [_row("tests/fixtures/mpm/particle_set_v1.h5", patch=None)],
+    "fixtures-user-results": [_row("tests/fixtures/user_results/conformance.json")],
+    "ladruno-anywhere": [_row("deep/a/b/x.ladruno", patch=None)],
+    "ladruno-at-root": [_row("x.ladruno", patch=None)],
+    "fingerprint-test": [_row("tests/results/user/test_user_fingerprint.py")],
+    "example-script": [_row("examples/shoebuckle_arch.py")],
 }
 
 
@@ -2502,7 +2511,8 @@ def test_an_app_lane_pr_with_app_tests_green_passes_2864(kind, capsys):
     # Names that only start like a pathspec, or sit beside one, are not matched by it.
     ["apeGmshViewerNotes.md", "docs/apeGmshViewer.md", "src/apeGmsh/viewers/apeGmshViewer/x.py",
      ".github/workflows/tests.yml.bak", ".github/workflows/live-fork.yml",
-     "tests/fixtures/ladruno/other.ladruno", "src/apeGmsh/results/readers/_ladruno.py"],
+     "tests/fixtures/ladrunoish/other.py", "src/apeGmsh/results/readers/_ladruno.py",
+     "x.ladruno.bak", "deep/a/b/x.ladruno.bak", "architecture/schemas_notes.md"],
 ])
 def test_a_pr_outside_the_app_lane_with_no_app_tests_run_passes_2864(files, capsys):
     gh, git = _recording(1218, PR_1218, SQUASH_1218, files)
@@ -2525,7 +2535,7 @@ def _filter_pathspecs(workflow: str) -> tuple[str, ...]:
     """The pathspec list of the app-tests filter's `git diff`, in order (continuations joined)."""
     found = _FILTER_DIFF.findall(_app_job(workflow))
     assert len(found) == 1, f"expected one filter `git diff` in the {land_pr.APP_CHECK} job, found {len(found)}"
-    return tuple(found[0].replace("\\\n", " ").split())
+    return tuple(shlex.split(found[0].replace("\\\n", " ")))
 
 
 def _workflow() -> str:
@@ -2544,6 +2554,16 @@ def test_app_paths_equal_the_filter_pathspecs_2864():
     """land_pr requires app-tests for exactly the paths the lane's filter runs its checks on
     (review of #2874): a pathspec added to tests.yml without APP_PATHS fails here."""
     assert _filter_pathspecs(_workflow()) == land_pr.APP_PATHS
+
+
+@pytest.mark.parametrize("name,hit", [
+    ("deep/a/b/x.ladruno", True), ("x.ladruno", True), ("tests/fixtures/new_dir/y.ladruno", True),
+    ("x.ladruno.bak", False), ("deep/a/b/x.ladruno.bak", False), ("x.ladrunoish", False),
+])
+def test_the_wildcard_pathspec_matches_like_git_2995(name, hit):
+    """`'*.ladruno'` (the viewer's contour golden scans every tracked .ladruno) is a git wildcard
+    pathspec: it matches in any directory and only a name that ends in `.ladruno`."""
+    assert land_pr._app_path(name) is hit
 
 
 def test_the_pathspec_parser_sees_a_grown_filter_2864():

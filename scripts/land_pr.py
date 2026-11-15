@@ -90,8 +90,16 @@ APP_CHECK = "app-tests"
 APP_PATHS = (
     "apeGmshViewer/",
     ".github/workflows/tests.yml",
+    "architecture/schemas/",
+    "tests/fixtures/ladruno/",
+    "tests/fixtures/mpm/",
+    "tests/fixtures/simplex_gp/",
+    "tests/fixtures/user_results/",
+    "tests/results/user/test_user_fingerprint.py",
+    "src/apeGmsh/results/_gauss_extrapolation.py",
+    "examples/shoebuckle_arch.py",
+    "*.ladruno",
     "tests/test_app_ladruno_pairing_oracle.py",
-    "tests/fixtures/ladruno/truss2d.ladruno",
     "src/apeGmsh/results/readers/_ladruno_provenance.py",
 )
 PR_FIELDS = (
@@ -1049,9 +1057,16 @@ def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Run
 
 
 def _app_path(name: str) -> bool:
-    """Whether git's pathspec list APP_PATHS matches `name`: a spec matches itself and,
-    as a leading directory, everything under it."""
-    return any(name == spec.rstrip("/") or name.startswith(spec.rstrip("/") + "/") for spec in APP_PATHS)
+    """Whether git's pathspec list APP_PATHS matches `name`: a spec matches itself and, as a
+    leading directory, everything under it; a spec with `*` is a git wildcard pathspec, whose
+    `*` also crosses `/` (`*.ladruno` matches `a/b/x.ladruno`, not `x.ladruno.bak`)."""
+    for spec in APP_PATHS:
+        if "*" in spec:
+            if fnmatch.fnmatchcase(name, spec):
+                return True
+        elif name == spec.rstrip("/") or name.startswith(spec.rstrip("/") + "/"):
+            return True
+    return False
 
 
 def _required_checks(number: int, rows: list[FileRow]) -> tuple[str, ...]:
