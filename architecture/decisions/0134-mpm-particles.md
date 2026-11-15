@@ -1,6 +1,6 @@
 # ADR 0134 — MPM in apeGmsh: the particle set beside the deck, particle results in `.ladruno`, a three.js points layer
 
-**Status:** Accepted (2026-11-13; drafted by the fork's MPM program (WP-232a), ratified by the
+**Status:** Accepted, with Amendment 2 (2026-11-15). Accepted 2026-11-13 (drafted by the fork's MPM program (WP-232a), ratified by the
 owner on #2976, "Yes, ratify"). Merging the PR that flips this Status (`human-gate`) is the
 acceptance. The pointers in ADRs 0112, 0023 and 0113 land with it (ADR 0121 D5).
 
@@ -395,3 +395,37 @@ verb, or another family.
   - `results/schema/_versions.py`;
   - `FORK_PIN`;
   - `docs/concepts/backend-capabilities.md`.
+
+## Amendment 2 (2026-11-15): a lattice point on the interface of two bodies goes to the body declared first
+
+D2 seeds each body on its own. As M2 shipped it, a lattice point that two bodies both claim was
+refused, whatever the reason. The owner ruled on this for #3005 ("Yes, first body"). This amendment
+changes D2 only; Amendment 1 changes D7.
+
+**Why.** Bodies that share a face are the ordinary case: a block resting on soil, a fill against a
+wall. When that face lies on a lattice coordinate, every lattice point on it is inside both bodies'
+closed regions. The refusal then failed every such two-body model, and the only way out was to move
+the face or the grid by a fraction of a sub-cell.
+
+**The rule.**
+
+- A lattice point two bodies claim is an **interface point** when it lies on a boundary facet of
+  each body, and two of those facets, one from each body, face each other: their outward normals have
+  a negative dot product. A boundary facet is an element facet that no other element of the same body
+  shares, matched by node ids. "Lies on" uses the seeder's existing tolerance in reference
+  coordinates. There is no new parameter.
+- An interface point is kept once, by the body declared first. Declaration order is already the
+  particle set's order (Contract 1), so the result is deterministic, and swapping two declarations
+  swaps the owner.
+- Any other shared point is an overlap and is still refused. The message names both bodies, the
+  number of shared points, how many of them are not on an interface, and one of those points. This
+  covers a point on a facet inside one body's mesh, and a point where both bodies lie on the same
+  side of a boundary they share.
+- A body that the rule leaves with no lattice point of its own is refused by name, as an empty body
+  already is.
+- The uniformity report gains `interface_points`: per `(first, later)` pair of body names, the number
+  of points the later body gave up to the earlier one. Its printed form lists them when there are any.
+
+**What stays.** The overlap check is still made on the lattice, as before. An overlap that holds no
+lattice point is not seen, and neither is one whose only lattice points lie on facing boundaries. A
+model in which no two bodies claim a point seeds exactly as before.
