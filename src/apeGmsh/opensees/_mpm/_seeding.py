@@ -229,6 +229,10 @@ def seed_lattice(
     ``thickness`` is the plane-strain thickness, required when ``grid.ndm == 2`` and
     refused when it is 3. Each particle gets the volume ``prod(h/n)`` (times the thickness
     in 2D), the GIMP half-lengths ``h/(2n)`` and its body's density.
+
+    A lattice point on the interface of two bodies is kept once, by the body declared first,
+    and counted in ``report.interface_points``; a point inside a body that another body
+    also claims is refused (ADR 0134 Amendment 2).
     """
     if not isinstance(grid, MPMGrid):
         raise MPMSeedError(f"grid must be an MPMGrid, got {type(grid).__name__}")
