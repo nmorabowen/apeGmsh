@@ -24,11 +24,14 @@ import pytest
 from apeGmsh.opensees import OpenSeesModel, apeSees
 from apeGmsh.opensees import mpm as mpm_mod
 from apeGmsh.opensees._internal.build.errors import BridgeError
+from apeGmsh.opensees._internal.types import Pattern
 from apeGmsh.opensees._mpm import (
     MPMDeckError,
     MPMSeedError,
     ParticleSetOverwriteRefused,
+    StaleParticleSetWarning,
 )
+from apeGmsh.opensees.emitter import h5_reader
 
 from ._meshes import grid_nodes, make_fem, quads
 
@@ -162,10 +165,22 @@ def test_the_replay_refuses_without_a_deck_path_and_on_live(tmp_path: Path) -> N
 
 # -- the grid tag is a load-pattern tag ---------------------------------------
 
-@pytest.mark.parametrize("before,after", [(0, 0), (1, 0), (3, 0), (0, 2), (2, 3)])
+#: ``_declare`` registers six ``mpm`` members: the grid (``mpm`` tag 1), then
+#: the body, wall, gravity, timeSeries and analyze (``mpm`` tags 2..6).
+N_MEMBERS = 6
+
+
+@pytest.mark.parametrize("before,after", [
+    (0, 0), (1, 0), (3, 0), (0, 2), (2, 3), (8, 0), (4, 5)])
 def test_the_grid_tag_is_never_a_pattern_tag(
     tmp_path: Path, before: int, after: int,
 ) -> None:
+    """The deck's grid tag, ``ops.tag_for(grid)`` and the archive's
+    declaration row are one tag (review finding 1), and it is no pattern's.
+
+    Closed form: one above every ``pattern`` tag and every other member's
+    ``mpm`` tag, ``max(before + after, N_MEMBERS) + 1``.
+    """
     ops = _bridge(patterns=before)
     _declare(ops)
     for _ in range(after):
@@ -176,7 +191,22 @@ def test_the_grid_tag_is_never_a_pattern_tag(
     (grid,) = [int(t) for t in re.findall(r"^mpm grid (\d+) ", text, re.M)]
     assert len(patterns) == before + after
     assert grid not in patterns
-    assert grid == max(patterns, default=0) + 1
+    assert grid == max(before + after, N_MEMBERS) + 1
+    # The public tag is the deck's, and no pattern's.
+    (prim,) = [p for p in ops._primitives if isinstance(p, mpm_mod.Grid)]
+    assert ops.tag_for(prim) == grid
+    assert ops.tag_for(prim) not in {
+        ops.tag_for(p) for p in ops._primitives if isinstance(p, Pattern)}
+    # The archive's declaration table joins ("mpm", grid) to the grid's
+    # declaration; the grid's bare allocator tag is no row's.
+    ops.h5(str(tmp_path / "model.h5"))
+    with h5_reader.open(str(tmp_path / "model.h5")) as m:
+        table = m.declarations()
+    assert table is not None
+    assert table.for_tag("mpm", grid).key == ops._decls[id(prim)][1][0]
+    mpm_rows = sorted(first for kind, first, _n, _d in table.tags
+                      if kind == "mpm")
+    assert mpm_rows == [*range(2, N_MEMBERS + 1), grid]
 
 
 # -- refusals -------------------------------------------------------------------
@@ -218,8 +248,12 @@ def test_a_staged_model_refuses() -> None:
     _declare(ops)
     bm = ops.build()
     staged = replace(bm, stage_records=(object(),))
-    with pytest.raises(BridgeError, match="unstaged"):
+    with pytest.raises(BridgeError, match="deck-only and unstaged") as exc:
         staged._mpm_block(TclEmitter(), staged.mpm_members())
+    # Review finding 2: the refusal promises no route v1 cannot emit (the
+    # fork's ``parameter ... loadPattern`` staging is a follow-up).
+    assert "parameter" not in str(exc.value)
+    assert "loadPattern" not in str(exc.value)
 
 
 def test_per_rank_refuses(tmp_path: Path) -> None:
@@ -392,7 +426,201 @@ def test_grid_arguments_refuse_by_name(kwargs: dict, match: str) -> None:
     (lambda: mpm_mod.Output(path="a{b}"), "brace"),
     (lambda: mpm_mod.Analyze(steps=-1, dt=0.1), ">= 0"),
     (lambda: mpm_mod.Units(length="k m", force="N", time="s"), "one word"),
+    # Review finding 5: every token the deck writes bare is one word.
+    (lambda: mpm_mod.Units(length="m", force="N", time="s",
+                           system="kN m s"), r"Units\.system .*one word"),
+    (lambda: mpm_mod.Units(length="m", force="N", time="s",
+                           system="SI	2"), r"Units\.system .*one word"),
+    (lambda: mpm_mod.Units(length="m", force="k	N", time="s"),
+     r"Units\.force .*one word"),
 ])
 def test_member_arguments_refuse_by_name(make, match: str) -> None:
     with pytest.raises(mpm_mod.MPMError, match=match):
         make()
+
+
+# -- a composed (partitioned) archive replays the flat deck (review finding 3) --
+
+def _composed_fem():
+    """The ``_fem`` block as a composed model (ADR 0038: one rank per module):
+    the bottom row of elements (1, 3, 5, 7) on rank 1, the top row on rank 2,
+    each node owned by the first rank whose element holds it (nodes 1-10, then
+    11-15), so the archive's per-rank rows run in the flat deck's node order."""
+    from apeGmsh._kernel.record_sets import ComposeSet
+    from apeGmsh._kernel.records._compose import ComposeRecord
+
+    nodes, ids = grid_nodes((4, 2), LO, HI)
+    elems = quads(ids)
+    owned: set[int] = set()
+    parts = {}
+    for rank, chunk in ((1, range(0, 8, 2)), (2, range(1, 8, 2))):
+        mine = sorted({int(n) for e in chunk for n in elems[e][1]} - owned)
+        owned.update(mine)
+        parts[rank] = {"node_ids": np.array(mine, dtype=np.int64),
+                       "element_ids": np.array([e + 1 for e in chunk],
+                                               dtype=np.int64)}
+    modules = ComposeSet(tuple(
+        ComposeRecord(label=f"m{rank}", source_path=f"m{rank}.h5",
+                      source_fem_hash=f"m{rank}",
+                      source_neutral_schema_version="2.9.0",
+                      translate=(0.0, 0.0, 0.0), partition_rank=rank,
+                      composed_at="2026-11-15T00:00:00Z")
+        for rank in parts))
+    return make_fem(nodes, {"Soil": elems}, partitions=parts,
+                    composed_from=modules)
+
+
+def _deck_lines(path: Path, stem: str) -> list[str]:
+    """The deck's lines, the stamp comments dropped (the ``# mpm body`` rows
+    kept) and the particle set's file name made the stem-free ``<stem>``."""
+    text = path.read_text(encoding="utf-8").replace(stem, "<stem>")
+    return [ln for ln in text.splitlines()
+            if ln.strip() and (not ln.lstrip().startswith("#")
+                               or ln.lstrip().startswith("# mpm"))]
+
+
+@pytest.mark.parametrize("patterns", [0, 2])
+def test_a_composed_archive_replays_the_flat_deck_in_its_order(
+    tmp_path: Path, patterns: int,
+) -> None:
+    """The oracle is ``ops.tcl(flat=True)`` for the same model, whole deck,
+    line for line: the mpm block follows the fixes, the patterns and every
+    other line, where the bridge writes it, not at the global command slot
+    (section 7). The patterns carry a load: a partitioned archive keeps no
+    empty pattern, an older gap of its replay that is not this one's."""
+    import warnings
+
+    from apeGmsh.opensees._internal.build.ownership import is_partitioned
+
+    ops = _bridge(fem=_composed_fem())
+    assert is_partitioned(ops.fem) and ops.fem.composed_from
+    _declare(ops)
+    for _ in range(patterns):
+        with ops.pattern.Plain(series="ramp") as p:
+            p.load(pg="Soil", forces=(1.0, 0.0))
+    bridge = tmp_path / "bridge.tcl"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ops.tcl(str(bridge), flat=True)
+        ops.h5(str(tmp_path / "model.h5"))
+    m = OpenSeesModel.from_h5(str(tmp_path / "model.h5"))
+    assert any(r.method == "partition_open" for r in m.program())
+    again = tmp_path / "again.tcl"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m.build("tcl", out=str(again), flat=True)
+    want = _deck_lines(bridge, "bridge")
+    got = _deck_lines(again, "again")
+    assert got == want
+    # Closed form: the mpm block is one run of lines that ends the deck, and
+    # every fix and pattern sits above it.
+    mpm = [i for i, ln in enumerate(got) if ln.startswith(("mpm ", "# mpm "))]
+    assert mpm == list(range(len(got) - len(mpm), len(got)))
+    assert len(mpm) == 7  # grid, particles, body, wall, gravity, series, analyze
+    pats = [i for i, ln in enumerate(got) if ln.startswith("pattern Plain")]
+    fixes = [i for i, ln in enumerate(got) if ln.startswith("fix ")]
+    assert len(pats) == patterns and len(fixes) == 15
+    assert max(pats + fixes) < mpm[0]
+    assert _particles(tmp_path / "again.particles.h5")["attrs"]["NUM_PARTICLES"]         == N_PARTICLES
+
+
+# -- a deck with no mpm members never keeps a stale set (review finding 4) -----
+
+def _plain(fem=None) -> apeSees:
+    """The same mesh and materials with no mpm member."""
+    ops = _bridge(fem=fem)
+    ops.fix(pg="Soil", dofs=[1, 1])
+    return ops
+
+
+@pytest.mark.parametrize("dialect", ["tcl", "py"])
+def test_a_deck_without_mpm_removes_the_apegmsh_set_of_its_stem(
+    tmp_path: Path, dialect: str,
+) -> None:
+    """ADR 0134 D1 ("never pair a new deck with a stale set"): the viewer
+    pairs ``<stem>.particles.h5`` with the deck of that stem, so re-emitting
+    a model without MPM over an MPM deck removes the set an apeGmsh emit
+    wrote there, silently (no warning)."""
+    import warnings
+
+    ops = _bridge()
+    _declare(ops)
+    deck = tmp_path / f"case1.{dialect}"
+    getattr(ops, dialect)(str(deck))
+    pset = tmp_path / "case1.particles.h5"
+    assert pset.is_file()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", StaleParticleSetWarning)
+        getattr(_plain(), dialect)(str(deck))
+    assert not pset.exists()
+    assert "mpm" not in deck.read_text(encoding="utf-8")
+    # No set there: nothing to decide, nothing warned.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", StaleParticleSetWarning)
+        getattr(_plain(), dialect)(str(deck))
+
+
+@pytest.mark.parametrize("dialect", ["tcl", "py"])
+def test_the_replay_without_mpm_removes_the_apegmsh_set_of_its_stem(
+    tmp_path: Path, dialect: str,
+) -> None:
+    ops = _bridge()
+    _declare(ops)
+    ops.tcl(str(tmp_path / f"case1.{dialect}"))
+    pset = tmp_path / "case1.particles.h5"
+    assert pset.is_file()
+    plain = _plain()
+    plain.h5(str(tmp_path / "plain.h5"))
+    m = OpenSeesModel.from_h5(str(tmp_path / "plain.h5"))
+    m.build(dialect, out=str(tmp_path / f"case1.{dialect}"))
+    assert not pset.exists()
+    # out=None writes no deck, so it decides nothing.
+    ops.tcl(str(tmp_path / f"case1.{dialect}"))
+    m.build(dialect)
+    assert pset.is_file()
+
+
+@pytest.mark.parametrize("dialect", ["tcl", "py"])
+def test_a_foreign_file_beside_a_deck_without_mpm_stays_and_warns(
+    tmp_path: Path, dialect: str,
+) -> None:
+    foreign = tmp_path / "case1.particles.h5"
+    with h5py.File(foreign, "w") as f:
+        f.attrs["FORMAT"] = "ladruno-mpm-particles"
+        f.attrs["GENERATOR"] = "someone-else"
+    before = foreign.read_bytes()
+    with pytest.warns(StaleParticleSetWarning, match=re.escape(repr(str(foreign)))):
+        getattr(_plain(), dialect)(str(tmp_path / f"case1.{dialect}"))
+    assert foreign.read_bytes() == before
+    assert (tmp_path / f"case1.{dialect}").is_file()
+    plain = _plain()
+    plain.h5(str(tmp_path / "plain.h5"))
+    with pytest.warns(StaleParticleSetWarning, match="not a particle set an apeGmsh"):
+        OpenSeesModel.from_h5(str(tmp_path / "plain.h5")).build(
+            dialect, out=str(tmp_path / f"case1.{dialect}"))
+    assert foreign.read_bytes() == before
+
+
+@pytest.mark.parametrize("dialect", ["tcl", "py"])
+def test_a_failed_emit_without_mpm_keeps_the_set(
+    tmp_path: Path, dialect: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Together or not at all: the set is removed only once the deck emitted
+    whole, so an emit that raises leaves the old deck and its set as they
+    were."""
+    import apeGmsh.opensees.apesees as apesees_mod
+
+    ops = _bridge()
+    _declare(ops)
+    deck = tmp_path / f"case1.{dialect}"
+    getattr(ops, dialect)(str(deck))
+    old = deck.read_bytes()
+
+    def _boom(*a, **k):
+        raise RuntimeError("emit failed")
+
+    monkeypatch.setattr(apesees_mod, "emit_deck_tail", _boom)
+    with pytest.raises(RuntimeError, match="emit failed"):
+        getattr(_plain(), dialect)(str(deck))
+    assert (tmp_path / "case1.particles.h5").is_file()
+    assert deck.read_bytes() == old

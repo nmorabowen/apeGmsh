@@ -39,8 +39,8 @@ set's ``MATERIAL_TAG`` is the body material's allocated ``nDMaterial`` tag
 
 The grid's tag is the fork's load-pattern tag (``mpm grid <tag>`` creates
 load pattern ``<tag>``). It is allocated in the ``mpm`` kind and written
-above every ``pattern`` tag of the deck (``BuiltModel._mpm_host_tag``), so
-the two never collide.
+above every ``pattern`` tag and every other member's ``mpm`` tag of the
+model (:func:`host_tag`); ``apeSees.tag_for(grid)`` answers that tag.
 
 MPM is deck-only (D1, D7): the live route refuses any model that declares a
 member, before the domain is touched.
@@ -48,7 +48,7 @@ member, before the domain is touched.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -124,6 +124,21 @@ def _label(name: str, value: str) -> str:
     if any(ch in value for ch in "{}\n\r"):
         raise MPMError(f"{name} {value!r} carries a brace or a line break, "
                        "which an emitted deck cannot quote")
+    return value
+
+
+def _word(name: str, value: str) -> str:
+    """A token the deck writes bare into an ``mpm`` line: one word.
+
+    The fork's parser reads one Tcl word per argument, so a value with
+    whitespace would be split: the engine keeps the first word and drops
+    the rest, while the particle set records the whole string.
+    """
+    _label(name, value)
+    if any(ch.isspace() for ch in value):
+        raise MPMError(f"{name} {value!r} must be one word (no whitespace): "
+                       "the deck writes it bare into an mpm line, where the "
+                       "fork's parser would split it")
     return value
 
 
@@ -452,12 +467,9 @@ class Units(MPM):
 
     def __post_init__(self) -> None:
         for field in ("length", "force", "time"):
-            v = getattr(self, field)
-            _label(f"Units.{field}", v)
-            if any(ch.isspace() for ch in v):
-                raise MPMError(f"Units.{field} {v!r} must be one word")
+            _word(f"Units.{field}", getattr(self, field))
         if self.system is not None:
-            _label("Units.system", self.system)
+            _word("Units.system", self.system)
 
     def args(self) -> tuple[int | float | str, ...]:
         out: list[int | float | str] = ["units", self.length, self.force, self.time]
@@ -627,6 +639,27 @@ def mpm_block(members: Sequence[MPM], *, ndm: int) -> tuple[MPM, ...]:
             raise MPMError(f"mpm gravity {m.g}: a {grid.ndm}-D grid takes "
                            f"{grid.ndm} components")
     return (grid, *bodies, *rest)
+
+
+def host_tag(
+    pattern_tags: "Iterable[int | None]", member_tags: "Iterable[int | None]",
+) -> int:
+    """The tag the deck writes for ``mpm grid`` (ADR 0134): one above every
+    ``pattern`` tag and every other ``mpm`` member's tag.
+
+    ``mpm grid <tag>`` creates load pattern ``<tag>`` (fork guide,
+    "Commands"), and the allocator keeps one counter per kind, so the grid's
+    own ``mpm`` tag would meet ``pattern`` 1 in any deck that has a pattern.
+    Every load pattern a deck writes is a registered ``Pattern`` (the tag
+    plan mints none), so a tag above all of theirs is never a pattern's. It
+    is also above the other members' ``mpm`` tags, because the grid's row in
+    the archive's declaration table is ``("mpm", <this tag>)``, beside
+    theirs, and a ``(kind, tag)`` has one declaration. ``apeSees.tag_for``,
+    the declaration table and the emit all read the grid's tag from here,
+    so a ``pattern`` or ``mpm`` member declared later moves it.
+    """
+    taken = [int(t) for t in (*pattern_tags, *member_tags) if t is not None]
+    return max(taken, default=0) + 1
 
 
 def prepare_particle_set(

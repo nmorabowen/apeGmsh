@@ -14,14 +14,19 @@ Charter P3/P9: stdlib, numpy and this package only.
 from __future__ import annotations
 
 import os
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ._particle_set import (
+    ParticleSetError,
+    ParticleSetOverwriteRefused,
     PreparedParticleSet,
     Provenance,
     Units,
+    check_overwrite,
     particle_set_path,
     preflight_particle_set,
 )
@@ -34,9 +39,12 @@ __all__ = [
     "MPMDeckError",
     "MPMDeckPlan",
     "PLANE_STRAIN_THICKNESS",
+    "StaleParticleSetWarning",
     "plan_from_commands",
     "prepare_deck_particle_set",
+    "remove_stale_particle_set",
     "resolve_units",
+    "stale_particle_set",
 ]
 
 #: The fork's plane-strain convention (guide, "A minimal run": ``ndm 2 = plane
@@ -189,3 +197,53 @@ def prepare_deck_particle_set(
     return preflight_particle_set(
         particle_set_path(deck_path), seeded, material_tags=plan.material_tags,
         units=units, provenance=provenance)
+
+
+# ---------------------------------------------------------------------------
+# a deck with no mpm members (ADR 0134 D1: never pair a new deck with a stale set)
+# ---------------------------------------------------------------------------
+
+class StaleParticleSetWarning(UserWarning):
+    """A deck with no ``mpm`` members is emitted beside a ``<stem>.particles.h5``
+    that no apeGmsh emit wrote, so the emit leaves it in place."""
+
+
+def stale_particle_set(deck_path: str | os.PathLike[str]) -> Path | None:
+    """Decide, before a deck with no ``mpm`` members is written, what to do
+    with the ``<deck stem>.particles.h5`` beside it (ADR 0134 D1).
+
+    The viewer pairs a deck with the set of its stem, so a set an earlier
+    MPM emit left there would be paired with the new deck. Returns that
+    set's path when it carries this contract's apeGmsh provenance (the
+    :func:`check_overwrite` rule: ``FORMAT="ladruno-mpm-particles"`` and
+    ``GENERATOR="apeGmsh"``); the caller removes it once the deck emitted
+    whole and before the deck is written (:func:`remove_stale_particle_set`).
+    Returns ``None`` when there is nothing there, and for anything else at
+    that path, which is left in place with a :class:`StaleParticleSetWarning`
+    naming it. Removes nothing.
+    """
+    try:
+        path = particle_set_path(deck_path)
+    except ParticleSetError:
+        return None
+    if not os.path.lexists(path):
+        return None
+    try:
+        check_overwrite(path)
+    except ParticleSetOverwriteRefused as exc:
+        warnings.warn(
+            f"the deck {str(deck_path)!r} declares no mpm members, and "
+            f"{str(path)!r} beside it is not a particle set an apeGmsh emit "
+            f"wrote, so it is left in place; a viewer pairing "
+            f"'<deck stem>.particles.h5' with this deck would read it "
+            f"(ADR 0134 D1). Move or delete it. ({exc})",
+            StaleParticleSetWarning, stacklevel=3)
+        return None
+    return path
+
+
+def remove_stale_particle_set(path: Path | None) -> None:
+    """Remove the apeGmsh set :func:`stale_particle_set` chose (``None``:
+    nothing). An error propagates, so the deck is not written beside it."""
+    if path is not None:
+        os.remove(path)

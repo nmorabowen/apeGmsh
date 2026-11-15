@@ -13,9 +13,12 @@ from ._deck import (
     PLANE_STRAIN_THICKNESS,
     MPMDeckError,
     MPMDeckPlan,
+    StaleParticleSetWarning,
     plan_from_commands,
     prepare_deck_particle_set,
+    remove_stale_particle_set,
     resolve_units,
+    stale_particle_set,
 )
 from ._particle_set import (
     FORMAT,
@@ -51,7 +54,10 @@ __all__ = [
     "MPMDeckPlan",
     "plan_from_commands",
     "prepare_deck_particle_set",
+    "remove_stale_particle_set",
     "resolve_units",
+    "stale_particle_set",
+    "StaleParticleSetWarning",
     "FORMAT",
     "FORMAT_VERSION",
     "GENERATOR",

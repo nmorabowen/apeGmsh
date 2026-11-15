@@ -218,6 +218,7 @@ from ._internal.ns import (
 )
 from .mpm import Grid as _MPMGrid
 from .mpm import MPMError, _MPMNS, mpm_block
+from .mpm import host_tag as _mpm_host_tag
 from ._internal.tag_allocator import TagAllocator
 from ._internal.tag_plan import (
     TagMode,
@@ -1061,7 +1062,10 @@ class BuiltModel:
         for p in self.primitives:
             if isinstance(p, Element):
                 continue
-            runs.append((_kind_of(p), int(self.tag_for[id(p)]), 1, decl_of(p)))
+            # ADR 0134: the grid's row is the tag its deck line writes.
+            tag = (self._mpm_host_tag(p) if isinstance(p, _MPMGrid)
+                   else int(self.tag_for[id(p)]))
+            runs.append((_kind_of(p), tag, 1, decl_of(p)))
         for spec, sub in tag_plan.elements.specs:
             decl = decl_of(spec)
             if not len(sub):
@@ -1408,21 +1412,15 @@ class BuiltModel:
         return tuple(p for p in self.primitives if isinstance(p, MPM))
 
     def _mpm_host_tag(self, grid: _MPMGrid) -> int:
-        """The grid's emitted tag: its ``mpm`` tag above every ``pattern``.
-
-        ``mpm grid <tag>`` creates load pattern ``<tag>`` (fork guide,
-        "Commands"), and the allocator keeps one counter per kind, so the
-        grid's ``mpm`` tag alone would meet ``pattern`` 1 in any deck that
-        has a pattern. Every load pattern a deck writes is a registered
-        ``Pattern`` (the tag plan mints none), so the grid is written at
-        ``max(pattern tags) + its mpm tag``: never a pattern's tag, and fixed
-        by the build, so the archive row and its replay carry the same one.
-        """
-        ceiling = max(
-            (int(self.tag_for[id(p)]) for p in self.primitives
+        """The grid's emitted tag (:func:`.mpm.host_tag`): above every
+        ``pattern`` tag and every other ``mpm`` member's tag, fixed by the
+        build, so the archive row, the declaration table and the replay
+        carry the one the deck writes."""
+        return _mpm_host_tag(
+            (self.tag_for[id(p)] for p in self.primitives
              if isinstance(p, Pattern)),
-            default=0)
-        return ceiling + int(self.tag_for[id(grid)])
+            (self.tag_for[id(p)] for p in self.primitives
+             if isinstance(p, MPM) and p is not grid))
 
     def mpm_commands(self) -> tuple[tuple[int | float | str, ...], ...]:
         """The ``mpm`` rows of this model's emit, as the arguments after
@@ -1448,11 +1446,15 @@ class BuiltModel:
         refuses. The member-set refusals are :func:`.mpm.mpm_block`'s.
         """
         if self.stage_records:
+            # A staged MPM run (the fork's ``parameter ... loadPattern``
+            # route; ``updateMaterialStage`` never reaches the particles)
+            # is a follow-up; v1 has no staged MPM emit, so it names none.
             raise BridgeError(
                 "apeSees: the model declares mpm members and "
-                f"{len(self.stage_records)} ops.stage block(s); an MPM run is "
-                "one unstaged mpm block (ADR 0134). Stage it in the deck "
-                "through the fork's parameter ... loadPattern instead.")
+                f"{len(self.stage_records)} ops.stage block(s); MPM in this "
+                "version is deck-only and unstaged: it emits one mpm block "
+                "and no staged MPM run (ADR 0134). Declare the MPM model "
+                "without ops.stage.")
         if is_partitioned(self.fem) and not self.fem.composed_from:
             raise BridgeError(
                 "apeSees: the model declares mpm members on a partitioned "
@@ -10255,7 +10257,11 @@ class apeSees(
         siblings promoted atomically on clean completion — a mid-emit
         exception never leaves a half-written deck.
         """
-        from ._mpm import write_particle_set
+        from ._mpm import (
+            remove_stale_particle_set,
+            stale_particle_set,
+            write_particle_set,
+        )
         from .emitter.tcl import TclEmitter, deck_backend
 
         if flat and per_rank:
@@ -10271,10 +10277,15 @@ class apeSees(
         emitter._run_record = analyze_steps is not None
         # ADR 0134 D1: an MPM model's particle set is seeded and checked
         # here, before anything is written; it is written with the deck.
+        # A deck with no mpm members never keeps an apeGmsh set of its
+        # stem beside it (decided here, removed with the deck).
         particles = None
+        stale = None
         if bm.mpm_members():
             particles = self._mpm_prepare(bm, path, per_rank=per_rank)
             emitter.bind_particle_set(str(particles.path))
+        else:
+            stale = stale_particle_set(path)
         # ADR 0099 S5: ``per_rank`` is applied around / after ``bm.emit``
         # (live fragment routing under ``stream``, post-hoc span slicing
         # otherwise), so the INV-4 gate inside emit cannot see it. Stamp
@@ -10312,6 +10323,7 @@ class apeSees(
                 # The deck emitted whole; the set lands before the deck is
                 # promoted, so no deck exists without its set (ADR 0134 D1).
                 write_particle_set(particles)
+            remove_stale_particle_set(stale)
             if stream:
                 # Promotion runs INSIDE the guarded region (review
                 # hardening): a failing os.replace mid-promotion
@@ -10836,7 +10848,11 @@ class apeSees(
         plan_emit_memory_columnar.md A1–A3); use
         ``ops.tcl(path, stream=True)``.
         """
-        from ._mpm import write_particle_set
+        from ._mpm import (
+            remove_stale_particle_set,
+            stale_particle_set,
+            write_particle_set,
+        )
         from .emitter.py import PyEmitter
         from .emitter.tcl import deck_backend
 
@@ -10854,14 +10870,18 @@ class apeSees(
         # ADR 0134 D1: as tcl(), the set is checked before anything is
         # written and written with the deck.
         particles = None
+        stale = None
         if bm.mpm_members():
             particles = self._mpm_prepare(bm, path, per_rank=False)
             emitter.bind_particle_set(str(particles.path))
+        else:
+            stale = stale_particle_set(path)
         pre_prof, post_prof = self._split_profiler_records()
         emit_deck_tail(self, emitter, bm, pre_prof, post_prof,
                        analyze_steps, analyze_dt, path)
         if particles is not None:
             write_particle_set(particles)
+        remove_stale_particle_set(stale)
         with open(path, "w", encoding="utf-8") as f:
             emitter.write_to(f)
         self._artifacts.after_emit(self)
@@ -11512,8 +11532,21 @@ class apeSees(
         return prim  # type: ignore[return-value]
 
     def tag_for(self, prim: Primitive) -> int | None:
-        """Return ``prim``'s allocated tag, or ``None`` if unregistered."""
-        return self._tags.tag_for(prim)
+        """Return ``prim``'s allocated tag, or ``None`` if unregistered.
+
+        An ``mpm`` grid answers the tag its deck line writes (ADR 0134,
+        :func:`.mpm.host_tag`): a fork load-pattern tag above every
+        registered ``pattern`` tag (and every other ``mpm`` member's tag),
+        so a pattern or member declared later moves it.
+        """
+        tag = self._tags.tag_for(prim)
+        if tag is not None and isinstance(prim, _MPMGrid):
+            return _mpm_host_tag(
+                (self._tags.tag_for(p) for p in self._primitives
+                 if isinstance(p, Pattern)),
+                (self._tags.tag_for(p) for p in self._primitives
+                 if isinstance(p, MPM) and p is not prim))
+        return tag
 
     def _name_records(self) -> tuple[tuple[str, str, int], ...]:
         """Resolve the name-alias table to ``(name, kind, tag)`` records.
