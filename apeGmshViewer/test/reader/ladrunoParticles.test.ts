@@ -270,14 +270,22 @@ function copyAttrs(from: h5wasm.Group | h5wasm.Dataset, to: h5wasm.Group | h5was
  * (null: contiguous). `skip` leaves out the links with these paths (relative to the stage),
  * and `dtype` writes a dataset (same relative path) with another dtype: the review's repros.
  */
-function rewritten(name: string, chunks: number | null, opts: { skip?: string[]; dtype?: Record<string, string> } = {}): string {
+function rewritten(name: string, chunks: number | null, opts: { skip?: string[]; dtype?: Record<string, string>; stages?: number } = {}): string {
   const path = join(tmp, name);
   const src = new h5wasm.File(ALL, "r");
   const out = new h5wasm.File(path, "w");
   try {
     const info = out.create_group("INFO");
     copyAttrs(src.get("INFO") as h5wasm.Group, info);
-    const stage = out.create_group("MODEL_STAGE[0]");
+    // `stages` copies of the fixture's particle stage, MODEL_STAGE[0] .. [stages - 1].
+    for (let k = 0; k < (opts.stages ?? 1); k++) writeStage(out.create_group(`MODEL_STAGE[${k}]`));
+  } finally {
+    out.close();
+    src.close();
+  }
+  return path;
+
+  function writeStage(stage: h5wasm.Group): void {
     copyAttrs(src.get("MODEL_STAGE[1]") as h5wasm.Group, stage);
     const rel = (path: string) => path.replace(/^\/MODEL_STAGE\[1\]\//, "");
     const copyTree = (from: h5wasm.Group, to: h5wasm.Group) => {
@@ -312,11 +320,7 @@ function rewritten(name: string, chunks: number | null, opts: { skip?: string[];
     copyTree(src.get("MODEL_STAGE[1]/MODEL/PARTICLES") as h5wasm.Group, model.create_group("PARTICLES"));
     const results = stage.create_group("RESULTS");
     copyTree(src.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES") as h5wasm.Group, results.create_group("ON_PARTICLES"));
-  } finally {
-    out.close();
-    src.close();
   }
-  return path;
 }
 
 for (const [label, chunks] of [["contiguous datasets", null], ["5-row chunks", 5]] as const) {
@@ -466,5 +470,115 @@ test("crash rule: T' is bounded by a short STEP as by a short TIME", () => {
     const s = p.stage("stage_0");
     assert.equal(s.nOutputs, 1);
     assert.match(s.torn!, /STEP holds 3, TIME 1 and OFFSETS 4 entries, so 1 output is committed/);
+  });
+});
+
+// -- #2985 / #2987 review follow-ups (M2-S4 #2983) -------------------------------------
+
+/** A fixture copy resized as `rows` names, then edited in place by `edit` (h5wasm, append mode). */
+function editedCopy(name: string, edit: (w: h5wasm.File) => void, rows: Record<string, number> = {}): string {
+  const path = tornCopy(name, rows);
+  const w = new h5wasm.File(path, "a");
+  try {
+    edit(w);
+  } finally {
+    w.close();
+  }
+  return path;
+}
+
+const ON = "MODEL_STAGE[1]/RESULTS/ON_PARTICLES";
+
+test("#2985 follow-up: a refused field's DATA still bounds the committed outputs, as the fork's committed_outputs reads it", () => {
+  // STRESS loses its TYPE (refused, C2-ATTR) and was cut short at 30 rows, below output 2's end 35.
+  const path = editedCopy("refused_short.ladruno", (w) => (w.get(`${ON}/STRESS`) as h5wasm.Group).delete_attribute("TYPE"), { "STRESS/DATA": 30 });
+  withFile(path, (_f, p) => {
+    const s = p.stage("stage_0");
+    assert.ok(s.refusedFields.some((x) => x.field === "STRESS" && /has no @TYPE \(C2-ATTR\)/.test(x.reason)), "STRESS is refused");
+    assert.equal(s.nOutputs, 2, "OFFSETS[3] = 35 exceeds the refused STRESS's 30 rows");
+    assert.match(s.torn!, /STRESS\/DATA holds 30 rows, short of output 2's end 35, so 1 committed output is dropped/);
+  });
+});
+
+test("#2987 follow-up: a field group with no TYPE, or with PARTITION_REDUCTION other than NONE, is refused by name; the stage's other fields read", () => {
+  const noType = editedCopy("no_type.ladruno", (w) => (w.get(`${ON}/VELOCITY`) as h5wasm.Group).delete_attribute("TYPE"));
+  const sum = editedCopy("field_sum.ladruno", (w) => {
+    const g = w.get(`${ON}/VOLUME`) as h5wasm.Group;
+    g.delete_attribute("PARTITION_REDUCTION");
+    g.create_attribute("PARTITION_REDUCTION", "SUM");
+  });
+  for (const [path, field, why] of [
+    [noType, "VELOCITY", /VELOCITY has no @TYPE \(C2-ATTR\)/],
+    [sum, "VOLUME", /VOLUME@PARTITION_REDUCTION = "SUM"; expected "NONE" \(C2-RED\)/],
+  ] as const) {
+    withFile(path, (f, p) => {
+      const s = p.stage("stage_0");
+      assert.deepEqual(s.refusedFields.map((x) => x.field), [field]);
+      assert.match(s.refusedFields[0]!.reason, why);
+      assert.ok(!s.fields.some((x) => x.name === field), `${field} is not offered`);
+      assert.throws(() => p.readOutput("stage_0", 0, field), new RegExp(`${field} is refused`));
+      assert.equal(s.nOutputs, 3, "the other fields read every output");
+      assert.ok(f.index.warnings.some((x) => new RegExp(`ON_PARTICLES/${field}: refused and not read`).test(x)), "the index warns");
+    });
+  }
+});
+
+test("#2987 follow-up: registry columns of unequal length refuse the stage by name (C2-REG), as the fork's merged contract and the Python reader do", () => {
+  assertRefusedStage(
+    editedCopy("short_mass.ladruno", (w) => (w.get("MODEL_STAGE[1]/MODEL/PARTICLES/MASS") as h5wasm.Dataset).resize([11])),
+    /^stage stage_0 \(\/MODEL_STAGE\[1\]\/MODEL\/PARTICLES\): the registry columns differ in length \(ID 12, BODY_ID 12, MATERIAL_TAG 12, MASS 11\) \(C2-REG\)$/,
+  );
+  assertRefusedStage(
+    editedCopy("short_body.ladruno", (w) => (w.get("MODEL_STAGE[1]/MODEL/PARTICLES/BODY_ID") as h5wasm.Dataset).resize([11])),
+    /^stage stage_0 \(\/MODEL_STAGE\[1\]\/MODEL\/PARTICLES\): the registry columns differ in length \(ID 12, BODY_ID 11, MATERIAL_TAG 12, MASS 12\) \(C2-REG\)$/,
+  );
+});
+
+test("#2983 (T ruling): a stage whose registry columns differ and that holds no committed output is still refused by name (C2-REG), never skipped; the file's other stages read", () => {
+  // Two copies of the fixture's particle stage; the second one's MASS is short and nothing of ON_PARTICLES was appended.
+  // A skip for such a stage waits on the fork's contract (OpenSees#1081, #2991); until then both readers refuse it.
+  const path = rewritten("short_registry_no_output.ladruno", 5, { stages: 2 });
+  const w = new h5wasm.File(path, "a");
+  try {
+    (w.get("MODEL_STAGE[1]/MODEL/PARTICLES/MASS") as h5wasm.Dataset).resize([7]);
+    const on = "MODEL_STAGE[1]/RESULTS/ON_PARTICLES";
+    for (const ds of ["STEP", "TIME", "OFFSETS", "ID"]) (w.get(`${on}/${ds}`) as h5wasm.Dataset).resize([0]);
+    for (const g of (w.get(on) as h5wasm.Group).keys()) {
+      const d = w.get(`${on}/${g}/DATA`);
+      if (d instanceof h5wasm.Dataset) d.resize([0, d.shape![1]!]);
+    }
+  } finally {
+    w.close();
+  }
+  const f = openLadruno(H5, path);
+  try {
+    const p = f.particles!;
+    assert.deepEqual(p.stages.map((s) => s.stageId), ["stage_0"], "the other stage reads");
+    assertFixtureStage(p.stages[0]!, p);
+    assert.equal(p.refused.length, 1);
+    assert.equal(p.refused[0]!.stageId, "stage_1");
+    assert.equal(p.refused[0]!.reason, "stage stage_1 (/MODEL_STAGE[1]/MODEL/PARTICLES): the registry columns differ in length (ID 12, BODY_ID 12, MATERIAL_TAG 12, MASS 7) (C2-REG)");
+    assert.throws(() => p.stage("stage_1"), /stage stage_1's particles are refused: stage stage_1 .*\(C2-REG\)/);
+    assert.ok(f.index.warnings.some((x) => /MODEL_STAGE\[1\]: its particles are refused and not read: stage stage_1 .*\(C2-REG\)/.test(x)), "the index warns");
+    const unread = f.stage("stage_1").unread;
+    assert.ok(!unread.includes(PARTICLES_UNREAD), "a refused stage never lists its particles as read");
+    assert.equal(particlesOnly(metaOf(f)), false);
+  } finally {
+    f.close();
+  }
+});
+
+test("#2987 follow-up: outputIds checks each output's ids as readOutput does: sorted and unique within the output, and in the registry (C2-ID)", () => {
+  // Output 0 holds ids 0..11 at rows 0..11: repeat id 0 at row 1, then name id 99, which the registry lacks.
+  const repeated = editedCopy("ids_repeat.ladruno", (w) => (w.get(`${ON}/ID`) as h5wasm.Dataset).write_slice([[1, 2]], new BigInt64Array([0n])));
+  withFile(repeated, (_f, p) => {
+    assert.throws(() => p.outputIds("stage_0", 0), /output 0's ids are not strictly increasing at row 1 \(C2-ID\)/);
+    assert.throws(() => p.readOutput("stage_0", 0, "POSITION"), /output 0's ids are not strictly increasing at row 1 \(C2-ID\)/);
+    assert.deepEqual(Array.from(p.outputIds("stage_0", 1)), IDS_FULL, "the other outputs still read");
+  });
+  const stranger = editedCopy("ids_stranger.ladruno", (w) => (w.get(`${ON}/ID`) as h5wasm.Dataset).write_slice([[11, 12]], new BigInt64Array([99n])));
+  withFile(stranger, (_f, p) => {
+    assert.throws(() => p.outputIds("stage_0", 0), /particle 99 is not in the stage registry \(C2-ID\)/);
+    assert.throws(() => p.readOutput("stage_0", 0, "POSITION"), /particle 99 is not in the stage registry \(C2-ID\)/);
   });
 });

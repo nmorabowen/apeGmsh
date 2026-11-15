@@ -68,7 +68,7 @@ import type { ResultsH5 } from "../reader/results.ts";
 import { readUserFile, readUserResultColumn, readUserSet, type UserColumnRead, type UserH5 } from "../reader/userFile.ts";
 import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } from "../reader/userSpectra.ts";
 import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
-import { compareStagesOf, ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
+import { compareStagesOf, readParticleSet, ResultsHost, type ParticleOutputRequest, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
 import { OpenSession, Study } from "./session.ts";
 import { confinedToStudy, isManifestPath, readVariants, resolveRow, type VariantsFs } from "../reader/variants.ts";
@@ -79,7 +79,7 @@ import { nodeDeps, registerWorkspace } from "./workspace.ts";
 import { combinationToken, nodeCombinationDeps, registerCombinations, sweepOnOpen, type CombinationH5 } from "./combinations.ts";
 import type { WorkspaceH5 } from "../reader/workspace.ts";
 import { agentMode, arg, argvSkip, badArgs, file, headless, mode, out, reachMode, t0 } from "./args.ts";
-import { measureResultsMode, registerMeasure } from "./modes/measure.ts";
+import { measureResultsMode, PARTICLE_WINDOW, particleRun, registerMeasure, registerParticleHarness } from "./modes/measure.ts";
 import { heardFromAgent, listedOffers, offersPageLoading, pageCommitted, reachWindow, registerReach, type Reach } from "./modes/reach.ts";
 import { abandonRender, agentStartup, drawnSet, registerRender, whereStopped } from "./modes/render.ts";
 
@@ -411,8 +411,9 @@ function pageLoading(): void {
 
 let appReadyAt = 0;
 ipcMain.handle("app:config", () => ({
-  mode,
-  file: mode === "view" ? (session.set?.model ?? null) : file ? resolve(file) : null,
+  // ADR 0134 D5: a particle run's page runs as the human's window (it reads no model); its job comes from `particles:harness`.
+  mode: particleRun ? "view" : mode,
+  file: particleRun ? null : mode === "view" ? (session.set?.model ?? null) : file ? resolve(file) : null,
   t0,
   appReadyMs: appReadyAt - t0,
   configMs: Date.now() - t0,
@@ -598,6 +599,31 @@ ipcMain.handle("results:scan", (e, req: unknown) => {
 });
 ipcMain.handle("results:scanCancel", (_e, scanId: unknown) => {
   if (typeof scanId === "number") resultsHost.cancelScan(scanId);
+});
+
+// ADR 0134 D5 (M2-S4 #2983): the particles. The index and one output of the window set's results file, through the
+// same `setFile` check as every `results:*` door (VU12): a `.ladruno` the set does not hold is refused. `particles:set`
+// takes no path: it reads the window set's own `<stem>.particles.h5`, and refuses when the set has none.
+ipcMain.handle("particles:index", (_e, path: unknown) => {
+  if (typeof path !== "string") return { ok: false, error: `particles:index needs a path; got ${shown(path)}` };
+  const f = setFile("particles:index", "results", path);
+  if (!f.ok) return f;
+  return resultsHost.particleIndex(f.path);
+});
+ipcMain.handle("particles:readOutput", (_e, req: unknown) => {
+  const r = req as ParticleOutputRequest | null;
+  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || typeof r.output !== "number" || typeof r.seq !== "number" || (r.field !== null && typeof r.field !== "string")) {
+    return { ok: false, seq: -1, error: `particles:readOutput: malformed request ${shown(req)}` };
+  }
+  const f = setFile("particles:readOutput", "results", r.path);
+  if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
+  return resultsHost.readParticleOutput({ path: f.path, stage: r.stage, output: r.output, field: r.field, seq: r.seq });
+});
+ipcMain.handle("particles:set", () => {
+  const set = windowSet();
+  if ("reason" in set) return { ok: false, error: `particles:set reads only the open set's particle set, and ${set.reason}` };
+  if (!set.particles) return { ok: false, error: "particles:set: the open set has no <stem>.particles.h5" };
+  return readParticleSet(h5wasm as unknown as ResultsH5, h5wasm.ready, set.particles);
 });
 
 // ---------------------------------------------------------------------------
@@ -1071,6 +1097,7 @@ async function setSources(): Promise<SourceScope> {
 
 // The `measure:*` handlers and the .ladruno read row (./modes/measure.ts, VH2 #2866).
 registerMeasure({ headlessEnd, errText, resultsHost, preload });
+registerParticleHarness({ headlessEnd, errText, set: windowSet });
 
 // The `capture:*` and `render:*` handlers (./modes/render.ts, VH3 #2868).
 registerRender({
@@ -1107,10 +1134,10 @@ app.whenReady().then(() => {
   if (agentMode) mkdirSync(resolve(out!), { recursive: true });
   const w = new BrowserWindow({
     // ADR 0128 D9: a render window's page is the spec's size (at device scale 1, above).
-    width: renderJob ? renderJob.spec.size[0] : 1600,
+    width: renderJob ? renderJob.spec.size[0] : particleRun ? PARTICLE_WINDOW[0] : 1600,
     // A tall hidden window lets one still show the whole definition chain.
-    height: renderJob ? renderJob.spec.size[1] : mode === "capture" ? 1900 : 1000,
-    useContentSize: agentMode,
+    height: renderJob ? renderJob.spec.size[1] : particleRun ? PARTICLE_WINDOW[1] : mode === "capture" ? 1900 : 1000,
+    useContentSize: agentMode || particleRun,
     show: mode !== "capture" && !agentMode,
     backgroundColor: "#16181d",
     title: "apeGmshViewer",

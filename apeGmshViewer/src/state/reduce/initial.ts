@@ -92,4 +92,5 @@ export const initialState: State = {
   camera: initialCamera,
   theme: "dark",
   offers: initialOffers,
+  particles: null,
 };

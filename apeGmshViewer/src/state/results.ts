@@ -19,8 +19,14 @@
 // no model is `noModel` with `particlesOnly`, and the banner says the particles read
 // without one, not "Results not drawn". A `.ladruno` with an FE stage keeps today's
 // sentence: its FE results need the model.
+//
+// The particle slice (ADR 0134 D5, M2-S4 #2983) is reduced here too: the store keeps
+// the particle index and what is asked (stage, output, colour); the arrays go from the
+// effects to the viewport and never enter the store. A set that holds only its
+// `<stem>.particles.h5` draws it, with the "particle set open without a model" notice.
 
-import type { Lineage, ProgramDecls, ResultsInfo } from "./types.ts";
+import type { ContourCmap, ContourState, Event, Lineage, ParticleFieldInfo, ParticlesState, ParticleStageInfo, ProgramDecls, ResultsInfo, State, UnitSystemId } from "./types.ts";
+import { parseDeclaredUnits, UNIT_SYSTEMS } from "./units.ts";
 
 export type ResultsPairing =
   /** no results file has been read */
@@ -238,15 +244,291 @@ export function pairResults(
   return { state: "unpairable", reason: "the results' /meta/lineage has neither model_hash nor fem_hash, so it cannot be paired with a model by content" };
 }
 
-/**
- * Why a `<stem>.particles.h5` opened with no model, geometry or results is refused
- * (#2985 finding 1): it fails closed, named, until the points layer (M2-S4) draws a
- * particle set alone. effects.ts `openSet` shows it as the model's load failure.
- */
-export function particleSetAloneRefusal(path: string): string {
-  const name = path.split(/[\\/]/).pop() ?? path;
-  return `${name} is a particle set (ADR 0134), not a model: drawing a particle set alone comes in a later version of apeGmshViewer. Open the model.h5 of the same stem, or the run's .ladruno.`;
+// -- ADR 0134 D5: the particles the points layer draws ------------------------------
+
+type ParticleEvent = Extract<
+  Event,
+  {
+    type:
+      | "particlesOpened"
+      | "particlesLoaded"
+      | "particlesFailed"
+      | "particlesClosed"
+      | "setParticleStage"
+      | "setParticleOutput"
+      | "setParticleColour"
+      | "setParticleGrid"
+      | "setParticlesOn"
+      | "particleFrame";
+  }
+>;
+
+/** The colour a stage opens with: POSITION's last component (the vertical: y in 2-D, z in 3-D). */
+export function defaultParticleColour(st: ParticleStageInfo): { field: string; component: number } | null {
+  const pos = st.fields.find((f) => f.name === "POSITION");
+  return pos ? { field: "POSITION", component: Math.min(st.ndm, pos.components.length) - 1 } : null;
 }
+
+/** Whether `colour` names a field the stage offers and one of its components. */
+function colourOffered(st: ParticleStageInfo | undefined, colour: { field: string; component: number }): boolean {
+  const f = st?.fields.find((x) => x.name === colour.field);
+  return f !== undefined && Number.isInteger(colour.component) && colour.component >= 0 && colour.component < f.components.length;
+}
+
+/** The output a stage opens on: its last committed one (0 for a stage with none). */
+const lastOutput = (st: ParticleStageInfo | undefined): number => Math.max(0, (st?.nOutputs ?? 0) - 1);
+
+/** A stage index, output and colour that hold on `stages`: the ones asked while they still do, else the stage's defaults. */
+function settle(p: ParticlesState, stages: ParticleStageInfo[], keepId: string | null): Pick<ParticlesState, "stage" | "output" | "colour"> {
+  const at = keepId === null ? -1 : stages.findIndex((x) => x.id === keepId);
+  const stage = at >= 0 ? at : 0;
+  const st = stages[stage];
+  const output = at >= 0 && p.output < (st?.nOutputs ?? 0) ? p.output : lastOutput(st);
+  const colour = p.colour !== null && colourOffered(st, p.colour) ? p.colour : st ? defaultParticleColour(st) : null;
+  return { stage, output, colour };
+}
+
+/** The particle slice's reducer (state/reduce.ts calls it for every particle event); a request the state cannot honour throws. */
+export function reduceParticles(p: ParticlesState | null, e: ParticleEvent): ParticlesState | null {
+  switch (e.type) {
+    case "particlesOpened": {
+      // The same file again (a re-read after a rewrite) keeps what was read until the new read lands.
+      if (p && p.path === e.path && p.source === e.source) return { ...p, status: "loading", error: null };
+      return { source: e.source, path: e.path, status: "loading", error: null, stages: [], unread: [], stage: 0, output: 0, colour: null, grid: p?.grid ?? false, on: p?.on ?? true, frame: null };
+    }
+    case "particlesLoaded": {
+      if (!p || p.path !== e.path || p.source !== e.source) throw new Error(`particlesLoaded: ${e.path} is not the particles being read (${p ? p.path : "none"})`);
+      for (const st of e.stages) {
+        const n = st.nOutputs;
+        if (!Number.isInteger(n) || n < 0 || st.steps.length !== n || st.time.length !== n || st.counts.length !== n) {
+          throw new RangeError(`particlesLoaded: stage ${st.id} says ${n} outputs and carries ${st.steps.length} steps, ${st.time.length} times, ${st.counts.length} counts`);
+        }
+      }
+      const keepId = p.status === "ready" || p.stages.length > 0 ? (p.stages[p.stage]?.id ?? null) : null;
+      return { ...p, status: "ready", error: null, stages: e.stages, unread: e.unread, ...settle(p, e.stages, keepId), frame: null };
+    }
+    case "particlesFailed":
+      if (!p || p.path !== e.path) throw new Error(`particlesFailed: ${e.path} is not the particles being read (${p ? p.path : "none"})`);
+      return { ...p, status: "failed", error: e.error, stages: [], unread: [], frame: null };
+    case "particlesClosed":
+      return null;
+    case "setParticleStage": {
+      if (!p || p.status !== "ready") throw new Error("setParticleStage: no particles are read");
+      if (!Number.isInteger(e.stage) || e.stage < 0 || e.stage >= p.stages.length) throw new RangeError(`setParticleStage: ${e.stage} is not a particle stage (0..${p.stages.length - 1})`);
+      if (e.stage === p.stage) return p;
+      const st = p.stages[e.stage]!;
+      const colour = p.colour !== null && colourOffered(st, p.colour) ? p.colour : defaultParticleColour(st);
+      return { ...p, stage: e.stage, output: lastOutput(st), colour, frame: null };
+    }
+    case "setParticleOutput": {
+      if (!p || p.status !== "ready") throw new Error("setParticleOutput: no particles are read");
+      const n = p.stages[p.stage]?.nOutputs ?? 0;
+      if (!Number.isInteger(e.output) || e.output < 0 || e.output >= n) throw new RangeError(`setParticleOutput: output ${e.output} is outside the stage's ${n} outputs`);
+      return e.output === p.output ? p : { ...p, output: e.output };
+    }
+    case "setParticleColour": {
+      if (!p || p.status !== "ready") throw new Error("setParticleColour: no particles are read");
+      if (e.colour !== null && !colourOffered(p.stages[p.stage], e.colour)) {
+        const st = p.stages[p.stage];
+        throw new RangeError(`setParticleColour: ${JSON.stringify(e.colour)} is not a field component of the stage; it offers ${st ? st.fields.map((f) => `${f.name}/${f.components.join(",")}`).join("; ") : "none"}`);
+      }
+      const same = e.colour === null ? p.colour === null : p.colour !== null && p.colour.field === e.colour.field && p.colour.component === e.colour.component;
+      return same ? p : { ...p, colour: e.colour };
+    }
+    case "setParticleGrid":
+      if (typeof e.on !== "boolean") throw new TypeError(`setParticleGrid: on is ${JSON.stringify(e.on)}`);
+      if (!p) throw new Error("setParticleGrid: no particles are open");
+      return e.on === p.grid ? p : { ...p, grid: e.on };
+    case "setParticlesOn":
+      if (typeof e.on !== "boolean") throw new TypeError(`setParticlesOn: on is ${JSON.stringify(e.on)}`);
+      if (!p) throw new Error("setParticlesOn: no particles are open");
+      return e.on === p.on ? p : { ...p, on: e.on };
+    case "particleFrame": {
+      // A frame for an output no longer shown is dropped (the effects also drop replies that are not their latest).
+      if (!p || p.status !== "ready" || e.frame.stage !== p.stage || e.frame.output !== p.output) return p;
+      const f = e.frame;
+      if (!Number.isInteger(f.count) || f.count < 0 || !Number.isInteger(f.noValue) || f.noValue < 0 || f.noValue > f.count) {
+        throw new RangeError(`particleFrame: ${f.noValue} without a value of ${f.count} particles`);
+      }
+      return { ...p, frame: f };
+    }
+    default: {
+      const unknown: never = e;
+      throw new Error(`reduceParticles: unknown event ${JSON.stringify(unknown)}`);
+    }
+  }
+}
+
+/** A field's DIMENSION in the stage's units: `F/L^2` with kN and m is `kN/m^2`; "" stays "" (dimensionless). */
+export function particleUnit(field: ParticleFieldInfo, units: ParticleStageInfo["units"]): string {
+  if (field.name === "POSITION") return units.length;
+  return field.dimension.replace(/\b[LFt]\b/g, (s) => (s === "L" ? units.length : s === "F" ? units.force : units.time));
+}
+
+/** The unit system a particle stage declares (`UNIT_SYSTEM`, e.g. `kN_m_s`), or null when it names none this app knows. */
+export function particleSystemOf(p: ParticlesState | null): UnitSystemId | null {
+  const st = p?.status === "ready" ? p.stages[p.stage] : undefined;
+  return st ? parseDeclaredUnits(st.units.system) : null;
+}
+
+/** The exponents of F, L and t in a DIMENSION (`F/L^2`, `L/t`, `F*t^2/L^4`, "" dimensionless), or null when it is not such a product. */
+export function dimensionExponents(dimension: string): { f: number; l: number; t: number } | null {
+  const e = { f: 0, l: 0, t: 0 };
+  const d = dimension.trim();
+  if (d === "") return e;
+  const parts = d.split("/");
+  if (parts.length > 2) return null;
+  for (const [k, part] of parts.entries()) {
+    for (const tok of part.split("*")) {
+      const m = /^\s*([FLt])(?:\^(\d+))?\s*$/.exec(tok);
+      if (!m) return null;
+      const n = (m[2] === undefined ? 1 : Number(m[2])) * (k === 0 ? 1 : -1);
+      if (m[1] === "F") e.f += n;
+      else if (m[1] === "L") e.l += n;
+      else e.t += n;
+    }
+  }
+  return e;
+}
+
+/**
+ * How a particle field's values are shown under the header's Units choice (`contour.targetUnits`):
+ * the factor from the stored values, and the unit label. "As stored" (or a stage that declares no
+ * known system, or a DIMENSION this cannot read) shows the stored values in the stage's own units.
+ */
+export function particleDisplay(
+  field: ParticleFieldInfo,
+  st: ParticleStageInfo,
+  contour: Pick<ContourState, "targetUnits" | "sourceUnits" | "declaredUnits">,
+): { factor: number; unit: string; converted: boolean } {
+  const stored = { factor: 1, unit: particleUnit(field, st.units), converted: false };
+  const target = contour.targetUnits;
+  if (target === "as_stored") return stored;
+  const from = parseDeclaredUnits(st.units.system) ?? contour.declaredUnits ?? contour.sourceUnits;
+  const dim = dimensionExponents(field.name === "POSITION" ? "L" : field.dimension);
+  if (from === null || dim === null) return stored;
+  const src = UNIT_SYSTEMS[from];
+  const dst = UNIT_SYSTEMS[target];
+  const factor = Math.pow(src.F / dst.F, dim.f) * Math.pow(src.L / dst.L, dim.l) * Math.pow(src.T / dst.T, dim.t);
+  const dimension = field.name === "POSITION" ? "L" : field.dimension;
+  const unit = dimension.replace(/\b[LFt]\b/g, (s) => (s === "L" ? dst.symbols.length : s === "F" ? dst.symbols.force : dst.symbols.time));
+  return { factor, unit, converted: from !== target };
+}
+
+const fmt = (x: number): string => (x === 0 ? "0" : Math.abs(x) >= 1e4 || Math.abs(x) < 1e-3 ? x.toExponential(3) : String(Number(x.toPrecision(4))));
+
+/** The banner's particle lines: what is drawn and how it is coloured, and every particle stage, field or value that is not. */
+export function particleNotices(s: Pick<State, "particles" | "artifacts" | "contour">): string[] {
+  const p = s.particles;
+  if (p === null) return [];
+  const name = baseName(p.path);
+  const out: string[] = [];
+  if (p.status === "failed") return [`Particles not drawn: ${name}: ${p.error ?? "the read failed"}.`];
+  if (p.status === "loading" && p.stages.length === 0) return [];
+  if (p.source === "set" && s.artifacts.model?.status !== "ready") {
+    const n = p.stages[0]?.counts[0];
+    out.push(`Particle set open without a model: ${name} draws its ${n === undefined ? "" : `${n.toLocaleString()} `}seeded particles alone (ADR 0134); open the model.h5 or the run's .ladruno to see more.`);
+  }
+  for (const u of p.unread) out.push(`Particles of ${u.stage} not drawn: ${u.reason}.`);
+  if (p.stages.length === 0) {
+    if (p.unread.length === 0) out.push(`${name} holds no particles to draw.`);
+    return out;
+  }
+  const st = p.stages[p.stage]!;
+  for (const r of st.refusedFields) out.push(`Particle field ${r.field} of ${st.name} not offered: ${r.reason}.`);
+  if (st.torn) out.push(`Particles of ${st.name}: ${st.nOutputs} output${st.nOutputs === 1 ? "" : "s"} read; ${st.torn}.`);
+  if (st.nOutputs === 0) {
+    out.push(`Particles of ${st.name}: no output was committed, so none is drawn.`);
+    return out;
+  }
+  if (!p.on) return out;
+  const f = p.frame;
+  if (f?.status === "failed") {
+    out.push(`Particle output ${p.output} of ${st.name} not drawn: ${f.error ?? "the read failed"}.`);
+    return out;
+  }
+  const where = p.source === "set" ? "the seeded set" : `output ${p.output + 1} of ${st.nOutputs} (step ${st.steps[p.output]}, t = ${fmt(st.time[p.output]!)} ${st.units.time})`;
+  if (p.colour === null) {
+    out.push(`Particles: ${where}, one colour.`);
+    return out;
+  }
+  const field = st.fields.find((x) => x.name === p.colour!.field)!;
+  // The header's Units choice: the label and the values (a positive factor: the colours do not change).
+  const shown = particleDisplay(field, st, s.contour);
+  const label = `${field.name}/${field.components[p.colour.component]}${shown.unit ? ` (${shown.unit})` : ""}`;
+  if (f?.status !== "ready") {
+    out.push(`Particles: ${where}, coloured by ${label}.`);
+    return out;
+  }
+  const range = f.range ? `${fmt(f.range.min * shown.factor)} to ${fmt(f.range.max * shown.factor)}` : "no finite value";
+  out.push(`Particles: ${where}, ${f.count.toLocaleString()} drawn, coloured by ${label}: ${range}.`);
+  if (f.count > 0 && f.noValue === f.count) out.push(`Particles: no particle has a value of ${label} at this output (NaN: their material does not answer it); all are drawn in the no-value colour.`);
+  else if (f.noValue > 0) out.push(`Particles: ${f.noValue.toLocaleString()} of ${f.count.toLocaleString()} have no value of ${label} (NaN: their material does not answer it); they are drawn in the no-value colour.`);
+  if (f.count === 0) out.push(`Particles: output ${p.output + 1} of ${st.name} holds no particle.`);
+  return out;
+}
+
+/** What the particles' colour scale in the viewport draws (panels/particleScale.ts, through ui/scaleChrome.ts `fillScale`). */
+export interface ParticleScale {
+  /** the field and component, with the unit the header's Units choice shows: `POSITION · y [m]` */
+  title: string;
+  /** where that unit came from, as the title's tooltip */
+  tooltip: string;
+  /** the colormap the points are drawn with (effects.ts hands `contour.cmap` to the layer) */
+  cmap: ContourCmap;
+  ticks: string[];
+  /** what the range spans: this output (the range is per output) */
+  range: string;
+  /** how many particles have no value (NaN) and are drawn in the no-value colour, or null when all have one */
+  noValue: string | null;
+}
+
+/**
+ * ADR 0134 D5 (owner D7 on #2992): the particles' colour scale, whenever they are drawn
+ * coloured by a field; null when they are not drawn, have one plain colour, or the
+ * output's read failed (the banner says why). Its values follow the header's Units as
+ * the banner's do (`particleDisplay`), and its ticks are the contour scale's
+ * (panels/legend.ts `contourLines`): five, or the one value and "(constant)", or "no
+ * finite value". While an output is read the scale stays, saying so.
+ */
+export function particleScaleOf(s: Pick<State, "particles" | "contour">): ParticleScale | null {
+  const p = s.particles;
+  if (p === null || p.status !== "ready" || !p.on || p.colour === null) return null;
+  const st = p.stages[p.stage];
+  if (!st || st.nOutputs === 0) return null;
+  const field = st.fields.find((x) => x.name === p.colour!.field);
+  const comp = field?.components[p.colour.component];
+  // The reducer only takes a colour the stage offers (`colourOffered`), so a miss is a broken state, not a scale to skip.
+  if (!field || comp === undefined) throw new Error(`particleScaleOf: ${JSON.stringify(p.colour)} is not a field component of ${st.name}`);
+  const shown = particleDisplay(field, st, s.contour);
+  const stored = particleUnit(field, st.units);
+  const f = p.frame !== null && p.frame.stage === p.stage && p.frame.output === p.output ? p.frame : null;
+  if (f?.status === "failed") return null;
+  const r = f?.status === "ready" ? f.range : undefined;
+  // `fmt` is the contour legend's number rule (state/contour.ts `fmtValue`), kept here: importing contour.ts closes a reader cycle.
+  const v = (x: number): string => fmt(x * shown.factor);
+  const ticks =
+    r === undefined ? ["reading the output"] : r === null ? ["no finite value"] : r.min === r.max ? [v(r.min), "(constant)"] : [0, 0.25, 0.5, 0.75, 1].map((t) => v(r.min + (r.max - r.min) * t));
+  const where = p.source === "set" ? "the seeded set" : `output ${p.output + 1} of ${st.nOutputs}`;
+  const noValue =
+    f?.status !== "ready" || f.noValue === 0
+      ? null
+      : f.noValue === f.count
+        ? `no value (NaN): all ${f.count.toLocaleString()} particles`
+        : `no value (NaN): ${f.noValue.toLocaleString()} of ${f.count.toLocaleString()} particles`;
+  return {
+    title: `${field.name} · ${comp}${shown.unit ? ` [${shown.unit}]` : ""}`,
+    tooltip: shown.converted
+      ? `stored in ${stored || "no unit"} (${st.units.system || "no UNIT_SYSTEM"}); shown in the header's Units`
+      : `as the stage stores it${stored ? `, in ${stored}` : ", no unit"} (${st.units.system || "no UNIT_SYSTEM"})`,
+    cmap: s.contour.cmap,
+    ticks,
+    range: `range of ${where}`,
+    noValue,
+  };
+}
+
+const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
 
 /** The banner sentence for a pairing that does not draw results, or null. */
 export function pairingNotice(p: ResultsPairing, resultsName: string): string | null {
