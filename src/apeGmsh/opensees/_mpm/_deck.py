@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import os
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TextIO
 
 from ._particle_set import (
     ParticleSetError,
@@ -29,6 +29,8 @@ from ._particle_set import (
     check_overwrite,
     particle_set_path,
     preflight_particle_set,
+    py_particles_line,
+    tcl_particles_line,
 )
 from ._seeding import MPMBody, MPMGrid, seed_lattice
 
@@ -45,6 +47,7 @@ __all__ = [
     "remove_stale_particle_set",
     "resolve_units",
     "stale_particle_set",
+    "write_deck_then_remove",
 ]
 
 #: The fork's plane-strain convention (guide, "A minimal run": ``ndm 2 = plane
@@ -205,22 +208,28 @@ def prepare_deck_particle_set(
 
 class StaleParticleSetWarning(UserWarning):
     """A deck with no ``mpm`` members is emitted beside a ``<stem>.particles.h5``
-    that no apeGmsh emit wrote, so the emit leaves it in place."""
+    that it keeps: a file no apeGmsh emit wrote, or an apeGmsh set the deck it
+    overwrites does not read."""
 
 
 def stale_particle_set(deck_path: str | os.PathLike[str]) -> Path | None:
-    """Decide, before a deck with no ``mpm`` members is written, what to do
-    with the ``<deck stem>.particles.h5`` beside it (ADR 0134 D1).
+    """Decide, before a deck with no ``mpm`` members is written over
+    ``deck_path``, whether the ``<deck stem>.particles.h5`` beside it goes
+    with the deck it replaces (ADR 0134 D1: never pair a new deck with a
+    stale set). Removes nothing.
 
-    The viewer pairs a deck with the set of its stem, so a set an earlier
-    MPM emit left there would be paired with the new deck. Returns that
-    set's path when it carries this contract's apeGmsh provenance (the
-    :func:`check_overwrite` rule: ``FORMAT="ladruno-mpm-particles"`` and
-    ``GENERATOR="apeGmsh"``); the caller removes it once the deck emitted
-    whole and before the deck is written (:func:`remove_stale_particle_set`).
-    Returns ``None`` when there is nothing there, and for anything else at
-    that path, which is left in place with a :class:`StaleParticleSetWarning`
-    naming it. Removes nothing.
+    Returns the set's path only when both hold: the set carries this
+    contract's apeGmsh provenance (the :func:`check_overwrite` rule,
+    ``FORMAT="ladruno-mpm-particles"`` and ``GENERATOR="apeGmsh"``), and the
+    deck being overwritten exists and its own ``mpm particles -file`` line
+    names that set. The caller removes it once the new deck is written and
+    in place (:func:`write_deck_then_remove`, :func:`remove_stale_particle_set`).
+
+    Returns ``None`` when nothing is there. Any other file there is kept,
+    with a :class:`StaleParticleSetWarning` naming it: a foreign file, and
+    an apeGmsh set that the overwritten deck does not read (no deck there,
+    or one that reads another set or none), which a sibling deck of the
+    same stem (``case.tcl`` beside ``case.py``) may read.
     """
     try:
         path = particle_set_path(deck_path)
@@ -231,19 +240,71 @@ def stale_particle_set(deck_path: str | os.PathLike[str]) -> Path | None:
     try:
         check_overwrite(path)
     except ParticleSetOverwriteRefused as exc:
-        warnings.warn(
-            f"the deck {str(deck_path)!r} declares no mpm members, and "
-            f"{str(path)!r} beside it is not a particle set an apeGmsh emit "
-            f"wrote, so it is left in place; a viewer pairing "
-            f"'<deck stem>.particles.h5' with this deck would read it "
-            f"(ADR 0134 D1). Move or delete it. ({exc})",
-            StaleParticleSetWarning, stacklevel=3)
+        _warn_kept(deck_path, path,
+                   f"it is not a particle set an apeGmsh emit wrote ({exc})")
+        return None
+    if not _deck_reads_set(deck_path, path):
+        _warn_kept(deck_path, path,
+                   "it is an apeGmsh particle set, but the deck being "
+                   "overwritten does not read it (no deck there, or its mpm "
+                   "particles -file line names no such set), so another deck "
+                   "of this stem may")
         return None
     return path
 
 
+def _deck_reads_set(deck_path: str | os.PathLike[str], set_path: Path) -> bool:
+    """Whether the deck file at ``deck_path`` holds the ``mpm particles
+    -file`` line (Tcl or Python form) that names ``set_path``."""
+    deck = Path(deck_path)
+    if not deck.is_file():
+        return False
+    lines = {tcl_particles_line(set_path), py_particles_line(set_path)}
+    with open(deck, encoding="utf-8", errors="replace") as f:
+        return any(line.strip() in lines for line in f)
+
+
+def _warn_kept(deck_path: str | os.PathLike[str], path: Path, why: str) -> None:
+    warnings.warn(
+        f"the deck {str(deck_path)!r} declares no mpm members, and "
+        f"{str(path)!r} beside it is kept: {why}. A viewer pairing "
+        "'<deck stem>.particles.h5' with this deck would read it (ADR 0134 "
+        "D1); move or delete it.",
+        StaleParticleSetWarning, stacklevel=4)
+
+
+def write_deck_then_remove(
+    deck_path: str | os.PathLike[str], write: Callable[[TextIO], Any],
+    stale: Path | None,
+) -> None:
+    """Write the deck with ``write(f)``, then remove ``stale``.
+
+    ``stale is None``: the deck is written in place, as before. Otherwise
+    the deck goes to a sibling temporary file and replaces ``deck_path``
+    only once it is whole, and the set is removed only after that, so a
+    failed write leaves the old deck and its set as they were.
+    """
+    if stale is None:
+        with open(deck_path, "w", encoding="utf-8") as f:
+            write(f)
+        return
+    deck = Path(deck_path)
+    tmp = deck.with_name(deck.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            write(f)
+        os.replace(tmp, deck)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    remove_stale_particle_set(stale)
+
+
 def remove_stale_particle_set(path: Path | None) -> None:
     """Remove the apeGmsh set :func:`stale_particle_set` chose (``None``:
-    nothing). An error propagates, so the deck is not written beside it."""
+    nothing), once the deck that replaced its reader is in place."""
     if path is not None:
         os.remove(path)

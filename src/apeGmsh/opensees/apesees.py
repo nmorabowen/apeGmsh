@@ -10260,6 +10260,7 @@ class apeSees(
         from ._mpm import (
             remove_stale_particle_set,
             stale_particle_set,
+            write_deck_then_remove,
             write_particle_set,
         )
         from .emitter.tcl import TclEmitter, deck_backend
@@ -10277,8 +10278,8 @@ class apeSees(
         emitter._run_record = analyze_steps is not None
         # ADR 0134 D1: an MPM model's particle set is seeded and checked
         # here, before anything is written; it is written with the deck.
-        # A deck with no mpm members never keeps an apeGmsh set of its
-        # stem beside it (decided here, removed with the deck).
+        # A deck with no mpm members drops the apeGmsh set the deck it
+        # overwrites reads (decided here, removed once the deck is in place).
         particles = None
         stale = None
         if bm.mpm_members():
@@ -10323,7 +10324,6 @@ class apeSees(
                 # The deck emitted whole; the set lands before the deck is
                 # promoted, so no deck exists without its set (ADR 0134 D1).
                 write_particle_set(particles)
-            remove_stale_particle_set(stale)
             if stream:
                 # Promotion runs INSIDE the guarded region (review
                 # hardening): a failing os.replace mid-promotion
@@ -10357,8 +10357,11 @@ class apeSees(
             # line_buffer(): read-only, no deck-sized copy (ADR 0065 A0).
             _write_per_rank_tcl(path, emitter.line_buffer(), spans)
         elif not stream:
-            with open(path, "w", encoding="utf-8") as f:
-                emitter.write_to(f)
+            # ADR 0134 D1: a stale set goes only once its deck is replaced.
+            write_deck_then_remove(path, emitter.write_to, stale)
+            stale = None
+        # A streamed or per-rank deck is in place now: its stale set goes.
+        remove_stale_particle_set(stale)
         self._artifacts.after_emit(self)
 
         if not run:
@@ -10849,8 +10852,8 @@ class apeSees(
         ``ops.tcl(path, stream=True)``.
         """
         from ._mpm import (
-            remove_stale_particle_set,
             stale_particle_set,
+            write_deck_then_remove,
             write_particle_set,
         )
         from .emitter.py import PyEmitter
@@ -10881,9 +10884,8 @@ class apeSees(
                        analyze_steps, analyze_dt, path)
         if particles is not None:
             write_particle_set(particles)
-        remove_stale_particle_set(stale)
-        with open(path, "w", encoding="utf-8") as f:
-            emitter.write_to(f)
+        # ADR 0134 D1: a stale set goes only once its deck is replaced.
+        write_deck_then_remove(path, emitter.write_to, stale)
         self._artifacts.after_emit(self)
 
         if not run:

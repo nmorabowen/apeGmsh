@@ -566,7 +566,7 @@ def test_the_replay_without_mpm_removes_the_apegmsh_set_of_its_stem(
 ) -> None:
     ops = _bridge()
     _declare(ops)
-    ops.tcl(str(tmp_path / f"case1.{dialect}"))
+    getattr(ops, dialect)(str(tmp_path / f"case1.{dialect}"))
     pset = tmp_path / "case1.particles.h5"
     assert pset.is_file()
     plain = _plain()
@@ -575,7 +575,7 @@ def test_the_replay_without_mpm_removes_the_apegmsh_set_of_its_stem(
     m.build(dialect, out=str(tmp_path / f"case1.{dialect}"))
     assert not pset.exists()
     # out=None writes no deck, so it decides nothing.
-    ops.tcl(str(tmp_path / f"case1.{dialect}"))
+    getattr(ops, dialect)(str(tmp_path / f"case1.{dialect}"))
     m.build(dialect)
     assert pset.is_file()
 
@@ -624,3 +624,83 @@ def test_a_failed_emit_without_mpm_keeps_the_set(
         getattr(_plain(), dialect)(str(deck))
     assert (tmp_path / "case1.particles.h5").is_file()
     assert deck.read_bytes() == old
+
+
+@pytest.mark.parametrize("mpm_deck,plain_deck", [("tcl", "py"), ("py", "tcl")])
+def test_a_sibling_deck_keeps_its_set(
+    tmp_path: Path, mpm_deck: str, plain_deck: str,
+) -> None:
+    """Delta review 4a: the set goes only with the deck that reads it. A
+    deck without MPM written beside an MPM deck of the same stem (``case.tcl``
+    and ``case.py``) keeps that deck's set and warns, naming it; so does a
+    deck without MPM written over one that does not read the set."""
+    ops = _bridge()
+    _declare(ops)
+    getattr(ops, mpm_deck)(str(tmp_path / f"case.{mpm_deck}"))
+    pset = tmp_path / "case.particles.h5"
+    before = pset.read_bytes()
+    named = re.escape(repr(str(pset)))
+    for _ in range(2):  # no deck there, then a deck without the -file line
+        with pytest.warns(StaleParticleSetWarning, match=named + ".*does not read"):
+            getattr(_plain(), plain_deck)(str(tmp_path / f"case.{plain_deck}"))
+        assert pset.read_bytes() == before
+    plain = _plain()
+    plain.h5(str(tmp_path / "plain.h5"))
+    with pytest.warns(StaleParticleSetWarning, match=named):
+        OpenSeesModel.from_h5(str(tmp_path / "plain.h5")).build(
+            plain_deck, out=str(tmp_path / f"case.{plain_deck}"))
+    assert pset.read_bytes() == before
+    # The MPM deck itself still reads it, and its own re-emit without MPM
+    # takes it.
+    getattr(_plain(), mpm_deck)(str(tmp_path / f"case.{mpm_deck}"))
+    assert not pset.exists()
+
+
+@pytest.mark.parametrize("dialect", ["tcl", "py"])
+def test_a_failed_deck_write_keeps_the_old_deck_and_its_set(
+    tmp_path: Path, dialect: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Delta review 4b: the set goes only after the new deck is written and
+    in place. A write that fails after the decision (half the deck written,
+    then an error) leaves the old deck and its set as they were, and no
+    temporary file behind."""
+    from apeGmsh.opensees.emitter.py import PyEmitter
+    from apeGmsh.opensees.emitter.tcl import TclEmitter
+
+    ops = _bridge()
+    _declare(ops)
+    deck = tmp_path / f"case1.{dialect}"
+    getattr(ops, dialect)(str(deck))
+    old = deck.read_bytes()
+    pset = tmp_path / "case1.particles.h5"
+    set_bytes = pset.read_bytes()
+
+    def _half(self, f):
+        f.write("half a deck\n")
+        raise OSError("disk full")
+
+    cls = TclEmitter if dialect == "tcl" else PyEmitter
+    with monkeypatch.context() as mp:
+        mp.setattr(cls, "write_to", _half)
+        with pytest.raises(OSError, match="disk full"):
+            getattr(_plain(), dialect)(str(deck))
+    assert deck.read_bytes() == old
+    assert pset.read_bytes() == set_bytes
+    assert sorted(x.name for x in tmp_path.iterdir()) == sorted(
+        [deck.name, pset.name])
+    # The replay's write, failing at the replace.
+    plain = _plain()
+    plain.h5(str(tmp_path / "plain.h5"))
+    m = OpenSeesModel.from_h5(str(tmp_path / "plain.h5"))
+    import apeGmsh.opensees._mpm._deck as deck_mod
+
+    def _no_replace(src, dst):
+        raise OSError("replace refused")
+
+    with monkeypatch.context() as mp:
+        mp.setattr(deck_mod.os, "replace", _no_replace)
+        with pytest.raises(OSError, match="replace refused"):
+            m.build(dialect, out=str(deck))
+    assert deck.read_bytes() == old
+    assert pset.read_bytes() == set_bytes
+    assert not (tmp_path / f"{deck.name}.tmp").exists()

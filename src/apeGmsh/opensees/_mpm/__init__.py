@@ -19,6 +19,7 @@ from ._deck import (
     remove_stale_particle_set,
     resolve_units,
     stale_particle_set,
+    write_deck_then_remove,
 )
 from ._particle_set import (
     FORMAT,
@@ -58,6 +59,7 @@ __all__ = [
     "resolve_units",
     "stale_particle_set",
     "StaleParticleSetWarning",
+    "write_deck_then_remove",
     "FORMAT",
     "FORMAT_VERSION",
     "GENERATOR",

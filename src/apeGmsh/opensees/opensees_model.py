@@ -2520,8 +2520,8 @@ class OpenSeesModel:
         particles = None
         stale = None
         if not mpm_rows and out is not None:
-            # D1: a deck with no mpm rows never keeps an apeGmsh set of
-            # its stem beside it (decided here, removed with the deck).
+            # D1: a deck with no mpm rows drops the apeGmsh set the deck it
+            # overwrites reads (decided here, removed once it is written).
             from ._mpm import stale_particle_set
 
             stale = stale_particle_set(str(out))
@@ -2553,12 +2553,11 @@ class OpenSeesModel:
             from ._mpm import write_particle_set
 
             write_particle_set(particles)
-        if stale is not None:
-            from ._mpm import remove_stale_particle_set
-
-            remove_stale_particle_set(stale)
         if out is not None:
-            Path(out).write_text(text, encoding="utf-8")
+            from ._mpm import write_deck_then_remove
+
+            # D1: a stale set goes only once its deck is replaced.
+            write_deck_then_remove(str(out), lambda f: f.write(text), stale)
         return text
 
     def _mpm_rows(self) -> "tuple[tuple[int | float | str, ...], ...]":
