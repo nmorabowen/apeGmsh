@@ -817,7 +817,7 @@ MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 
 #: The ``ladrunoSchema`` v1 capability that promises that fix
 #: (``kCapabilities`` in the fork's ``SRC/interpreter/LadrunoSchema.h``,
-#: listed at ``FORK_PIN`` ``6050d78e1``).  The fork defines a capability's
+#: listed at ``FORK_PIN`` ``f0b9a1df6``).  The fork defines a capability's
 #: absence as "older build, refuse", so a v0 schema, which predates every
 #: name, lacks it.
 MD_STAGE_FLAG_CAPABILITY = "mdStageFlagPreserved"
@@ -934,7 +934,12 @@ C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 #: ``True`` is refused (fail closed).  A ``FORK_PIN`` bump adds its row (a
 #: unit lock fails otherwise).
 FORK_BUILD_HAS_C83: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261103 (6050d78e1): c83ee812e is its ancestor
+    # FORK_PIN ladruno-v20261114 (f0b9a1df6): c83ee812e is its ancestor
+    # (GitHub compare: ahead 295, behind 0). It is 6050d78e1 plus
+    # 84 commits: the MPM driver, contracts and particle writer, and
+    # the LadrunoHS, recorder and SANISAND fixes.
+    "f0b9a1df699f9634fd89c5942d69d90fe5ad27c4": True,
+    # ladruno-v20261103 (6050d78e1): c83ee812e is its ancestor
     # (GitHub compare: ahead 211, behind 0). It is 23d937bc4 plus
     # 123 commits: the LadrunoConcrete3D tangent, concrete integration,
     # beam-column, contact and integrator fixes.
@@ -1038,7 +1043,12 @@ MEMBRANE_WP208_FORK_COMMIT = "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f"
 FORK_BUILD_HAS_MEMBRANE_WP208: dict[str, bool] = {
     # The floor commit itself.
     MEMBRANE_WP208_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261103 (6050d78e1): b6d3e3d21 is its ancestor
+    # FORK_PIN ladruno-v20261114 (f0b9a1df6): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 293, behind 0). It is 6050d78e1 plus
+    # 84 commits: the MPM driver, contracts and particle writer, and
+    # the LadrunoHS, recorder and SANISAND fixes.
+    "f0b9a1df699f9634fd89c5942d69d90fe5ad27c4": True,
+    # ladruno-v20261103 (6050d78e1): b6d3e3d21 is its ancestor
     # (GitHub compare: ahead 209, behind 0). It is 23d937bc4 plus
     # 123 commits: the LadrunoConcrete3D tangent, concrete integration,
     # beam-column, contact and integrator fixes.
@@ -1142,7 +1152,12 @@ BEAM3D_PARTIAL_LOAD_FORK_COMMIT = "34df942c75fa8006da7fa930d32645c0fd37b20f"
 FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
     # The floor commit itself.
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261103 (6050d78e1): 34df942c7 is its ancestor
+    # FORK_PIN ladruno-v20261114 (f0b9a1df6): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 323, behind 0). It is 6050d78e1 plus
+    # 84 commits: the MPM driver, contracts and particle writer, and
+    # the LadrunoHS, recorder and SANISAND fixes.
+    "f0b9a1df699f9634fd89c5942d69d90fe5ad27c4": True,
+    # ladruno-v20261103 (6050d78e1): 34df942c7 is its ancestor
     # (GitHub compare: ahead 239, behind 0). It is 23d937bc4 plus
     # 123 commits: the LadrunoConcrete3D tangent, concrete integration,
     # beam-column, contact and integrator fixes.
@@ -1277,7 +1292,12 @@ FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION: tuple[int, int, int] = (3, 7, 0)
 FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD: dict[str, bool] = {
     # The 3-D partial-load floor commit (compare: ahead 4045, behind 0).
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261103 (6050d78e1): f4c791df6 is its ancestor
+    # FORK_PIN ladruno-v20261114 (f0b9a1df6): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4368, behind 0). It is 6050d78e1 plus
+    # 84 commits: the MPM driver, contracts and particle writer, and
+    # the LadrunoHS, recorder and SANISAND fixes.
+    "f0b9a1df699f9634fd89c5942d69d90fe5ad27c4": True,
+    # ladruno-v20261103 (6050d78e1): f4c791df6 is its ancestor
     # (GitHub compare: ahead 4284, behind 0). It is 23d937bc4 plus
     # 123 commits: the LadrunoConcrete3D tangent, concrete integration,
     # beam-column, contact and integrator fixes.
