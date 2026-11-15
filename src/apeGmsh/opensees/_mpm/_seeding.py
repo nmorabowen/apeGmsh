@@ -4,8 +4,9 @@ The grid declares ``n`` points per cell per axis at the sub-cell centres. A poin
 for a body when it lies inside an element of the body's physical group, tested on the
 FEMData mesh in numpy: barycentric coordinates for ``tri3``/``tet4``, the inverse
 isoparametric map (Newton) for ``quad4``/``hex8``. A point on a face shared by two
-elements of one body is kept once; a point claimed by two bodies is refused. Every other
-element family is refused by name.
+elements of one body is kept once. A point claimed by two bodies is kept once, by the body
+declared first, when it lies on the interface between them (Amendment 2); any other point
+claimed by two bodies is refused by name. Every other element family is refused by name.
 
 Charter P3/P9: this module imports neither gmsh nor anything outside ``apeGmsh.mesh``.
 ``FEMData`` is read through its public ``nodes``/``elements`` surface only.
@@ -13,8 +14,8 @@ Charter P3/P9: this module imports neither gmsh nor anything outside ``apeGmsh.m
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -148,10 +149,15 @@ class UniformityReport:
     ``counts`` has shape ``grid.num_cells``, indexed ``[ix, iy(, iz)]``. A cell on a body's
     boundary holds fewer than ``expected``; a cell holds more only if bodies overlap, which
     seeding refuses, so ``counts <= expected`` always holds.
+
+    ``interface_points`` maps ``(first, later)`` body names to the number of lattice points
+    on their interface that the first-declared body kept and the later one gave up (ADR
+    0134 Amendment 2). It is empty when no two bodies claim a point.
     """
 
     counts: IntArray
     expected: int
+    interface_points: dict[tuple[str, str], int] = field(default_factory=dict)
 
     @property
     def full_cells(self) -> int:
@@ -171,9 +177,14 @@ class UniformityReport:
         return np.argwhere(mask).astype(np.int64)
 
     def __str__(self) -> str:
-        return (f"{int(self.counts.sum())} particles; {self.full_cells} full cells "
+        text = (f"{int(self.counts.sum())} particles; {self.full_cells} full cells "
                 f"({self.expected} each), {self.partial_cells} partial, "
                 f"{self.empty_cells} empty")
+        if self.interface_points:
+            pairs = ", ".join(f"{a!r} over {b!r}: {k}"
+                              for (a, b), k in self.interface_points.items())
+            text += f"; interface points kept by the first-declared body: {pairs}"
+        return text
 
 
 @dataclass(frozen=True)
@@ -255,7 +266,8 @@ def seed_lattice(
                 f"at n={n} per cell per axis; refine n or the grid")
         kept.append(lin)
 
-    _refuse_shared_points(kept, bodies, grid, n, lattice_shape)
+    interface = _resolve_shared_points(
+        kept, bodies, fem, grid, n, lattice_shape, sorted_ids, order, node_xyz)
 
     all_lin = np.concatenate(kept)
     idx = np.stack(np.unravel_index(all_lin, lattice_shape, order="F"), axis=1)
@@ -275,7 +287,7 @@ def seed_lattice(
         np.ravel_multi_index(tuple(cells.T), grid.num_cells, order="F"),
         minlength=int(np.prod(grid.num_cells)),
     ).reshape(grid.num_cells, order="F").astype(np.int64)
-    report = UniformityReport(counts=counts, expected=n ** ndm)
+    report = UniformityReport(counts=counts, expected=n ** ndm, interface_points=interface)
 
     return SeededParticles(
         grid=grid, n=n, thickness=thk, body_names=tuple(names),
@@ -313,6 +325,33 @@ def _seed_body(
     node_xyz: FloatArray,
 ) -> IntArray:
     """Sorted, unique linear lattice indices (Fortran order) kept for one body."""
+    found: list[IntArray] = []
+    for g in _body_groups(fem, body, grid, sorted_ids, order, node_xyz):
+        found.extend(_scan(g.tester, g.lo_e, g.hi_e, grid, n, lattice_shape))
+    if not found:
+        return np.empty(0, dtype=np.int64)
+    return np.unique(np.concatenate(found))
+
+
+@dataclass(frozen=True)
+class _Group:
+    """One element family of a body: its connectivity, bounding boxes and tester."""
+
+    conn: IntArray
+    lo_e: FloatArray
+    hi_e: FloatArray
+    tester: _SimplexTester | _IsoTester
+
+
+def _body_groups(
+    fem: Any,
+    body: MPMBody,
+    grid: MPMGrid,
+    sorted_ids: IntArray,
+    order: IntArray,
+    node_xyz: FloatArray,
+) -> Iterator[_Group]:
+    """Validate a body's element groups and yield each one's geometry, group by group."""
     ndm = grid.ndm
     try:
         groups = list(fem.elements.select(pg=body.pg).groups())
@@ -334,7 +373,6 @@ def _seed_body(
 
     extent = float(np.max(grid.hi - grid.lo))
     box_tol = 1e-9 * extent
-    found: list[IntArray] = []
     for g in groups:
         fam = g.element_type.name
         conn = np.asarray(g.connectivity, dtype=np.int64)
@@ -363,20 +401,18 @@ def _seed_body(
                 f"body {body.name!r}: element {e} of physical group {body.pg!r} extends "
                 f"outside the grid box [{grid.lo.tolist()}, {grid.hi.tolist()}]")
         if ndm == 2:
-            verts = _counter_clockwise(verts)
+            verts, conn = _counter_clockwise(verts, conn)
         tester: _SimplexTester | _IsoTester
         if fam in ("tri3", "tet4"):
             tester = _SimplexTester(verts, eids, body)
         else:
             tester = _IsoTester(verts, eids, body)
-        found.extend(_scan(tester, lo_e, hi_e, grid, n, lattice_shape))
-    if not found:
-        return np.empty(0, dtype=np.int64)
-    return np.unique(np.concatenate(found))
+        yield _Group(conn=conn, lo_e=lo_e, hi_e=hi_e, tester=tester)
 
 
-def _counter_clockwise(verts: FloatArray) -> FloatArray:
-    """tri3/quad4 vertices with each clockwise element's node order reversed.
+def _counter_clockwise(verts: FloatArray, conn: IntArray) -> tuple[FloatArray, IntArray]:
+    """tri3/quad4 vertices (and connectivity) with each clockwise element's node order
+    reversed.
 
     A surface meshed with its normal along -z numbers its elements clockwise, so every
     corner Jacobian is negative. That is an orientation, not an inverted element: lattice
@@ -389,11 +425,13 @@ def _counter_clockwise(verts: FloatArray) -> FloatArray:
     area2 = np.sum(x * np.roll(y, -1, axis=1) - np.roll(x, -1, axis=1) * y, axis=1)
     cw = area2 < 0.0
     if not cw.any():
-        return verts
+        return verts, conn
     out = verts.copy()
+    out_conn = conn.copy()
     order = [0, *range(verts.shape[1] - 1, 0, -1)]
     out[cw] = verts[cw][:, order, :]
-    return out
+    out_conn[cw] = conn[cw][:, order]
+    return out, out_conn
 
 
 def _scan(
@@ -405,6 +443,24 @@ def _scan(
     lattice_shape: tuple[int, ...],
 ) -> list[IntArray]:
     """Test every lattice point in each element's bounding box; return kept indices."""
+    kept: list[IntArray] = []
+    for e_loc, idx, pts in _candidates(lo_e, hi_e, grid, n, lattice_shape):
+        inside = tester.inside(e_loc, pts)
+        if inside.any():
+            kept.append(np.ravel_multi_index(
+                tuple(idx[inside].T), lattice_shape, order="F").astype(np.int64))
+    return kept
+
+
+def _candidates(
+    lo_e: FloatArray,
+    hi_e: FloatArray,
+    grid: MPMGrid,
+    n: int,
+    lattice_shape: tuple[int, ...],
+) -> Iterator[tuple[IntArray, IntArray, FloatArray]]:
+    """Batches ``(element, lattice index, position)`` of the lattice points in each
+    element's bounding box, about ``_PAIRS_PER_BATCH`` pairs per batch."""
     ndm = grid.ndm
     spacing = np.asarray(grid.cell_size, dtype=np.float64) / n
     shape = np.asarray(lattice_shape, dtype=np.int64)
@@ -416,7 +472,6 @@ def _scan(
     b = np.clip(b, 0, shape)
     sizes = np.maximum(b - a, 0)
     per_elem = np.prod(sizes, axis=1)
-    kept: list[IntArray] = []
     start = 0
     n_elem = per_elem.size
     while start < n_elem:
@@ -436,12 +491,8 @@ def _scan(
                 idx[:, d] = a[e_loc, d] + k % s
                 k = k // s
             pts = grid.lo + (idx.astype(np.float64) + 0.5) * spacing
-            inside = tester.inside(e_loc, pts)
-            if inside.any():
-                kept.append(np.ravel_multi_index(
-                    tuple(idx[inside].T), lattice_shape, order="F").astype(np.int64))
+            yield e_loc, idx, pts
         start = stop
-    return kept
 
 
 class _SimplexTester:
@@ -463,12 +514,27 @@ class _SimplexTester:
                 f"element")
         self._x0 = x0
         self._inv = np.linalg.inv(edges)
+        nv = ndm + 1
+        #: facet k is the one opposite vertex k (where lambda_k = 0)
+        self.facet_nodes = np.array([[v for v in range(nv) if v != k] for k in range(nv)])
 
     def inside(self, e: IntArray, pts: FloatArray) -> NDArray[np.bool_]:
         lam = np.einsum("pij,pj->pi", self._inv[e], pts - self._x0[e])
         lam0 = 1.0 - lam.sum(axis=1)
         inside: NDArray[np.bool_] = (lam.min(axis=1) >= -_INSIDE_TOL) & (lam0 >= -_INSIDE_TOL)
         return inside
+
+    def facets(self, e: IntArray, pts: FloatArray) -> tuple[NDArray[np.bool_], FloatArray]:
+        """Which facets each point lies on (``lambda_k <= tol``, inside points only) and
+        each facet's outward unit normal ``-grad(lambda_k)``: ``(P, F)`` and ``(P, F, ndm)``."""
+        inv = self._inv[e]                                  # row k: grad lambda_(k+1)
+        lam = np.einsum("pij,pj->pi", inv, pts - self._x0[e])
+        full = np.concatenate([(1.0 - lam.sum(axis=1))[:, None], lam], axis=1)
+        inside = full.min(axis=1) >= -_INSIDE_TOL
+        on: NDArray[np.bool_] = (full <= _INSIDE_TOL) & inside[:, None]
+        grad = np.concatenate([-inv.sum(axis=1, keepdims=True), inv], axis=1)
+        outward: FloatArray = -grad / np.linalg.norm(grad, axis=2, keepdims=True)
+        return on, outward
 
 
 class _IsoTester:
@@ -493,6 +559,9 @@ class _IsoTester:
                 f"at a corner (min det {float(det[i].min()):.6g}); seeding refuses an "
                 f"inverted or degenerate element")
         self._scale = scale
+        #: facet 2d is xi_d = -1, facet 2d+1 is xi_d = +1
+        self.facet_nodes = np.array([np.nonzero(self._corners[:, d] == sgn)[0]
+                                     for d in range(ndm) for sgn in (-1.0, 1.0)])
 
     def _shape(self, xi: FloatArray) -> tuple[FloatArray, FloatArray]:
         """N (P, nn) and dN/dxi (P, nn, ndm) at reference points ``xi`` (P, ndm)."""
@@ -513,6 +582,28 @@ class _IsoTester:
         return jac
 
     def inside(self, e: IntArray, pts: FloatArray) -> NDArray[np.bool_]:
+        return self._invert(e, pts)[0]
+
+    def facets(self, e: IntArray, pts: FloatArray) -> tuple[NDArray[np.bool_], FloatArray]:
+        """Which facets each point lies on (``|xi_d| >= 1 - tol``, inside points only) and
+        each facet's outward unit normal ``+-grad(xi_d)``: ``(P, F)`` and ``(P, F, ndm)``."""
+        inside, xi = self._invert(e, pts)
+        npts, ndm = pts.shape
+        on = np.zeros((npts, 2 * ndm), dtype=bool)
+        outward = np.zeros((npts, 2 * ndm, ndm), dtype=np.float64)
+        if inside.any():
+            grad = np.linalg.inv(self._jacobian(e[inside], xi[inside]))  # row d: grad xi_d
+            unit = grad / np.linalg.norm(grad, axis=2, keepdims=True)
+            for d in range(ndm):
+                on[:, 2 * d] = xi[:, d] <= -1.0 + _INSIDE_TOL
+                on[:, 2 * d + 1] = xi[:, d] >= 1.0 - _INSIDE_TOL
+                outward[inside, 2 * d] = -unit[:, d, :]
+                outward[inside, 2 * d + 1] = unit[:, d, :]
+        on &= inside[:, None]
+        return on, outward
+
+    def _invert(self, e: IntArray, pts: FloatArray) -> tuple[NDArray[np.bool_], FloatArray]:
+        """The inside flag and the reference coordinates ``xi`` of each point."""
         npts, ndm = pts.shape
         xi = np.zeros((npts, ndm), dtype=np.float64)
         active = np.ones(npts, dtype=bool)
@@ -557,26 +648,160 @@ class _IsoTester:
                 f"in element {int(self._eids[e[i]])} at point {pts[i].tolist()}")
         inside: NDArray[np.bool_] = converged & ~outside
         inside &= np.all(np.abs(xi) <= 1.0 + _INSIDE_TOL, axis=1)
-        return inside
+        return inside, xi
 
 
-def _refuse_shared_points(
+def _resolve_shared_points(
     kept: list[IntArray],
     bodies: Sequence[MPMBody],
+    fem: Any,
     grid: MPMGrid,
     n: int,
     lattice_shape: tuple[int, ...],
-) -> None:
-    """A lattice point inside two bodies has no owner: refuse it by name."""
+    sorted_ids: IntArray,
+    order: IntArray,
+    node_xyz: FloatArray,
+) -> dict[tuple[str, str], int]:
+    """Give each lattice point two bodies claim to the first-declared one, or refuse it
+    (ADR 0134 Amendment 2). Edits ``kept`` in place; returns the per-pair counts.
+
+    A shared point is on the interface of bodies ``i`` and ``j`` when it lies on a boundary
+    facet of each (a facet no other element of that body shares) and two of those facets,
+    one per body, face each other (outward normals with a negative dot product). Any other
+    shared point lies inside at least one of the two bodies: an overlap, refused by name.
+    """
+    pairs: dict[tuple[int, int], IntArray] = {}
     for i in range(len(kept)):
         for j in range(i + 1, len(kept)):
             both = np.intersect1d(kept[i], kept[j], assume_unique=True)
             if both.size:
-                idx = np.array(np.unravel_index(int(both[0]), lattice_shape, order="F"))
-                spacing = np.asarray(grid.cell_size, dtype=np.float64) / n
-                x = grid.lo + (idx + 0.5) * spacing
-                raise MPMSeedError(
-                    f"bodies {bodies[i].name!r} and {bodies[j].name!r} share {both.size} "
-                    f"lattice point{'s' if both.size != 1 else ''} at n={n}; e.g. "
-                    f"{x.tolist()}; a particle needs one body (overlapping bodies, or an "
-                    f"interface through a sub-cell centre)")
+                pairs[(i, j)] = both
+    if not pairs:
+        return {}
+
+    involved = sorted({b for pair in pairs for b in pair})
+    normals: dict[int, tuple[IntArray, FloatArray]] = {}
+    for b in involved:
+        mine = np.unique(np.concatenate(
+            [pts for pair, pts in pairs.items() if b in pair]))
+        normals[b] = _boundary_normals(
+            fem, bodies[b], grid, n, lattice_shape, sorted_ids, order, node_xyz, mine)
+
+    for (i, j), both in pairs.items():
+        facing = _facing(both, normals[i], normals[j])
+        if not facing.all():
+            bad = both[~facing]
+            idx = np.array(np.unravel_index(int(bad[0]), lattice_shape, order="F"))
+            spacing = np.asarray(grid.cell_size, dtype=np.float64) / n
+            x = grid.lo + (idx + 0.5) * spacing
+            raise MPMSeedError(
+                f"bodies {bodies[i].name!r} and {bodies[j].name!r} share {both.size} "
+                f"lattice point{'s' if both.size != 1 else ''} at n={n}; {bad.size} of them "
+                f"lie inside a body rather than on the interface between the two, e.g. "
+                f"{x.tolist()}; a particle needs one body (overlapping bodies)")
+
+    original = list(kept)
+    interface: dict[tuple[str, str], int] = {}
+    for j in range(1, len(kept)):
+        lost = [pts for (_, jj), pts in pairs.items() if jj == j]
+        if not lost:
+            continue
+        given_up = np.unique(np.concatenate(lost))
+        owner = np.full(given_up.size, -1, dtype=np.int64)
+        for i in range(j):
+            mine = (owner < 0) & np.isin(given_up, original[i], assume_unique=True)
+            owner[mine] = i
+        for i in np.unique(owner):
+            interface[(bodies[int(i)].name, bodies[j].name)] = int(np.count_nonzero(owner == i))
+        kept[j] = np.setdiff1d(original[j], given_up, assume_unique=True)
+        if kept[j].size == 0:
+            raise MPMSeedError(
+                f"body {bodies[j].name!r} (physical group {bodies[j].pg!r}) holds no lattice "
+                f"point of its own at n={n}: each point it holds lies on its interface with "
+                f"an earlier-declared body, which keeps it; refine n or the grid")
+    return interface
+
+
+def _boundary_normals(
+    fem: Any,
+    body: MPMBody,
+    grid: MPMGrid,
+    n: int,
+    lattice_shape: tuple[int, ...],
+    sorted_ids: IntArray,
+    order: IntArray,
+    node_xyz: FloatArray,
+    points: IntArray,
+) -> tuple[IntArray, FloatArray]:
+    """For the lattice points ``points`` (sorted linear indices), every boundary facet of
+    ``body`` each lies on: rows ``(point, outward unit normal)``, sorted by point."""
+    groups = list(_body_groups(fem, body, grid, sorted_ids, order, node_xyz))
+    boundary = _boundary_facets(groups)
+    rows_lin: list[IntArray] = []
+    rows_nrm: list[FloatArray] = []
+    for grp, bnd in zip(groups, boundary):
+        for e_loc, idx, pts in _candidates(grp.lo_e, grp.hi_e, grid, n, lattice_shape):
+            lin = np.ravel_multi_index(tuple(idx.T), lattice_shape, order="F").astype(np.int64)
+            pos = np.clip(np.searchsorted(points, lin), 0, points.size - 1)
+            sel = points[pos] == lin
+            if not sel.any():
+                continue
+            e_sel = e_loc[sel]
+            on, outward = grp.tester.facets(e_sel, pts[sel])
+            p_i, f_i = np.nonzero(on & bnd[e_sel])
+            rows_lin.append(lin[sel][p_i])
+            rows_nrm.append(outward[p_i, f_i])
+    if not rows_lin:
+        return np.empty(0, dtype=np.int64), np.empty((0, grid.ndm), dtype=np.float64)
+    lin_all = np.concatenate(rows_lin)
+    srt = np.argsort(lin_all, kind="stable")
+    return lin_all[srt], np.concatenate(rows_nrm)[srt]
+
+
+def _boundary_facets(groups: Sequence[_Group]) -> list[NDArray[np.bool_]]:
+    """Per group, ``(E, F)``: the facet belongs to one element of the body only.
+
+    Facets are matched by their sorted node ids across every group of the body, so a
+    ``tri3``/``quad4`` mix in 2-D shares its edges; a mesh that does not share nodes
+    across a face (non-conforming) shows that face as boundary on both sides.
+    """
+    keys = [np.sort(grp.conn[:, grp.tester.facet_nodes], axis=2) for grp in groups]
+    out: list[NDArray[np.bool_]] = [np.empty((0, 0), dtype=bool)] * len(groups)
+    for width in sorted({int(k.shape[2]) for k in keys}):
+        members = [gi for gi, k in enumerate(keys) if k.shape[2] == width]
+        flat = np.concatenate([keys[gi].reshape(-1, width) for gi in members])
+        _, inverse, counts = np.unique(flat, axis=0, return_inverse=True, return_counts=True)
+        once = counts[inverse.ravel()] == 1
+        start = 0
+        for gi in members:
+            size = keys[gi].shape[0] * keys[gi].shape[1]
+            out[gi] = once[start:start + size].reshape(keys[gi].shape[:2])
+            start += size
+    return out
+
+
+def _facing(
+    points: IntArray,
+    a: tuple[IntArray, FloatArray],
+    b: tuple[IntArray, FloatArray],
+) -> NDArray[np.bool_]:
+    """Per point: some boundary facet of body ``a`` and some of body ``b`` there have
+    outward normals with a negative dot product (the bodies lie on opposite sides)."""
+    lin_a, nrm_a = a
+    lin_b, nrm_b = b
+    lo_a = np.searchsorted(lin_a, points, side="left")
+    cnt_a = np.searchsorted(lin_a, points, side="right") - lo_a
+    lo_b = np.searchsorted(lin_b, points, side="left")
+    cnt_b = np.searchsorted(lin_b, points, side="right") - lo_b
+    per = cnt_a * cnt_b
+    facing = np.zeros(points.size, dtype=bool)
+    total = int(per.sum())
+    if total == 0:
+        return facing
+    p = np.repeat(np.arange(points.size), per)
+    k = np.arange(total, dtype=np.int64) - np.repeat(np.cumsum(per) - per, per)
+    ia = lo_a[p] + k // cnt_b[p]
+    ib = lo_b[p] + k % cnt_b[p]
+    dots = np.einsum("pi,pi->p", nrm_a[ia], nrm_b[ib])
+    np.logical_or.at(facing, p, dots < 0.0)
+    return facing
