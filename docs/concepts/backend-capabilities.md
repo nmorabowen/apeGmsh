@@ -320,7 +320,7 @@ It needs a fork release that carries `mpm` (`ladruno-v20261114`, build
 
 | Member | Fork line | Notes |
 |---|---|---|
-| `ops.mpm.grid(origin=, h=, cells=, basis=)` | `mpm grid <tag> -origin .. -h .. -cells .. [-basis ..]` | one per model; its tag is written above every `pattern` tag |
+| `ops.mpm.grid(origin=, h=, cells=, basis=)` | `mpm grid <tag> -origin .. -h .. -cells .. [-basis ..]` | one per model; its tag is written above every `pattern` tag and every other member's tag, and `ops.tag_for(grid)` returns it |
 | `ops.mpm.body(pg, material=, density=, ppc=, name=)` | none: the body is seeded into the particle set | lattice seeding of the physical group's `tri3` / `quad4` / `tet4` / `hex8` elements; every body shares one `ppc` |
 | `ops.mpm.fix(face, components)` | `mpm fix <face> <components>` | |
 | `ops.mpm.wall(face, mu)` | `mpm wall <face> <mu>` | |
@@ -330,18 +330,21 @@ It needs a fork release that carries `mpm` (`ladruno-v20261114`, build
 | `ops.mpm.flip(alpha)` | `mpm flip <alpha>` | |
 | `ops.mpm.massCutoff(c)` | `mpm massCutoff <c>` | |
 | `ops.mpm.safety(s)` | `mpm safety <s>` | |
-| `ops.mpm.units(L, F, T, system=)` | `mpm units <L> <F> <T> [-system ..]` | without it the particle set takes the bridge's `units=` |
+| `ops.mpm.units(L, F, T, system=)` | `mpm units <L> <F> <T> [-system ..]` | without it the particle set takes the bridge's `units=`; each symbol, and `system`, is one word |
 | `ops.mpm.output(path, ...)` | `mpm output <path> ...` | the particle results, a `.ladruno` file |
 | `ops.mpm.analyze(steps, dt)` | `mpm analyze <n> <dt>` | |
 
 MPM is **deck-only**. `ops.tcl(path)` and `ops.py(path)` seed the bodies
 and write `<deck stem>.particles.h5` beside the deck, and the deck reads it
 from its own folder. The two are written together or not at all, and an
-existing particle set is replaced only when an apeGmsh emit wrote it. The
-live route (`ops.run()`, `ops.analyze()`, every in-process procedure)
+existing particle set is replaced only when an apeGmsh emit wrote it. A
+deck with no `mpm` member removes the apeGmsh set of its stem once it has
+emitted whole, so a viewer never pairs it with a stale set; a file there
+that no apeGmsh emit wrote is left in place, and the emit warns
+(`StaleParticleSetWarning`) naming it. The live route (`ops.run()`, `ops.analyze()`, every in-process procedure)
 refuses a model with an `mpm` member on every build, before the domain is
-touched, and so do a partitioned or per-rank emit and a staged model. A
-fork v1 run also needs every FE node fixed: fix the seeding mesh's nodes
+touched, and so do a partitioned or per-rank emit and a staged model
+(staged MPM is not in this version). A fork v1 run also needs every FE node fixed: fix the seeding mesh's nodes
 with `ops.fix`.
 
 ## Stock engine defects

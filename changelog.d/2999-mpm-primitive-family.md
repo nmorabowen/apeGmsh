@@ -6,13 +6,16 @@ The Ladruno fork's Material Point Method engine is now a primitive family,
 `units`, `output` and `analyze`. A body names a physical group, a material by
 label, a density and the particles per cell. Users never type a tag: the
 body's material tag comes from the bridge's allocator, and the grid's tag (a
-fork load-pattern tag) is written above every `pattern` tag of the deck.
+fork load-pattern tag) is written above every `pattern` tag of the deck;
+`ops.tag_for(grid)` returns that tag.
 
 `ops.tcl(path)` and `ops.py(path)` lattice-seed the bodies on the bridge's
 FEMData and write `<deck stem>.particles.h5` beside the deck. The deck reads
 it with an `mpm particles -file` line anchored to its own folder. The two are
 checked before either is written and written together, and an existing
-particle set is replaced only when an apeGmsh emit wrote it. Every
+particle set is replaced only when an apeGmsh emit wrote it. A deck with no
+`mpm` member removes the apeGmsh particle set of its stem with it, and warns
+by name about any other file there, which it leaves in place. Every
 declaration is a `/opensees/commands` row of `model.h5`, so
 `OpenSeesModel.build("tcl" | "py", out=path)` re-seeds the same particles
 beside the replayed deck, under a new `SET_ID`.
