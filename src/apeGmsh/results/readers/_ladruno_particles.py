@@ -277,7 +277,7 @@ def _check_unit_system(system: str, units: "dict[str, str]", where: str) -> None
     converts from it: when it names an apeGmsh unit system, that system's
     symbols must be ``UNIT_FORCE`` / ``UNIT_LENGTH`` / ``UNIT_TIME``, or the
     stage is refused (C2-UNIT). An id apeGmsh does not know is not used."""
-    spec = UNIT_SYSTEMS.get(system)  # type: ignore[call-overload]
+    spec = UNIT_SYSTEMS.get(system)  # type: ignore[call-overload]  # an id the file names, maybe not a UnitSystemId
     if spec is None:
         return
     declared = {"UNIT_FORCE": spec.force_symbol,
@@ -759,7 +759,7 @@ class ParticleStage:
 
 
 # ---------------------------------------------------------------------
-# A killed run: the stage rule by open step (contract §2.5, M2-S7 #2991)
+# A killed run: the stage rule by open step (contract §2.5)
 # ---------------------------------------------------------------------
 
 @dataclass(frozen=True)
