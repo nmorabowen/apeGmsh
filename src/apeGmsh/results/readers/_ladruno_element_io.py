@@ -403,13 +403,17 @@ _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
     # crack normals (getMax3Normals), each scaled by that crack's
     # opening, so |c_k| is the k-th crack's width and its direction the
     # crack normal in the global frame. An isotropic (single-normal)
-    # state fills only c1; unused slots are zero. ``crushPattern`` writes
-    # the SAME labels for the compression side, which is why this table
-    # keys by token and not by label.
+    # state fills only c1; unused slots are zero. ``crushPattern`` (id
+    # 2009) writes the SAME labels for the compression side — crush
+    # normals scaled by the crushing opening — which is why this table
+    # keys by token and not by label. The fork has no crush-width token.
     "crackwidth": "crack_width",
     "cw": "crack_width",
     "crackpattern": tuple(
         f"crack_c{k}_{axis}" for k in (1, 2, 3) for axis in ("x", "y", "z")
+    ),
+    "crushpattern": tuple(
+        f"crush_c{k}_{axis}" for k in (1, 2, 3) for axis in ("x", "y", "z")
     ),
 }
 _MATERIAL_PREFIX = "material."
@@ -454,6 +458,9 @@ _MATERIAL_BUCKET_EXPECTED_NAMES: "dict[str, tuple[str, ...]]" = {
     "crackwidth": ("cw",),
     "cw": ("cw",),
     "crackpattern": tuple(
+        f"C{k}{axis}" for k in (1, 2, 3) for axis in ("x", "y", "z")
+    ),
+    "crushpattern": tuple(
         f"C{k}{axis}" for k in (1, 2, 3) for axis in ("x", "y", "z")
     ),
     "implexerror": ("implexError",),

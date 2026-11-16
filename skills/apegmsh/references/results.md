@@ -598,7 +598,8 @@ fibers / energy / cracks / node_envelope`.
 names the buckets as Gauss components: `crack_c{1,2,3}_{x,y,z}` (up to
 three vectors along the crack normals, each as long as that crack's
 opening, cracking strain x lch, global frame; unused slots are 0) and
-`crack_width` (the largest opening). `material.crushPattern` is not read.
+`crack_width` (the largest opening). `material.crushPattern` (same labels,
+compression side) reads as `crush_c{1,2,3}_{x,y,z}`; there is no crush width.
 `crack_width` is 0 unless the material has `-crackPlanes` (a fork quirk:
 the isotropic mode has no planes to take the max over); `crackPattern`
 is filled in both modes.

@@ -109,8 +109,34 @@ def test_crack_tokens_are_keyed_by_token_not_label() -> None:
         CRACK_VECTOR_COMPONENTS
     )
     # crushPattern writes the same C1x..C3z labels for the compression
-    # side; it must not be read as cracks.
-    assert material_bucket_canonicals("material.crushPattern") is None
+    # side; it must be read as crush vectors, never as cracks.
+    assert material_bucket_canonicals("material.crushPattern") == tuple(
+        c.replace("crack_", "crush_") for c in CRACK_VECTOR_COMPONENTS
+    )
+
+
+def test_crush_pattern_reads_beside_crack_pattern(tmp_path: Path) -> None:
+    # A copy of the fixture with a crushPattern bucket of the same layout
+    # (the fork writes identical labels): both families resolve, apart.
+    import shutil
+
+    dst = tmp_path / "crush.ladruno"
+    shutil.copy(CRACKS, dst)
+    with h5py.File(dst, "r+") as f:
+        on_e = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
+        on_e.copy(on_e["material.crackPattern"], "material.crushPattern")
+        key = next(iter(on_e["material.crushPattern"]))
+        data = on_e["material.crushPattern"][key]["DATA"]
+        data[...] = -2.0 * data[...]
+    r = Results.from_ladruno(dst)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", GaussColumnDroppedWarning)
+        warnings.simplefilter("error", GaussColumnNameMismatchWarning)
+        comps = set(r.elements.gauss.available_components())
+    assert {"crush_c1_x", "crush_c3_z", "crack_c1_x"} <= comps
+    crack = r.elements.gauss.get(component="crack_c1_x").values
+    crush = r.elements.gauss.get(component="crush_c1_x").values
+    np.testing.assert_array_equal(crush, -2.0 * crack)
 
 
 # ---------------------------------------------------------------------------
