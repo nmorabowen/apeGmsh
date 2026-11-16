@@ -41,6 +41,9 @@
 //   state/results.ts's PARTICLES_UNREAD (the FE stage does not read it). Below
 //   minor 2 a particle group is not read, and the index warns (C2-MINOR); a part
 //   file that holds one is refused by name (C2-PART: Contract 2 is serial only).
+// - a killed fork run opens by the reader rule of the fork's 232a §2.5 (reader/h5open.ts
+//   `openH5ByRule`: plain, else SWMR-read, else a repaired copy; never the file itself);
+//   `opened` says which step, and the particle stages follow the stage rule for it.
 //
 // Browser-safe: no Node import.
 
@@ -53,9 +56,9 @@ import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
 import { collectModelLocalAxes, collectStepLocalAxes, resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
-import { hasParticleGroups, LadrunoParticles, type PCtors, type PGroup } from "./ladrunoParticles.ts";
+import { isH5Error, LadrunoParticles, particleEvidence, type PCtors, type PGroup } from "./ladrunoParticles.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
-import { openH5 } from "./h5open.ts";
+import { openH5ByRule, type H5RuleOpenable, type OpenStep } from "./h5open.ts";
 
 export { quaternionToZRec, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 
@@ -99,6 +102,18 @@ export class LadrunoError extends Error {
   constructor(kind: LadrunoErrorKind, message: string) {
     super(message);
     this.kind = kind;
+  }
+}
+
+/**
+ * A group or dataset the layout names is absent (a `layout` refusal, as before). Apart from
+ * other `layout` refusals only so that a particle file's stage rule can tell "this stage's
+ * objects are missing or do not read" (a stage torn while laid out, or damage: 232a §2.5)
+ * from a schema refusal (a bad `KIND`, a repeated node id), which still refuses the file.
+ */
+export class LadrunoMissingError extends LadrunoError {
+  constructor(message: string) {
+    super("layout", message);
   }
 }
 
@@ -323,11 +338,14 @@ export function openLadruno(h5: ResultsH5, path: string, opts: { part?: boolean 
       `${path} is part ${part.groups!.idx} of the partitioned set ${part.groups!.stem}.part-<N>.ladruno; this reader reads one file, not a part set`,
     );
   }
-  const f = openH5(h5, path) as unknown as LFile;
+  // The reader rule's open (232a §2.5, M2-S7 #2991): plain, else SWMR-read (flags 0x05),
+  // else a repaired copy (flags 0x01); a live writer's lock is an H5BusyError.
+  const opened = openH5ByRule(h5 as unknown as H5RuleOpenable<LFile>, path);
+  const f = opened.file;
   // h5wasm does not throw when HDF5 cannot open a file: it returns a File whose id is negative.
   if (Number(f.file_id) < 0) throw new LadrunoError("open", `HDF5 could not open ${path} (truncated, or not an HDF5 file)`);
   try {
-    return new LadrunoFile(h5, f, path, opts.part === true);
+    return new LadrunoFile(h5, f, path, opts.part === true, { step: opened.step, repaired: opened.repaired });
   } catch (err) {
     f.close();
     throw err;
@@ -349,12 +367,20 @@ export class LadrunoFile {
    * particle group is not read (the index warns).
    */
   readonly particles: LadrunoParticles | null;
+  /** The reader-rule step that opened the file (232a §2.5), and whether `f` is a repaired copy (the user's file is never written). */
+  readonly opened: { step: OpenStep; repaired: boolean };
 
-  constructor(h5: ResultsH5, f: LFile, path: string, part = false) {
+  constructor(h5: ResultsH5, f: LFile, path: string, part = false, opened: { step: OpenStep; repaired: boolean } = { step: 1, repaired: false }) {
     this.h5 = h5;
     this.f = f;
+    this.opened = opened;
     this.gauss = new LadrunoGauss(h5, f, (kind, message) => new LadrunoError(kind, message));
     const warnings: string[] = [];
+    if (opened.step === 2) {
+      warnings.push(`${path}: a killed run (a plain open refuses it: superblock flags 0x05, or a stored end-of-allocation past the file's end), opened ${opened.repaired ? "through a repaired copy because SWMR-read refused it" : "SWMR-read"} (the reader rule's step 2, 232a §2.5); the file is not changed`);
+    } else if (opened.step === 3) {
+      warnings.push(`${path}: a run killed while a stage was laid out (superblock flags 0x01), opened through a repaired copy (the reader rule's step 3, 232a §2.5); the file is not changed`);
+    }
     const info = this.gate(path);
     const formatMinorVersion = optionalInt(info, "FORMAT_MINOR_VERSION") ?? 0;
     const formatVersion = optionalInt(info, "FORMAT_VERSION")!;
@@ -378,7 +404,9 @@ export class LadrunoFile {
     stageNames.sort((a, b) => Number(STAGE_NAME.exec(a)![1]) - Number(STAGE_NAME.exec(b)![1]));
     const stageGroups = stageNames.map((name, i) => ({ id: `stage_${i}`, group: this.group(f, name) }));
     const ctors = h5 as unknown as PCtors;
-    const withParticles = stageGroups.filter((s) => hasParticleGroups(s.group as unknown as PGroup, ctors));
+    // Which stages carry particles, from what survives damage (a torn stage's links may not list).
+    const evidence = stageGroups.map((s) => particleEvidence(s.group as unknown as PGroup, ctors));
+    const withParticles = stageGroups.filter((_s, i) => evidence[i] === true);
     if (part && withParticles.length > 0) {
       throw new LadrunoError(
         "unsupported",
@@ -391,7 +419,26 @@ export class LadrunoFile {
         `${withParticles.map((s) => s.group.path).join(", ")} holds a particle group, and INFO@FORMAT_MINOR_VERSION is ${formatMinorVersion}: a file with particles writes minor >= ${LADRUNO_PARTICLES_MINOR} (C2-MINOR), so its particles are not read`,
       );
     }
-    const hosts = stageGroups.map((s) => this.readHost(s.group, s.id, warnings, readsParticles));
+    // In a file with particles, a stage whose own groups do not read (a stage torn while laid out, or
+    // damage) never refuses the whole file: it becomes an empty host, and the stage rule of 232a §2.5
+    // decides (the particle stage rule below, or `hostRule` for an FE stage). A file without particles
+    // reads as before (its recorder rule, ladruno_schema_v1.md §7b.2, is #3003's).
+    const particleFile = readsParticles && withParticles.length > 0;
+    const hostFailures = new Map<string, string>();
+    const hosts = stageGroups.map((s, i) => {
+      if (!particleFile) return this.readHost(s.group, s.id, warnings, readsParticles);
+      try {
+        const h = this.readHost(s.group, s.id, warnings, readsParticles);
+        if (h.onNodes) this.discoverModes(h.onNodes, []);
+        return h;
+      } catch (err) {
+        // Only a read failure (h5wasm's plain Error) or a missing object marks a stage whose groups do not
+        // read; a schema or contract refusal (a bad KIND, a repeated node id, ...) refuses the file as before.
+        if (!(err instanceof LadrunoMissingError) && !isH5Error(err)) throw err;
+        hostFailures.set(s.id, err.message);
+        return this.emptyHost(s.group, s.id, err.message, evidence[i] !== false);
+      }
+    });
     const modes = this.layModes(hosts, warnings);
     const stages: StageInfo[] = [];
     for (const h of hosts) {
@@ -399,7 +446,7 @@ export class LadrunoFile {
       for (const m of modes.stages) if (m.host === h.stage.id) stages.push(m.stage);
     }
     this.particles = readsParticles
-      ? new LadrunoParticles(ctors, f as unknown as PGroup, stageGroups.map((s, i) => ({ id: s.id, group: s.group as unknown as PGroup, fileKind: hosts[i]!.fileKind })), dim)
+      ? new LadrunoParticles(ctors, f as unknown as PGroup, stageGroups.map((s, i) => ({ id: s.id, group: s.group as unknown as PGroup, fileKind: hosts[i]!.fileKind })), dim, opened.step)
       : null;
     for (const r of this.particles?.refused ?? []) {
       warnings.push(`${r.group}: its particles are refused and not read: ${r.reason}`);
@@ -408,6 +455,26 @@ export class LadrunoFile {
       const at = unread.indexOf(PARTICLES_UNREAD);
       if (at >= 0) unread[at] = `ON_PARTICLES (particles refused, not read: ${r.reason})`;
     }
+    for (const s of this.particles?.skipped ?? []) {
+      // The last stage of a killed run, torn while laid out (232a §2.5): named, holding no output.
+      warnings.push(`${s.group}: its particles are skipped: ${s.reason}`);
+      const unread = hosts.find((h) => h.stage.id === s.stageId)!.stage.unread;
+      const at = unread.indexOf(PARTICLES_UNREAD);
+      if (at >= 0) unread[at] = `ON_PARTICLES (skipped, torn while laid out: no output)`;
+    }
+    hostFailures.forEach((reason, id) => {
+      const i = stageGroups.findIndex((s) => s.id === id);
+      const group = stageGroups[i]!.group.path;
+      if (this.particles?.stages.some((s) => s.stageId === id)) {
+        warnings.push(`${group}: its FE groups do not read and are not indexed (${reason}); its particles read`);
+      } else if (evidence[i] !== false) {
+        warnings.push(`${group}: its groups do not read (${reason})`);
+      } else {
+        // An FE stage of a particle file, under the same rule (232a §2.5).
+        const fate = i < stageGroups.length - 1 ? "refused: it is not the file's last stage, so it is corruption" : opened.step === 2 ? "refused: corruption in a file opened SWMR-read, where every stage must read" : "skipped: torn while it was laid out (the last stage of a killed run)";
+        warnings.push(`${group}: its groups do not read (${reason}); ${fate} (232a §2.5)`);
+      }
+    });
     for (const s of this.particles?.stages ?? []) {
       if (s.torn !== null) warnings.push(`${s.group}/RESULTS/ON_PARTICLES: ${s.nOutputs} output${s.nOutputs === 1 ? "" : "s"} read; ${s.torn}`);
       for (const x of s.refusedFields) warnings.push(`${s.group}/RESULTS/ON_PARTICLES/${x.field}: refused and not read: ${x.reason}`);
@@ -1062,6 +1129,26 @@ export class LadrunoFile {
 
   // -- stages -----------------------------------------------------------------
 
+  /**
+   * A stage whose groups do not read, in a file with particles: no FE result, its `KIND` if the
+   * object header still gives it (the particle reader checks it), and the reason in `unread`.
+   */
+  private emptyHost(g: LGroup, id: string, reason: string, particles: boolean): { stage: StageInfo; fileKind: string; onNodes: LGroup | null } {
+    let kind: unknown;
+    try {
+      const a = g.attrs["KIND"];
+      kind = a === undefined ? undefined : oneValue(a.value);
+    } catch (err) {
+      if (!isH5Error(err)) throw err;
+    }
+    const fileKind = typeof kind === "string" ? kind : "";
+    this.columns.set(id, new Map());
+    const unread = [`(the stage's groups do not read: ${reason})`];
+    if (particles) unread.push(PARTICLES_UNREAD);
+    const stage: StageInfo = { id, name: g.path.slice(1), kind: KIND_MAP[fileKind] ?? "static", time: new Float64Array(0), nSteps: 0, partition: "partition_0", nodes: null, gauss: [], unread };
+    return { stage, fileKind, onNodes: null };
+  }
+
   private readHost(g: LGroup, id: string, warnings: string[], readsParticles: boolean): { stage: StageInfo; fileKind: string; onNodes: LGroup | null } {
     const kindAttr = g.attrs["KIND"];
     const kind = kindAttr === undefined ? undefined : oneValue(kindAttr.value);
@@ -1380,7 +1467,7 @@ export class LadrunoFile {
 
   private group(parent: LGroup, name: string): LGroup {
     const path = parent.path === "/" ? `/${name}` : `${parent.path}/${name}`;
-    if (!parent.keys().includes(name)) throw new LadrunoError("layout", `missing group ${path}`);
+    if (!parent.keys().includes(name)) throw new LadrunoMissingError(`missing group ${path}`);
     const g = parent.get(name);
     if (!(g instanceof this.h5.Group)) throw new LadrunoError("layout", `${path} is not a group`);
     return g as unknown as LGroup;
@@ -1388,7 +1475,7 @@ export class LadrunoFile {
 
   private dataset(parent: LGroup, name: string): LDataset {
     const path = parent.path === "/" ? `/${name}` : `${parent.path}/${name}`;
-    if (!parent.keys().includes(name)) throw new LadrunoError("layout", `missing dataset ${path}`);
+    if (!parent.keys().includes(name)) throw new LadrunoMissingError(`missing dataset ${path}`);
     const d = parent.get(name);
     if (!(d instanceof this.h5.Dataset)) throw new LadrunoError("layout", `${path} is not a dataset`);
     return d as unknown as LDataset;

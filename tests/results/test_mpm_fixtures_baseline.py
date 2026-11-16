@@ -14,7 +14,10 @@ These tests pin:
    error);
 4. the fork's torn file (M2-S6 #2990, fork e30872e34): the closed-file validator
    refuses it (C2-OFF), the reference ``committed_outputs`` counts 3 outputs, and the
-   Python reader reads exactly that many.
+   Python reader reads exactly that many;
+5. the torn-stage fixtures (M2-S7 #2991): each whole stage counts 3 outputs, and
+   ``LadrunoReader``, which does not know the open step until #3003, refuses the torn
+   stage by stage (C2-REG).
 
 The particle values themselves are checked in ``test_ladruno_particles.py``.
 """
@@ -117,5 +120,44 @@ def test_python_reader_reads_the_reference_committed_outputs(contracts, path: Pa
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", ParticleOutputsTruncatedWarning)
             assert r.particles.get(component="POSITION", stage=sid).n_outputs == expected
+    finally:
+        r.close()
+
+
+# --- pin 5: the torn-stage fixtures (M2-S7 #2991; built by make_torn_stage_fixtures.py) ---
+
+TORN_LAST = MPM / "particles_torn_last_stage_v1m2.ladruno"
+TORN_EARLY = MPM / "particles_torn_early_stage_v1m2.ladruno"
+TWO = MPM / "particles_two_stages_v1m2.ladruno"   # both whole: the damage cases' base
+
+
+@pytest.mark.parametrize("path, stage", [(TORN_LAST, "MODEL_STAGE[1]"),
+                                         (TORN_EARLY, "MODEL_STAGE[2]"),
+                                         (TWO, "MODEL_STAGE[1]"),
+                                         (TWO, "MODEL_STAGE[2]")],
+                         ids=lambda x: x.name if isinstance(x, Path) else x)
+def test_torn_stage_fixtures_whole_stage_reads_3(contracts, path: Path, stage: str) -> None:
+    assert contracts.committed_outputs(str(path), stage=stage) == 3
+
+
+@pytest.mark.parametrize("path, expected", [
+    (TORN_LAST, ["read 3", "ParticleStageTornError"]),
+    (TORN_EARLY, ["ParticleStageTornError", "read 3"]),
+    (TWO, ["read 3", "read 3"]),
+], ids=lambda x: x.name if isinstance(x, Path) else "")
+def test_ladruno_reader_on_the_torn_stage_fixtures(path: Path, expected: list) -> None:
+    """``LadrunoReader`` opens these files plainly and does not apply the stage
+    rule (it adopts the shared open in #3003): a torn registry is refused by
+    stage (C2-REG). ``ParticleFile`` applies the rule
+    (``test_ladruno_particles.py``)."""
+    r = Results.from_ladruno(path)
+    try:
+        got = []
+        for sid in r.particles.stages():
+            try:
+                got.append(f"read {r.particles.get(component='POSITION', stage=sid).n_outputs}")
+            except Exception as e:  # noqa: BLE001 - the pin records which error
+                got.append(type(e).__name__)
+        assert got == expected
     finally:
         r.close()

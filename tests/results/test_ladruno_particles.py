@@ -675,12 +675,12 @@ def test_output_ids_are_checked_on_the_rows_read(copy_of, opened, row, value, ma
 
 
 def test_registry_columns_of_unequal_length_refuse(copy_of, opened) -> None:
-    """Contract §2.4 at fork e30872e34: every registry column is ``[M]``,
-    and the registry is extensible, appended during the stage. Unequal
-    columns are C2-REG, and the stage is refused. A rule that skips a
-    stage whose registry was torn while the stage opened is proposed in
-    OpenSees#1081, which has not merged; M2-S6 (#2990) follows the merged
-    contract and keeps this refusal."""
+    """Contract §2.4: every registry column is ``[M]``; unequal columns are
+    C2-REG. Since OpenSees#1081 (232a §2.5, crash rule step 0) such a stage
+    was torn while it opened, and the stage rule skips it when it is the
+    last stage of a file opened by step 1 or 3 (``ParticleFile``, below).
+    ``LadrunoReader`` does not know the open step until it adopts the shared
+    open (#3003), so through it the stage is still refused."""
     p = copy_of(PARTICLES)
     with h5py.File(p, "r+") as f:
         _resize(f[f"{REG}/MASS"], f[f"{REG}/MASS"].shape[0] - 2)
@@ -705,3 +705,368 @@ def test_field_attributes_are_checked(copy_of, opened, edit, match) -> None:
 
 def test_result_level_has_particles() -> None:
     assert ResultLevel("particles") is ResultLevel.PARTICLES
+
+
+# --- UNIT_SYSTEM against UNIT_LENGTH / UNIT_FORCE / UNIT_TIME (#2991) ------------------
+
+@pytest.mark.parametrize("system, ok", [
+    ("kN_m_s", True),          # the fixture's: kN, m, s
+    ("N_mm_s", False),         # N, mm, s: force and length disagree
+    ("tf_m_s", False),         # tf, m, s: force disagrees
+    ("not_an_apegmsh_id", True),   # informative and unknown: not used, not checked
+])
+def test_unit_system_must_agree_with_the_unit_attributes(copy_of, opened, system, ok) -> None:
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        f[REG].attrs["UNIT_SYSTEM"] = np.bytes_(system)
+    r = opened(p)
+    if ok:
+        assert r.particles.get(component="POSITION").n_outputs == 3
+    else:
+        with pytest.raises(ParticleFormatError, match="UNIT_SYSTEM.*disagree.*C2-UNIT"):
+            r.particles.get(component="POSITION")
+
+
+# --- a killed run: the stage rule by open step (232a §2.5 at a1d4c7260, #2991) ---------
+
+TORN_LAST = MPM / "particles_torn_last_stage_v1m2.ladruno"     # step 0 in the last stage
+# no ON_PARTICLES in the last stage: built per test by make_torn_stage_fixtures.build(p, "half"),
+# not committed (LadrunoReader refuses it at open, and every committed .ladruno must open)
+HALF_LAST = MPM / "particles_half_last_stage_v1m2.ladruno"
+TORN_EARLY = MPM / "particles_torn_early_stage_v1m2.ladruno"   # step 0 in the first stage
+ORACLE = MPM / "fork_a1d4c7260"
+
+
+@pytest.fixture(scope="module")
+def fork():
+    """The fork's ``mpm_contracts`` / ``ladruno_format`` at a1d4c7260 (the
+    stage rule's reference), with ``sys.path`` / ``sys.modules`` restored."""
+    import importlib
+    import sys
+
+    names = ("mpm_contracts", "ladruno_format", "ladruno_basis")
+    saved_path = list(sys.path)
+    saved = {n: sys.modules.get(n) for n in names}
+    for n in names:
+        sys.modules.pop(n, None)
+    sys.path.insert(0, str(ORACLE))
+    try:
+        yield importlib.import_module("mpm_contracts"), importlib.import_module("ladruno_format")
+    finally:
+        sys.path[:] = saved_path
+        for n, m in saved.items():
+            if m is None:
+                sys.modules.pop(n, None)
+            else:
+                sys.modules[n] = m
+
+
+def build_torn_stage(path: Path, kind: str) -> Path:
+    """``tests/fixtures/mpm/make_torn_stage_fixtures.py``'s ``build``, loaded by path."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_make_torn_stage_fixtures", MPM / "make_torn_stage_fixtures.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.build(path, kind)
+    return path
+
+
+def _flagged(fork, copy_of, src: Path, flags: int) -> Path:
+    if src == HALF_LAST:
+        p = build_torn_stage(copy_of(TORN_LAST, f"{src.stem}.{flags:02x}.ladruno"), "half")
+    else:
+        p = copy_of(src, f"{src.stem}.{flags:02x}.ladruno")
+    if flags:
+        fork[1].set_superblock(p, flags=flags)
+    return p
+
+
+def test_ladruno_reader_refuses_the_half_stage_file_at_open(copy_of) -> None:
+    """``LadrunoReader`` opens plainly and has no stage rule until #3003: the half
+    group of a last stage killed mid-layout is C2-PAIR at open. ``ParticleFile``
+    skips that stage (below)."""
+    p = build_torn_stage(copy_of(TORN_LAST, "half.ladruno"), "half")
+    with pytest.raises(ParticleFormatError, match="C2-PAIR"):
+        Results.from_ladruno(p)
+
+
+def _states(pf) -> list:
+    return [(s.group, s.status, s.committed) for s in pf.states]
+
+
+@pytest.mark.parametrize("src", [TORN_LAST, HALF_LAST], ids=["registry", "half"])
+@pytest.mark.parametrize("flags, step, last", [
+    (0x00, 1, "skipped"), (0x05, 2, "refused"), (0x01, 3, "skipped"),
+], ids=["step1", "step2", "step3"])
+def test_a_torn_last_stage_by_open_step(fork, copy_of, src, flags, step, last) -> None:
+    from apeGmsh.results.readers._ladruno_particles import (
+        ParticleFile,
+        ParticleStageSkippedWarning,
+    )
+    p = _flagged(fork, copy_of, src, flags)
+    before = p.read_bytes()
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with ParticleFile(p) as pf:
+            assert pf.step == step
+            assert _states(pf) == [("MODEL_STAGE[1]", "read", 3),
+                                   ("MODEL_STAGE[2]", last, 0)]
+            assert pf.stage("MODEL_STAGE[1]").read("POSITION").n_outputs == 3
+            with pytest.raises(ParticleFormatError, match=f"MODEL_STAGE\\[2\\] is {last}"):
+                pf.stage("MODEL_STAGE[2]")
+            reason = pf.states[1].reason
+    skipped = [x for x in w if issubclass(x.category, ParticleStageSkippedWarning)]
+    if last == "skipped":
+        assert "torn while it was laid out" in reason and len(skipped) == 1
+    else:
+        assert "every stage must read" in reason and "corruption" in reason and not skipped
+    assert p.read_bytes() == before
+
+
+# --- HDF5-level damage (#3008 review F1-F3): the viewer's ladrunoParticles.test.ts flips the
+# same bytes of the same fixture and expects the same outcome for every case.
+
+TWO = MPM / "particles_two_stages_v1m2.ladruno"   # both stages whole, 3 outputs each
+#: (label, byte offset, signature there, damaged stage (2 = the last), its index still commits outputs)
+DAMAGE = [
+    ("stage2-links-TREE", 66699, b"TREE", 2, False),
+    ("stage2-links-SNOD", 83851, b"SNOD", 2, False),
+    ("stage2-OFFSETS", 95043, b"TREE", 2, False),
+    ("stage2-STRESS-DATA", 113531, b"TREE", 2, True),
+    ("stage1-links-TREE", 2795, b"TREE", 1, False),
+    ("stage1-OFFSETS", 33187, b"TREE", 1, False),
+    ("stage1-STRESS-DATA", 51675, b"TREE", 1, True),
+]
+
+
+def _damaged(fork, copy_of, off: int, sig: bytes, flags: int) -> Path:
+    p = copy_of(TWO, f"damage_{off}_{flags:02x}.ladruno")
+    raw = bytearray(p.read_bytes())
+    assert raw[off:off + 4] == sig
+    raw[off] ^= 0x20
+    p.write_bytes(bytes(raw))
+    if flags:
+        fork[1].set_superblock(p, flags=flags)
+    return p
+
+
+def _fates(pf) -> list:
+    return [(s.group, s.status + (" (corruption)" if s.status == "refused"
+                                  and "corruption" in s.reason else ""), s.committed)
+            for s in pf.states]
+
+
+@pytest.mark.parametrize("label, off, sig, damaged, holds_outputs", DAMAGE,
+                         ids=[d[0] for d in DAMAGE])
+@pytest.mark.parametrize("flags, step", [(0x00, 1), (0x05, 2), (0x01, 3)],
+                         ids=["step1", "step2", "step3"])
+def test_hdf5_damage_through_the_stage_rule(fork, copy_of, label, off, sig, damaged,
+                                            holds_outputs, flags, step) -> None:
+    """A damaged B-tree node fails its stage, whatever h5py raises (RuntimeError
+    for a link B-tree, OSError for a chunk index, KeyError for a heap): a stage
+    that holds no countable output is torn (skipped as the last stage after step
+    1 or 3, refused after step 2); one with outputs, or one before another
+    stage, is refused. The other stage reads; the file is never written."""
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    p = _damaged(fork, copy_of, off, sig, flags)
+    before = p.read_bytes()
+    fate = ("refused" if holds_outputs else
+            "refused (corruption)" if damaged == 1 or step == 2 else "skipped")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with ParticleFile(p) as pf:
+            assert pf.step == step
+            whole = ("MODEL_STAGE[2]" if damaged == 1 else "MODEL_STAGE[1]", "read", 3)
+            hurt = (f"MODEL_STAGE[{damaged}]", fate, 0)
+            assert _fates(pf) == ([hurt, whole] if damaged == 1 else [whole, hurt])
+    assert p.read_bytes() == before
+
+
+def _damage_sweep_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_damage_sweep", MPM / "damage_sweep.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+#: Sweep cases where the Python reader is stricter than the fork's reference: the reference
+#: reads the stage (it counts outputs from the index alone), and the Python reader does not,
+#: because it also reads the stage's metadata, registry, field attributes and last committed
+#: rows (a damaged registry or field heap, or a field attribute that does not read). 343
+#: (stage, file) pairs: 204 from attribute-message damage, 118 from signature flips, 18 from
+#: 1 KiB zeroed blocks, 3 from 256-byte ones. Pinned so a change is seen.
+STRICTER_THAN_REFERENCE = 343
+
+
+def test_the_damage_sweep_gives_the_recorded_outcomes(fork, tmp_path) -> None:
+    """Every damaged copy of ``tests/fixtures/mpm/damage_sweep.py`` (built here, removed
+    after; "hang" cases, where HDF5 itself does not return, are never opened):
+
+    1. the Python reader gives the recorded outcome, and the viewer's
+       ``ladrunoParticles.test.ts`` checks ``openLadruno`` against the same table, so
+       the two readers agree file by file;
+    2. Python never reads a stage that the fork's reference ``particle_stage_report``
+       (a1d4c7260) skips or refuses. Python may be stricter (it reads more of a stage
+       than the index the reference counts); those cases are counted, not refused."""
+    import json
+
+    mc, lf = fork
+    mod = _damage_sweep_module()
+    expected = json.loads(mod.EXPECTED.read_text(encoding="utf-8"))
+    raw = mod.BASE.read_bytes()
+    wrong, looser, stricter, n = [], [], [], 0
+    for name, data in mod.cases(raw):
+        n += 1
+        if expected.get(name) == ["hang"]:
+            continue
+        p = tmp_path / f"{name}.ladruno"
+        p.write_bytes(data)
+        got = mod.outcome(p)
+        if got != expected.get(name):
+            wrong.append((name, expected.get(name), got))
+        ref = mod.reference_reads(p, tmp_path, mc, lf)
+        mine = {}
+        if got != ["file-error"]:
+            for row in got[1:]:
+                stage, what = row.split(" ", 1)
+                mine[stage] = what
+        for stage, what in ref.items():
+            if not what.startswith("read") and mine.get(stage, "").startswith("read"):
+                looser.append((name, stage, what, mine[stage]))
+            if what.startswith("read") and not mine.get(stage, "").startswith("read"):
+                stricter.append((name, stage, what, mine.get(stage, "file-error")))
+        p.unlink()
+        for q in tmp_path.glob("ref_*"):
+            q.unlink()
+    assert n == len(expected) and n >= 750
+    assert not wrong, f"{len(wrong)} case(s) differ from the table: {wrong[:5]}"
+    assert not looser, f"Python reads a stage the reference skips or refuses: {looser[:5]}"
+    assert len(stricter) == STRICTER_THAN_REFERENCE, stricter[:10]
+
+
+def test_an_eoa_past_the_end_at_flags_0x00_opens_swmr_read(copy_of) -> None:
+    """h5py's plain open refuses "truncated file"; the SWMR-read open (step 2)
+    skips that check, as the fork's open_ladruno does (the viewer agrees)."""
+    from apeGmsh.results.readers._ladruno_open import lookup3
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    p = copy_of(TWO, "eoa_past_end.ladruno")
+    raw = bytearray(p.read_bytes())
+    raw[28:36] = (len(raw) + 4096).to_bytes(8, "little")
+    raw[44:48] = lookup3(bytes(raw[:44])).to_bytes(4, "little")
+    p.write_bytes(bytes(raw))
+    with pytest.raises(OSError, match="truncated file"):
+        h5py.File(p, "r")
+    with ParticleFile(p) as pf:
+        assert pf.step == 2
+        assert _states(pf) == [("MODEL_STAGE[1]", "read", 3), ("MODEL_STAGE[2]", "read", 3)]
+
+
+def test_a_bug_is_not_a_failing_stage(copy_of, monkeypatch) -> None:
+    """Only HDF5's errors fail a stage; a TypeError (a bug) propagates."""
+    from apeGmsh.results.readers import _ladruno_particles as lp
+
+    def broken(self):
+        raise TypeError("a bug")
+
+    monkeypatch.setattr(lp.ParticleStage, "validate", broken)
+    with pytest.raises(TypeError, match="a bug"):
+        lp.ParticleFile(TWO)
+
+
+@pytest.mark.parametrize("flags", [0x00, 0x05, 0x01], ids=["step1", "step2", "step3"])
+def test_an_earlier_torn_stage_is_corruption_after_any_step(fork, copy_of, flags) -> None:
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    p = _flagged(fork, copy_of, TORN_EARLY, flags)
+    before = p.read_bytes()
+    with ParticleFile(p) as pf:
+        assert _states(pf) == [("MODEL_STAGE[1]", "refused", 0),
+                               ("MODEL_STAGE[2]", "read", 3)]
+        assert "not the file's last stage, so it is corruption" in pf.states[0].reason
+        with pytest.raises(ParticleFormatError, match="corruption"):
+            pf.stage("MODEL_STAGE[1]")
+    assert p.read_bytes() == before
+
+
+@pytest.mark.parametrize("edit, match", [
+    (lambda f: _resize(f[f"{REG}/MASS"], 11), "differ in length"),
+    (lambda f: f[ON_P].attrs.__setitem__("PARTITION_REDUCTION", np.bytes_("SUM")), "C2-RED"),
+], ids=["registry", "reduction"])
+def test_a_failing_last_stage_that_holds_outputs_is_refused_not_skipped(copy_of, edit, match) -> None:
+    """The writer lays a stage out in full, registry included, before output 0
+    and creates nothing after (§2.5), so a stage whose index commits outputs
+    was not torn while laid out: its failure is refused even as the last
+    stage of a plainly opened file."""
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        edit(f)
+    with ParticleFile(p) as pf:
+        assert pf.step == 1
+        assert _states(pf) == [(STAGE, "refused", 0)]
+        assert "holds 3 output(s), so it was not torn" in pf.states[0].reason
+        with pytest.raises(ParticleFormatError, match=match):
+            pf.stage(STAGE)
+
+
+@pytest.mark.parametrize("src", [TORN_LAST, HALF_LAST, TORN_EARLY],
+                         ids=["registry", "half", "early"])
+@pytest.mark.parametrize("flags", [0x00, 0x05, 0x01], ids=["step1", "step2", "step3"])
+def test_the_stage_rule_agrees_with_the_forks_reference(fork, copy_of, tmp_path, src, flags) -> None:
+    """``particle_stage_report`` at a1d4c7260 (after ``open_ladruno``, or
+    ``recover_particle_file`` for step 3) on the same file. Where it counts
+    a stage, the counts agree; where it raises, the reader refuses. Its step
+    0 returns 0 committed for a torn registry in any stage and after any
+    step, where the merged text (§2.5, lines 515-517) and the owner's ruling
+    say "skip the LAST stage after step 1 or 3, refuse otherwise": the
+    reader follows the text, so there it only agrees that the stage holds no
+    output."""
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    mc, lf = fork
+    p = _flagged(fork, copy_of, src, flags)
+    try:
+        if flags == 0x01:
+            ref = mc.recover_particle_file(p, tmp_path / "ref.ladruno")
+        else:
+            with lf.open_ladruno(p) as f:
+                ref = mc.particle_stage_report(f)
+    except mc.TornStageError:
+        ref = None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with ParticleFile(p) as pf:
+            ours = {s.group: s for s in pf.states}
+    if ref is None:
+        assert any(s.status == "refused" for s in ours.values())
+        return
+    for entry in ref:
+        mine = ours[entry["stage"]]
+        if entry.get("torn_while_laid_out"):
+            assert mine.status in ("skipped", "refused") and mine.committed == 0
+        elif mine.status == "read":
+            assert mine.committed == entry["committed"]
+        else:   # step 0 in the reference: no output
+            assert entry["committed"] == 0 and mine.committed == 0
+
+
+@pytest.mark.parametrize("src", [PARTICLES, MIXED, TORN], ids=lambda p: p.name)
+def test_a_closed_fork_fixture_reads_every_stage_through_the_rule(fork, src) -> None:
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    mc, _ = fork
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ParticleOutputsTruncatedWarning)
+        with ParticleFile(src) as pf:
+            assert pf.step == 1
+            assert _states(pf) == [
+                (STAGE, "read", mc.committed_outputs(str(src), stage=STAGE))]
