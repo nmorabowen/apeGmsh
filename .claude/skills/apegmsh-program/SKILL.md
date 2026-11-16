@@ -208,6 +208,14 @@ ref (merge `main`, or push an empty commit); the Re-run button reuses the old
 ref. So a landing right after another waits for `main`'s run on the new head,
 or merges `main` first.
 
+**Card amendments.** Check 9 also reads the card's amendment comments, and its
+parser has two traps (#2936, #2991, #2999). It takes a backticked path in the
+amendment's prose as an owned path, and it skips a whole amendment line that
+holds a negation word. Write the reason as plain prose with no backticked
+path, give each added file its own bare path bullet, then run
+`python scripts/land_pr.py --check-card <issue>` and read the Owned set back
+before telling the builder.
+
 **Stalls.** Notifications get lost: app restarts, dead
 reviewers, the 600 s watchdog. Never end a turn waiting for CI or a review. At
 every check, look for (a) approved and green PRs not landed, (b) open PRs with
@@ -258,10 +266,14 @@ sessions to hold their landings until it lands.
 9. Watch `main`'s run on the fix sha in a background loop, and broadcast the
    lift to every session yourself.
 
-**Approvals across merges.** A verdict binds to a SHA. An approval carries over
-only when the new delta is a merge of `main` that touches no PR file: compare
-the PR's own diff before and after, and post the carry-over with its reason. A
-hand-resolved conflict needs a delta review.
+**Approvals across merges.** A verdict binds to a SHA, and the
+`review-verdict` check reads only a `Review-verdict:` comment that names the
+current head in full. No approval carries over a push, not even a pure merge
+of `main`: dispatch the reviewer for a narrow review of the delta and post the
+new line. Reviewers do not post; T posts their verdict with a Bash heredoc or
+`--body-file` (a PowerShell here-string adds a BOM the check cannot read,
+#2737). Reviewers work from a `git archive` of the head, never a shared
+worktree.
 
 **Maintainer questions.**
 - Ask one question at a time, explaining what it means for their modelling,
@@ -284,13 +296,34 @@ hand-resolved conflict needs a delta review.
 - ADRs: `land_pr` check 7 refuses an agent landing an ADR whose status is
   Accepted, including amendments to one. The maintainer merges those PRs
   through the GitHub web page; put ADR edits in their own small PR so they hold
-  up nothing else.
+  up nothing else. When the maintainer tells T in T's own session to merge
+  one, T records the words on the PR, confirms the required checks are green,
+  runs `gh pr merge <n> --squash --match-head-commit <head>`, and verifies it
+  with `compare` (#3004, 2026-11-15).
+- "Merged" from the maintainer is a claim to check: read
+  `gh pr view <n> --json state` before closing a card or archiving a session
+  on it (#3004 was still open, blocked by pending checks).
 - Standing rules:
   - Qt viewers are in sunset: they get only changes that unblock CI or stop a
     user-facing crash.
   - Silent wrong answers go to chain B.
   - Opus reviews.
   - Sessions land their own green, approved PRs.
+
+**Fork facts.** A fork rule becomes a build instruction only once it is in
+the fork's merged text. Verify the merge yourself
+(`gh pr view <n> --repo nmorabowen/OpenSees`, then `compare/ladruno...<sha>`),
+and quote the contract section and the commit on the card. A slice builds
+and makes its fixtures at `FORK_PIN`; work that needs a later fork commit
+is a queued card that names the release it waits for. When two fork documents
+disagree, stop the slice, verify both quotes, and ask the fork sessions to
+settle it in one merged text before the builder writes code (the torn-stage
+rule on #2991, settled by OpenSees#1092).
+
+**Sessions.** Pass `model` on every `start_session`: a started session
+inherits the caller's model otherwise. A hook adds a `session` label to
+`archive_session`; when the first call returns no verdict, send it again with
+exactly the input the refusal quotes.
 
 **Wrap-up (batch end or large context).**
 1. Each session stops its workers, pushes any WIP, posts its §6 handoff with
@@ -313,3 +346,5 @@ hand-resolved conflict needs a delta review.
   message began; it can only propose one as a card. Starting a session in
   another folder (the fork) needs the maintainer's own words in your session.
 - On Windows, a script can die with 0xC000070A or exit 127 (#1376): retry once.
+- Git Bash rewrites `origin/main:<path>` into a Windows path list. Set
+  `MSYS_NO_PATHCONV=1` for `git show <ref>:<path>`.
