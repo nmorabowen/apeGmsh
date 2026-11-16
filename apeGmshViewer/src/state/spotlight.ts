@@ -15,6 +15,7 @@ import { gaussUnavailable } from "./gaussNotes.ts";
 import { reactionComponentsOf } from "./loads.ts";
 import { springCountOf } from "./springs.ts";
 import { tensorFields } from "./tensor.ts";
+import { crackFieldOf } from "./cracks.ts";
 import { vectorFieldOf } from "./vectors.ts";
 import { CMAP_NAMES, elementContourFields, fieldsOf, rangeKindOf, rangeOptionsOf } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
@@ -187,6 +188,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
   setSupports: { kind: "expose", command: "toggle-supports", description: "Toggle the restraint glyphs at the supports (the Display card's BC)" },
   setPrincipal: { kind: "expose", command: "toggle-principal", description: "Toggle or configure the principal stress or strain arrows at the Gauss points" },
+  setCracks: { kind: "expose", command: "toggle-cracks", description: "Toggle or configure the smeared-crack discs at the Gauss points" },
   setReactions: { kind: "expose", command: "toggle-reactions", description: "Toggle or configure the reaction-force arrows of the results step" },
   setSprings: { kind: "expose", command: "toggle-springs", description: "Toggle or configure the zero-length spring force arrows of the results step" },
   setVectors: { kind: "expose", command: "toggle-vectors", description: "Toggle or configure the nodal vector arrows of the results step" },
@@ -786,6 +788,21 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
         [{ type: "setPrincipal", on: !s.principal.on }],
       ),
       keywords: "principal stress strain directions gauss tension compression arrows toggle results",
+    });
+  }
+  // selectors.crackFieldOf, restated for the same reason.
+  if (s.mesh && shownStage && s.results?.elementIndex?.verified && crackFieldOf(shownStage.gauss)?.groups.length) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-cracks",
+        "loads",
+        s.cracks.on ? "Turn Off Cracks" : "Turn On Cracks",
+        `Smeared-crack discs at the Gauss points are currently ${s.cracks.on ? "ON" : "OFF"}`,
+        [{ type: "setCracks", on: !s.cracks.on }],
+        s.cracks.on,
+        [{ type: "setCracks", on: !s.cracks.on }],
+      ),
+      keywords: "cracks crack pattern width opening concrete asdconcrete3d gauss discs toggle results",
     });
   }
 

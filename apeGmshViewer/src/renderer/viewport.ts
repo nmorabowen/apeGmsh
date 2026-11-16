@@ -27,6 +27,7 @@ import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
 import { EntitiesLayer } from "./entities.ts";
+import { CracksLayer } from "./cracks.ts";
 import { LoadsLayer, PrincipalLayer, ReactionsLayer, SupportsLayer, VectorsLayer } from "./loads.ts";
 import { SpringsLayer } from "./springs.ts";
 import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
@@ -179,6 +180,8 @@ export class Viewport {
   readonly reactions = new ReactionsLayer();
   readonly vectors = new VectorsLayer();
   readonly principal = new PrincipalLayer();
+  /** The Cracks card: a disc in each crack plane at the Gauss points (renderer/cracks.ts). */
+  readonly cracks = new CracksLayer();
   /** The Springs card: one force arrow per zero-length spring of the results step. */
   readonly springs = new SpringsLayer();
   /** The Display card's BC toggle: restraint glyphs at the supports. */
@@ -242,7 +245,7 @@ export class Viewport {
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
     this.lineDiagram = new LineDiagramLayer(this.camera);
-    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.vectors.root, this.principal.root, this.springs.root, this.supports.root, this.entities.root);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.vectors.root, this.principal.root, this.cracks.root, this.springs.root, this.supports.root, this.entities.root);
     // ADR 0134 D5: after the node layer's group (`content`), as the card asks.
     this.scene.add(this.particles.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
@@ -563,6 +566,7 @@ export class Viewport {
     this.reactions.dispose();
     this.vectors.dispose();
     this.principal.dispose();
+    this.cracks.dispose();
     this.springs.dispose();
     this.supports.dispose();
     this.entities.dispose();
@@ -596,6 +600,7 @@ export class Viewport {
         this.reactions.setClippingPlanes(this.clip.planes);
         this.vectors.setClippingPlanes(this.clip.planes);
         this.principal.setClippingPlanes(this.clip.planes);
+        this.cracks.setClippingPlanes(this.clip.planes);
         this.springs.setClippingPlanes(this.clip.planes);
         this.supports.setClippingPlanes(this.clip.planes);
         this.requestRender();
@@ -803,13 +808,14 @@ export class Viewport {
   }
 
   private syncLoads(s: State = this.store.get()): void {
-    // The Reactions, Vectors, Principal and Springs cards' glyphs follow the same inputs, plus the step's data.
+    // The Reactions, Vectors, Principal, Cracks and Springs cards' glyphs follow the same inputs, plus the step's data.
     const loads = this.loads.sync(s, this.blobs, this.full);
     const supports = this.supports.sync(s, this.blobs, this.full);
     const vectors = this.vectors.sync(s, this.blobs, this.full, this.stepSource());
     const principal = this.principal.sync(s, this.blobs, this.full, this.stepSource());
+    const cracks = this.cracks.sync(s, this.blobs, this.full, this.stepSource());
     const springs = this.springs.sync(s, this.blobs, this.full, this.stepSource());
-    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || vectors || principal || springs) {
+    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || vectors || principal || cracks || springs) {
       this.requestRender();
     }
   }

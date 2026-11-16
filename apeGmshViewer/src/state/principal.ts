@@ -26,7 +26,7 @@ export interface PrincipalPoints {
  * markers place them), hidden and inactive elements left out, and which value
  * each point reads. A group the file does not place is refused by name.
  */
-export function principalPointsOf(s: State, blobs: BlobStore, field: TensorField): PrincipalPoints | null {
+export function principalPointsOf(s: State, blobs: BlobStore, field: { readonly groups: readonly { readonly id: string }[] }): PrincipalPoints | null {
   const at = s.phase.at;
   const stage = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
   if (!stage || !s.mesh) return null;

@@ -1,17 +1,18 @@
 // The overlay slice of the reducer (state/reduce.ts delegates here): the
-// supports, principal-stress, reaction, spring, vector and load overlays.
-// Each event writes one of the six and reads nothing else of the state.
+// supports, principal-stress, crack, reaction, spring, vector and load overlays.
+// Each event writes one of the seven and reads nothing else of the state.
 
 import type { OverlaysEvent } from "../types/events/overlays.ts";
 import { CMAP_NAMES } from "../contour.ts";
-import type { LoadsState, PrincipalState, ReactionsState, SpringsState, State, SupportsState, VectorsState } from "../types.ts";
+import type { CracksState, LoadsState, PrincipalState, ReactionsState, SpringsState, State, SupportsState, VectorsState } from "../types.ts";
 
-/** The six overlay settings, each its own field of the state. */
-export type Overlays = Pick<State, "supports" | "principal" | "reactions" | "springs" | "vectors" | "loads">;
+/** The seven overlay settings, each its own field of the state. */
+export type Overlays = Pick<State, "supports" | "principal" | "cracks" | "reactions" | "springs" | "vectors" | "loads">;
 
 export const initialSupports: SupportsState = { on: false, scale: 1 };
 
 export const initialPrincipal: PrincipalState = { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true };
+export const initialCracks: CracksState = { on: false, minOpening: 0, cmap: "turbo", scale: 1 };
 export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
 export const initialSprings: SpringsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", notice: null };
 export const initialVectors: VectorsState = { on: false, field: null, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant" };
@@ -72,6 +73,19 @@ export function reduceOverlays(o: Overlays, e: OverlaysEvent): Overlays {
         thin: e.thin ?? cur.thin,
       };
       return (Object.keys(next) as (keyof PrincipalState)[]).every((k) => next[k] === cur[k]) ? o : { ...o, principal: next };
+    }
+    case "setCracks": {
+      if (e.on !== undefined && typeof e.on !== "boolean") throw new RangeError(`setCracks: on ${JSON.stringify(e.on)}`);
+      if (e.minOpening !== undefined && (typeof e.minOpening !== "number" || !Number.isFinite(e.minOpening) || e.minOpening < 0)) {
+        throw new RangeError(`setCracks: the minimum opening must be a finite number of 0 or more; got ${JSON.stringify(e.minOpening)}`);
+      }
+      if (e.scale !== undefined && (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0)) {
+        throw new RangeError(`setCracks: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
+      }
+      if (e.cmap !== undefined && !(CMAP_NAMES as readonly string[]).includes(e.cmap)) throw new RangeError(`setCracks: cmap ${JSON.stringify(e.cmap)}`);
+      const cur = o.cracks;
+      const next: CracksState = { on: e.on ?? cur.on, minOpening: e.minOpening ?? cur.minOpening, cmap: e.cmap ?? cur.cmap, scale: e.scale ?? cur.scale };
+      return (Object.keys(next) as (keyof CracksState)[]).every((k) => next[k] === cur[k]) ? o : { ...o, cracks: next };
     }
     case "setReactions": {
       for (const k of ["on", "thin", "allNodes", "forces", "moments"] as const) {

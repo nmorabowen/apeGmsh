@@ -28,7 +28,7 @@ import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLine
 import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
 import { componentOf, particleRange, type ParticleFrame } from "./renderer/particles.ts";
-import { contourView, deformView, draftJudgedOf, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
+import { contourView, crackFieldOf, deformView, draftJudgedOf, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
@@ -1284,7 +1284,10 @@ export class Effects {
           ? (st.lineStations?.[0] ?? null)
           : null;
     // The Principal card reads the components of its tensor field (a verified file's only: `principalFieldOf`).
-    const components = [...new Set([...((s.principal.on ? principalFieldOf(s)?.components : undefined) ?? []), ...(derived?.components ?? [])])];
+    // The Cracks card reads its nine crack-vector components the same way.
+    const components = [
+      ...new Set([...((s.principal.on ? principalFieldOf(s)?.components : undefined) ?? []), ...((s.cracks.on ? crackFieldOf(s)?.components : undefined) ?? []), ...(derived?.components ?? [])]),
+    ];
     const tensor = components.length ? components : null;
     const springs = s.springs.on && (st.springs ?? 0) > 0;
     // VA6d: a derived scalar's step also names the model's plane map, so a model re-read that changes it is fetched again.

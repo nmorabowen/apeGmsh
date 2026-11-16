@@ -51,7 +51,7 @@ import { UNIT_SYSTEM_IDS } from "./units.ts";
 export { canonicalPose, initialCamera, ROLL_TOLERANCE } from "./reduce/camera.ts";
 export { emptyRecord, initialContour, initialDeform, initialLineDiagram, initialState } from "./reduce/initial.ts";
 export { initialOffers, MAX_OFFERS } from "./reduce/offers.ts";
-export { initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./reduce/overlays.ts";
+export { initialCracks, initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./reduce/overlays.ts";
 export { NO_USER_FILE, userEventOf, userInfoOf, userPathOf, userReadable } from "./reduce/user.ts";
 export { initialVariants } from "./reduce/variants.ts";
 export { initialWorkspace } from "./reduce/workspace.ts";
@@ -846,11 +846,12 @@ function reduceEvent(s: State, e: Event): State {
     }
     case "setSupports":
     case "setPrincipal":
+    case "setCracks":
     case "setReactions":
     case "setSprings":
     case "setVectors":
     case "setLoads": {
-      const cur = { supports: s.supports, principal: s.principal, reactions: s.reactions, springs: s.springs, vectors: s.vectors, loads: s.loads };
+      const cur = { supports: s.supports, principal: s.principal, cracks: s.cracks, reactions: s.reactions, springs: s.springs, vectors: s.vectors, loads: s.loads };
       const next = reduceOverlays(cur, e);
       return next === cur ? s : { ...s, ...next };
     }

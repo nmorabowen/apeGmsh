@@ -10,7 +10,7 @@ import type { DeformState } from "./deform.ts";
 import type { LineDiagramState } from "./lineDiagram.ts";
 import type { ArtifactInfo, ArtifactKind, BlockInfo, Decl, DeclPath, GeometryInfo, Lineage, MeshInfo, PhaseKey, Pick, ProvenanceEntry, SpatialNdm, StageElements, UnitSystemId } from "./model.ts";
 import type { OffersState } from "./offers.ts";
-import type { LoadsState, PrincipalState, ReactionsState, SpringsState, SupportsState, VectorsState } from "./overlays.ts";
+import type { CracksState, LoadsState, PrincipalState, ReactionsState, SpringsState, SupportsState, VectorsState } from "./overlays.ts";
 import type { ResultStepStatus, ResultsInfo } from "./results.ts";
 import type { CombinationRead, UserFileState, UserResultRead } from "./user.ts";
 import type { VariantsState } from "./variants.ts";
@@ -194,6 +194,8 @@ export interface State {
   loads: LoadsState;
   reactions: ReactionsState;
   principal: PrincipalState;
+  /** the Cracks card: smeared-crack discs at the Gauss points */
+  cracks: CracksState;
   vectors: VectorsState;
   springs: SpringsState;
   supports: SupportsState;
