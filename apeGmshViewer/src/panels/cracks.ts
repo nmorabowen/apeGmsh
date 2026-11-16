@@ -7,7 +7,7 @@
 // Follows ADR 0112 D6 (`panel-allow-list`): imports only `store`, `selectors`,
 // `types`, and `ui/dom`.
 
-import { CMAP_NAMES, crackFieldOf, rampCss } from "../state/selectors.ts";
+import { CMAP_NAMES, crackFieldOf, fmtValue, rampCss } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { ContourCmap, Event } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
@@ -65,7 +65,7 @@ export function renderCracks(s: State, dispatch: (e: Event) => void = () => {}, 
   minInput.type = "number";
   minInput.step = "any";
   minInput.min = "0";
-  minInput.value = String(c.minOpening);
+  minInput.value = fmtValue(c.minOpening);
   minInput.title = "a crack whose opening is below this is not drawn (the file's length unit)";
   const scaleInput = el("input", "deform-scale cracks-scale");
   scaleInput.type = "number";
@@ -92,7 +92,7 @@ export function renderCracks(s: State, dispatch: (e: Event) => void = () => {}, 
   const chip = el("span", "chip cracks-ramp");
   chip.style.background = rampCss(c.cmap);
   chip.title = "the colour of the opening, over the minimum opening..the largest opening of the step on screen";
-  ramp.append(el("span", "cracks-range-min", c.minOpening > 0 ? `${c.minOpening}` : "0"), chip, el("span", "cracks-range-max", "largest"));
+  ramp.append(el("span", "cracks-range-min", fmtValue(c.minOpening)), chip, el("span", "cracks-range-max", "largest"));
   box.append(ramp);
 
   box.append(el("div", "legend-note cracks-note", "inside a solid: lower the surface opacity, hide the faces or cut with a section plane to see them"));

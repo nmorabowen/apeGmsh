@@ -8,11 +8,12 @@ import { painted, until, type HarnessContext } from "./context.ts";
  * At the last step of the first stage with a crack pattern, the faces at 0.25
  * opacity so the discs inside the solid show:
  * (1) `cracks-1-iso`: every crack that opened (min opening 0), iso view;
- * (2) `cracks-2-min-opening`: only the openings of at least half the largest;
- * (3) `cracks-3-side`: the same from -y, the discs edge-on: the view Python's
- *     `results.plot.cracks(plane="xz")` draws as segments;
+ * (2) `cracks-2-side`: the same from -y with the faces hidden, the discs
+ *     edge-on: the view Python's `results.plot.cracks(plane="xz")` draws as segments;
+ * (3) `cracks-3-min-opening`: only the openings of at least half the largest, iso;
  * (4) `cracks-4-deformed`: (2) on the deformed shape at scale 10, from iso.
- * The state is put back afterwards (card off, opaque faces, undeformed, iso).
+ * The card is shown open. The state is put back afterwards (card off and
+ * collapsed, opaque faces, undeformed).
  */
 export async function captureCracks(ctx: HarnessContext, settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
   const { store, viewport, bridge } = ctx;
@@ -36,12 +37,18 @@ export async function captureCracks(ctx: HarnessContext, settle: (ms?: number) =
   store.dispatch({ type: "setPhase", at: { kind: "results", stage: stageIdx, step: last } });
   store.dispatch({ type: "setCracks", on: true, minOpening: 0 });
   store.dispatch({ type: "setCamera", to: "iso" });
+  // The card starts collapsed: open it for these stills, and close it again after.
+  const card = document.getElementById("cracks");
+  const opened = !!card && !card.hidden && card.dataset["collapsed"] === "true";
+  if (opened) card.querySelector("h3")?.click();
   await still("cracks-1-iso");
-  store.dispatch({ type: "setCracks", minOpening: 0.5 * viewport.cracks.drawn.maxOpening });
-  await still("cracks-2-min-opening");
+  store.dispatch({ type: "setOpacity", value: 0 });
   store.dispatch({ type: "setCamera", to: "-y" });
-  await still("cracks-3-side");
+  await still("cracks-2-side");
+  store.dispatch({ type: "setOpacity", value: 0.25 });
   store.dispatch({ type: "setCamera", to: "iso" });
+  store.dispatch({ type: "setCracks", minOpening: 0.5 * viewport.cracks.drawn.maxOpening });
+  await still("cracks-3-min-opening");
   store.dispatch({ type: "setDeform", on: true });
   store.dispatch({ type: "setDeformScale", scale: 10 });
   await still("cracks-4-deformed");
@@ -49,6 +56,7 @@ export async function captureCracks(ctx: HarnessContext, settle: (ms?: number) =
   store.dispatch({ type: "setDeformScale", scale: 1 });
   store.dispatch({ type: "setCracks", on: false, minOpening: 0 });
   store.dispatch({ type: "setOpacity", value: 1 });
+  if (opened && card.dataset["collapsed"] !== "true") card.querySelector("h3")?.click();
   await settle();
   viewport.renderNow();
 }
