@@ -17,7 +17,7 @@ These tests pin:
    Python reader reads exactly that many;
 5. the torn-stage fixtures (M2-S7 #2991): each whole stage counts 3 outputs, and
    ``LadrunoReader``, which does not know the open step until #3003, refuses the torn
-   stage by stage (C2-REG) or the half-stage file at open (C2-PAIR).
+   stage by stage (C2-REG).
 
 The particle values themselves are checked in ``test_ladruno_particles.py``.
 """
@@ -128,12 +128,10 @@ def test_python_reader_reads_the_reference_committed_outputs(contracts, path: Pa
 
 TORN_LAST = MPM / "particles_torn_last_stage_v1m2.ladruno"
 TORN_EARLY = MPM / "particles_torn_early_stage_v1m2.ladruno"
-HALF_LAST = MPM / "particles_half_last_stage_v1m2.ladruno"
 
 
 @pytest.mark.parametrize("path, stage", [(TORN_LAST, "MODEL_STAGE[1]"),
-                                         (TORN_EARLY, "MODEL_STAGE[2]"),
-                                         (HALF_LAST, "MODEL_STAGE[1]")],
+                                         (TORN_EARLY, "MODEL_STAGE[2]")],
                          ids=lambda x: x.name if isinstance(x, Path) else x)
 def test_torn_stage_fixtures_whole_stage_reads_3(contracts, path: Path, stage: str) -> None:
     assert contracts.committed_outputs(str(path), stage=stage) == 3
@@ -159,10 +157,3 @@ def test_ladruno_reader_on_the_torn_stage_fixtures(path: Path, expected: list) -
         assert got == expected
     finally:
         r.close()
-
-
-def test_ladruno_reader_refuses_the_half_stage_fixture() -> None:
-    from apeGmsh.results.readers._ladruno_particles import ParticleFormatError
-
-    with pytest.raises(ParticleFormatError, match="C2-PAIR"):
-        Results.from_ladruno(HALF_LAST)

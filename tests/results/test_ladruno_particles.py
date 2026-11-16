@@ -730,7 +730,9 @@ def test_unit_system_must_agree_with_the_unit_attributes(copy_of, opened, system
 # --- a killed run: the stage rule by open step (232a §2.5 at a1d4c7260, #2991) ---------
 
 TORN_LAST = MPM / "particles_torn_last_stage_v1m2.ladruno"     # step 0 in the last stage
-HALF_LAST = MPM / "particles_half_last_stage_v1m2.ladruno"     # no ON_PARTICLES in the last
+# no ON_PARTICLES in the last stage: built per test by make_torn_stage_fixtures.build(p, "half"),
+# not committed (LadrunoReader refuses it at open, and every committed .ladruno must open)
+HALF_LAST = MPM / "particles_half_last_stage_v1m2.ladruno"
 TORN_EARLY = MPM / "particles_torn_early_stage_v1m2.ladruno"   # step 0 in the first stage
 ORACLE = MPM / "fork_a1d4c7260"
 
@@ -759,11 +761,36 @@ def fork():
                 sys.modules[n] = m
 
 
+def build_torn_stage(path: Path, kind: str) -> Path:
+    """``tests/fixtures/mpm/make_torn_stage_fixtures.py``'s ``build``, loaded by path."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_make_torn_stage_fixtures", MPM / "make_torn_stage_fixtures.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.build(path, kind)
+    return path
+
+
 def _flagged(fork, copy_of, src: Path, flags: int) -> Path:
-    p = copy_of(src, f"{src.stem}.{flags:02x}.ladruno")
+    if src == HALF_LAST:
+        p = build_torn_stage(copy_of(TORN_LAST, f"{src.stem}.{flags:02x}.ladruno"), "half")
+    else:
+        p = copy_of(src, f"{src.stem}.{flags:02x}.ladruno")
     if flags:
         fork[1].set_superblock(p, flags=flags)
     return p
+
+
+def test_ladruno_reader_refuses_the_half_stage_file_at_open(copy_of) -> None:
+    """``LadrunoReader`` opens plainly and has no stage rule until #3003: the half
+    group of a last stage killed mid-layout is C2-PAIR at open. ``ParticleFile``
+    skips that stage (below)."""
+    p = build_torn_stage(copy_of(TORN_LAST, "half.ladruno"), "half")
+    with pytest.raises(ParticleFormatError, match="C2-PAIR"):
+        Results.from_ladruno(p)
 
 
 def _states(pf) -> list:

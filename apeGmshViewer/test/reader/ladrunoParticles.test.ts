@@ -272,22 +272,24 @@ function copyAttrs(from: h5wasm.Group | h5wasm.Dataset, to: h5wasm.Group | h5was
  * (null: contiguous). `skip` leaves out the links with these paths (relative to the stage),
  * and `dtype` writes a dataset (same relative path) with another dtype: the review's repros.
  */
-function rewritten(name: string, chunks: number | null, opts: { skip?: string[]; dtype?: Record<string, string>; stages?: number } = {}): string {
+function rewritten(name: string, chunks: number | null, opts: { skip?: string[]; dtype?: Record<string, string>; stages?: number; noLastOnParticles?: boolean; latest?: boolean } = {}): string {
   const path = join(tmp, name);
   const src = new h5wasm.File(ALL, "r");
-  const out = new h5wasm.File(path, "w");
+  // `latest`: a version-3 superblock, the one whose consistency flags the reader rule reads.
+  const out = opts.latest ? new h5wasm.File(path, "w", { libver: "latest" }) : new h5wasm.File(path, "w");
   try {
     const info = out.create_group("INFO");
     copyAttrs(src.get("INFO") as h5wasm.Group, info);
     // `stages` copies of the fixture's particle stage, MODEL_STAGE[0] .. [stages - 1].
-    for (let k = 0; k < (opts.stages ?? 1); k++) writeStage(out.create_group(`MODEL_STAGE[${k}]`));
+    const n = opts.stages ?? 1;
+    for (let k = 0; k < n; k++) writeStage(out.create_group(`MODEL_STAGE[${k}]`), k === n - 1);
   } finally {
     out.close();
     src.close();
   }
   return path;
 
-  function writeStage(stage: h5wasm.Group): void {
+  function writeStage(stage: h5wasm.Group, last: boolean): void {
     copyAttrs(src.get("MODEL_STAGE[1]") as h5wasm.Group, stage);
     const rel = (path: string) => path.replace(/^\/MODEL_STAGE\[1\]\//, "");
     const copyTree = (from: h5wasm.Group, to: h5wasm.Group) => {
@@ -321,6 +323,8 @@ function rewritten(name: string, chunks: number | null, opts: { skip?: string[];
     const model = stage.create_group("MODEL");
     copyTree(src.get("MODEL_STAGE[1]/MODEL/PARTICLES") as h5wasm.Group, model.create_group("PARTICLES"));
     const results = stage.create_group("RESULTS");
+    // `noLastOnParticles`: the last stage was killed after MODEL/PARTICLES, before RESULTS/ON_PARTICLES.
+    if (last && opts.noLastOnParticles) return;
     copyTree(src.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES") as h5wasm.Group, results.create_group("ON_PARTICLES"));
   }
 }
@@ -607,7 +611,8 @@ for (const [system, ok] of [["kN_m_s", true], ["N_mm_s", false], ["tf_m_s", fals
 /** The fork's killed run, made with its hdf5_crash_replay.py at f0b9a1df6 (tests/fixtures/mpm/README.md). */
 const KILLED = repo("tests/fixtures/mpm/particles_killed_swmr_replay.h5");
 const TORN_LAST = repo("tests/fixtures/mpm/particles_torn_last_stage_v1m2.ladruno");
-const HALF_LAST = repo("tests/fixtures/mpm/particles_half_last_stage_v1m2.ladruno");
+/** Two particle stages, the last killed after MODEL/PARTICLES and before RESULTS/ON_PARTICLES (version-3 superblock, closed). */
+const HALF_LAST = rewritten("half_last_stage.ladruno", 5, { stages: 2, noLastOnParticles: true, latest: true });
 const TORN_EARLY = repo("tests/fixtures/mpm/particles_torn_early_stage_v1m2.ladruno");
 const ON0 = "MODEL_STAGE[0]/RESULTS/ON_PARTICLES";
 /** What the fork's `committed_outputs` counts on KILLED (tests/results/test_ladruno_open.py checks it, and Python's SWMR-read). */
@@ -666,6 +671,9 @@ test("lookup3 is Bob Jenkins' hashlittle (lookup3.c's own vectors) and HDF5's su
   assert.equal(superblockFlags(KILLED), 0x05);
   assert.equal(superblockFlags(TORN_LAST), 0x00);
   assert.equal(superblockFlags(ALL), null, "a version-0 superblock has no flags");
+  assert.equal(superblockFlags(HALF_LAST), 0x00, "h5wasm's libver latest writes a version-3 superblock");
+  const sb = readFileSync(HALF_LAST).subarray(0, 48);
+  assert.equal(lookup3(sb.subarray(0, 44)), sb.readUInt32LE(44), "and its checksum is lookup3's");
 });
 
 test("the h5wasm question (#2991): h5wasm opens the fork's killed run SWMR-read, and a repaired copy reads the same committed outputs and byte-identical rows", () => {

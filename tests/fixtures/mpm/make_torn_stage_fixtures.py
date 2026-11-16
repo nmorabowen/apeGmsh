@@ -16,9 +16,12 @@ cleanly, so their flags read 0x00. A test copies one and sets the flags to
 - ``particles_torn_early_stage_v1m2.ladruno``: the same torn stage first
   (``MODEL_STAGE[1]``, epoch 0), then a whole stage (``MODEL_STAGE[2]``,
   epoch 1, 3 outputs): an earlier stage that does not read is corruption.
-- ``particles_half_last_stage_v1m2.ladruno``: ``MODEL_STAGE[2]`` was killed
+- ``build(path, "half")`` (not committed): ``MODEL_STAGE[2]`` was killed
   after ``MODEL/PARTICLES`` was written and before ``RESULTS/ON_PARTICLES``
-  was created (it does not open as a particle stage, C2-PAIR).
+  was created (it does not open as a particle stage, C2-PAIR). The tests
+  build it in a temp folder: ``LadrunoReader`` refuses it at open (C2-PAIR),
+  and every committed ``.ladruno`` must open
+  (``tests/results/test_ladruno_duplicate_node_ids.py``).
 
 Run from the repository root: ``python tests/fixtures/mpm/make_torn_stage_fixtures.py``.
 """
@@ -73,7 +76,6 @@ def build(path: Path, kind: str) -> None:
 
 if __name__ == "__main__":
     for kind, name in (("last", "particles_torn_last_stage_v1m2.ladruno"),
-                       ("early", "particles_torn_early_stage_v1m2.ladruno"),
-                       ("half", "particles_half_last_stage_v1m2.ladruno")):
+                       ("early", "particles_torn_early_stage_v1m2.ladruno")):
         build(HERE / name, kind)
         print(name)
