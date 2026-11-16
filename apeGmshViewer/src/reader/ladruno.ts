@@ -41,6 +41,9 @@
 //   state/results.ts's PARTICLES_UNREAD (the FE stage does not read it). Below
 //   minor 2 a particle group is not read, and the index warns (C2-MINOR); a part
 //   file that holds one is refused by name (C2-PART: Contract 2 is serial only).
+// - a killed fork run opens by the reader rule of the fork's 232a §2.5 (reader/h5open.ts
+//   `openH5ByRule`: plain, else SWMR-read, else a repaired copy; never the file itself);
+//   `opened` says which step, and the particle stages follow the stage rule for it.
 //
 // Browser-safe: no Node import.
 
