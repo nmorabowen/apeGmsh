@@ -11,6 +11,7 @@ import { mountHeader } from "../panels/header.ts";
 import { mountInspector } from "../panels/inspector.ts";
 import { mountLegend } from "../panels/legend.ts";
 import { mountLineDiagram } from "../panels/lineDiagram.ts";
+import { mountParticleScale } from "../panels/particleScale.ts";
 import { mountLoads } from "../panels/loads.ts";
 import { mountPrincipal } from "../panels/principal.ts";
 import { mountReactions } from "../panels/reactions.ts";
@@ -92,6 +93,8 @@ const panels = [
   // VF2 (#2924 item 6): a derived contour's out-of-plane line needs the element-id blobs, which a panel never holds.
   mountBanner(store, (s) => derivedPlaneOf(s, blobs)?.warning ?? null),
   mountLineDiagram(store, (fn) => viewport.onViewChange(fn)),
+  // ADR 0134 D5 (owner D7 on #2992): the particles' colour scale, in #scale-stack after the line diagram's.
+  mountParticleScale(store),
   mountLoads(store, (fn) => viewport.onViewChange(fn)),
   mountReactions(store, (fn) => viewport.onViewChange(fn)),
   mountPrincipal(store),
@@ -161,7 +164,7 @@ const PANEL_LAYERS: Readonly<Record<AppLayer, readonly string[]>> = {
   header: ["header"],
   phase: ["phase"],
   viewcube: ["viewcube"],
-  // #scale-stack holds the contour's and line diagram's colour bars, which #2701 moved off their left-rail cards.
+  // #scale-stack holds the contour's and line diagram's colour bars, which #2701 moved off their left-rail cards, and the particles'.
   left_rail: ["left-rail", "scale-stack"],
   rail: ["rail", "rail-toggle"],
   windows: ["windows-menu", "windows"],

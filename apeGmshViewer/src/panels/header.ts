@@ -31,29 +31,40 @@ export function mountHeader(store: Store): () => void {
   let lastUnitsKey: string | null = null;
   let lastArtifacts: State["artifacts"] | null = null;
   let lastResults: State["results"] | null = null;
+  let lastParticles: State["particles"] | null = null;
 
   const render = (s: State, prev: State | null) => {
     const unitsKey = `${s.contour.declaredUnits ?? ""}|${s.contour.sourceUnits ?? ""}|${s.contour.targetUnits}`;
     const unitsChanged = !prev || unitsKey !== lastUnitsKey;
-    const artifactsChanged = !prev || s.artifacts !== lastArtifacts || s.results !== lastResults;
+    const artifactsChanged = !prev || s.artifacts !== lastArtifacts || s.results !== lastResults || s.particles !== lastParticles;
     if (!unitsChanged && !artifactsChanged) return;
 
     const summary = modelSummary(s);
     const resArt = s.artifacts.results;
     const hasResultsOnly =
       summary === null && (s.results !== null || (resArt !== null && resArt.status === "ready"));
-    header.hidden = summary === null && !hasResultsOnly;
+    // ADR 0134 D5: a particle set opened alone has its header too: its name and the Units control.
+    const setOnly = summary === null && !hasResultsOnly && s.particles?.status === "ready" && s.particles.source === "set" ? s.particles : null;
+    header.hidden = summary === null && !hasResultsOnly && setOnly === null;
     if (header.hidden) {
       lastUnitsKey = null;
       lastArtifacts = null;
       lastResults = null;
+      lastParticles = null;
       return;
     }
 
     if (artifactsChanged) {
       lastArtifacts = s.artifacts;
       lastResults = s.results;
-      if (summary) {
+      lastParticles = s.particles;
+      if (setOnly) {
+        const file = setOnly.path.split(/[\\/]/).pop() ?? setOnly.path;
+        const n = setOnly.stages[0]?.counts[0] ?? 0;
+        name.textContent = file;
+        stats.replaceChildren(`particle set · ${n.toLocaleString()} ${n === 1 ? "particle" : "particles"}`);
+        document.title = `${file} - apeGmshViewer`;
+      } else if (summary) {
         name.textContent = summary.name;
         stats.replaceChildren(summary.stats);
         for (const k of ["geometry", "results"] as const) {

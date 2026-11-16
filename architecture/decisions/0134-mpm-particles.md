@@ -1,6 +1,6 @@
 # ADR 0134 — MPM in apeGmsh: the particle set beside the deck, particle results in `.ladruno`, a three.js points layer
 
-**Status:** Accepted, with Amendment 2 (2026-11-15). Accepted 2026-11-13 (drafted by the fork's MPM program (WP-232a), ratified by the
+**Status:** Accepted, with Amendments 1 and 2 (2026-11-15). Accepted 2026-11-13 (drafted by the fork's MPM program (WP-232a), ratified by the
 owner on #2976, "Yes, ratify"). Merging the PR that flips this Status (`human-gate`) is the
 acceptance. The pointers in ADRs 0112, 0023 and 0113 land with it (ADR 0121 D5).
 
@@ -395,6 +395,21 @@ verb, or another family.
   - `results/schema/_versions.py`;
   - `FORK_PIN`;
   - `docs/concepts/backend-capabilities.md`.
+
+## Amendment 1 (2026-11-15): D7's staged-run parameter target is `loadPattern`
+
+D7 says a staged MPM run uses `parameter … pattern <mpmTag>`. The fork spells this target
+`loadPattern`: in classic Tcl, `parameter … pattern` matches only `pattern <tag> lambda`
+(`TclParameterCommands.cpp:134-135`), and the generic branch that reaches the MPM host's
+`setParameter` matches `loadPattern` (`:235`, `:248`). The fork's ADR
+(`232_ladruno_mpm_general_driver_adr.md`, finding 3) and its guide use `loadPattern` throughout.
+
+This amendment changes one word. Where D7 reads `parameter … pattern <mpmTag>`, read
+`parameter … loadPattern <mpmTag>`. The rest of D7 stands: MPM is deck-only, and the live route
+refuses any model with MPM bodies by name.
+
+The bridge does not emit this route yet. Since #3001, a staged emit of a model with MPM
+declarations is refused by name; emitting the `loadPattern` stage path is a follow-up.
 
 ## Amendment 2 (2026-11-15): a lattice point on the interface of two bodies goes to the body declared first
 
