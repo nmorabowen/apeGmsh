@@ -14,14 +14,16 @@
 // encodings"): the reads must not depend on the chunk shape or the string encoding.
 
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
-import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
-import type { LadrunoParticles, ParticleStage } from "../../src/reader/ladrunoParticles.ts";
+import { H5BusyError, H5ReadError, lookup3, openH5ByRule, readRows, repairCopy, superblockFlags, superblockIo, type H5ReadModule, type H5RowsDataset, type H5RuleOpenable } from "../../src/reader/h5open.ts";
+import { LadrunoError, LadrunoMissingError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { committedOutputs, type LadrunoParticles, type ParticleStage, type PCtors, type PGroup } from "../../src/reader/ladrunoParticles.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { metaOf } from "../../src/main/results.ts";
 import { pairingNotice, pairResults, particlesOnly, PARTICLES_UNREAD } from "../../src/state/results.ts";
@@ -270,22 +272,24 @@ function copyAttrs(from: h5wasm.Group | h5wasm.Dataset, to: h5wasm.Group | h5was
  * (null: contiguous). `skip` leaves out the links with these paths (relative to the stage),
  * and `dtype` writes a dataset (same relative path) with another dtype: the review's repros.
  */
-function rewritten(name: string, chunks: number | null, opts: { skip?: string[]; dtype?: Record<string, string>; stages?: number } = {}): string {
+function rewritten(name: string, chunks: number | null, opts: { skip?: string[]; dtype?: Record<string, string>; stages?: number; noLastOnParticles?: boolean; latest?: boolean } = {}): string {
   const path = join(tmp, name);
   const src = new h5wasm.File(ALL, "r");
-  const out = new h5wasm.File(path, "w");
+  // `latest`: a version-3 superblock, the one whose consistency flags the reader rule reads.
+  const out = opts.latest ? new h5wasm.File(path, "w", { libver: "latest" }) : new h5wasm.File(path, "w");
   try {
     const info = out.create_group("INFO");
     copyAttrs(src.get("INFO") as h5wasm.Group, info);
     // `stages` copies of the fixture's particle stage, MODEL_STAGE[0] .. [stages - 1].
-    for (let k = 0; k < (opts.stages ?? 1); k++) writeStage(out.create_group(`MODEL_STAGE[${k}]`));
+    const n = opts.stages ?? 1;
+    for (let k = 0; k < n; k++) writeStage(out.create_group(`MODEL_STAGE[${k}]`), k === n - 1);
   } finally {
     out.close();
     src.close();
   }
   return path;
 
-  function writeStage(stage: h5wasm.Group): void {
+  function writeStage(stage: h5wasm.Group, last: boolean): void {
     copyAttrs(src.get("MODEL_STAGE[1]") as h5wasm.Group, stage);
     const rel = (path: string) => path.replace(/^\/MODEL_STAGE\[1\]\//, "");
     const copyTree = (from: h5wasm.Group, to: h5wasm.Group) => {
@@ -319,6 +323,8 @@ function rewritten(name: string, chunks: number | null, opts: { skip?: string[];
     const model = stage.create_group("MODEL");
     copyTree(src.get("MODEL_STAGE[1]/MODEL/PARTICLES") as h5wasm.Group, model.create_group("PARTICLES"));
     const results = stage.create_group("RESULTS");
+    // `noLastOnParticles`: the last stage was killed after MODEL/PARTICLES, before RESULTS/ON_PARTICLES.
+    if (last && opts.noLastOnParticles) return;
     copyTree(src.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES") as h5wasm.Group, results.create_group("ON_PARTICLES"));
   }
 }
@@ -487,6 +493,19 @@ function editedCopy(name: string, edit: (w: h5wasm.File) => void, rows: Record<s
   return path;
 }
 
+/** A copy of `src` edited in place by `edit` (h5wasm, append mode). */
+function editedCopyOf(src: string, name: string, edit: (w: h5wasm.File) => void): string {
+  const path = join(tmp, name);
+  copyFileSync(src, path);
+  const w = new h5wasm.File(path, "a");
+  try {
+    edit(w);
+  } finally {
+    w.close();
+  }
+  return path;
+}
+
 const ON = "MODEL_STAGE[1]/RESULTS/ON_PARTICLES";
 
 test("#2985 follow-up: a refused field's DATA still bounds the committed outputs, as the fork's committed_outputs reads it", () => {
@@ -534,9 +553,9 @@ test("#2987 follow-up: registry columns of unequal length refuse the stage by na
   );
 });
 
-test("#2983 (T ruling): a stage whose registry columns differ and that holds no committed output is still refused by name (C2-REG), never skipped; the file's other stages read", () => {
+test("#2991 (ruling 2026-11-15, replacing #2983's): the LAST stage whose registry columns differ and that holds no output was torn while it opened; a plain open skips it by name, and the other stage reads", () => {
   // Two copies of the fixture's particle stage; the second one's MASS is short and nothing of ON_PARTICLES was appended.
-  // A skip for such a stage waits on the fork's contract (OpenSees#1081, #2991); until then both readers refuse it.
+  // 232a §2.5 at a1d4c7260 (crash rule step 0, and the reader rule): skipped after step 1 or 3, refused after step 2.
   const path = rewritten("short_registry_no_output.ladruno", 5, { stages: 2 });
   const w = new h5wasm.File(path, "a");
   try {
@@ -553,15 +572,18 @@ test("#2983 (T ruling): a stage whose registry columns differ and that holds no 
   const f = openLadruno(H5, path);
   try {
     const p = f.particles!;
+    assert.equal(f.opened.step, 1);
     assert.deepEqual(p.stages.map((s) => s.stageId), ["stage_0"], "the other stage reads");
     assertFixtureStage(p.stages[0]!, p);
-    assert.equal(p.refused.length, 1);
-    assert.equal(p.refused[0]!.stageId, "stage_1");
-    assert.equal(p.refused[0]!.reason, "stage stage_1 (/MODEL_STAGE[1]/MODEL/PARTICLES): the registry columns differ in length (ID 12, BODY_ID 12, MATERIAL_TAG 12, MASS 7) (C2-REG)");
-    assert.throws(() => p.stage("stage_1"), /stage stage_1's particles are refused: stage stage_1 .*\(C2-REG\)/);
-    assert.ok(f.index.warnings.some((x) => /MODEL_STAGE\[1\]: its particles are refused and not read: stage stage_1 .*\(C2-REG\)/.test(x)), "the index warns");
+    assert.deepEqual(p.refused, []);
+    assert.equal(p.skipped.length, 1);
+    assert.equal(p.skipped[0]!.stageId, "stage_1");
+    assert.equal(p.skipped[0]!.reason, "torn while it was laid out (the last stage of a killed run), it holds no output (232a §2.5): stage stage_1 (/MODEL_STAGE[1]/MODEL/PARTICLES): the registry columns differ in length (ID 12, BODY_ID 12, MATERIAL_TAG 12, MASS 7) (C2-REG)");
+    assert.throws(() => p.stage("stage_1"), /stage stage_1's particles are skipped: torn while it was laid out/);
+    assert.ok(f.index.warnings.some((x) => /MODEL_STAGE\[1\]: its particles are skipped: torn while it was laid out/.test(x)), "the index warns");
     const unread = f.stage("stage_1").unread;
-    assert.ok(!unread.includes(PARTICLES_UNREAD), "a refused stage never lists its particles as read");
+    assert.ok(!unread.includes(PARTICLES_UNREAD), "a skipped stage never lists its particles as read");
+    assert.ok(unread.includes("ON_PARTICLES (skipped, torn while laid out: no output)"), unread.join("\n"));
     assert.equal(particlesOnly(metaOf(f)), false);
   } finally {
     f.close();
@@ -582,3 +604,445 @@ test("#2987 follow-up: outputIds checks each output's ids as readOutput does: so
     assert.throws(() => p.readOutput("stage_0", 0, "POSITION"), /particle 99 is not in the stage registry \(C2-ID\)/);
   });
 });
+
+// -- UNIT_SYSTEM against UNIT_LENGTH / UNIT_FORCE / UNIT_TIME (#2991; the Python reader refuses alike) ----
+
+for (const [system, ok] of [["kN_m_s", true], ["N_mm_s", false], ["tf_m_s", false], ["not_an_apegmsh_id", true]] as const) {
+  test(`UNIT_SYSTEM ${system}: ${ok ? "reads" : "disagrees with UNIT_FORCE / UNIT_LENGTH / UNIT_TIME (kN, m, s) and is refused (C2-UNIT)"}`, () => {
+    const path = editedCopy(`units_${system}.ladruno`, (w) => {
+      const g = w.get("MODEL_STAGE[1]/MODEL/PARTICLES") as h5wasm.Group;
+      g.delete_attribute("UNIT_SYSTEM");
+      g.create_attribute("UNIT_SYSTEM", system);
+    });
+    if (ok) withFile(path, (_f, p) => assert.equal(p.stage("stage_0").units.system, system));
+    else assertRefusedStage(path, /@UNIT_SYSTEM = "[^"]+" means UNIT_FORCE .*, but the stage says UNIT_FORCE "kN".*the two disagree.*\(C2-UNIT\)/);
+  });
+}
+
+// -- a killed run (M2-S7 #2991): the reader rule's open and the stage rule, 232a §2.5 at a1d4c7260 -------
+
+/** The fork's killed run, made with its hdf5_crash_replay.py at f0b9a1df6 (tests/fixtures/mpm/README.md). */
+const KILLED = repo("tests/fixtures/mpm/particles_killed_swmr_replay.h5");
+const TORN_LAST = repo("tests/fixtures/mpm/particles_torn_last_stage_v1m2.ladruno");
+/** Two particle stages, the last killed after MODEL/PARTICLES and before RESULTS/ON_PARTICLES (version-3 superblock, closed). */
+const HALF_LAST = rewritten("half_last_stage.ladruno", 5, { stages: 2, noLastOnParticles: true, latest: true });
+const TORN_EARLY = repo("tests/fixtures/mpm/particles_torn_early_stage_v1m2.ladruno");
+const ON0 = "MODEL_STAGE[0]/RESULTS/ON_PARTICLES";
+/** What the fork's `committed_outputs` counts on KILLED (tests/results/test_ladruno_open.py checks it, and Python's SWMR-read). */
+const REPLAY_COMMITTED = 4;
+const REPLAY_IDS = [3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610];
+const REPLAY_FIELDS = [["POSITION", 2], ["VELOCITY", 2], ["STRESS", 3], ["VOLUME", 1]] as const;
+const RULE_H5 = h5wasm as unknown as H5RuleOpenable<h5wasm.File>;
+
+const sha = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+const repairDirs = () => readdirSync(tmpdir()).filter((x) => x.startsWith("apegmsh-ladruno-repair-")).length;
+
+/** A copy of `src` with superblock flags `flags` and a fresh lookup3 (the repair's own arithmetic, checked against HDF5's below). */
+function flaggedCopy(src: string, flags: number, name: string): string {
+  const path = join(tmp, name);
+  copyFileSync(src, path);
+  const b = readFileSync(path);
+  b[11] = flags;
+  b.writeUInt32LE(lookup3(b.subarray(0, 44)), 44);
+  writeFileSync(path, b);
+  return path;
+}
+
+/** The committed rows of KILLED's stage as one h5wasm file reads them. */
+function replayRows(f: h5wasm.File, n: number): Record<string, ArrayBufferView> {
+  const ds = (p: string) => f.get(`${ON0}/${p}`) as h5wasm.Dataset;
+  const offs = ds("OFFSETS").slice([[0, n + 1]]) as BigInt64Array;
+  const end = Number(offs[n]);
+  const out: Record<string, ArrayBufferView> = { OFFSETS: offs, STEP: ds("STEP").slice([[0, n]]) as Int32Array, TIME: ds("TIME").slice([[0, n]]) as Float64Array, ID: ds("ID").slice([[0, end]]) as BigInt64Array };
+  for (const [name] of REPLAY_FIELDS) out[name] = ds(`${name}/DATA`).slice([[0, end]]) as Float64Array;
+  return out;
+}
+
+function assertReplayClosedForm(rows: Record<string, ArrayBufferView>): void {
+  const offs = rows.OFFSETS as BigInt64Array;
+  for (let k = 0; k < REPLAY_COMMITTED; k++) {
+    const [a, b] = [Number(offs[k]), Number(offs[k + 1])];
+    assert.deepEqual(Array.from((rows.ID as BigInt64Array).subarray(a, b), Number), REPLAY_IDS);
+    assert.equal((rows.STEP as Int32Array)[k], k + 1);
+    assert.equal((rows.TIME as Float64Array)[k], (k + 1) * 1e-6);
+    for (const [name, nc] of REPLAY_FIELDS) {
+      const v = (rows[name] as Float64Array).subarray(a * nc, b * nc);
+      v.forEach((x, j) => assert.equal(x, k * 1000 + Math.floor(j / nc) * 10 + (j % nc) + 0.5, `${name} output ${k}`));
+    }
+  }
+}
+
+test("lookup3 is Bob Jenkins' hashlittle (lookup3.c's own vectors) and HDF5's superblock checksum", () => {
+  const enc = (s: string) => new TextEncoder().encode(s);
+  assert.equal(lookup3(new Uint8Array(0)), 0xdeadbeef);
+  assert.equal(lookup3(enc("Four score and seven years ago")), 0x17770551);
+  assert.equal(lookup3(enc("Four score and seven years ago"), 1), 0xcd628161);
+  for (const p of [KILLED, TORN_LAST]) {
+    const sb = readFileSync(p).subarray(0, 48);
+    assert.equal(lookup3(sb.subarray(0, 44)), sb.readUInt32LE(44), p);
+  }
+  assert.equal(superblockFlags(KILLED), 0x05);
+  assert.equal(superblockFlags(TORN_LAST), 0x00);
+  assert.equal(superblockFlags(ALL), null, "a version-0 superblock has no flags");
+  assert.equal(superblockFlags(HALF_LAST), 0x00, "h5wasm's libver latest writes a version-3 superblock");
+  const sb = readFileSync(HALF_LAST).subarray(0, 48);
+  assert.equal(lookup3(sb.subarray(0, 44)), sb.readUInt32LE(44), "and its checksum is lookup3's");
+});
+
+test("the h5wasm question (#2991): h5wasm opens the fork's killed run SWMR-read, and a repaired copy reads the same committed outputs and byte-identical rows", () => {
+  const before = sha(KILLED);
+  const plain = new h5wasm.File(KILLED, "r");
+  assert.ok(Number(plain.file_id) < 0, "a plain open refuses flags 0x05, as h5py's does");
+  // (1) SWMR-read: h5wasm 0.10.3 (HDF5 2.0.0) has the mode "Sr" (H5F_ACC_SWMR_READ).
+  const swmr = new h5wasm.File(KILLED, "Sr");
+  let swmrRows: Record<string, ArrayBufferView>;
+  try {
+    assert.ok(Number(swmr.file_id) >= 0, "h5wasm opens a flags-0x05 file SWMR-read");
+    const on = swmr.get(ON0) as unknown as PGroup;
+    assert.equal((swmr.get(`${ON0}/STEP`) as h5wasm.Dataset).shape![0], REPLAY_COMMITTED + 1, "a partial fifth output is on disk");
+    assert.equal(committedOutputs(on, h5wasm as unknown as PCtors), REPLAY_COMMITTED);
+    swmrRows = replayRows(swmr, REPLAY_COMMITTED);
+  } finally {
+    swmr.close();
+  }
+  assertReplayClosedForm(swmrRows);
+  // (2) the repair on a copy, opened plainly.
+  const copy = join(tmp, "killed_repaired.h5");
+  repairCopy(KILLED, copy);
+  assert.equal(superblockFlags(copy), 0x00);
+  const rep = new h5wasm.File(copy, "r");
+  try {
+    assert.ok(Number(rep.file_id) >= 0);
+    assert.equal(committedOutputs(rep.get(ON0) as unknown as PGroup, h5wasm as unknown as PCtors), REPLAY_COMMITTED);
+    const repRows = replayRows(rep, REPLAY_COMMITTED);
+    for (const k of Object.keys(swmrRows)) {
+      const [x, y] = [swmrRows[k]!, repRows[k]!];
+      assert.deepEqual(Buffer.from(x.buffer, x.byteOffset, x.byteLength), Buffer.from(y.buffer, y.byteOffset, y.byteLength), `${k} byte-identical`);
+    }
+  } finally {
+    rep.close();
+  }
+  assert.equal(sha(KILLED), before, "the user's file is untouched");
+});
+
+test("openH5ByRule: the killed run opens by step 2 (SWMR-read), and the file is untouched", () => {
+  const before = sha(KILLED);
+  const o = openH5ByRule(RULE_H5, KILLED);
+  try {
+    assert.deepEqual({ step: o.step, flags: o.flags, repaired: o.repaired }, { step: 2, flags: 0x05, repaired: false });
+    assert.equal(committedOutputs(o.file.get(ON0) as unknown as PGroup, h5wasm as unknown as PCtors), REPLAY_COMMITTED);
+  } finally {
+    o.file.close();
+  }
+  assert.equal(sha(KILLED), before);
+});
+
+test("openH5ByRule: when SWMR-read refuses a flags-0x05 file, a repaired copy reads it, still as step 2, and the copy goes at close", () => {
+  // An h5wasm whose "Sr" refuses (a negative id), as a build without SWMR-read would.
+  const noSwmr = {
+    FS: h5wasm.FS,
+    File: function (path: string, mode: "r" | "Sr") {
+      return mode === "Sr" ? { file_id: -1n, close: () => undefined } : new h5wasm.File(path, mode);
+    },
+  } as unknown as H5RuleOpenable<h5wasm.File>;
+  const before = sha(KILLED);
+  const dirs = repairDirs();
+  const o = openH5ByRule(noSwmr, KILLED);
+  try {
+    assert.deepEqual({ step: o.step, repaired: o.repaired }, { step: 2, repaired: true });
+    assert.notEqual(o.file.filename, KILLED);
+    assert.equal(repairDirs(), dirs + 1);
+    assert.equal(committedOutputs(o.file.get(ON0) as unknown as PGroup, h5wasm as unknown as PCtors), REPLAY_COMMITTED);
+    assertReplayClosedForm(replayRows(o.file, REPLAY_COMMITTED));
+  } finally {
+    o.file.close();
+  }
+  assert.equal(repairDirs(), dirs, "the repaired copy is removed when the handle closes");
+  assert.equal(sha(KILLED), before);
+});
+
+test("openH5ByRule: flags 0x01 (killed in a layout) opens a repaired copy by step 3; the copy goes at close, the file is untouched", () => {
+  const path = flaggedCopy(TORN_LAST, 0x01, "layout_killed.ladruno");
+  const before = sha(path);
+  assert.ok(Number(new h5wasm.File(path, "r").file_id) < 0, "a plain open refuses flags 0x01");
+  assert.ok(Number(new h5wasm.File(path, "Sr").file_id) < 0, "so does an SWMR-read open");
+  const dirs = repairDirs();
+  const o = openH5ByRule(RULE_H5, path);
+  try {
+    assert.deepEqual({ step: o.step, flags: o.flags, repaired: o.repaired }, { step: 3, flags: 0x01, repaired: true });
+    assert.equal(superblockFlags(o.file.filename), 0x00);
+  } finally {
+    o.file.close();
+  }
+  assert.equal(repairDirs(), dirs);
+  assert.equal(sha(path), before);
+});
+
+test("a live writer's lock (the raw superblock read refused) is H5BusyError; nothing is copied or repaired", () => {
+  const path = flaggedCopy(TORN_LAST, 0x01, "busy.ladruno");
+  const before = sha(path);
+  const dirs = repairDirs();
+  const real = superblockIo.readHead;
+  for (const code of ["EBUSY", "EACCES"]) {
+    superblockIo.readHead = () => {
+      throw Object.assign(new Error(`${code}: resource busy or locked`), { code });
+    };
+    try {
+      assert.throws(() => openH5ByRule(RULE_H5, path), (e: unknown) => e instanceof H5BusyError && /a live writer holds it.*Nothing was copied or repaired/.test(e.message));
+      assert.throws(() => openLadruno(H5, path), H5BusyError, "the .ladruno reader surfaces it as is");
+      assert.throws(() => repairCopy(path, join(tmp, "never.ladruno")), H5BusyError);
+    } finally {
+      superblockIo.readHead = real;
+    }
+  }
+  assert.equal(repairDirs(), dirs);
+  assert.equal(sha(path), before);
+});
+
+/** The stage rule's outcome on one torn-stage file: the step, and each particle stage read (its outputs), skipped or refused. */
+function stageRule(path: string): { step: number; stages: string[]; warnings: string[] } {
+  const before = sha(path);
+  const f = openLadruno(H5, path);
+  try {
+    const p = f.particles!;
+    const rows = [
+      ...p.stages.map((s) => [s.stageId, `read ${s.nOutputs}`] as const),
+      ...p.skipped.map((s) => [s.stageId, "skipped"] as const),
+      ...p.refused.map((s) => [s.stageId, `refused${/corruption/.test(s.reason) ? " (corruption)" : ""}`] as const),
+    ].sort();
+    return { step: f.opened.step, stages: rows.map(([id, what]) => `${id} ${what}`), warnings: f.index.warnings };
+  } finally {
+    f.close();
+    assert.equal(sha(path), before, "the user's file is untouched");
+  }
+}
+
+for (const [src, label] of [[TORN_LAST, "registry torn (crash rule step 0)"], [HALF_LAST, "no ON_PARTICLES yet (C2-PAIR)"]] as const) {
+  for (const [flags, step, last] of [[0x00, 1, "skipped"], [0x05, 2, "refused (corruption)"], [0x01, 3, "skipped"]] as const) {
+    test(`a last stage torn while laid out, ${label}: opened by step ${step}, it is ${last}; the whole stage reads its 3 outputs`, () => {
+      const path = flaggedCopy(src, flags, `rule_${step}_${src.split(/[\\/]/).pop()}`);
+      const r = stageRule(path);
+      assert.equal(r.step, step);
+      assert.deepEqual(r.stages, ["stage_0 read 3", `stage_1 ${last}`]);
+      if (step !== 1) assert.ok(r.warnings.some((w) => new RegExp(`reader rule's step ${step}`).test(w)), r.warnings.join("\n"));
+    });
+  }
+}
+
+// -- HDF5-level damage (#3008 review F1-F3): the same byte flips, through both readers ---------------
+//
+// particles_two_stages_v1m2.ladruno (both stages whole) with one B-tree node's signature flipped, at the
+// offsets tests/results/test_ladruno_particles.py flips too; each case expects the same outcome there.
+
+const TWO = repo("tests/fixtures/mpm/particles_two_stages_v1m2.ladruno");
+/** [label, byte offset, signature there, the damaged stage (1 = the last), whether that stage's index still commits outputs] */
+const DAMAGE = [
+  ["MODEL_STAGE[2]'s link B-tree (TREE)", 66699, "TREE", 2, false],
+  ["MODEL_STAGE[2]'s symbol-table node (SNOD)", 83851, "SNOD", 2, false],
+  ["MODEL_STAGE[2] OFFSETS' chunk index", 95043, "TREE", 2, false],
+  ["MODEL_STAGE[2] STRESS/DATA's chunk index", 113531, "TREE", 2, true],
+  ["MODEL_STAGE[1]'s link B-tree (TREE)", 2795, "TREE", 1, false],
+  ["MODEL_STAGE[1] OFFSETS' chunk index", 33187, "TREE", 1, false],
+  ["MODEL_STAGE[1] STRESS/DATA's chunk index", 51675, "TREE", 1, true],
+] as const;
+
+/** A copy of TWO with the byte at `off` flipped (after checking the signature there), then flags `flags`. */
+function damagedCopy(off: number, sig: string, flags: number, name: string): string {
+  const b = readFileSync(TWO);
+  assert.equal(b.subarray(off, off + 4).toString("latin1"), sig, `${sig} at ${off}`);
+  b[off]! ^= 0x20;
+  const flipped = join(tmp, `${name}.flipped`);
+  writeFileSync(flipped, b);
+  return flaggedCopy(flipped, flags, name);
+}
+
+for (const [label, off, sig, damaged, holdsOutputs] of DAMAGE) {
+  for (const [flags, step] of [[0x00, 1], [0x05, 2], [0x01, 3]] as const) {
+    // The damaged stage fails. Holding no countable output it is torn: skipped as the last stage after
+    // step 1 or 3, refused after step 2; with outputs, or before another stage, refused.
+    const fate = holdsOutputs ? "refused" : damaged === 1 || step === 2 ? "refused (corruption)" : "skipped";
+    test(`damage, ${label}, opened by step ${step}: that stage is ${fate}, the other reads 3 outputs`, () => {
+      const r = stageRule(damagedCopy(off, sig, flags, `damage_${off}_${step}.ladruno`));
+      assert.equal(r.step, step);
+      assert.deepEqual(r.stages, damaged === 1 ? [`stage_0 ${fate}`, "stage_1 read 3"] : ["stage_0 read 3", `stage_1 ${fate}`]);
+    });
+  }
+}
+
+/**
+ * The damage sweep (tests/fixtures/mpm/damage_sweep.py, the same rule): the first byte XOR 0x20 of every
+ * HDF5 object signature; 256 zero bytes at every 4 KiB boundary after the superblock; 1 KiB of zeros at
+ * 1536 + 3072 k; the file cut every 2 KiB from 65536 (through the second stage's layout). Each at flags
+ * 0x00, 0x05 and 0x01 with a new lookup3. Built here, never committed.
+ */
+const SWEEP_SIGNATURES = ["TREE", "SNOD", "HEAP", "OHDR", "OCHK", "GCOL", "FRHP", "FHDB", "FHIB", "FSHD", "FSSE", "BTHD", "BTIN", "BTLF", "EAHD", "EAIB", "EADB", "EASB", "FAHD", "FADB"];
+function* damageSweep(raw: Buffer): Generator<[string, Buffer]> {
+  const flips: number[] = [];
+  for (const sig of SWEEP_SIGNATURES) {
+    for (let at = raw.indexOf(sig, 0, "latin1"); at >= 0; at = raw.indexOf(sig, at + 1, "latin1")) flips.push(at);
+  }
+  const sites: [string, "flip" | "zero" | "zk" | "cut", number][] = [...new Set(flips)].sort((a, b) => a - b).map((at) => [`flip${at}`, "flip", at]);
+  for (let k = 1; k <= Math.floor(raw.length / 4096); k++) sites.push([`zero${k * 4096}`, "zero", k * 4096]);
+  for (let off = 1536; off < raw.length; off += 3072) sites.push([`zk${off}`, "zk", off]);
+  for (let n = 65536; n < raw.length; n += 2048) sites.push([`cut${n}`, "cut", n]);
+  // Attribute messages: a byte at each of these names, and 8 bytes before it (damage_sweep.py ATTRIBUTE_NAMES).
+  const attr = new Set<number>();
+  for (const name of ["KIND", "PARTICLE_EPOCH", "UNIT_SYSTEM", "COMPONENTS", "PARTITION_REDUCTION"]) {
+    for (let at = raw.indexOf(name, 0, "latin1"); at >= 0; at = raw.indexOf(name, at + name.length, "latin1")) for (const rel of [0, -8]) attr.add(at + rel);
+  }
+  for (const at of [...attr].sort((a, b) => a - b)) sites.push([`attr${at}`, "flip", at]);
+  for (const [label, kind, at] of sites) {
+    for (const flags of [0x00, 0x05, 0x01]) {
+      let b = Buffer.from(raw);
+      if (kind === "flip") b[at]! ^= 0x20;
+      else if (kind === "zero") b.fill(0, at, Math.min(at + 256, b.length));
+      else if (kind === "zk") b.fill(0, at, Math.min(at + 1024, b.length));
+      else b = b.subarray(0, at);
+      b[11] = flags;
+      b.writeUInt32LE(lookup3(b.subarray(0, 44)), 44);
+      yield [`${label}_${flags.toString(16).padStart(2, "0")}`, b];
+    }
+  }
+}
+
+/**
+ * Where the readers knowingly differ on the sweep's attribute-message damage, each counted and checked
+ * by its reason (232a §2.5 does not decide either; Python stays the stricter one where it can be):
+ * - a field attribute that does not read (COMPONENTS, PARTITION_REDUCTION): the viewer refuses that
+ *   field alone and reads the stage (the per-field refusal of #2987); Python refuses the whole stage;
+ * - a stage `KIND` that does not read: the viewer refuses the file (schema §2a, the #3008 review: a
+ *   schema refusal is never taken for a torn stage); Python's ParticleFile does not read `KIND`.
+ */
+const KNOWN_FIELD_ONLY = 144;
+const KNOWN_KIND_REFUSAL = 18;
+
+test("the damage sweep: openLadruno gives the Python reader's recorded outcome on every damaged file, but for the named differences", () => {
+  const expected = JSON.parse(readFileSync(repo("tests/fixtures/mpm/damage_sweep_expected.json"), "utf8")) as Record<string, string[]>;
+  const dir = mkdtempSync(join(tmp, "sweep-"));
+  const wrong: string[] = [];
+  const known = { fieldOnly: 0, kind: 0 };
+  let n = 0;
+  for (const [name, bytes] of damageSweep(readFileSync(TWO))) {
+    n++;
+    // HDF5 itself does not return on a "hang" case (the recorder found it with a timeout): never opened.
+    if (JSON.stringify(expected[name]) === JSON.stringify(["hang"])) continue;
+    const path = join(dir, `${name}.ladruno`);
+    writeFileSync(path, bytes);
+    let got: string[];
+    let fieldRefused = new Set<string>();
+    let kindRefused = false;
+    try {
+      const f = openLadruno(H5, path);
+      try {
+        const p = f.particles!;
+        const at = (g: string) => g.replace(/^\//, "");
+        const rows = [
+          ...p.stages.map((s) => `${at(s.group)} read ${s.nOutputs}`),
+          ...p.skipped.map((s) => `${at(s.group)} skipped`),
+          ...p.refused.map((s) => `${at(s.group)} refused${/corruption/.test(s.reason) ? " (corruption)" : ""}`),
+        ].sort();
+        got = [`step ${f.opened.step}`, ...rows];
+        fieldRefused = new Set(p.stages.filter((s) => s.refusedFields.length > 0).map((s) => at(s.group)));
+      } finally {
+        f.close();
+      }
+    } catch (e) {
+      // A refusal of the whole file is one outcome; a bug (a TypeError or the like) is not.
+      if (!(e instanceof Error) || (e.constructor !== Error && !(e instanceof LadrunoError))) throw e;
+      got = ["file-error"];
+      kindRefused = e instanceof LadrunoError && e.kind === "layout" && /@KIND = .*expected static, transient or eigen \(schema §2a\)/.test(e.message);
+    }
+    rmSync(path);
+    const want = expected[name]!;
+    if (JSON.stringify(got) === JSON.stringify(want)) continue;
+    // The stage Python refuses for a field attribute is read here, with that field refused alone.
+    const fieldOnly = got.length === want.length && got[0] === want[0] && want.every((w, i) => {
+      if (w === got[i]) return true;
+      const stage = w.split(" ")[0]!;
+      return w === `${stage} refused` && /^MODEL_STAGE\[\d+\] read \d+$/.test(got[i]!) && got[i]!.startsWith(`${stage} `) && fieldRefused.has(stage);
+    });
+    if (fieldOnly) known.fieldOnly++;
+    else if (kindRefused && name.startsWith("attr")) known.kind++;
+    else wrong.push(`${name}: Python ${JSON.stringify(want)}, TS ${JSON.stringify(got)}`);
+  }
+  assert.equal(n, Object.keys(expected).length, "the viewer builds the cases the Python recorder built");
+  assert.ok(n >= 750, `${n} cases`);
+  assert.deepEqual(wrong, []);
+  assert.deepEqual(known, { fieldOnly: KNOWN_FIELD_ONLY, kind: KNOWN_KIND_REFUSAL }, "the named differences, counted");
+});
+
+// #3008 review, round 4: the stage rule's catch takes a read failure or a missing object, never a schema
+// refusal. A clean, closed file (flags 0x00) whose stage has a bad KIND (schema §2a) refuses as before
+// (LadrunoError "layout"), in the first stage and in the last, FE stage or particle stage alike.
+for (const [label, src, stage] of [
+  ["the mixed file's FE stage (the first)", MIXED, "MODEL_STAGE[0]"],
+  ["the two-stage file's first particle stage", TWO, "MODEL_STAGE[1]"],
+  ["the two-stage file's last particle stage", TWO, "MODEL_STAGE[2]"],
+] as const) {
+  test(`a clean file with a bad KIND in ${label} is refused, never read as a torn stage (the catch does not swallow a layout LadrunoError)`, () => {
+    const path = editedCopyOf(src, `bad_kind_${label.replace(/\W+/g, "_")}.ladruno`, (w) => {
+      const g = w.get(stage) as h5wasm.Group;
+      g.delete_attribute("KIND");
+      g.create_attribute("KIND", "bogus");
+    });
+    assert.equal(superblockFlags(path) ?? 0, 0x00, "a clean, closed file");
+    assert.throws(
+      () => openLadruno(H5, path),
+      (e: unknown) => e instanceof LadrunoError && !(e instanceof LadrunoMissingError) && e.kind === "layout" && /@KIND = "bogus"; expected static, transient or eigen \(schema §2a\)/.test(e.message),
+    );
+  });
+}
+
+test("a missing group or dataset is a LadrunoMissingError: still a layout LadrunoError to every caller", () => {
+  const e = new LadrunoMissingError("missing group /X");
+  assert.ok(e instanceof LadrunoError);
+  assert.equal(e.kind, "layout");
+});
+
+for (const cut of [90112, 98304, 106496, 114688, 122880]) {
+  test(`the canonical layout kill: the file cut at ${cut} bytes inside the last stage's layout, flags 0x01, opens by step 3; the first stage reads, the torn last stage is skipped (#3008 review)`, () => {
+    const b = readFileSync(TWO).subarray(0, cut);
+    b[11] = 0x01;
+    b.writeUInt32LE(lookup3(b.subarray(0, 44)), 44);
+    const path = join(tmp, `layout_kill_${cut}.ladruno`);
+    writeFileSync(path, b);
+    const r = stageRule(path);
+    assert.equal(r.step, 3);
+    assert.deepEqual(r.stages, ["stage_0 read 3", "stage_1 skipped"]);
+  });
+}
+
+test("a stored end-of-allocation past the file's end at flags 0x00 opens SWMR-read (step 2), as h5py's \"truncated file\" does; both stages read", () => {
+  const path = join(tmp, "eoa_past_end.ladruno");
+  copyFileSync(TWO, path);
+  const b = readFileSync(path);
+  b.writeBigUInt64LE(BigInt(b.length + 4096), 28);
+  b.writeUInt32LE(lookup3(b.subarray(0, 44)), 44);
+  writeFileSync(path, b);
+  assert.ok(Number(new h5wasm.File(path, "r").file_id) < 0, "a plain open refuses it");
+  const r = stageRule(path);
+  assert.equal(r.step, 2);
+  assert.deepEqual(r.stages, ["stage_0 read 3", "stage_1 read 3"]);
+});
+
+test("a refused HDF5 read is an error, never the buffer h5wasm hands back as data (readRows)", () => {
+  const path = damagedCopy(113531, "TREE", 0x00, "garbage.ladruno");
+  const f = new h5wasm.File(path, "r");
+  try {
+    const ds = f.get("MODEL_STAGE[2]/RESULTS/ON_PARTICLES/STRESS/DATA") as h5wasm.Dataset;
+    assert.equal((ds.slice([[0, 1]]) as Float64Array).length, 3, "h5wasm's slice returns a buffer, whatever HDF5 said");
+    assert.throws(() => readRows(h5wasm.Module as unknown as H5ReadModule, ds as unknown as H5RowsDataset, 0, 1), H5ReadError);
+    const ok = f.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES/STRESS/DATA") as h5wasm.Dataset;
+    assert.deepEqual(Array.from(readRows(h5wasm.Module as unknown as H5ReadModule, ok as unknown as H5RowsDataset, 0, 1) as Float64Array), [-3.67875, -7.3575, 0]);
+  } finally {
+    f.close();
+  }
+});
+
+for (const [flags, step] of [[0x00, 1], [0x05, 2], [0x01, 3]] as const) {
+  test(`an earlier stage torn while laid out is corruption after step ${step}: refused, and the last stage reads`, () => {
+    const r = stageRule(flaggedCopy(TORN_EARLY, flags, `early_${step}.ladruno`));
+    assert.equal(r.step, step);
+    assert.deepEqual(r.stages, ["stage_0 refused (corruption)", "stage_1 read 3"]);
+  });
+}

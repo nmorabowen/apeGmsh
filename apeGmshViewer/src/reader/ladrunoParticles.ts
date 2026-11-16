@@ -31,7 +31,15 @@
 // - `NaN` is read as stored: `STATE_*` writes it where a material does not answer
 //   (§2.6). Values are not scanned for C2-FINITE (that is the fork's validator).
 //
+// - a killed run (M2-S7 #2991): the stage rule of §2.5 by the reader-rule step that opened
+//   the file (`LadrunoParticles` below); `UNIT_SYSTEM` must agree with UNIT_LENGTH /
+//   UNIT_FORCE / UNIT_TIME when it names an apeGmsh system (C2-UNIT).
+//
 // Browser-safe: no Node import, and no import of reader/ladruno.ts (it imports this).
+
+import type { UnitSystemId } from "../state/types.ts";
+import { UNIT_SYSTEMS } from "../state/units.ts";
+import { H5ReadError, readRows, type H5ReadModule, type H5RowsDataset } from "./h5open.ts";
 
 /** HDF5 type classes, as h5wasm reports `metadata.type`. */
 const H5T_INTEGER = 0;
@@ -80,6 +88,8 @@ export interface PDataset extends PNode {
 export interface PCtors {
   Group: abstract new (...args: never[]) => unknown;
   Dataset: abstract new (...args: never[]) => unknown;
+  /** h5wasm's module export, through which `rowsOf` reads with HDF5's status (reader/h5open.ts `readRows`) */
+  Module: H5ReadModule;
 }
 
 /** A contract break: the rule code of the fork's page, and what was found. */
@@ -89,6 +99,47 @@ export class ParticleContractError extends Error {
     super(`${message} (${code})`);
     this.code = code;
   }
+}
+
+/** HDF5 refused a read of rows the stage needs (a damaged chunk index or data): the stage does not read. */
+export class ParticleReadError extends ParticleContractError {
+  constructor(message: string) {
+    super("C2-DATA", message);
+  }
+}
+
+/** Rows `a..b` of `ds`, read with HDF5's status: a refused read is a `ParticleReadError`, never numbers. */
+function rowsOf(ctors: PCtors, ds: PDataset, a: number, b: number): Int32Array | BigInt64Array | Float32Array | Float64Array {
+  try {
+    return readRows(ctors.Module, ds as unknown as H5RowsDataset, a, b);
+  } catch (err) {
+    if (err instanceof H5ReadError) throw new ParticleReadError(`${ds.path}: rows ${a}..${b} do not read (HDF5 refused the read: a damaged chunk index or data)`);
+    throw err;
+  }
+}
+
+/** `readIds` through `rowsOf`: int64 (each a safe integer) or int32 rows as Numbers. */
+function idsOf(ctors: PCtors, ds: PDataset, a: number, b: number): Float64Array {
+  if (b === a) return new Float64Array(0);
+  const v = rowsOf(ctors, ds, a, b);
+  if (v instanceof BigInt64Array) return Float64Array.from(v, (x, i) => safe(x, `${ds.path}[${a + i}]`));
+  if (v instanceof Int32Array) return Float64Array.from(v);
+  throw new ParticleContractError("C2-DTYPE", `${ds.path} is not an int64 or int32 dataset`);
+}
+
+/** `floats` through `rowsOf`. */
+function floatsOf(ctors: PCtors, ds: PDataset, a: number, b: number): Float64Array {
+  return b === a ? new Float64Array(0) : floats(rowsOf(ctors, ds, a, b), ds.path);
+}
+
+/** `int32s` through `rowsOf`. */
+function int32sOf(ctors: PCtors, ds: PDataset, n: number, code: string): Int32Array {
+  exactInt(ds, 4, code);
+  if (oneD(ds, code) !== n) throw new ParticleContractError(code, `${ds.path} has ${oneD(ds, code)} rows; expected ${n}`);
+  if (n === 0) return new Int32Array(0);
+  const v = rowsOf(ctors, ds, 0, n);
+  if (!(v instanceof Int32Array)) throw new ParticleContractError(code, `${ds.path} did not read as int32`);
+  return v;
 }
 
 // -- what the points layer (M2-S4) draws from ------------------------------------
@@ -181,7 +232,12 @@ export interface ParticleRead {
   stages: ParticleStage[];
   /** a stage whose particle groups break the contract, by name, with why */
   refused: { stageId: string; group: string; reason: string }[];
+  /** the last stage of a killed run, torn while it was laid out: it holds no output (232a §2.5) */
+  skipped: { stageId: string; group: string; reason: string }[];
 }
+
+/** The reader-rule step that opened the file (232a §2.5; reader/h5open.ts `openH5ByRule`). */
+export type ParticleOpenStep = 1 | 2 | 3;
 
 /** Whether a stage group names a particle group, of any HDF5 kind (either half of the pair, C2-PAIR): a malformed one is refused, never skipped. */
 export function hasParticleGroups(stage: PGroup, ctors: PCtors): boolean {
@@ -189,40 +245,76 @@ export function hasParticleGroups(stage: PGroup, ctors: PCtors): boolean {
 }
 
 /**
- * The particle stages of one `.ladruno`. `stages` are its MODEL_STAGE groups with the
- * stage ids reader/ladruno.ts gave them, `ndm` its `INFO@SPATIAL_DIM`, and `fileKinds`
- * each stage's `KIND`. Call only at `FORMAT_MINOR_VERSION >= 2`.
+ * The particle stages of one `.ladruno`. `stages` are its MODEL_STAGE groups, in id
+ * order, with the stage ids reader/ladruno.ts gave them, `ndm` its `INFO@SPATIAL_DIM`,
+ * `fileKinds` each stage's `KIND`, and `openStep` the reader-rule step that opened the
+ * file. Call only at `FORMAT_MINOR_VERSION >= 2`.
+ *
+ * The stage rule of a killed run (232a §2.5 at fork a1d4c7260; the Python twin is
+ * `_ladruno_particles.py::particle_stage_report`): a stage that does not read (a
+ * contract break, step 0's registry columns of unequal length, or an HDF5 read
+ * error) and holds no output was torn while it was laid out. As the file's LAST stage
+ * it is skipped by name after step 1 or 3, and refused after step 2 (killed with SWMR
+ * armed, after its last layout: every stage must read). Before another stage it is
+ * corruption, refused. A failing stage whose index commits outputs was laid out in
+ * full (the writer creates nothing after the layout, and the registry precedes
+ * output 0), so it is refused after any step.
  */
 export class LadrunoParticles {
   readonly stages: ParticleStage[];
   readonly refused: ParticleRead["refused"];
+  readonly skipped: ParticleRead["skipped"];
   private readonly ctors: PCtors;
   private readonly root: PGroup;
 
-  constructor(ctors: PCtors, root: PGroup, stages: readonly { id: string; group: PGroup; fileKind: string }[], ndm: number | null) {
+  constructor(ctors: PCtors, root: PGroup, stages: readonly { id: string; group: PGroup; fileKind: string }[], ndm: number | null, openStep: ParticleOpenStep = 1) {
     this.ctors = ctors;
     this.root = root;
     const read: ParticleStage[] = [];
     const refused: ParticleRead["refused"] = [];
-    for (const s of stages) {
-      if (!hasParticleGroups(s.group, ctors)) continue;
+    const skipped: ParticleRead["skipped"] = [];
+    // Which stages carry particles, from what survives damage (`particleEvidence`); a stage
+    // whose group does not list is a particle stage that fails, when the file carries particles.
+    const evidence = stages.map((s) => particleEvidence(s.group, ctors));
+    const particleFile = evidence.includes(true);
+    stages.forEach((s, i) => {
+      if (evidence[i] === false || (evidence[i] === null && !particleFile)) return;
       try {
+        if (evidence[i] === null) throw new ParticleReadError(`${s.group.path}: the stage group does not list (its links are damaged, or were never written)`);
         read.push(this.readStage(s.id, s.group, s.fileKind, ndm));
       } catch (err) {
-        if (!(err instanceof ParticleContractError)) throw err;
-        refused.push({ stageId: s.id, group: s.group.path, reason: err.message });
+        // A contract break or a refused HDF5 read (ParticleReadError), or an h5wasm error (a plain Error); a TypeError or the like is a bug and propagates.
+        if (!(err instanceof ParticleContractError) && !(err instanceof Error && err.constructor === Error)) throw err;
+        const why = err.message;
+        const outputs = outputsOnDisk(s.group, ctors);
+        if (outputs !== 0) {
+          // Laid out in full, so not torn: the contract's refusal stands as it reads.
+          refused.push({ stageId: s.id, group: s.group.path, reason: why });
+        } else if (i < stages.length - 1) {
+          refused.push({ stageId: s.id, group: s.group.path, reason: `corruption: it does not read and is not the file's last stage (232a §2.5): ${why}` });
+        } else if (openStep === 2) {
+          refused.push({ stageId: s.id, group: s.group.path, reason: `corruption: it does not read in a file opened SWMR-read (killed with SWMR armed, after its last layout completed, so every stage must read; 232a §2.5): ${why}` });
+        } else {
+          skipped.push({ stageId: s.id, group: s.group.path, reason: `torn while it was laid out (the last stage of a killed run), it holds no output (232a §2.5): ${why}` });
+        }
       }
-    }
+    });
     this.stages = read;
     this.refused = refused;
+    this.skipped = skipped;
   }
 
   stage(stageId: string): ParticleStage {
     const s = this.stages.find((x) => x.stageId === stageId);
     if (!s) {
       const why = this.refused.find((r) => r.stageId === stageId);
+      const skip = this.skipped.find((r) => r.stageId === stageId);
       throw new RangeError(
-        why ? `stage ${stageId}'s particles are refused: ${why.reason}` : `stage ${stageId} holds no particles; particle stages: ${this.stages.map((x) => x.stageId).join(", ") || "none"}`,
+        why
+          ? `stage ${stageId}'s particles are refused: ${why.reason}`
+          : skip
+            ? `stage ${stageId}'s particles are skipped: ${skip.reason}`
+            : `stage ${stageId} holds no particles; particle stages: ${this.stages.map((x) => x.stageId).join(", ") || "none"}`,
       );
     }
     return s;
@@ -248,7 +340,7 @@ export class LadrunoParticles {
     const { ids, rows } = this.checkedIds(s, k, a, b);
     const nComp = f.components.length;
     const dataDs = this.dataset(`${on}/${field}/DATA`);
-    const values = b === a ? new Float64Array(0) : floats(dataDs.slice([[a, b], [0, nComp]]), dataDs.path);
+    const values = floatsOf(this.ctors, dataDs, a, b);
     if (values.length !== (b - a) * nComp) throw new ParticleContractError("C2-DATA", `${dataDs.path}: rows ${a}..${b} read ${values.length} values, not ${(b - a) * nComp}`);
     return { ids, rows, values, nComp, step: s.steps[k]!, time: s.time[k]! };
   }
@@ -264,7 +356,7 @@ export class LadrunoParticles {
   /** Rows `a..b` of `ID` (output `k`): each a safe integer, strictly increasing within the output, and in the stage registry (C2-ID). */
   private checkedIds(s: ParticleStage, k: number, a: number, b: number): { ids: Float64Array; rows: Int32Array } {
     const idDs = this.dataset(`${s.group}/RESULTS/ON_PARTICLES/ID`);
-    const ids = readIds(idDs, a, b);
+    const ids = idsOf(this.ctors, idDs, a, b);
     for (let i = 1; i < ids.length; i++) {
       if (!(ids[i]! > ids[i - 1]!)) throw new ParticleContractError("C2-ID", `${idDs.path}: output ${k}'s ids are not strictly increasing at row ${a + i}`);
     }
@@ -280,6 +372,9 @@ export class LadrunoParticles {
   private readStage(stageId: string, g: PGroup, fileKind: string, fileNdm: number | null): ParticleStage {
     const hasModel = childNamed(g, ["MODEL", "PARTICLES"], this.ctors);
     const hasOn = childNamed(g, ["RESULTS", "ON_PARTICLES"], this.ctors);
+    if (!hasModel && !hasOn) {
+      throw new ParticleContractError("C2-PAIR", `${g.path} has PARTICLE_EPOCH but holds neither MODEL/PARTICLES nor RESULTS/ON_PARTICLES; a particle stage holds both`);
+    }
     if (!hasModel || !hasOn) {
       throw new ParticleContractError("C2-PAIR", `${g.path} holds ${hasModel ? "MODEL/PARTICLES" : "RESULTS/ON_PARTICLES"} without ${hasModel ? "RESULTS/ON_PARTICLES" : "MODEL/PARTICLES"}; both or neither`);
     }
@@ -304,6 +399,7 @@ export class LadrunoParticles {
       system: optionalText(model, "UNIT_SYSTEM"),
     };
     for (const [k, v] of Object.entries(units)) if (k !== "system" && v === "") throw new ParticleContractError("C2-UNIT", `${model.path}@UNIT_${k.toUpperCase()} is empty`);
+    checkUnitSystem(units, model.path);
     const grid = readGrid(requiredGroup(model, "GRID", this.ctors, "C2-GRID"), ndm, "C2-GRID");
     const bodies = readBodies(requiredGroup(model, "BODIES", this.ctors, "C2-BODY"), this.ctors, "C2-BODY");
     const registry = this.readRegistry(stageId, model, bodies);
@@ -330,20 +426,21 @@ export class LadrunoParticles {
     const ds = (name: string) => requiredDataset(model, name, this.ctors, "C2-REG");
     const idDs = ds("ID");
     exactInt(idDs, 8, "C2-REG");
-    // The fork's merged contract (fork e30872e34) refuses registry columns of unequal length (C2-REG), as the
-    // Python reader does; the refusal names the stage. (A skip for a stage torn at opening waits on the fork PR OpenSees#1081; tracked in #2991.)
+    // Registry columns of unequal length (C2-REG) are the crash rule's step 0 (232a §2.5, OpenSees#1081): a stage
+    // torn while it opened. The refusal names the stage; the constructor's stage rule skips it when it is the last
+    // stage of a file opened by step 1 or 3 and holds no output.
     const lengths = (["ID", "BODY_ID", "MATERIAL_TAG", "MASS"] as const).map((n) => ({ n, rows: oneD(ds(n), "C2-REG") }));
     if (lengths.some((l) => l.rows !== lengths[0]!.rows)) {
       throw new ParticleContractError("C2-REG", `stage ${stageId} (${model.path}): the registry columns differ in length (${lengths.map((l) => `${l.n} ${l.rows}`).join(", ")})`);
     }
-    const ids = readIds(idDs, 0, oneD(idDs, "C2-REG"));
+    const ids = idsOf(this.ctors, idDs, 0, oneD(idDs, "C2-REG"));
     for (let i = 1; i < ids.length; i++) if (!(ids[i]! > ids[i - 1]!)) throw new ParticleContractError("C2-REG", `${idDs.path} is not strictly increasing at row ${i}`);
-    const bodyIds = int32s(ds("BODY_ID"), ids.length, "C2-REG");
-    const materialTags = int32s(ds("MATERIAL_TAG"), ids.length, "C2-REG");
+    const bodyIds = int32sOf(this.ctors, ds("BODY_ID"), ids.length, "C2-REG");
+    const materialTags = int32sOf(this.ctors, ds("MATERIAL_TAG"), ids.length, "C2-REG");
     const massDs = ds("MASS");
     exactFloat(massDs, 8, "C2-REG");
     if (oneD(massDs, "C2-REG") !== ids.length) throw new ParticleContractError("C2-REG", `${massDs.path} has ${oneD(massDs, "C2-REG")} rows and the registry ID ${ids.length}`);
-    const mass = ids.length === 0 ? new Float64Array(0) : floats(massDs.value, massDs.path);
+    const mass = floatsOf(this.ctors, massDs, 0, ids.length);
     const known = new Set(bodies.map((b) => b.id));
     bodyIds.forEach((b, i) => {
       if (!known.has(b)) throw new ParticleContractError("C2-REG", `${model.path}/BODY_ID[${i}] = ${b} is not in BODIES/ID`);
@@ -367,22 +464,8 @@ export class LadrunoParticles {
     const nTime = oneD(timeDs, "C2-AXES");
     const nOff = oneD(offDs, "C2-OFF");
     const nId = oneD(idDs, "C2-ID");
-    const offsets = nOff === 0 ? new Float64Array(0) : readIds(offDs, 0, nOff);
-    // §2.5's crash rule, the fork's final text (fork commit 7b949e58d), c = len(OFFSETS). The writer
-    // appends DATA, ID, STEP and TIME, then OFFSETS last, flushing after each output, so only the
-    // last OFFSETS entry can be torn (extended, still the fill value 0). A torn entry equal to the
-    // one before it (every output so far empty) is no decrease: it reads as one more empty output.
-    // (1) OFFSETS[0] != 0 refuses.
-    if (nOff > 0 && offsets[0] !== 0) throw new ParticleContractError("C2-OFF", `${offDs.path}[0] = ${offsets[0]}; expected 0`);
-    // (2) c >= 2 and OFFSETS[c-1] < OFFSETS[c-2]: the last entry is a torn extension; that output is dropped.
-    let nOffUsed = nOff;
-    let inFlight: string | null = null;
-    if (nOff >= 2 && offsets[nOff - 1]! < offsets[nOff - 2]!) {
-      nOffUsed = nOff - 1;
-      inFlight = `${offDs.path}[${nOff - 1}] = ${offsets[nOff - 1]} is below the entry before it, so it is the output being written and is not counted`;
-    }
-    // (3) OFFSETS still decreasing anywhere in what remains refuses the stage.
-    for (let i = 1; i < nOffUsed; i++) if (offsets[i]! < offsets[i - 1]!) throw new ParticleContractError("C2-OFF", `${offDs.path} decreases at ${i}`);
+    const offsets = idsOf(this.ctors, offDs, 0, nOff);
+    const { nOffUsed, inFlight } = offsetsRule(offsets, offDs.path);
     // Then T' = min(len(STEP), len(TIME), len(OFFSETS) - 1), and the ID and DATA bounds apply to what remains.
     // The fields, checked against the contract; each one's DATA length bounds the outputs.
     const fields: ParticleField[] = [];
@@ -402,6 +485,12 @@ export class LadrunoParticles {
       // `committed_outputs` reads it (#2985 review follow-up): a group that breaks the contract by an
       // attribute still had its rows appended by the writer, and its length still says where it stopped.
       const g = item as unknown as PGroup;
+      // A field group that lists nothing (h5wasm lists a group whose links are damaged as empty) is
+      // not a field that breaks the contract: the stage does not read, as Python's (where h5py raises
+      // or finds no DATA) and the fork's reference. A field that lists and breaks the contract is refused alone.
+      if (g.keys().length === 0) throw new ParticleReadError(`${on.path}/${name}: the field group lists nothing (its links are damaged, or were never written)`);
+      // Its DATA must open as a dataset: h5wasm calls an object whose header does not read a Group.
+      if (!(g.get("DATA") instanceof this.ctors.Dataset)) throw new ParticleReadError(`${on.path}/${name}/DATA does not open as a dataset (absent, damaged, or not a dataset)`);
       const dataRows = groupDataRows(g, this.ctors);
       if (dataRows !== null) bounds.push({ what: `${on.path}/${name}/DATA`, rows: dataRows });
       try {
@@ -415,17 +504,7 @@ export class LadrunoParticles {
       const why = refusedFields.find((f) => f.field === "POSITION");
       throw new ParticleContractError("C2-POS", why ? `${on.path}/POSITION is refused: ${why.reason}` : `${on.path} has no POSITION field`);
     }
-    // §2.5: T' from the index datasets, then the committed prefix every dataset holds.
-    const tPrime = Math.max(0, Math.min(nStep, nTime, nOffUsed - 1));
-    let n = tPrime;
-    let short: { what: string; rows: number } | null = null;
-    while (n > 0) {
-      const end = offsets[n]!;
-      const lacking = bounds.find((b) => end > b.rows);
-      if (!lacking) break;
-      short = lacking;
-      n--;
-    }
+    const { tPrime, n, short } = boundsRule(offsets, nOffUsed, nStep, nTime, bounds);
     const notes: string[] = [];
     if (nOff === 0) notes.push(`${offDs.path} is empty: no output was committed`);
     if (inFlight !== null) notes.push(inFlight);
@@ -434,9 +513,16 @@ export class LadrunoParticles {
     const used = nOff === 0 ? 0 : offsets[n]!;
     const longer = bounds.filter((b) => b.rows > used);
     if (longer.length > 0) notes.push(`rows past ${used} (${longer.map((b) => `${b.what}: ${b.rows}`).join(", ")}) are a partial output and are not read`);
-    const steps = n === 0 ? new Float64Array(0) : readIds(stepDs, 0, n);
+    const steps = idsOf(this.ctors, stepDs, 0, n);
     for (let k = 1; k < n; k++) if (!(steps[k]! > steps[k - 1]!)) throw new ParticleContractError("C2-AXES", `${stepDs.path} is not strictly increasing at output ${k} (${steps[k - 1]}, then ${steps[k]})`);
-    const time = n === 0 ? new Float64Array(0) : floats(timeDs.slice([[0, n]]), timeDs.path);
+    const time = floatsOf(this.ctors, timeDs, 0, n);
+    // The last committed row of ID and of every field's DATA reads (one row each, never the history):
+    // a chunk index HDF5 cannot follow fails the stage here (C2-DATA), as the Python reader's probe does.
+    if (n > 0 && offsets[n]! > 0) {
+      const last = offsets[n]! - 1;
+      rowsOf(this.ctors, idDs, last, last + 1);
+      for (const f of fields) rowsOf(this.ctors, requiredDataset(requiredGroup(on, f.name, this.ctors, "C2-DATA"), "DATA", this.ctors, "C2-DATA"), last, last + 1);
+    }
     return {
       nOutputs: n,
       steps,
@@ -446,6 +532,140 @@ export class LadrunoParticles {
       refusedFields,
       torn: notes.length > 0 ? `a torn tail (§2.5 crash rule): ${notes.join("; ")}` : null,
     };
+  }
+}
+
+// -- §2.5's crash rule, shared by `readOutputs` and `committedOutputs` ------------------
+
+/**
+ * Steps 1-3 of §2.5's crash rule, the fork's final text (fork commit 7b949e58d), c = len(OFFSETS).
+ * The writer appends DATA, ID, STEP and TIME, then OFFSETS last, flushing after each output, so only
+ * the last OFFSETS entry can be torn (extended, still the fill value 0). A torn entry equal to the
+ * one before it (every output so far empty) is no decrease: it reads as one more empty output.
+ */
+function offsetsRule(offsets: Float64Array, offPath: string): { nOffUsed: number; inFlight: string | null } {
+  const nOff = offsets.length;
+  // (1) OFFSETS[0] != 0 refuses.
+  if (nOff > 0 && offsets[0] !== 0) throw new ParticleContractError("C2-OFF", `${offPath}[0] = ${offsets[0]}; expected 0`);
+  // (2) c >= 2 and OFFSETS[c-1] < OFFSETS[c-2]: the last entry is a torn extension; that output is dropped.
+  let nOffUsed = nOff;
+  let inFlight: string | null = null;
+  if (nOff >= 2 && offsets[nOff - 1]! < offsets[nOff - 2]!) {
+    nOffUsed = nOff - 1;
+    inFlight = `${offPath}[${nOff - 1}] = ${offsets[nOff - 1]} is below the entry before it, so it is the output being written and is not counted`;
+  }
+  // (3) OFFSETS still decreasing anywhere in what remains refuses the stage.
+  for (let i = 1; i < nOffUsed; i++) if (offsets[i]! < offsets[i - 1]!) throw new ParticleContractError("C2-OFF", `${offPath} decreases at ${i}`);
+  return { nOffUsed, inFlight };
+}
+
+/** Steps 4-6: T' from the index datasets, then the committed prefix every dataset in `bounds` holds. */
+function boundsRule(offsets: Float64Array, nOffUsed: number, nStep: number, nTime: number, bounds: readonly { what: string; rows: number }[]): { tPrime: number; n: number; short: { what: string; rows: number } | null } {
+  const tPrime = Math.max(0, Math.min(nStep, nTime, nOffUsed - 1));
+  let n = tPrime;
+  let short: { what: string; rows: number } | null = null;
+  while (n > 0) {
+    const end = offsets[n]!;
+    const lacking = bounds.find((b) => end > b.rows);
+    if (!lacking) break;
+    short = lacking;
+    n--;
+  }
+  return { tPrime, n, short };
+}
+
+/**
+ * The committed outputs of one `RESULTS/ON_PARTICLES` group by §2.5's crash rule, from its
+ * datasets as they stand; no attribute is checked (the fork's reference
+ * `tests/mpm_contracts.py::committed_outputs`). `ID` and the `DATA` of every field group bound
+ * the outputs. A refused OFFSETS (C2-OFF, or not an integer dataset) throws.
+ */
+export function committedOutputs(on: PGroup, ctors: PCtors): number {
+  const ds = (name: string) => requiredDataset(on, name, ctors, "C2-AXES");
+  const offDs = ds("OFFSETS");
+  const nOff = oneD(offDs, "C2-OFF");
+  const offsets = idsOf(ctors, offDs, 0, nOff);
+  const { nOffUsed } = offsetsRule(offsets, offDs.path);
+  const bounds = [{ what: `${on.path}/ID`, rows: oneD(ds("ID"), "C2-ID") }];
+  for (const name of on.keys()) {
+    const item = on.get(name);
+    if (!(item instanceof ctors.Group)) continue;
+    // A field group that lists nothing (damaged links) bounds the outputs at an unknown row: the count
+    // cannot be read, as the reference's `"DATA" in item` raises there (h5py) and the Python twin's does.
+    const fg = item as unknown as PGroup;
+    if (fg.keys().length === 0) throw new ParticleReadError(`${on.path}/${name}: the field group lists nothing, so its DATA cannot bound the outputs`);
+    if (fg.keys().includes("DATA") && !(fg.get("DATA") instanceof ctors.Dataset)) throw new ParticleReadError(`${on.path}/${name}/DATA does not open as a dataset, so it cannot bound the outputs`);
+    const rows = groupDataRows(fg, ctors);
+    if (rows !== null) bounds.push({ what: `${on.path}/${name}/DATA`, rows });
+  }
+  return boundsRule(offsets, nOffUsed, oneD(ds("STEP"), "C2-AXES"), oneD(ds("TIME"), "C2-AXES"), bounds).n;
+}
+
+/**
+ * The outputs a failing stage's index commits (`committedOutputs`): 0 when its
+ * RESULTS/ON_PARTICLES or an index dataset is absent or does not read (its layout did not
+ * complete, or HDF5 refuses the read), null when the index itself is refused (C2-OFF).
+ * The Python twin is `_ladruno_particles.py::_outputs_on_disk`.
+ */
+function outputsOnDisk(stage: PGroup, ctors: PCtors): number | null {
+  try {
+    if (!childNamed(stage, ["RESULTS", "ON_PARTICLES"], ctors)) return 0;
+    const on = (stage.get("RESULTS") as PGroup).get("ON_PARTICLES");
+    if (!(on instanceof ctors.Group)) return 0;
+    const g = on as unknown as PGroup;
+    if (!INDEX_DATASETS.every((n) => g.keys().includes(n) && g.get(n) instanceof ctors.Dataset)) return 0;
+    return committedOutputs(g, ctors);
+  } catch (err) {
+    if (err instanceof ParticleReadError) return 0;
+    if (err instanceof ParticleContractError) return null;
+    if (err instanceof Error && err.constructor === Error) return 0;
+    throw err;
+  }
+}
+
+/**
+ * Whether a stage carries particles, from what survives damage: true when it has
+ * `PARTICLE_EPOCH` (an attribute in the object header, readable when the group's links are
+ * not) or names either half of the particle group; false for an FE stage; null when the group
+ * lists nothing or does not list (h5wasm lists a group whose links are damaged as empty, or
+ * throws a plain Error; a kill can leave one empty). The Python twin is
+ * `_ladruno_particles.py::_particle_evidence`.
+ */
+export function particleEvidence(stage: PGroup, ctors: PCtors): boolean | null {
+  try {
+    if (stage.attrs["PARTICLE_EPOCH"] !== undefined) return true;
+  } catch (err) {
+    if (!isH5Error(err)) throw err;
+  }
+  try {
+    if (stage.keys().length === 0) return null;
+    return hasParticleGroups(stage, ctors);
+  } catch (err) {
+    if (!isH5Error(err)) throw err;
+    return null;
+  }
+}
+
+/** An error h5wasm raises for an object HDF5 cannot read: a plain `Error` (a TypeError or the like is a bug). */
+export function isH5Error(err: unknown): err is Error {
+  return err instanceof Error && err.constructor === Error;
+}
+
+/**
+ * `UNIT_SYSTEM` is informative (§1.1, §2.4), but the points layer converts from it: when it
+ * names an apeGmsh unit system, that system's symbols must be `UNIT_FORCE`, `UNIT_LENGTH` and
+ * `UNIT_TIME`, or the stage is refused (C2-UNIT), as the Python reader refuses it. An id
+ * apeGmsh does not know is not used (state/results.ts reads it as null).
+ */
+function checkUnitSystem(units: { length: string; force: string; time: string; system: string }, where: string): void {
+  if (!Object.hasOwn(UNIT_SYSTEMS, units.system)) return;
+  const sym = UNIT_SYSTEMS[units.system as UnitSystemId].symbols;
+  const wrong = (["force", "length", "time"] as const).filter((k) => sym[k] !== units[k]);
+  if (wrong.length > 0) {
+    throw new ParticleContractError(
+      "C2-UNIT",
+      `${where}@UNIT_SYSTEM = ${JSON.stringify(units.system)} means ${wrong.map((k) => `UNIT_${k.toUpperCase()} ${JSON.stringify(sym[k])}`).join(", ")}, but the stage says ${wrong.map((k) => `UNIT_${k.toUpperCase()} ${JSON.stringify(units[k])}`).join(", ")}; the two disagree, so neither is a base to convert from`,
+    );
   }
 }
 

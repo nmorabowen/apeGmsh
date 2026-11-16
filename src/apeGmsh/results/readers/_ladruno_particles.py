@@ -29,6 +29,20 @@ What this module accepts and refuses, by the contract:
   hyperslabs.
 * a stage the contract refuses is never cached or listed as readable:
   :meth:`ParticleStage.validate` runs before the reader hands it out.
+* ``UNIT_SYSTEM``, when it names an apeGmsh unit system, must agree with
+  ``UNIT_LENGTH`` / ``UNIT_FORCE`` / ``UNIT_TIME``; a mismatch is refused
+  (C2-UNIT), so nothing converts from the wrong base (#2991).
+
+A killed run (M2-S7 #2991): :class:`ParticleFile` opens the file by the
+reader rule's three open steps (``_ladruno_open.py``), then applies the
+stage rule of 232a §2.5 (fork ``a1d4c7260``) by the step that opened it
+(:func:`particle_stage_report`). A LAST stage that does not read, or whose
+registry columns differ in length (the crash rule's step 0: torn while the
+stage opened), and that holds no output, was torn while laid out: it is
+skipped by name after step 1 or 3, and refused after step 2 (a file killed
+with SWMR armed, after its last layout completed, where every stage must
+read). An earlier stage that does not read is corruption after any step,
+and so is a failing stage that holds outputs; both are refused.
 """
 from __future__ import annotations
 
@@ -41,7 +55,9 @@ from typing import TYPE_CHECKING, Any, Optional, Sequence
 import numpy as np
 from numpy import ndarray
 
+from ...units import UNIT_SYSTEMS
 from .._slabs import ParticleSlab
+from ._ladruno_open import STEP_SWMR, open_ladruno
 
 if TYPE_CHECKING:
     import h5py
@@ -56,6 +72,13 @@ SAFE_INTEGER = 2 ** 53 - 1
 _STAGE_PREFIX = "MODEL_STAGE["
 _PART_FILE_RE = re.compile(r"\.part-\d+\.ladruno$", re.IGNORECASE)
 _INDEX_DATASETS = ("STEP", "TIME", "OFFSETS", "ID")
+#: The registry datasets of ``MODEL/PARTICLES`` (contract §2.4).
+_REGISTRY_DATASETS = ("ID", "BODY_ID", "MATERIAL_TAG", "MASS")
+#: What h5py raises for an object HDF5 cannot read (a damaged B-tree raises
+#: RuntimeError, a missing link KeyError, a failed read OSError). The stage
+#: rule catches these around a stage's HDF5 reads; any other exception is a
+#: bug and propagates.
+_H5_ERRORS = (OSError, KeyError, ValueError, RuntimeError)
 
 
 class ParticleFormatError(ValueError):
@@ -64,6 +87,18 @@ class ParticleFormatError(ValueError):
     The message names the file, the stage and the contract rule code
     (``C2-…``, contract 232a §2).
     """
+
+
+class ParticleStageTornError(ParticleFormatError):
+    """A stage's registry columns differ in length: it was torn while it
+    opened (contract §2.5, the crash rule's step 0) and holds no committed
+    output. :func:`particle_stage_report` skips it when it is the last stage
+    of a file opened by step 1 or 3, and refuses it otherwise."""
+
+
+class ParticleStageSkippedWarning(UserWarning):
+    """The last stage of a killed run was torn while it was laid out and is
+    skipped: it holds no output (contract §2.5, the reader rule)."""
 
 
 class ParticleOutputsTruncatedWarning(UserWarning):
@@ -211,6 +246,13 @@ def scan_particle_stages(h5: "h5py.File", path: Path) -> frozenset[str]:
             names.append(name)
     if not names:
         return frozenset()
+    _check_particle_file(h5, path, names)
+    return frozenset(names)
+
+
+def _check_particle_file(h5: "h5py.File", path: Path, names: "list[str]") -> None:
+    """The file-level rules for a file whose stages ``names`` hold particles:
+    minor >= 2 (C2-MINOR), and never a part file (C2-PART)."""
     info = h5["INFO"]
     minor = int(_attr_number(info.attrs, "FORMAT_MINOR_VERSION",
                              f"{path.name} INFO")) \
@@ -233,7 +275,84 @@ def scan_particle_stages(h5: "h5py.File", path: Path) -> frozenset[str]:
             "serial, and a part file with particles is refused (C2-PART, "
             "ADR 0134 D3)."
         )
-    return frozenset(names)
+
+
+def _check_unit_system(system: str, units: "dict[str, str]", where: str) -> None:
+    """``UNIT_SYSTEM`` is informative (contract §1.1, §2.4), but a reader
+    converts from it: when it names an apeGmsh unit system, that system's
+    symbols must be ``UNIT_FORCE`` / ``UNIT_LENGTH`` / ``UNIT_TIME``, or the
+    stage is refused (C2-UNIT). An id apeGmsh does not know is not used."""
+    spec = UNIT_SYSTEMS.get(system)  # type: ignore[call-overload]  # an id the file names, maybe not a UnitSystemId
+    if spec is None:
+        return
+    declared = {"UNIT_FORCE": spec.force_symbol,
+                "UNIT_LENGTH": spec.length_symbol,
+                "UNIT_TIME": spec.time_symbol}
+    wrong = [k for k, v in declared.items() if units[k] != v]
+    if wrong:
+        raise ParticleFormatError(
+            f"{where}: UNIT_SYSTEM {system!r} means "
+            + ", ".join(f"{k} {declared[k]!r}" for k in wrong)
+            + ", but the stage says "
+            + ", ".join(f"{k} {units[k]!r}" for k in wrong)
+            + "; the two disagree, so neither is a base to convert from "
+            "(C2-UNIT)."
+        )
+
+
+def _crash_rule(offsets: ndarray, n_step: int, n_time: int, rows: int,
+                where: str) -> "tuple[ndarray, int]":
+    """Contract §2.5's crash rule, steps 1-6, over ``OFFSETS`` as it stands
+    on disk (the fork's reference: ``tests/mpm_contracts.py::
+    committed_outputs``). ``rows`` is the fewest rows of ``ID`` and of every
+    field's ``DATA``. Returns ``(offsets[: kept + 1], kept)``."""
+    if offsets.size == 0:
+        offsets = np.zeros(1, dtype=np.int64)
+    # (1) the first entry is 0.
+    if offsets[0] != 0:
+        raise ParticleFormatError(
+            f"{where}/OFFSETS[0] is {int(offsets[0])}, not 0 (C2-OFF)."
+        )
+    # (2) a last entry below its predecessor is a torn extension
+    # (the HDF5 fill, 0): drop the in-flight output it would commit.
+    if offsets.size >= 2 and offsets[-1] < offsets[-2]:
+        offsets = offsets[:-1]
+    # (3) any remaining decrease is corruption: refuse the stage.
+    if bool(np.any(np.diff(offsets) < 0)):
+        raise ParticleFormatError(
+            f"{where}/OFFSETS decreases before its last entry "
+            "(C2-OFF)."
+        )
+    # (4) every index axis holds the output; (5) so do ID and every DATA.
+    n_out = min(n_step, n_time, offsets.size - 1)
+    offsets = offsets[: n_out + 1]
+    kept = int(np.searchsorted(offsets[1:], rows, side="right"))
+    return offsets[: kept + 1], kept
+
+
+def committed_outputs(on_particles: "h5py.Group") -> int:
+    """The committed outputs of one ``RESULTS/ON_PARTICLES`` group by the
+    crash rule (contract §2.5), from its datasets as they stand; no
+    attribute is checked. ``ID`` and the ``DATA`` of every field group bound
+    the outputs, as the fork's reference ``committed_outputs`` reads them.
+    Step 0 (a torn registry) is the stage rule's
+    (:func:`particle_stage_report`)."""
+    import h5py
+
+    rows = on_particles["ID"].shape[0]
+    for name in on_particles:
+        item = on_particles[name]
+        if isinstance(item, h5py.Group) and "DATA" in item:
+            data = item["DATA"]
+            if not isinstance(data, h5py.Dataset):
+                # No row count to bound the outputs with (the viewer's twin agrees).
+                raise KeyError(f"{data.name} is not a dataset")
+            rows = min(rows, data.shape[0])
+    _, kept = _crash_rule(
+        np.asarray(on_particles["OFFSETS"][...], dtype=np.int64).reshape(-1),
+        on_particles["STEP"].shape[0], on_particles["TIME"].shape[0], rows,
+        on_particles.name)
+    return kept
 
 
 # ---------------------------------------------------------------------
@@ -325,6 +444,28 @@ class ParticleStage:
         self.registry()
         self.fields()
         self.committed()
+        self._probe_committed_rows()
+
+    def _probe_committed_rows(self) -> None:
+        """Read the last committed row of ``ID`` and of every field's
+        ``DATA`` (one row each, never the history): a chunk index HDF5
+        cannot follow refuses the stage here, not at a later read (C2-DATA).
+        A damaged node that indexes only earlier rows is found when they are
+        read."""
+        offsets, _, _ = self.committed()
+        last = int(offsets[-1]) - 1
+        if last < 0:
+            return
+        where = f"{self._where} RESULTS/ON_PARTICLES"
+        for name in ("ID", *self.fields()):
+            ds = self._results["ID"] if name == "ID" else self._results[name]["DATA"]
+            try:
+                ds[last]
+            except _H5_ERRORS as e:
+                raise ParticleFormatError(
+                    f"{where}/{name if name == 'ID' else name + '/DATA'}: committed "
+                    f"row {last} does not read ({str(e).splitlines()[0]}) (C2-DATA)."
+                ) from e
 
     # -- metadata -----------------------------------------------------
 
@@ -337,6 +478,7 @@ class ParticleStage:
         }
         system = _attr_text(attrs, "UNIT_SYSTEM", where, required=False)
         if system:
+            _check_unit_system(system, units, where)
             units["UNIT_SYSTEM"] = system
         thickness = (
             float(_attr_number(attrs, "PLANE_STRAIN_THICKNESS", where))
@@ -395,9 +537,11 @@ class ParticleStage:
         sizes = {"ID": ids.size, "BODY_ID": body.size,
                  "MATERIAL_TAG": mat.size, "MASS": mass.size}
         if len(set(sizes.values())) != 1:
-            raise ParticleFormatError(
+            raise ParticleStageTornError(
                 f"{where}: the registry columns differ in length {sizes}; "
-                "every column has one row per particle (C2-REG)."
+                "every column has one row per particle (C2-REG). The stage "
+                "was torn while it opened and holds no output (contract "
+                "§2.5, crash rule step 0)."
             )
         if ids.size > 1 and not bool(np.all(np.diff(ids) > 0)):
             raise ParticleFormatError(
@@ -504,35 +648,13 @@ class ParticleStage:
                 "particle group writes 'NONE' (C2-RED)."
             )
         fields = self.fields()
-        # The fork's numbered steps (232a §2.5; its reference is
-        # tests/mpm_contracts.py::committed_outputs), over OFFSETS as it
-        # stands on disk (T + 1 int64 entries, a small read).
-        offsets = np.asarray(off_ds[...], dtype=np.int64).reshape(-1)
-        if offsets.size == 0:
-            offsets = np.zeros(1, dtype=np.int64)
-        # (1) the first entry is 0.
-        if offsets[0] != 0:
-            raise ParticleFormatError(
-                f"{where}/OFFSETS[0] is {int(offsets[0])}, not 0 (C2-OFF)."
-            )
-        # (2) a last entry below its predecessor is a torn extension
-        # (the HDF5 fill, 0): drop the in-flight output it would commit.
-        if offsets.size >= 2 and offsets[-1] < offsets[-2]:
-            offsets = offsets[:-1]
-        # (3) any remaining decrease is corruption: refuse the stage.
-        if bool(np.any(np.diff(offsets) < 0)):
-            raise ParticleFormatError(
-                f"{where}/OFFSETS decreases before its last entry "
-                "(C2-OFF)."
-            )
-        n_out = min(len(step_ds), len(time_ds), offsets.size - 1)
-        offsets = offsets[: n_out + 1]
         rows = min(
             [len(id_ds)]
             + [len(res[name]["DATA"]) for name in fields]
         )
-        kept = int(np.searchsorted(offsets[1:], rows, side="right"))
-        offsets = offsets[: kept + 1]
+        offsets, kept = _crash_rule(
+            np.asarray(off_ds[...], dtype=np.int64).reshape(-1),
+            len(step_ds), len(time_ds), rows, where)
         step = np.asarray(step_ds[:kept], dtype=np.int32)
         time = np.asarray(time_ds[:kept], dtype=np.float64)
         if kept > 1 and not bool(np.all(np.diff(step) > 0)):
@@ -665,3 +787,221 @@ class ParticleStage:
             registry_ids=registry_ids,
             components=tuple(field.components[c] for c in cols),
         )
+
+
+# ---------------------------------------------------------------------
+# A killed run: the stage rule by open step (contract §2.5)
+# ---------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ParticleStageState:
+    """What the stage rule made of one stage of a particle file.
+
+    ``status`` is ``"read"`` (``committed`` outputs), ``"skipped"`` (the
+    last stage, torn while laid out: it holds no output) or ``"refused"``
+    (corruption); ``reason`` says why for the last two, else ``""``.
+    """
+
+    group: str          # "MODEL_STAGE[<id>]"
+    status: str         # "read" | "skipped" | "refused"
+    committed: int
+    reason: str
+
+
+def _stage_number(name: str) -> int:
+    try:
+        return int(name[len(_STAGE_PREFIX):-1])
+    except ValueError:
+        raise ParticleFormatError(
+            f"/{name}: a MODEL_STAGE whose id is not an integer.") from None
+
+
+def _outputs_on_disk(h5: "h5py.File", name: str) -> Optional[int]:
+    """The outputs a failing stage's index datasets commit by the crash rule
+    (steps 1-6, no attribute checked): 0 when the stage, its
+    ``RESULTS/ON_PARTICLES`` or an index dataset cannot be read (the layout
+    did not complete), None when the index itself is refused (C2-OFF)."""
+    try:
+        on = h5[name]["RESULTS"]["ON_PARTICLES"]
+        if not all(k in on for k in _INDEX_DATASETS):
+            return 0
+        return committed_outputs(on)
+    except ParticleFormatError:
+        return None
+    except _H5_ERRORS:
+        return 0
+
+
+def _registry_lengths(stage_grp: "h5py.Group") -> "dict[str, int]":
+    """The row count of each registry dataset present in ``MODEL/PARTICLES``."""
+    model = stage_grp["MODEL"]["PARTICLES"]
+    return {k: model[k].shape[0] for k in _REGISTRY_DATASETS if k in model}
+
+
+def _particle_evidence(h5: "h5py.File", name: str) -> Optional[bool]:
+    """Whether stage ``name`` carries particles, from what survives damage:
+    True when it has ``PARTICLE_EPOCH`` (an attribute, in the object header,
+    readable when the group's links are not) or names either half of the
+    particle group; False for an FE stage; None when the group does not list
+    (its links are damaged, or a kill left it empty)."""
+    try:
+        grp = h5[name]
+    except _H5_ERRORS:
+        return None
+    try:
+        if "PARTICLE_EPOCH" in grp.attrs:
+            return True
+    except _H5_ERRORS:
+        pass
+    try:
+        children = list(grp)
+        if not children:
+            return None
+        return (("MODEL" in children and "PARTICLES" in grp["MODEL"])
+                or ("RESULTS" in children and "ON_PARTICLES" in grp["RESULTS"]))
+    except _H5_ERRORS:
+        return None
+
+
+def particle_stage_report(
+    h5: "h5py.File", path: Path, step: int,
+) -> "tuple[list[ParticleStageState], dict[str, ParticleStage]]":
+    """The stage rule of contract §2.5 (fork ``a1d4c7260``; its reference is
+    ``tests/mpm_contracts.py::particle_stage_report``) for a file opened by
+    reader-rule ``step`` (``_ladruno_open.STEP_*``).
+
+    A ``MODEL_STAGE`` is a particle stage when it carries ``PARTICLE_EPOCH``
+    or names either half of the particle group, or, in a file with another
+    particle stage, when its group does not list (damaged links, or a kill
+    before any link): :func:`_particle_evidence`. Each particle stage, in id
+    order, is read: its registry first (the crash rule's step 0: columns of
+    unequal length mean the stage was torn while it opened), then
+    :meth:`ParticleStage.validate`, which also reads each committed field's
+    last row. Any HDF5 read error (``_H5_ERRORS``) fails the stage. A stage that
+    fails was torn while it was laid out only if it holds no output: the
+    writer lays a stage out in full, registry included, before output 0, and
+    creates nothing after (§2.5, "The writer's guarantees"), so a failing
+    stage whose index datasets commit an output is refused. A torn stage is
+    skipped by name, with a :class:`ParticleStageSkippedWarning`, when it is
+    the file's LAST stage and ``step`` is 1 or 3; it is refused when ``step``
+    is 2 (killed with SWMR armed, after the last layout: every stage must
+    read) or when a later stage follows it (corruption). Returns the states
+    in order and the stages that read, by group name.
+    """
+    names = sorted((n for n in h5 if n.startswith(_STAGE_PREFIX)),
+                   key=_stage_number)
+    states: "list[ParticleStageState]" = []
+    stages: "dict[str, ParticleStage]" = {}
+    particle_names: "list[str]" = []
+    evidence = {name: _particle_evidence(h5, name) for name in names}
+    particle_file = any(v is True for v in evidence.values())
+    for i, name in enumerate(names):
+        where = f"{path.name} {name}"
+        # An FE stage is not the particle reader's; a stage that does not list
+        # is a particle stage that fails, when the file carries particles.
+        if evidence[name] is False or (evidence[name] is None and not particle_file):
+            continue
+        particle_names.append(name)
+        try:
+            if evidence[name] is None:
+                raise ParticleFormatError(
+                    f"{where}: the stage group does not list (its links are "
+                    "damaged, or were never written).")
+            grp = h5[name]
+            has_model = "MODEL" in grp and "PARTICLES" in grp["MODEL"]
+            has_results = "RESULTS" in grp and "ON_PARTICLES" in grp["RESULTS"]
+            if not (has_model and has_results):
+                raise ParticleFormatError(
+                    f"{where} holds "
+                    f"{'MODEL/PARTICLES' if has_model else 'no MODEL/PARTICLES'} and "
+                    f"{'RESULTS/ON_PARTICLES' if has_results else 'no RESULTS/ON_PARTICLES'}; "
+                    "a particle stage holds both (C2-PAIR).")
+            lengths = _registry_lengths(grp)
+            if len(set(lengths.values())) > 1:
+                raise ParticleStageTornError(
+                    f"{where} MODEL/PARTICLES: the registry columns differ in "
+                    f"length {lengths}: the stage was torn while it opened "
+                    "(contract §2.5, crash rule step 0).")
+            stage = ParticleStage(grp, where=where)
+            stage.validate()
+        except (ParticleFormatError, *_H5_ERRORS) as e:
+            why = str(e).splitlines()[0] if str(e) else type(e).__name__
+            outputs = _outputs_on_disk(h5, name)
+            if outputs != 0:
+                # Laid out in full (the writer creates nothing after the layout,
+                # and the registry precedes output 0), so not torn: refused.
+                states.append(ParticleStageState(name, "refused", 0, (
+                    f"{where} does not read, and it holds "
+                    f"{'outputs' if outputs is None else f'{outputs} output(s)'}, so it "
+                    f"was not torn while it was laid out: {why}")))
+            elif i < len(names) - 1:
+                states.append(ParticleStageState(
+                    name, "refused", 0,
+                    f"{where} does not read, and it is not the file's last "
+                    f"stage, so it is corruption (contract §2.5): {why}"))
+            elif step == STEP_SWMR:
+                states.append(ParticleStageState(
+                    name, "refused", 0,
+                    f"{where} does not read in a file opened SWMR-read (killed "
+                    "with SWMR armed, after its last layout completed, so "
+                    f"every stage must read): corruption (contract §2.5): {why}"))
+            else:
+                reason = (f"{where} was torn while it was laid out (the last "
+                          "stage of a killed run) and holds no output; it is "
+                          f"skipped (contract §2.5): {why}")
+                warnings.warn(reason, ParticleStageSkippedWarning, stacklevel=2)
+                states.append(ParticleStageState(name, "skipped", 0, reason))
+            continue
+        stages[name] = stage
+        states.append(ParticleStageState(name, "read", int(stage.committed()[1].size), ""))
+    if particle_names:
+        _check_particle_file(h5, path, particle_names)
+    return states, stages
+
+
+class ParticleFile:
+    """A particle ``.ladruno`` opened by the reader rule (contract §2.5).
+
+    The open is ``_ladruno_open.open_ladruno`` (steps 1-3; a repaired copy
+    for step 3, never the file itself), and the stages are judged by
+    :func:`particle_stage_report` for the step that opened the file.
+    ``LadrunoReader`` adopts the shared open in #3003; until then this is
+    the particle reader's way into a killed run.
+    """
+
+    def __init__(self, path: "str | Path", *,
+                 scratch_dir: "Optional[str | Path]" = None) -> None:
+        self._path = Path(path)
+        self._opened = open_ladruno(self._path, scratch_dir=scratch_dir)
+        try:
+            self.states, self._stages = particle_stage_report(
+                self._opened.h5, self._path, self._opened.step)
+        except BaseException:
+            self._opened.close()
+            raise
+
+    @property
+    def step(self) -> int:
+        """The reader-rule step that opened the file (1, 2 or 3)."""
+        return self._opened.step
+
+    def stage(self, group: str) -> ParticleStage:
+        """The stage ``group`` (``"MODEL_STAGE[<id>]"``) that read, or a
+        refusal that says why it did not."""
+        if group in self._stages:
+            return self._stages[group]
+        for s in self.states:
+            if s.group == group:
+                raise ParticleFormatError(f"{s.group} is {s.status}: {s.reason}")
+        raise KeyError(
+            f"{self._path.name}: no particle stage {group!r}; the stages are "
+            f"{[s.group for s in self.states]}.")
+
+    def close(self) -> None:
+        self._opened.close()
+
+    def __enter__(self) -> "ParticleFile":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
