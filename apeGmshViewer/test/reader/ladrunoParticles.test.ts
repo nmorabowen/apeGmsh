@@ -22,7 +22,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { H5BusyError, H5ReadError, lookup3, openH5ByRule, readRows, repairCopy, superblockFlags, superblockIo, type H5ReadModule, type H5RowsDataset, type H5RuleOpenable } from "../../src/reader/h5open.ts";
-import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
+import { LadrunoError, LadrunoMissingError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
 import { committedOutputs, type LadrunoParticles, type ParticleStage, type PCtors, type PGroup } from "../../src/reader/ladrunoParticles.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { metaOf } from "../../src/main/results.ts";
@@ -493,6 +493,19 @@ function editedCopy(name: string, edit: (w: h5wasm.File) => void, rows: Record<s
   return path;
 }
 
+/** A copy of `src` edited in place by `edit` (h5wasm, append mode). */
+function editedCopyOf(src: string, name: string, edit: (w: h5wasm.File) => void): string {
+  const path = join(tmp, name);
+  copyFileSync(src, path);
+  const w = new h5wasm.File(path, "a");
+  try {
+    edit(w);
+  } finally {
+    w.close();
+  }
+  return path;
+}
+
 const ON = "MODEL_STAGE[1]/RESULTS/ON_PARTICLES";
 
 test("#2985 follow-up: a refused field's DATA still bounds the committed outputs, as the fork's committed_outputs reads it", () => {
@@ -872,6 +885,12 @@ function* damageSweep(raw: Buffer): Generator<[string, Buffer]> {
   for (let k = 1; k <= Math.floor(raw.length / 4096); k++) sites.push([`zero${k * 4096}`, "zero", k * 4096]);
   for (let off = 1536; off < raw.length; off += 3072) sites.push([`zk${off}`, "zk", off]);
   for (let n = 65536; n < raw.length; n += 2048) sites.push([`cut${n}`, "cut", n]);
+  // Attribute messages: a byte at each of these names, and 8 bytes before it (damage_sweep.py ATTRIBUTE_NAMES).
+  const attr = new Set<number>();
+  for (const name of ["KIND", "PARTICLE_EPOCH", "UNIT_SYSTEM", "COMPONENTS", "PARTITION_REDUCTION"]) {
+    for (let at = raw.indexOf(name, 0, "latin1"); at >= 0; at = raw.indexOf(name, at + name.length, "latin1")) for (const rel of [0, -8]) attr.add(at + rel);
+  }
+  for (const at of [...attr].sort((a, b) => a - b)) sites.push([`attr${at}`, "flip", at]);
   for (const [label, kind, at] of sites) {
     for (const flags of [0x00, 0x05, 0x01]) {
       let b = Buffer.from(raw);
@@ -886,10 +905,22 @@ function* damageSweep(raw: Buffer): Generator<[string, Buffer]> {
   }
 }
 
-test("the damage sweep: openLadruno gives the Python reader's recorded outcome on every damaged file", () => {
+/**
+ * Where the readers knowingly differ on the sweep's attribute-message damage, each counted and checked
+ * by its reason (232a §2.5 does not decide either; Python stays the stricter one where it can be):
+ * - a field attribute that does not read (COMPONENTS, PARTITION_REDUCTION): the viewer refuses that
+ *   field alone and reads the stage (the per-field refusal of #2987); Python refuses the whole stage;
+ * - a stage `KIND` that does not read: the viewer refuses the file (schema §2a, the #3008 review: a
+ *   schema refusal is never taken for a torn stage); Python's ParticleFile does not read `KIND`.
+ */
+const KNOWN_FIELD_ONLY = 144;
+const KNOWN_KIND_REFUSAL = 18;
+
+test("the damage sweep: openLadruno gives the Python reader's recorded outcome on every damaged file, but for the named differences", () => {
   const expected = JSON.parse(readFileSync(repo("tests/fixtures/mpm/damage_sweep_expected.json"), "utf8")) as Record<string, string[]>;
   const dir = mkdtempSync(join(tmp, "sweep-"));
   const wrong: string[] = [];
+  const known = { fieldOnly: 0, kind: 0 };
   let n = 0;
   for (const [name, bytes] of damageSweep(readFileSync(TWO))) {
     n++;
@@ -898,6 +929,8 @@ test("the damage sweep: openLadruno gives the Python reader's recorded outcome o
     const path = join(dir, `${name}.ladruno`);
     writeFileSync(path, bytes);
     let got: string[];
+    let fieldRefused = new Set<string>();
+    let kindRefused = false;
     try {
       const f = openLadruno(H5, path);
       try {
@@ -909,6 +942,7 @@ test("the damage sweep: openLadruno gives the Python reader's recorded outcome o
           ...p.refused.map((s) => `${at(s.group)} refused${/corruption/.test(s.reason) ? " (corruption)" : ""}`),
         ].sort();
         got = [`step ${f.opened.step}`, ...rows];
+        fieldRefused = new Set(p.stages.filter((s) => s.refusedFields.length > 0).map((s) => at(s.group)));
       } finally {
         f.close();
       }
@@ -916,13 +950,53 @@ test("the damage sweep: openLadruno gives the Python reader's recorded outcome o
       // A refusal of the whole file is one outcome; a bug (a TypeError or the like) is not.
       if (!(e instanceof Error) || (e.constructor !== Error && !(e instanceof LadrunoError))) throw e;
       got = ["file-error"];
+      kindRefused = e instanceof LadrunoError && e.kind === "layout" && /@KIND = .*expected static, transient or eigen \(schema §2a\)/.test(e.message);
     }
     rmSync(path);
-    if (JSON.stringify(got) !== JSON.stringify(expected[name])) wrong.push(`${name}: Python ${JSON.stringify(expected[name])}, TS ${JSON.stringify(got)}`);
+    const want = expected[name]!;
+    if (JSON.stringify(got) === JSON.stringify(want)) continue;
+    // The stage Python refuses for a field attribute is read here, with that field refused alone.
+    const fieldOnly = got.length === want.length && got[0] === want[0] && want.every((w, i) => {
+      if (w === got[i]) return true;
+      const stage = w.split(" ")[0]!;
+      return w === `${stage} refused` && /^MODEL_STAGE\[\d+\] read \d+$/.test(got[i]!) && got[i]!.startsWith(`${stage} `) && fieldRefused.has(stage);
+    });
+    if (fieldOnly) known.fieldOnly++;
+    else if (kindRefused && name.startsWith("attr")) known.kind++;
+    else wrong.push(`${name}: Python ${JSON.stringify(want)}, TS ${JSON.stringify(got)}`);
   }
   assert.equal(n, Object.keys(expected).length, "the viewer builds the cases the Python recorder built");
   assert.ok(n >= 750, `${n} cases`);
   assert.deepEqual(wrong, []);
+  assert.deepEqual(known, { fieldOnly: KNOWN_FIELD_ONLY, kind: KNOWN_KIND_REFUSAL }, "the named differences, counted");
+});
+
+// #3008 review, round 4: the stage rule's catch takes a read failure or a missing object, never a schema
+// refusal. A clean, closed file (flags 0x00) whose stage has a bad KIND (schema §2a) refuses as before
+// (LadrunoError "layout"), in the first stage and in the last, FE stage or particle stage alike.
+for (const [label, src, stage] of [
+  ["the mixed file's FE stage (the first)", MIXED, "MODEL_STAGE[0]"],
+  ["the two-stage file's first particle stage", TWO, "MODEL_STAGE[1]"],
+  ["the two-stage file's last particle stage", TWO, "MODEL_STAGE[2]"],
+] as const) {
+  test(`a clean file with a bad KIND in ${label} is refused, never read as a torn stage (the catch does not swallow a layout LadrunoError)`, () => {
+    const path = editedCopyOf(src, `bad_kind_${label.replace(/\W+/g, "_")}.ladruno`, (w) => {
+      const g = w.get(stage) as h5wasm.Group;
+      g.delete_attribute("KIND");
+      g.create_attribute("KIND", "bogus");
+    });
+    assert.equal(superblockFlags(path) ?? 0, 0x00, "a clean, closed file");
+    assert.throws(
+      () => openLadruno(H5, path),
+      (e: unknown) => e instanceof LadrunoError && !(e instanceof LadrunoMissingError) && e.kind === "layout" && /@KIND = "bogus"; expected static, transient or eigen \(schema §2a\)/.test(e.message),
+    );
+  });
+}
+
+test("a missing group or dataset is a LadrunoMissingError: still a layout LadrunoError to every caller", () => {
+  const e = new LadrunoMissingError("missing group /X");
+  assert.ok(e instanceof LadrunoError);
+  assert.equal(e.kind, "layout");
 });
 
 for (const cut of [90112, 98304, 106496, 114688, 122880]) {

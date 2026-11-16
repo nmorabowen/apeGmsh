@@ -105,6 +105,18 @@ export class LadrunoError extends Error {
   }
 }
 
+/**
+ * A group or dataset the layout names is absent (a `layout` refusal, as before). Apart from
+ * other `layout` refusals only so that a particle file's stage rule can tell "this stage's
+ * objects are missing or do not read" (a stage torn while laid out, or damage: 232a §2.5)
+ * from a schema refusal (a bad `KIND`, a repeated node id), which still refuses the file.
+ */
+export class LadrunoMissingError extends LadrunoError {
+  constructor(message: string) {
+    super("layout", message);
+  }
+}
+
 interface LNode {
   path: string;
   attrs: Record<string, LAttr>;
@@ -420,7 +432,9 @@ export class LadrunoFile {
         if (h.onNodes) this.discoverModes(h.onNodes, []);
         return h;
       } catch (err) {
-        if (!(err instanceof LadrunoError) && !isH5Error(err)) throw err;
+        // Only a read failure (h5wasm's plain Error) or a missing object marks a stage whose groups do not
+        // read; a schema or contract refusal (a bad KIND, a repeated node id, ...) refuses the file as before.
+        if (!(err instanceof LadrunoMissingError) && !isH5Error(err)) throw err;
         hostFailures.set(s.id, err.message);
         return this.emptyHost(s.group, s.id, err.message, evidence[i] !== false);
       }
@@ -1453,7 +1467,7 @@ export class LadrunoFile {
 
   private group(parent: LGroup, name: string): LGroup {
     const path = parent.path === "/" ? `/${name}` : `${parent.path}/${name}`;
-    if (!parent.keys().includes(name)) throw new LadrunoError("layout", `missing group ${path}`);
+    if (!parent.keys().includes(name)) throw new LadrunoMissingError(`missing group ${path}`);
     const g = parent.get(name);
     if (!(g instanceof this.h5.Group)) throw new LadrunoError("layout", `${path} is not a group`);
     return g as unknown as LGroup;
@@ -1461,7 +1475,7 @@ export class LadrunoFile {
 
   private dataset(parent: LGroup, name: string): LDataset {
     const path = parent.path === "/" ? `/${name}` : `${parent.path}/${name}`;
-    if (!parent.keys().includes(name)) throw new LadrunoError("layout", `missing dataset ${path}`);
+    if (!parent.keys().includes(name)) throw new LadrunoMissingError(`missing dataset ${path}`);
     const d = parent.get(name);
     if (!(d instanceof this.h5.Dataset)) throw new LadrunoError("layout", `${path} is not a dataset`);
     return d as unknown as LDataset;

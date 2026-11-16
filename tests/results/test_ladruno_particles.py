@@ -899,9 +899,10 @@ def _damage_sweep_module():
 #: Sweep cases where the Python reader is stricter than the fork's reference: the reference
 #: reads the stage (it counts outputs from the index alone), and the Python reader does not,
 #: because it also reads the stage's metadata, registry, field attributes and last committed
-#: rows (a damaged registry or field heap, say). 139 (stage, file) pairs: 118 from signature
-#: flips, 18 from 1 KiB zeroed blocks, 3 from 256-byte ones. Pinned so a change is seen.
-STRICTER_THAN_REFERENCE = 139
+#: rows (a damaged registry or field heap, or a field attribute that does not read). 343
+#: (stage, file) pairs: 204 from attribute-message damage, 118 from signature flips, 18 from
+#: 1 KiB zeroed blocks, 3 from 256-byte ones. Pinned so a change is seen.
+STRICTER_THAN_REFERENCE = 343
 
 
 def test_the_damage_sweep_gives_the_recorded_outcomes(fork, tmp_path) -> None:

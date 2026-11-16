@@ -10,7 +10,9 @@ lookup3 over bytes 0-43 at byte 44, as the reader rule's step 3 expects):
 - ``zero<off>``: 256 zero bytes at every 4 KiB boundary after the superblock;
 - ``zk<off>``: 1 KiB of zero bytes at 1536 + 3072 k (offsets off the 4 KiB grid);
 - ``cut<len>``: the file cut to ``len`` bytes, every 2 KiB from 65536 (the second
-  stage's layout starts near 66.5 KB), the stored end-of-allocation left as it was.
+  stage's layout starts near 66.5 KB), the stored end-of-allocation left as it was;
+- ``attr<off>``: a byte XOR 0x20 in an attribute message (at each ``ATTRIBUTE_NAMES``
+  name, and 8 bytes before it).
 
 The files are built in a temp folder by the tests and never committed. The expected
 outcome of each is ``damage_sweep_expected.json``, recorded from the Python reader
@@ -46,6 +48,10 @@ FLAGS = (0x00, 0x05, 0x01)
 SIGNATURES = (b"TREE", b"SNOD", b"HEAP", b"OHDR", b"OCHK", b"GCOL", b"FRHP", b"FHDB",
               b"FHIB", b"FSHD", b"FSSE", b"BTHD", b"BTIN", b"BTLF", b"EAHD", b"EAIB",
               b"EADB", b"EASB", b"FAHD", b"FADB")
+#: Attribute messages: a byte XOR 0x20 at each of these names in the file, and 8 bytes
+#: before it (inside the attribute message's header).
+ATTRIBUTE_NAMES = (b"KIND", b"PARTICLE_EPOCH", b"UNIT_SYSTEM", b"COMPONENTS",
+                   b"PARTITION_REDUCTION")
 HANG_SECONDS = 20
 
 
@@ -56,6 +62,9 @@ def sites(raw: bytes) -> list[tuple[str, str, int]]:
     out += [(f"zero{k * 4096}", "zero", k * 4096) for k in range(1, len(raw) // 4096 + 1)]
     out += [(f"zk{off}", "zk", off) for off in range(1536, len(raw), 3072)]
     out += [(f"cut{n}", "cut", n) for n in range(65536, len(raw), 2048)]
+    attr = sorted({m.start() + rel for name in ATTRIBUTE_NAMES
+                   for m in re.finditer(re.escape(name), raw) for rel in (0, -8)})
+    out += [(f"attr{at}", "flip", at) for at in attr]
     return out
 
 

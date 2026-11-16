@@ -40,10 +40,14 @@ stage carrying `PARTICLE_EPOCH` whose group does not list is a failing
 particle stage, not an FE stage. In a file with particles, a stage whose own
 groups do not read (the torn last stage of a layout kill, or damage) no longer
 refuses the whole file in the viewer: its FE part is left out with a warning,
-and the stage rule decides its particles. Both readers give the same outcome
-on 750 damaged copies of a two-stage file (flips, zeroed blocks, truncations
-through the last stage's layout), and Python never reads a stage the fork's
-reference skips or refuses. h5wasm's `slice` returns its buffer as data when HDF5
+and the stage rule decides its particles. Only a read failure or a missing
+group or dataset does this; a schema refusal (a bad `KIND`) still refuses the
+file. Both readers give the same outcome on 966 damaged copies of a two-stage
+file (flips, zeroed blocks, truncations through the last stage's layout,
+attribute damage), but for two named differences on attribute damage: the
+viewer refuses a damaged field alone where Python refuses its stage, and
+refuses the file for a `KIND` it cannot read. Python never reads a stage the
+fork's reference skips or refuses. h5wasm's `slice` returns its buffer as data when HDF5
 refuses a read, so the viewer's particle reader now reads through
 `reader/h5open.ts` `readRows`, which checks HDF5's status.
 
