@@ -395,6 +395,22 @@ _MATERIAL_BUCKET_TOKENS: "dict[str, str | tuple[str, ...]]" = {
     # live capture and the MPCO ``d+``/``d-`` META symbols also land on.
     "damage": ("damage_tension", "damage_compression"),
     "omega": ("damage_tension", "damage_compression"),
+    # ASDConcrete3D's crack responses (ASDConcrete3DMaterial.cpp
+    # setResponse ids 2007 / 2008). ``crackWidth`` (alias ``cw``) is one
+    # column: the largest crack opening, max(eq. tensile strain - onset,
+    # 0) x lch (``-avg`` swaps in the averaged measure under the same
+    # token). ``crackPattern`` is nine: up to three vectors along the
+    # crack normals (getMax3Normals), each scaled by that crack's
+    # opening, so |c_k| is the k-th crack's width and its direction the
+    # crack normal in the global frame. An isotropic (single-normal)
+    # state fills only c1; unused slots are zero. ``crushPattern`` writes
+    # the SAME labels for the compression side, which is why this table
+    # keys by token and not by label.
+    "crackwidth": "crack_width",
+    "cw": "crack_width",
+    "crackpattern": tuple(
+        f"crack_c{k}_{axis}" for k in (1, 2, 3) for axis in ("x", "y", "z")
+    ),
 }
 _MATERIAL_PREFIX = "material."
 _BEAM_RE = re.compile(r"^(?P<base>[A-Za-z]+?)(?:_(?P<station>\d+))?$")
@@ -434,6 +450,12 @@ _MATERIAL_BUCKET_EXPECTED_NAMES: "dict[str, tuple[str, ...]]" = {
     "yielddistance": ("yieldDistance",),
     "yieldfunction": ("yieldDistance",),
     "damage": ("d+", "d-"),
+    # ASDConcrete3DMaterial.cpp lb_cw / lb_crackpattern.
+    "crackwidth": ("cw",),
+    "cw": ("cw",),
+    "crackpattern": tuple(
+        f"C{k}{axis}" for k in (1, 2, 3) for axis in ("x", "y", "z")
+    ),
     "implexerror": ("implexError",),
     "avgimplexerror": ("avgImplexError",),
     "substeps": ("substeps_me", "substeps_capHit"),

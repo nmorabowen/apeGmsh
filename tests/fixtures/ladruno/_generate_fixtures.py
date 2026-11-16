@@ -35,6 +35,12 @@ deterministic. Fixtures:
                            per-node ``MIN``/``MAX``/``ABSMAX``/``ARG_STEP``
                            (no time series; ``ON_NODES`` is empty). The
                            Finding-B envelope-reader baseline.
+  * ``crack_bricks.ladruno`` — three stdBrick elements of ASDConcrete3D
+                           (``-crackPlanes 4 4 45``) pulled in uniaxial
+                           tension until the last brick cracks; records
+                           ``material.crackPattern`` (9 cols / GP) and
+                           ``material.crackWidth`` (1 col / GP). The
+                           crack-reader and ``results.plot.cracks`` baseline.
   * ``monitor.h5``       — a live-telemetry **Monitor** sink (``recorder
                            Monitor``): a lightweight SWMR-HDF5 file
                            (``FORMAT="ladruno-monitor"``) with ``COLUMNS``/
@@ -366,6 +372,55 @@ def _bezier_tet10(path: str) -> None:
     ops.wipe()
 
 
+def _crack_bricks(path: str) -> None:
+    # Three unit bricks along x, clamped in x at x=0 and pulled at x=3.
+    # Without ``-crackPlanes`` ASDConcrete3D reports crackWidth = 0 (its
+    # max strain measure loops over crack planes, of which the isotropic
+    # mode has none), so the planes are on: both buckets then carry data.
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    nx = 3
+    nid = {}
+    tag = 0
+    for i in range(nx + 1):
+        for j in range(2):
+            for k in range(2):
+                tag += 1
+                nid[(i, j, k)] = tag
+                ops.node(tag, float(i), float(j), float(k))
+    for (j, k), fy, fz in (((0, 0), 1, 1), ((1, 0), 0, 1),
+                           ((0, 1), 1, 0), ((1, 1), 0, 0)):
+        ops.fix(nid[(0, j, k)], 1, fy, fz)
+    ops.nDMaterial("ASDConcrete3D", 1, 30000.0, 0.2,
+                   "-Te", 0.0, 1.0e-4, 2.0e-3, "-Ts", 0.0, 3.0, 0.3,
+                   "-Ce", 0.0, 1.0e-3, 3.0e-3, "-Cs", 0.0, 30.0, 10.0,
+                   "-crackPlanes", 4, 4, 45.0)
+    for i in range(nx):
+        ops.element(
+            "stdBrick", i + 1,
+            nid[(i, 0, 0)], nid[(i + 1, 0, 0)],
+            nid[(i + 1, 1, 0)], nid[(i, 1, 0)],
+            nid[(i, 0, 1)], nid[(i + 1, 0, 1)],
+            nid[(i + 1, 1, 1)], nid[(i, 1, 1)], 1,
+        )
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    for j in range(2):
+        for k in range(2):
+            ops.sp(nid[(nx, j, k)], 1, 3.0e-3)
+    ops.recorder("ladruno", path, "-N", "displacement",
+                 "-E", "material.crackPattern", "material.crackWidth")
+    ops.system("BandGen")
+    ops.numberer("RCM")
+    ops.constraints("Transformation")
+    ops.test("NormDispIncr", 1e-10, 50)
+    ops.integrator("LoadControl", 0.25)
+    ops.algorithm("Newton")
+    ops.analysis("Static")
+    ops.analyze(4)
+    ops.wipe()
+
+
 def _synthesize_partitions(source_name: str, stem: str) -> list[str]:
     """Hand-split a single-partition ``.ladruno`` into a 2-partition set.
 
@@ -463,6 +518,7 @@ def main() -> None:
         ("bezier_tri6.ladruno", _bezier_tri6),
         ("bezier_tet10.ladruno", _bezier_tet10),
         ("fiberbeam.ladruno", _fiberbeam),
+        ("crack_bricks.ladruno", _crack_bricks),
     ):
         path = os.path.join(HERE, name)
         if os.path.exists(path):

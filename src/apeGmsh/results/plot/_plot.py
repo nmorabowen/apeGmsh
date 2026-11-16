@@ -5,8 +5,9 @@ static matplotlib figures suitable for publication / headless CI.
 
 Available methods: ``mesh``, ``contour`` (nodal or gauss, averaged /
 discrete), ``deformed``, ``history``, ``vector_glyph``, ``reactions``,
-``loads``, ``line_force``, ``fibers``, ``energy``, ``node_envelope``
-(the last two consume Ladruno-recorder channels). Each returns the
+``loads``, ``line_force``, ``fibers``, ``energy``, ``cracks``,
+``node_envelope`` (the last three consume Ladruno-recorder channels;
+``energy`` and ``cracks`` draw on 2-D axes). Each returns the
 matplotlib ``Axes`` for chaining or further customization. Pass your
 own ``ax=`` to embed in a larger layout.
 
@@ -1155,6 +1156,188 @@ class ResultsPlot:
             title = "energy balance" + (
                 "" if region is None else f" (region {region})"
             )
+        ax.set_title(title)
+        return ax
+
+    # ------------------------------------------------------------------
+    # cracks — projected smeared-crack map (ASDConcrete3D crackPattern)
+    # ------------------------------------------------------------------
+
+    def cracks(
+        self,
+        *,
+        step: int = -1,
+        stage: Optional[str] = None,
+        plane: str = "xz",
+        ids: Optional[Any] = None,
+        pg: Optional[str] = None,
+        label: Optional[str] = None,
+        selection: Optional[str] = None,
+        min_opening: float = 0.0,
+        half_length: Optional[float] = None,
+        linewidths: tuple[float, float] = (0.6, 3.0),
+        outline: bool = True,
+        ax: Optional[Any] = None,
+        cmap: str = "inferno_r",
+        clim: Optional[tuple[float, float]] = None,
+        scalar_bar: bool = True,
+        title: Optional[str] = None,
+    ) -> Any:
+        """Projected crack map: one segment per open crack per Gauss point.
+
+        Reads the crack vectors ``crack_c{1,2,3}_{x,y,z}`` (recorded as
+        ``material.crackPattern`` on an ASDConcrete3D model): at every
+        Gauss point, up to three vectors along the crack normals, each
+        as long as that crack's opening (cracking strain x the element's
+        characteristic length). Each crack is drawn on the ``plane``
+        view as a segment through the Gauss point running across its
+        projected normal — the trace of the crack plane — with colour
+        and line width scaled by the opening.
+
+        Parameters
+        ----------
+        step, stage
+            The instant to draw (``step`` indexes the stage's steps;
+            ``-1``, the default, is the last).
+        plane
+            Two world axes, horizontal first: ``"xz"`` (default, a side
+            view of a beam spanning x with z up), ``"yz"``, ``"xy"``…
+        ids, pg, label, selection
+            Element selection (at most one); default every element that
+            recorded crack vectors.
+        min_opening
+            Cracks narrower than this (in model length units) are not
+            drawn — the hairline threshold.
+        half_length
+            Half a segment's length. ``None`` picks 0.4 x the typical
+            projected Gauss-point spacing, so neighbours do not touch.
+        linewidths
+            ``(thinnest, thickest)`` line width, mapped linearly from 0
+            to the largest drawn opening.
+        outline
+            Draw the projected outline of every selected element faintly
+            under the cracks.
+        ax
+            Existing **2-D** axes. ``None`` creates a new figure.
+        cmap, clim, scalar_bar
+            Colour by opening; ``clim=None`` spans ``min_opening`` to
+            the largest drawn opening.
+
+        Returns the axes. A step with no crack above ``min_opening``
+        draws the outline only (the map of an uncracked member is a
+        valid answer).
+        """
+        _require_mpl()
+        from matplotlib.collections import LineCollection, PolyCollection
+
+        from ._cracks import (
+            CRACK_VECTOR_COMPONENTS,
+            convex_hull_2d,
+            crack_segments,
+            default_half_length,
+            parse_plane,
+        )
+
+        axes_hv = parse_plane(plane)
+        fem = _require_fem(self._r, "cracks")
+        gauss = self._r.elements.gauss
+        stored = set(gauss.available_components(stage=stage))
+        missing = [c for c in CRACK_VECTOR_COMPONENTS if c not in stored]
+        if missing:
+            raise RuntimeError(
+                f"cracks: the crack vectors {missing} are not in this "
+                f"result. Record 'material.crackPattern' on the concrete "
+                f"elements (ASDConcrete3D) to draw a crack map."
+            )
+        slabs = [
+            gauss.get(
+                component=c, time=step, stage=stage,
+                ids=ids, pg=pg, label=label, selection=selection,
+            )
+            for c in CRACK_VECTOR_COMPONENTS
+        ]
+        # The nine columns come from one bucket, so their Gauss points
+        # line up; check rather than assume, since a mis-pairing would
+        # draw a wrong map without any error.
+        first = slabs[0]
+        for s in slabs[1:]:
+            if not (np.array_equal(s.element_index, first.element_index)
+                    and np.allclose(s.natural_coords, first.natural_coords)):
+                raise RuntimeError(
+                    f"cracks: {s.component} does not cover the same Gauss "
+                    f"points as {first.component}; the crack vectors "
+                    f"cannot be paired."
+                )
+        n_gp = first.element_index.size
+        vectors = np.stack(
+            [np.asarray(s.values[0], dtype=np.float64) for s in slabs],
+            axis=1,
+        ).reshape(n_gp, 3, 3)
+        points = first.global_coords(fem)
+        h, v = axes_hv
+        if half_length is None:
+            half_length = default_half_length(points[:, [h, v]])
+        segments, openings = crack_segments(
+            points, vectors, plane=axes_hv,
+            min_opening=float(min_opening), half_length=float(half_length),
+        )
+
+        if ax is None:
+            _, ax = plt.subplots(figsize=self._figsize)
+
+        drawn = [points[:, [h, v]]]
+        if outline:
+            wanted = set(int(e) for e in np.unique(first.element_index))
+            coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+            nid_to_row = {
+                int(n): k for k, n in enumerate(np.asarray(fem.nodes.ids))
+            }
+            polys = []
+            for group in fem.elements:
+                g_ids = np.asarray(group.ids, dtype=np.int64)
+                conn = np.asarray(group.connectivity, dtype=np.int64)
+                for k, eid in enumerate(g_ids):
+                    if int(eid) not in wanted:
+                        continue
+                    rows = [nid_to_row[int(n)] for n in conn[k]
+                            if int(n) in nid_to_row]
+                    if len(rows) >= 2:
+                        polys.append(convex_hull_2d(coords[rows][:, [h, v]]))
+            if polys:
+                ax.add_collection(PolyCollection(
+                    polys, facecolors="none", edgecolors=_COLOR_GHOST,
+                    linewidths=0.4,
+                ))
+                drawn.extend(polys)
+
+        top = float(openings.max()) if openings.size else 0.0
+        if openings.size:
+            lo, hi = linewidths
+            lines = LineCollection(
+                segments, array=openings, cmap=cmap,
+                linewidths=lo + (hi - lo) * openings / top,
+            )
+            lines.set_clim(*(
+                clim if clim is not None else (float(min_opening), top)
+            ))
+            ax.add_collection(lines)
+            if scalar_bar:
+                ax.figure.colorbar(lines, ax=ax, label="crack opening")
+            drawn.append(segments.reshape(-1, 2))
+
+        allpts = np.vstack(drawn)
+        lo_xy, hi_xy = allpts.min(axis=0), allpts.max(axis=0)
+        pad = 0.03 * float((hi_xy - lo_xy).max() or 1.0)
+        ax.set_xlim(lo_xy[0] - pad, hi_xy[0] + pad)
+        ax.set_ylim(lo_xy[1] - pad, hi_xy[1] + pad)
+        ax.set_aspect("equal")
+        names = "xyz"
+        ax.set_xlabel(names[h])
+        ax.set_ylabel(names[v])
+        if title is None:
+            t = float(first.time[0]) if first.time.size else float("nan")
+            title = (f"cracks @ step {step} (t = {t:g}), {plane} view, "
+                     f"{openings.size} drawn")
         ax.set_title(title)
         return ax
 
