@@ -146,6 +146,66 @@ function openTracked<F>(h5: H5RuleOpenable<F>, path: string, mode: "r" | "Sr", a
 // raw superblock read (Windows: EBUSY / EACCES / EPERM): `H5BusyError`, and
 // nothing is copied. (h5wasm itself takes no file lock: emscripten's flock is a stub.)
 
+// -- A read that says when HDF5 refused it ---------------------------------------------
+//
+// h5wasm's `Dataset.slice` and `.value` ignore H5Dread's status: when HDF5 cannot follow a
+// damaged chunk index it prints its error stack and h5wasm returns the uninitialised buffer as
+// data. `readRows` calls the same binding (`Module.get_dataset_data`, which returns the status)
+// and throws `H5ReadError` on a refusal, so a damaged dataset is never read as numbers.
+
+/** The h5wasm module export `readRows` reads through (`h5wasm.Module`, after `ready`). */
+export interface H5ReadModule {
+  get_dataset_data(file_id: bigint, path: string, count: bigint[] | null, offset: bigint[] | null, strides: bigint[] | null, ptr: bigint): number;
+  _malloc(size: number): number;
+  _free(ptr: number): void;
+  readonly HEAPU8: Uint8Array;
+}
+
+/** A dataset as `readRows` reads it (an h5wasm `Dataset`). */
+export interface H5RowsDataset {
+  file_id: bigint;
+  path: string;
+  shape: number[] | null;
+  metadata: { type: number; size: number; signed: boolean };
+}
+
+/** HDF5 refused a read (its status was negative); nothing it returned is data. */
+export class H5ReadError extends Error {}
+
+/**
+ * Rows `a..b` (every column) of a 1-D or 2-D integer or float dataset, as the typed array of
+ * its stored type (int32, int64, float32, float64; the wasm heap is little-endian, as the
+ * callers require of the file). Throws `H5ReadError` when HDF5 refuses the read.
+ */
+export function readRows(mod: H5ReadModule, ds: H5RowsDataset, a: number, b: number): Int32Array | BigInt64Array | Float32Array | Float64Array {
+  const shape = ds.shape ?? [];
+  if (shape.length !== 1 && shape.length !== 2) throw new Error(`${ds.path}: readRows reads a 1-D or 2-D dataset, not rank ${shape.length}`);
+  const { type, size, signed } = ds.metadata;
+  const make =
+    type === 0 && signed && size === 4 ? (buf: ArrayBuffer) => new Int32Array(buf)
+    : type === 0 && signed && size === 8 ? (buf: ArrayBuffer) => new BigInt64Array(buf)
+    : type === 1 && size === 4 ? (buf: ArrayBuffer) => new Float32Array(buf)
+    : type === 1 && size === 8 ? (buf: ArrayBuffer) => new Float64Array(buf)
+    : null;
+  if (make === null) throw new Error(`${ds.path}: readRows reads int32, int64, float32 or float64 data (class ${type}, size ${size})`);
+  const cols = shape.length === 2 ? shape[1]! : 1;
+  const n = b - a;
+  if (n <= 0) return make(new ArrayBuffer(0));
+  const nbytes = n * cols * size;
+  const count = shape.length === 2 ? [BigInt(n), BigInt(cols)] : [BigInt(n)];
+  const offset = shape.length === 2 ? [BigInt(a), 0n] : [BigInt(a)];
+  const strides = shape.length === 2 ? [1n, 1n] : [1n];
+  const ptr = mod._malloc(nbytes);
+  if (!ptr) throw new Error(`${ds.path}: could not allocate ${nbytes} bytes to read rows ${a}..${b}`);
+  try {
+    const status = mod.get_dataset_data(ds.file_id, ds.path, count, offset, strides, BigInt(ptr));
+    if (status < 0) throw new H5ReadError(`${ds.path}: HDF5 refused to read rows ${a}..${b} (its chunk index or data does not read)`);
+    return make(mod.HEAPU8.slice(ptr, ptr + nbytes).buffer);
+  } finally {
+    mod._free(ptr);
+  }
+}
+
 /** What `openH5ByRule` needs of the h5wasm module: `File` read-only (`"r"`) and SWMR-read (`"Sr"`). */
 export interface H5RuleOpenable<F> {
   File: new (filename: string, mode: "r" | "Sr") => F;
@@ -301,12 +361,18 @@ function openRepaired<F>(h5: H5RuleOpenable<F>, path: string): F {
  * to refuse as it refuses any unreadable file.
  */
 export function openH5ByRule<F extends { file_id: bigint | number }>(h5: H5RuleOpenable<F>, path: string): RuleOpened<F> {
-  const flags = superblockFlags(path);
+  const sb = readSuperblock(path);
+  const flags = isV23(sb) ? sb[11]! : null;
   const plain = openTracked(h5, path, "r");
   if (!(Number(plain.file_id) < 0)) return { file: plain, step: 1, flags, repaired: false };
-  if (flags === 0x05) {
+  // Step 2 is the SWMR-read open, for a plain open's "already open for write" (flags 0x05) or
+  // "truncated file" (the stored EOA past the file's end), which an SWMR-read open skips; as
+  // the fork's open_ladruno, it applies to flags 0x00 too (SWMR-read accepts 0x00 and 0x05).
+  const truncated = flags !== null && new DataView(sb.buffer, sb.byteOffset, 48).getBigUint64(28, true) > BigInt(process.getBuiltinModule("node:fs").statSync(path).size);
+  if (flags === 0x05 || (flags === 0x00 && truncated)) {
     const swmr = openTracked(h5, path, "Sr");
     if (!(Number(swmr.file_id) < 0)) return { file: swmr, step: 2, flags, repaired: false };
+    if (flags === 0x00) return { file: plain, step: 1, flags, repaired: false };
     return { file: openRepaired(h5, path), step: 2, flags, repaired: true };
   }
   if (flags === 0x01) return { file: openRepaired(h5, path), step: 3, flags, repaired: true };

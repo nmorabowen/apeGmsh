@@ -12,7 +12,11 @@ implemented in Python and in apeGmshViewer:
    and open the copy. The user's file is never written.
 
 A lock error ("unable to lock file", or a raw read the OS refuses) raises a
-distinct busy error, and nothing is copied. The Python open is the shared
+distinct busy error, and nothing is copied. The viewer cannot see the fork
+writer's guard lock (a byte-range lock at 2^62 on Windows, `flock` on POSIX,
+with HDF5 file locking off): Node has no file-lock call, so a live run in a
+layout step opens in the viewer by step 3, from a copy, and reads as killed.
+The user's file is still never written. The Python reader reports it as busy. The Python open is the shared
 module `apeGmsh.results.readers._ladruno_open` (`open_ladruno`), which
 reports the step; `LadrunoReader` adopts it in #3003. The viewer opens every
 `.ladruno` this way (`reader/h5open.ts` `openH5ByRule`). h5wasm 0.10.3 opens
@@ -28,6 +32,15 @@ out. As the last stage it is skipped by name after step 1 or 3 and refused
 after step 2. Before another stage it is corruption and refused. A failing
 stage that holds outputs is refused after any step. This replaces the C2-REG
 refusal for the torn last stage.
+
+A stage also fails when HDF5 cannot read it: a damaged link B-tree, an
+unreadable `OFFSETS`, or a committed `ID` / `DATA` row whose chunk index does
+not read (each stage's last committed row is read when the file opens). A
+stage carrying `PARTICLE_EPOCH` whose group does not list is a failing
+particle stage, not an FE stage. Both readers give the same outcome on the
+same damaged bytes. h5wasm's `slice` returns its buffer as data when HDF5
+refuses a read, so the viewer's particle reader now reads through
+`reader/h5open.ts` `readRows`, which checks HDF5's status.
 
 Both readers also refuse a particle stage whose `UNIT_SYSTEM` names an
 apeGmsh unit system that disagrees with `UNIT_LENGTH` / `UNIT_FORCE` /

@@ -365,7 +365,7 @@ export class LadrunoFile {
     this.gauss = new LadrunoGauss(h5, f, (kind, message) => new LadrunoError(kind, message));
     const warnings: string[] = [];
     if (opened.step === 2) {
-      warnings.push(`${path}: a killed run (superblock flags 0x05), opened ${opened.repaired ? "through a repaired copy because SWMR-read refused it" : "SWMR-read"} (the reader rule's step 2, 232a §2.5); the file is not changed`);
+      warnings.push(`${path}: a killed run (a plain open refuses it: superblock flags 0x05, or a stored end-of-allocation past the file's end), opened ${opened.repaired ? "through a repaired copy because SWMR-read refused it" : "SWMR-read"} (the reader rule's step 2, 232a §2.5); the file is not changed`);
     } else if (opened.step === 3) {
       warnings.push(`${path}: a run killed while a stage was laid out (superblock flags 0x01), opened through a repaired copy (the reader rule's step 3, 232a §2.5); the file is not changed`);
     }

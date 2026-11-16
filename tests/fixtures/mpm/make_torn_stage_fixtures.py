@@ -16,6 +16,10 @@ cleanly, so their flags read 0x00. A test copies one and sets the flags to
 - ``particles_torn_early_stage_v1m2.ladruno``: the same torn stage first
   (``MODEL_STAGE[1]``, epoch 0), then a whole stage (``MODEL_STAGE[2]``,
   epoch 1, 3 outputs): an earlier stage that does not read is corruption.
+- ``particles_two_stages_v1m2.ladruno``: both stages whole (epochs 0 and 1,
+  3 outputs each), the base the HDF5-level damage cases flip bytes in
+  (``tests/results/test_ladruno_particles.py``, and the viewer's
+  ``ladrunoParticles.test.ts``, at the same offsets).
 - ``build(path, "half")`` (not committed): ``MODEL_STAGE[2]`` was killed
   after ``MODEL/PARTICLES`` was written and before ``RESULTS/ON_PARTICLES``
   was created (it does not open as a particle stage, C2-PAIR). The tests
@@ -70,12 +74,13 @@ def build(path: Path, kind: str) -> None:
             _tear_registry(first)
         elif kind == "half":
             del second["RESULTS/ON_PARTICLES"]
-        else:
+        elif kind != "whole":
             raise ValueError(kind)
 
 
 if __name__ == "__main__":
     for kind, name in (("last", "particles_torn_last_stage_v1m2.ladruno"),
-                       ("early", "particles_torn_early_stage_v1m2.ladruno")):
+                       ("early", "particles_torn_early_stage_v1m2.ladruno"),
+                       ("whole", "particles_two_stages_v1m2.ladruno")):
         build(HERE / name, kind)
         print(name)

@@ -46,6 +46,7 @@ test("particles_torn_v1m2.ladruno: 3 committed outputs, the fork's committed_out
 for (const [name, stages] of [
   ["particles_torn_last_stage_v1m2.ladruno", { read: [["stage_0", 3]], skipped: ["stage_1"], refused: [] }],
   ["particles_torn_early_stage_v1m2.ladruno", { read: [["stage_1", 3]], skipped: [], refused: ["stage_0"] }],
+  ["particles_two_stages_v1m2.ladruno", { read: [["stage_0", 3], ["stage_1", 3]], skipped: [], refused: [] }],
 ] as const) {
   test(`${name}: opens without a layout error, and the stage rule reads, skips and refuses as pinned`, () => {
     withFile(name, (f) => {

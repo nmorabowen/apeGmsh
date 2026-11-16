@@ -826,6 +826,96 @@ def test_a_torn_last_stage_by_open_step(fork, copy_of, src, flags, step, last) -
     assert p.read_bytes() == before
 
 
+# --- HDF5-level damage (#3008 review F1-F3): the viewer's ladrunoParticles.test.ts flips the
+# same bytes of the same fixture and expects the same outcome for every case.
+
+TWO = MPM / "particles_two_stages_v1m2.ladruno"   # both stages whole, 3 outputs each
+#: (label, byte offset, signature there, damaged stage (2 = the last), its index still commits outputs)
+DAMAGE = [
+    ("stage2-links-TREE", 66699, b"TREE", 2, False),
+    ("stage2-links-SNOD", 83851, b"SNOD", 2, False),
+    ("stage2-OFFSETS", 95043, b"TREE", 2, False),
+    ("stage2-STRESS-DATA", 113531, b"TREE", 2, True),
+    ("stage1-links-TREE", 2795, b"TREE", 1, False),
+    ("stage1-OFFSETS", 33187, b"TREE", 1, False),
+    ("stage1-STRESS-DATA", 51675, b"TREE", 1, True),
+]
+
+
+def _damaged(fork, copy_of, off: int, sig: bytes, flags: int) -> Path:
+    p = copy_of(TWO, f"damage_{off}_{flags:02x}.ladruno")
+    raw = bytearray(p.read_bytes())
+    assert raw[off:off + 4] == sig
+    raw[off] ^= 0x20
+    p.write_bytes(bytes(raw))
+    if flags:
+        fork[1].set_superblock(p, flags=flags)
+    return p
+
+
+def _fates(pf) -> list:
+    return [(s.group, s.status + (" (corruption)" if s.status == "refused"
+                                  and "corruption" in s.reason else ""), s.committed)
+            for s in pf.states]
+
+
+@pytest.mark.parametrize("label, off, sig, damaged, holds_outputs", DAMAGE,
+                         ids=[d[0] for d in DAMAGE])
+@pytest.mark.parametrize("flags, step", [(0x00, 1), (0x05, 2), (0x01, 3)],
+                         ids=["step1", "step2", "step3"])
+def test_hdf5_damage_through_the_stage_rule(fork, copy_of, label, off, sig, damaged,
+                                            holds_outputs, flags, step) -> None:
+    """A damaged B-tree node fails its stage, whatever h5py raises (RuntimeError
+    for a link B-tree, OSError for a chunk index, KeyError for a heap): a stage
+    that holds no countable output is torn (skipped as the last stage after step
+    1 or 3, refused after step 2); one with outputs, or one before another
+    stage, is refused. The other stage reads; the file is never written."""
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    p = _damaged(fork, copy_of, off, sig, flags)
+    before = p.read_bytes()
+    fate = ("refused" if holds_outputs else
+            "refused (corruption)" if damaged == 1 or step == 2 else "skipped")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with ParticleFile(p) as pf:
+            assert pf.step == step
+            whole = ("MODEL_STAGE[2]" if damaged == 1 else "MODEL_STAGE[1]", "read", 3)
+            hurt = (f"MODEL_STAGE[{damaged}]", fate, 0)
+            assert _fates(pf) == ([hurt, whole] if damaged == 1 else [whole, hurt])
+    assert p.read_bytes() == before
+
+
+def test_an_eoa_past_the_end_at_flags_0x00_opens_swmr_read(copy_of) -> None:
+    """h5py's plain open refuses "truncated file"; the SWMR-read open (step 2)
+    skips that check, as the fork's open_ladruno does (the viewer agrees)."""
+    from apeGmsh.results.readers._ladruno_open import lookup3
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    p = copy_of(TWO, "eoa_past_end.ladruno")
+    raw = bytearray(p.read_bytes())
+    raw[28:36] = (len(raw) + 4096).to_bytes(8, "little")
+    raw[44:48] = lookup3(bytes(raw[:44])).to_bytes(4, "little")
+    p.write_bytes(bytes(raw))
+    with pytest.raises(OSError, match="truncated file"):
+        h5py.File(p, "r")
+    with ParticleFile(p) as pf:
+        assert pf.step == 2
+        assert _states(pf) == [("MODEL_STAGE[1]", "read", 3), ("MODEL_STAGE[2]", "read", 3)]
+
+
+def test_a_bug_is_not_a_failing_stage(copy_of, monkeypatch) -> None:
+    """Only HDF5's errors fail a stage; a TypeError (a bug) propagates."""
+    from apeGmsh.results.readers import _ladruno_particles as lp
+
+    def broken(self):
+        raise TypeError("a bug")
+
+    monkeypatch.setattr(lp.ParticleStage, "validate", broken)
+    with pytest.raises(TypeError, match="a bug"):
+        lp.ParticleFile(TWO)
+
+
 @pytest.mark.parametrize("flags", [0x00, 0x05, 0x01], ids=["step1", "step2", "step3"])
 def test_an_earlier_torn_stage_is_corruption_after_any_step(fork, copy_of, flags) -> None:
     from apeGmsh.results.readers._ladruno_particles import ParticleFile

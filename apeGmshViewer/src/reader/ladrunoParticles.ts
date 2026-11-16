@@ -39,6 +39,7 @@
 
 import type { UnitSystemId } from "../state/types.ts";
 import { UNIT_SYSTEMS } from "../state/units.ts";
+import { H5ReadError, readRows, type H5ReadModule, type H5RowsDataset } from "./h5open.ts";
 
 /** HDF5 type classes, as h5wasm reports `metadata.type`. */
 const H5T_INTEGER = 0;
@@ -87,6 +88,8 @@ export interface PDataset extends PNode {
 export interface PCtors {
   Group: abstract new (...args: never[]) => unknown;
   Dataset: abstract new (...args: never[]) => unknown;
+  /** h5wasm's module export, through which `rowsOf` reads with HDF5's status (reader/h5open.ts `readRows`) */
+  Module: H5ReadModule;
 }
 
 /** A contract break: the rule code of the fork's page, and what was found. */
@@ -96,6 +99,47 @@ export class ParticleContractError extends Error {
     super(`${message} (${code})`);
     this.code = code;
   }
+}
+
+/** HDF5 refused a read of rows the stage needs (a damaged chunk index or data): the stage does not read. */
+export class ParticleReadError extends ParticleContractError {
+  constructor(message: string) {
+    super("C2-DATA", message);
+  }
+}
+
+/** Rows `a..b` of `ds`, read with HDF5's status: a refused read is a `ParticleReadError`, never numbers. */
+function rowsOf(ctors: PCtors, ds: PDataset, a: number, b: number): Int32Array | BigInt64Array | Float32Array | Float64Array {
+  try {
+    return readRows(ctors.Module, ds as unknown as H5RowsDataset, a, b);
+  } catch (err) {
+    if (err instanceof H5ReadError) throw new ParticleReadError(`${ds.path}: rows ${a}..${b} do not read (HDF5 refused the read: a damaged chunk index or data)`);
+    throw err;
+  }
+}
+
+/** `readIds` through `rowsOf`: int64 (each a safe integer) or int32 rows as Numbers. */
+function idsOf(ctors: PCtors, ds: PDataset, a: number, b: number): Float64Array {
+  if (b === a) return new Float64Array(0);
+  const v = rowsOf(ctors, ds, a, b);
+  if (v instanceof BigInt64Array) return Float64Array.from(v, (x, i) => safe(x, `${ds.path}[${a + i}]`));
+  if (v instanceof Int32Array) return Float64Array.from(v);
+  throw new ParticleContractError("C2-DTYPE", `${ds.path} is not an int64 or int32 dataset`);
+}
+
+/** `floats` through `rowsOf`. */
+function floatsOf(ctors: PCtors, ds: PDataset, a: number, b: number): Float64Array {
+  return b === a ? new Float64Array(0) : floats(rowsOf(ctors, ds, a, b), ds.path);
+}
+
+/** `int32s` through `rowsOf`. */
+function int32sOf(ctors: PCtors, ds: PDataset, n: number, code: string): Int32Array {
+  exactInt(ds, 4, code);
+  if (oneD(ds, code) !== n) throw new ParticleContractError(code, `${ds.path} has ${oneD(ds, code)} rows; expected ${n}`);
+  if (n === 0) return new Int32Array(0);
+  const v = rowsOf(ctors, ds, 0, n);
+  if (!(v instanceof Int32Array)) throw new ParticleContractError(code, `${ds.path} did not read as int32`);
+  return v;
 }
 
 // -- what the points layer (M2-S4) draws from ------------------------------------
@@ -229,12 +273,17 @@ export class LadrunoParticles {
     const read: ParticleStage[] = [];
     const refused: ParticleRead["refused"] = [];
     const skipped: ParticleRead["skipped"] = [];
+    // Which stages carry particles, from what survives damage (`particleEvidence`); a stage
+    // whose group does not list is a particle stage that fails, when the file carries particles.
+    const evidence = stages.map((s) => particleEvidence(s.group, ctors));
+    const particleFile = evidence.includes(true);
     stages.forEach((s, i) => {
-      if (!hasParticleGroups(s.group, ctors)) return;
+      if (evidence[i] === false || (evidence[i] === null && !particleFile)) return;
       try {
+        if (evidence[i] === null) throw new ParticleReadError(`${s.group.path}: the stage group does not list (its links are damaged, or were never written)`);
         read.push(this.readStage(s.id, s.group, s.fileKind, ndm));
       } catch (err) {
-        // A contract break, or an HDF5 read error (h5wasm throws a plain Error); a TypeError or the like is a bug and propagates.
+        // A contract break or a refused HDF5 read (ParticleReadError), or an h5wasm error (a plain Error); a TypeError or the like is a bug and propagates.
         if (!(err instanceof ParticleContractError) && !(err instanceof Error && err.constructor === Error)) throw err;
         const why = err.message;
         const outputs = outputsOnDisk(s.group, ctors);
@@ -291,7 +340,7 @@ export class LadrunoParticles {
     const { ids, rows } = this.checkedIds(s, k, a, b);
     const nComp = f.components.length;
     const dataDs = this.dataset(`${on}/${field}/DATA`);
-    const values = b === a ? new Float64Array(0) : floats(dataDs.slice([[a, b], [0, nComp]]), dataDs.path);
+    const values = floatsOf(this.ctors, dataDs, a, b);
     if (values.length !== (b - a) * nComp) throw new ParticleContractError("C2-DATA", `${dataDs.path}: rows ${a}..${b} read ${values.length} values, not ${(b - a) * nComp}`);
     return { ids, rows, values, nComp, step: s.steps[k]!, time: s.time[k]! };
   }
@@ -307,7 +356,7 @@ export class LadrunoParticles {
   /** Rows `a..b` of `ID` (output `k`): each a safe integer, strictly increasing within the output, and in the stage registry (C2-ID). */
   private checkedIds(s: ParticleStage, k: number, a: number, b: number): { ids: Float64Array; rows: Int32Array } {
     const idDs = this.dataset(`${s.group}/RESULTS/ON_PARTICLES/ID`);
-    const ids = readIds(idDs, a, b);
+    const ids = idsOf(this.ctors, idDs, a, b);
     for (let i = 1; i < ids.length; i++) {
       if (!(ids[i]! > ids[i - 1]!)) throw new ParticleContractError("C2-ID", `${idDs.path}: output ${k}'s ids are not strictly increasing at row ${a + i}`);
     }
@@ -323,6 +372,9 @@ export class LadrunoParticles {
   private readStage(stageId: string, g: PGroup, fileKind: string, fileNdm: number | null): ParticleStage {
     const hasModel = childNamed(g, ["MODEL", "PARTICLES"], this.ctors);
     const hasOn = childNamed(g, ["RESULTS", "ON_PARTICLES"], this.ctors);
+    if (!hasModel && !hasOn) {
+      throw new ParticleContractError("C2-PAIR", `${g.path} has PARTICLE_EPOCH but holds neither MODEL/PARTICLES nor RESULTS/ON_PARTICLES; a particle stage holds both`);
+    }
     if (!hasModel || !hasOn) {
       throw new ParticleContractError("C2-PAIR", `${g.path} holds ${hasModel ? "MODEL/PARTICLES" : "RESULTS/ON_PARTICLES"} without ${hasModel ? "RESULTS/ON_PARTICLES" : "MODEL/PARTICLES"}; both or neither`);
     }
@@ -381,14 +433,14 @@ export class LadrunoParticles {
     if (lengths.some((l) => l.rows !== lengths[0]!.rows)) {
       throw new ParticleContractError("C2-REG", `stage ${stageId} (${model.path}): the registry columns differ in length (${lengths.map((l) => `${l.n} ${l.rows}`).join(", ")})`);
     }
-    const ids = readIds(idDs, 0, oneD(idDs, "C2-REG"));
+    const ids = idsOf(this.ctors, idDs, 0, oneD(idDs, "C2-REG"));
     for (let i = 1; i < ids.length; i++) if (!(ids[i]! > ids[i - 1]!)) throw new ParticleContractError("C2-REG", `${idDs.path} is not strictly increasing at row ${i}`);
-    const bodyIds = int32s(ds("BODY_ID"), ids.length, "C2-REG");
-    const materialTags = int32s(ds("MATERIAL_TAG"), ids.length, "C2-REG");
+    const bodyIds = int32sOf(this.ctors, ds("BODY_ID"), ids.length, "C2-REG");
+    const materialTags = int32sOf(this.ctors, ds("MATERIAL_TAG"), ids.length, "C2-REG");
     const massDs = ds("MASS");
     exactFloat(massDs, 8, "C2-REG");
     if (oneD(massDs, "C2-REG") !== ids.length) throw new ParticleContractError("C2-REG", `${massDs.path} has ${oneD(massDs, "C2-REG")} rows and the registry ID ${ids.length}`);
-    const mass = ids.length === 0 ? new Float64Array(0) : floats(massDs.value, massDs.path);
+    const mass = floatsOf(this.ctors, massDs, 0, ids.length);
     const known = new Set(bodies.map((b) => b.id));
     bodyIds.forEach((b, i) => {
       if (!known.has(b)) throw new ParticleContractError("C2-REG", `${model.path}/BODY_ID[${i}] = ${b} is not in BODIES/ID`);
@@ -412,7 +464,7 @@ export class LadrunoParticles {
     const nTime = oneD(timeDs, "C2-AXES");
     const nOff = oneD(offDs, "C2-OFF");
     const nId = oneD(idDs, "C2-ID");
-    const offsets = nOff === 0 ? new Float64Array(0) : readIds(offDs, 0, nOff);
+    const offsets = idsOf(this.ctors, offDs, 0, nOff);
     const { nOffUsed, inFlight } = offsetsRule(offsets, offDs.path);
     // Then T' = min(len(STEP), len(TIME), len(OFFSETS) - 1), and the ID and DATA bounds apply to what remains.
     // The fields, checked against the contract; each one's DATA length bounds the outputs.
@@ -455,9 +507,16 @@ export class LadrunoParticles {
     const used = nOff === 0 ? 0 : offsets[n]!;
     const longer = bounds.filter((b) => b.rows > used);
     if (longer.length > 0) notes.push(`rows past ${used} (${longer.map((b) => `${b.what}: ${b.rows}`).join(", ")}) are a partial output and are not read`);
-    const steps = n === 0 ? new Float64Array(0) : readIds(stepDs, 0, n);
+    const steps = idsOf(this.ctors, stepDs, 0, n);
     for (let k = 1; k < n; k++) if (!(steps[k]! > steps[k - 1]!)) throw new ParticleContractError("C2-AXES", `${stepDs.path} is not strictly increasing at output ${k} (${steps[k - 1]}, then ${steps[k]})`);
-    const time = n === 0 ? new Float64Array(0) : floats(timeDs.slice([[0, n]]), timeDs.path);
+    const time = floatsOf(this.ctors, timeDs, 0, n);
+    // The last committed row of ID and of every field's DATA reads (one row each, never the history):
+    // a chunk index HDF5 cannot follow fails the stage here (C2-DATA), as the Python reader's probe does.
+    if (n > 0 && offsets[n]! > 0) {
+      const last = offsets[n]! - 1;
+      rowsOf(this.ctors, idDs, last, last + 1);
+      for (const f of fields) rowsOf(this.ctors, requiredDataset(requiredGroup(on, f.name, this.ctors, "C2-DATA"), "DATA", this.ctors, "C2-DATA"), last, last + 1);
+    }
     return {
       nOutputs: n,
       steps,
@@ -519,7 +578,7 @@ export function committedOutputs(on: PGroup, ctors: PCtors): number {
   const ds = (name: string) => requiredDataset(on, name, ctors, "C2-AXES");
   const offDs = ds("OFFSETS");
   const nOff = oneD(offDs, "C2-OFF");
-  const offsets = nOff === 0 ? new Float64Array(0) : readIds(offDs, 0, nOff);
+  const offsets = idsOf(ctors, offDs, 0, nOff);
   const { nOffUsed } = offsetsRule(offsets, offDs.path);
   const bounds = [{ what: `${on.path}/ID`, rows: oneD(ds("ID"), "C2-ID") }];
   for (const name of on.keys()) {
@@ -534,7 +593,8 @@ export function committedOutputs(on: PGroup, ctors: PCtors): number {
 /**
  * The outputs a failing stage's index commits (`committedOutputs`): 0 when its
  * RESULTS/ON_PARTICLES or an index dataset is absent or does not read (its layout did not
- * complete), null when the index itself is refused (C2-OFF).
+ * complete, or HDF5 refuses the read), null when the index itself is refused (C2-OFF).
+ * The Python twin is `_ladruno_particles.py::_outputs_on_disk`.
  */
 function outputsOnDisk(stage: PGroup, ctors: PCtors): number | null {
   try {
@@ -545,10 +605,24 @@ function outputsOnDisk(stage: PGroup, ctors: PCtors): number | null {
     if (!INDEX_DATASETS.every((n) => g.keys().includes(n) && g.get(n) instanceof ctors.Dataset)) return 0;
     return committedOutputs(g, ctors);
   } catch (err) {
+    if (err instanceof ParticleReadError) return 0;
     if (err instanceof ParticleContractError) return null;
     if (err instanceof Error && err.constructor === Error) return 0;
     throw err;
   }
+}
+
+/**
+ * Whether a stage carries particles, from what survives damage: true when it has
+ * `PARTICLE_EPOCH` (an attribute in the object header, readable when the group's links are
+ * not) or names either half of the particle group; false for an FE stage; null when the group
+ * lists nothing (h5wasm lists a group whose links are damaged as empty; a kill can leave one
+ * empty). The Python twin is `_ladruno_particles.py::_particle_evidence`.
+ */
+function particleEvidence(stage: PGroup, ctors: PCtors): boolean | null {
+  if (stage.attrs["PARTICLE_EPOCH"] !== undefined) return true;
+  if (stage.keys().length === 0) return null;
+  return hasParticleGroups(stage, ctors);
 }
 
 /**

@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
-import { H5BusyError, lookup3, openH5ByRule, repairCopy, superblockFlags, superblockIo, type H5RuleOpenable } from "../../src/reader/h5open.ts";
+import { H5BusyError, H5ReadError, lookup3, openH5ByRule, readRows, repairCopy, superblockFlags, superblockIo, type H5ReadModule, type H5RowsDataset, type H5RuleOpenable } from "../../src/reader/h5open.ts";
 import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
 import { committedOutputs, type LadrunoParticles, type ParticleStage, type PCtors, type PGroup } from "../../src/reader/ladrunoParticles.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
@@ -815,6 +815,73 @@ for (const [src, label] of [[TORN_LAST, "registry torn (crash rule step 0)"], [H
     });
   }
 }
+
+// -- HDF5-level damage (#3008 review F1-F3): the same byte flips, through both readers ---------------
+//
+// particles_two_stages_v1m2.ladruno (both stages whole) with one B-tree node's signature flipped, at the
+// offsets tests/results/test_ladruno_particles.py flips too; each case expects the same outcome there.
+
+const TWO = repo("tests/fixtures/mpm/particles_two_stages_v1m2.ladruno");
+/** [label, byte offset, signature there, the damaged stage (1 = the last), whether that stage's index still commits outputs] */
+const DAMAGE = [
+  ["MODEL_STAGE[2]'s link B-tree (TREE)", 66699, "TREE", 2, false],
+  ["MODEL_STAGE[2]'s symbol-table node (SNOD)", 83851, "SNOD", 2, false],
+  ["MODEL_STAGE[2] OFFSETS' chunk index", 95043, "TREE", 2, false],
+  ["MODEL_STAGE[2] STRESS/DATA's chunk index", 113531, "TREE", 2, true],
+  ["MODEL_STAGE[1]'s link B-tree (TREE)", 2795, "TREE", 1, false],
+  ["MODEL_STAGE[1] OFFSETS' chunk index", 33187, "TREE", 1, false],
+  ["MODEL_STAGE[1] STRESS/DATA's chunk index", 51675, "TREE", 1, true],
+] as const;
+
+/** A copy of TWO with the byte at `off` flipped (after checking the signature there), then flags `flags`. */
+function damagedCopy(off: number, sig: string, flags: number, name: string): string {
+  const b = readFileSync(TWO);
+  assert.equal(b.subarray(off, off + 4).toString("latin1"), sig, `${sig} at ${off}`);
+  b[off]! ^= 0x20;
+  const flipped = join(tmp, `${name}.flipped`);
+  writeFileSync(flipped, b);
+  return flaggedCopy(flipped, flags, name);
+}
+
+for (const [label, off, sig, damaged, holdsOutputs] of DAMAGE) {
+  for (const [flags, step] of [[0x00, 1], [0x05, 2], [0x01, 3]] as const) {
+    // The damaged stage fails. Holding no countable output it is torn: skipped as the last stage after
+    // step 1 or 3, refused after step 2; with outputs, or before another stage, refused.
+    const fate = holdsOutputs ? "refused" : damaged === 1 || step === 2 ? "refused (corruption)" : "skipped";
+    test(`damage, ${label}, opened by step ${step}: that stage is ${fate}, the other reads 3 outputs`, () => {
+      const r = stageRule(damagedCopy(off, sig, flags, `damage_${off}_${step}.ladruno`));
+      assert.equal(r.step, step);
+      assert.deepEqual(r.stages, damaged === 1 ? [`stage_0 ${fate}`, "stage_1 read 3"] : ["stage_0 read 3", `stage_1 ${fate}`]);
+    });
+  }
+}
+
+test("a stored end-of-allocation past the file's end at flags 0x00 opens SWMR-read (step 2), as h5py's \"truncated file\" does; both stages read", () => {
+  const path = join(tmp, "eoa_past_end.ladruno");
+  copyFileSync(TWO, path);
+  const b = readFileSync(path);
+  b.writeBigUInt64LE(BigInt(b.length + 4096), 28);
+  b.writeUInt32LE(lookup3(b.subarray(0, 44)), 44);
+  writeFileSync(path, b);
+  assert.ok(Number(new h5wasm.File(path, "r").file_id) < 0, "a plain open refuses it");
+  const r = stageRule(path);
+  assert.equal(r.step, 2);
+  assert.deepEqual(r.stages, ["stage_0 read 3", "stage_1 read 3"]);
+});
+
+test("a refused HDF5 read is an error, never the buffer h5wasm hands back as data (readRows)", () => {
+  const path = damagedCopy(113531, "TREE", 0x00, "garbage.ladruno");
+  const f = new h5wasm.File(path, "r");
+  try {
+    const ds = f.get("MODEL_STAGE[2]/RESULTS/ON_PARTICLES/STRESS/DATA") as h5wasm.Dataset;
+    assert.equal((ds.slice([[0, 1]]) as Float64Array).length, 3, "h5wasm's slice returns a buffer, whatever HDF5 said");
+    assert.throws(() => readRows(h5wasm.Module as unknown as H5ReadModule, ds as unknown as H5RowsDataset, 0, 1), H5ReadError);
+    const ok = f.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES/STRESS/DATA") as h5wasm.Dataset;
+    assert.deepEqual(Array.from(readRows(h5wasm.Module as unknown as H5ReadModule, ok as unknown as H5RowsDataset, 0, 1) as Float64Array), [-3.67875, -7.3575, 0]);
+  } finally {
+    f.close();
+  }
+});
 
 for (const [flags, step] of [[0x00, 1], [0x05, 2], [0x01, 3]] as const) {
   test(`an earlier stage torn while laid out is corruption after step ${step}: refused, and the last stage reads`, () => {

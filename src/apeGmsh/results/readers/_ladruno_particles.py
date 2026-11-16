@@ -74,6 +74,11 @@ _PART_FILE_RE = re.compile(r"\.part-\d+\.ladruno$", re.IGNORECASE)
 _INDEX_DATASETS = ("STEP", "TIME", "OFFSETS", "ID")
 #: The registry datasets of ``MODEL/PARTICLES`` (contract §2.4).
 _REGISTRY_DATASETS = ("ID", "BODY_ID", "MATERIAL_TAG", "MASS")
+#: What h5py raises for an object HDF5 cannot read (a damaged B-tree raises
+#: RuntimeError, a missing link KeyError, a failed read OSError). The stage
+#: rule catches these around a stage's HDF5 reads; any other exception is a
+#: bug and propagates.
+_H5_ERRORS = (OSError, KeyError, ValueError, RuntimeError)
 
 
 class ParticleFormatError(ValueError):
@@ -435,6 +440,28 @@ class ParticleStage:
         self.registry()
         self.fields()
         self.committed()
+        self._probe_committed_rows()
+
+    def _probe_committed_rows(self) -> None:
+        """Read the last committed row of ``ID`` and of every field's
+        ``DATA`` (one row each, never the history): a chunk index HDF5
+        cannot follow refuses the stage here, not at a later read (C2-DATA).
+        A damaged node that indexes only earlier rows is found when they are
+        read."""
+        offsets, _, _ = self.committed()
+        last = int(offsets[-1]) - 1
+        if last < 0:
+            return
+        where = f"{self._where} RESULTS/ON_PARTICLES"
+        for name in ("ID", *self.fields()):
+            ds = self._results["ID"] if name == "ID" else self._results[name]["DATA"]
+            try:
+                ds[last]
+            except _H5_ERRORS as e:
+                raise ParticleFormatError(
+                    f"{where}/{name if name == 'ID' else name + '/DATA'}: committed "
+                    f"row {last} does not read ({str(e).splitlines()[0]}) (C2-DATA)."
+                ) from e
 
     # -- metadata -----------------------------------------------------
 
@@ -797,7 +824,7 @@ def _outputs_on_disk(h5: "h5py.File", name: str) -> Optional[int]:
         return committed_outputs(on)
     except ParticleFormatError:
         return None
-    except (OSError, KeyError, ValueError):
+    except _H5_ERRORS:
         return 0
 
 
@@ -807,6 +834,31 @@ def _registry_lengths(stage_grp: "h5py.Group") -> "dict[str, int]":
     return {k: model[k].shape[0] for k in _REGISTRY_DATASETS if k in model}
 
 
+def _particle_evidence(h5: "h5py.File", name: str) -> Optional[bool]:
+    """Whether stage ``name`` carries particles, from what survives damage:
+    True when it has ``PARTICLE_EPOCH`` (an attribute, in the object header,
+    readable when the group's links are not) or names either half of the
+    particle group; False for an FE stage; None when the group does not list
+    (its links are damaged, or a kill left it empty)."""
+    try:
+        grp = h5[name]
+    except _H5_ERRORS:
+        return None
+    try:
+        if "PARTICLE_EPOCH" in grp.attrs:
+            return True
+    except _H5_ERRORS:
+        pass
+    try:
+        children = list(grp)
+        if not children:
+            return None
+        return (("MODEL" in children and "PARTICLES" in grp["MODEL"])
+                or ("RESULTS" in children and "ON_PARTICLES" in grp["RESULTS"]))
+    except _H5_ERRORS:
+        return None
+
+
 def particle_stage_report(
     h5: "h5py.File", path: Path, step: int,
 ) -> "tuple[list[ParticleStageState], dict[str, ParticleStage]]":
@@ -814,10 +866,14 @@ def particle_stage_report(
     ``tests/mpm_contracts.py::particle_stage_report``) for a file opened by
     reader-rule ``step`` (``_ladruno_open.STEP_*``).
 
-    Every ``MODEL_STAGE`` in id order whose group will not open, or that
-    names a particle group (either half), is read: its registry first (the
-    crash rule's step 0: columns of unequal length mean the stage was torn
-    while it opened), then :meth:`ParticleStage.validate`. A stage that
+    A ``MODEL_STAGE`` is a particle stage when it carries ``PARTICLE_EPOCH``
+    or names either half of the particle group, or, in a file with another
+    particle stage, when its group does not list (damaged links, or a kill
+    before any link): :func:`_particle_evidence`. Each particle stage, in id
+    order, is read: its registry first (the crash rule's step 0: columns of
+    unequal length mean the stage was torn while it opened), then
+    :meth:`ParticleStage.validate`, which also reads each committed field's
+    last row. Any HDF5 read error (``_H5_ERRORS``) fails the stage. A stage that
     fails was torn while it was laid out only if it holds no output: the
     writer lays a stage out in full, registry included, before output 0, and
     creates nothing after (§2.5, "The writer's guarantees"), so a failing
@@ -833,19 +889,29 @@ def particle_stage_report(
     states: "list[ParticleStageState]" = []
     stages: "dict[str, ParticleStage]" = {}
     particle_names: "list[str]" = []
+    evidence = {name: _particle_evidence(h5, name) for name in names}
+    particle_file = any(v is True for v in evidence.values())
     for i, name in enumerate(names):
         where = f"{path.name} {name}"
+        # An FE stage is not the particle reader's; a stage that does not list
+        # is a particle stage that fails, when the file carries particles.
+        if evidence[name] is False or (evidence[name] is None and not particle_file):
+            continue
+        particle_names.append(name)
         try:
+            if evidence[name] is None:
+                raise ParticleFormatError(
+                    f"{where}: the stage group does not list (its links are "
+                    "damaged, or were never written).")
             grp = h5[name]
             has_model = "MODEL" in grp and "PARTICLES" in grp["MODEL"]
             has_results = "RESULTS" in grp and "ON_PARTICLES" in grp["RESULTS"]
-            if not (has_model or has_results):
-                continue    # an FE stage: not the particle reader's
-            particle_names.append(name)
-            if has_model != has_results:
+            if not (has_model and has_results):
                 raise ParticleFormatError(
-                    f"{where}: MODEL/PARTICLES and RESULTS/ON_PARTICLES are "
-                    "present together or not at all (C2-PAIR).")
+                    f"{where} holds "
+                    f"{'MODEL/PARTICLES' if has_model else 'no MODEL/PARTICLES'} and "
+                    f"{'RESULTS/ON_PARTICLES' if has_results else 'no RESULTS/ON_PARTICLES'}; "
+                    "a particle stage holds both (C2-PAIR).")
             lengths = _registry_lengths(grp)
             if len(set(lengths.values())) > 1:
                 raise ParticleStageTornError(
@@ -854,7 +920,7 @@ def particle_stage_report(
                     "(contract §2.5, crash rule step 0).")
             stage = ParticleStage(grp, where=where)
             stage.validate()
-        except (ParticleFormatError, OSError, KeyError, ValueError) as e:
+        except (ParticleFormatError, *_H5_ERRORS) as e:
             why = str(e).splitlines()[0] if str(e) else type(e).__name__
             outputs = _outputs_on_disk(h5, name)
             if outputs != 0:

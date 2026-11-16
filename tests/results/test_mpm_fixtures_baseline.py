@@ -128,10 +128,13 @@ def test_python_reader_reads_the_reference_committed_outputs(contracts, path: Pa
 
 TORN_LAST = MPM / "particles_torn_last_stage_v1m2.ladruno"
 TORN_EARLY = MPM / "particles_torn_early_stage_v1m2.ladruno"
+TWO = MPM / "particles_two_stages_v1m2.ladruno"   # both whole: the damage cases' base
 
 
 @pytest.mark.parametrize("path, stage", [(TORN_LAST, "MODEL_STAGE[1]"),
-                                         (TORN_EARLY, "MODEL_STAGE[2]")],
+                                         (TORN_EARLY, "MODEL_STAGE[2]"),
+                                         (TWO, "MODEL_STAGE[1]"),
+                                         (TWO, "MODEL_STAGE[2]")],
                          ids=lambda x: x.name if isinstance(x, Path) else x)
 def test_torn_stage_fixtures_whole_stage_reads_3(contracts, path: Path, stage: str) -> None:
     assert contracts.committed_outputs(str(path), stage=stage) == 3
@@ -140,6 +143,7 @@ def test_torn_stage_fixtures_whole_stage_reads_3(contracts, path: Path, stage: s
 @pytest.mark.parametrize("path, expected", [
     (TORN_LAST, ["read 3", "ParticleStageTornError"]),
     (TORN_EARLY, ["ParticleStageTornError", "read 3"]),
+    (TWO, ["read 3", "read 3"]),
 ], ids=lambda x: x.name if isinstance(x, Path) else "")
 def test_ladruno_reader_on_the_torn_stage_fixtures(path: Path, expected: list) -> None:
     """``LadrunoReader`` opens these files plainly and does not apply the stage

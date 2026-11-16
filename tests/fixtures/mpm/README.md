@@ -36,6 +36,7 @@ process kill.
 | `particles_killed_swmr_replay.h5` | `make_killed_swmr_replay.py <fork files at f0b9a1df6>`: the fork's `Ladruno_scripts/mpm_crash_tests/hdf5_crash_replay.py` (blob `99772f89ceda9596f63027800300c4eb5d886cd9`), unmodified: `write_run(fobj, 6, False, 8 << 20, 0, True)` (SWMR, the current writer's HDF5 call pattern), the image after write op 237, then the tool's own `check()` (flags 0x05 with a new lookup3: sec2's SWMR flags, which the fileobj driver does not write). h5py 3.15.1 / HDF5 1.14.6. | `145223563319571019c32d2f144ff8665b040080` |
 | `particles_torn_last_stage_v1m2.ladruno` | `make_torn_stage_fixtures.py`, from `particles_v1m2.ladruno` | `732ad5cd110307e0d38d3f8b33ac0d91ec4a3938` |
 | `particles_torn_early_stage_v1m2.ladruno` | `make_torn_stage_fixtures.py`, from `particles_v1m2.ladruno` | `f1e21eaea23c3d28f5e8889706c4eaa3359cae96` |
+| `particles_two_stages_v1m2.ladruno` | `make_torn_stage_fixtures.py`, from `particles_v1m2.ladruno` (both stages whole) | `a0dd6da74661634f36fd6710bb3f5945f92f2510` |
 
 - `particles_killed_swmr_replay.h5` is an HDF5 image of the particle group's layout as the
   replay models it, **not** a contract-conformant `.ladruno` (no `INFO`, and its field
@@ -53,6 +54,11 @@ process kill.
   (`build(p, "half")` in Python, `rewritten(..., { noLastOnParticles: true })` in the viewer):
   `LadrunoReader` refuses it at open (C2-PAIR), and every committed `.ladruno` must open
   (`tests/results/test_ladruno_duplicate_node_ids.py`).
+- `particles_two_stages_v1m2.ladruno` is the base of the HDF5-level damage cases: both test
+  suites flip the first byte of the same B-tree node signatures (`TREE`/`SNOD`, at byte offsets
+  the tests list and check) in a copy, and expect the same stage outcome from both readers. The
+  offsets hold as long as the file's blob sha above holds; a rebuild that changes the bytes
+  needs the offsets found again (the tests assert the signature at each one).
 
 `fork_a1d4c7260/` holds the stage rule's **reference code** at
 `a1d4c72601fe394a58a33e1596bb21a2efbb3d4c` (OpenSees#1088: 232a §2.5's stage rule), read as an
