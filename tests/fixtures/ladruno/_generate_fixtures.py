@@ -374,9 +374,9 @@ def _bezier_tet10(path: str) -> None:
 
 def _crack_bricks(path: str) -> None:
     # Three unit bricks along x, clamped in x at x=0 and pulled at x=3.
-    # Without ``-crackPlanes`` ASDConcrete3D reports crackWidth = 0 (its
-    # max strain measure loops over crack planes, of which the isotropic
-    # mode has none), so the planes are on: both buckets then carry data.
+    # ``-crackPlanes`` is on so crackPattern fills all three vector slots
+    # (the isotropic mode fills only c1); crackWidth reads the same in
+    # both modes.
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     nx = 3
