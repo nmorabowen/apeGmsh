@@ -675,12 +675,12 @@ def test_output_ids_are_checked_on_the_rows_read(copy_of, opened, row, value, ma
 
 
 def test_registry_columns_of_unequal_length_refuse(copy_of, opened) -> None:
-    """Contract §2.4 at fork e30872e34: every registry column is ``[M]``,
-    and the registry is extensible, appended during the stage. Unequal
-    columns are C2-REG, and the stage is refused. A rule that skips a
-    stage whose registry was torn while the stage opened is proposed in
-    OpenSees#1081, which has not merged; M2-S6 (#2990) follows the merged
-    contract and keeps this refusal."""
+    """Contract §2.4: every registry column is ``[M]``; unequal columns are
+    C2-REG. Since OpenSees#1081 (232a §2.5, crash rule step 0) such a stage
+    was torn while it opened, and the stage rule skips it when it is the
+    last stage of a file opened by step 1 or 3 (``ParticleFile``, below).
+    ``LadrunoReader`` does not know the open step until it adopts the shared
+    open (#3003), so through it the stage is still refused."""
     p = copy_of(PARTICLES)
     with h5py.File(p, "r+") as f:
         _resize(f[f"{REG}/MASS"], f[f"{REG}/MASS"].shape[0] - 2)
@@ -705,3 +705,164 @@ def test_field_attributes_are_checked(copy_of, opened, edit, match) -> None:
 
 def test_result_level_has_particles() -> None:
     assert ResultLevel("particles") is ResultLevel.PARTICLES
+
+
+# --- UNIT_SYSTEM against UNIT_LENGTH / UNIT_FORCE / UNIT_TIME (#2991) ------------------
+
+@pytest.mark.parametrize("system, ok", [
+    ("kN_m_s", True),          # the fixture's: kN, m, s
+    ("N_mm_s", False),         # N, mm, s: force and length disagree
+    ("tf_m_s", False),         # tf, m, s: force disagrees
+    ("not_an_apegmsh_id", True),   # informative and unknown: not used, not checked
+])
+def test_unit_system_must_agree_with_the_unit_attributes(copy_of, opened, system, ok) -> None:
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        f[REG].attrs["UNIT_SYSTEM"] = np.bytes_(system)
+    r = opened(p)
+    if ok:
+        assert r.particles.get(component="POSITION").n_outputs == 3
+    else:
+        with pytest.raises(ParticleFormatError, match="UNIT_SYSTEM.*disagree.*C2-UNIT"):
+            r.particles.get(component="POSITION")
+
+
+# --- a killed run: the stage rule by open step (232a §2.5 at a1d4c7260, #2991) ---------
+
+TORN_LAST = MPM / "particles_torn_last_stage_v1m2.ladruno"     # step 0 in the last stage
+HALF_LAST = MPM / "particles_half_last_stage_v1m2.ladruno"     # no ON_PARTICLES in the last
+TORN_EARLY = MPM / "particles_torn_early_stage_v1m2.ladruno"   # step 0 in the first stage
+ORACLE = MPM / "fork_a1d4c7260"
+
+
+@pytest.fixture(scope="module")
+def fork():
+    """The fork's ``mpm_contracts`` / ``ladruno_format`` at a1d4c7260 (the
+    stage rule's reference), with ``sys.path`` / ``sys.modules`` restored."""
+    import importlib
+    import sys
+
+    names = ("mpm_contracts", "ladruno_format", "ladruno_basis")
+    saved_path = list(sys.path)
+    saved = {n: sys.modules.get(n) for n in names}
+    for n in names:
+        sys.modules.pop(n, None)
+    sys.path.insert(0, str(ORACLE))
+    try:
+        yield importlib.import_module("mpm_contracts"), importlib.import_module("ladruno_format")
+    finally:
+        sys.path[:] = saved_path
+        for n, m in saved.items():
+            if m is None:
+                sys.modules.pop(n, None)
+            else:
+                sys.modules[n] = m
+
+
+def _flagged(fork, copy_of, src: Path, flags: int) -> Path:
+    p = copy_of(src, f"{src.stem}.{flags:02x}.ladruno")
+    if flags:
+        fork[1].set_superblock(p, flags=flags)
+    return p
+
+
+def _states(pf) -> list:
+    return [(s.group, s.status, s.committed) for s in pf.states]
+
+
+@pytest.mark.parametrize("src", [TORN_LAST, HALF_LAST], ids=["registry", "half"])
+@pytest.mark.parametrize("flags, step, last", [
+    (0x00, 1, "skipped"), (0x05, 2, "refused"), (0x01, 3, "skipped"),
+], ids=["step1", "step2", "step3"])
+def test_a_torn_last_stage_by_open_step(fork, copy_of, src, flags, step, last) -> None:
+    from apeGmsh.results.readers._ladruno_particles import (
+        ParticleFile,
+        ParticleStageSkippedWarning,
+    )
+    p = _flagged(fork, copy_of, src, flags)
+    before = p.read_bytes()
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with ParticleFile(p) as pf:
+            assert pf.step == step
+            assert _states(pf) == [("MODEL_STAGE[1]", "read", 3),
+                                   ("MODEL_STAGE[2]", last, 0)]
+            assert pf.stage("MODEL_STAGE[1]").read("POSITION").n_outputs == 3
+            with pytest.raises(ParticleFormatError, match=f"MODEL_STAGE\\[2\\] is {last}"):
+                pf.stage("MODEL_STAGE[2]")
+            reason = pf.states[1].reason
+    skipped = [x for x in w if issubclass(x.category, ParticleStageSkippedWarning)]
+    if last == "skipped":
+        assert "torn while it was laid out" in reason and len(skipped) == 1
+    else:
+        assert "every stage must read" in reason and "corruption" in reason and not skipped
+    assert p.read_bytes() == before
+
+
+@pytest.mark.parametrize("flags", [0x00, 0x05, 0x01], ids=["step1", "step2", "step3"])
+def test_an_earlier_torn_stage_is_corruption_after_any_step(fork, copy_of, flags) -> None:
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    p = _flagged(fork, copy_of, TORN_EARLY, flags)
+    before = p.read_bytes()
+    with ParticleFile(p) as pf:
+        assert _states(pf) == [("MODEL_STAGE[1]", "refused", 0),
+                               ("MODEL_STAGE[2]", "read", 3)]
+        assert "not the file's last stage, so it is corruption" in pf.states[0].reason
+        with pytest.raises(ParticleFormatError, match="corruption"):
+            pf.stage("MODEL_STAGE[1]")
+    assert p.read_bytes() == before
+
+
+@pytest.mark.parametrize("src", [TORN_LAST, HALF_LAST, TORN_EARLY],
+                         ids=["registry", "half", "early"])
+@pytest.mark.parametrize("flags", [0x00, 0x05, 0x01], ids=["step1", "step2", "step3"])
+def test_the_stage_rule_agrees_with_the_forks_reference(fork, copy_of, tmp_path, src, flags) -> None:
+    """``particle_stage_report`` at a1d4c7260 (after ``open_ladruno``, or
+    ``recover_particle_file`` for step 3) on the same file. Where it counts
+    a stage, the counts agree; where it raises, the reader refuses. Its step
+    0 returns 0 committed for a torn registry in any stage and after any
+    step, where the merged text (§2.5, lines 515-517) and the owner's ruling
+    say "skip the LAST stage after step 1 or 3, refuse otherwise": the
+    reader follows the text, so there it only agrees that the stage holds no
+    output."""
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    mc, lf = fork
+    p = _flagged(fork, copy_of, src, flags)
+    try:
+        if flags == 0x01:
+            ref = mc.recover_particle_file(p, tmp_path / "ref.ladruno")
+        else:
+            with lf.open_ladruno(p) as f:
+                ref = mc.particle_stage_report(f)
+    except mc.TornStageError:
+        ref = None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with ParticleFile(p) as pf:
+            ours = {s.group: s for s in pf.states}
+    if ref is None:
+        assert any(s.status == "refused" for s in ours.values())
+        return
+    for entry in ref:
+        mine = ours[entry["stage"]]
+        if entry.get("torn_while_laid_out"):
+            assert mine.status in ("skipped", "refused") and mine.committed == 0
+        elif mine.status == "read":
+            assert mine.committed == entry["committed"]
+        else:   # step 0 in the reference: no output
+            assert entry["committed"] == 0 and mine.committed == 0
+
+
+@pytest.mark.parametrize("src", [PARTICLES, MIXED, TORN], ids=lambda p: p.name)
+def test_a_closed_fork_fixture_reads_every_stage_through_the_rule(fork, src) -> None:
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    mc, _ = fork
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ParticleOutputsTruncatedWarning)
+        with ParticleFile(src) as pf:
+            assert pf.step == 1
+            assert _states(pf) == [
+                (STAGE, "read", mc.committed_outputs(str(src), stage=STAGE))]
