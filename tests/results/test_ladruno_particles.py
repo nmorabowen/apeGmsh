@@ -886,23 +886,68 @@ def test_hdf5_damage_through_the_stage_rule(fork, copy_of, label, off, sig, dama
     assert p.read_bytes() == before
 
 
-def test_the_damage_sweep_gives_the_recorded_outcomes(tmp_path) -> None:
-    """528 damaged copies (``tests/fixtures/mpm/damage_sweep.py``, built here and
-    removed): the Python reader gives the recorded outcome for every one. The
-    viewer's ``ladrunoParticles.test.ts`` checks ``openLadruno`` against the same
-    table, so the two readers agree file by file."""
+def _damage_sweep_module():
     import importlib.util
-    import json
 
     spec = importlib.util.spec_from_file_location("_damage_sweep", MPM / "damage_sweep.py")
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    return mod
+
+
+#: Sweep cases where the Python reader is stricter than the fork's reference: the reference
+#: reads the stage (it counts outputs from the index alone), and the Python reader does not,
+#: because it also reads the stage's metadata, registry, field attributes and last committed
+#: rows (a damaged registry or field heap, say). 139 (stage, file) pairs: 118 from signature
+#: flips, 18 from 1 KiB zeroed blocks, 3 from 256-byte ones. Pinned so a change is seen.
+STRICTER_THAN_REFERENCE = 139
+
+
+def test_the_damage_sweep_gives_the_recorded_outcomes(fork, tmp_path) -> None:
+    """Every damaged copy of ``tests/fixtures/mpm/damage_sweep.py`` (built here, removed
+    after; "hang" cases, where HDF5 itself does not return, are never opened):
+
+    1. the Python reader gives the recorded outcome, and the viewer's
+       ``ladrunoParticles.test.ts`` checks ``openLadruno`` against the same table, so
+       the two readers agree file by file;
+    2. Python never reads a stage that the fork's reference ``particle_stage_report``
+       (a1d4c7260) skips or refuses. Python may be stricter (it reads more of a stage
+       than the index the reference counts); those cases are counted, not refused."""
+    import json
+
+    mc, lf = fork
+    mod = _damage_sweep_module()
     expected = json.loads(mod.EXPECTED.read_text(encoding="utf-8"))
-    got = mod.sweep(tmp_path)
-    assert len(got) == len(expected) == 528
-    wrong = {k: (expected[k], got[k]) for k in got if got[k] != expected.get(k)}
-    assert not wrong, f"{len(wrong)} case(s) differ: {list(wrong.items())[:5]}"
+    raw = mod.BASE.read_bytes()
+    wrong, looser, stricter, n = [], [], [], 0
+    for name, data in mod.cases(raw):
+        n += 1
+        if expected.get(name) == ["hang"]:
+            continue
+        p = tmp_path / f"{name}.ladruno"
+        p.write_bytes(data)
+        got = mod.outcome(p)
+        if got != expected.get(name):
+            wrong.append((name, expected.get(name), got))
+        ref = mod.reference_reads(p, tmp_path, mc, lf)
+        mine = {}
+        if got != ["file-error"]:
+            for row in got[1:]:
+                stage, what = row.split(" ", 1)
+                mine[stage] = what
+        for stage, what in ref.items():
+            if not what.startswith("read") and mine.get(stage, "").startswith("read"):
+                looser.append((name, stage, what, mine[stage]))
+            if what.startswith("read") and not mine.get(stage, "").startswith("read"):
+                stricter.append((name, stage, what, mine.get(stage, "file-error")))
+        p.unlink()
+        for q in tmp_path.glob("ref_*"):
+            q.unlink()
+    assert n == len(expected) and n >= 750
+    assert not wrong, f"{len(wrong)} case(s) differ from the table: {wrong[:5]}"
+    assert not looser, f"Python reads a stage the reference skips or refuses: {looser[:5]}"
+    assert len(stricter) == STRICTER_THAN_REFERENCE, stricter[:10]
 
 
 def test_an_eoa_past_the_end_at_flags_0x00_opens_swmr_read(copy_of) -> None:

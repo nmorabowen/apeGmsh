@@ -56,7 +56,7 @@ import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
 import { collectModelLocalAxes, collectStepLocalAxes, resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
-import { hasParticleGroups, LadrunoParticles, type PCtors, type PGroup } from "./ladrunoParticles.ts";
+import { isH5Error, LadrunoParticles, particleEvidence, type PCtors, type PGroup } from "./ladrunoParticles.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
 import { openH5ByRule, type H5RuleOpenable, type OpenStep } from "./h5open.ts";
 
@@ -392,7 +392,9 @@ export class LadrunoFile {
     stageNames.sort((a, b) => Number(STAGE_NAME.exec(a)![1]) - Number(STAGE_NAME.exec(b)![1]));
     const stageGroups = stageNames.map((name, i) => ({ id: `stage_${i}`, group: this.group(f, name) }));
     const ctors = h5 as unknown as PCtors;
-    const withParticles = stageGroups.filter((s) => hasParticleGroups(s.group as unknown as PGroup, ctors));
+    // Which stages carry particles, from what survives damage (a torn stage's links may not list).
+    const evidence = stageGroups.map((s) => particleEvidence(s.group as unknown as PGroup, ctors));
+    const withParticles = stageGroups.filter((_s, i) => evidence[i] === true);
     if (part && withParticles.length > 0) {
       throw new LadrunoError(
         "unsupported",
@@ -405,7 +407,24 @@ export class LadrunoFile {
         `${withParticles.map((s) => s.group.path).join(", ")} holds a particle group, and INFO@FORMAT_MINOR_VERSION is ${formatMinorVersion}: a file with particles writes minor >= ${LADRUNO_PARTICLES_MINOR} (C2-MINOR), so its particles are not read`,
       );
     }
-    const hosts = stageGroups.map((s) => this.readHost(s.group, s.id, warnings, readsParticles));
+    // In a file with particles, a stage whose own groups do not read (a stage torn while laid out, or
+    // damage) never refuses the whole file: it becomes an empty host, and the stage rule of 232a §2.5
+    // decides (the particle stage rule below, or `hostRule` for an FE stage). A file without particles
+    // reads as before (its recorder rule, ladruno_schema_v1.md §7b.2, is #3003's).
+    const particleFile = readsParticles && withParticles.length > 0;
+    const hostFailures = new Map<string, string>();
+    const hosts = stageGroups.map((s, i) => {
+      if (!particleFile) return this.readHost(s.group, s.id, warnings, readsParticles);
+      try {
+        const h = this.readHost(s.group, s.id, warnings, readsParticles);
+        if (h.onNodes) this.discoverModes(h.onNodes, []);
+        return h;
+      } catch (err) {
+        if (!(err instanceof LadrunoError) && !isH5Error(err)) throw err;
+        hostFailures.set(s.id, err.message);
+        return this.emptyHost(s.group, s.id, err.message, evidence[i] !== false);
+      }
+    });
     const modes = this.layModes(hosts, warnings);
     const stages: StageInfo[] = [];
     for (const h of hosts) {
@@ -429,6 +448,19 @@ export class LadrunoFile {
       const at = unread.indexOf(PARTICLES_UNREAD);
       if (at >= 0) unread[at] = `ON_PARTICLES (skipped, torn while laid out: no output)`;
     }
+    hostFailures.forEach((reason, id) => {
+      const i = stageGroups.findIndex((s) => s.id === id);
+      const group = stageGroups[i]!.group.path;
+      if (this.particles?.stages.some((s) => s.stageId === id)) {
+        warnings.push(`${group}: its FE groups do not read and are not indexed (${reason}); its particles read`);
+      } else if (evidence[i] !== false) {
+        warnings.push(`${group}: its groups do not read (${reason})`);
+      } else {
+        // An FE stage of a particle file, under the same rule (232a §2.5).
+        const fate = i < stageGroups.length - 1 ? "refused: it is not the file's last stage, so it is corruption" : opened.step === 2 ? "refused: corruption in a file opened SWMR-read, where every stage must read" : "skipped: torn while it was laid out (the last stage of a killed run)";
+        warnings.push(`${group}: its groups do not read (${reason}); ${fate} (232a §2.5)`);
+      }
+    });
     for (const s of this.particles?.stages ?? []) {
       if (s.torn !== null) warnings.push(`${s.group}/RESULTS/ON_PARTICLES: ${s.nOutputs} output${s.nOutputs === 1 ? "" : "s"} read; ${s.torn}`);
       for (const x of s.refusedFields) warnings.push(`${s.group}/RESULTS/ON_PARTICLES/${x.field}: refused and not read: ${x.reason}`);
@@ -1082,6 +1114,26 @@ export class LadrunoFile {
   }
 
   // -- stages -----------------------------------------------------------------
+
+  /**
+   * A stage whose groups do not read, in a file with particles: no FE result, its `KIND` if the
+   * object header still gives it (the particle reader checks it), and the reason in `unread`.
+   */
+  private emptyHost(g: LGroup, id: string, reason: string, particles: boolean): { stage: StageInfo; fileKind: string; onNodes: LGroup | null } {
+    let kind: unknown;
+    try {
+      const a = g.attrs["KIND"];
+      kind = a === undefined ? undefined : oneValue(a.value);
+    } catch (err) {
+      if (!isH5Error(err)) throw err;
+    }
+    const fileKind = typeof kind === "string" ? kind : "";
+    this.columns.set(id, new Map());
+    const unread = [`(the stage's groups do not read: ${reason})`];
+    if (particles) unread.push(PARTICLES_UNREAD);
+    const stage: StageInfo = { id, name: g.path.slice(1), kind: KIND_MAP[fileKind] ?? "static", time: new Float64Array(0), nSteps: 0, partition: "partition_0", nodes: null, gauss: [], unread };
+    return { stage, fileKind, onNodes: null };
+  }
 
   private readHost(g: LGroup, id: string, warnings: string[], readsParticles: boolean): { stage: StageInfo; fileKind: string; onNodes: LGroup | null } {
     const kindAttr = g.attrs["KIND"];

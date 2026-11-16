@@ -627,13 +627,28 @@ function outputsOnDisk(stage: PGroup, ctors: PCtors): number | null {
  * Whether a stage carries particles, from what survives damage: true when it has
  * `PARTICLE_EPOCH` (an attribute in the object header, readable when the group's links are
  * not) or names either half of the particle group; false for an FE stage; null when the group
- * lists nothing (h5wasm lists a group whose links are damaged as empty; a kill can leave one
- * empty). The Python twin is `_ladruno_particles.py::_particle_evidence`.
+ * lists nothing or does not list (h5wasm lists a group whose links are damaged as empty, or
+ * throws a plain Error; a kill can leave one empty). The Python twin is
+ * `_ladruno_particles.py::_particle_evidence`.
  */
-function particleEvidence(stage: PGroup, ctors: PCtors): boolean | null {
-  if (stage.attrs["PARTICLE_EPOCH"] !== undefined) return true;
-  if (stage.keys().length === 0) return null;
-  return hasParticleGroups(stage, ctors);
+export function particleEvidence(stage: PGroup, ctors: PCtors): boolean | null {
+  try {
+    if (stage.attrs["PARTICLE_EPOCH"] !== undefined) return true;
+  } catch (err) {
+    if (!isH5Error(err)) throw err;
+  }
+  try {
+    if (stage.keys().length === 0) return null;
+    return hasParticleGroups(stage, ctors);
+  } catch (err) {
+    if (!isH5Error(err)) throw err;
+    return null;
+  }
+}
+
+/** An error h5wasm raises for an object HDF5 cannot read: a plain `Error` (a TypeError or the like is a bug). */
+export function isH5Error(err: unknown): err is Error {
+  return err instanceof Error && err.constructor === Error;
 }
 
 /**

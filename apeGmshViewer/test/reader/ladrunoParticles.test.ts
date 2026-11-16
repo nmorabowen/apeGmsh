@@ -857,21 +857,28 @@ for (const [label, off, sig, damaged, holdsOutputs] of DAMAGE) {
 }
 
 /**
- * The damage sweep (tests/fixtures/mpm/damage_sweep.py, the same rule): every TREE/SNOD/HEAP signature's
- * first byte XOR 0x20, and 256 zero bytes at every 4 KiB boundary after the superblock, each at flags
+ * The damage sweep (tests/fixtures/mpm/damage_sweep.py, the same rule): the first byte XOR 0x20 of every
+ * HDF5 object signature; 256 zero bytes at every 4 KiB boundary after the superblock; 1 KiB of zeros at
+ * 1536 + 3072 k; the file cut every 2 KiB from 65536 (through the second stage's layout). Each at flags
  * 0x00, 0x05 and 0x01 with a new lookup3. Built here, never committed.
  */
+const SWEEP_SIGNATURES = ["TREE", "SNOD", "HEAP", "OHDR", "OCHK", "GCOL", "FRHP", "FHDB", "FHIB", "FSHD", "FSSE", "BTHD", "BTIN", "BTLF", "EAHD", "EAIB", "EADB", "EASB", "FAHD", "FADB"];
 function* damageSweep(raw: Buffer): Generator<[string, Buffer]> {
-  const sites: [string, "flip" | "zero", number][] = [];
-  for (const sig of ["TREE", "SNOD", "HEAP"]) {
-    for (let at = raw.indexOf(sig, 0, "latin1"); at >= 0; at = raw.indexOf(sig, at + 4, "latin1")) sites.push([`flip${at}`, "flip", at]);
+  const flips: number[] = [];
+  for (const sig of SWEEP_SIGNATURES) {
+    for (let at = raw.indexOf(sig, 0, "latin1"); at >= 0; at = raw.indexOf(sig, at + 1, "latin1")) flips.push(at);
   }
+  const sites: [string, "flip" | "zero" | "zk" | "cut", number][] = [...new Set(flips)].sort((a, b) => a - b).map((at) => [`flip${at}`, "flip", at]);
   for (let k = 1; k <= Math.floor(raw.length / 4096); k++) sites.push([`zero${k * 4096}`, "zero", k * 4096]);
-  for (const [label, kind, off] of sites) {
+  for (let off = 1536; off < raw.length; off += 3072) sites.push([`zk${off}`, "zk", off]);
+  for (let n = 65536; n < raw.length; n += 2048) sites.push([`cut${n}`, "cut", n]);
+  for (const [label, kind, at] of sites) {
     for (const flags of [0x00, 0x05, 0x01]) {
-      const b = Buffer.from(raw);
-      if (kind === "flip") b[off]! ^= 0x20;
-      else b.fill(0, off, Math.min(off + 256, b.length));
+      let b = Buffer.from(raw);
+      if (kind === "flip") b[at]! ^= 0x20;
+      else if (kind === "zero") b.fill(0, at, Math.min(at + 256, b.length));
+      else if (kind === "zk") b.fill(0, at, Math.min(at + 1024, b.length));
+      else b = b.subarray(0, at);
       b[11] = flags;
       b.writeUInt32LE(lookup3(b.subarray(0, 44)), 44);
       yield [`${label}_${flags.toString(16).padStart(2, "0")}`, b];
@@ -879,19 +886,15 @@ function* damageSweep(raw: Buffer): Generator<[string, Buffer]> {
   }
 }
 
-/**
- * Sweep cases whose damage sits in FE groups the particle reader never reads, where reader/ladruno.ts's FE
- * indexing throws (h5wasm's "name not defined"): that reader is outside #2991, passed to T by the #3008 review.
- */
-const FE_READER_THROWS = new Set(["zero24576_00", "zero24576_01", "zero24576_05"]);
-
-test("the damage sweep: openLadruno gives the Python reader's recorded outcome on each of the 528 damaged files", () => {
+test("the damage sweep: openLadruno gives the Python reader's recorded outcome on every damaged file", () => {
   const expected = JSON.parse(readFileSync(repo("tests/fixtures/mpm/damage_sweep_expected.json"), "utf8")) as Record<string, string[]>;
   const dir = mkdtempSync(join(tmp, "sweep-"));
   const wrong: string[] = [];
   let n = 0;
   for (const [name, bytes] of damageSweep(readFileSync(TWO))) {
     n++;
+    // HDF5 itself does not return on a "hang" case (the recorder found it with a timeout): never opened.
+    if (JSON.stringify(expected[name]) === JSON.stringify(["hang"])) continue;
     const path = join(dir, `${name}.ladruno`);
     writeFileSync(path, bytes);
     let got: string[];
@@ -910,20 +913,30 @@ test("the damage sweep: openLadruno gives the Python reader's recorded outcome o
         f.close();
       }
     } catch (e) {
-      if (FE_READER_THROWS.has(name)) {
-        rmSync(path);
-        continue;
-      }
+      // A refusal of the whole file is one outcome; a bug (a TypeError or the like) is not.
+      if (!(e instanceof Error) || (e.constructor !== Error && !(e instanceof LadrunoError))) throw e;
       got = ["file-error"];
     }
     rmSync(path);
-    if (FE_READER_THROWS.has(name)) wrong.push(`${name}: expected the FE reader to throw (remove it from FE_READER_THROWS)`);
-    else if (JSON.stringify(got) !== JSON.stringify(expected[name])) wrong.push(`${name}: Python ${JSON.stringify(expected[name])}, TS ${JSON.stringify(got)}`);
+    if (JSON.stringify(got) !== JSON.stringify(expected[name])) wrong.push(`${name}: Python ${JSON.stringify(expected[name])}, TS ${JSON.stringify(got)}`);
   }
-  assert.equal(n, 528);
-  assert.equal(Object.keys(expected).length, 528);
+  assert.equal(n, Object.keys(expected).length, "the viewer builds the cases the Python recorder built");
+  assert.ok(n >= 750, `${n} cases`);
   assert.deepEqual(wrong, []);
 });
+
+for (const cut of [90112, 98304, 106496, 114688, 122880]) {
+  test(`the canonical layout kill: the file cut at ${cut} bytes inside the last stage's layout, flags 0x01, opens by step 3; the first stage reads, the torn last stage is skipped (#3008 review)`, () => {
+    const b = readFileSync(TWO).subarray(0, cut);
+    b[11] = 0x01;
+    b.writeUInt32LE(lookup3(b.subarray(0, 44)), 44);
+    const path = join(tmp, `layout_kill_${cut}.ladruno`);
+    writeFileSync(path, b);
+    const r = stageRule(path);
+    assert.equal(r.step, 3);
+    assert.deepEqual(r.stages, ["stage_0 read 3", "stage_1 skipped"]);
+  });
+}
 
 test("a stored end-of-allocation past the file's end at flags 0x00 opens SWMR-read (step 2), as h5py's \"truncated file\" does; both stages read", () => {
   const path = join(tmp, "eoa_past_end.ladruno");
