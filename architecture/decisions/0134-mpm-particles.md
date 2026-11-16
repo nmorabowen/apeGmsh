@@ -444,10 +444,12 @@ the face or the grid by a fraction of a sub-cell.
 **What stays.** The overlap check is still made on the lattice, as before. An overlap that holds no
 lattice point is not seen, and neither is one whose only lattice points lie on facing boundaries.
 An overlap thinner than one lattice spacing in which one body's boundary crosses another's at a
-lattice point now seeds instead of being refused, because the crossing point is read as an interface
+lattice point, with the two boundary facets there facing each other (outward normals with a negative
+dot product), now seeds instead of being refused, because the crossing point is read as an interface
 point (for example, a body B that dips 0.075 into A = [0, 0.625]² and crosses A's top edge at
-(0.375, 0.625)). A same-side sliver thinner than one lattice spacing that lies inside a body, against
-a face where that body is meshed non-conformingly, also seeds instead of being refused, because that
-face counts as a boundary on both sides (for example, A made of two hex blocks that share no node at
-x = 0.375, with B a sliver inside A on that face; a conforming A refuses it). A model in which no
-two bodies claim a point seeds exactly as before.
+(0.375, 0.625)); a crossing whose facets do not face each other is still refused. A same-side sliver
+thinner than one lattice spacing that lies inside a body, against a face where that body is meshed
+non-conformingly, also seeds instead of being refused, because that face counts as a boundary on both
+sides (for example, A made of two hex blocks that share no node at x = 0.375, with B a sliver inside
+A on that face; a conforming A refuses it). A model in which no two bodies claim a point seeds
+exactly as before.
