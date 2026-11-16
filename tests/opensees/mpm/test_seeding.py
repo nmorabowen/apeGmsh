@@ -7,8 +7,6 @@ The lattice coordinates are dyadic, so ties with a boundary are exact and named 
 """
 from __future__ import annotations
 
-import re
-
 import numpy as np
 import pytest
 
@@ -518,6 +516,10 @@ def test_one_lattice_column_on_a_two_element_interface_seeds_at_n_3():
     np.testing.assert_array_equal(s.body_id, [0] * 6 + [1] * 3)
     np.testing.assert_allclose(s.position[s.body_id == 1][:, 0], 5 / 6)
     assert s.report.interface_points == {("left", "right"): 3}
+    # n = 1: the one lattice point (0.5, 0.5) is on the interface and goes to 'left'
+    with pytest.raises(MPMSeedError, match=r"body 'right' \(physical group 'right'\) holds "
+                       r"no lattice point of its own at n=1"):
+        seed(fem, grid, [MPMBody("left", "left", 1.0), MPMBody("right", "right", 1.0)], n=1)
 
 
 def test_mesh_outside_the_grid_is_refused():
