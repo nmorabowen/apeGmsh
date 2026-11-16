@@ -38,10 +38,11 @@ reader rule's three open steps (``_ladruno_open.py``), then applies the
 stage rule of 232a §2.5 (fork ``a1d4c7260``) by the step that opened it
 (:func:`particle_stage_report`). A LAST stage that does not read, or whose
 registry columns differ in length (the crash rule's step 0: torn while the
-stage opened), holds no output: it is skipped by name after step 1 or 3,
-and refused after step 2 (a file killed with SWMR armed, after its last
-layout completed, where every stage must read). An earlier stage that does
-not read is corruption after any step and is refused.
+stage opened), and that holds no output, was torn while laid out: it is
+skipped by name after step 1 or 3, and refused after step 2 (a file killed
+with SWMR armed, after its last layout completed, where every stage must
+read). An earlier stage that does not read is corruption after any step,
+and so is a failing stage that holds outputs; both are refused.
 """
 from __future__ import annotations
 
@@ -784,6 +785,22 @@ def _stage_number(name: str) -> int:
             f"/{name}: a MODEL_STAGE whose id is not an integer.") from None
 
 
+def _outputs_on_disk(h5: "h5py.File", name: str) -> Optional[int]:
+    """The outputs a failing stage's index datasets commit by the crash rule
+    (steps 1-6, no attribute checked): 0 when the stage, its
+    ``RESULTS/ON_PARTICLES`` or an index dataset cannot be read (the layout
+    did not complete), None when the index itself is refused (C2-OFF)."""
+    try:
+        on = h5[name]["RESULTS"]["ON_PARTICLES"]
+        if not all(k in on for k in _INDEX_DATASETS):
+            return 0
+        return committed_outputs(on)
+    except ParticleFormatError:
+        return None
+    except (OSError, KeyError, ValueError):
+        return 0
+
+
 def _registry_lengths(stage_grp: "h5py.Group") -> "dict[str, int]":
     """The row count of each registry dataset present in ``MODEL/PARTICLES``."""
     model = stage_grp["MODEL"]["PARTICLES"]
@@ -801,11 +818,15 @@ def particle_stage_report(
     names a particle group (either half), is read: its registry first (the
     crash rule's step 0: columns of unequal length mean the stage was torn
     while it opened), then :meth:`ParticleStage.validate`. A stage that
-    fails is skipped by name, with a :class:`ParticleStageSkippedWarning`,
-    when it is the file's LAST stage and ``step`` is 1 or 3; it is refused
-    when ``step`` is 2 (killed with SWMR armed, after the last layout:
-    every stage must read) or when a later stage follows it (corruption).
-    Returns the states in order and the stages that read, by group name.
+    fails was torn while it was laid out only if it holds no output: the
+    writer lays a stage out in full, registry included, before output 0, and
+    creates nothing after (§2.5, "The writer's guarantees"), so a failing
+    stage whose index datasets commit an output is refused. A torn stage is
+    skipped by name, with a :class:`ParticleStageSkippedWarning`, when it is
+    the file's LAST stage and ``step`` is 1 or 3; it is refused when ``step``
+    is 2 (killed with SWMR armed, after the last layout: every stage must
+    read) or when a later stage follows it (corruption). Returns the states
+    in order and the stages that read, by group name.
     """
     names = sorted((n for n in h5 if n.startswith(_STAGE_PREFIX)),
                    key=_stage_number)
@@ -835,7 +856,15 @@ def particle_stage_report(
             stage.validate()
         except (ParticleFormatError, OSError, KeyError, ValueError) as e:
             why = str(e).splitlines()[0] if str(e) else type(e).__name__
-            if i < len(names) - 1:
+            outputs = _outputs_on_disk(h5, name)
+            if outputs != 0:
+                # Laid out in full (the writer creates nothing after the layout,
+                # and the registry precedes output 0), so not torn: refused.
+                states.append(ParticleStageState(name, "refused", 0, (
+                    f"{where} does not read, and it holds "
+                    f"{'outputs' if outputs is None else f'{outputs} output(s)'}, so it "
+                    f"was not torn while it was laid out: {why}")))
+            elif i < len(names) - 1:
                 states.append(ParticleStageState(
                     name, "refused", 0,
                     f"{where} does not read, and it is not the file's last "

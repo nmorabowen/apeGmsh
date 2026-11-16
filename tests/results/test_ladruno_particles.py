@@ -814,6 +814,28 @@ def test_an_earlier_torn_stage_is_corruption_after_any_step(fork, copy_of, flags
     assert p.read_bytes() == before
 
 
+@pytest.mark.parametrize("edit, match", [
+    (lambda f: _resize(f[f"{REG}/MASS"], 11), "differ in length"),
+    (lambda f: f[ON_P].attrs.__setitem__("PARTITION_REDUCTION", np.bytes_("SUM")), "C2-RED"),
+], ids=["registry", "reduction"])
+def test_a_failing_last_stage_that_holds_outputs_is_refused_not_skipped(copy_of, edit, match) -> None:
+    """The writer lays a stage out in full, registry included, before output 0
+    and creates nothing after (§2.5), so a stage whose index commits outputs
+    was not torn while laid out: its failure is refused even as the last
+    stage of a plainly opened file."""
+    from apeGmsh.results.readers._ladruno_particles import ParticleFile
+
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        edit(f)
+    with ParticleFile(p) as pf:
+        assert pf.step == 1
+        assert _states(pf) == [(STAGE, "refused", 0)]
+        assert "holds 3 output(s), so it was not torn" in pf.states[0].reason
+        with pytest.raises(ParticleFormatError, match=match):
+            pf.stage(STAGE)
+
+
 @pytest.mark.parametrize("src", [TORN_LAST, HALF_LAST, TORN_EARLY],
                          ids=["registry", "half", "early"])
 @pytest.mark.parametrize("flags", [0x00, 0x05, 0x01], ids=["step1", "step2", "step3"])
