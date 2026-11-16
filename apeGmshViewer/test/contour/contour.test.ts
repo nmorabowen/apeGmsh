@@ -866,6 +866,10 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "particles_mixed_v1m2.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | -",
   // M2-S6 (#2990): the fork's torn file (a fourth output whose OFFSETS entry holds the fill).
   "particles_torn_v1m2.ladruno": "-",
+  // M2-S7 (#2991): the torn-stage fixtures (two particle-only stages each).
+  "particles_torn_last_stage_v1m2.ladruno": "- | -",
+  "particles_torn_early_stage_v1m2.ladruno": "- | -",
+  "particles_half_last_stage_v1m2.ladruno": "- | -",
 };
 
 /** The repository root, and the directories the golden below scans for `.ladruno` files. */

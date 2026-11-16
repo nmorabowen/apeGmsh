@@ -55,7 +55,7 @@ import { collectModelLocalAxes, collectStepLocalAxes, resolveLocalAxes, rowOf, s
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
 import { hasParticleGroups, LadrunoParticles, type PCtors, type PGroup } from "./ladrunoParticles.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
-import { openH5 } from "./h5open.ts";
+import { openH5ByRule, type H5RuleOpenable, type OpenStep } from "./h5open.ts";
 
 export { quaternionToZRec, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 
@@ -323,11 +323,14 @@ export function openLadruno(h5: ResultsH5, path: string, opts: { part?: boolean 
       `${path} is part ${part.groups!.idx} of the partitioned set ${part.groups!.stem}.part-<N>.ladruno; this reader reads one file, not a part set`,
     );
   }
-  const f = openH5(h5, path) as unknown as LFile;
+  // The reader rule's open (232a §2.5, M2-S7 #2991): plain, else SWMR-read (flags 0x05),
+  // else a repaired copy (flags 0x01); a live writer's lock is an H5BusyError.
+  const opened = openH5ByRule(h5 as unknown as H5RuleOpenable<LFile>, path);
+  const f = opened.file;
   // h5wasm does not throw when HDF5 cannot open a file: it returns a File whose id is negative.
   if (Number(f.file_id) < 0) throw new LadrunoError("open", `HDF5 could not open ${path} (truncated, or not an HDF5 file)`);
   try {
-    return new LadrunoFile(h5, f, path, opts.part === true);
+    return new LadrunoFile(h5, f, path, opts.part === true, { step: opened.step, repaired: opened.repaired });
   } catch (err) {
     f.close();
     throw err;
@@ -349,12 +352,20 @@ export class LadrunoFile {
    * particle group is not read (the index warns).
    */
   readonly particles: LadrunoParticles | null;
+  /** The reader-rule step that opened the file (232a §2.5), and whether `f` is a repaired copy (the user's file is never written). */
+  readonly opened: { step: OpenStep; repaired: boolean };
 
-  constructor(h5: ResultsH5, f: LFile, path: string, part = false) {
+  constructor(h5: ResultsH5, f: LFile, path: string, part = false, opened: { step: OpenStep; repaired: boolean } = { step: 1, repaired: false }) {
     this.h5 = h5;
     this.f = f;
+    this.opened = opened;
     this.gauss = new LadrunoGauss(h5, f, (kind, message) => new LadrunoError(kind, message));
     const warnings: string[] = [];
+    if (opened.step === 2) {
+      warnings.push(`${path}: a killed run (superblock flags 0x05), opened ${opened.repaired ? "through a repaired copy because SWMR-read refused it" : "SWMR-read"} (the reader rule's step 2, 232a §2.5); the file is not changed`);
+    } else if (opened.step === 3) {
+      warnings.push(`${path}: a run killed while a stage was laid out (superblock flags 0x01), opened through a repaired copy (the reader rule's step 3, 232a §2.5); the file is not changed`);
+    }
     const info = this.gate(path);
     const formatMinorVersion = optionalInt(info, "FORMAT_MINOR_VERSION") ?? 0;
     const formatVersion = optionalInt(info, "FORMAT_VERSION")!;
@@ -399,7 +410,7 @@ export class LadrunoFile {
       for (const m of modes.stages) if (m.host === h.stage.id) stages.push(m.stage);
     }
     this.particles = readsParticles
-      ? new LadrunoParticles(ctors, f as unknown as PGroup, stageGroups.map((s, i) => ({ id: s.id, group: s.group as unknown as PGroup, fileKind: hosts[i]!.fileKind })), dim)
+      ? new LadrunoParticles(ctors, f as unknown as PGroup, stageGroups.map((s, i) => ({ id: s.id, group: s.group as unknown as PGroup, fileKind: hosts[i]!.fileKind })), dim, opened.step)
       : null;
     for (const r of this.particles?.refused ?? []) {
       warnings.push(`${r.group}: its particles are refused and not read: ${r.reason}`);
@@ -407,6 +418,13 @@ export class LadrunoFile {
       const unread = hosts.find((h) => h.stage.id === r.stageId)!.stage.unread;
       const at = unread.indexOf(PARTICLES_UNREAD);
       if (at >= 0) unread[at] = `ON_PARTICLES (particles refused, not read: ${r.reason})`;
+    }
+    for (const s of this.particles?.skipped ?? []) {
+      // The last stage of a killed run, torn while laid out (232a §2.5): named, holding no output.
+      warnings.push(`${s.group}: its particles are skipped: ${s.reason}`);
+      const unread = hosts.find((h) => h.stage.id === s.stageId)!.stage.unread;
+      const at = unread.indexOf(PARTICLES_UNREAD);
+      if (at >= 0) unread[at] = `ON_PARTICLES (skipped, torn while laid out: no output)`;
     }
     for (const s of this.particles?.stages ?? []) {
       if (s.torn !== null) warnings.push(`${s.group}/RESULTS/ON_PARTICLES: ${s.nOutputs} output${s.nOutputs === 1 ? "" : "s"} read; ${s.torn}`);
