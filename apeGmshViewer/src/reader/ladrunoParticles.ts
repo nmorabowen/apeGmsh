@@ -485,6 +485,12 @@ export class LadrunoParticles {
       // `committed_outputs` reads it (#2985 review follow-up): a group that breaks the contract by an
       // attribute still had its rows appended by the writer, and its length still says where it stopped.
       const g = item as unknown as PGroup;
+      // A field group that lists nothing (h5wasm lists a group whose links are damaged as empty) is
+      // not a field that breaks the contract: the stage does not read, as Python's (where h5py raises
+      // or finds no DATA) and the fork's reference. A field that lists and breaks the contract is refused alone.
+      if (g.keys().length === 0) throw new ParticleReadError(`${on.path}/${name}: the field group lists nothing (its links are damaged, or were never written)`);
+      // Its DATA must open as a dataset: h5wasm calls an object whose header does not read a Group.
+      if (!(g.get("DATA") instanceof this.ctors.Dataset)) throw new ParticleReadError(`${on.path}/${name}/DATA does not open as a dataset (absent, damaged, or not a dataset)`);
       const dataRows = groupDataRows(g, this.ctors);
       if (dataRows !== null) bounds.push({ what: `${on.path}/${name}/DATA`, rows: dataRows });
       try {
@@ -584,7 +590,12 @@ export function committedOutputs(on: PGroup, ctors: PCtors): number {
   for (const name of on.keys()) {
     const item = on.get(name);
     if (!(item instanceof ctors.Group)) continue;
-    const rows = groupDataRows(item as unknown as PGroup, ctors);
+    // A field group that lists nothing (damaged links) bounds the outputs at an unknown row: the count
+    // cannot be read, as the reference's `"DATA" in item` raises there (h5py) and the Python twin's does.
+    const fg = item as unknown as PGroup;
+    if (fg.keys().length === 0) throw new ParticleReadError(`${on.path}/${name}: the field group lists nothing, so its DATA cannot bound the outputs`);
+    if (fg.keys().includes("DATA") && !(fg.get("DATA") instanceof ctors.Dataset)) throw new ParticleReadError(`${on.path}/${name}/DATA does not open as a dataset, so it cannot bound the outputs`);
+    const rows = groupDataRows(fg, ctors);
     if (rows !== null) bounds.push({ what: `${on.path}/${name}/DATA`, rows });
   }
   return boundsRule(offsets, nOffUsed, oneD(ds("STEP"), "C2-AXES"), oneD(ds("TIME"), "C2-AXES"), bounds).n;

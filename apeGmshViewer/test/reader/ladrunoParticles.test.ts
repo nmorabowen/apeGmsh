@@ -856,6 +856,75 @@ for (const [label, off, sig, damaged, holdsOutputs] of DAMAGE) {
   }
 }
 
+/**
+ * The damage sweep (tests/fixtures/mpm/damage_sweep.py, the same rule): every TREE/SNOD/HEAP signature's
+ * first byte XOR 0x20, and 256 zero bytes at every 4 KiB boundary after the superblock, each at flags
+ * 0x00, 0x05 and 0x01 with a new lookup3. Built here, never committed.
+ */
+function* damageSweep(raw: Buffer): Generator<[string, Buffer]> {
+  const sites: [string, "flip" | "zero", number][] = [];
+  for (const sig of ["TREE", "SNOD", "HEAP"]) {
+    for (let at = raw.indexOf(sig, 0, "latin1"); at >= 0; at = raw.indexOf(sig, at + 4, "latin1")) sites.push([`flip${at}`, "flip", at]);
+  }
+  for (let k = 1; k <= Math.floor(raw.length / 4096); k++) sites.push([`zero${k * 4096}`, "zero", k * 4096]);
+  for (const [label, kind, off] of sites) {
+    for (const flags of [0x00, 0x05, 0x01]) {
+      const b = Buffer.from(raw);
+      if (kind === "flip") b[off]! ^= 0x20;
+      else b.fill(0, off, Math.min(off + 256, b.length));
+      b[11] = flags;
+      b.writeUInt32LE(lookup3(b.subarray(0, 44)), 44);
+      yield [`${label}_${flags.toString(16).padStart(2, "0")}`, b];
+    }
+  }
+}
+
+/**
+ * Sweep cases whose damage sits in FE groups the particle reader never reads, where reader/ladruno.ts's FE
+ * indexing throws (h5wasm's "name not defined"): that reader is outside #2991, passed to T by the #3008 review.
+ */
+const FE_READER_THROWS = new Set(["zero24576_00", "zero24576_01", "zero24576_05"]);
+
+test("the damage sweep: openLadruno gives the Python reader's recorded outcome on each of the 528 damaged files", () => {
+  const expected = JSON.parse(readFileSync(repo("tests/fixtures/mpm/damage_sweep_expected.json"), "utf8")) as Record<string, string[]>;
+  const dir = mkdtempSync(join(tmp, "sweep-"));
+  const wrong: string[] = [];
+  let n = 0;
+  for (const [name, bytes] of damageSweep(readFileSync(TWO))) {
+    n++;
+    const path = join(dir, `${name}.ladruno`);
+    writeFileSync(path, bytes);
+    let got: string[];
+    try {
+      const f = openLadruno(H5, path);
+      try {
+        const p = f.particles!;
+        const at = (g: string) => g.replace(/^\//, "");
+        const rows = [
+          ...p.stages.map((s) => `${at(s.group)} read ${s.nOutputs}`),
+          ...p.skipped.map((s) => `${at(s.group)} skipped`),
+          ...p.refused.map((s) => `${at(s.group)} refused${/corruption/.test(s.reason) ? " (corruption)" : ""}`),
+        ].sort();
+        got = [`step ${f.opened.step}`, ...rows];
+      } finally {
+        f.close();
+      }
+    } catch (e) {
+      if (FE_READER_THROWS.has(name)) {
+        rmSync(path);
+        continue;
+      }
+      got = ["file-error"];
+    }
+    rmSync(path);
+    if (FE_READER_THROWS.has(name)) wrong.push(`${name}: expected the FE reader to throw (remove it from FE_READER_THROWS)`);
+    else if (JSON.stringify(got) !== JSON.stringify(expected[name])) wrong.push(`${name}: Python ${JSON.stringify(expected[name])}, TS ${JSON.stringify(got)}`);
+  }
+  assert.equal(n, 528);
+  assert.equal(Object.keys(expected).length, 528);
+  assert.deepEqual(wrong, []);
+});
+
 test("a stored end-of-allocation past the file's end at flags 0x00 opens SWMR-read (step 2), as h5py's \"truncated file\" does; both stages read", () => {
   const path = join(tmp, "eoa_past_end.ladruno");
   copyFileSync(TWO, path);

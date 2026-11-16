@@ -886,6 +886,25 @@ def test_hdf5_damage_through_the_stage_rule(fork, copy_of, label, off, sig, dama
     assert p.read_bytes() == before
 
 
+def test_the_damage_sweep_gives_the_recorded_outcomes(tmp_path) -> None:
+    """528 damaged copies (``tests/fixtures/mpm/damage_sweep.py``, built here and
+    removed): the Python reader gives the recorded outcome for every one. The
+    viewer's ``ladrunoParticles.test.ts`` checks ``openLadruno`` against the same
+    table, so the two readers agree file by file."""
+    import importlib.util
+    import json
+
+    spec = importlib.util.spec_from_file_location("_damage_sweep", MPM / "damage_sweep.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    expected = json.loads(mod.EXPECTED.read_text(encoding="utf-8"))
+    got = mod.sweep(tmp_path)
+    assert len(got) == len(expected) == 528
+    wrong = {k: (expected[k], got[k]) for k in got if got[k] != expected.get(k)}
+    assert not wrong, f"{len(wrong)} case(s) differ: {list(wrong.items())[:5]}"
+
+
 def test_an_eoa_past_the_end_at_flags_0x00_opens_swmr_read(copy_of) -> None:
     """h5py's plain open refuses "truncated file"; the SWMR-read open (step 2)
     skips that check, as the fork's open_ladruno does (the viewer agrees)."""

@@ -343,7 +343,11 @@ def committed_outputs(on_particles: "h5py.Group") -> int:
     for name in on_particles:
         item = on_particles[name]
         if isinstance(item, h5py.Group) and "DATA" in item:
-            rows = min(rows, item["DATA"].shape[0])
+            data = item["DATA"]
+            if not isinstance(data, h5py.Dataset):
+                # No row count to bound the outputs with (the viewer's twin agrees).
+                raise KeyError(f"{data.name} is not a dataset")
+            rows = min(rows, data.shape[0])
     _, kept = _crash_rule(
         np.asarray(on_particles["OFFSETS"][...], dtype=np.int64).reshape(-1),
         on_particles["STEP"].shape[0], on_particles["TIME"].shape[0], rows,

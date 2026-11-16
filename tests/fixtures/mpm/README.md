@@ -59,6 +59,11 @@ process kill.
   the tests list and check) in a copy, and expect the same stage outcome from both readers. The
   offsets hold as long as the file's blob sha above holds; a rebuild that changes the bytes
   needs the offsets found again (the tests assert the signature at each one).
+- `damage_sweep.py` builds 528 damaged copies of it, in a temp folder, never committed: every
+  `TREE`/`SNOD`/`HEAP` signature flipped, and 256 zero bytes at every 4 KiB boundary, each at
+  flags 0x00/0x05/0x01. `damage_sweep_expected.json` is the Python reader's outcome per copy,
+  recorded by running the script. Both readers' tests check every copy against it, so they
+  agree file by file. Re-record it only for a deliberate change to the stage rule.
 
 `fork_a1d4c7260/` holds the stage rule's **reference code** at
 `a1d4c72601fe394a58a33e1596bb21a2efbb3d4c` (OpenSees#1088: 232a §2.5's stage rule), read as an
