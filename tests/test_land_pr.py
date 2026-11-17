@@ -232,9 +232,23 @@ def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip=""
         "rev-parse HEAD": (local or head) + "\n",
         "status --porcelain": porcelain,
         f"ls-remote origin refs/heads/{pr['headRefName']}": tip,
+        **_test_shows(rows, head),  # check 12 (#3023) reads each changed test; unmarked by default
         **{f"show {head}:{path}": text for path, text in (shows or {}).items()},
     })
     return gh, git
+
+
+def _test_shows(rows, head):
+    """An unmarked body for every `tests/**.py` name check 12 reads: at the head, or on
+    origin/main for a deleted file or the old name of a rename."""
+    shows = {}
+    for row in rows:
+        path, status, previous = json.loads(row)[:3]
+        for name in (path, previous):
+            if name and name.startswith("tests/") and name.endswith(".py"):
+                rev = head if name == path and status != "removed" else "origin/main"
+                shows[f"show {rev}:{name}"] = "def test_stock():\n    pass\n"
+    return shows
 
 
 def _run(number, gh, git, **kw):
@@ -2311,6 +2325,11 @@ def _pin_call(head):
             f"{head} --json {land_pr.LIVE_FORK_RUNS_JSON}")
 
 
+def _green_fork_run(gh, pr):
+    """Record a green live-fork dispatch on `pr`'s head, for a PR check 12 applies to."""
+    gh.responses[_pin_call(pr["headRefOid"])] = json.dumps([_fork_run(pr["headRefOid"])])
+
+
 def _pin_pr(files=FILES_2138, runs=(), pr=PR_1218):
     pr = {**pr, "headRefOid": HEAD_2138}
     gh, git = _recording(1218, pr, SQUASH_1218, files=files)
@@ -2388,6 +2407,108 @@ def test_fork_pin_renamed_or_deleted_with_no_run_is_refused(row):
     gh.responses[_pin_call(HEAD_2138)] = "[]"
     with pytest.raises(land_pr.LandError, match="check 12"):
         _run(1218, gh, git)
+
+
+# --- #3023 (#2889 -> #2907): check 12 also covers fork-only tests and src -------------------------
+#: #2889's shape: a fork-marked test the stock lanes skip. It merged green and left live-fork red.
+MARKED = "import pytest\n\n\n@pytest.mark.ladruno_fork\ndef test_fork_only():\n    pass\n"
+MODULE_MARKED = "import pytest\n\npytestmark = [pytest.mark.live, pytest.mark.ladruno_fork]\n"
+#: tests/conftest.py names the marker without applying it.
+NAMES_ONLY = 'def pytest_runtest_setup(item):\n    if item.get_closest_marker("ladruno_fork") is None:\n        return\n'
+FORK_TEST = "tests/opensees/integration/test_md_stage_ladruno_at_pin.py"
+
+
+def _fork_pr(rows, shows=None, base_shows=None, runs=None, pr=PR_1218):
+    pr = {**pr, "headRefOid": HEAD_2138}
+    gh, git = _recording(1218, pr, SQUASH_1218, rows=rows, shows=shows)
+    git.responses.update({f"show origin/main:{p}": text for p, text in (base_shows or {}).items()})
+    if runs is not None:
+        gh.responses[_pin_call(HEAD_2138)] = json.dumps(list(runs))
+    return gh, git
+
+
+@pytest.mark.parametrize("rows, shows, base_shows", [
+    pytest.param([_row(FORK_TEST)], {FORK_TEST: MARKED}, None, id="marked-test-2889"),
+    pytest.param([_row("tests/a/test_m.py")], {"tests/a/test_m.py": MODULE_MARKED}, None, id="module-pytestmark"),
+    pytest.param([_row(FORK_TEST, "removed")], None, {FORK_TEST: MARKED}, id="deleted-marked"),
+    pytest.param([_row("tests/b/test_new.py", "renamed", FORK_TEST)], None, {FORK_TEST: MARKED}, id="renamed-away"),
+    pytest.param([_row(FORK_TEST, "renamed", "tests/b/test_old.py")], {FORK_TEST: MARKED}, None, id="renamed-to"),
+    pytest.param([_row("tests/opensees/integration_ladruno/conftest.py")], None, None, id="integration-ladruno"),
+    pytest.param([_row("tests/opensees/integration_ladruno/data/deck.tcl")], None, None, id="integration-ladruno-data"),
+    pytest.param([_row("tests/x/test_a.py", "renamed", "tests/opensees/integration_ladruno/test_a.py")], None, None,
+                 id="renamed-out-of-integration-ladruno"),
+    pytest.param([_row("src/apeGmsh/opensees/LadrunoBrick.py")], None, None, id="src-ladruno-any-case"),
+    pytest.param([_row("src/apeGmsh/results/readers/_ladruno.py", "removed")], None, None, id="src-ladruno-deleted"),
+])
+def test_a_fork_only_change_without_a_dispatch_run_is_refused_3023(rows, shows, base_shows):
+    """Revert-proof: with `_fork_only` returning [] (main's check 12), every case merges."""
+    gh, git = _fork_pr(rows, shows, base_shows, runs=[])
+    with pytest.raises(land_pr.LandError, match=(
+        r"check 12: #1218 changes fork-only files \(.+\) but no live-fork workflow_dispatch run .*"
+        r"#2889 -> #2907.*`gh workflow run live-fork\.yml --ref "
+    )):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_the_refusal_names_the_triggering_files_3023():
+    rows = [_row("docs/a.md"), _row(FORK_TEST), _row("src/apeGmsh/x/ladruno_io.py"), _row("tests/a/test_s.py")]
+    gh, git = _fork_pr(rows, {FORK_TEST: MARKED}, runs=[])
+    with pytest.raises(land_pr.LandError) as exc:
+        _run(1218, gh, git)
+    assert f"fork-only files ({FORK_TEST}, src/apeGmsh/x/ladruno_io.py)" in str(exc.value)
+
+
+@pytest.mark.parametrize("run, message", [
+    (_fork_run(HEAD_2138, status="queued", conclusion=None), r"is queued, not completed.*workflow run live-fork"),
+    (_fork_run(HEAD_2138, conclusion="failure"), r"concluded failure .*fork-only files .*gh run rerun 41"),
+    (_fork_run("0" * 40), r"no live-fork workflow_dispatch run"),  # green on an older head only
+])
+def test_a_fork_only_change_refuses_unfinished_failed_or_older_head_runs_3023(run, message):
+    gh, git = _fork_pr([_row(FORK_TEST)], {FORK_TEST: MARKED}, runs=[run])
+    with pytest.raises(land_pr.LandError, match=rf"check 12: .*{message}"):
+        _run(1218, gh, git)
+
+
+def test_a_fork_only_change_with_a_green_dispatch_on_the_head_lands_3023(capsys):
+    gh, git = _fork_pr([_row(FORK_TEST)], {FORK_TEST: MARKED}, runs=[_fork_run(HEAD_2138)])
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert f"check 12: fork-only files ({FORK_TEST}) changed; live-fork dispatch run" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("labels", [["fixes-red-main"], ["scope-ok", "human-gate", "fixes-red-main"]])
+def test_no_label_overrides_the_fork_only_trigger_3023(labels):
+    pr = {**PR_1218, "labels": [{"name": n} for n in labels]}
+    gh, git = _fork_pr([_row("src/apeGmsh/opensees/ladruno/x.py")], runs=[], pr=pr)
+    with pytest.raises(land_pr.LandError, match="check 12: #1218 changes fork-only files"):
+        _run(1218, gh, git)
+
+
+@pytest.mark.parametrize("rows, shows", [
+    pytest.param([_row("docs/a.md"), _row("README.md")], None, id="docs-only"),
+    pytest.param([_row("tests/a/test_s.py"), _row("docs/a.md")], None, id="stock-test"),
+    pytest.param([_row("tests/conftest.py")], {"tests/conftest.py": NAMES_ONLY}, id="names-the-marker-only"),
+    pytest.param([_row("tests/fixtures/ladruno_deck.h5")], None, id="non-py-test-asset"),
+    pytest.param([_row("docs/ladruno.md"), _row("scripts/ladruno_tool.py")], None, id="ladruno-outside-src"),
+])
+def test_a_pr_with_no_fork_only_file_needs_no_dispatch_3023(rows, shows, capsys):
+    gh, git = _fork_pr(rows, shows)
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "does not change FORK_PIN; no live-fork dispatch is required." in capsys.readouterr().out
+    assert not any(call.startswith("run list") for call in gh.calls)
+
+
+def test_an_unreadable_test_file_refuses_3023():
+    """A read that fails refuses rather than letting the file count as unmarked."""
+    gh, git = _fork_pr([_row("tests/a/test_s.py")])
+
+    def git_fails_on_show(args):
+        if args[0] == "show":
+            raise land_pr.subprocess.CalledProcessError(128, ["git", *args])
+        return git(args)
+
+    with pytest.raises(land_pr.LandError, match=r"check 12: tests/a/test_s\.py could not be read .*refusing"):
+        _run(1218, gh, git_fails_on_show)
 
 
 # --- #2326: check 9 scopes a negation to its own line -------------------------------------
@@ -2502,6 +2623,7 @@ def test_a_failed_app_tests_run_before_a_green_rerun_refuses_2864():
 @pytest.mark.parametrize("kind", sorted(VIEWER_ROWS))
 def test_an_app_lane_pr_with_app_tests_green_passes_2864(kind, capsys):
     gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": APP_ROLLUP}, SQUASH_1218, rows=VIEWER_ROWS[kind])
+    _green_fork_run(gh, PR_1218)  # the provenance rows are a src/ ladruno path: check 12 (#3023)
     assert _run(1218, gh, git, dry_run=True) == 0
     assert "'app-tests' is required too" in capsys.readouterr().out
 
@@ -2516,6 +2638,7 @@ def test_an_app_lane_pr_with_app_tests_green_passes_2864(kind, capsys):
 ])
 def test_a_pr_outside_the_app_lane_with_no_app_tests_run_passes_2864(files, capsys):
     gh, git = _recording(1218, PR_1218, SQUASH_1218, files)
+    _green_fork_run(gh, PR_1218)  # `src/.../_ladruno.py` is fork-only to check 12 (#3023)
     assert not any(run["name"] == "app-tests" for run in PR_1218["statusCheckRollup"])
     assert _run(1218, gh, git, dry_run=True) == 0
     assert "app-tests" not in capsys.readouterr().out

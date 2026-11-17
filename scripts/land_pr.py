@@ -34,7 +34,10 @@ STALE_HOURS hours, behind ``main``. The base is read from the job log's
 
 Check 12 (#2138 bumped ``FORK_PIN`` with only the stock lane run; the fork side went red that night, #2143) refuses
 a PR that changes ``FORK_PIN`` unless a ``live-fork`` ``workflow_dispatch`` run on the PR head SHA completed
-green. ``live-fork`` is not a required check, so nothing else proves a new pin. No label overrides it.
+green. ``live-fork`` is not a required check, so nothing else proves a new pin. Since #3023 the same holds for
+a PR that changes a ``ladruno_fork``-marked test, a file under ``tests/opensees/integration_ladruno/``, or a
+``src/`` path containing ``ladruno``: those skip on the stock lanes (#2889 merged green and left ``live-fork``
+red on ``main``, #2907). No label overrides it, ``fixes-red-main`` included.
 
 Whatever copy is invoked, the rules that run are origin/main's: ``main``
 fetches origin/main and re-executes ``git show origin/main:scripts/land_pr.py``
@@ -1020,40 +1023,81 @@ def check_fresh_base(number: int, rows: list[FileRow], gh: Runner, bases: Bases)
 #: Check 12: the file a pin bump edits, and the fork lane that must have run on the new pin.
 PIN_FILE = "FORK_PIN"
 LIVE_FORK_RUNS_JSON = "databaseId,status,conclusion,headSha,url"
+#: #3023 (#2889 -> #2907): fork-only changes, which the stock required lanes skip. A file under
+#: FORK_TESTS, a `.py` under tests/ whose content applies the `ladruno_fork` marker, or a src/
+#: path containing "ladruno" (any case) needs the same green dispatch as a pin bump.
+FORK_TESTS = "tests/opensees/integration_ladruno/"
+FORK_MARK = re.compile(r"\bmark\.ladruno_fork\b")
 
 
-def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner) -> None:
-    """Check 12 (#2138 -> #2143). A PR that changes ``FORK_PIN`` needs a ``live-fork`` run with
-    ``event == workflow_dispatch`` on its head SHA, completed and successful. Neither ``scope-ok``
-    nor ``human-gate`` overrides it, and it applies to every PR. A PR that leaves the pin alone
-    makes no run-list call."""
-    if not any(PIN_FILE in (row[0], row[2]) for row in rows):
-        print(f"check 12: #{number} does not change {PIN_FILE}; no live-fork dispatch is required.")
-        return
+def _fork_only(rows: list[FileRow], head: str, git: Runner) -> list[str]:
+    """The changed paths only the fork lane exercises. Either name of a rename triggers. A test's
+    content is read at the head, or on origin/main (fetched by `main`) for a name the PR deletes
+    or renames away. The reads are local `git show`s; one that fails refuses."""
+    hits: list[str] = []
+    for path, status, previous, _changes, _patch in rows:
+        for name in (path, previous):
+            if not name or name in hits:
+                continue
+            if name.startswith(FORK_TESTS) or (name.startswith("src/") and "ladruno" in name.lower()):
+                hits.append(name)
+                continue
+            if not (name.startswith("tests/") and name.endswith(".py")):
+                continue
+            rev = head if name == path and status != "removed" else "origin/main"
+            try:
+                text = git(["show", f"{rev}:{name}"])
+            except _UNREADABLE as exc:
+                raise LandError(
+                    f"check 12: {name} could not be read at {rev[:12]} ({exc!r}), so whether it applies "
+                    f"the ladruno_fork marker is unknown; refusing."
+                ) from exc
+            if FORK_MARK.search(text):
+                hits.append(name)
+    return hits
+
+
+def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner, git: Runner) -> None:
+    """Check 12 (#2138 -> #2143; #2889 -> #2907). A PR that changes ``FORK_PIN``, or a fork-only
+    test or src file (`_fork_only`), needs a ``live-fork`` run with ``event == workflow_dispatch``
+    on its head SHA, completed and successful. No label overrides it (``scope-ok``,
+    ``human-gate`` and ``fixes-red-main`` included), and it applies to every PR. A PR that
+    changes none of these makes no run-list call."""
     head = pr["headRefOid"]
     dispatch = f"gh workflow run live-fork.yml --ref {pr['headRefName']}"
+    if any(PIN_FILE in (row[0], row[2]) for row in rows):
+        what, proof, again = PIN_FILE, "A new pin is proven by the fork lane", ""
+    else:
+        fork = _fork_only(rows, head, git)
+        if not fork:
+            print(f"check 12: #{number} does not change {PIN_FILE}; no live-fork dispatch is required.")
+            return
+        shown = ", ".join(fork[:5]) + (f" (+{len(fork) - 5} more)" if len(fork) > 5 else "")
+        what = f"fork-only files ({shown})"
+        proof = "Fork-only tests and src skip on the stock lanes (#2889 -> #2907); they are proven by the fork lane"
+        again = f" #{number} changes {what}; start a run with `{dispatch}`."
     listing = gh(["run", "list", "--workflow", "live-fork.yml", "--event", "workflow_dispatch",
                   "--commit", head, "--json", LIVE_FORK_RUNS_JSON])
     runs = [run for run in json.loads(listing) if run.get("headSha") == head]
     if not runs:
         raise LandError(
-            f"check 12: #{number} changes {PIN_FILE} but no live-fork workflow_dispatch run exists on {head[:12]}. "
-            f"A new pin is proven by the fork lane, which is not a required check (#2138 -> #2143). Start one "
+            f"check 12: #{number} changes {what} but no live-fork workflow_dispatch run exists on {head[:12]}. "
+            f"{proof}, which is not a required check (#2138 -> #2143). Start one "
             f"with `{dispatch}`, wait for it to finish green, then land."
         )
     latest = max(runs, key=lambda run: run.get("databaseId") or 0)  # only the newest dispatch counts
     if latest.get("status") != "completed":
         raise LandError(
             f"check 12: the newest live-fork dispatch run on {head[:12]} is {latest.get('status')}, not completed "
-            f"({latest.get('url')}). Pending is a refusal, not a wait."
+            f"({latest.get('url')}). Pending is a refusal, not a wait.{again}"
         )
     if latest.get("conclusion") != "success":
         raise LandError(
             f"check 12: the newest live-fork dispatch run on {head[:12]} concluded {latest.get('conclusion')} "
-            f"({latest.get('url')}); a {PIN_FILE} change needs it green. Re-run it with "
+            f"({latest.get('url')}); a {what} change needs it green. Re-run it with "
             f"`gh run rerun {latest.get('databaseId')}` or start a new one with `{dispatch}`."
         )
-    print(f"check 12: {PIN_FILE} changed; live-fork dispatch run {latest.get('url')} is green on {head[:12]}.")
+    print(f"check 12: {what} changed; live-fork dispatch run {latest.get('url')} is green on {head[:12]}.")
 
 
 def _app_path(name: str) -> bool:
@@ -1144,7 +1188,7 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
 
     check_main_green(number, pr, rows, gh, bases)
     check_fresh_base(number, rows, gh, bases)
-    check_fork_pin(number, pr, rows, gh)
+    check_fork_pin(number, pr, rows, gh, git)
     return pr
 
 
