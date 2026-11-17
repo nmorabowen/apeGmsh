@@ -922,6 +922,32 @@ MD_STATIC_RESET_GUARD = ForkBuildCapability(
     capability=MD_STAGE_FLAG_CAPABILITY, message=MD_STATIC_RESET_MESSAGE)
 
 
+#: The ``ladrunoSchema`` v1 capability that promises ``recorder ladruno
+#: ... -R tag -RN nodeTag`` (fork WP-234): the node channel records the
+#: ``-R`` element nodes plus the ``-RN`` region's nodes.  A build without
+#: it fails on the unknown ``-RN`` option or, older still, ignores it.
+LADRUNO_NODE_REGION_CAPABILITY = "recorderLadrunoNodeRegion"
+
+#: The error :data:`LADRUNO_NODE_REGION_GUARD` stops a deck with, and the
+#: live route raises: one message on every route.
+LADRUNO_NODE_REGION_MESSAGE = (
+    "apeGmsh: this Ladruno recorder filters nodes and elements together "
+    "(nodes_pg or nodes with elements_pg or elements), so it is emitted as "
+    "two regions read by recorder ladruno -R and -RN (fork WP-234). One "
+    "OpenSees region cannot hold both lists, so without -RN the nodes "
+    "outside the recorded elements would be dropped with no error. The "
+    "running OpenSees is a Ladruno fork build whose ladrunoSchema does not "
+    f"report the {LADRUNO_NODE_REGION_CAPABILITY} capability. Rebuild the "
+    "Ladruno fork at or after WP-234, or drop one of the two selectors."
+)
+
+#: The guard a deck with a ``recorder ladruno ... -RN`` line runs, and the
+#: question the live route asks the engine it drives.
+LADRUNO_NODE_REGION_GUARD = ForkBuildCapability(
+    capability=LADRUNO_NODE_REGION_CAPABILITY,
+    message=LADRUNO_NODE_REGION_MESSAGE)
+
+
 #: The Ladruno fork merge that completes fork WP-202, WP-203 and WP-205:
 #: ASD shell ``-pDelta``, ``responseSpectrumAnalysis -scale`` and
 #: ``modalProperties`` after ``eigen -feast``.

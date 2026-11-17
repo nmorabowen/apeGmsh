@@ -37,6 +37,7 @@ from .._internal.build.stage_emit import (
     BEAM3D_PARTIAL_LOAD_MESSAGE,
     FORCE_BEAM_PARTIAL_LOAD_GUARD,
     FORCE_BEAM_PARTIAL_LOAD_MESSAGE,
+    LADRUNO_NODE_REGION_GUARD,
     MD_STATIC_RESET_GUARD,
     MEMBRANE_WP208_MESSAGE,
     Beam3dPartialLoadTargets,
@@ -1758,6 +1759,16 @@ class LiveOpsEmitter:
     # -- Recorders ----------------------------------------------------------
 
     def recorder(self, kind: str, *args: int | float | str) -> None:
+        if kind == "ladruno" and "-RN" in args:
+            # Only a fork build listing the capability reads -RN (fork
+            # WP-234); refuse another by name, as a deck does at its start.
+            ops = self._real_ops if self._in_partition else self._ops
+            module = ops.module if isinstance(ops, _CoercingOps) else ops
+            if not engine_has_capability(
+                    LADRUNO_NODE_REGION_GUARD, self._backend(), module):
+                from .._internal.build.errors import BridgeError
+
+                raise BridgeError(LADRUNO_NODE_REGION_GUARD.message)
         self._ops.recorder(kind, *args)
 
     def recorder_declaration_begin(

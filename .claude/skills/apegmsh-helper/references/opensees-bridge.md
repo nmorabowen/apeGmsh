@@ -1176,6 +1176,22 @@ The canonical component vocabulary is the neutral top-level
 > records it on the fork with no declaration at all. Full emit/read contract:
 > `Ladruno_implementation/ladruno_apegmsh_contract.md` in the fork. The fork is
 > opt-in; stock `openseespy` (no `.ladruno`) stays first-class.
+>
+> **Filtering nodes and elements together.** `Ladruno(nodes_pg=..., elements_pg=...)`
+> (or `nodes=` / `elements=`) emits **two** regions, `region $t -ele ...` and
+> `region $tn -node ...`, and passes `-R $t -RN $tn`: `-N` rows cover the `-R`
+> element nodes plus the `-RN` nodes, `-E` rows the `-R` elements only. One
+> OpenSees region cannot carry both lists (`MeshRegion::setNodes` /
+> `setElements` each wipe both, and `-ele` rebuilds the nodes), so the old
+> single `region -node ... -ele ...` line silently dropped `nodes_pg`. Use it to
+> record nodes that have no recorded element, e.g. embedded rebar
+> (`g.rebar.place(coupling="embedded", emit_elements=True)`): keep the minted
+> truss elements out with `elements_pg="solids"` and put the bar nodes in
+> `nodes_pg`. Needs a fork build whose `ladrunoSchema` lists
+> `recorderLadrunoNodeRegion` (fork WP-234): the live route raises
+> `BridgeError` naming it on an older build, and a deck checks the running
+> build at its start. Only one selector side → one region, as before. MPCO
+> (stock, no `-RN`) still writes the single combined region.
 
 ## Native model.h5 — two zones + schema constants
 
