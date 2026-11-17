@@ -227,7 +227,9 @@ def _results(
                if na in fa else [])
     names_b = ([n for n in fb[nb] if not _modal(n) or holds_modes(fb[nb][n])]
                if nb in fb else [])
-    if names_a != names_b:
+    # HDF5 creation order carries no meaning (since fork #1084 the modes
+    # groups are laid out first), so the names compare as sets.
+    if sorted(names_a) != sorted(names_b):
         problems.append(f"{where} ON_NODES: {names_a} vs {names_b}")
     ea, eb = f"{ga}/RESULTS/ON_ELEMENTS", f"{gb}/RESULTS/ON_ELEMENTS"
     buckets_a = [(t, b) for t in (fa[ea] if ea in fa else ()) for b in fa[ea][t]]
