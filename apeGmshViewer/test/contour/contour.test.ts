@@ -824,7 +824,7 @@ test("#2214: a fixture copy whose DISPLACEMENT labels are X,Y contours X and Y a
  * `refused: part <k> of <stem>` for a part file, which the reader refuses (any
  * other open error fails the test). The rows of the fixtures on main at
  * c394ebce8 were recorded there, before #2214; the rest were added as their
- * fixtures landed (#2241 parts2d, simplex_gp tet/tri).
+ * fixtures landed (#2241 parts2d, simplex_gp tet/tri, #3014 crack_bricks).
  */
 const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "deform_2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
@@ -848,6 +848,7 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "beam3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
   "bezier_tet10.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
   "bezier_tri6.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "crack_bricks.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
   "energy.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "fiberbeam.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "node_envelope.ladruno": "-",

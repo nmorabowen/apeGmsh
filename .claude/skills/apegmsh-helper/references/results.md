@@ -589,8 +589,33 @@ results.plot.history(node=412, component="displacement_x")
 ```
 
 `results.plot` is the headless renderer. Methods: `mesh / contour /
-deformed / history / vector_glyph / reactions / loads / line_force`.
+deformed / history / vector_glyph / reactions / loads / line_force /
+fibers / energy / cracks / node_envelope`.
 `ImportError` if the `[plot]` extra (matplotlib) is absent.
+
+**Crack map (ASDConcrete3D).** Record `material.crackPattern` (and
+`material.crackWidth`) on the concrete elements. The `.ladruno` reader
+names the buckets as Gauss components: `crack_c{1,2,3}_{x,y,z}` (up to
+three vectors along the crack normals, each as long as that crack's
+opening, cracking strain x lch, global frame; unused slots are 0) and
+`crack_width` (the largest opening). `material.crushPattern` (same labels,
+compression side) reads as `crush_c{1,2,3}_{x,y,z}`; there is no crush width.
+Without `-crackPlanes` only `crack_c1_*` is filled; `crack_width` equals
+the largest |c_k| in both modes.
+
+```python
+results.elements.gauss.get(pg="concrete", component="crack_width", time=step)
+ax = results.plot.cracks(step=step, pg="concrete", plane="xz",  # side view: x right, z up
+                         min_opening=0.05,   # hairline threshold, model length units
+                         half_length=13.0)   # default: 0.4 x projected GP spacing
+```
+
+One segment per open crack per Gauss point, across the projected normal,
+coloured and widened by opening, over a faint outline of the selected
+elements (`outline=False` drops it). It draws on **2-D** axes. A crack
+whose normal is perpendicular to the view plane has no trace and is
+skipped. Raises `RuntimeError` if the crack vectors were not recorded.
+# verified: tests/results/test_plot_cracks.py
 
 ### Interactive desktop viewer — `blocking=None` auto-detect
 
