@@ -36,6 +36,7 @@ from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
 from .._internal.build.stage_emit import (
     ASDSHELL_PDELTA_GUARD,
+    LADRUNO_NODE_REGION_GUARD,
     MEMBRANE_WP208_GUARD,
     Beam3dPartialLoadTargets,
     ForkBuildGuard,
@@ -1092,6 +1093,10 @@ class TclEmitter:
     # -- Recorders ----------------------------------------------------------
 
     def recorder(self, kind: str, *args: int | float | str) -> None:
+        if kind == "ladruno" and "-RN" in args:
+            # Only a fork build listing the capability reads -RN; the deck
+            # checks the running build at its start (fork WP-234).
+            self._require_fork_floors((LADRUNO_NODE_REGION_GUARD,))
         if kind == "mpco" and args and str(args[0]) not in self._mpco_files:
             self._mpco_files.append(str(args[0]))
         if kind == "mpco" and args and self._run_record:

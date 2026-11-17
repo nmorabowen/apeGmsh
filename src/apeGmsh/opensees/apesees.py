@@ -7596,7 +7596,16 @@ class BuiltModel:
             if p.has_filter():
                 node_ids, elem_ids = p.resolve_filter_ids(self.fem)
                 region_tag = region_tags["filter"]
-                regions.append(_RegionEmit(region_tag, node_ids, elem_ids))
+                split = isinstance(p, Ladruno) and p.splits_filter()
+                if split:
+                    # Ladruno with nodes AND elements: the element region
+                    # under -R, the nodes in their own region under -RN
+                    # (one region cannot hold both lists; fork WP-234).
+                    node_tag = region_tags["nodes"]
+                    regions.append(_RegionEmit(region_tag, (), elem_ids))
+                    regions.append(_RegionEmit(node_tag, node_ids, ()))
+                else:
+                    regions.append(_RegionEmit(region_tag, node_ids, elem_ids))
                 materialised = replace(
                     materialised,
                     nodes_pg=None,
@@ -7605,6 +7614,10 @@ class BuiltModel:
                     elements=elem_ids if elem_ids else None,
                     _region_tag=region_tag,
                 )
+                if split:
+                    assert isinstance(materialised, Ladruno)
+                    materialised = replace(
+                        materialised, _node_region_tag=node_tag)
 
             # Decoupled energy region (-G energy $tag), Ladruno only
             # (ADR 0064 §4). Independent of the value filter: its own tag,
