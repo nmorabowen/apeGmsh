@@ -754,9 +754,11 @@ _MD_STATIC_FIX = MD_STATIC_FIX_COMMIT
 #: capability.  It stays the live reset test's record of what each build
 #: does, for the v0 builds that carry the fix but cannot say so.
 _FORK_BUILD_HAS_MD_STATIC_FIX: "dict[str, bool]" = {
-    # FORK_PIN ladruno-v20261114 (f0b9a1df6): 43b235bbb is its ancestor
-    # (GitHub compare: ahead 310, behind 0); its ladrunoSchema is v1 and
+    # FORK_PIN ladruno-v20261116 (6ee968060): 43b235bbb is its ancestor
+    # (GitHub compare: ahead 378, behind 0); its ladrunoSchema is v1 and
     # lists mdStageFlagPreserved (fork LadrunoSchema.h kCapabilities).
+    "6ee9680606e3d5d62c410d286547b8009d581159": True,
+    # ladruno-v20261114 (f0b9a1df6): ahead 310, behind 0.
     "f0b9a1df699f9634fd89c5942d69d90fe5ad27c4": True,
     # ladruno-v20261103 (6050d78e1): ahead 226, behind 0.
     "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe": True,

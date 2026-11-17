@@ -48,6 +48,7 @@ from tests.opensees.integration_ladruno import _fork_spec
 from tests.opensees.integration_ladruno._mpco_ladruno_compare import (
     attr,
     compare,
+    holds_modes,
     stages,
 )
 from tests.opensees.integration_ladruno.test_mpco_to_ladruno_oracle_live import (
@@ -250,7 +251,8 @@ def test_every_file_splits_the_run_into_the_program_stages(run) -> None:
             assert tuple(stages(f)) == _ALL, key
             for stage in _ALL:
                 on = f"{stage}/RESULTS/ON_NODES"
-                modal = [n for n in f[on] if n.startswith("MODES_OF_VIBRATION")]
+                modal = [n for n in f[on] if n.startswith("MODES_OF_VIBRATION")
+                         and holds_modes(f[on][n])]
                 assert bool(modal) == (stage == _MODAL_HOST), (key, stage, modal)
 
 
