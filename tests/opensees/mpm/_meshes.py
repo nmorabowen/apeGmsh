@@ -96,6 +96,21 @@ def grid_nodes(shape: Sequence[int], lo: Sequence[float], hi: Sequence[float],
     return nodes, ids
 
 
+def box(family: str, lo: Sequence[float], hi: Sequence[float], divisions: Sequence[int],
+        first: int = 1) -> tuple[dict[int, list[float]], list[Element]]:
+    """A structured ``family`` mesh of the box ``[lo, hi]``, node ids from ``first``."""
+    nodes, ids = grid_nodes(divisions, lo, hi, first=first)
+    if family == "quad4":
+        return nodes, quads(ids)
+    if family == "tri3":
+        return nodes, tris(ids)
+    if family == "hex8":
+        return nodes, hexes(ids)
+    if family == "tet4":
+        return nodes, tets(ids, nodes)
+    raise ValueError(f"box: no structured mesh for {family!r}")
+
+
 def quads(ids: np.ndarray) -> list[Element]:
     out: list[Element] = []
     for i in range(ids.shape[0] - 1):

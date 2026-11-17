@@ -600,9 +600,8 @@ three vectors along the crack normals, each as long as that crack's
 opening, cracking strain x lch, global frame; unused slots are 0) and
 `crack_width` (the largest opening). `material.crushPattern` (same labels,
 compression side) reads as `crush_c{1,2,3}_{x,y,z}`; there is no crush width.
-`crack_width` is 0 unless the material has `-crackPlanes` (a fork quirk:
-the isotropic mode has no planes to take the max over); `crackPattern`
-is filled in both modes.
+Without `-crackPlanes` only `crack_c1_*` is filled; `crack_width` equals
+the largest |c_k| in both modes.
 
 ```python
 results.elements.gauss.get(pg="concrete", component="crack_width", time=step)

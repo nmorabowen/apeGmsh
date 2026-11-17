@@ -1,0 +1,3 @@
+### FIXED — MPM seeding keeps a lattice point on the interface of two bodies, for the body declared first (#3005)
+
+`seed_lattice` used to refuse any lattice point two bodies claimed, so two bodies sharing a face that lies on a lattice coordinate could not be seeded. Per ADR 0134 Amendment 2, a point on a boundary facet of both bodies, with those facets facing each other, is now kept once by the body declared first. A point inside either body is still refused, naming both bodies. `UniformityReport.interface_points` counts the points each later body gave up, per body pair. A model in which no two bodies claim a point seeds exactly as before.
