@@ -22,6 +22,10 @@
 - empty or degenerate names:
 - partial writes:
 
+### Damage cases
+<!-- Required on semantic cards; delete on mechanical ones. Before dispatch, list every input or state the change must handle: each way the data can be damaged, torn, empty, repeated, out of order or from an older format, and each wrong result it must refuse rather than return. Give each case one line with the expected behaviour (read, refuse by name, or warn). The builder adds a test per case, and the reviewer checks against this list instead of discovering cases one round at a time (#3008 took four review rounds, each finding a case the card had not named). A case found in review is added here by card amendment. -->
+- <case>: <expected behaviour>
+
 ### Owned files
 <!-- The only files the worker may edit. Derive this list, never write it: paste the output of the verification grep run on origin/main untruncated, and check each cited path with `git ls-tree origin/main <path>` or `nav.py where <symbol>`.
      `land_pr.py` check 9 enforces it (lesson #1788): a PR labelled `program` must say `Slice: #<n>`, and every file it changes, both names of a rename included, must be named in backticks here (a PR whose body says `Slice: #<n>` without the `program` label is refused, #2012), under Append-only or under Allowed. The rules:
