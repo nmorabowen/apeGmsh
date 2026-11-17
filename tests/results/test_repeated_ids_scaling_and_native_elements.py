@@ -6,7 +6,7 @@ refuse a repeated element.
    scanned the whole id list once per repeated id: O(R·N), 26 s for 400k
    ids that all repeat. It now sorts once. Its result must stay exactly
    what it was (the oracle is the old function, copied below), and
-   an 8x step in ids must cost well under the 64x a quadratic check
+   an 8x step in ids must cost well under the ~60x a quadratic check
    pays (#2971 replaced an absolute one-second bound).
 
 2. The native ``read_gauss``, ``read_elements``, ``read_line_stations``,
@@ -100,12 +100,12 @@ def _all_duplicated(n: int) -> np.ndarray:
 # shared CI runner missed "under 1 s" by a few hundredths six times
 # (#2971). An 8x size step costs the sort-once check 9.5x to 17x
 # (measured: N log N, and the large arrays fall out of cache) and the
-# old per-repeat scan ~64x
-# (each of N/2 repeats scans N ids), so a ratio under 32, a factor of two
-# from each, separates them on any runner speed. Each size is timed best
-# of three, so one stall on a shared runner cannot set the ratio, and
-# with the cyclic GC paused: its collections over the result lists add a
-# superlinear cost that is not the check's.
+# old per-repeat scan ~60x (each of N/2 repeats scans N ids), so a
+# ratio under 32, a factor of about two from each, separates them on any
+# runner speed. The two sizes are timed in alternation, best of three
+# each, so a stall or a busy spell on a shared runner hits both or sets
+# neither, and with the cyclic GC paused: its collections over the
+# result lists add a superlinear cost that is not the check's.
 _SMALL = 50_000
 _STEP = 8
 _LARGE = _STEP * _SMALL
@@ -113,22 +113,26 @@ _REPEATS = 3
 _MAX_RATIO = 32.0
 
 
-def _best_of(timed: Callable[[], float]) -> float:
+def _assert_subquadratic(
+    timed: Callable[[np.ndarray], float], small_ids: np.ndarray,
+    large_ids: np.ndarray, what: str,
+) -> None:
     was_enabled = gc.isenabled()
     gc.disable()
     try:
-        return min(timed() for _ in range(_REPEATS))
+        small = large = float("inf")
+        for _ in range(_REPEATS):
+            small = min(small, timed(small_ids))
+            large = min(large, timed(large_ids))
     finally:
         if was_enabled:
             gc.enable()
-
-
-def _assert_subquadratic(small: float, large: float, what: str) -> None:
     ratio = large / small
     assert ratio < _MAX_RATIO, (
         f"{what}: {_LARGE} ids took {large:.3f} s, {_SMALL} ids took "
         f"{small:.3f} s, ratio {ratio:.1f} for a {_STEP}x size step "
-        f"(sort-once ~16, quadratic ~{_STEP**2}; the bound is {_MAX_RATIO})"
+        f"(sort-once 9.5 to 17, quadratic ~{_STEP**2}; the bound is "
+        f"{_MAX_RATIO})"
     )
 
 
@@ -145,9 +149,9 @@ def test_repeated_rows_on_all_duplicated_ids_scales_subquadratically() -> None:
     rows = _repeated_rows(large_ids)
     assert len(rows) == _LARGE // 2
     assert all(len(r) == 2 for r in rows.values())
-    small = _best_of(lambda: _time_repeated_rows(small_ids))
-    large = _best_of(lambda: _time_repeated_rows(large_ids))
-    _assert_subquadratic(small, large, "_repeated_rows")
+    _assert_subquadratic(
+        _time_repeated_rows, small_ids, large_ids, "_repeated_rows",
+    )
 
 
 def _refuse(
@@ -173,9 +177,10 @@ def test_writer_refusal_of_all_duplicated_node_ids_scales_subquadratically(
     _, err = _refuse(next(files), large_ids)
     assert len(err.repeated) == _LARGE // 2
     assert f"and {_LARGE // 2 - 5} more" in str(err)
-    small = _best_of(lambda: _refuse(next(files), small_ids)[0])
-    large = _best_of(lambda: _refuse(next(files), large_ids)[0])
-    _assert_subquadratic(small, large, "the writer refusal")
+    _assert_subquadratic(
+        lambda ids: _refuse(next(files), ids)[0], small_ids, large_ids,
+        "the writer refusal",
+    )
 
 
 # =====================================================================
