@@ -36,6 +36,8 @@ import {
 } from "./contour.ts";
 import { meanFallbackGroups, usesMatrix } from "./extrapolation.ts";
 import { planeStatementOf, planeWarning, tensorFields, type PlaneStatement, type TensorField } from "./tensor.ts";
+import { crackFieldOf as stageCrackField, type CrackField } from "./cracks.ts";
+export type { CrackField } from "./cracks.ts";
 import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 import {
@@ -784,6 +786,14 @@ export function principalFieldOf(s: State): TensorField | null {
   const fields = principalFieldsOf(s);
   const drawable = fields.filter((f) => f.groups.length > 0);
   return fields.find((f) => f.name === s.principal.field) ?? drawable.find((f) => f.family === "stress") ?? drawable[0] ?? fields[0] ?? null;
+}
+
+/** The Cracks card's field: the crack pattern of a verified file's results stage on screen; null when the stage records none. */
+export function crackFieldOf(s: State): CrackField | null {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results || !s.mesh || !elementVerdictOf(s.results).verified) return null;
+  const st = s.results.stages[at.stage];
+  return st ? stageCrackField(st.gauss) : null;
 }
 
 /**

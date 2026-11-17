@@ -48,6 +48,21 @@ export interface PrincipalState {
   readonly thin: boolean;
 }
 
+/**
+ * The Cracks card: at each Gauss point of a smeared-crack material's
+ * `crackPattern`, a disc in each crack plane, coloured by the opening
+ * (state/cracks.ts).
+ */
+export interface CracksState {
+  readonly on: boolean;
+  /** an opening below this is not drawn (>= 0; default 0: every crack that opened) */
+  readonly minOpening: number;
+  /** the map of the opening, over minOpening..the largest opening on screen (default turbo) */
+  readonly cmap: ContourCmap;
+  /** the disc size multiplier on 0.4 x the Gauss spacing (default 1, > 0) */
+  readonly scale: number;
+}
+
 /** `axis`: two heads, one each way from the point (a direction is an axis); `arrow`: one along the sign-canonical direction (Qt). */
 export type PrincipalHead = "axis" | "arrow";
 

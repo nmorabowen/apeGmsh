@@ -13,6 +13,7 @@ import { mountLegend } from "../panels/legend.ts";
 import { mountLineDiagram } from "../panels/lineDiagram.ts";
 import { mountParticleScale } from "../panels/particleScale.ts";
 import { mountLoads } from "../panels/loads.ts";
+import { mountCracks } from "../panels/cracks.ts";
 import { mountPrincipal } from "../panels/principal.ts";
 import { mountReactions } from "../panels/reactions.ts";
 import { mountSprings } from "../panels/springs.ts";
@@ -98,6 +99,7 @@ const panels = [
   mountLoads(store, (fn) => viewport.onViewChange(fn)),
   mountReactions(store, (fn) => viewport.onViewChange(fn)),
   mountPrincipal(store),
+  mountCracks(store),
   mountVectors(store, (fn) => viewport.onViewChange(fn)),
   mountSprings(store, (fn) => viewport.onViewChange(fn)),
   mountLegend(store, (fn) => viewport.onViewChange(fn)),
@@ -133,7 +135,7 @@ panels.push(
   }),
 );
 const chrome = mountCollapsibleChrome({
-  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram", "loads", "reactions", "vectors", "principal", "springs", "offers", "modal-table"],
+  panelIds: [...DEFAULT_PANEL_IDS, "line-diagram", "loads", "reactions", "vectors", "principal", "cracks", "springs", "offers", "modal-table"],
   visible: () => {
     const s = store.get();
     return s.mesh !== null || s.provenance.length > 0;

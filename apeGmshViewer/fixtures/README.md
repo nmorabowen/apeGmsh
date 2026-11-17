@@ -406,6 +406,12 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   The same script writes `principal_random.oracle.json`: `principal_frame` of
   300 seeded random 3-D tensors with distinct values, whose signed vectors
   `test/tensor.test.ts` checks (the canonical sign the `arrow` head draws).
+- `ladruno_cracks3d.ladruno` and `ladruno_cracks3d.h5` are the Python suite's
+  fork run `tests/fixtures/ladruno/crack_bricks.ladruno`, stamped, and its
+  model, written by hand (`--cracks`). It has three ASDConcrete3D `stdBrick`
+  elements pulled along x. The third has cracked from step 0, and the first two
+  never crack. It records `material.crackPattern` (9 columns per Gauss point)
+  and `material.crackWidth`. `test/cracks.test.ts` draws its crack discs.
 - `ladruno_parts2d.part-0.ladruno`, `ladruno_parts2d.part-1.ladruno` and
   `ladruno_parts2d.h5` (#2188) are a 2-rank OpenSeesMP run (fork build
   `80dd3f13d`, which writes `PARTITION_REDUCTION`, WP-126) and its model,
@@ -447,6 +453,8 @@ $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_viewer_gauss_oracle.py
 # and the zero-length springs and their model (fork build)
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --springs
+# and the crack bricks and their model (no fork run: a stamped copy of the suite's crack_bricks.ladruno)
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --cracks
 ```
 
 The part set needs OpenSeesMP from a fork build with WP-126 and its MPI

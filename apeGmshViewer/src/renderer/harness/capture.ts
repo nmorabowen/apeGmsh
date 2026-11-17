@@ -5,6 +5,7 @@ import type { HarnessConfig, HarnessContext } from "./context.ts";
 import { demoTarget } from "./pointer.ts";
 import { captureContours, captureDeform, captureElements, captureExtrudeResults, captureLineDiagrams, captureResults } from "./results.ts";
 import { captureCaps, captureClip, captureGizmo } from "./sections.ts";
+import { captureCracks } from "./cracks.ts";
 import { captureWorkspace } from "./workspace.ts";
 import { captureCombine } from "./combine.ts";
 
@@ -153,6 +154,8 @@ export async function runCapture(ctx: HarnessContext, cfg: HarnessConfig, file: 
     await captureClip(ctx, settle, width, height);
     // V4e2 (D7): the plane-gizmo stills, at the capture window's own width.
     await captureGizmo(ctx, settle, width, height);
+    // The Cracks card's stills, only on a stage that records a crack pattern (./cracks.ts).
+    await captureCracks(ctx, settle, width, height);
   }
   // VU9a (D7): the sets panel and the workspace's notices, only for a set with a <stem>.workspace.h5 (./workspace.ts).
   await captureWorkspace(ctx, settle);
