@@ -10,7 +10,26 @@ import sys
 from typing import Optional, Sequence
 
 
+def _utf8_streams() -> None:
+    """Make stdout/stderr UTF-8 so a cp1252 console can print signatures.
+
+    Signatures and docstrings carry non-Latin-1 characters (``ρ`` in
+    ``g.loads.gravity``, ``…`` in the ambiguous list); a Windows console
+    on cp1252 raised ``UnicodeEncodeError`` on them.  Streams that cannot
+    be reconfigured (a captured test stream) are left alone.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):  # pragma: no cover - detached stream
+            pass
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    _utf8_streams()
     parser = argparse.ArgumentParser(
         prog="python -m apeGmsh.studio.lookup",
         description=(

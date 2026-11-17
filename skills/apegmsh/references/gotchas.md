@@ -229,6 +229,33 @@ garbage: an equilibrium sum, a hand estimate, or sane eigen periods.
 mm models: `tolerance=1e-3`. Metre models: `tolerance=1e-6`. Picking the
 metre tolerance on a mm model silently fails to merge coincident nodes.
 
+### Every run writes `.h5` files beside the script; `save_to=None` is not "no save"
+ADR 0112 D1 makes the artifacts unconditional:
+
+- the session's `end()` (or `with` exit) writes `<model_name>.h5` and
+  `<model_name>.geometry.h5`; `save_to=None` only means "use the
+  conventional directory", and there is no user-facing opt-out;
+- the bridge writes its own full `<model_name>.h5` (neutral zone +
+  `/opensees` + `/provenance`) at the end of **every** live build /
+  `ops.analyze` / `ops.run()` / `ops.tcl` / `ops.py` deck emit, skipped only when the
+  declarations are unchanged since the last write to that path.
+
+The conventional directory is `$APEGMSH_ARTIFACT_DIR` when set and
+non-empty, else the folder of the `__main__` script, else the cwd.
+`save_to=` moves **only the session's** write: the bridge never reads it,
+so `apeGmsh(save_to="out/m.h5")` + `apeSees(fem).analyze(...)` still drops
+`<model_name>.h5` beside the script. To keep a source tree clean (a
+showcase repo, a test run), set the variable before running:
+`APEGMSH_ARTIFACT_DIR=out python model.py` (PowerShell:
+`$env:APEGMSH_ARTIFACT_DIR="out"`). Notebook / `-c` / stdin with no
+`model_name=`: nothing is written, one warning.
+`# src/apeGmsh/_core.py:39 (default_artifact_dir), src/apeGmsh/opensees/_internal/artifact_write.py:284`
+
+### `in_box` takes two points, `in_box(lo, hi)`
+Both families take two 3-tuples, `.in_box((x0, y0, z0), (x1, y1, z1))`.
+Six bare numbers (`in_box(x0, y0, z0, x1, y1, z1)`) raise `TypeError`.
+`# src/apeGmsh/core/_selection.py:930`
+
 ### `in_box` is half-open `[lo, hi)` (point family)
 Every point-family `.select().in_box(...)` (and the retained
 `filter_set(in_box=)`) excludes a coordinate / centroid lying exactly on

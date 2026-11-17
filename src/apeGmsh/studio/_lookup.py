@@ -21,8 +21,22 @@ def load_index(path: Path | None = None) -> dict[str, Any]:
     return json.loads(dest.read_text(encoding="utf-8"))
 
 
+#: Class-name spellings of the two indexed instances: ``apeSees.analyze``
+#: is ``ops.analyze``, ``apeGmsh.save`` is ``g.save``.  The bare class
+#: names stay their own (constructor) entries.
+_INSTANCE_ALIASES: tuple[tuple[str, str], ...] = (
+    ("apeSees.", "ops."),
+    ("apeGmsh.", "g."),
+)
+
+
 def match_symbols(query: str, entries: dict[str, Any]) -> list[str]:
-    q = query.strip().rstrip("()")
+    query = query.strip()
+    for cls_prefix, inst_prefix in _INSTANCE_ALIASES:
+        if query.startswith(cls_prefix):
+            query = inst_prefix + query[len(cls_prefix):]
+            break
+    q = query.rstrip("()")
     if q.startswith("g."):
         q = q[2:]
     hits: list[str] = []

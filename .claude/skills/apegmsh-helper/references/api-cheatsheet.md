@@ -22,18 +22,23 @@ into labels.
 ```python
 from apeGmsh import apeGmsh, Part
 
-g = apeGmsh(model_name=None, verbose=False,
+g = apeGmsh(*, model_name=None, units=None, verbose=False,
             save_to=None, overwrite=True)   # model_name=None -> the running script's stem
 g.begin()           # opens gmsh, wires composites
 g.is_active         # True while session is open
 g.name              # the model name ("" in a notebook / -c / stdin with no model_name=)
-g.save(path=None)   # explicit neutral-zone checkpoint (uses save_to if path None)
-g.end()             # closes gmsh; writes <dir>/<model_name>.h5 + <model_name>.geometry.h5
-                    # beside the script (save_to= overrides the path). No model_name and no
-                    # script file: nothing written, one warning. Pass model_name= in notebooks.
+g.save(path=None)   # explicit neutral-zone checkpoint; path None -> save_to, and with
+                    # neither path nor save_to it RAISES RuntimeError
+g.end()             # closes gmsh; ALWAYS writes <model_name>.h5 + <model_name>.geometry.h5
+                    # (ADR 0112 D1). save_to=None does NOT mean "no save": it means the
+                    # conventional dir = $APEGMSH_ARTIFACT_DIR if set, else the __main__
+                    # script's folder, else cwd. save_to=<file|dir> only moves THIS write.
+                    # No model_name and no script file: nothing written, one warning.
+                    # There is no user-facing opt-out; point APEGMSH_ARTIFACT_DIR at a
+                    # scratch dir to keep artifacts out of your source tree.
 
 # Preferred form
-with apeGmsh(model_name="...", save_to="m.h5") as g:
+with apeGmsh(model_name="...", units="N_m_s", save_to="m.h5") as g:
     ...             # begin/end run automatically; m.h5 written on exit
 ```
 
@@ -176,12 +181,24 @@ other (whole-model weld) rather than one object/tool pair.
 ### `g.model.transforms` — rigid-body & generative ops (`_Transforms`)
 
 ```
-translate(dimtags, dx, dy, dz)        rotate(dimtags, x, y, z, ax, ay, az, angle)
-scale(dimtags, x, y, z, sx, sy=None, sz=None)   mirror(dimtags, a, b, c, d)   copy(dimtags)
-extrude(dimtags, dx, dy, dz, *, num_elems=None, recombine=False)
-revolve(dimtags, x, y, z, ax, ay, az, angle, *, num_elems=None)
-sweep(dimtags, curves, *, num_elems=None)        thru_sections(wires, *, make_solid=True)
+translate(tags, dx, dy, dz, *, dim=3, sync=True)
+rotate(tags, angle, *, ax=0, ay=0, az=1, cx=0, cy=0, cz=0, dim=3, sync=True)   # radians
+scale(tags, sx, sy, sz, *, cx=0, cy=0, cz=0, dim=3, sync=True)
+mirror(tags, a, b, c, d, *, dim=3, sync=True)     copy(tags, *, dim=3, sync=True)
+extrude(tags, dx, dy, dz, *, dim=2, num_elements=None, heights=None, recombine=False, sync=True) -> list[DimTag]
+revolve(tags, angle, *, x=0, y=0, z=0, ax=0, ay=0, az=1, dim=2,
+        num_elements=None, heights=None, recombine=False, sync=True) -> list[DimTag]   # radians
+sweep(profiles, path, *, dim=2, trihedron="DiscreteTrihedron", label=None, sync=True)
+thru_sections(wires, *, make_solid=True, make_ruled=False, max_degree=-1, continuity="",
+              parametrization="", smoothing=False, label=None, sync=True)
 ```
+`tags` takes an int / label / PG name / `(dim, tag)` / a list of any mix;
+`dim=` is only the fallback for bare ints. Everything after the leading
+positionals is **keyword-only**: the gmsh-style positional
+`revolve(dimtags, x, y, z, ax, ay, az, angle)` raises `TypeError`. A
+quarter turn of surface `"profile"` about the global z axis through the
+origin is `revolve("profile", math.pi / 2, x=0, y=0, z=0, ax=0, ay=0, az=1)`.
+`# src/apeGmsh/core/_model_transforms.py:254 (revolve), :190 (extrude), :74 (rotate)`
 
 ### `g.model.io` — CAD I/O + health diagnostics (`_IO`)
 
@@ -240,10 +257,13 @@ the selection into a label/PG without raw tags:
 
 ```python
 (g.model.select("block", dim=3)        # or select(None, dim=2) for "all surfaces"
-   .in_box(xmin, ymin, zmin, xmax, ymax, zmax)   # .in_sphere/.on_plane/.crossing_plane/.nearest_to/.where
+   .in_box((xmin, ymin, zmin), (xmax, ymax, zmax))   # two 3-tuples lo, hi — NOT 6 numbers
+                                       # .in_sphere/.on_plane/.crossing_plane/.nearest_to/.where
    .to_label("loaded_faces"))           # or .to_physical("BC") / .to_dataframe() / .result().tags()
 ```
-`# src/apeGmsh/core/Model.py:152` — verbs compose with `|` `&` `-` `^`.
+`# src/apeGmsh/core/Model.py:152`, `src/apeGmsh/core/_selection.py:930 (in_box(lo, hi))` — verbs compose with `|` `&` `-` `^`.
+The entity family's box is closed `[lo, hi]` and rejects `inclusive=`
+(see gotchas.md, "`in_box` is half-open").
 
 ---
 
