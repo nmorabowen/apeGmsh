@@ -5,8 +5,9 @@ refuse a repeated element.
    ``NativeRepeatedNodeId`` and the writer's ``NativeWriteRepeatedId``)
    scanned the whole id list once per repeated id: O(R·N), 26 s for 400k
    ids that all repeat. It now sorts once. Its result must stay exactly
-   what it was (the oracle is the old function, copied below), and the
-   400k case must finish well under a second.
+   what it was (the oracle is the old function, copied below), and
+   an 8x step in ids must cost well under the ~60x a quadratic check
+   pays (#2971 replaced an absolute one-second bound).
 
 2. The native ``read_gauss``, ``read_elements``, ``read_line_stations``,
    ``read_fibers`` and ``read_layers`` concatenated each group's
@@ -23,6 +24,7 @@ refuse a repeated element.
 """
 from __future__ import annotations
 
+import gc
 import time
 from pathlib import Path
 from typing import Callable
@@ -88,39 +90,97 @@ def test_repeated_rows_matches_the_old_function_on_random_lists() -> None:
         _same(_repeated_rows(arr), _repeated_rows_before_2363(arr))
 
 
-def _all_duplicated(n: int = 400_000) -> np.ndarray:
+def _all_duplicated(n: int) -> np.ndarray:
     ids = np.repeat(np.arange(n // 2, dtype=np.int64), 2)
     np.random.default_rng(0).shuffle(ids)
     return ids
 
 
-def test_400k_ids_all_duplicated_finish_well_under_a_second() -> None:
-    # The old function took ~26 s here (one scan of 400k ids per each of
-    # the 200k repeated ids). The new one sorts once (~0.2 s on a laptop).
-    ids = _all_duplicated()
-    t0 = time.perf_counter()
-    rows = _repeated_rows(ids)
-    elapsed = time.perf_counter() - t0
-    assert len(rows) == 200_000
-    assert all(len(r) == 2 for r in rows.values())
-    assert elapsed < 1.0, f"_repeated_rows took {elapsed:.2f} s"
+# The scaling is proven by a ratio, not an absolute wall-clock bound: a
+# shared CI runner missed "under 1 s" by a few hundredths six times
+# (#2971). An 8x size step costs the sort-once check 9.5x to 17x
+# (measured: N log N, and the large arrays fall out of cache) and the
+# old per-repeat scan ~60x (each of N/2 repeats scans N ids), so a
+# ratio under 32, a factor of about two from each, separates them on any
+# runner speed. The two sizes are timed in alternation, best of three
+# each, so a stall or a busy spell on a shared runner hits both or sets
+# neither, and with the cyclic GC paused: its collections over the
+# result lists add a superlinear cost that is not the check's.
+_SMALL = 50_000
+_STEP = 8
+_LARGE = _STEP * _SMALL
+_REPEATS = 3
+_MAX_RATIO = 32.0
 
 
-def test_writer_refuses_400k_duplicated_node_ids_well_under_a_second(
-    tmp_path: Path,
+def _assert_subquadratic(
+    timed: Callable[[np.ndarray], float], small_ids: np.ndarray,
+    large_ids: np.ndarray, what: str,
 ) -> None:
-    # The writer's _refuse_repeated calls the same function.
-    ids = _all_duplicated()
-    with NativeWriter(tmp_path / "run.h5") as w:
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        small = large = float("inf")
+        for _ in range(_REPEATS):
+            small = min(small, timed(small_ids))
+            large = min(large, timed(large_ids))
+    finally:
+        if was_enabled:
+            gc.enable()
+    ratio = large / small
+    assert ratio < _MAX_RATIO, (
+        f"{what}: {_LARGE} ids took {large:.3f} s, {_SMALL} ids took "
+        f"{small:.3f} s, ratio {ratio:.1f} for a {_STEP}x size step "
+        f"(sort-once 9.5 to 17, quadratic ~{_STEP**2}; the bound is "
+        f"{_MAX_RATIO})"
+    )
+
+
+def _time_repeated_rows(ids: np.ndarray) -> float:
+    t0 = time.perf_counter()
+    _repeated_rows(ids)
+    return time.perf_counter() - t0
+
+
+def test_repeated_rows_on_all_duplicated_ids_scales_subquadratically() -> None:
+    # The old function took ~26 s on 400k ids (one scan of 400k ids per
+    # each of the 200k repeated ids). The new one sorts once.
+    small_ids, large_ids = _all_duplicated(_SMALL), _all_duplicated(_LARGE)
+    rows = _repeated_rows(large_ids)
+    assert len(rows) == _LARGE // 2
+    assert all(len(r) == 2 for r in rows.values())
+    _assert_subquadratic(
+        _time_repeated_rows, small_ids, large_ids, "_repeated_rows",
+    )
+
+
+def _refuse(
+    path: Path, ids: np.ndarray,
+) -> "tuple[float, NativeWriteRepeatedId]":
+    # The writer's _refuse_repeated calls the same function. Only the
+    # refused write_nodes is timed, not opening and closing the file.
+    with NativeWriter(path) as w:
         w.open()
         sid = w.begin_stage(name="s", kind="static", time=_TIME)
         t0 = time.perf_counter()
         with pytest.raises(NativeWriteRepeatedId) as info:
             w.write_nodes(sid, "partition_0", node_ids=ids, components={})
         elapsed = time.perf_counter() - t0
-    assert len(info.value.repeated) == 200_000
-    assert "and 199995 more" in str(info.value)
-    assert elapsed < 1.0, f"the refusal took {elapsed:.2f} s"
+    return elapsed, info.value
+
+
+def test_writer_refusal_of_all_duplicated_node_ids_scales_subquadratically(
+    tmp_path: Path,
+) -> None:
+    small_ids, large_ids = _all_duplicated(_SMALL), _all_duplicated(_LARGE)
+    files = iter(tmp_path / f"run_{i}.h5" for i in range(2 * _REPEATS + 1))
+    _, err = _refuse(next(files), large_ids)
+    assert len(err.repeated) == _LARGE // 2
+    assert f"and {_LARGE // 2 - 5} more" in str(err)
+    _assert_subquadratic(
+        lambda ids: _refuse(next(files), ids)[0], small_ids, large_ids,
+        "the writer refusal",
+    )
 
 
 # =====================================================================
