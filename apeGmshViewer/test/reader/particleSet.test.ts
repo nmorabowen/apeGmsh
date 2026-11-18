@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
-import { ParticleContractError } from "../../src/reader/ladrunoParticles.ts";
+import { C1_BASES, ParticleContractError } from "../../src/reader/ladrunoParticles.ts";
 import { openParticleSet } from "../../src/reader/particleSet.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 
@@ -91,3 +91,26 @@ test("a BODY_ID outside BODIES is refused (C1-BODYREF)", () => {
   });
   assert.throws(() => openParticleSet(H5, p), refusedWith("C1-BODYREF", /BODY_ID\[0\] = 7 is not in BODIES\/ID/));
 });
+
+// GRID/BASIS (#3013): amendment 232i (fork ladruno-v20261118) added the B-splines to Contract 2
+// only. Contract 1 keeps gimp | linear (the fork checker's C1_BASES), so a set cannot load into a
+// B-spline grid (K2) until Contract 1 v2; the fork's mpm_contracts.py refuses bspline2 as C1-BASIS.
+const basisEdited = (value: string) => edited(`basis_${value}.particles.h5`, (f) => {
+  const g = f.get("GRID") as h5wasm.Group;
+  g.delete_attribute("BASIS");
+  g.create_attribute("BASIS", value);
+});
+
+test("the Contract-1 basis set is the fork's C1_BASES", () => {
+  assert.deepEqual([...C1_BASES], ["gimp", "linear"]);
+});
+
+test("BASIS linear reads in a particle set", () => {
+  assert.equal(openParticleSet(H5, basisEdited("linear")).grid.basis, "linear");
+});
+
+for (const basis of ["bspline2", "bspline3", "bspline4"]) {
+  test(`BASIS ${basis} is refused in a particle set by name (C1-BASIS), Contract 2's set notwithstanding`, () => {
+    assert.throws(() => openParticleSet(H5, basisEdited(basis)), refusedWith("C1-BASIS", new RegExp(`GRID@BASIS = "${basis}"; expected gimp \\| linear \\(C1-BASIS\\)$`)));
+  });
+}

@@ -15,9 +15,10 @@ computes (the live test, ``test_mpm_bspline_readers_live.py``, runs one).
 - ``particles_bspline2_v1m2.ladruno``: ``BASIS = "bspline2"``.
 - ``particles_bspline3_v1m2.ladruno``: ``BASIS = "bspline3"``.
 
-The refused values (``bspline4`` in Contract 2, ``bspline2`` in Contract 1)
-are edited copies each test suite makes in a temp folder, the same edit in
-Python and in the viewer, never committed.
+The refused values (``bspline4`` and others in Contract 2, ``bspline2`` in
+Contract 1) are edited copies each test suite makes in a temp folder, the same
+values in Python (:func:`set_basis`) and in the viewer (a variable-length
+string), never committed.
 
 Run from the repository root: ``python tests/fixtures/mpm/make_basis_fixtures.py``.
 """
