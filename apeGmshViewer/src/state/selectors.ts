@@ -1117,12 +1117,15 @@ export function activationNow(s: State): { activation: Activation; stageName: st
   // W4d #2843: matched by the program name; `stageName` is the label shown (a display name may differ).
   const key = [s.sequence, s.stageElements, s.definitions, st.programName, st.name, byFem];
   if (activationMemo && activationMemo.key.every((k, i) => k === key[i])) return activationMemo.value;
-  const activation: Activation = byFem
-    ? {
-        state: "unbound",
-        reason: "the results pair with this model by fem_hash only (the mesh matches; they carry no model_hash), so they are not tied to this model's /sequence program",
-      }
-    : activationOf(s.sequence, s.stageElements, s.definitions, st.programName);
+  // An unstaged model has no activation to bind, so its pairing does not matter (#1754).
+  const own = activationOf(s.sequence, s.stageElements, s.definitions, st.programName);
+  const activation: Activation =
+    byFem && own.state !== "unstaged"
+      ? {
+          state: "unbound",
+          reason: "the results pair with this model by fem_hash only (the mesh matches; they carry no model_hash), so they are not tied to this model's /sequence program",
+        }
+      : own;
   const value = { activation, stageName: st.name };
   activationMemo = { key, value };
   return value;
