@@ -24,13 +24,25 @@ Key layout facts (verified against fork build ``605affeb``, FORMAT_VERSION 1):
 * ``RESULTS/ON_NODES/<RESULT>`` (e.g. ``DISPLACEMENT``) — attr
   ``COMPONENTS`` (comma-joined labels ``"Ux,Uy"``); datasets ``ID[n,1]``,
   ``DATA[T,n,nComp]``, ``TIME[T]``, ``STEP[T]``.
+
+A killed run (M2-S8 #3003; fork schema §7b.2 at ``ladruno-v20261116``): the
+file opens by the reader rule (``_ladruno_open.open_ladruno``: plain, else
+SWMR-read, else a repaired copy; the user's file is never written), and its
+stages follow the stage rule (``_ladruno_open.stage_report``): a torn LAST
+stage is skipped after a plain open or a repaired copy, and refused after an
+SWMR-read open; an earlier stage that does not read refuses the file. On a
+killed file (superblock flags other than 0x00) every stage is cut to T', the
+fewest rows any of its streaming results holds in ``DATA``, ``TIME`` or
+``STEP``: the time vector, and so every time-series read, stops there. A
+cleanly closed file is read as it is. A live writer's lock is
+``_ladruno_open.LadrunoFileBusyError``.
 """
 from __future__ import annotations
 
 import warnings
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Sequence
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Sequence, cast
 
 import numpy as np
 from numpy import ndarray
@@ -73,15 +85,28 @@ from ._buckets import (
     attach_nodes_ndf,
     canonical_node_component,
     discover_modes,
+    is_modal_result_name,
     locate_node_component,
     modal_components,
     mode_stage_layout,
     model_node_ids,
     partition_reduction_from_name,
     read_mode_shape,
+    SNAPSHOTS_CLEAN,
+    SNAPSHOTS_REFUSE,
+    SNAPSHOTS_SKIP,
+    torn_mode_snapshots,
 )
 from ._ladruno_element_io import SpatialDimUnknown
 from ._ladruno_hyperslab import read_hyperslab
+from ._ladruno_open import (
+    LadrunoStages,
+    LadrunoStageSkippedWarning,
+    STEP_SWMR,
+    OpenedLadruno,
+    open_ladruno,
+    stage_report,
+)
 from ._ladruno_particles import ParticleStage, scan_particle_stages
 from ._mpco import MPCOStrainNotRecorded
 from ._protocol import ResultLevel, StageInfo, TimeSlice
@@ -207,9 +232,11 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
     (one part stamped, the other not, or with other names), or display
     names with no ``stage_names`` to bind by; and ``ValueError`` when the
     parts hold different numbers of ``MODEL_STAGE`` groups.
-    """
-    import h5py
 
+    Each file opens as :class:`LadrunoReader` opens it (the reader rule of
+    schema §7b.2), and its stages are the ones the stage rule reads: a torn
+    last stage the reader skips is not one of them (the reader warns).
+    """
     files = [Path(p) for p in paths]
     source = files[0].name if len(files) == 1 else f"{files[0].name} (+{len(files) - 1} parts)"
     per_part: list[list[tuple[str, Optional[str], bool, bool]]] = []
@@ -217,11 +244,12 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
     shown: list[Optional[tuple[str, ...]]] = []
     transcoded = False
     for path in files:
-        with h5py.File(path, "r") as h5:
-            groups = sorted(
-                (k for k in h5.keys() if k.startswith(_STAGE_PREFIX)),
-                key=_stage_sort_key,
-            )
+        with open_ladruno(path) as opened:
+            h5 = opened.h5
+            with warnings.catch_warnings():
+                # The reader that reads the file warns of a skipped stage.
+                warnings.simplefilter("ignore", LadrunoStageSkippedWarning)
+                groups = list(stage_report(opened).names)
             rows = []
             for name in groups:
                 grp = h5[name]
@@ -545,6 +573,27 @@ def _child(group: "h5py.Group", path: str):
     return cur
 
 
+class _StagesView:
+    """A file as a scan over its stages sees it: ``INFO`` and the
+    ``MODEL_STAGE`` groups the stage rule reads (schema §7b.2), never a torn
+    last stage it skipped."""
+
+    def __init__(self, h5: "h5py.File", names: "Sequence[str]") -> None:
+        self._h5 = h5
+        self._names = tuple(names)
+
+    def __iter__(self):
+        yield from ("INFO", *self._names)
+
+    def __contains__(self, name: object) -> bool:
+        return name == "INFO" or name in self._names
+
+    def __getitem__(self, name: str):
+        if name not in self:
+            raise KeyError(name)
+        return self._h5[name]
+
+
 def _per_material_strain_token(component: str) -> Optional[str]:
     """The catalog token of ``component`` when it is a strain that a
     :data:`PER_MATERIAL_STRAIN_CLASSES` class could answer, else ``None``
@@ -591,20 +640,27 @@ class LadrunoReader:
     """Reads one ``.ladruno`` file into the ``ResultsReader`` protocol."""
 
     def __init__(self, path: "str | Path") -> None:
-        import h5py
-
         self._path = Path(path)
-        self._h5: "h5py.File" = h5py.File(self._path, "r")
+        # The reader rule (schema §7b.2): a killed run opens SWMR-read, or
+        # through a repaired copy; a live writer's lock is busy.
+        self._opened: OpenedLadruno = open_ladruno(self._path)
+        self._h5: "h5py.File" = self._opened.h5
         # A file that fails the identity check (or any setup after the
         # open, or an interrupt) is closed before the original error
         # propagates, so it stays unlocked while the traceback lives.
         try:
             self._validate_identity()
+            # The stage rule: the stages that read, and each one's T' on a
+            # killed file. Every later walk over the stages uses these.
+            self._stage_rule: LadrunoStages = stage_report(self._opened)
             self._refuse_repeated_node_ids()
             self._refuse_malformed_local_axes()
             # ADR 0134 D3: the MODEL_STAGE groups holding a particle
             # group; a file the contract forbids is refused here.
-            self._particle_groups = scan_particle_stages(self._h5, self._path)
+            self._particle_groups = scan_particle_stages(
+                cast("h5py.File", _StagesView(self._h5, self._stage_rule.names)),
+                self._path,
+            )
             self._particle_stages: dict[str, ParticleStage] = {}
             self._stage_cache: Optional[list[StageInfo]] = None
             self._stage_to_grp: dict[str, str] = {}
@@ -654,10 +710,7 @@ class LadrunoReader:
         """
         import h5py
 
-        for stage in sorted(
-            (k for k in self._h5 if k.startswith(_STAGE_PREFIX)),
-            key=_stage_sort_key,
-        ):
+        for stage in self._stage_rule.names:
             nodes = _child(self._h5[stage], "MODEL/NODES")
             # A MODEL/NODES without an ID lists no node; the FEMData read
             # that needs it fails on that read.
@@ -708,10 +761,7 @@ class LadrunoReader:
         """
         import h5py
 
-        for stage in sorted(
-            (k for k in self._h5 if k.startswith(_STAGE_PREFIX)),
-            key=_stage_sort_key,
-        ):
+        for stage in self._stage_rule.names:
             axes = _child(self._h5[stage], "MODEL/LOCAL_AXES")
             if not isinstance(axes, h5py.Group):
                 continue
@@ -748,10 +798,39 @@ class LadrunoReader:
                 raise LadrunoRepeatedElementId(self._path, places)
 
     def close(self) -> None:
+        # Closes the file, and removes a repaired copy (reader rule step 3).
         try:
-            self._h5.close()
+            self._opened.close()
         except Exception:
             pass
+
+    @property
+    def open_step(self) -> int:
+        """The reader-rule step that opened the file (schema §7b.2): 1 a
+        plain open, 2 SWMR-read (a run killed with SWMR armed), 3 a repaired
+        copy (a run killed during a layout step)."""
+        return self._opened.step
+
+    @property
+    def killed(self) -> bool:
+        """Whether the file's superblock says a writer never closed it
+        (flags other than 0x00): its stages are then cut to T'."""
+        return self._stage_rule.killed
+
+    def committed_steps(self, stage_id: str) -> Optional[int]:
+        """T' of a host stage on a killed file (schema §7b.2), the rows every
+        read of it stops at; None on a cleanly closed file (no cut) or for a
+        stage with no streaming result. A mode stage has none."""
+        if self._stage_cache is None:
+            self.stages()
+        if stage_id in self._mode_refs:
+            return None
+        return self._stage_rule.committed[
+            self._resolve_stage_group(stage_id).name.lstrip("/")]
+
+    def _cut(self, grp: "h5py.Group") -> Optional[int]:
+        """The rows of ``grp``'s stage a read may use (T'), or None."""
+        return self._stage_rule.committed.get(grp.name.lstrip("/"))
 
     def __enter__(self) -> "LadrunoReader":
         return self
@@ -944,12 +1023,25 @@ class LadrunoReader:
         if self._stage_cache is not None:
             return list(self._stage_cache)
         hosts: list[StageInfo] = []
-        # Sort by the numeric stamp inside ``MODEL_STAGE[<k>]`` —
-        # lexicographic sorting would put MODEL_STAGE[10] before
-        # MODEL_STAGE[2] once a run reaches ten stages.
-        names = sorted(
-            (k for k in self._h5.keys() if k.startswith(_STAGE_PREFIX)),
-            key=_stage_sort_key,
+        # The stages the stage rule reads (schema §7b.2), sorted by the
+        # numeric stamp inside ``MODEL_STAGE[<k>]`` — lexicographic sorting
+        # would put MODEL_STAGE[10] before MODEL_STAGE[2] once a run
+        # reaches ten stages.
+        names = list(self._stage_rule.names)
+        # The modes-snapshot crash rule (schema §7b.2) follows the stage
+        # rule: on a killed file opened plainly or through a repaired copy
+        # (flags 0x01) a damaged snapshot is skipped with every later one;
+        # on one opened SWMR-read (flags 0x05) it refuses by name; on a
+        # cleanly closed file one that does not open refuses by name.
+        if not self._stage_rule.killed:
+            rule = SNAPSHOTS_CLEAN
+        elif self._opened.step == STEP_SWMR:
+            rule = SNAPSHOTS_REFUSE
+        else:
+            rule = SNAPSHOTS_SKIP
+        torn_snapshots = torn_mode_snapshots(
+            [(n, _child(self._h5[n], "RESULTS/ON_NODES")) for n in names],
+            source=self._path.name, rule=rule,
         )
         host_sets = []
         for i, name in enumerate(names):
@@ -968,6 +1060,7 @@ class LadrunoReader:
             host_sets.append(
                 [] if on_nodes is None else discover_modes(
                     on_nodes, source=f"{self._path.name} {name}",
+                    skip_steps=torn_snapshots.get(name, frozenset()),
                 )
             )
         # Each recorded mode is its own kind="mode" stage, listed
@@ -1057,10 +1150,15 @@ class LadrunoReader:
         return self._h5[self._stage_to_grp[stage_id]]
 
     def _time_for_group(self, grp: "h5py.Group") -> ndarray:
-        """Read a stage's TIME axis from the first result that has one."""
+        """Read a stage's TIME axis from the first result that has one.
+
+        On a killed file the axis stops at the stage's T' (schema §7b.2),
+        so every read that resolves its steps against it stops there too.
+        """
         results = _child(grp, "RESULTS")
         if results is None:
             return np.array([], dtype=np.float64)
+        cut = self._cut(grp)
         # ON_NODES/<res>/TIME is the canonical source; fall back to any
         # ON_* result group carrying a TIME dataset.
         for bucket in ("ON_NODES", "ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS"):
@@ -1069,15 +1167,23 @@ class LadrunoReader:
                 continue
             t = self._find_time_dataset(bgrp)
             if t is not None:
-                return np.asarray(t[...], dtype=np.float64).flatten()
+                rows = t[...] if cut is None else t[:cut]
+                return np.asarray(rows, dtype=np.float64).flatten()
         return np.array([], dtype=np.float64)
 
     @staticmethod
     def _find_time_dataset(group: "h5py.Group"):
-        """Depth-first search for a ``TIME`` dataset under ``group``."""
+        """Depth-first search for a ``TIME`` dataset under ``group``.
+
+        A modes result (``MODES_OF_VIBRATION(U|R)``) holds no ``TIME`` and is
+        not entered: its snapshots are read only by the modes-snapshot crash
+        rule, which skips one that does not open.
+        """
         import h5py
 
         for key in group:
+            if is_modal_result_name(key):
+                continue
             item = group[key]
             if key == "TIME" and isinstance(item, h5py.Dataset):
                 return item
@@ -1523,7 +1629,12 @@ class LadrunoReader:
             )
         cols = [c.strip() for c in _decode(eg.attrs["COMPONENTS"]).split(",")]
         ids = np.asarray(eg["ID"][...], dtype=np.int64).flatten()
-        time = np.asarray(eg["TIME"][...], dtype=np.float64).flatten()
+        # A killed file's stage stops at T' (schema §7b.2).
+        cut = self._cut(grp)
+        time = np.asarray(
+            eg["TIME"][...] if cut is None else eg["TIME"][:cut],
+            dtype=np.float64,
+        ).flatten()
         if region is None:
             row = 0
         else:
