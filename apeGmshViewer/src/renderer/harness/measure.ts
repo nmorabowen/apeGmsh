@@ -8,6 +8,7 @@ import { nextFrame, painted, until, type HarnessConfig, type HarnessContext } fr
 import { addSixPlanes, removePlanes } from "./planes.ts";
 import { demoTarget, scriptedClick } from "./pointer.ts";
 import { contourShowsNow } from "./shown.ts";
+import { scanProblem, scanSatisfied, scrubSkipNote, type ScanWant } from "./verdicts.ts";
 
 export async function measure(ctx: HarnessContext, t0: number, startup: { appReadyMs: number; configMs: number }) {
   const { store, viewport, bridge } = ctx;
@@ -125,8 +126,9 @@ const CAPPED_SCALE = 1e-6;
  * step range, the vertex colours, the upload and a draw with `gl.finish()`.
  * The history scan's time comes first; the machine's CPU load is sampled
  * before (1 s idle) and during the scrub, and the working sets every 100 ms.
+ * A model that cannot give the row returns null and says why in `skipped` (#2669).
  */
-export async function measureContour(ctx: HarnessContext, path: string, deform = false, element = false, gauss: GaussMode = "cell", planes = false, capped = false) {
+export async function measureContour(ctx: HarnessContext, path: string, deform = false, element = false, gauss: GaussMode = "cell", planes = false, capped = false, skipped: string[] = []) {
   const { store, effects, viewport, bridge } = ctx;
   store.dispatch({ type: "clearSelection" });
   // V4d: the same scrub with the deformed shape on (true scale): each step also waits for the displaced positions.
@@ -145,6 +147,11 @@ export async function measureContour(ctx: HarnessContext, path: string, deform =
   });
   if (best < 0 && element) return null;
   if (best < 0) throw new Error(`measure: ${path} has no stage with nodal results`);
+  const noScrub = scrubSkipNote(path, stages[best]!.name || stages[best]!.id, stages[best]!.time.length);
+  if (noScrub) {
+    skipped.push(noScrub);
+    return null;
+  }
   const cpu = bridge.measureCpu!;
   const memory = bridge.measureMemory!;
   await cpu();
@@ -171,9 +178,28 @@ export async function measureContour(ctx: HarnessContext, path: string, deform =
     // V4c2b: the element scrub in a node-located draw mode (`cell` leaves the V4c2a rows as they were).
     store.dispatch({ type: "setContourGauss", mode: element ? gauss : "cell" });
     // V4c2b: a node-located mode waits for its own scan (its key names the mode), never an earlier mode's.
-    const scanDone = () =>
-      store.get().contour.scan?.status === "done" && (!element || store.get().contour.scan!.key.includes("|elem:")) && (gauss === "cell" || store.get().contour.scan!.key === contourKeysOf(store.get())?.scan);
-    if (!(await until(scanDone, 600000))) throw new Error(`measure: the history scan did not finish: ${JSON.stringify(store.get().contour.scan)}`);
+    const want = (): ScanWant => ({ element, key: gauss === "cell" ? null : (contourKeysOf(store.get())?.scan ?? null) });
+    const scanDone = () => scanSatisfied(store.get().contour.scan, want());
+    const refusal = () => {
+      const c = contourView(store.get());
+      return c.state === "refused" ? c.reason : null;
+    };
+    // A refused contour starts no scan, so waiting could only time out. It can read as refused for a
+    // moment while its data arrives, so the refusal counts once it has held for 5 s with no scan running.
+    let refusedSince: number | null = null;
+    const refusalHeld = () => {
+      if (refusal() === null || store.get().contour.scan?.status === "running") refusedSince = null;
+      else refusedSince ??= performance.now();
+      return refusedSince !== null && performance.now() - refusedSince > 5000;
+    };
+    let scanned = false;
+    await until(() => (scanned = scanDone()) || refusalHeld(), 600000);
+    if (!scanned) {
+      const why = refusal();
+      if (why === null) throw new Error(scanProblem(store.get().contour.scan, want()));
+      skipped.push(`${path}: the contour is refused (${why}); no ${element ? "element " : ""}contour row`);
+      return null;
+    }
     const scanMs = performance.now() - t0;
     await contourShowsNow(ctx);
     const v = contourView(store.get());
@@ -192,9 +218,15 @@ export async function measureContour(ctx: HarnessContext, path: string, deform =
     // V4e2: and their six gizmos drawn (shown by default), so the scrub renders them every step.
     if (planes && viewport.gizmoCount !== 6) throw new Error(`measure: ${viewport.gizmoCount} plane gizmos drawn, not 6`);
     // V4e3: and, capped, a cap on each of the six planes, sliced again at every step (the deformed solid, the step's field).
-    if (capped && !(await until(() => viewport.capsSettled() && viewport.capCount === 6))) throw new Error(`measure: ${viewport.capCount} caps drawn, not 6`);
+    // A plane that cuts nothing draws no cap (a hollow or open solid), so the count is what the model gives.
+    if (capped && !(await until(() => viewport.capsSettled()))) throw new Error("measure: the caps did not settle");
+    if (capped && viewport.capCount === 0) {
+      skipped.push(`${path}: none of the six planes cuts a drawn cell; no caps row`);
+      return null;
+    }
+    const capsDrawn = viewport.capCount;
     const slices0 = viewport.caps.slices;
-    const field = what + (deform ? `, deformed ×${capped ? CAPPED_SCALE : 1}` : "") + (planes ? ", 6 section planes + gizmos" : "") + (capped ? " + 6 caps" : "");
+    const field = what + (deform ? `, deformed ×${capped ? CAPPED_SCALE : 1}` : "") + (planes ? ", 6 section planes + gizmos" : "") + (capped ? ` + ${capsDrawn} caps` : "");
     const T = stages[best]!.time.length;
     const gl = viewport.renderer.getContext();
     const stepMs: number[] = [];
@@ -215,7 +247,7 @@ export async function measureContour(ctx: HarnessContext, path: string, deform =
     const sorted = [...stepMs].sort((a, b) => a - b);
     // V4e3: one slice per plane per step, never more (F-SETTLED at scale).
     const slices = viewport.caps.slices - slices0;
-    if (capped && (slices !== 6 * (T - 1) || viewport.capCount !== 6)) throw new Error(`measure: ${slices} slices over ${T - 1} steps (want ${6 * (T - 1)}), ${viewport.capCount} caps`);
+    if (capped && slices !== 6 * (T - 1)) throw new Error(`measure: ${slices} slices over ${T - 1} steps (want ${6 * (T - 1)})`);
     return {
       file: path,
       field: `${field} (stage ${stages[best]!.name || stages[best]!.id})`,
@@ -240,19 +272,20 @@ export async function runMeasure(ctx: HarnessContext, cfg: HarnessConfig): Promi
   const { store, bridge } = ctx;
   const result = await measure(ctx, cfg.t0, cfg);
   // V4c1: with a results sibling, the contour scrub row too (main prints it).
-  const contour = cfg.results ? await measureContour(ctx, cfg.results) : null;
+  const skipped: string[] = [];
+  const contour = cfg.results ? await measureContour(ctx, cfg.results, false, false, "cell", false, false, skipped) : null;
   // V4d: and the contour scrub again with the deformed shape on.
-  const deformed = cfg.results ? await measureContour(ctx, cfg.results, true) : null;
+  const deformed = cfg.results ? await measureContour(ctx, cfg.results, true, false, "cell", false, false, skipped) : null;
   // V4c2a: the scrub with an element contour on (a verified file with an element field), then deformed too.
-  const elements = cfg.results ? await measureContour(ctx, cfg.results, false, true) : null;
-  const elementsDeformed = elements && cfg.results ? await measureContour(ctx, cfg.results, true, true) : null;
+  const elements = cfg.results ? await measureContour(ctx, cfg.results, false, true, "cell", false, false, skipped) : null;
+  const elementsDeformed = elements && cfg.results ? await measureContour(ctx, cfg.results, true, true, "cell", false, false, skipped) : null;
   // V4c2b: the element scrub carried to the nodes, one row per node-located mode.
-  const elementsAveraged = elements && cfg.results ? await measureContour(ctx, cfg.results, false, true, "cell_averaged") : null;
-  const elementsNode = elements && cfg.results ? await measureContour(ctx, cfg.results, false, true, "node") : null;
-  const elementsDiscrete = elements && cfg.results ? await measureContour(ctx, cfg.results, false, true, "node_discrete") : null;
+  const elementsAveraged = elements && cfg.results ? await measureContour(ctx, cfg.results, false, true, "cell_averaged", false, false, skipped) : null;
+  const elementsNode = elements && cfg.results ? await measureContour(ctx, cfg.results, false, true, "node", false, false, skipped) : null;
+  const elementsDiscrete = elements && cfg.results ? await measureContour(ctx, cfg.results, false, true, "node_discrete", false, false, skipped) : null;
   // V4e1: the nodal scrub, deformed, with six section planes cutting (in the JSON as `clip`; main prints no row for it).
-  const clip = cfg.results ? await measureContour(ctx, cfg.results, true, false, "cell", true) : null;
+  const clip = cfg.results ? await measureContour(ctx, cfg.results, true, false, "cell", true, false, skipped) : null;
   // V4e3: the same scrub with the six planes capped (in the JSON as `caps`; main prints no row for it). A model with no solid cell has no row.
-  const caps = cfg.results && store.get().mesh!.counts.solidCells > 0 ? await measureContour(ctx, cfg.results, true, false, "cell", true, true) : null;
-  await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed, elementsAveraged, elementsNode, elementsDiscrete, clip, caps });
+  const caps = cfg.results && store.get().mesh!.counts.solidCells > 0 ? await measureContour(ctx, cfg.results, true, false, "cell", true, true, skipped) : null;
+  await bridge.measureDone({ ...result, contour, deform: deformed, elements, elementsDeform: elementsDeformed, elementsAveraged, elementsNode, elementsDiscrete, clip, caps, skipped: [...new Set(skipped)] });
 }

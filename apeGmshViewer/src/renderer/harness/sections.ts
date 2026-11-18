@@ -1,13 +1,14 @@
 // The capture harness (VH1, #2865): the section-plane stills (D7): cut-face caps, clip planes and plane gizmos.
 
 import * as THREE from "three";
-import { deformOf } from "../../state/selectors.ts";
+import { contourView, deformOf } from "../../state/selectors.ts";
 import { tipPoint } from "../gizmo.ts";
 import { zoomToward } from "../navigation.ts";
 import { painted, until, type HarnessContext } from "./context.ts";
 import { addAt, placeAt, removePlanes } from "./planes.ts";
 import { clipMissTarget, marker, pointerAt, screenOf } from "./pointer.ts";
 import { contourShown, deformShown } from "./shown.ts";
+import { capsStillProblem } from "./verdicts.ts";
 
 /**
  * The V4e3 cut-face stills (D7), by a fixed rule. On a model with volumetric
@@ -36,7 +37,20 @@ export async function captureCaps(ctx: HarnessContext, settle: (ms?: number) => 
   store.dispatch({ type: "clearSelection" });
   const still = async (name: string, caps: number) => {
     const ok = () => deformShown(ctx) && (store.get().visibility.colourBy !== "contour" || contourShown(ctx)) && viewport.capsSettled() && viewport.capCount === caps;
-    if (!(await until(ok))) throw new Error(`capture ${name}: ${viewport.capCount} caps (want ${caps}), settled ${viewport.capsSettled()}`);
+    if (!(await until(ok))) {
+      const v = contourView(store.get());
+      throw new Error(
+        capsStillProblem(name, {
+          caps: viewport.capCount,
+          want: caps,
+          settled: viewport.capsSettled(),
+          deformShown: deformShown(ctx),
+          contourWanted: store.get().visibility.colourBy === "contour",
+          contourShown: contourShown(ctx),
+          contour: "reason" in v ? `${v.state}: ${v.reason}` : v.state,
+        }),
+      );
+    }
     await settle(150);
     viewport.renderNow();
     await painted();
