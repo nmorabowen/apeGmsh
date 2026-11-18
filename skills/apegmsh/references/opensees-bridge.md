@@ -52,6 +52,18 @@ Session declarations all still flow into the **`model.h5` neutral
 zone** (`ops.h5(path)`), so the **viewer / `Results`** see everything
 regardless of whether a pattern imported it.
 
+> **The bridge writes `<model_name>.h5` on its own (ADR 0112 D1).** Every
+> live build / `ops.analyze` / `ops.run()` / `ops.tcl` / `ops.py` / `modal_deck` emit ends by writing the
+> full archive (neutral + `/opensees` + `/provenance`) to
+> `<dir>/<fem.model_name>.h5`, once per changed set of declarations (a
+> loop of emits on one model writes once). `<dir>` is
+> `$APEGMSH_ARTIFACT_DIR` when set, else the `__main__` script's folder,
+> else the cwd. The session's `save_to=` does **not** move it, so a session
+> saved to `out/m.h5` still leaves `<model_name>.h5` beside the script
+> unless `APEGMSH_ARTIFACT_DIR` is set. Failures warn once
+> (`BridgeArtifactWarning`) and never raise; `ops.h5(path)` is the explicit
+> save and bypasses this. `# src/apeGmsh/opensees/_internal/artifact_write.py`
+
 > **Two execution modes — no mixing (ADR 0051 §5).** Non-staged (a
 > global `ops.pattern.*` + the chain + `ops.analyze`/`ops.eigen`) OR
 > staged (every pattern stage-scoped via `s.pattern(series=...)`, run
