@@ -595,17 +595,16 @@ def _amendment_paths(
 
     A negation still drops the lines it governs (#1872). Every exclusion ends at a heading
     or a bold label; the widest one in force wins, and a narrower negation inside it never
-    shortens it. A line that opens with a path negates only when it ends in ":" (the path is
-    still added, then the list it governs is dropped); any other line that opens with a path never
-    negates, and any other line can:
+    shortens it. A line that opens with a path is always added; if its prose negates,
+    it then drops what it governs, as below (a trailing ":" makes it a LIST, otherwise an ITEM):
 
     - LIST: a negated line ending in ":", or a negated bullet that opens with no path ("Do
       not touch the following"), opens a list. It runs across blank lines and ends at
       the first non-list line that follows a blank line.
     - PARA: any other negated line that is not a bullet excludes to the paragraph's
       end (a blank line).
-    - ITEM: a negated bullet that opens with no path but names one ("- Do not touch `c.py`")
-      excludes itself, its sub-items and its unmarked continuation lines, up to a sibling
+    - ITEM: a negated bullet that names a path ("- Do not touch `c.py`", or "- `a.py` (never touch
+      the helpers below)", which still adds `a.py`) excludes itself (unless it opens with its path), its sub-items and its unmarked continuation lines, up to a sibling
       or shallower bullet or a blank line.
 
     `skipped`, when given, collects (line, negation word) for each dropped line that opens
@@ -630,9 +629,9 @@ def _amendment_paths(
             mode = _LIST  # a negated paragraph whose last line ends in ":" introduces a negated list (#2326)
         opening = _opening_paths(line, real)
         found_word = _negation_word(line)
-        lead_in = bool(opening) and found_word is not None and line.rstrip(" *").endswith(":")
+        negated_opening = bool(opening) and found_word is not None
         before = mode
-        if found_word is not None and (lead_in or not opening):
+        if found_word is not None:
             bullet = _BULLET.match(line) is not None
             # Without `real`: "- Do not touch `FORK_PIN`" still names no path, so it keeps
             # excluding the list after it; admitting a file name never narrows an exclusion.
@@ -642,9 +641,9 @@ def _amendment_paths(
                 new = _ITEM if bullet else _PARA
             if new > mode:
                 mode, depth, word = new, indent, found_word
-        if lead_in and before == _FREE:
-            # the path-opening lead-in "- `a.py` ... do not touch these:" adds its own path, then
-            # drops the list it governs (#3025)
+        if negated_opening and before == _FREE:
+            # "- `a.py` ... do not touch these:" adds its own path, then drops the list it governs;
+            # without the colon it drops its own sub-items (the ITEM rule). Siblings stay (#3025)
             paths += opening
             if ignored is not None:
                 rest = _line_paths(line, real)
