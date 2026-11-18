@@ -2245,7 +2245,7 @@ def test_every_workflow_run_is_judged_the_stale_one_refuses():
 # --- #2145 (lesson #1985): --check-card prints the parsed Owned set and the skipped amendments ------
 CARD_CHECK = "### Owned files\n- `scripts/a.py`\n\n### Done when\nok\n"
 POSITIVE_AMENDMENT = {"body": "**Card amendment** also owns:\n- `scripts/b.py`"}
-NEGATED_AMENDMENT = {"body": "**Card amendment** Do not touch `scripts/c.py`."}
+NEGATED_AMENDMENT = {"body": "**Card amendment** Do not touch:\n- `scripts/c.py`"}
 
 
 def _card_gh(body, comments):
@@ -2259,7 +2259,7 @@ def test_check_card_prints_owned_set_and_negated_amendment_with_its_word(monkeyp
     out = capsys.readouterr().out
     assert "  scripts/a.py" in out and "  scripts/b.py" in out
     assert "  scripts/c.py" not in out
-    assert "skipped (negation 'not'): **Card amendment** Do not touch `scripts/c.py`." in out
+    assert "skipped (negation 'not'): - `scripts/c.py`" in out
 
 
 def test_check_card_never_calls_pr_endpoints_or_merges(monkeypatch):
@@ -2289,7 +2289,7 @@ def test_check_card_combined_with_a_mode_flag_is_a_usage_error(extra, capsys):
 def test_check_card_survives_a_cp1252_stdout_with_a_sigma_2057(monkeypatch):
     import io
 
-    sigma = {"body": "**Card amendment** Do not touch `scripts/c.py`, sigma σ."}
+    sigma = {"body": "**Card amendment** Do not touch:\n- `scripts/c.py`, sigma σ."}
     monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [sigma]))
     monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
     raw = io.BytesIO()
@@ -2555,7 +2555,7 @@ def test_an_owned_path_with_a_space_is_read_2339():
 
 
 def test_check_card_exits_1_when_an_amendment_path_is_skipped_2412(monkeypatch, capsys):
-    skipped = {"body": "**Card amendment (T):** also edit:\n- `scripts/b.py`\nnever touch `scripts/c.py`.\n"}
+    skipped = {"body": "**Card amendment (T):** also edit:\n- `scripts/b.py`\nnever touch:\n- `scripts/c.py`\n"}
     monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [skipped]))
     monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
     assert land_pr.main(["--check-card", "2000"]) == 1
@@ -2781,7 +2781,12 @@ def _amend(text, real=None):
     pytest.param("\nReason: `a.py` stays read-only.\n- `b.py`\n", ["b.py"], [("a.py", "prose path")],
                  id="prose-path-is-not-owned"),
     pytest.param("\n- `b.py` (not a hub; do not split)\n", ["b.py"], [], id="negation-in-trailing-prose"),
-    pytest.param("\n- Do not touch `c.py`\n", [], [("c.py", 'dropped by negated lead-in "not"')], id="negated-bullet"),
+    pytest.param("\n- Do not touch `c.py`\n", [], [("c.py", "prose path")], id="negated-bullet"),
+    pytest.param("\n- `a.py` (owned). Do not touch these:\n  - `b.py`\n  - `c.py`\n", ["a.py"],
+                 [("b.py", 'dropped by negated lead-in "not"'), ("c.py", 'dropped by negated lead-in "not"')],
+                 id="path-opening-lead-in-with-colon"),
+    pytest.param("\n- `a.py`, but never the following:\n- `b.py`\n", ["a.py"],
+                 [("b.py", 'dropped by negated lead-in "never"')], id="path-opening-lead-in-never"),
     pytest.param("\nDo not touch the following:\n- `d.py`\n- `e.py`\n", [],
                  [("d.py", 'dropped by negated lead-in "not"'), ("e.py", 'dropped by negated lead-in "not"')],
                  id="negated-lead-in-list"),
@@ -2810,3 +2815,15 @@ def test_check_card_lists_paths_added_and_ignored_per_amendment_3025(monkeypatch
     assert "amendment 1 adds 1 path(s):" in out
     assert "  added scripts/b.py" in out
     assert "  ignored scripts/a.py (prose path)" in out
+
+
+def test_check_card_exits_0_when_every_skipped_line_is_prose_3025(monkeypatch, capsys):
+    prose = {"body": "**Card amendment (T):** also edit:\n- `scripts/b.py`\n\nDo not read `scripts/c.py` or `scripts/d.py`.\n\n- `scripts/e.py`\n".replace("\n", chr(10))}
+    monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [prose]))
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    assert land_pr.main(["--check-card", "2000"]) == 0
+    out = capsys.readouterr().out
+    assert "  ignored scripts/c.py (prose path)" in out and "  ignored scripts/d.py (prose path)" in out
+    assert "  added scripts/e.py" in out
+    assert "may hold paths" not in out and "dropped by a negation" not in out
+
