@@ -22,6 +22,7 @@ import { openResults, type ResultsFile, type ResultsH5 } from "../../reader/resu
 import { arg, file, mode, out, t0 } from "../args.ts";
 import { pairSet, type OpenSet } from "../pairing.ts";
 import type { ResultsHost } from "../results.ts";
+import { DISPLACEMENT, readRowStage } from "./readRow.ts";
 
 /** What the measurement harness takes from main.ts, handed over once (`registerMeasure`). */
 export interface MeasureHost {
@@ -70,6 +71,8 @@ export function registerMeasure(host: MeasureHost): void {
       const row = (result as Partial<Record<typeof key, ContourMeasure | null>> | null)?.[key];
       if (row) printContourRow(row);
     }
+    // #2669: the rows this model cannot give, each with its reason.
+    for (const why of (result as { skipped?: string[] } | null)?.skipped ?? []) printSkip(why);
     // ADR 0122 slice 4 (#2129): a `<stem>.ladruno` beside the model gets its read row.
     if (mode === "measure" && file) {
       try {
@@ -112,8 +115,6 @@ export function registerMeasure(host: MeasureHost): void {
 // two read columns compare.
 // ---------------------------------------------------------------------------
 
-/** The translational displacement components, under the .ladruno and the native reader's names. */
-const DISPLACEMENT = /^(DISPLACEMENT\/U[xyz]|displacement_[xyz])$/;
 const WARM_REPEATS = 21;
 
 interface ReadRow {
@@ -136,22 +137,28 @@ function measureLadrunoRead(model: string, resultsHost: ResultsHost): void {
   const rows = [timeRead(results, openLadruno)];
   const native = results.replace(/\.ladruno$/i, ".results.h5");
   if (existsSync(native)) rows.push(timeRead(native, openResults));
-  printReadRows(rows);
+  const measured = rows.filter((r) => r !== null);
+  if (measured.length) printReadRows(measured);
+}
+
+function printSkip(why: string): void {
+  process.stdout.write(`measure: skipped: ${why}\n`);
 }
 
 /** The index (open to a full index) and the middle step of the displacement components, cold then warm. */
-function timeRead(path: string, open: (h5: ResultsH5, path: string) => ResultsFile | LadrunoFile): ReadRow {
+function timeRead(path: string, open: (h5: ResultsH5, path: string) => ResultsFile | LadrunoFile): ReadRow | null {
   const sizeBytes = statSync(path).size;
   const [rf, indexMs] = timed(() => open(h5wasm as unknown as ResultsH5, path));
   let row: Omit<ReadRow, "layout">;
   let dataset: string;
   try {
-    const s = rf.index.stages.find((st) => st.kind !== "mode" && st.nodes?.components.some((c) => DISPLACEMENT.test(c)));
-    if (!s?.nodes) {
-      const seen = rf.index.stages.map((st) => `${st.id}: ${st.nodes ? st.nodes.components.join(", ") : "no nodal results"}`);
-      throw new Error(`${path}: the read row needs a stage with nodal displacements; the file has ${seen.join("; ") || "no stages"}`);
+    const pick = readRowStage(path, rf.index.stages);
+    if ("skip" in pick) {
+      printSkip(pick.skip);
+      return null;
     }
-    const nodes = s.nodes;
+    const s = pick.stage;
+    const nodes = s.nodes!;
     const comps = nodes.components.filter((c) => DISPLACEMENT.test(c));
     const mid = Math.floor(s.nSteps / 2);
     const [, stepColdMs] = timed(() => rf.readNodalStep(s.id, comps, mid));
