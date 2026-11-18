@@ -11,7 +11,8 @@
 //   the normal (the ray through `centre + s n` moves it by exactly `s`);
 // - G-ROTATE: one `setClipPose` per move; the plane pivots about the quad
 //   centre, not the world origin; a flipped plane keeps the arrow on the cursor;
-// - G-EVENTS: pointer-leave ends a drag; the legend over the press wins it; a
+// - G-EVENTS: a captured drag survives leaving the canvas, pointer-leave ends an
+//   uncaptured one, a lost capture ends either; the legend over the press wins it; a
 //   plane deleted mid-drag ends it; a raise ends it; a degenerate pose is refused;
 // - G-PICK: a click through the quad picks the model under it, and no scene
 //   raycast ever hits a gizmo.
@@ -97,9 +98,14 @@ function canvasOf() {
   return Object.assign(t, {
     clientHeight: W,
     style: { cursor: "" },
-    setPointerCapture: () => {},
+    captures: [] as string[],
+    setPointerCapture(this: { captures: string[] }, id: number) {
+      this.captures.push(`set ${id}`);
+    },
     hasPointerCapture: () => false,
-    releasePointerCapture: () => {},
+    releasePointerCapture(this: { captures: string[] }, id: number) {
+      this.captures.push(`release ${id}`);
+    },
     getBoundingClientRect: () => ({ left: 0, top: 0, width: W, height: W }),
   });
 }
@@ -270,7 +276,7 @@ test("G-HIT: a press on the quad starts a translate, on the tip a rotate; the na
   assert.equal(e.defaultPrevented, true, "claimed");
   assert.equal(r.gizmo.mode, "translate");
   assert.equal(r.nav.dragging, false, "the navigator never saw the press");
-  r.send("pointerleave", qx, qy);
+  r.send("pointerup", qx, qy);
   const [tx, ty] = r.at(tipPoint(g));
   r.send("pointerdown", tx, ty);
   assert.equal(r.gizmo.mode, "rotate", "the tip is the rotate handle");
@@ -375,8 +381,42 @@ test("G-ROTATE: a flipped plane keeps the arrow on the cursor (the stored normal
 
 // ---- G-EVENTS and the seams ----------------------------------------------------------
 
-test("G-EVENTS: pointer-leave ends a drag; the moves after it change nothing", () => {
+test("G-EVENTS: a drag released off the canvas applies exactly its moves, and gives the capture back (#1919)", () => {
   const r = rig(stateWith(BOX, { normal: [0, 0, 1] }), [1, -5, 4]);
+  const g = r.geom();
+  r.send("pointerdown", ...r.at(g.centre));
+  assert.deepEqual(r.canvas.captures, ["set 1"]);
+  r.send("pointermove", ...r.at(add(g.centre, g.normal, 0.2)));
+  r.send("pointerleave", 0, 0);
+  assert.equal(r.gizmo.dragging, true, "leaving the canvas does not end a captured drag");
+  r.send("pointermove", ...r.at(add(g.centre, g.normal, 0.5)));
+  assert.equal(r.store.log.length, 2, "the move outside still applies");
+  near(r.store.get().clip.planes[0]!.offset, 1.5, 1e-6, "the pose is the last move's");
+  r.send("pointerup", ...r.at(add(g.centre, g.normal, 0.9)));
+  assert.equal(r.gizmo.dragging, false);
+  assert.equal(r.store.log.length, 2, "the release adds no pose of its own");
+  assert.deepEqual(r.canvas.captures, ["set 1", "release 1"]);
+  assert.deepEqual(r.picks, [], "a drag is not a click");
+});
+
+test("G-EVENTS: pointercancel and a lost capture each end a captured drag", () => {
+  for (const type of ["pointercancel", "lostpointercapture"]) {
+    const r = rig(stateWith(BOX, { normal: [0, 0, 1] }), [1, -5, 4]);
+    const g = r.geom();
+    r.send("pointerdown", ...r.at(g.centre));
+    r.send("pointermove", ...r.at(add(g.centre, g.normal, 0.2)));
+    r.send(type, 0, 0);
+    assert.equal(r.gizmo.dragging, false, type);
+    r.send("pointermove", ...r.at(add(g.centre, g.normal, 0.5)));
+    assert.equal(r.store.log.length, 1, `no pose after ${type}`);
+  }
+});
+
+test("G-EVENTS: without a capture, pointer-leave ends a drag; the moves after it change nothing", () => {
+  const r = rig(stateWith(BOX, { normal: [0, 0, 1] }), [1, -5, 4]);
+  r.canvas.setPointerCapture = () => {
+    throw new Error("InvalidPointerId");
+  };
   const g = r.geom();
   r.send("pointerdown", ...r.at(g.centre));
   r.send("pointermove", ...r.at(add(g.centre, g.normal, 0.2)));
@@ -420,7 +460,7 @@ test("seam: a raise while dispatching a move ends the drag before it propagates"
   const s = stateWith(BOX, { normal: [0, 0, 1] });
   const g = gizmoGeometry(s.clip.planes[0]!, BOX);
   const it = new GizmoInteractor({
-    element: new EventTarget(),
+    element: canvasOf(),
     rayAt: () => ({ origin: [1, 1, 5], direction: [0, 0.6, -1] }),
     hit: () => ({ id: "plane-1", mode: "translate", t: 1 }),
     geometry: () => g,
@@ -458,7 +498,7 @@ test("seam: a degenerate rotate is refused by the reducer and the pose is kept",
   const g = gizmoGeometry(p0, BOX);
   let ray = { origin: [1, -5, 4], direction: new THREE.Vector3(...tipPoint(g)).sub(new THREE.Vector3(1, -5, 4)).toArray() as number[] };
   const it = new GizmoInteractor({
-    element: new EventTarget(),
+    element: canvasOf(),
     rayAt: () => ray,
     hit: (q) => (rayHit(g, q)?.mode === "rotate" ? { id: "plane-1", mode: "rotate", t: 1 } : null),
     geometry: () => g,
