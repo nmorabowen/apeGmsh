@@ -394,17 +394,17 @@ def stage_report(opened: OpenedLadruno) -> LadrunoStages:
             n = committed_steps(h5[name])
         except Exception as e:  # noqa: BLE001 - any failure to read is the rule's input
             why = (str(e).splitlines() or [type(e).__name__])[0]
-            if i < len(names) - 1:
-                raise LadrunoStageCorrupt(
-                    f"{path.name} {name} does not read and is not the file's "
-                    f"last stage, so it is corruption (fork schema section "
-                    f"7b.2): {why}") from e
             if opened.step == STEP_SWMR:
                 raise LadrunoStageCorrupt(
                     f"{path.name} {name} does not read in a file killed with "
                     "SWMR armed (superblock flags 0x05, opened SWMR-read), "
                     "where every stage must read: corruption (fork schema "
                     f"section 7b.2): {why}") from e
+            if i < len(names) - 1:
+                raise LadrunoStageCorrupt(
+                    f"{path.name} {name} does not read and is not the file's "
+                    f"last stage, so it is corruption (fork schema section "
+                    f"7b.2): {why}") from e
             if opened.flags is None:
                 raise LadrunoStageCorrupt(
                     f"{path.name} {name} does not read, and the file's "

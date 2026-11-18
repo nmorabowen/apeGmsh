@@ -47,8 +47,8 @@ KILL_AFTER = 35
 
 CHILD = r"""
 import os, sys, time
-bin_dir, out, stage1, eigen_at, sleep = sys.argv[1:6]
-stage1, eigen_at, sleep = int(stage1), int(eigen_at), float(sleep)
+bin_dir, out, stage1, eigen_at, sleep, nsteps = sys.argv[1:7]
+stage1, eigen_at, sleep, nsteps = int(stage1), int(eigen_at), float(sleep), int(nsteps)
 if bin_dir != "-":
     if hasattr(os, "add_dll_directory"):
         os.add_dll_directory(bin_dir)
@@ -75,7 +75,7 @@ ops.constraints("Plain"); ops.numberer("RCM"); ops.system("BandGen")
 ops.test("NormDispIncr", 1.0e-12, 10); ops.algorithm("Linear")
 ops.integrator("Newmark", 0.5, 0.25); ops.analysis("Transient")
 k = 0
-while True:
+while nsteps == 0 or k < nsteps:
     k += 1
     if ops.analyze(1, 0.001) != 0:
         raise SystemExit("analyze failed")
@@ -85,6 +85,8 @@ while True:
         ops.domainChange()
     print("STEP", k, flush=True)
     time.sleep(sleep)
+ops.wipe()
+print("CHILD DONE", flush=True)
 """
 
 
@@ -95,20 +97,28 @@ def pinned_sha() -> str:
     raise SystemExit("FORK_PIN has no sha= line")
 
 
+def start(bin_dir: str, out: Path, script_dir: Path, *, sleep: float = 0.02,
+          nsteps: int = 0, python: str = sys.executable) -> subprocess.Popen:
+    """Start :data:`CHILD` recording to ``out`` (``nsteps`` 0: until
+    killed), its script written into ``script_dir``. ``bin_dir`` "-" imports
+    ``opensees`` from the environment."""
+    script = Path(script_dir) / "killed_run_child.py"
+    script.write_text(CHILD, encoding="utf-8")
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
+    env.pop("HDF5_USE_FILE_LOCKING", None)
+    return subprocess.Popen(
+        [python, str(script), bin_dir, str(out), str(STAGE1_STEPS),
+         str(EIGEN_AT), str(sleep), str(nsteps)],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+
+
 def run_and_kill(bin_dir: str, out: Path, *, kill_after: int = KILL_AFTER,
                  sleep: float = 0.02, timeout: float = 120.0,
                  python: str = sys.executable) -> str:
     """Run :data:`CHILD` recording to ``out``; kill it after it has printed
     step ``kill_after``. Returns the build the child reported."""
     with tempfile.TemporaryDirectory(prefix="apegmsh-killed-run-") as tmp:
-        script = Path(tmp) / "child.py"
-        script.write_text(CHILD, encoding="utf-8")
-        env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
-        env.pop("HDF5_USE_FILE_LOCKING", None)
-        proc = subprocess.Popen(
-            [python, str(script), bin_dir, str(out), str(STAGE1_STEPS),
-             str(EIGEN_AT), str(sleep)],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+        proc = start(bin_dir, out, Path(tmp), sleep=sleep, python=python)
         build, seen = "", []
         try:
             assert proc.stdout is not None
