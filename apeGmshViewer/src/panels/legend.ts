@@ -652,6 +652,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     unsubTheme?.();
     for (const u of unlistenCards) u();
     for (const u of contourUnlisten) u();
+    for (const u of deformUnlisten) u();
     scaleChrome?.dispose();
     for (const u of unlisten) u();
   };
