@@ -22,8 +22,8 @@ into labels.
 ```python
 from apeGmsh import apeGmsh, Part
 
-g = apeGmsh(*, model_name=None, units=None, verbose=False,
-            save_to=None, overwrite=True)   # model_name=None -> the running script's stem
+g = apeGmsh(model_name=None, units=None, verbose=False,
+            save_to=None, overwrite=True)   # all keyword-only; model_name=None -> the running script's stem
 g.begin()           # opens gmsh, wires composites
 g.is_active         # True while session is open
 g.name              # the model name ("" in a notebook / -c / stdin with no model_name=)
@@ -198,7 +198,7 @@ positionals is **keyword-only**: the gmsh-style positional
 `revolve(dimtags, x, y, z, ax, ay, az, angle)` raises `TypeError`. A
 quarter turn of surface `"profile"` about the global z axis through the
 origin is `revolve("profile", math.pi / 2, x=0, y=0, z=0, ax=0, ay=0, az=1)`.
-`# src/apeGmsh/core/_model_transforms.py:254 (revolve), :190 (extrude), :74 (rotate)`
+`# src/apeGmsh/core/_model_transforms.py (revolve, extrude, rotate)`
 
 ### `g.model.io` — CAD I/O + health diagnostics (`_IO`)
 
@@ -261,7 +261,7 @@ the selection into a label/PG without raw tags:
                                        # .in_sphere/.on_plane/.crossing_plane/.nearest_to/.where
    .to_label("loaded_faces"))           # or .to_physical("BC") / .to_dataframe() / .result().tags()
 ```
-`# src/apeGmsh/core/Model.py:152`, `src/apeGmsh/core/_selection.py:930 (in_box(lo, hi))` — verbs compose with `|` `&` `-` `^`.
+`# src/apeGmsh/core/Model.py:152`, `src/apeGmsh/core/_selection.py (in_box(lo, hi))` — verbs compose with `|` `&` `-` `^`.
 The entity family's box is closed `[lo, hi]` and rejects `inclusive=`
 (see gotchas.md, "`in_box` is half-open").
 

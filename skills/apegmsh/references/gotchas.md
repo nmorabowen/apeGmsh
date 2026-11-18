@@ -249,12 +249,12 @@ showcase repo, a test run), set the variable before running:
 `APEGMSH_ARTIFACT_DIR=out python model.py` (PowerShell:
 `$env:APEGMSH_ARTIFACT_DIR="out"`). Notebook / `-c` / stdin with no
 `model_name=`: nothing is written, one warning.
-`# src/apeGmsh/_core.py:39 (default_artifact_dir), src/apeGmsh/opensees/_internal/artifact_write.py:284`
+`# src/apeGmsh/_core.py (default_artifact_dir), src/apeGmsh/opensees/_internal/artifact_write.py`
 
 ### `in_box` takes two points, `in_box(lo, hi)`
 Both families take two 3-tuples, `.in_box((x0, y0, z0), (x1, y1, z1))`.
 Six bare numbers (`in_box(x0, y0, z0, x1, y1, z1)`) raise `TypeError`.
-`# src/apeGmsh/core/_selection.py:930`
+`# src/apeGmsh/core/_selection.py (in_box)`
 
 ### `in_box` is half-open `[lo, hi)` (point family)
 Every point-family `.select().in_box(...)` (and the retained
