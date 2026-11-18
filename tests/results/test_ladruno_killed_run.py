@@ -268,22 +268,29 @@ def test_an_earlier_stage_that_does_not_read_refuses_the_file(tmp_path, lf, flag
 
 
 # --- the modes-snapshot crash rule --------------------------------------------------------
+#
+# Schema §7b.2 (the crash rule, KILLED files only) and T's ruling of 2026-11-18 on #3003:
+# a modes snapshot that does not open, or lacks a MODE_<j> (a gap in its mode numbers, or
+# modal groups that disagree), is skipped with every later one at flags 0x01; at flags
+# 0x05 (every stage must read) it refuses by name; a cleanly closed file (0x00) keeps
+# main's named refusals and refuses a snapshot that does not open by name, never a raw
+# KeyError. A smaller snapshot after a larger one is a whole snapshot: the writer stores
+# one snapshot per eigen call, with that call's mode count.
 
-MODES_U = "RESULTS/ON_NODES/MODES_OF_VIBRATION(U)/DATA"
+MODES = "RESULTS/ON_NODES/MODES_OF_VIBRATION(U)"
+MODES_U = f"{MODES}/DATA"
+MODES_R = "RESULTS/ON_NODES/MODES_OF_VIBRATION(R)"
 #: The object header of MODEL_STAGE[1]'s modes snapshot STEP_10 in KILLED (asserted below).
 STEP_10_OHDR = 260827
+#: The mode stages of KILLED: MODEL_STAGE[1]'s STEP_10 holds MODE_0 and MODE_1.
+STAGE_1_MODES = ["stage_0_mode_1", "stage_0_mode_2"]
 
 
 def _mode_ids(reader: LadrunoReader) -> list:
     return [s.id for s in reader.stages() if s.kind == "mode"]
 
 
-@pytest.mark.parametrize("flags", [0x00, 0x01, 0x05], ids=["0x00", "0x01", "0x05"])
-def test_a_modes_snapshot_that_does_not_open_is_skipped(tmp_path, lf, flags) -> None:
-    """Schema §7b.2: a ``DATA/STEP_<k>`` that does not open is the snapshot being
-    written; it is skipped (with every later one) and named, never a raw error."""
-    from apeGmsh.results.readers._buckets import ModeSnapshotSkippedWarning
-
+def _corrupt_step_10(tmp_path: Path, lf, flags: int) -> Path:
     p = _copy(tmp_path, lf, f"snap_ohdr_{flags:02x}.ladruno", flags,
               eoa_to_size=flags == 0x00)
     with open_ladruno(p) as o:
@@ -292,33 +299,127 @@ def test_a_modes_snapshot_that_does_not_open_is_skipped(tmp_path, lf, flags) -> 
     assert raw[STEP_10_OHDR:STEP_10_OHDR + 4] == b"OHDR"
     raw[STEP_10_OHDR] ^= 0xFF
     p.write_bytes(bytes(raw))
+    return p
+
+
+@pytest.mark.parametrize("flags", [0x00, 0x05], ids=["0x00", "0x05"])
+def test_a_modes_snapshot_that_does_not_open_is_refused_by_name(tmp_path, lf, flags) -> None:
+    """A cleanly closed file (0x00) and one killed with SWMR armed (0x05) must read
+    every snapshot: one that does not open refuses by name, never a raw KeyError."""
+    from apeGmsh.results.readers._buckets import ModeSnapshotCorrupt
+
+    p = _corrupt_step_10(tmp_path, lf, flags)
+    before = sha(p)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        with pytest.raises(ModeSnapshotCorrupt, match=r"MODEL_STAGE\[1\]/STEP_10 does not"):
+            with Results.from_ladruno(p):
+                pass
+        with pytest.raises(ModeSnapshotCorrupt, match=r"MODEL_STAGE\[1\]/STEP_10 does not"):
+            with LadrunoReader(p) as reader:
+                reader.stages()
+    assert sha(p) == before
+
+
+def test_a_modes_snapshot_that_does_not_open_is_skipped_at_0x01(tmp_path, lf) -> None:
+    """Killed while a layout was written (flags 0x01, a repaired copy): the snapshot
+    that does not open was being written; it is skipped with every later one, named."""
+    from apeGmsh.results.readers._buckets import ModeSnapshotSkippedWarning
+
+    p = _corrupt_step_10(tmp_path, lf, 0x01)
     before = sha(p)
     with pytest.warns(ModeSnapshotSkippedWarning, match=r"MODEL_STAGE\[1\]/STEP_10"):
         with Results.from_ladruno(p) as results:
             assert [s.kind for s in results.stages] == ["static", "static"]
     with pytest.warns(ModeSnapshotSkippedWarning):
         with LadrunoReader(p) as reader:
+            assert reader.open_step == STEP_REPAIRED
             assert _mode_ids(reader) == []
             assert [s.n_steps for s in reader.stages()] == [20, 15]
     assert sha(p) == before
 
 
-def test_a_last_snapshot_that_lacks_a_mode_is_not_a_mode_stage(tmp_path, lf) -> None:
-    """A last-stage snapshot holding MODE_0 only, after a two-mode snapshot: it was
-    being written (MODE_1 not yet there), so it lists no mode stage."""
+def _last_snapshot(tmp_path: Path, lf, name: str, flags: int, modes: "list[int]", *,
+                   r_modes: "list[int] | None" = None,
+                   lam: bool = True) -> Path:
+    """KILLED with a last-stage snapshot MODEL_STAGE[2]/STEP_25 holding ``modes``
+    (copies of STEP_10's MODE_0, each a whole mode with its LAMBDA unless ``lam`` is
+    False); with ``r_modes``, a MODES_OF_VIBRATION(R) group too, whose STEP_25 holds
+    ``r_modes``. Built on a copy repaired as the rule repairs one, then given ``flags``."""
+    p = _copy(tmp_path, lf, name, 0x00, eoa_to_size=True)
+    with h5py.File(p, "r+") as f:
+        src = f[f"{S1}/{MODES_U}/STEP_10/MODE_0"]
+
+        def snapshot(data: "h5py.Group", which: "list[int]") -> None:
+            g = data.create_group("STEP_25")
+            for j in which:
+                f.copy(src, g, f"MODE_{j}")
+                if not lam:
+                    del g[f"MODE_{j}"].attrs["LAMBDA"]
+
+        snapshot(f[f"{S2}/{MODES_U}"], modes)
+        if r_modes is not None:
+            f.copy(f[f"{S2}/{MODES}"], f[f"{S2}/RESULTS/ON_NODES"], "MODES_OF_VIBRATION(R)")
+            del f[f"{S2}/{MODES_R}/DATA/STEP_25"]
+            snapshot(f[f"{S2}/{MODES_R}/DATA"], r_modes)
+    lf.set_superblock(p, flags=flags)
+    return p
+
+
+@pytest.mark.parametrize("flags", [0x00, 0x01], ids=["0x00", "0x01"])
+def test_a_whole_one_mode_last_snapshot_is_listed(tmp_path, lf, flags) -> None:
+    """``eigen 1`` after ``eigen 2``: a last-stage STEP_25 holding MODE_0 and its
+    LAMBDA is a whole snapshot, listed as a mode stage (as main lists it)."""
     from apeGmsh.results.readers._buckets import ModeSnapshotSkippedWarning
 
-    p = _copy(tmp_path, lf, "partial_snapshot.ladruno", 0x00, eoa_to_size=True)
-    with h5py.File(p, "r+") as f:
-        src = f[f"{S1}/{MODES_U}/STEP_10"]
-        g = f[f"{S2}/{MODES_U}"].create_group("STEP_25")
-        f.copy(src["MODE_0"], g, "MODE_0")
-    lf.set_superblock(p, flags=0x01)
-    with pytest.warns(ModeSnapshotSkippedWarning, match=r"MODEL_STAGE\[2\]/STEP_25.*lacks a mode"):
+    p = _last_snapshot(tmp_path, lf, f"one_mode_{flags:02x}.ladruno", flags, [0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ModeSnapshotSkippedWarning)
         with LadrunoReader(p) as reader:
-            assert _mode_ids(reader) == ["stage_0_mode_1", "stage_0_mode_2"]
-            assert [s.id for s in reader.stages()] == [
-                "stage_0", "stage_0_mode_1", "stage_0_mode_2", "stage_1"]
+            assert _mode_ids(reader) == STAGE_1_MODES + ["stage_1_mode_1"]
+            assert [s.id for s in reader.stages()][-2:] == ["stage_1", "stage_1_mode_1"]
+
+
+@pytest.mark.parametrize("case", ["gap", "disagree"])
+def test_a_last_snapshot_that_lacks_a_mode_is_skipped_at_0x01(tmp_path, lf, case) -> None:
+    """At 0x01 a last-stage STEP_25 that lacks a mode was being written: one whose
+    mode numbers have a gap (MODE_0, MODE_2), or whose (U) group holds MODE_0 and
+    MODE_1 while (R) holds only MODE_0. It is skipped and named; STEP_10 still reads."""
+    from apeGmsh.results.readers._buckets import ModeSnapshotSkippedWarning
+
+    if case == "gap":
+        p = _last_snapshot(tmp_path, lf, "gap.ladruno", 0x01, [0, 2])
+    else:
+        p = _last_snapshot(tmp_path, lf, "disagree.ladruno", 0x01, [0, 1], r_modes=[0])
+    with pytest.warns(ModeSnapshotSkippedWarning,
+                      match=r"MODEL_STAGE\[2\]/STEP_25 does not read whole \(.*lacks a mode\)"):
+        with LadrunoReader(p) as reader:
+            assert _mode_ids(reader) == STAGE_1_MODES
+
+
+@pytest.mark.parametrize("case", ["gap", "disagree"])
+def test_a_last_snapshot_that_lacks_a_mode_is_refused_at_0x05(tmp_path, lf, case) -> None:
+    """At 0x05 every snapshot must read: a snapshot that lacks a mode refuses by name."""
+    from apeGmsh.results.readers._buckets import ModeSnapshotCorrupt
+
+    if case == "gap":
+        p = _last_snapshot(tmp_path, lf, "gap5.ladruno", 0x05, [0, 2])
+    else:
+        p = _last_snapshot(tmp_path, lf, "disagree5.ladruno", 0x05, [0, 1], r_modes=[0])
+    with pytest.raises(ModeSnapshotCorrupt, match=r"MODEL_STAGE\[2\]/STEP_25 does not read whole"):
+        with LadrunoReader(p) as reader:
+            reader.stages()
+
+
+def test_a_clean_file_with_a_mode_missing_lambda_is_refused_as_on_main(tmp_path, lf) -> None:
+    """A cleanly closed file (0x00) whose last snapshot's MODE_0 has no LAMBDA: main's
+    named refusal, never a skip."""
+    p = _last_snapshot(tmp_path, lf, "no_lambda.ladruno", 0x00, [0], lam=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        with pytest.raises(ValueError, match=r"STEP_25/MODE_0 has no LAMBDA attribute"):
+            with LadrunoReader(p) as reader:
+                reader.stages()
 
 
 # --- the energy read's cut ----------------------------------------------------------------

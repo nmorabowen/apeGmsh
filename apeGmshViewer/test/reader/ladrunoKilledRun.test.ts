@@ -176,45 +176,109 @@ for (const flags of [0x00, 0x01, 0x05]) {
 }
 
 // -- the modes-snapshot crash rule (schema §7b.2) ------------------------------------------
+//
+// T's ruling of 2026-11-18 on #3003, the same cases as Python's test: a modes snapshot that does
+// not open, or lacks a MODE_<j> (a gap in its mode numbers, or modal groups that disagree), is
+// skipped with every later one at flags 0x01; at flags 0x05 (step 2, where every stage must read)
+// it refuses by name; a cleanly closed file (0x00) keeps main's named refusals and refuses a
+// snapshot that does not open by name, never a raw h5wasm error. A smaller snapshot after a larger
+// one is a whole snapshot: the writer stores one snapshot per eigen call, with that call's mode count.
 
-const MODES_U = "RESULTS/ON_NODES/MODES_OF_VIBRATION(U)/DATA";
+const MODES = "RESULTS/ON_NODES/MODES_OF_VIBRATION(U)";
+const MODES_U = `${MODES}/DATA`;
 /** The object header of MODEL_STAGE[1]'s STEP_10 snapshot in KILLED (h5py's address; Python's test asserts it too). */
 const STEP_10_OHDR = 260827;
+/** The mode stages of KILLED: MODEL_STAGE[1]'s STEP_10 holds MODE_0 and MODE_1. */
+const STAGE_1_MODES = ["stage_0_mode_1", "stage_0_mode_2"];
 const modeIds = (f: LadrunoFile) => f.index.stages.filter((s) => s.kind === "mode").map((s) => s.id);
+const snapshotWarning = (f: LadrunoFile) => f.index.warnings.filter((w) => /modes snapshot/.test(w));
 
-for (const flags of [0x00, 0x01, 0x05]) {
-  test(`a modes snapshot that does not open is skipped and named, never a raw error (flags 0x0${flags})`, () => {
-    const path = flagged(KILLED, flags, `snap_ohdr_${flags}.ladruno`, flags === 0x00);
-    const b = readFileSync(path);
-    assert.equal(b.subarray(STEP_10_OHDR, STEP_10_OHDR + 4).toString("latin1"), "OHDR");
-    b[STEP_10_OHDR] = b[STEP_10_OHDR]! ^ 0xff;
-    writeFileSync(path, b);
+function corruptStep10(flags: number): string {
+  const path = flagged(KILLED, flags, `snap_ohdr_${flags}.ladruno`, flags === 0x00);
+  const b = readFileSync(path);
+  assert.equal(b.subarray(STEP_10_OHDR, STEP_10_OHDR + 4).toString("latin1"), "OHDR");
+  b[STEP_10_OHDR] = b[STEP_10_OHDR]! ^ 0xff;
+  writeFileSync(path, b);
+  return path;
+}
+
+for (const flags of [0x00, 0x05]) {
+  test(`a modes snapshot that does not open is refused by name, never a raw error (flags 0x0${flags})`, () => {
+    const path = corruptStep10(flags);
     const before = sha(path);
-    withFile(path, (f) => {
-      assert.deepEqual(steps(f), [["stage_0", 20], ["stage_1", 15]]);
-      assert.ok(f.index.warnings.some((w) => /modes snapshot MODEL_STAGE\[1\]\/STEP_10 does not read whole .* skipped with every later snapshot/.test(w)), f.index.warnings.join("\n"));
-    });
+    assert.throws(() => openLadruno(H5, path), (e: unknown) => e instanceof LadrunoError && /the modes snapshot .* MODEL_STAGE\[1\]\/STEP_10 does not/.test(e.message));
     assert.equal(sha(path), before);
   });
 }
 
-test("a last snapshot that lacks a mode (MODE_0 only, after a two-mode snapshot) is no mode stage", () => {
-  const base = join(tmp, "partial_base.ladruno");
+test("a modes snapshot that does not open is skipped and named at flags 0x01", () => {
+  const path = corruptStep10(0x01);
+  const before = sha(path);
+  withFile(path, (f) => {
+    assert.equal(f.opened.step, 3);
+    assert.deepEqual(steps(f), [["stage_0", 20], ["stage_1", 15]]);
+    assert.ok(f.index.warnings.some((w) => /modes snapshot MODEL_STAGE\[1\]\/STEP_10 does not read whole .* skipped with every later snapshot/.test(w)), f.index.warnings.join("\n"));
+  });
+  assert.equal(sha(path), before);
+});
+
+/**
+ * KILLED with a last-stage snapshot MODEL_STAGE[2]/STEP_25 holding `modes` (copies of STEP_10's MODE_0, each
+ * with its LAMBDA unless `lam` is false); with `rModes`, a MODES_OF_VIBRATION(R) group too, whose STEP_25
+ * holds `rModes`. Built on a repaired copy, then given `flags`.
+ */
+function lastSnapshot(name: string, flags: number, modes: number[], opts: { rModes?: number[]; lam?: boolean } = {}): string {
+  const base = join(tmp, `base_${name}`);
   repairCopy(KILLED, base);
   const w = new h5wasm.File(base, "a");
   try {
     const mode0 = w.get(`MODEL_STAGE[1]/${MODES_U}/STEP_10/MODE_0`) as h5wasm.Dataset;
-    const snap = (w.get(`${S2}/${MODES_U}`) as h5wasm.Group).create_group("STEP_25");
-    const ds = snap.create_dataset({ name: "MODE_0", data: mode0.value as never, shape: mode0.shape! as number[], dtype: mode0.dtype as never });
-    ds.create_attribute("LAMBDA", new Float64Array([Number(oneOf(mode0.attrs["LAMBDA"]!.value))]), [1]);
+    const lambda = Number(oneOf(mode0.attrs["LAMBDA"]!.value));
+    const snapshot = (data: h5wasm.Group, which: number[]) => {
+      const snap = data.create_group("STEP_25");
+      for (const j of which) {
+        const ds = snap.create_dataset({ name: `MODE_${j}`, data: mode0.value as never, shape: mode0.shape! as number[], dtype: mode0.dtype as never });
+        if (opts.lam !== false) ds.create_attribute("LAMBDA", new Float64Array([lambda]), [1]);
+      }
+    };
+    snapshot(w.get(`${S2}/${MODES_U}`) as h5wasm.Group, modes);
+    if (opts.rModes) {
+      const u = w.get(`${S2}/${MODES}`) as h5wasm.Group;
+      const r = (w.get(`${S2}/RESULTS/ON_NODES`) as h5wasm.Group).create_group("MODES_OF_VIBRATION(R)");
+      r.create_attribute("COMPONENTS", String(oneOf(u.attrs["COMPONENTS"]!.value)));
+      snapshot(r.create_group("DATA"), opts.rModes);
+    }
   } finally {
     w.close();
   }
-  const path = flagged(base, 0x01, "partial_snapshot.ladruno");
-  withFile(path, (f) => {
-    assert.deepEqual(modeIds(f), ["stage_0_mode_1", "stage_0_mode_2"]);
-    assert.ok(f.index.warnings.some((w) => /modes snapshot MODEL_STAGE\[2\]\/STEP_25 does not read whole \(.*lacks a mode\)/.test(w)), f.index.warnings.join("\n"));
+  return flagged(base, flags, name);
+}
+
+for (const flags of [0x00, 0x01]) {
+  test(`a whole one-mode last snapshot is listed as a mode stage (flags 0x0${flags})`, () => {
+    withFile(lastSnapshot(`one_mode_${flags}.ladruno`, flags, [0]), (f) => {
+      assert.deepEqual(modeIds(f), [...STAGE_1_MODES, "stage_1_mode_1"]);
+      assert.deepEqual(snapshotWarning(f), []);
+    });
   });
+}
+
+for (const [label, modes, rModes] of [["gap", [0, 2], undefined], ["disagree", [0, 1], [0]]] as const) {
+  test(`a last snapshot that lacks a mode (${label}) is skipped and named at flags 0x01`, () => {
+    withFile(lastSnapshot(`${label}_1.ladruno`, 0x01, [...modes], { rModes: rModes && [...rModes] }), (f) => {
+      assert.deepEqual(modeIds(f), STAGE_1_MODES);
+      assert.ok(f.index.warnings.some((w) => /modes snapshot MODEL_STAGE\[2\]\/STEP_25 does not read whole \(.*lacks a mode\)/.test(w)), f.index.warnings.join("\n"));
+    });
+  });
+  test(`a last snapshot that lacks a mode (${label}) is refused by name at flags 0x05`, () => {
+    const path = lastSnapshot(`${label}_5.ladruno`, 0x05, [...modes], { rModes: rModes && [...rModes] });
+    assert.throws(() => openLadruno(H5, path), (e: unknown) => e instanceof LadrunoError && /the modes snapshot .* MODEL_STAGE\[2\]\/STEP_25 does not read whole .*lacks a mode/.test(e.message));
+  });
+}
+
+test("a cleanly closed file with a mode missing LAMBDA is refused by name, as on main", () => {
+  const path = lastSnapshot("no_lambda.ladruno", 0x00, [0], { lam: false });
+  assert.throws(() => openLadruno(H5, path), (e: unknown) => e instanceof LadrunoError && /STEP_25\/MODE_0 has no numeric LAMBDA attribute/.test(e.message));
 });
 
 function oneOf(v: unknown): unknown {

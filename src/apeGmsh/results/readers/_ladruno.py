@@ -92,6 +92,9 @@ from ._buckets import (
     model_node_ids,
     partition_reduction_from_name,
     read_mode_shape,
+    SNAPSHOTS_CLEAN,
+    SNAPSHOTS_REFUSE,
+    SNAPSHOTS_SKIP,
     torn_mode_snapshots,
 )
 from ._ladruno_element_io import SpatialDimUnknown
@@ -99,6 +102,7 @@ from ._ladruno_hyperslab import read_hyperslab
 from ._ladruno_open import (
     LadrunoStages,
     LadrunoStageSkippedWarning,
+    STEP_SWMR,
     OpenedLadruno,
     open_ladruno,
     stage_report,
@@ -1024,14 +1028,20 @@ class LadrunoReader:
         # would put MODEL_STAGE[10] before MODEL_STAGE[2] once a run
         # reaches ten stages.
         names = list(self._stage_rule.names)
-        # The modes-snapshot crash rule (schema §7b.2) for a file the SWMR
-        # recorder wrote (a version-2/3 superblock): a snapshot that does not
-        # read whole is skipped with every later one.
-        torn_snapshots = (
-            {} if self._opened.flags is None else torn_mode_snapshots(
-                [(n, _child(self._h5[n], "RESULTS/ON_NODES")) for n in names],
-                source=self._path.name,
-            )
+        # The modes-snapshot crash rule (schema §7b.2) follows the stage
+        # rule: on a killed file opened plainly or through a repaired copy
+        # (flags 0x01) a damaged snapshot is skipped with every later one;
+        # on one opened SWMR-read (flags 0x05) it refuses by name; on a
+        # cleanly closed file one that does not open refuses by name.
+        if not self._stage_rule.killed:
+            rule = SNAPSHOTS_CLEAN
+        elif self._opened.step == STEP_SWMR:
+            rule = SNAPSHOTS_REFUSE
+        else:
+            rule = SNAPSHOTS_SKIP
+        torn_snapshots = torn_mode_snapshots(
+            [(n, _child(self._h5[n], "RESULTS/ON_NODES")) for n in names],
+            source=self._path.name, rule=rule,
         )
         host_sets = []
         for i, name in enumerate(names):

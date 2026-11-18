@@ -541,7 +541,7 @@ export class LadrunoFile {
         return this.emptyHost(s.group, s.id, err.message, evidence[i] !== false);
       }
     });
-    const modes = this.layModes(hosts, warnings);
+    const modes = this.layModes(hosts, warnings, path);
     const stages: StageInfo[] = [];
     for (const h of hosts) {
       stages.push(h.stage);
@@ -1393,9 +1393,12 @@ export class LadrunoFile {
   // -- modes ------------------------------------------------------------------
 
   /** Python `discover_modes` per host, then `mode_stage_layout` over the file. */
-  private layModes(hosts: { stage: StageInfo; onNodes: LGroup | null }[], warnings: string[]): { stages: { host: string; stage: StageInfo }[]; facts: LadrunoMode[] } {
-    // The modes-snapshot crash rule (schema §7b.2) for a file the SWMR recorder wrote (a version-2/3 superblock).
-    const skip = this.opened.flags === null ? new Map<string, Set<string>>() : this.tornSnapshots(hosts, warnings);
+  private layModes(hosts: { stage: StageInfo; onNodes: LGroup | null }[], warnings: string[], path: string): { stages: { host: string; stage: StageInfo }[]; facts: LadrunoMode[] } {
+    // The modes-snapshot crash rule (schema §7b.2) follows the stage rule: on a killed file opened plainly or
+    // through a repaired copy (flags 0x01) a damaged snapshot is skipped with every later one; on one opened at
+    // step 2 (flags 0x05) it refuses by name; on a cleanly closed file one that does not open refuses by name.
+    const rule = !this.killed ? "clean" : this.opened.step === 2 ? "refuse" : "skip";
+    const skip = this.tornSnapshots(hosts, warnings, rule, path);
     const perHost = hosts.map((h) => (h.onNodes ? this.discoverModes(h.onNodes, warnings, skip.get(h.stage.id)) : []));
     const nSets = perHost.reduce((n, sets) => n + sets.length, 0);
     const stages: { host: string; stage: StageInfo }[] = [];
@@ -1416,21 +1419,18 @@ export class LadrunoFile {
   }
 
   /**
-   * Every modal set under ON_NODES, ordered by step, modes by index. The
-   * translational group is the reference; the rotational one, when both
-   * exist, lists the same steps, modes and eigenvalues, or the file is
-   * refused. A group without DATA, or a MODE_<k> without LAMBDA, is refused.
-   */
-  /**
    * The modes snapshots the crash rule of schema §7b.2 skips (Python's `_buckets.torn_mode_snapshots`).
-   * The snapshots are taken in stage order, then by step. The first one that does not open, or lacks a
-   * `MODE_<j>`, was being written when the run was killed: it is skipped with every later one, in its
-   * stage and in every later stage, and a warning names them. A snapshot lacks a mode when its `MODE_<j>`
-   * keys have a gap, when the modal groups disagree on its modes, or, for the file's LAST snapshot only
-   * (the only one a kill can leave half written), when it holds fewer modes than the snapshot before it.
+   * The snapshots are taken in stage order, then by step. A snapshot is damaged when it does not open, or
+   * lacks a `MODE_<j>`: its `MODE_<j>` keys have a gap, or the modal groups disagree on its modes. A smaller
+   * snapshot after a larger one is not damage: the writer stores one snapshot per eigen call, with that
+   * call's mode count. `rule` follows the stage rule: "skip" (a killed file opened plainly or through a
+   * repaired copy, flags 0x01) skips the first damaged snapshot with every later one, in its stage and every
+   * later stage, and a warning names them; "refuse" (flags 0x05, where every stage must read) refuses any
+   * damage by name; "clean" (a cleanly closed file, or a superblock the SWMR recorder never wrote) refuses
+   * by name only a snapshot that does not open, and `discoverModes` reads the rest as before.
    * Returns stage id -> skipped `STEP_<k>` keys (`ALL_SNAPSHOTS`: the stage's modes DATA does not list).
    */
-  private tornSnapshots(hosts: { stage: StageInfo; onNodes: LGroup | null }[], warnings: string[]): Map<string, Set<string>> {
+  private tornSnapshots(hosts: { stage: StageInfo; onNodes: LGroup | null }[], warnings: string[], rule: "skip" | "refuse" | "clean", path: string): Map<string, Set<string>> {
     const isGroup = (x: unknown): x is LGroup => x instanceof this.h5.Group;
     const isDataset = (x: unknown): x is LDataset => x instanceof this.h5.Dataset;
     const child = (g: LGroup, name: string): unknown => {
@@ -1442,12 +1442,15 @@ export class LadrunoFile {
       if (!isGroup(x)) throw new Error(`${g.path}/${name} is not a group`);
       return x;
     };
+    const whole = rule !== "clean";
     const order: { host: { stage: StageInfo; onNodes: LGroup }; groups: string[]; step: string | null }[] = [];
     for (const h of hosts) {
       if (!h.onNodes) continue;
       const host = { stage: h.stage, onNodes: h.onNodes };
       try {
-        const groups = MODAL_GROUPS.filter((n) => h.onNodes!.keys().includes(n));
+        let groups = MODAL_GROUPS.filter((n) => h.onNodes!.keys().includes(n));
+        // discoverModes refuses a group without DATA by name.
+        if (!whole) groups = groups.filter((n) => groupOf(h.onNodes!, n).keys().includes("DATA"));
         const keys = new Set<string>();
         for (const g of groups) for (const k of groupOf(groupOf(h.onNodes, g), "DATA").keys()) if (k.startsWith("STEP_")) keys.add(k);
         const steps = [...keys].sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
@@ -1456,32 +1459,32 @@ export class LadrunoFile {
         order.push({ host, groups: [], step: null });
       }
     }
-    const modesOf = (e: (typeof order)[number]): number => {
+    const readSnapshot = (e: (typeof order)[number]): void => {
       if (e.step === null) throw new Error("its modes DATA does not list");
-      const counts = e.groups.map((name) => {
-        const sg = groupOf(groupOf(groupOf(e.host.onNodes, name), "DATA"), e.step!);
+      const counts: number[] = [];
+      for (const name of e.groups) {
+        const data = groupOf(groupOf(e.host.onNodes, name), "DATA");
+        if (!data.keys().includes(e.step)) {
+          if (whole) throw new Error(`${data.path} has no ${e.step}`);
+          continue;
+        }
+        const sg = groupOf(data, e.step);
         const keys = sg.keys().filter((k) => k.startsWith("MODE_"));
-        const idx = keys.map((k) => Number(k.slice(5))).sort((a, b) => a - b);
-        if (idx.length === 0 || idx.some((x, i) => x !== i)) throw new Error(`${sg.path} holds modes [${idx.join(", ")}], not MODE_0..MODE_<m-1>: it lacks a mode`);
         for (const k of keys) {
           const ds = sg.get(k);
-          if (!isDataset(ds) || ds.shape === null) throw new Error(`${sg.path}/${k} is not a dataset`);
-          const lam = ds.attrs["LAMBDA"];
-          if (lam === undefined || typeof oneValue(lam.value) !== "number") throw new Error(`${sg.path}/${k} has no numeric LAMBDA`);
+          if (!isDataset(ds) || ds.shape === null) throw new Error(`${sg.path}/${k} does not open as a dataset`);
         }
-        return idx.length;
-      });
-      if (new Set(counts).size > 1) throw new Error(`${e.step}: the modal groups ${e.groups.join(", ")} hold ${counts.join(", ")} modes: one lacks a mode`);
-      return counts[0]!;
+        const idx = keys.map((k) => Number(k.slice(5))).sort((a, b) => a - b);
+        if (whole && (idx.length === 0 || idx.some((x, i) => x !== i))) throw new Error(`${sg.path} holds modes [${idx.join(", ")}], not MODE_0..MODE_<m-1>: it lacks a mode`);
+        counts.push(idx.length);
+      }
+      if (whole && new Set(counts).size > 1) throw new Error(`${e.step}: the modal groups ${e.groups.join(", ")} hold ${counts.join(", ")} modes: one lacks a mode`);
     };
     let tornAt = -1;
     let why = "";
-    let previous: number | null = null;
     for (let i = 0; i < order.length; i++) {
       try {
-        const m = modesOf(order[i]!);
-        if (i === order.length - 1 && previous !== null && m < previous) throw new Error(`it holds ${m} modes and the snapshot before it ${previous}: the last snapshot lacks a mode`);
-        previous = m;
+        readSnapshot(order[i]!);
       } catch (err) {
         tornAt = i;
         why = (err instanceof Error ? err.message : String(err)).split("\n")[0]!;
@@ -1491,18 +1494,31 @@ export class LadrunoFile {
     const skip = new Map<string, Set<string>>();
     if (tornAt < 0) return skip;
     const torn = order.slice(tornAt);
+    const first = torn[0]!;
+    const where = `${path} ${first.host.stage.name}/${first.step ?? "DATA"}`;
+    if (rule === "refuse") {
+      throw new LadrunoError("layout", `the modes snapshot ${where} does not read whole (${why}) in a file killed with SWMR armed (superblock flags 0x05), where every snapshot must read: corruption (schema §7b.2)`);
+    }
+    if (rule === "clean") {
+      throw new LadrunoError("layout", `the modes snapshot ${where} does not open (${why}) in a file a writer closed, so it is corruption, not a snapshot a kill left half written (schema §7b.2)`);
+    }
     for (const e of torn) {
       const set = skip.get(e.host.stage.id) ?? new Set<string>();
       set.add(e.step ?? ALL_SNAPSHOTS);
       skip.set(e.host.stage.id, set);
     }
-    const first = torn[0]!;
     warnings.push(
       `the modes snapshot ${first.host.stage.name}/${first.step ?? "DATA"} does not read whole (${why}); it was being written when the run was killed, so it is skipped with every later snapshot (schema §7b.2): ${torn.map((e) => `${e.host.stage.name}/${e.step ?? "DATA"}`).join(", ")}`,
     );
     return skip;
   }
 
+  /**
+   * Every modal set under ON_NODES, ordered by step, modes by index. The
+   * translational group is the reference; the rotational one, when both
+   * exist, lists the same steps, modes and eigenvalues, or the file is
+   * refused. A group without DATA, or a MODE_<k> without LAMBDA, is refused.
+   */
   private discoverModes(onNodes: LGroup, warnings: string[], skip?: Set<string>): { stepKey: string; modes: { key: string; index: number; lambda: number }[] }[] {
     const names = MODAL_GROUPS.filter((n) => onNodes.keys().includes(n));
     if (names.length === 0 || skip?.has(ALL_SNAPSHOTS)) return [];
