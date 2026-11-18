@@ -504,7 +504,7 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
     readout.title = readout.textContent ?? "";
     // Wide enough for the stage's longest step and a long time, so the digits changing do not move the bar.
     const roomCh = `step ${t.steps}/${t.steps} · t = `.length + 10;
-    readout.style.cssText = `display: inline-block; flex: 0 1 ${roomCh}ch; min-width: 0; max-width: ${READOUT_MAX_PX}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);`;
+    readout.style.cssText = `display: inline-block; flex: 0 1 auto; width: ${roomCh}ch; min-width: 0; max-width: ${READOUT_MAX_PX}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);`;
     const pending = el("span", "step-pending-dot");
     pending.title = "reading this step";
     unlisten.push(
