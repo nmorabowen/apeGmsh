@@ -10,6 +10,7 @@ import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
 import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
+import { solidShapeOf } from "./slice.ts";
 import { activationNotice, activationOf, type Activation } from "./activation.ts";
 import { pairingNotice, pairResults, particleNotices, type ResultsPairing } from "./results.ts";
 // ADR 0134 D5 (owner D7 on #2992): the particles' colour scale, which panels/particleScale.ts draws.
@@ -1477,9 +1478,61 @@ export type { Box, Vec3 } from "./clip.ts";
 /** V4e3: why a mesh gets no cut-face cap: it has no volumetric cell. */
 export const NO_SOLID_CELLS = "No cap: this mesh has no volumetric cells (shells, beams or 2-D), so a cut has no inside to fill.";
 
+export const NO_NODE_TABLE = "No cap: the model was read without its node table, so the cut face cannot be built.";
+export const ALL_SOLIDS_HIDDEN = "No cap: every volumetric cell is hidden.";
+
+/** The colour group of a cell: the smallest element-side physical group holding it, ties by name (mesh/build.ts `colourGroups`). */
+function colourGroupOf(d: Decl, decls: Readonly<Record<DeclPath, Decl>>): DeclPath | null {
+  let best: Decl | null = null;
+  for (const p of d.element?.groups ?? []) {
+    const g = decls[p];
+    if (!g?.group) continue;
+    if (!best || g.group.count < best.group!.count || (g.group.count === best.group!.count && g.name.localeCompare(best.name) < 0)) best = g;
+  }
+  return best?.path ?? null;
+}
+
+/** Whether a cell is off the drawing (its element or colour group hidden, or inactive at this stage); null when every cell is on it. */
+export function cellHiddenTest(s: State): ((d: Decl) => boolean) | null {
+  const hidden = new Set(s.visibility.hidden);
+  const a = activationNow(s)?.activation;
+  const inactive = a?.state === "filtered" ? a.inactiveTags : null;
+  if (!hidden.size && !inactive?.size) return null;
+  const hiddenElems = hidden.size ? hiddenElementsOf(s) : null;
+  return (d) => {
+    const g = hidden.size ? colourGroupOf(d, s.decls) : null;
+    return (hiddenElems !== null && hiddenElems.has(d.path)) || (g !== null && hidden.has(g)) || (inactive !== null && (d.element?.metas ?? []).some((m) => inactive.has(m.tag)));
+  };
+}
+
+let allSolidsHiddenMemo: { key: readonly unknown[]; value: boolean } | null = null;
+
+function allSolidsHidden(s: State): boolean {
+  const off = cellHiddenTest(s);
+  if (!off) return false;
+  const key = [s.decls, s.blocks, s.visibility.hidden, activationNow(s)?.activation ?? null];
+  if (allSolidsHiddenMemo?.key.every((k, i) => k === key[i])) return allSolidsHiddenMemo.value;
+  let solids = 0, shown = 0;
+  for (const d of Object.values(s.decls)) {
+    const cell = d.element?.cell;
+    if (!cell || solidShapeOf(s.blocks[cell.block]?.code ?? 0) === null) continue;
+    solids++;
+    if (!off(d)) {
+      shown++;
+      break;
+    }
+  }
+  const value = solids > 0 && shown === 0;
+  allSolidsHiddenMemo = { key, value };
+  return value;
+}
+
 /** V4e3: what the planes panel says under "Contour on cut face": why no cap can be drawn, or null when one can (or no mesh is loaded). */
 export function cutFaceNote(s: State): string | null {
-  return s.mesh && s.mesh.counts.solidCells === 0 ? NO_SOLID_CELLS : null;
+  if (!s.mesh) return null;
+  if (s.mesh.counts.solidCells === 0) return NO_SOLID_CELLS;
+  if (!s.mesh.nodes) return NO_NODE_TABLE;
+  return allSolidsHidden(s) ? ALL_SOLIDS_HIDDEN : null;
 }
 
 // -- VU7b-1: a User Combination over the /spectra cases (ADR 0130 D4, D5) --------

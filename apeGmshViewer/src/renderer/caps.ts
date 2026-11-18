@@ -34,7 +34,7 @@ import { cutsOf, type Cut } from "../state/clip.ts";
 import { columnOf, elementCellValues, gaussCellValues, isNodeTopology, vertexValues } from "../state/contour.ts";
 import { vertexDisplacements } from "../state/deform.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners } from "../state/extrapolation.ts";
-import { activationNow, contourView, deformView, hiddenElementsOf, NO_SOLID_CELLS, type ContourView } from "../state/selectors.ts";
+import { activationNow, ALL_SOLIDS_HIDDEN, cellHiddenTest, contourView, deformView, NO_NODE_TABLE, NO_SOLID_CELLS, type ContourView } from "../state/selectors.ts";
 import { SOLID_CORNERS, SOLID_SHAPES, sliceSolids, sliceExtent, solidShapeOf, type Slice, type Solids } from "../state/slice.ts";
 import type { Decl, DeclPath, State } from "../state/types.ts";
 import { DARK_ROLE } from "../theme/tokens.ts";
@@ -62,8 +62,6 @@ export const CAP_FILL_TEXTURE: THREE.DataTexture = (() => {
   return t;
 })();
 
-/** Why a model gets no cap (the panel shows it: selectors `cutFaceNote`). */
-export const NO_NODE_TABLE = "the model was read without its node table, so the cut face cannot be built";
 
 /** The volumetric cells of one mesh read, over the full node table. */
 export interface SolidTable {
@@ -142,33 +140,13 @@ function buildTable(s: Pick<State, "decls" | "blocks" | "mesh">, blobs: BlobStor
   };
 }
 
-/** The colour group of a cell: the smallest element-side physical group holding it, ties by name (mesh/build.ts `colourGroups`). */
-function colourGroupOf(d: Decl, decls: Readonly<Record<DeclPath, Decl>>): DeclPath | null {
-  let best: Decl | null = null;
-  for (const p of d.element?.groups ?? []) {
-    const g = decls[p];
-    if (!g?.group) continue;
-    if (!best || g.group.count < best.group!.count || (g.group.count === best.group!.count && g.name.localeCompare(best.name) < 0)) best = g;
-  }
-  return best?.path ?? null;
-}
-
 /** Which cells are drawn (1) given the hidden legend rows and the stage's activation; null when every cell is. */
 export function shownCells(s: State, t: SolidTable): Uint8Array | null {
-  const hidden = new Set(s.visibility.hidden);
-  const hiddenElems = hidden.size ? hiddenElementsOf(s) : null;
-  const a = activationNow(s)?.activation;
-  const inactive = a?.state === "filtered" ? a.inactiveTags : null;
-  if (!hidden.size && !inactive?.size) return null;
+  const off = cellHiddenTest(s);
+  if (!off) return null;
   const out = new Uint8Array(t.decl.length);
-  t.decl.forEach((p, c) => {
-    const d = s.decls[p]!;
-    const g = hidden.size ? colourGroupOf(d, s.decls) : null;
-    const off =
-      (hiddenElems !== null && hiddenElems.has(p)) ||
-      (g !== null && hidden.has(g)) ||
-      (inactive !== null && (d.element?.metas ?? []).some((m) => inactive.has(m.tag)));
-    out[c] = off ? 0 : 1;
+  t.decl.forEach((p, i) => {
+    out[i] = off(s.decls[p]!) ? 0 : 1;
   });
   return out;
 }
@@ -287,7 +265,7 @@ export function capInputs(s: State, blobs: BlobStore, step: StepValues | null, c
   if ((v.state === "ready" || v.state === "element") && !v.stepMeasured) return { wait: true };
   if (v.state === "element" && (step!.element !== v.component.key || !step!.gauss)) return { wait: true };
   const sub = shownSubset(s, t);
-  if (!sub.solids.shape.length) return { none: "every volumetric cell is hidden" };
+  if (!sub.solids.shape.length) return { none: ALL_SOLIDS_HIDDEN };
   // Positions: the node table, deformed as the surfaces are (a node with no displacement stays put, as it is drawn).
   let xyz = t.xyz;
   if (deformed && stepIsShown(s, step)) {

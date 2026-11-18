@@ -73,6 +73,20 @@ const AXES: readonly { key: "x" | "y" | "z"; label: string; normal: Vec3 }[] = [
   { key: "z", label: "Z", normal: [0, 0, 1] },
 ];
 
+/** What the panel's structure depends on: it is rebuilt when this changes, and only its offsets move otherwise. */
+export function planesShapeOf(s: State, box: Box | null, expanded: ReadonlySet<string>): string {
+  return JSON.stringify([
+    s.mesh === null,
+    s.clip.applyCuts,
+    s.clip.showGizmos,
+    s.clip.cutFace,
+    s.clip.notice,
+    cutFaceNote(s),
+    s.clip.planes.map((p) => [p.id, p.active, p.flipped, p.gizmo, p.normal, expanded.has(p.id)]),
+    box,
+  ]);
+}
+
 export function mountPlanes(store: Store, host: PlanesHost): () => void {
   const panel = byId("planes");
   let unlisten: (() => void)[] = [];
@@ -83,20 +97,9 @@ export function mountPlanes(store: Store, host: PlanesHost): () => void {
   /** The offset inputs of each drawn row, updated in place while a slider drags (a rebuild would drop the drag). */
   let inputs = new Map<string, { slider: HTMLInputElement | null; field: HTMLInputElement }>();
 
-  const shapeOf = (s: State, box: Box | null): string =>
-    JSON.stringify([
-      s.mesh === null,
-      s.clip.applyCuts,
-      s.clip.showGizmos,
-      s.clip.cutFace,
-      s.clip.notice,
-      s.clip.planes.map((p) => [p.id, p.active, p.flipped, p.gizmo, p.normal, expanded.has(p.id)]),
-      box,
-    ]);
-
   const render = (s: State) => {
     const box = s.mesh ? host.box() : null;
-    const shape = shapeOf(s, box);
+    const shape = planesShapeOf(s, box, expanded);
     if (shape === lastShape && box === lastBox) {
       // Only offsets changed: move the inputs, never the one the user is editing.
       for (const r of planeRows(s.clip.planes, box)) {

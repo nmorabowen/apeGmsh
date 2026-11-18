@@ -1,7 +1,7 @@
 // The capture harness (VH1, #2865): the section-plane stills (D7): cut-face caps, clip planes and plane gizmos.
 
 import * as THREE from "three";
-import { deformOf } from "../../state/selectors.ts";
+import { ALL_SOLIDS_HIDDEN, deformOf } from "../../state/selectors.ts";
 import { tipPoint } from "../gizmo.ts";
 import { zoomToward } from "../navigation.ts";
 import { painted, until, type HarnessContext } from "./context.ts";
@@ -80,6 +80,11 @@ export async function captureCaps(ctx: HarnessContext, settle: (ms?: number) => 
   store.dispatch({ type: "setCutFace", on: false });
   await still("caps-5-cut-face-off", 0);
   store.dispatch({ type: "setCutFace", on: true });
+  // #1924: every solid cell hidden, the panel saying why there is no cap.
+  store.dispatch({ type: "setHidden", decls: Object.values(store.get().decls).filter((d) => d.kind === "physical_group").map((d) => d.path), hidden: true });
+  await still("caps-6-all-cells-hidden", 0);
+  if (document.querySelector("#planes .planes-capnote")?.textContent !== ALL_SOLIDS_HIDDEN) throw new Error("capture: the planes panel does not say every solid cell is hidden");
+  store.dispatch({ type: "showAll" });
   removePlanes(ctx);
   store.dispatch({ type: "setDeform", on: false });
   store.dispatch({ type: "setColourBy", by: "group" });
