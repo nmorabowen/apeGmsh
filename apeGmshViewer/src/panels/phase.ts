@@ -208,6 +208,9 @@ export const SCRUBBER_MIN_PX = 396;
 /** The readout's widest extent; longer text ends in an ellipsis, with the full text as its tooltip. */
 export const READOUT_MAX_PX = 240;
 
+/** A step read shorter than this says nothing: most are, and a mark for each would blink. */
+const PENDING_MS = 400;
+
 const fmtTime = (t: number): string => (Number.isInteger(t) ? String(t) : Math.abs(t) >= 1e-3 && Math.abs(t) < 1e4 ? t.toPrecision(4).replace(/\.?0+$/, "") : t.toExponential(3));
 
 /** The scrubber's readout: `step 3/5 · t = 0.6`, the elements the stage does not have, and a fetch that failed (one under way is the mark beside it, which moves nothing). */
@@ -258,6 +261,8 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
   /** The slider's newest value, not dispatched yet: at most one step per frame. */
   let dragStep: number | null = null;
   let dragFrame: number | null = null;
+  let pendingStep: number | null = null;
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
   const nextFrame = (fn: () => void): number => (typeof requestAnimationFrame === "function" ? requestAnimationFrame(fn) : (setTimeout(fn, 16) as unknown as number));
   const cancelFrame = (id: number) => {
     if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id);
@@ -304,8 +309,21 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
       live.readout.textContent = text;
       live.readout.title = text;
     }
-    live.pending.className = "step-pending-dot" + (t.fetch === "loading" ? " on" : "");
+    syncPending(t);
     syncPlay();
+  };
+  /** The mark beside the readout: only for a read of one step that takes long, timed per step so quick steps in a row never show it. */
+  const syncPending = (t: Timeline) => {
+    const waiting = t.fetch === "loading" ? t.step : null;
+    if (waiting === pendingStep) return;
+    pendingStep = waiting;
+    clearPending();
+    if (waiting !== null) pendingTimer = setTimeout(() => live?.pending.classList.add("on"), PENDING_MS);
+  };
+  const clearPending = () => {
+    if (pendingTimer !== null) clearTimeout(pendingTimer);
+    pendingTimer = null;
+    live?.pending.classList.remove("on");
   };
   const step = (delta: number): boolean => {
     const t = timelineOf(store.get());
@@ -321,6 +339,8 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
     if (prev && t && live && sameScrubber(s, prev)) return syncScrubber(t, s);
     for (const u of unlisten) u();
     unlisten = [];
+    clearPending();
+    pendingStep = null;
     live = null;
     if (!t) stop();
     const families = familiesOf(s);
@@ -485,7 +505,7 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
     // Wide enough for the stage's longest step and a long time, so the digits changing do not move the bar.
     const roomCh = `step ${t.steps}/${t.steps} · t = `.length + 10;
     readout.style.cssText = `display: inline-block; flex: 0 1 ${roomCh}ch; min-width: 0; max-width: ${READOUT_MAX_PX}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);`;
-    const pending = el("span", "step-pending-dot" + (t.fetch === "loading" ? " on" : ""));
+    const pending = el("span", "step-pending-dot");
     pending.title = "reading this step";
     unlisten.push(
       listen(back, "click", () => {
@@ -530,6 +550,7 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
     for (const b of [pick, back, play, fwd, pace, pending]) rigid(b);
     box.append(pick, back, play, fwd, pace, slider, readout, pending);
     live = { back, fwd, play, slider, readout, pending };
+    syncPending(t);
     return [box];
   };
   render(store.get(), null);
@@ -567,6 +588,7 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
   }
   return () => {
     stop();
+    clearPending();
     if (dragFrame !== null) cancelFrame(dragFrame);
     unsubscribe();
     for (const u of unlisten) u();

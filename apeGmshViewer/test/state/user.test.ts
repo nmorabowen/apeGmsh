@@ -546,6 +546,7 @@ class FakeEl {
   constructor(tag: string) {
     this.tagName = tag.toUpperCase();
   }
+  classList = { add: (c: string) => void (this.className += ` ${c}`), remove: (c: string) => void (this.className = this.className.replace(` ${c}`, "")) };
   append(...xs: (FakeEl | string)[]) {
     this.children.push(...xs);
   }
