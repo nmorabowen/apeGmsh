@@ -105,6 +105,10 @@ _land_pr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_land_pr)
 REQUIRED_CHECKS: tuple[str, ...] = _land_pr.REQUIRED_CHECKS
 _green = _land_pr._green
+# Same normalisation land_pr applies to PR bodies: CRLF to LF, and a BOM or
+# zero-width space dropped at line start only (a mark mid-line still blocks).
+_CR = _land_pr._CR
+_LEADING_INVISIBLE = _land_pr._LEADING_INVISIBLE
 
 
 def run_gh(args: list[str]) -> str:
@@ -155,7 +159,8 @@ def verdicts(pr: dict) -> list[dict]:
     for c in sorted(pr.get("comments") or [], key=lambda c: c["createdAt"]):
         if c.get("authorAssociation") not in VERDICT_AUTHORS:
             continue
-        for m in _VERDICT.finditer(c.get("body") or ""):
+        body = _LEADING_INVISIBLE.sub("", _CR.sub("\n", c.get("body") or ""))
+        for m in _VERDICT.finditer(body):
             found.append({"model": m["model"], "verdict": m["verdict"],
                           "sha": m["sha"], "at": _ts(c["createdAt"])})
     return found

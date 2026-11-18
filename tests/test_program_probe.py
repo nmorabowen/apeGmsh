@@ -11,6 +11,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 _spec = importlib.util.spec_from_file_location(
     "program_probe",
     Path(__file__).resolve().parent.parent / "scripts" / "program_probe.py",
@@ -102,6 +104,33 @@ def test_verdict_from_an_outsider_does_not_count():
     unlabelled = _verdict(5)
     del unlabelled["authorAssociation"]
     assert pp.approval_at_head(_pr(comments=[unlabelled])) is None
+
+
+@pytest.mark.parametrize("prefix", ["﻿", "​", "﻿​"])
+def test_verdict_led_by_an_invisible_mark_counts(prefix):
+    c = _verdict(5)
+    c["body"] = prefix + c["body"]
+    assert pp.approval_at_head(_pr(comments=[c])) is not None
+
+
+def test_verdict_with_crlf_line_ends_counts():
+    c = _verdict(5)
+    c["body"] = "notes\r\n﻿Review-verdict: Opus 5.5 approve " + HEAD + "\r\n"
+    assert pp.approval_at_head(_pr(comments=[c])) is not None
+
+
+def test_verdict_after_other_text_on_the_line_still_does_not_count():
+    # #1917: only a leading mark is dropped; a mid-line mark cannot forge one.
+    for body in (f"see ﻿Review-verdict: Opus approve {HEAD}",
+                 f"x Review-verdict: Opus approve {HEAD}"):
+        c = {**_verdict(5), "body": body}
+        assert pp.verdicts(_pr(comments=[c])) == []
+
+
+def test_bom_verdict_from_an_outsider_still_does_not_count():
+    c = _verdict(5, association="NONE")
+    c["body"] = "﻿" + c["body"]
+    assert pp.verdicts(_pr(comments=[c])) == []
 
 
 def test_verdict_from_a_member_or_collaborator_counts():
