@@ -178,7 +178,7 @@ function elementDecl(path: DeclPath, h5: string, name: string, facts: ElementFac
   return {
     path,
     kind: "element",
-    type: first?.type ?? "(no OpenSees type)",
+    type: first?.type ?? (hasOpensees ? "(mesh only)" : "(no OpenSees type)"),
     name,
     nameSource: h5,
     h5,
