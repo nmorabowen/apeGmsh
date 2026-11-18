@@ -1,4 +1,4 @@
-### apeGmshViewer: bridge-minted membranes are drawn (#2667)
+### FIXED — apeGmshViewer draws bridge-minted `LadrunoMembrane` panels (#2667)
 
 A `LadrunoMembrane` minted with `fem_eid = -1` is now drawn as the polygon its
 archived `-nodes` and `-hole` loops name, and it counts in the header's
