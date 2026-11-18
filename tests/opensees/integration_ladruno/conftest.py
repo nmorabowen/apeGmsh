@@ -1,29 +1,17 @@
 """Fork-lane guards for ``tests/opensees/integration_ladruno``.
 
-* ``APEGMSH_FORK_PIN_ENFORCE=1`` (set by the nightly ``live-fork`` lane):
-  every ``ladruno_fork`` test skips unless the imported engine's build stamp
-  equals the ``sha`` in the repo-root ``FORK_PIN``. Unset, local runs beside
-  a dev fork build are unaffected.
 * ``ladruno_mkl`` tests skip with a reason when ``system Pardiso`` is not
   available in the imported build (the Linux tarball may lack MKL).
+
+The ``APEGMSH_FORK_PIN_ENFORCE=1`` build-stamp skip lives in the root
+``tests/conftest.py``, so it reaches every ``ladruno_fork`` test, not only
+the ones in this directory.
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import pytest
 
-_PIN_FILE = Path(__file__).resolve().parents[3] / "FORK_PIN"
 _PARDISO: "tuple[bool, str] | None" = None
-
-
-def _pinned_sha() -> str:
-    for line in _PIN_FILE.read_text(encoding="utf-8").splitlines():
-        key, sep, val = line.partition("=")
-        if sep and key.strip() == "sha":
-            return val.strip()
-    raise RuntimeError(f"no sha= line in {_PIN_FILE}")
 
 
 def _pardiso_available() -> "tuple[bool, str]":
@@ -42,22 +30,13 @@ def _pardiso_available() -> "tuple[bool, str]":
     return _PARDISO
 
 
-@pytest.hookimpl(tryfirst=True)
+@pytest.hookimpl(trylast=True)
 def pytest_runtest_setup(item: pytest.Item) -> None:
+    # trylast: the root conftest's backend and FORK_PIN skips run first, so
+    # an off-pin build reads "fork build mismatch", never "ladruno_mkl:"
+    # (the live-fork lane fails on any ladruno_mkl skip).
     if item.get_closest_marker("ladruno_fork") is None:
         return
-    if os.environ.get("APEGMSH_FORK_PIN_ENFORCE") == "1":
-        pinned = _pinned_sha()
-        from apeGmsh.opensees.emitter.live import get_backend_build
-        try:
-            imported = get_backend_build()
-        except Exception:
-            imported = None
-        if imported != pinned:
-            pytest.skip(
-                f"fork build mismatch: pinned {pinned[:12]}, "
-                f"imported {imported[:12] if imported else 'none'}"
-            )
     if item.get_closest_marker("ladruno_mkl") is not None:
         ok, why = _pardiso_available()
         if not ok:
