@@ -872,6 +872,8 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "particles_torn_last_stage_v1m2.ladruno": "- | -",
   "particles_torn_early_stage_v1m2.ladruno": "- | -",
   "particles_two_stages_v1m2.ladruno": "- | -",
+  // M2-S8 (#3003): a recorder run of the release build, killed (flags 0x05); MODEL_STAGE[2]'s empty modes group is no mode stage.
+  "killed_swmr.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] | DISPLACEMENT[magnitude x=Ux y=Uy]",
 };
 
 /** The repository root, and the directories the golden below scans for `.ladruno` files. */
@@ -884,6 +886,7 @@ const CONTOUR_GOLDEN_DIRS: readonly URL[] = [
   new URL("apeGmshViewer/test/fixtures/vu10/cracked/", REPO_ROOT),
   new URL("apeGmshViewer/test/fixtures/compare_render/remeshed/", REPO_ROOT),
   new URL("tests/fixtures/mpm/", REPO_ROOT),
+  new URL("tests/fixtures/ladruno_killed/", REPO_ROOT),
 ];
 
 /** `git ls-files '*.ladruno'` at the repo root (sorted, `/`-separated), or the reason git could not answer. */
