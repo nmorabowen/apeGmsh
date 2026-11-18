@@ -34,7 +34,10 @@ STALE_HOURS hours, behind ``main``. The base is read from the job log's
 
 Check 12 (#2138 bumped ``FORK_PIN`` with only the stock lane run; the fork side went red that night, #2143) refuses
 a PR that changes ``FORK_PIN`` unless a ``live-fork`` ``workflow_dispatch`` run on the PR head SHA completed
-green. ``live-fork`` is not a required check, so nothing else proves a new pin. No label overrides it.
+green. ``live-fork`` is not a required check, so nothing else proves a new pin. Since #3023 the same holds for
+a PR that changes a ``ladruno_fork``-marked test, a file under ``tests/opensees/integration_ladruno/``, or a
+``src/`` path containing ``ladruno``: those skip on the stock lanes (#2889 merged green and left ``live-fork``
+red on ``main``, #2907). No label overrides it, ``fixes-red-main`` included.
 
 Whatever copy is invoked, the rules that run are origin/main's: ``main``
 fetches origin/main and re-executes ``git show origin/main:scripts/land_pr.py``
@@ -567,24 +570,47 @@ def _card_paths(body: str, real: Real | None = None) -> list[str] | None:
     return paths if found else None
 
 
-def _amendment_paths(
-    text: str, card: int, real: Real | None = None, skipped: list[tuple[str, str]] | None = None
-) -> list[str]:
-    """The paths a `**Card amendment` comment adds. A negated line adds none, nor do
-    the lines it governs (#1872). Every exclusion ends at a heading or a bold label;
-    the widest one in force wins, and a narrower negation inside it never shortens it.
+def _opening_paths(line: str, real: Real | None = None) -> list[str]:
+    """The path a list item opens with: the item's first backticked span, when the line is
+    a list item ("- ", "* " or "1. ") whose text starts with that span (`path::symbol` is
+    `path`). Empty for every other line, and for a first span that is not a path."""
+    lead = _LEADING_SPAN.match(line)
+    if lead is None:
+        return []
+    close = line.find("`", lead.end())
+    return _line_paths(line[: close + 1], real) if close > 0 else []
 
-    - LIST: a negated line ending in ":", or a negated bullet that names no path ("Do
+
+def _amendment_paths(
+    text: str,
+    card: int,
+    real: Real | None = None,
+    skipped: list[tuple[str, str]] | None = None,
+    ignored: list[tuple[str, str]] | None = None,
+) -> list[str]:
+    """The paths a `**Card amendment` comment adds (#3025). A path counts only when its
+    backtick span opens a list item; the bullet's trailing prose, negation words included,
+    does not affect it. A backticked path anywhere else (prose, mid-bullet, after a lead-in
+    word) adds nothing. The card body's Owned parsing (`_card_paths`) is unchanged.
+
+    A negation still drops the lines it governs (#1872). Every exclusion ends at a heading
+    or a bold label; the widest one in force wins, and a narrower negation inside it never
+    shortens it. A line that opens with a path is always added; if its prose negates,
+    it then drops what it governs, as below (a trailing ":" makes it a LIST, otherwise an ITEM):
+
+    - LIST: a negated line ending in ":", or a negated bullet that opens with no path ("Do
       not touch the following"), opens a list. It runs across blank lines and ends at
       the first non-list line that follows a blank line.
     - PARA: any other negated line that is not a bullet excludes to the paragraph's
       end (a blank line).
-    - ITEM: a negated bullet that names a path excludes itself, its sub-items and its
-      unmarked continuation lines, up to a sibling or shallower bullet or a blank line,
-      so one "do not" bullet does not drop the siblings of a prose amendment.
+    - ITEM: a negated bullet that names a path ("- Do not touch `c.py`", or "- `a.py` (never touch
+      the helpers below)", which still adds `a.py`) excludes itself (unless it opens with its path), its sub-items and its unmarked continuation lines, up to a sibling
+      or shallower bullet or a blank line.
 
-    `skipped`, when given, collects (line, negation word) for each skipped line that has
-    a backtick (the lines check 9 prints); the word is the governing line's (`--check-card`)."""
+    `skipped`, when given, collects (line, negation word) for each dropped line that opens
+    with a path (the only ones that could have added one; check 9 prints every dropped line). `ignored` collects (path, reason) for each
+    backticked path that added nothing: "prose path", or 'dropped by negated lead-in "<word>"'
+    (`--check-card`)."""
     paths: list[str] = []
     mode, depth, after_blank = _FREE, -1, False
     word = ""
@@ -601,7 +627,10 @@ def _amendment_paths(
         after_blank = not line.strip()
         if mode == _PARA and line.rstrip(" *").endswith(":"):
             mode = _LIST  # a negated paragraph whose last line ends in ":" introduces a negated list (#2326)
+        opening = _opening_paths(line, real)
         found_word = _negation_word(line)
+        negated_opening = bool(opening) and found_word is not None
+        before = mode
         if found_word is not None:
             bullet = _BULLET.match(line) is not None
             # Without `real`: "- Do not touch `FORK_PIN`" still names no path, so it keeps
@@ -612,13 +641,34 @@ def _amendment_paths(
                 new = _ITEM if bullet else _PARA
             if new > mode:
                 mode, depth, word = new, indent, found_word
+        if negated_opening and before == _FREE:
+            # "- `a.py` ... do not touch these:" adds its own path, then drops the list it governs;
+            # without the colon it drops its own sub-items (the ITEM rule). Siblings stay (#3025)
+            paths += opening
+            if ignored is not None:
+                rest = _line_paths(line, real)
+                for path in opening:
+                    rest.remove(path)
+                ignored.extend((p, "prose path") for p in rest)
+            continue
         if mode != _FREE:
             if "`" in line:
-                if skipped is not None:
-                    skipped.append((line.strip(), word))
+                if opening:  # a path-opening bullet that a list drop took: it could have added its path
+                    if skipped is not None:
+                        skipped.append((line.strip(), word))
+                    reason = f'dropped by negated lead-in "{word}"'
+                else:  # a prose line adds nothing either way
+                    reason = "prose path"
+                if ignored is not None:
+                    ignored.extend((p, reason) for p in _line_paths(line, real))
                 print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
             continue
-        paths += _line_paths(line, real)
+        paths += opening
+        if ignored is not None:
+            rest = _line_paths(line, real)
+            for path in opening:
+                rest.remove(path)
+            ignored.extend((p, "prose path") for p in rest)
     return paths
 
 
@@ -740,19 +790,29 @@ def check_card(card: int, gh: Runner, git: Runner) -> int:
         return 1
     allowed = list(owned)
     skipped: list[tuple[str, str]] = []
+    reports: list[tuple[list[str], list[tuple[str, str]]]] = []
     for comment in issue.get("comments") or []:
         text = _text(comment.get("body"))
         if _AMENDMENT.match(text):
-            allowed += _amendment_paths(text, card, real, skipped)
+            ignored: list[tuple[str, str]] = []
+            added = _amendment_paths(text, card, real, skipped, ignored)
+            allowed += added
+            reports.append((added, ignored))
     print(f"check-card: slice card #{card}'s Owned set ({len(allowed)} path(s)):")
     for path in allowed:
         print(f"  {path}")
+    for number, (added, ignored) in enumerate(reports, 1):
+        print(f"check-card: amendment {number} adds {len(added)} path(s):")
+        for path in added:
+            print(f"  added {path}")
+        for path, reason in ignored:
+            print(f"  ignored {path} ({reason})")
     if skipped:
-        print(f"check-card: {len(skipped)} amendment line(s) skipped by a negation:")
+        print(f"check-card: {len(skipped)} amendment line(s) dropped by a negation:")
         for line, word in skipped:
             print(f"  skipped (negation {word!r}): {line}")
-        print("check-card: a skipped amendment line may hold paths the card meant to own; "
-              "restate the amendment as a bold label plus a bullet list of paths (#2326).")
+        print("check-card: a dropped amendment line may hold paths the card meant to own; "
+              "restate the amendment as a bold label plus a bullet list that opens each item with its path (#2326).")
         return 1
     if not allowed:
         print(f"check-card: #{card} names no backticked path, so check 9 would refuse it.")
@@ -1020,40 +1080,81 @@ def check_fresh_base(number: int, rows: list[FileRow], gh: Runner, bases: Bases)
 #: Check 12: the file a pin bump edits, and the fork lane that must have run on the new pin.
 PIN_FILE = "FORK_PIN"
 LIVE_FORK_RUNS_JSON = "databaseId,status,conclusion,headSha,url"
+#: #3023 (#2889 -> #2907): fork-only changes, which the stock required lanes skip. A file under
+#: FORK_TESTS, a `.py` under tests/ whose content applies the `ladruno_fork` marker, or a src/
+#: path containing "ladruno" (any case) needs the same green dispatch as a pin bump.
+FORK_TESTS = "tests/opensees/integration_ladruno/"
+FORK_MARK = re.compile(r"\bmark\.ladruno_fork\b")
 
 
-def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner) -> None:
-    """Check 12 (#2138 -> #2143). A PR that changes ``FORK_PIN`` needs a ``live-fork`` run with
-    ``event == workflow_dispatch`` on its head SHA, completed and successful. Neither ``scope-ok``
-    nor ``human-gate`` overrides it, and it applies to every PR. A PR that leaves the pin alone
-    makes no run-list call."""
-    if not any(PIN_FILE in (row[0], row[2]) for row in rows):
-        print(f"check 12: #{number} does not change {PIN_FILE}; no live-fork dispatch is required.")
-        return
+def _fork_only(rows: list[FileRow], head: str, git: Runner) -> list[str]:
+    """The changed paths only the fork lane exercises. Either name of a rename triggers. A test's
+    content is read at the head, or on origin/main (fetched by `main`) for a name the PR deletes
+    or renames away. The reads are local `git show`s; one that fails refuses."""
+    hits: list[str] = []
+    for path, status, previous, _changes, _patch in rows:
+        for name in (path, previous):
+            if not name or name in hits:
+                continue
+            if name.startswith(FORK_TESTS) or (name.startswith("src/") and "ladruno" in name.lower()):
+                hits.append(name)
+                continue
+            if not (name.startswith("tests/") and name.endswith(".py")):
+                continue
+            rev = head if name == path and status != "removed" else "origin/main"
+            try:
+                text = git(["show", f"{rev}:{name}"])
+            except _UNREADABLE as exc:
+                raise LandError(
+                    f"check 12: {name} could not be read at {rev[:12]} ({exc!r}), so whether it applies "
+                    f"the ladruno_fork marker is unknown; refusing."
+                ) from exc
+            if FORK_MARK.search(text):
+                hits.append(name)
+    return hits
+
+
+def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner, git: Runner) -> None:
+    """Check 12 (#2138 -> #2143; #2889 -> #2907). A PR that changes ``FORK_PIN``, or a fork-only
+    test or src file (`_fork_only`), needs a ``live-fork`` run with ``event == workflow_dispatch``
+    on its head SHA, completed and successful. No label overrides it (``scope-ok``,
+    ``human-gate`` and ``fixes-red-main`` included), and it applies to every PR. A PR that
+    changes none of these makes no run-list call."""
     head = pr["headRefOid"]
     dispatch = f"gh workflow run live-fork.yml --ref {pr['headRefName']}"
+    if any(PIN_FILE in (row[0], row[2]) for row in rows):
+        what, proof, again = PIN_FILE, "A new pin is proven by the fork lane", ""
+    else:
+        fork = _fork_only(rows, head, git)
+        if not fork:
+            print(f"check 12: #{number} does not change {PIN_FILE}; no live-fork dispatch is required.")
+            return
+        shown = ", ".join(fork[:5]) + (f" (+{len(fork) - 5} more)" if len(fork) > 5 else "")
+        what = f"fork-only files ({shown})"
+        proof = "Fork-only tests and src skip on the stock lanes (#2889 -> #2907); they are proven by the fork lane"
+        again = f" #{number} changes {what}; start a run with `{dispatch}`."
     listing = gh(["run", "list", "--workflow", "live-fork.yml", "--event", "workflow_dispatch",
                   "--commit", head, "--json", LIVE_FORK_RUNS_JSON])
     runs = [run for run in json.loads(listing) if run.get("headSha") == head]
     if not runs:
         raise LandError(
-            f"check 12: #{number} changes {PIN_FILE} but no live-fork workflow_dispatch run exists on {head[:12]}. "
-            f"A new pin is proven by the fork lane, which is not a required check (#2138 -> #2143). Start one "
+            f"check 12: #{number} changes {what} but no live-fork workflow_dispatch run exists on {head[:12]}. "
+            f"{proof}, which is not a required check (#2138 -> #2143). Start one "
             f"with `{dispatch}`, wait for it to finish green, then land."
         )
     latest = max(runs, key=lambda run: run.get("databaseId") or 0)  # only the newest dispatch counts
     if latest.get("status") != "completed":
         raise LandError(
             f"check 12: the newest live-fork dispatch run on {head[:12]} is {latest.get('status')}, not completed "
-            f"({latest.get('url')}). Pending is a refusal, not a wait."
+            f"({latest.get('url')}). Pending is a refusal, not a wait.{again}"
         )
     if latest.get("conclusion") != "success":
         raise LandError(
             f"check 12: the newest live-fork dispatch run on {head[:12]} concluded {latest.get('conclusion')} "
-            f"({latest.get('url')}); a {PIN_FILE} change needs it green. Re-run it with "
+            f"({latest.get('url')}); a {what} change needs it green. Re-run it with "
             f"`gh run rerun {latest.get('databaseId')}` or start a new one with `{dispatch}`."
         )
-    print(f"check 12: {PIN_FILE} changed; live-fork dispatch run {latest.get('url')} is green on {head[:12]}.")
+    print(f"check 12: {what} changed; live-fork dispatch run {latest.get('url')} is green on {head[:12]}.")
 
 
 def _app_path(name: str) -> bool:
@@ -1144,7 +1245,7 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
 
     check_main_green(number, pr, rows, gh, bases)
     check_fresh_base(number, rows, gh, bases)
-    check_fork_pin(number, pr, rows, gh)
+    check_fork_pin(number, pr, rows, gh, git)
     return pr
 
 

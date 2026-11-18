@@ -39,7 +39,8 @@ export interface ParticleStageInfo {
   name: string;
   ndm: 2 | 3;
   units: { length: string; force: string; time: string; system: string };
-  grid: { origin: number[]; cellSize: number[]; numCells: number[]; basis: "gimp" | "linear" };
+  /** `basis`: the reader's `ParticleBasis` (C2_BASES), spelled out: importing it would close an import cycle */
+  grid: { origin: number[]; cellSize: number[]; numCells: number[]; basis: "gimp" | "linear" | "bspline2" | "bspline3" };
   bodies: { id: number; name: string }[];
   nOutputs: number;
   /** (nOutputs,) the Domain commit tag of each output (the set: [0]) */

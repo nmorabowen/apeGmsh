@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { H5BusyError, H5ReadError, lookup3, openH5ByRule, readRows, repairCopy, superblockFlags, superblockIo, type H5ReadModule, type H5RowsDataset, type H5RuleOpenable } from "../../src/reader/h5open.ts";
 import { LadrunoError, LadrunoMissingError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
-import { committedOutputs, type LadrunoParticles, type ParticleStage, type PCtors, type PGroup } from "../../src/reader/ladrunoParticles.ts";
+import { C2_BASES, committedOutputs, type LadrunoParticles, type ParticleStage, type PCtors, type PGroup } from "../../src/reader/ladrunoParticles.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { metaOf } from "../../src/main/results.ts";
 import { pairingNotice, pairResults, particlesOnly, PARTICLES_UNREAD } from "../../src/state/results.ts";
@@ -1044,5 +1044,50 @@ for (const [flags, step] of [[0x00, 1], [0x05, 2], [0x01, 3]] as const) {
     const r = stageRule(flaggedCopy(TORN_EARLY, flags, `early_${step}.ladruno`));
     assert.equal(r.step, step);
     assert.deepEqual(r.stages, ["stage_0 refused (corruption)", "stage_1 read 3"]);
+  });
+}
+
+// -- GRID/BASIS: the Contract-2 set (232a §2.4, amendment 232i; #3013) -----------------------
+//
+// The oracle is the fork's checker at `ladruno-v20261118`: `ladruno_format.py` holds
+// `C2_BASES = ("gimp", "linear", "bspline2", "bspline3")` and refuses any other value as
+// C2-GRID. The B-spline files are `particles_v1m2.ladruno` with only BASIS rewritten
+// (tests/fixtures/mpm/make_basis_fixtures.py); the Python reader's test_ladruno_particles.py
+// reads the same files and refuses the same values.
+
+/** A copy of the fixture with GRID/BASIS rewritten (variable-length here, fixed-length in the fixtures). */
+function basisCopy(value: string): string {
+  return editedCopyOf(ALL, `basis_${value}.ladruno`, (w) => {
+    const g = w.get("MODEL_STAGE[1]/MODEL/PARTICLES/GRID") as h5wasm.Group;
+    g.delete_attribute("BASIS");
+    g.create_attribute("BASIS", value);
+  });
+}
+
+test("the Contract-2 basis set is the fork's C2_BASES", () => {
+  assert.deepEqual([...C2_BASES], ["gimp", "linear", "bspline2", "bspline3"]);
+});
+
+for (const basis of ["bspline2", "bspline3"] as const) {
+  test(`particles_${basis}_v1m2.ladruno reads, reports BASIS ${basis}, and its values are the fixture's`, () => {
+    withFile(repo(`tests/fixtures/mpm/particles_${basis}_v1m2.ladruno`), (_f, p) => {
+      assert.equal(p.stages.length, 1);
+      assert.deepEqual(p.refused, []);
+      const s = p.stages[0]!;
+      assert.deepEqual(s.grid, { origin: [0, 0], cellSize: [0.5, 0.5], numCells: [4, 4], basis });
+      assert.deepEqual(Array.from(p.readOutput(s.stageId, 2, "POSITION").values), POSITION_2.flat());
+    });
+  });
+}
+
+for (const basis of ["linear", "bspline2", "bspline3"] as const) {
+  test(`BASIS ${basis} reads on an edited copy (variable-length string)`, () => {
+    withFile(basisCopy(basis), (_f, p) => assert.equal(p.stages[0]!.grid.basis, basis));
+  });
+}
+
+for (const basis of ["bspline4", "bspline", "BSPLINE2", "quadratic"]) {
+  test(`BASIS ${basis} is outside Contract 2: the stage is refused by name (C2-GRID)`, () => {
+    assertRefusedStage(basisCopy(basis), new RegExp(`@BASIS = "${basis}"; expected gimp \\| linear \\| bspline2 \\| bspline3 \\(C2-GRID\\)`));
   });
 }

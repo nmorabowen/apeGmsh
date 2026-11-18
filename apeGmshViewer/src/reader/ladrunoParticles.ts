@@ -144,12 +144,22 @@ function int32sOf(ctors: PCtors, ds: PDataset, n: number, code: string): Int32Ar
 
 // -- what the points layer (M2-S4) draws from ------------------------------------
 
+/**
+ * `GRID/BASIS` per contract (232a §2.4, amendment 232i, fork `ladruno-v20261118`; #3013).
+ * Contract 2 (`.ladruno`) added the quadratic and cubic B-splines with no minor bump, so
+ * any other value is refused by name (C2-GRID); Contract 1 (the particle-set file) is
+ * unchanged (C1-BASIS). The fork checker's `C1_BASES` and `C2_BASES` (`ladruno_format.py`).
+ */
+export const C1_BASES = ["gimp", "linear"] as const;
+export const C2_BASES = ["gimp", "linear", "bspline2", "bspline3"] as const;
+export type ParticleBasis = (typeof C2_BASES)[number];
+
 /** `GRID` (§1.2, §2.4): nodes at `origin + i * cellSize`, `i = 0 .. numCells` per axis. */
-export interface ParticleGrid {
+export interface ParticleGrid<B extends ParticleBasis = ParticleBasis> {
   origin: number[];
   cellSize: number[];
   numCells: number[];
-  basis: "gimp" | "linear";
+  basis: B;
 }
 
 /** One body: the id particles carry, and its label in apeGmsh (§1.3). */
@@ -400,7 +410,7 @@ export class LadrunoParticles {
     };
     for (const [k, v] of Object.entries(units)) if (k !== "system" && v === "") throw new ParticleContractError("C2-UNIT", `${model.path}@UNIT_${k.toUpperCase()} is empty`);
     checkUnitSystem(units, model.path);
-    const grid = readGrid(requiredGroup(model, "GRID", this.ctors, "C2-GRID"), ndm, "C2-GRID");
+    const grid = readGrid(requiredGroup(model, "GRID", this.ctors, "C2-GRID"), ndm, "C2-GRID", "C2-GRID", C2_BASES);
     const bodies = readBodies(requiredGroup(model, "BODIES", this.ctors, "C2-BODY"), this.ctors, "C2-BODY");
     const registry = this.readRegistry(stageId, model, bodies);
     const outputs = this.readOutputs(on, ndm);
@@ -721,17 +731,22 @@ function readField(g: PGroup, name: string, ndm: 2 | 3, ctors: PCtors): Particle
 
 // -- shared with reader/particleSet.ts (Contract 1 has the same encodings) -------
 
-/** The grid's four attributes (§1.2). `code` is the rule the contract names for it. */
-export function readGrid(g: PGroup, ndm: 2 | 3, code: string): ParticleGrid {
+/**
+ * The grid's four attributes (§1.2, §2.4). `code` is the rule the contract names for the
+ * grid, `basisCode` the one for BASIS, and `bases` the contract's BASIS values
+ * (`C1_BASES` or `C2_BASES`): any other value is refused by name.
+ */
+export function readGrid<B extends ParticleBasis>(g: PGroup, ndm: 2 | 3, code: string, basisCode: string, bases: readonly B[]): ParticleGrid<B> {
   const origin = floatVector(g, "ORIGIN", ndm, code);
   const cellSize = floatVector(g, "CELL_SIZE", ndm, code);
   const numCells = intVector(g, "NUM_CELLS", ndm, code);
   if (origin.some((x) => !Number.isFinite(x))) throw new ParticleContractError(code, `${g.path}@ORIGIN is not finite`);
   if (cellSize.some((x) => !(x > 0) || !Number.isFinite(x))) throw new ParticleContractError(code, `${g.path}@CELL_SIZE must be finite and > 0 on each axis`);
   if (numCells.some((x) => x < 1)) throw new ParticleContractError(code, `${g.path}@NUM_CELLS must be >= 1 on each axis`);
-  const basis = requiredText(g, "BASIS", code === "C1-GRID" ? "C1-BASIS" : code);
-  if (basis !== "gimp" && basis !== "linear") throw new ParticleContractError(code === "C1-GRID" ? "C1-BASIS" : code, `${g.path}@BASIS = ${JSON.stringify(basis)}; expected gimp or linear`);
-  return { origin, cellSize, numCells, basis };
+  const basis = requiredText(g, "BASIS", basisCode);
+  const known = bases.find((b) => b === basis);
+  if (known === undefined) throw new ParticleContractError(basisCode, `${g.path}@BASIS = ${JSON.stringify(basis)}; expected ${bases.join(" | ")}`);
+  return { origin, cellSize, numCells, basis: known };
 }
 
 /** `BODIES/{ID, NAME}` (§1.3, §2.4): ids unique, names unique and non-empty; NAME fixed- or variable-length. */

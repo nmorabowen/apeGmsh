@@ -208,14 +208,6 @@ ref (merge `main`, or push an empty commit); the Re-run button reuses the old
 ref. So a landing right after another waits for `main`'s run on the new head,
 or merges `main` first.
 
-**Card amendments.** Check 9 also reads the card's amendment comments, and its
-parser has two traps (#2936, #2991, #2999). It takes a backticked path in the
-amendment's prose as an owned path, and it skips a whole amendment line that
-holds a negation word. Write the reason as plain prose with no backticked
-path, give each added file its own bare path bullet, then run
-`python scripts/land_pr.py --check-card <issue>` and read the Owned set back
-before telling the builder.
-
 **Stalls.** Notifications get lost: app restarts, dead
 reviewers, the 600 s watchdog. Never end a turn waiting for CI or a review. At
 every check, look for (a) approved and green PRs not landed, (b) open PRs with

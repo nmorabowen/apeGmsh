@@ -215,6 +215,13 @@ export interface H5RuleOpenable<F> {
 /** A live writer holds the file; nothing was copied or repaired. */
 export class H5BusyError extends Error {}
 
+/**
+ * How to follow a run that is still writing (the fork's schema §7b.2, "To read a live file"):
+ * the SWMR tail read with HDF5 file locking off, which never blocks the writer. Every
+ * `H5BusyError` names it; Python's `_ladruno_open.SWMR_TAIL_READ` is the same text.
+ */
+export const SWMR_TAIL_READ = 'h5py.File(path, "r", swmr=True, locking=False)';
+
 /** The step of the reader rule that opened a file (232a §2.5). */
 export type OpenStep = 1 | 2 | 3;
 
@@ -295,7 +302,10 @@ function readSuperblock(path: string): Uint8Array {
   } catch (err) {
     const code = (err as { code?: unknown }).code;
     if (code === "EBUSY" || code === "EACCES" || code === "EPERM" || code === "EAGAIN") {
-      throw new H5BusyError(`${path} cannot be read (${String(code)}): a live writer holds it; open it again when the run has stopped. Nothing was copied or repaired.`);
+      throw new H5BusyError(
+        `${path} cannot be read (${String(code)}): a live writer holds it; open it again when the run has stopped. ` +
+          `To follow the run while it writes, use the SWMR tail read, ${SWMR_TAIL_READ}, and re-open it to refresh (schema §7b.2). Nothing was copied or repaired.`,
+      );
     }
     throw err;
   }

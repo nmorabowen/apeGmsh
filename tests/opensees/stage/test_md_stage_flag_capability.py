@@ -47,7 +47,7 @@ from tests.opensees.integration.test_deck_md_static_guard import (
     schema_json,
 )
 
-_SHA = "f0b9a1df699f9634fd89c5942d69d90fe5ad27c4"
+_SHA = "3e738308c79846fe4bd76687d3af3c705a582c91"
 _MD_ARGS = (125.0, 0.05, 0.8, 1.25, 0.712, 0.019, 0.934, 0.7, 100.0, 0.01,
             7.05, 0.968, 1.1, 0.704, 3.5, 4.0, 600.0, 1.42)
 
