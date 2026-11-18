@@ -360,6 +360,26 @@ export function rankSubscribers(raw: readonly SubscriberRaw[], nameOf: (id: numb
 
 // ---- the result, ranked -----------------------------------------------------
 
+/** A gesture on the scrubber, frame by frame (`play`, `drag-slider`). */
+export interface PlaybackReport {
+  ms: number;
+  /** distinct steps the app was on at some animation frame */
+  stepsAsked: number;
+  /** of those, the steps seen ready at an animation frame */
+  stepsReady: number;
+  stepsPerSecond: number;
+  animationFrames: number;
+  /** animation frames that found the step still loading */
+  framesLoading: number;
+  /** distinct texts of the colour scale over the gesture */
+  scaleTexts: number;
+  /** DOM changes in the two panels */
+  mutations: { phase: number; scale: number };
+  flicker: { frames: number; byRegion: Record<string, number>; kept: string[] };
+  /** times the slider element under the pointer was replaced */
+  sliderSwaps?: number;
+}
+
 export interface ScenarioResult {
   name: string;
   what: string;
@@ -378,6 +398,7 @@ export interface ScenarioResult {
   subscribers: SubscriberCost[];
   /** events dispatched during the scenario, by type */
   events: Record<string, number>;
+  playback?: PlaybackReport;
   /** the machine's busy percentage over the scenario */
   machineCpuPct: number;
   noisy: boolean;
@@ -441,7 +462,7 @@ export function renderSummary(r: RunResult): string {
   for (const w of r.warnings) out.push(`Warning: ${w}`);
   out.push("", "## Scenarios, most expensive first", "");
   out.push("| scenario | status | per op (ms) | ops | total (ms) | fps median | p95 frame (ms) | long tasks | renderer busy (ms) | main busy (ms) | GC % | machine % |");
-  out.push("|---|---|---|---|---|---|---|---|---|---|---|---|");
+  out.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
   for (const s of [...r.scenarios].sort((a, b) => (quantile(b.repMs, 0.5) || 0) - (quantile(a.repMs, 0.5) || 0))) {
     out.push(`| ${s.name} | ${s.status} | ${fmt(quantile(s.repMs, 0.5))} | ${s.repMs.length} | ${fmt(s.durationMs, 0)} | ${fmt(s.frames?.medianFps)} | ${fmt(s.frames?.p95FrameMs)} | ${s.longTasks.count} (${fmt(s.longTasks.totalMs, 0)} ms) | ${fmt(s.renderer?.busyMs, 0)} | ${fmt(s.main?.busyMs, 0)} | ${fmt(s.renderer?.gcPct)} | ${fmt(s.machineCpuPct, 0)} |`);
   }
@@ -449,6 +470,16 @@ export function renderSummary(r: RunResult): string {
   if (notes.length) {
     out.push("");
     for (const s of notes) out.push(`- **${s.name}** (${s.status}): ${s.reason}`);
+  }
+  const played = r.scenarios.filter((s) => s.playback);
+  if (played.length) {
+    out.push("", "## Playback, frame by frame", "");
+    out.push("A flicker frame jumps away from its neighbours and comes back (scripts/profile/frames.ts).", "");
+    out.push("| scenario | steps ready / asked | steps/s | frames on screen | flicker: viewport | scale | contour card | phase bar | rAF frames loading | scale texts | DOM changes phase / scale | slider replaced |", "|---|---|---|---|---|---|---|---|---|---|---|");
+    for (const s of played) {
+      const p = s.playback!, f = p.flicker.byRegion;
+      out.push(`| ${s.name} | ${p.stepsReady} / ${p.stepsAsked} | ${fmt(p.stepsPerSecond)} | ${p.flicker.frames} | ${f["viewport"] ?? "-"} | ${f["scale"] ?? "-"} | ${f["contour"] ?? "-"} | ${f["phase"] ?? "-"} | ${p.framesLoading} of ${p.animationFrames} | ${p.scaleTexts} | ${p.mutations.phase} / ${p.mutations.scale} | ${p.sliderSwaps ?? "-"} |`);
+    }
   }
   const events = r.scenarios.filter((s) => s.name.startsWith("store-event") && s.status !== "skipped");
   out.push("", "## One store event, per subscriber", "");

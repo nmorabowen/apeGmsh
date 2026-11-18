@@ -36,12 +36,14 @@ import {
   type CpuProfile,
   type CpuTimes,
   type Mapper,
+  type PlaybackReport,
   type RunResult,
   type ScenarioResult,
   type Status,
   type SubscriberRaw,
 } from "./profile/analyze.ts";
 import { Cdp, findTarget, TOOL_URL } from "./profile/cdp.ts";
+import { fingerprint, flickerFrames, type Rect } from "./profile/frames.ts";
 import { installProbe, type Probe } from "./profile/probe.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -56,6 +58,8 @@ const SCENARIOS = [
   "switch-contour",
   "switch-contour-element",
   "toggle-deformed",
+  "play",
+  "drag-slider",
   "orbit-contour",
   "hover",
   "store-event-results",
@@ -162,7 +166,7 @@ interface Wait {
 }
 
 /** The legend's note when a contour is not drawn (panels/legend.ts): a refusal ends the wait, a "Not drawn" that persists too. */
-const CONTOUR_REFUSAL = `([...document.querySelectorAll("#legend .legend-note")].map((n) => n.textContent ?? "").find((t) => /^(Refused|Nothing to colour|Not drawn):/.test(t)) ?? null)`;
+const CONTOUR_REFUSAL = `([...document.querySelectorAll(".legend-note")].map((n) => n.textContent ?? "").find((t) => /^(Refused|Nothing to colour|Not drawn):/.test(t)) ?? null)`;
 /** How long a "Not drawn" note may stand before the wait takes it as the answer. */
 const NOT_YET_MS = 30_000;
 
@@ -207,11 +211,10 @@ async function click(page: Cdp, selector: string): Promise<void> {
   await mouse(page, "mouseReleased", x, y, "left", 0);
 }
 
-/** A button of the legend by its label. */
-async function clickLegendButton(page: Cdp, label: string): Promise<void> {
-  const tag = await page.evaluate<boolean>(`(() => { document.querySelector("[data-agv-target]")?.removeAttribute("data-agv-target"); const b = [...document.querySelectorAll("#legend button")].find((x) => x.textContent === ${JSON.stringify(label)}); if (!b) return false; b.setAttribute("data-agv-target", "1"); return true; })()`);
-  if (!tag) throw new Error(`the legend has no "${label}" button`);
-  await click(page, "[data-agv-target]");
+/** A card of the left rail starts collapsed, its buttons out of reach: open it as a user would. */
+async function openCard(page: Cdp, id: string): Promise<void> {
+  await page.evaluate(`(() => { const c = document.getElementById(${JSON.stringify(id)}); if (c && !c.hidden && c.dataset.collapsed === "true") c.querySelector("h3")?.click(); })()`);
+  await twoFrames(page);
 }
 
 async function canvasRect(page: Cdp) {
@@ -235,6 +238,103 @@ async function canvasCentre(page: Cdp) {
   return { x, y };
 }
 
+// ---- frames on screen ---------------------------------------------------------
+
+interface ShotFrame {
+  data: string;
+  t: number;
+}
+
+const recorders = new WeakMap<Cdp, { sink: ShotFrame[] | null }>();
+
+/** Every frame the compositor produces while `during` runs: what the user saw, panels included. */
+async function recordFrames(page: Cdp, during: () => Promise<void>): Promise<ShotFrame[]> {
+  let rec = recorders.get(page);
+  if (!rec) {
+    const made: { sink: ShotFrame[] | null } = { sink: null };
+    rec = made;
+    recorders.set(page, made);
+    page.on("Page.screencastFrame", (p) => {
+      made.sink?.push({ data: p["data"] as string, t: (p["metadata"] as { timestamp: number }).timestamp * 1000 });
+      void page.send("Page.screencastFrameAck", { sessionId: p["sessionId"] }).catch(() => undefined);
+    });
+  }
+  const frames: ShotFrame[] = [];
+  rec.sink = frames;
+  await page.send("Page.startScreencast", { format: "png", maxWidth: 960, maxHeight: 600, everyNthFrame: 1 });
+  try {
+    await during();
+    await sleep(200);
+  } finally {
+    await page.send("Page.stopScreencast");
+    rec.sink = null;
+  }
+  return frames;
+}
+
+/** What the page held at each animation frame, so a frame on screen can be tied to the state behind it. */
+const TIMELINE_START = `(() => {
+  const g = globalThis, s = g.__agvProbe.store;
+  const tl = (g.__agvTimeline = { rows: [], mutations: { phase: 0, scale: 0 }, on: true, watchers: [] });
+  for (const [key, id] of [["phase", "phase"], ["scale", "viewport-scale"]]) {
+    const host = document.getElementById(id);
+    if (!host) continue;
+    const m = new MutationObserver((l) => { tl.mutations[key] += l.length; });
+    m.observe(host, { childList: true, subtree: true, characterData: true, attributes: true });
+    tl.watchers.push(m);
+  }
+  const tick = (t) => {
+    if (!tl.on) return;
+    const st = s.get();
+    tl.rows.push({ t, step: st.phase.at?.step ?? null, status: st.resultStep?.status ?? null, statusStep: st.resultStep?.step ?? null, readout: document.querySelector(".results-readout")?.textContent ?? null, scale: document.getElementById("viewport-scale")?.textContent ?? "" });
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+})()`;
+const TIMELINE_STOP = `(() => { const tl = globalThis.__agvTimeline; tl.on = false; for (const m of tl.watchers) m.disconnect(); return { rows: tl.rows, mutations: tl.mutations }; })()`;
+
+interface TimelineRow {
+  t: number;
+  step: number | null;
+  status: string | null;
+  statusStep: number | null;
+  readout: string | null;
+  scale: string;
+}
+
+/** The regions a flicker is counted in, in screencast pixels. */
+async function regions(page: Cdp, scale: number): Promise<Record<string, Rect>> {
+  const css = await page.evaluate<Record<string, Rect | null>>(`(() => { const of = (q) => { const e = document.querySelector(q); if (!e || e.hidden) return null; const r = e.getBoundingClientRect(); return r.width && r.height ? { x: r.x, y: r.y, width: r.width, height: r.height } : null; }; return { viewport: of("#viewport canvas"), scale: of("#viewport-scale"), contour: of("#contour"), phase: of("#phase") }; })()`);
+  const out: Record<string, Rect> = {};
+  for (const [k, r] of Object.entries(css)) if (r) out[k] = { x: r.x * scale, y: r.y * scale, width: r.width * scale, height: r.height * scale };
+  return out;
+}
+
+/** Counts the frames that jumped away and came back, per region; the first few are kept as PNGs for a person to look at. */
+async function judgeFrames(page: Cdp, frames: ShotFrame[], name: string): Promise<PlaybackReport["flicker"]> {
+  const decoded = frames.map((f) => readPng(Buffer.from(f.data, "base64")));
+  if (!decoded.length) return { frames: 0, byRegion: {}, kept: [] };
+  const cssWidth = await page.evaluate<number>("innerWidth");
+  const rects = await regions(page, decoded[0]!.width / cssWidth);
+  const byRegion: Record<string, number> = {};
+  const hits = new Set<number>();
+  for (const [key, r] of Object.entries(rects)) {
+    const bad = flickerFrames(decoded.map((p) => fingerprint(p, r)));
+    byRegion[key] = bad.length;
+    for (const i of bad) hits.add(i);
+  }
+  const kept: string[] = [];
+  if (hits.size) mkdirSync(join(outDir, "flicker"), { recursive: true });
+  for (const i of [...hits].sort((a, b) => a - b).slice(0, 4)) {
+    for (const j of [i - 1, i, i + 1]) {
+      const file = join("flicker", `${name}-${String(i).padStart(4, "0")}-${j - i + 1}.png`);
+      writeFileSync(join(outDir, file), Buffer.from(frames[j]!.data, "base64"));
+      kept.push(file);
+    }
+  }
+  return { frames: frames.length, byRegion, kept };
+}
+
 // ---- one scenario -----------------------------------------------------------
 
 interface Outcome {
@@ -247,6 +347,7 @@ interface Outcome {
   /** false: a scenario with no visual claim, whose proof is the store alone */
   visual: boolean;
   skip?: string;
+  playback?: PlaybackReport;
 }
 
 /**
@@ -387,6 +488,7 @@ class Run {
       main: mainProfile ? summarizeProfile(mainProfile, this.mapper) : null,
       subscribers: [],
       events: live?.events ?? {},
+      ...(outcome?.playback ? { playback: outcome.playback } : {}),
       machineCpuPct: load,
       noisy: load > NOISY_LOAD_PCT,
       metrics: {
@@ -547,9 +649,9 @@ async function runScenarios(page: Cdp, run: Run, openFile: () => void): Promise<
   };
   const needResults = (next: (() => Promise<string | null>) | null = null) => async () => (hasResults ? (next ? next() : null) : noResults());
 
-  await run.scenario("enter-results", "click the results phase, to its first step shown", needResults(), async () => {
+  await run.scenario("enter-results", "click the results family in the phase bar, to its first step shown", needResults(), async () => {
     const t = performance.now();
-    await page.evaluate(`document.querySelector("[data-agv-target]")?.removeAttribute("data-agv-target"); [...document.querySelectorAll("#phase button.phase")].find((b) => b.textContent === "results")?.setAttribute("data-agv-target", "1")`);
+    await page.evaluate(`document.querySelector("[data-agv-target]")?.removeAttribute("data-agv-target"); (document.querySelector('#phase button.family[data-family="stages"]:not([disabled])') ?? document.querySelector("#phase button.family:not([disabled])"))?.setAttribute("data-agv-target", "1")`);
     await click(page, "[data-agv-target]");
     const wait = await waitFor(page, `s.phase.at?.kind === "results" && ${RESULTS_READY}`, `{ at: s.phase.at, step: s.resultStep }`, t);
     const problem = await state<string | null>(page, `s.phase.at?.kind !== "results" ? "the phase did not change" : s.resultStep?.status === "failed" ? ("the step failed: " + s.resultStep.error) : null`);
@@ -564,7 +666,8 @@ async function runScenarios(page: Cdp, run: Run, openFile: () => void): Promise<
     needResults(async () => ((await onResults()) ? null : "the results phase was not entered")),
     async () => {
       const t = performance.now();
-      await clickLegendButton(page, "contour");
+      await openCard(page, "contour");
+      await click(page, "button.contour-toggle");
       const wait = await waitFor(page, `s.visibility.colourBy === "contour" && (s.contour.field === null || (${SCAN_OF_PICK} && ${SCAN_SETTLED})) && ${RESULTS_READY}`, `{ by: s.visibility.colourBy, field: s.contour.field, scan: s.contour.scan && [s.contour.scan.key, s.contour.scan.status, s.contour.scan.done, s.contour.scan.total] }`, t, CONTOUR_REFUSAL);
       if (wait.refused) return refusedBy(wait);
       const problem = await state<string | null>(page, `s.visibility.colourBy !== "contour" ? "the legend click changed nothing" : s.contour.field === null ? "no field to contour" : s.contour.scan?.status === "failed" ? ("the scan failed: " + s.contour.scan.error) : null`);
@@ -604,12 +707,12 @@ async function runScenarios(page: Cdp, run: Run, openFile: () => void): Promise<
     },
   );
 
-  const fieldOptions = () => page.evaluate<{ value: string; selected: boolean }[]>(`[...document.querySelectorAll("#legend select.contour-field option")].filter((o) => !o.disabled).map((o) => ({ value: o.value, selected: o.selected }))`);
+  const fieldOptions = () => page.evaluate<{ value: string; selected: boolean }[]>(`[...document.querySelectorAll("#contour select.contour-field option")].filter((o) => !o.disabled).map((o) => ({ value: o.value, selected: o.selected }))`);
   const switchTo = async (pick: (opts: { value: string; selected: boolean }[]) => string | undefined): Promise<Outcome> => {
     const value = pick(await fieldOptions());
     const before = await state<string>(page, `String(s.contour.source) + ":" + String(s.contour.field)`);
     const t = performance.now();
-    await page.evaluate(`(() => { const f = document.querySelector("#legend select.contour-field"); f.value = ${JSON.stringify(value)}; f.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    await page.evaluate(`(() => { const f = document.querySelector("#contour select.contour-field"); f.value = ${JSON.stringify(value)}; f.dispatchEvent(new Event("change", { bubbles: true })); })()`);
     const wait = await waitFor(page, `(String(s.contour.source) + ":" + String(s.contour.field)) === ${JSON.stringify(value)} && ${SCAN_OF_PICK} && ${SCAN_SETTLED} && ${RESULTS_READY}`, `{ field: s.contour.field, scan: s.contour.scan && [s.contour.scan.key, s.contour.scan.status, s.contour.scan.done, s.contour.scan.total] }`, t, CONTOUR_REFUSAL);
     const problem = await state<string | null>(page, `(String(s.contour.source) + ":" + String(s.contour.field)) === ${JSON.stringify(before)} ? "the field did not change" : s.contour.scan?.status === "failed" ? ("the scan failed: " + s.contour.scan.error) : s.resultStep?.status === "failed" ? ("the step failed: " + s.resultStep.error) : null`);
     const shown = await state<string>(page, `String(s.contour.field) + " " + String(s.contour.component) + ", scan " + (s.contour.scan?.done ?? "?") + "/" + (s.contour.scan?.total ?? "?")`);
@@ -637,7 +740,8 @@ async function runScenarios(page: Cdp, run: Run, openFile: () => void): Promise<
     "click deformed in the legend, on and off, each to its shape painted",
     needResults(async () => {
       if (!(await onResults())) return "the results phase was not entered";
-      const off = await page.evaluate<string | null>(`(() => { const b = document.querySelector("#legend button.deform-toggle"); return !b ? "no deformed button" : b.disabled ? ("the deformed shape is refused: " + b.title) : null; })()`);
+      await openCard(page, "deform");
+      const off = await page.evaluate<string | null>(`(() => { const b = document.querySelector("button.deform-toggle"); return !b ? "no deformed button" : b.disabled ? ("the deformed shape is refused: " + b.title) : null; })()`);
       if (off) return off;
       // A real displacement can be below a pixel at true scale: find the scale at which the shape shows.
       const base = await screenshot(page);
@@ -661,7 +765,7 @@ async function runScenarios(page: Cdp, run: Run, openFile: () => void): Promise<
       for (let i = 0; i < reps; i++) {
         const on = i % 2 === 0;
         const t = performance.now();
-        await click(page, "#legend button.deform-toggle");
+        await click(page, "button.deform-toggle");
         wait = await waitFor(page, `s.deform.on === ${on} && ${RESULTS_READY}`, "{ on: s.deform.on, step: s.resultStep }", t);
         total += wait.ms;
         if (!wait.finished) break;
@@ -672,6 +776,80 @@ async function runScenarios(page: Cdp, run: Run, openFile: () => void): Promise<
       return { wait: { ...wait, ms: total }, repMs, softMs: 500 * reps, stateProblem: wait.finished ? problem : null, proof: `on at scale ${scale}`, visual: true };
     },
   );
+
+  /** The longest stage from its first step: what `play` and `drag-slider` walk. */
+  const atLongestStage = needResults(async () => {
+    if (!(await onResults())) return "the results phase was not entered";
+    const best = await state<{ stage: number; steps: number }>(page, `(() => { let stage = 0, steps = 0; s.results.stages.forEach((st, i) => { if (st.time.length > steps) { steps = st.time.length; stage = i; } }); return { stage, steps }; })()`);
+    if (best.steps < 3) return `the longest stage has ${best.steps} steps`;
+    await dispatch(page, { type: "setPhase", at: { kind: "results", stage: best.stage, step: 0 } });
+    const w = await waitFor(page, RESULTS_READY, "s.resultStep");
+    await twoFrames(page);
+    return w.finished ? null : `the first step never arrived: ${w.lastSeen}`;
+  });
+
+  /** One gesture on the scrubber, recorded frame by frame with the state behind each frame. */
+  const recorded = async (name: string, gesture: () => Promise<void>): Promise<PlaybackReport> => {
+    await page.evaluate(TIMELINE_START);
+    const t = performance.now();
+    const frames = await recordFrames(page, gesture);
+    const ms = performance.now() - t;
+    const tl = await page.evaluate<{ rows: TimelineRow[]; mutations: { phase: number; scale: number } }>(TIMELINE_STOP);
+    const painted = new Set(tl.rows.filter((r) => r.status === "ready" && r.statusStep === r.step).map((r) => r.step));
+    const asked = new Set(tl.rows.map((r) => r.step));
+    return {
+      ms,
+      stepsAsked: asked.size,
+      stepsReady: painted.size,
+      stepsPerSecond: (painted.size * 1000) / ms,
+      animationFrames: tl.rows.length,
+      framesLoading: tl.rows.filter((r) => r.status === "loading").length,
+      scaleTexts: new Set(tl.rows.map((r) => r.scale)).size,
+      mutations: tl.mutations,
+      flicker: await judgeFrames(page, frames, name),
+    };
+  };
+
+  await run.scenario("play", "press play on the longest stage and record every frame on screen, up to 10 s", atLongestStage, async () => {
+    const last = await state<number>(page, `s.results.stages[s.phase.at.stage].time.length - 1`);
+    const t = performance.now();
+    const playback = await recorded("play", async () => {
+      await click(page, "button.play");
+      const end = performance.now() + 10_000;
+      while (performance.now() < end && (await state<number>(page, "s.phase.at.step")) < last) await sleep(30);
+      if ((await page.evaluate<string>(`document.querySelector("button.play")?.title ?? ""`)) === "pause") await click(page, "button.play");
+    });
+    const ms = performance.now() - t;
+    const moved = await state<number>(page, "s.phase.at.step");
+    return { wait: { finished: true, ms, lastSeen: "" }, repMs: [ms / Math.max(1, playback.stepsReady)], softMs: 60_000, stateProblem: moved > 0 ? null : "play moved no step", proof: `${playback.stepsReady} steps painted of ${playback.stepsAsked} asked, ${playback.stepsPerSecond.toFixed(1)} steps/s`, visual: true, playback };
+  });
+
+  await run.scenario("drag-slider", "drag the step slider with real mouse moves, 10% to 90% of its track, and record every frame", atLongestStage, async () => {
+    const r = await rectOf(page, "input.results-step");
+    if (!r) return skipped("no step slider on the page");
+    const steps = await state<number>(page, `s.results.stages[s.phase.at.stage].time.length`);
+    const y = r.y + r.height / 2, xAt = (u: number) => r.x + r.width * u;
+    const MOVES = 40;
+    await page.evaluate(`globalThis.__agvSlider = document.querySelector("input.results-step"); globalThis.__agvSliderSwaps = 0; globalThis.__agvSliderWatch = setInterval(() => { const now = document.querySelector("input.results-step"); if (now !== globalThis.__agvSlider) { globalThis.__agvSliderSwaps++; globalThis.__agvSlider = now; } }, 4)`);
+    const t = performance.now();
+    const playback = await recorded("drag-slider", async () => {
+      await mouse(page, "mouseMoved", xAt(0.1), y);
+      await mouse(page, "mousePressed", xAt(0.1), y, "left", 1);
+      for (let i = 1; i <= MOVES; i++) {
+        await mouse(page, "mouseMoved", xAt(0.1 + (0.8 * i) / MOVES), y, "left", 1);
+        await sleep(16);
+      }
+      await mouse(page, "mouseReleased", xAt(0.9), y, "left", 0);
+    });
+    const ms = performance.now() - t;
+    const wait = await waitFor(page, RESULTS_READY, "s.resultStep");
+    const swaps = await page.evaluate<number>("(clearInterval(globalThis.__agvSliderWatch), globalThis.__agvSliderSwaps)");
+    const at = await state<number>(page, "s.phase.at.step");
+    const want = 0.9 * (steps - 1);
+    // The thumb's half width makes the last step differ from the pointer's by a little: 15% of the range is a miss.
+    const off = Math.abs(at - want) > Math.max(1, 0.15 * (steps - 1));
+    return { wait: { ...wait, ms }, repMs: [ms / MOVES], softMs: 30_000, stateProblem: off ? `the drag ended on step ${at}, the pointer asked for about ${Math.round(want)}` : null, proof: `ended on step ${at} of ${steps - 1}; the slider element was replaced ${swaps} times during the drag`, visual: true, playback: { ...playback, sliderSwaps: swaps } };
+  });
 
   await run.scenario("orbit-contour", "the orbit again, with the results, contour and deformed shape on", needResults(), orbit);
 
