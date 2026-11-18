@@ -12,7 +12,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { ELEMENT_SYNTAX } from "../src/chain/signatures.ts";
-import { renderHinges } from "../src/panels/hinges.ts";
+import { hingeCardKeys, renderHinges } from "../src/panels/hinges.ts";
 import { HINGE_COLUMNS, hingeColumnsOf, openLadruno } from "../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../src/reader/results.ts";
 import { HingesLayer } from "../src/renderer/hinges.ts";
@@ -218,6 +218,40 @@ test("through the app: the switch reads the step, colours the markers, and plots
   await until(() => hingeViewOf(h.store.get()).chart?.curve.rotation[last] === O3.hingeSummary[String(O3.elements["dbc"])]![last]![2], "the picked hinge's history");
   assert.deepEqual(hingeViewOf(h.store.get()).axes, ["z", "y"], "a biaxial hinge plots both axes");
   h.store.dispatch({ type: "clearSelection" });
+});
+
+test("playback may skip steps: markers and the plot show the step on screen, whatever came before it", async () => {
+  h.store.dispatch({ type: "setHinges", on: true, colorBy: "moment", element: `mesh/element/${O3.femIds["fbc"]}`, end: "i", axis: "z" });
+  await atStep(O3.steps - 1);
+  await until(() => hingeViewOf(h.store.get()).chart !== null, "the hinge history");
+  const live = O3.hingeSummary[String(O3.elements["fbc"])]!;
+  const layer = new HingesLayer();
+  for (const k of [17, 3, 11]) {
+    const step = await atStep(k);
+    const s = h.store.get();
+    const join = hingeJoinOf(s);
+    assert.ok(join.ok);
+    const row = [...step.hinges!.elementIds].indexOf(O3.elements["fbc"]!);
+    close(step.hinges!.values[row * 8 + 1]!, live[k]![1]!, `Mz_i at step ${k}`);
+    const v = hingeViewOf(s);
+    assert.equal(v.chart!.step, k);
+    close(v.chart!.curve.moment[k]!, live[k]![1]!, `the plot's Mz_i at step ${k}`);
+    assert.equal(layer.sync(s, h.blobs, null, step as never), true, `step ${k} redraws`);
+    assert.equal(layer.drawn.noValue, 0);
+  }
+  // A step still on its way keeps the last markers; it never paints another step's values as this one's.
+  const waiting = reduce(h.store.get(), { type: "setPhase", at: { kind: "results", stage: 0, step: 5 } });
+  assert.equal(layer.sync(waiting, h.blobs, null, null), false);
+  layer.dispose();
+  h.store.dispatch({ type: "setHinges", colorBy: "rotation", element: null });
+});
+
+test("a step change redraws only the plot: the card and its menus are not rebuilt", () => {
+  const s = reduce(h.store.get(), { type: "setPhase", at: { kind: "results", stage: 0, step: 4 } });
+  const t = reduce(s, { type: "setPhase", at: { kind: "results", stage: 0, step: 9 } });
+  assert.equal(hingeCardKeys(s).card, hingeCardKeys(t).card);
+  assert.deepEqual([hingeCardKeys(s).step, hingeCardKeys(t).step], [4, 9]);
+  assert.notEqual(hingeCardKeys(reduce(t, { type: "setHinges", axis: "y" })).card, hingeCardKeys(t).card);
 });
 
 test("the card: controls dispatch, Spotlight offers the switch, and a model without hinges has no card", () => {

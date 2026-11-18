@@ -127,15 +127,36 @@ export function renderHinges(s: State, dispatch: (e: Event) => void = () => {}, 
   return box;
 }
 
+/**
+ * What the card depends on, split in two: `card` rebuilds it, and `step` (the step
+ * on screen, which playback moves, skipping steps on a slow model) only redraws the
+ * plot, so an open menu stays open while the model plays.
+ */
+export function hingeCardKeys(s: State): { card: string; step: number | null } {
+  const { history, ...rest } = s.hinges;
+  const at = s.phase.at;
+  return {
+    card: JSON.stringify([rest, history ? [history.stage, history.element, history.time.length] : null, at?.kind ?? null, at?.kind === "results" ? at.stage : null, s.selection.decls, s.mesh?.linePositions.id]),
+    step: at?.kind === "results" ? at.step : null,
+  };
+}
+
 export function mountHinges(store: Store): () => void {
   const panel = byId("hinges");
   let unlisten: (() => void)[] = [];
-  let lastSig = "";
+  let lastCard = "";
+  let lastStep: number | null = null;
   const render = (s: State) => {
-    const { history, ...rest } = s.hinges;
-    const sig = JSON.stringify([rest, history ? [history.stage, history.element, history.time.length] : null, s.phase.at, s.selection.decls, s.resultStep?.status, s.mesh?.linePositions.id]);
-    if (sig === lastSig) return;
-    lastSig = sig;
+    const { card, step } = hingeCardKeys(s);
+    if (card === lastCard) {
+      if (step === lastStep) return;
+      lastStep = step;
+      const chart = hingeViewOf(s).chart;
+      if (chart) panel.querySelector(".hinges-charts")?.replaceWith(charts(chart));
+      return;
+    }
+    lastCard = card;
+    lastStep = step;
     for (const u of unlisten) u();
     unlisten = [];
     const content = renderHinges(s, (e) => store.dispatch(e), unlisten);
