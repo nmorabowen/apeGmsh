@@ -872,6 +872,9 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "particles_torn_last_stage_v1m2.ladruno": "- | -",
   "particles_torn_early_stage_v1m2.ladruno": "- | -",
   "particles_two_stages_v1m2.ladruno": "- | -",
+  // #3013: the B-spline grid fixtures (particles_v1m2.ladruno with only GRID/BASIS rewritten).
+  "particles_bspline2_v1m2.ladruno": "-",
+  "particles_bspline3_v1m2.ladruno": "-",
   // M2-S8 (#3003): a recorder run of the release build, killed (flags 0x05); MODEL_STAGE[2]'s empty modes group is no mode stage.
   "killed_swmr.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] | DISPLACEMENT[magnitude x=Ux y=Uy]",
 };
