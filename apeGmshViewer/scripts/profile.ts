@@ -59,6 +59,7 @@ const SCENARIOS = [
   "switch-contour-element",
   "toggle-deformed",
   "play",
+  "play-x4",
   "drag-slider",
   "orbit-contour",
   "hover",
@@ -810,19 +811,27 @@ async function runScenarios(page: Cdp, run: Run, openFile: () => void): Promise<
     };
   };
 
-  await run.scenario("play", "press play on the longest stage and record every frame on screen, up to 10 s", atLongestStage, async () => {
+  const playAt = async (name: "play" | "play-x4", speed: number): Promise<Outcome> => {
+    if (speed !== 1) {
+      const set = await page.evaluate<boolean>(`(() => { const p = document.querySelector("select.play-speed"); if (!p) return false; p.value = ${JSON.stringify(String(speed))}; p.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`);
+      if (!set) return skipped("this build has no speed selector");
+    }
     const last = await state<number>(page, `s.results.stages[s.phase.at.stage].time.length - 1`);
     const t = performance.now();
-    const playback = await recorded("play", async () => {
+    const playback = await recorded(name, async () => {
       await click(page, "button.play");
       const end = performance.now() + 10_000;
       while (performance.now() < end && (await state<number>(page, "s.phase.at.step")) < last) await sleep(30);
+      await waitFor(page, RESULTS_READY, "s.resultStep");
       if ((await page.evaluate<string>(`document.querySelector("button.play")?.title ?? ""`)) === "pause") await click(page, "button.play");
     });
     const ms = performance.now() - t;
     const moved = await state<number>(page, "s.phase.at.step");
-    return { wait: { finished: true, ms, lastSeen: "" }, repMs: [ms / Math.max(1, playback.stepsReady)], softMs: 60_000, stateProblem: moved > 0 ? null : "play moved no step", proof: `${playback.stepsReady} steps painted of ${playback.stepsAsked} asked, ${playback.stepsPerSecond.toFixed(1)} steps/s`, visual: true, playback };
-  });
+    if (speed !== 1) await page.evaluate(`(() => { const p = document.querySelector("select.play-speed"); p.value = "1"; p.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    return { wait: { finished: true, ms, lastSeen: "" }, repMs: [ms / Math.max(1, playback.stepsReady)], softMs: 60_000, stateProblem: moved > 0 ? null : "play moved no step", proof: `ended on step ${moved} of ${last}; ${playback.stepsReady} steps painted of ${playback.stepsAsked} asked, ${playback.stepsPerSecond.toFixed(1)} steps/s`, visual: true, playback };
+  };
+  await run.scenario("play", "press play on the longest stage and record every frame on screen, up to 10 s", atLongestStage, () => playAt("play", 1));
+  await run.scenario("play-x4", "the same at speed x4, where the app offers one", atLongestStage, () => playAt("play-x4", 4));
 
   await run.scenario("drag-slider", "drag the step slider with real mouse moves, 10% to 90% of its track, and record every frame", atLongestStage, async () => {
     const r = await rectOf(page, "input.results-step");
