@@ -136,6 +136,10 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
   // Turning contour off returns to the mode it was turned on from.
   let lastBy: "group" | "role" = "group";
   let contourHead: HTMLElement | null = null;
+  // The Deformed card too: its state changes without the group rows changing.
+  let deformUnlisten: (() => void)[] = [];
+  let deformHead: HTMLElement | null = null;
+  let lastDeformLoading: string | null = null;
   let lastContour = "";
   let lastDeform = "";
   let lastTheme = "";
@@ -174,7 +178,12 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     ) {
       // (V4d) The cards follow the deformed shape's state in every mode, and the Contour card alone follows
       // the pick, the step and the ranges: a step rebuilds it, never the group rows under the pointer.
-      if (deformSignature(s) === lastDeform) {
+      const resultsOn = (x: State) => x.phase.axis.some((k) => k.kind === "results");
+      if (resultsOn(s) === resultsOn(prev)) {
+        if (deformSignature(s) !== lastDeform) {
+          lastDeform = deformSignature(s);
+          renderDeform(s);
+        } else syncDeformLoading(s);
         if (contour && contourSignature(s) !== lastContour) renderContourCard(s);
         return;
       }
@@ -348,11 +357,14 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
    */
   const renderDeform = (s: State) => {
     if (!s.phase.axis.some((k) => k.kind === "results")) return;
+    for (const u of deformUnlisten) u();
+    deformUnlisten = [];
     const lines = deformLines(s);
     const box = deformCard;
-    const head = el("h3", undefined, "Deformed");
-    if (lines.loading) head.append(el("span", "step-pending", lines.loading));
-    box.replaceChildren(head);
+    deformHead = el("h3", undefined, "Deformed");
+    box.replaceChildren(deformHead);
+    lastDeformLoading = null;
+    syncDeformLoading(s);
     const modes = el("div", "legend-mode deform-modes");
     const on = el("button", "deform-toggle" + (s.deform.on ? " on" : ""), "deformed");
     on.disabled = !lines.available && !s.deform.on;
@@ -360,7 +372,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     const ghost = el("button", "deform-ghost" + (s.deform.ghost ? " on" : ""), "reference ghost");
     ghost.title = `the undeformed mesh behind the deformed one, at ${GHOST_OPACITY} opacity`;
     ghost.disabled = !s.deform.on;
-    unlisten.push(
+    deformUnlisten.push(
       listen(on, "click", () => store.dispatch({ type: "setDeform", on: !store.get().deform.on })),
       listen(ghost, "click", () => store.dispatch({ type: "setReferenceGhost", on: !store.get().deform.ghost })),
     );
@@ -373,7 +385,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     scale.min = "0";
     scale.value = String(s.deform.scale);
     scale.title = "deformation scale: positions are x + scale · u (1 is true scale)";
-    unlisten.push(
+    deformUnlisten.push(
       listen(scale, "change", () => {
         const v = Number(scale.value);
         if (Number.isFinite(v) && v > 0) store.dispatch({ type: "setDeformScale", scale: v });
@@ -390,6 +402,15 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       m.append(chip, el("span", undefined, lines.partial));
       box.append(m);
     }
+  };
+
+  /** A step on its way, in the Deformed heading: the card itself, and a scale being typed in it, stay. */
+  const syncDeformLoading = (s: State) => {
+    const text = deformLines(s).loading;
+    if (text === lastDeformLoading) return;
+    lastDeformLoading = text;
+    deformHead?.querySelector?.(".step-pending")?.remove();
+    if (text) deformHead?.append(el("span", "step-pending", text));
   };
 
   /** The Contour card: its switch, then (while on) the field, its draw mode and what the file refuses; and the viewport scale. */
@@ -683,7 +704,7 @@ export function deformLines(s: State): {
 
 /** What the deformed-shape section shows, as one string (the step's keys left out, so a scrub does not rebuild it). */
 function deformSignature(s: State): string {
-  return JSON.stringify([s.phase.axis.some((k) => k.kind === "results"), s.deform.on, s.deform.scale, s.deform.ghost, deformLines(s)]);
+  return JSON.stringify([s.phase.axis.some((k) => k.kind === "results"), s.deform.on, s.deform.scale, s.deform.ghost, { ...deformLines(s), loading: null }]);
 }
 
 const TARGET_WORD: Readonly<Record<UserResult["target"], string>> = { nodes: "nodal", elements: "element", entities: "entity", domain: "whole model" };
