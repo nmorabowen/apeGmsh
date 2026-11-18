@@ -70,6 +70,28 @@ process kill.
   the fork's reference `particle_stage_report` skips or refuses. Re-record it only for a
   deliberate change to the stage rule.
 
+## B-spline grids (#3013)
+
+Fork release `ladruno-v20261118` (`3e738308c`, WP-232i, OpenSees#1099) amends 232a §2.4:
+a Contract 2 `GRID/BASIS` is one of `gimp | linear | bspline2 | bspline3`, with no minor
+bump; Contract 1 keeps `gimp | linear` (the fork checker's `C1_BASES`, `C2_BASES` in
+`ladruno_format.py`). The fork commits no `.ladruno` with a B-spline grid, so these are
+**made** from `particles_v1m2.ladruno` by `make_basis_fixtures.py`, which rewrites only
+`BASIS`, in the fork's encoding (a 1-element, fixed-length, null-terminated ASCII string).
+The outputs are still the GIMP run's: the files pin what a reader accepts, not what a
+B-spline run computes. The fork's checker at the tag accepts both (`validate` returns
+`[]`) and refuses the same edit with `bspline4` (C2-GRID). The live test
+`tests/opensees/integration_ladruno/test_mpm_bspline_readers_live.py` runs the fork and
+checks that its BASIS has this encoding.
+
+| File here | How it was made | git blob sha |
+|---|---|---|
+| `particles_bspline2_v1m2.ladruno` | `make_basis_fixtures.py`, from `particles_v1m2.ladruno` | `b8df927bd194a013f6b1d1a2516eec6e716c247e` |
+| `particles_bspline3_v1m2.ladruno` | `make_basis_fixtures.py`, from `particles_v1m2.ladruno` | `9a4e989a38256ed10db5004546b80721c85f2fe2` |
+
+The vendored `ladruno_format.py` and `mpm_contracts.py` above predate the amendment and
+still refuse a B-spline grid; they are not refreshed here.
+
 `fork_a1d4c7260/` holds the stage rule's **reference code** at
 `a1d4c72601fe394a58a33e1596bb21a2efbb3d4c` (OpenSees#1088: 232a §2.5's stage rule), read as an
 oracle only: `particle_stage_report`, `recover_particle_file`, `open_particle_file` and
