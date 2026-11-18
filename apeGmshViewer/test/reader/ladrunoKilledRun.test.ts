@@ -66,7 +66,7 @@ function torn(stage: keyof typeof OHDR, flags: number, name: string): string {
   const path = flagged(KILLED, flags, name, flags === 0x00);
   const b = readFileSync(path);
   assert.equal(b.subarray(OHDR[stage], OHDR[stage] + 4).toString("latin1"), "OHDR", `${stage}'s object header`);
-  b[OHDR[stage]] ^= 0xff;
+  b[OHDR[stage]] = b[OHDR[stage]]! ^ 0xff;
   writeFileSync(path, b);
   return path;
 }
