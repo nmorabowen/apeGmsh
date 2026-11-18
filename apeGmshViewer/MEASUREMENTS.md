@@ -1246,3 +1246,25 @@ screencast (at most 960 px wide) and call a frame a flicker when it differs
 from both neighbours while they are close to each other
 (`scripts/profile/frames.ts`). The screencast drops frames under load, so a
 count is a lower bound; the first flicker frames are kept under `flicker/`.
+
+### After #3041 and #3042 (2026-11-18)
+
+The same command with both PRs merged in. The machine load differs between the
+runs (the percentages are its busy share), so compare orders of magnitude.
+
+| model | scenario | before | after |
+|---|---|---|---|
+| `tims_c3b` | step change | 274 ms (95%) | 83 ms (93%) |
+| `tims_c3b` | enter results | 651 ms (100%) | 192 ms (97%) |
+| `tims_c3b` | contour on | 941 ms (98%) | 556 ms (97%) |
+| `tims_c3b` | steps drawn in `play` | 2 of 51 | every step asked (42), ending on step 50 |
+| `tims_c3b` | `play-x4` | no control | 1.7 s for the stage, 13 steps drawn |
+| `tims_c3b` | flicker frames, every region | not counted on this model | 0 |
+| `yoo_slab_N56_75` | step change | 231 to 362 ms (34 to 90%) | 56 ms (70%) |
+| `yoo_building_SLE_T2` | enter results | 4686 ms (99%) | 1220 ms (46%) |
+| `yoo_building_SLE_T2` | contour on | 2063 ms (94%) | 493 ms (52%) |
+| `yoo_building_SLE_T2` | deformed toggle | 721 ms (98%) | 224 ms (43%) |
+| `yoo_building_SLE_T2` | load | 228557 ms (77%) | 216197 ms (74%); #2835 is separate |
+
+These runs predate the last #3042 commit, which stops a deformed-shape change
+from rebuilding the legend (163 ms of the building's 224 ms toggle).
