@@ -78,7 +78,7 @@ _CAP = "mdStageFlagPreserved"
 
 def schema_json(
     version: int = 1, caps: "tuple[str, ...] | None" = (_CAP,),
-    build: str = "6ee9680606e3d5d62c410d286547b8009d581159", *,
+    build: str = "3e738308c79846fe4bd76687d3af3c705a582c91", *,
     indent: "int | None" = None,
 ) -> str:
     """A ``ladrunoSchema()`` answer as the fork renders it: one JSON
@@ -273,7 +273,7 @@ def _tcl_interp() -> Any:
 
 
 def tcl_guard_passes(tkinter: Any, guard: str, schema: "str | None", *,
-                     build: str = "6ee9680606e3d5d62c410d286547b8009d581159",
+                     build: str = "3e738308c79846fe4bd76687d3af3c705a582c91",
                      raises: bool = False) -> bool:
     """Run the Tcl ``guard`` in a fresh interpreter whose stub fork answers
     ``ladrunoBuild`` with ``build`` and ``ladrunoSchema`` with ``schema``
