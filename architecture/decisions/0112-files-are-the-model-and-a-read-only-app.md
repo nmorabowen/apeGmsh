@@ -333,3 +333,11 @@ which `src/apeGmsh/_artifact_policy.py` does not govern, and it pairs with
 its model by stem only. Like `.user.h5` and `.workspace.h5`, it is a file of
 the set, not a zone of `model.h5`. ADR 0134 D1 governs the file. The decision
 text above is unchanged.
+
+## Pointer (2026-11-18): ADR 0135
+
+[ADR 0135](0135-material-tester-runs-the-fork.md) (Accepted 2026-11-18) amends
+D4: besides reading the artifacts and the schema documents, the app may run the
+Ladruno fork's `OpenSees.exe` on one declared material, under that ADR's rules for
+untrusted model values. The wall against apeGmsh and Python stands. The decision
+text above is unchanged.

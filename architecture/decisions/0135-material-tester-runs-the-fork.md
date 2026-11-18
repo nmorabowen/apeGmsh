@@ -1,7 +1,8 @@
 # ADR 0135 — The material tester: apeGmshViewer runs the fork's `OpenSees.exe` on one declared material
 
-**Status:** Proposed (2026-11-18). Merging the PR that flips this Status to
-Accepted is the acceptance. The pointer in ADR 0112 lands with it (ADR 0121 D5).
+**Status:** Accepted (2026-11-18; approved by the owner in the design session).
+Merging the PR that carries this Status is the acceptance. The pointer in ADR
+0112 lands with it (ADR 0121 D5).
 
 **Owner:** nmora
 
@@ -76,7 +77,8 @@ and `src/main/source.ts`, so this exception cannot widen unnoticed.
 ### D2 — The user chooses the executable; the model never does
 
 The path comes from, in order: the app's own setting, `$APEGMSH_OPENSEES`, the
-default install path. Nothing read from an artifact can influence it. The child
+default install path. The setting arrives with the tool's surface (S1b); S1 has
+the other two. Nothing read from an artifact can influence it. The child
 environment matches what `opensees_ladruno.bat` sets (`PATH` entries and
 `TCL_LIBRARY`, relative to the executable). With no usable executable, the
 window says so and offers the setting; the rest of the app is unaffected.
