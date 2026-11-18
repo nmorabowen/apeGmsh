@@ -18,14 +18,19 @@ plain `h5py.File(path, "r")`, which refuses a file killed with SWMR armed
   holds in `DATA`, `TIME` or `STEP`. The time vector stops there, and so
   does every node, element and energy read. A cleanly closed file is read
   as it is.
-- **A torn modes snapshot.** The crash rule for modes applies to a file the
-  SWMR recorder wrote. A `DATA/STEP_<k>` that does not open, or that lacks a
-  `MODE_<j>`, was being written when the run was killed. It is skipped,
-  together with every later snapshot, and `ModeSnapshotSkippedWarning` names
-  each one; it is never listed as a mode stage. A snapshot lacks a mode
-  when its `MODE_<j>` keys have a gap, when its modal groups disagree, or,
-  for the file's last snapshot only, when it holds fewer modes than the
-  snapshot before it.
+- **A damaged modes snapshot.** A `DATA/STEP_<k>` is damaged when it does
+  not open or lacks a `MODE_<j>`, that is, its `MODE_<j>` keys have a gap
+  or its modal groups disagree. What happens follows the stage rule:
+  - In a run killed while a layout was written (flags 0x01), the snapshot
+    was being written when the run was killed. It is skipped, together with
+    every later snapshot, and `ModeSnapshotSkippedWarning` names each one.
+  - In a run killed with SWMR armed (flags 0x05), every snapshot must read,
+    so any damage raises `ModeSnapshotCorrupt`, which names the snapshot.
+  - A cleanly closed file reads as before. A snapshot that does not open
+    raises `ModeSnapshotCorrupt` instead of a raw `KeyError`.
+
+  A snapshot with fewer modes than the one before it is whole and is listed:
+  the writer stores one snapshot per eigen call, with that call's mode count.
 - **A live run.** A run that is still writing raises `LadrunoFileBusyError`.
   The message names the SWMR tail read, `h5py.File(path, "r", swmr=True,
   locking=False)`. `stamp_provenance` still refuses a file the recorder
