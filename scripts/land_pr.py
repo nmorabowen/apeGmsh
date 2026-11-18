@@ -570,24 +570,46 @@ def _card_paths(body: str, real: Real | None = None) -> list[str] | None:
     return paths if found else None
 
 
-def _amendment_paths(
-    text: str, card: int, real: Real | None = None, skipped: list[tuple[str, str]] | None = None
-) -> list[str]:
-    """The paths a `**Card amendment` comment adds. A negated line adds none, nor do
-    the lines it governs (#1872). Every exclusion ends at a heading or a bold label;
-    the widest one in force wins, and a narrower negation inside it never shortens it.
+def _opening_paths(line: str, real: Real | None = None) -> list[str]:
+    """The path a list item opens with: the item's first backticked span, when the line is
+    a list item ("- ", "* " or "1. ") whose text starts with that span (`path::symbol` is
+    `path`). Empty for every other line, and for a first span that is not a path."""
+    lead = _LEADING_SPAN.match(line)
+    if lead is None:
+        return []
+    close = line.find("`", lead.end())
+    return _line_paths(line[: close + 1], real) if close > 0 else []
 
-    - LIST: a negated line ending in ":", or a negated bullet that names no path ("Do
+
+def _amendment_paths(
+    text: str,
+    card: int,
+    real: Real | None = None,
+    skipped: list[tuple[str, str]] | None = None,
+    ignored: list[tuple[str, str]] | None = None,
+) -> list[str]:
+    """The paths a `**Card amendment` comment adds (#3025). A path counts only when its
+    backtick span opens a list item; the bullet's trailing prose, negation words included,
+    does not affect it. A backticked path anywhere else (prose, mid-bullet, after a lead-in
+    word) adds nothing. The card body's Owned parsing (`_card_paths`) is unchanged.
+
+    A negation still drops the lines it governs (#1872). Every exclusion ends at a heading
+    or a bold label; the widest one in force wins, and a narrower negation inside it never
+    shortens it. Only a line that does not open with a path can negate:
+
+    - LIST: a negated line ending in ":", or a negated bullet that opens with no path ("Do
       not touch the following"), opens a list. It runs across blank lines and ends at
       the first non-list line that follows a blank line.
     - PARA: any other negated line that is not a bullet excludes to the paragraph's
       end (a blank line).
-    - ITEM: a negated bullet that names a path excludes itself, its sub-items and its
-      unmarked continuation lines, up to a sibling or shallower bullet or a blank line,
-      so one "do not" bullet does not drop the siblings of a prose amendment.
+    - ITEM: a negated bullet that opens with no path but names one ("- Do not touch `c.py`")
+      excludes itself, its sub-items and its unmarked continuation lines, up to a sibling
+      or shallower bullet or a blank line.
 
-    `skipped`, when given, collects (line, negation word) for each skipped line that has
-    a backtick (the lines check 9 prints); the word is the governing line's (`--check-card`)."""
+    `skipped`, when given, collects (line, negation word) for each dropped line that has a
+    backtick (the lines check 9 prints). `ignored` collects (path, reason) for each
+    backticked path that added nothing: "prose path", or 'dropped by negated lead-in "<word>"'
+    (`--check-card`)."""
     paths: list[str] = []
     mode, depth, after_blank = _FREE, -1, False
     word = ""
@@ -604,7 +626,8 @@ def _amendment_paths(
         after_blank = not line.strip()
         if mode == _PARA and line.rstrip(" *").endswith(":"):
             mode = _LIST  # a negated paragraph whose last line ends in ":" introduces a negated list (#2326)
-        found_word = _negation_word(line)
+        opening = _opening_paths(line, real)
+        found_word = None if opening else _negation_word(line)
         if found_word is not None:
             bullet = _BULLET.match(line) is not None
             # Without `real`: "- Do not touch `FORK_PIN`" still names no path, so it keeps
@@ -619,9 +642,16 @@ def _amendment_paths(
             if "`" in line:
                 if skipped is not None:
                     skipped.append((line.strip(), word))
+                if ignored is not None:
+                    ignored.extend((p, f'dropped by negated lead-in "{word}"') for p in _line_paths(line, real))
                 print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
             continue
-        paths += _line_paths(line, real)
+        paths += opening
+        if ignored is not None:
+            rest = _line_paths(line, real)
+            for path in opening:
+                rest.remove(path)
+            ignored.extend((p, "prose path") for p in rest)
     return paths
 
 
@@ -743,19 +773,29 @@ def check_card(card: int, gh: Runner, git: Runner) -> int:
         return 1
     allowed = list(owned)
     skipped: list[tuple[str, str]] = []
+    reports: list[tuple[list[str], list[tuple[str, str]]]] = []
     for comment in issue.get("comments") or []:
         text = _text(comment.get("body"))
         if _AMENDMENT.match(text):
-            allowed += _amendment_paths(text, card, real, skipped)
+            ignored: list[tuple[str, str]] = []
+            added = _amendment_paths(text, card, real, skipped, ignored)
+            allowed += added
+            reports.append((added, ignored))
     print(f"check-card: slice card #{card}'s Owned set ({len(allowed)} path(s)):")
     for path in allowed:
         print(f"  {path}")
+    for number, (added, ignored) in enumerate(reports, 1):
+        print(f"check-card: amendment {number} adds {len(added)} path(s):")
+        for path in added:
+            print(f"  added {path}")
+        for path, reason in ignored:
+            print(f"  ignored {path} ({reason})")
     if skipped:
-        print(f"check-card: {len(skipped)} amendment line(s) skipped by a negation:")
+        print(f"check-card: {len(skipped)} amendment line(s) dropped by a negation:")
         for line, word in skipped:
             print(f"  skipped (negation {word!r}): {line}")
-        print("check-card: a skipped amendment line may hold paths the card meant to own; "
-              "restate the amendment as a bold label plus a bullet list of paths (#2326).")
+        print("check-card: a dropped amendment line may hold paths the card meant to own; "
+              "restate the amendment as a bold label plus a bullet list that opens each item with its path (#2326).")
         return 1
     if not allowed:
         print(f"check-card: #{card} names no backticked path, so check 9 would refuse it.")

@@ -976,10 +976,10 @@ def test_1812_stale_tree_is_refused_and_every_foreign_file_named():
                  "### Owned files\n- `tests/viewers/golden_stills/`\n- `tests/fixtures/schema_corpus/**`\n", (),
                  id="directory-and-glob"),
     pytest.param(["internal_docs/program/board_notes.md"], CARD_1812,
-                 ("**Card amendment (T):** also re-date a row in `internal_docs/program/board_notes.md`.",),
+                 ("**Card amendment (T):** also re-date a row in:\n- `internal_docs/program/board_notes.md`",),
                  id="bold-amendment"),
     pytest.param(["internal_docs/program/board_notes.md"], CARD_1812,
-                 ("Card amendment (orchestrator): Owned files add `internal_docs/program/board_notes.md`.",),
+                 ("Card amendment (orchestrator): Owned files add:\n- `internal_docs/program/board_notes.md`",),
                  id="plain-amendment-1807"),
     pytest.param(["changelog.d/any-slug.md"], CARD_1812, (), id="changelog-fragment"),
     pytest.param(["internal_docs/program/prototypes/legacy.py", "internal_docs/program/prototypes/README.md"],
@@ -1145,7 +1145,7 @@ def test_negated_owned_line_fails_closed(line):
 
 
 def test_negated_amendment_line_adds_no_path(capsys):
-    amendment = "**Card amendment (T):** also edit `src/a.py`.\nDo NOT touch `src/b.py`.\n"
+    amendment = "**Card amendment (T):** also edit:\n- `src/a.py`\nDo NOT touch `src/b.py`.\n"
     gh, git = _scope(["src/a.py"], comments=(amendment,))
     assert _run(1218, gh, git, dry_run=True) == 0
     assert "skipped a negated card-amendment line" in capsys.readouterr().out
@@ -1170,7 +1170,7 @@ def _refused_b(amendment):
 
 def test_negation_opening_a_multi_line_list_excludes_the_list_1872(capsys):
     """Revert-proof: with the lead-in's `excluding` state removed, `src/b.py` is owned."""
-    amendment = "**Card amendment:** add `src/a.py`.\nDo not touch:\n- `src/b.py`\n"
+    amendment = "**Card amendment:** add:\n- `src/a.py`\nDo not touch:\n- `src/b.py`\n"
     _refused_b(amendment)
     assert "skipped a negated card-amendment line on #1801: '- `src/b.py`'" in capsys.readouterr().out
     gh, git = _scope(["src/a.py"], comments=(amendment,))  # the positive line still adds its path
@@ -1178,14 +1178,14 @@ def test_negation_opening_a_multi_line_list_excludes_the_list_1872(capsys):
 
 
 @pytest.mark.parametrize("amendment", [
-    pytest.param("**Card amendment:** add `src/a.py`.\n- Do not touch `src/b0.py` or these\n  - `src/b.py`\n",
+    pytest.param("**Card amendment:** add:\n- `src/a.py`\n- Do not touch `src/b0.py` or these\n  - `src/b.py`\n",
                  id="sub-items"),
-    pytest.param("**Card amendment:** add `src/a.py`.\n- Do not touch:\n- `src/b.py`\n", id="bullet-ending-in-colon"),
+    pytest.param("**Card amendment:** add:\n- `src/a.py`\n- Do not touch:\n- `src/b.py`\n", id="bullet-ending-in-colon"),
     # review of #1883, F2 (a): an unmarked continuation line, at any indent, stays in the item
-    pytest.param("**Card amendment:** add `src/a.py`.\n- do not touch `src/b0.py`,\n`src/b.py`, `src/b3.py`\n",
+    pytest.param("**Card amendment:** add:\n- `src/a.py`\n- do not touch `src/b0.py`,\n`src/b.py`, `src/b3.py`\n",
                  id="unindented-continuation"),
     # F2 (b): a negated bullet naming no path is a lead-in for the sibling bullets after it
-    pytest.param("**Card amendment:**\n- add `src/a.py`\n- Do not touch the following\n- `src/b.py`\n",
+    pytest.param("**Card amendment:**\n- `src/a.py`\n- Do not touch the following\n- `src/b.py`\n",
                  id="pathless-bullet-lead-in"),
 ])
 def test_a_negated_bullet_excludes_the_list_it_opens_1872(amendment):
@@ -1199,27 +1199,27 @@ def test_a_colon_lead_in_spans_blank_lines_to_its_list_1872(gap):
     """Review of #1883, F1: a blank line between "Do not touch:" and its list (23 of 355
     program issues use that layout) must not end the exclusion. Revert-proof: with the
     lead-in ending at a blank line, `src/b.py` is owned."""
-    _refused_b(f"**Card amendment:** add `src/a.py`.\n\nDo not touch:{gap}\n- `src/b.py`\n")
+    _refused_b(f"**Card amendment:** add:\n- `src/a.py`\n\nDo not touch:{gap}\n- `src/b.py`\n")
 
 
 def test_a_negated_bullet_does_not_swallow_its_siblings_1872():
     """Amendments are often prose bullets naming a path (#1663, #1722): one negated bullet
     must not drop the paths its siblings add. Fails if a negated bullet excluded to the
     paragraph's end."""
-    amendment = "**Card amendment:**\n- add `src/a.py`\n- do not reformat `src/z.py`\n- add `src/c.py`\n"
+    amendment = "**Card amendment:**\n- `src/a.py`\n- do not reformat `src/z.py`\n- `src/c.py`\n"
     gh, git = _scope(["src/a.py", "src/c.py"], comments=(amendment,))
     assert _run(1218, gh, git, dry_run=True) == 0
 
 
 @pytest.mark.parametrize("tail", [
-    pytest.param("\nAlso add `src/c.py`.", id="blank-line"),
+    pytest.param("\nAlso add:\n- `src/c.py`", id="blank-line"),
     pytest.param("### Also\n- `src/c.py`", id="heading"),
-    pytest.param("**Also add:** `src/c.py`", id="bold-label"),
+    pytest.param("**Also add:**\n- `src/c.py`", id="bold-label"),
 ])
 def test_a_negated_list_ends_where_an_owned_section_does_1872(tail):
     """The list a negation opens ends at a blank line, a heading or a bold label, as in
     `_card_paths`; a positive line after it adds its path again (the card's stop condition)."""
-    amendment = "**Card amendment:** add `src/a.py`.\nDo not touch:\n- `src/b.py`\n" + tail
+    amendment = "**Card amendment:** add:\n- `src/a.py`\nDo not touch:\n- `src/b.py`\n" + tail
     gh, git = _scope(["src/a.py", "src/c.py"], comments=(amendment,))
     assert _run(1218, gh, git, dry_run=True) == 0
 
@@ -1243,7 +1243,7 @@ def test_a_negated_list_ends_where_an_owned_section_does_1872(tail):
 ])
 def test_negation_vocabulary_adds_no_path_1872(line):
     """Revert-proof, one form per case: drop the form from `_NEGATION` and `src/b.py` is owned."""
-    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+    _refused_b(f"**Card amendment (T):** also edit:\n- `src/a.py`\n{line}\n")
 
 
 @pytest.mark.parametrize("line", [
@@ -1260,7 +1260,7 @@ def test_a_negation_word_inside_a_backticked_path_is_not_a_negation_1872():
     not), so without masking path spans this Owned line refuses and the amendment adds nothing."""
     card = "### Owned files\n- `src/x/not_found.py`, `test_never_twice.py`\n"
     assert land_pr._card_paths(card) == ["src/x/not_found.py", "src/x/test_never_twice.py"]
-    gh, git = _scope(["tests/avoid-cannot.py"], comments=("**Card amendment:** add `tests/avoid-cannot.py`.",))
+    gh, git = _scope(["tests/avoid-cannot.py"], comments=("**Card amendment:** add:\n- `tests/avoid-cannot.py`",))
     assert _run(1218, gh, git, dry_run=True) == 0
 
 
@@ -1279,7 +1279,7 @@ def test_a_negation_word_inside_a_quoted_code_string_is_not_a_negation_1857():
 def test_a_backticked_negation_phrase_still_negates_g1(line):
     """Review of #1883, G1. Revert-proof: masking every span hides the negation and
     `src/b.py` is owned."""
-    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+    _refused_b(f"**Card amendment (T):** also edit:\n- `src/a.py`\n{line}\n")
 
 
 def test_a_backticked_negation_in_an_owned_line_refuses_g1():
@@ -1306,7 +1306,7 @@ def test_a_residual_backticked_negation_adds_no_path_1891(line):
     circumstances` in `_FILLER`, without dropping path words from a multi-word span, or
     without the editing-verb object rule, the span is masked and `src/b.py` is owned.
     `bare-can-not` already negated on main (through `not`); it pins that."""
-    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+    _refused_b(f"**Card amendment (T):** also edit:\n- `src/a.py`\n{line}\n")
 
 
 @pytest.mark.parametrize("line", [
@@ -1348,7 +1348,7 @@ def test_a_bom_and_crlf_body_is_read_1891(bom):
         return ("﻿" if bom == where else "") + text.replace("\n", "\r\n")
     pr = {**PROGRAM_PR, "body": mark("Slice: #1801\nClass: semantic\n", "pr")}
     card = mark("### Owned files\n- `src/a.py`\n", "card")
-    amendment = mark("**Card amendment (T):** add `src/c.py`.\n", "amendment")
+    amendment = mark("**Card amendment (T):** add:\n- `src/c.py`\n", "amendment")
     gh, git = _scope(["src/a.py", "src/c.py"], card=card, comments=(amendment,), pr=pr)
     assert _run(1218, gh, git, dry_run=True) == 0
 
@@ -1396,7 +1396,7 @@ def test_a_mid_line_invisible_mark_does_not_hide_an_owned_negation_1891(line):
 ])
 def test_a_mid_line_invisible_mark_does_not_hide_an_amendment_negation_1891(line):
     """Delta review of #1917, as above for a card amendment. Fails on 91c91fe9."""
-    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+    _refused_b(f"**Card amendment (T):** also edit:\n- `src/a.py`\n{line}\n")
 
 
 def test_a_bom_prefixed_body_still_holds_a_freeze_1891():
@@ -1536,13 +1536,13 @@ def test_an_unreadable_tree_refuses_check_9_end_to_end_1939():
 
 
 def test_extensionless_names_do_not_weaken_a_negation_1939():
-    """An Owned line that negates still refuses. In an amendment, "- `FORK_PIN`: do not touch" keeps
+    """An Owned line that negates still refuses. In an amendment, "- Do not touch `FORK_PIN`" keeps
     excluding the list after it, as it did when `FORK_PIN` was no path. Revert-proof: reading that
     bullet with `real` turns it into a one-item exclusion and admits `src/b.py`."""
     real, _git = _tree_real()
     with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates"):
         land_pr._card_paths("### Owned files\n- `FORK_PIN` (never touch `scripts/a.py`)\n", real)
-    amendment = "**Card amendment (T):** also edit `src/a.py`.\n\n- `FORK_PIN`: do not touch\n- `src/b.py`\n"
+    amendment = "**Card amendment (T):** also edit:\n- `src/a.py`\n\n- Do not touch `FORK_PIN`\n- `src/b.py`\n"
     assert land_pr._amendment_paths(amendment, 1939, real) == ["src/a.py"]
     assert land_pr._amendment_paths("**Card amendment (T):** add\n- `FORK_PIN`\n", 1939, real) == ["FORK_PIN"]
 
@@ -2244,7 +2244,7 @@ def test_every_workflow_run_is_judged_the_stale_one_refuses():
 
 # --- #2145 (lesson #1985): --check-card prints the parsed Owned set and the skipped amendments ------
 CARD_CHECK = "### Owned files\n- `scripts/a.py`\n\n### Done when\nok\n"
-POSITIVE_AMENDMENT = {"body": "**Card amendment** also owns `scripts/b.py`."}
+POSITIVE_AMENDMENT = {"body": "**Card amendment** also owns:\n- `scripts/b.py`"}
 NEGATED_AMENDMENT = {"body": "**Card amendment** Do not touch `scripts/c.py`."}
 
 
@@ -2555,7 +2555,7 @@ def test_an_owned_path_with_a_space_is_read_2339():
 
 
 def test_check_card_exits_1_when_an_amendment_path_is_skipped_2412(monkeypatch, capsys):
-    skipped = {"body": "**Card amendment (T):** also edit `scripts/b.py`; never touch `scripts/c.py`.\n"}
+    skipped = {"body": "**Card amendment (T):** also edit:\n- `scripts/b.py`\nnever touch `scripts/c.py`.\n"}
     monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [skipped]))
     monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
     assert land_pr.main(["--check-card", "2000"]) == 1
@@ -2768,3 +2768,45 @@ def test_a_rename_in_g_h_counts_its_old_name():
     with pytest.raises(land_pr.LandError, match=r"refused: files overlap G\.\.H on src/apeGmsh/old\.py\.$"):
         _run(1858, gh, git)
     assert not _merged(gh)
+
+
+# --- #3025: an amendment adds only the path that opens a list item -----------------------------
+def _amend(text, real=None):
+    ignored = []
+    added = land_pr._amendment_paths("**Card amendment (T):**" + text, 3025, real, None, ignored)
+    return added, ignored
+
+
+@pytest.mark.parametrize("text, added, ignored", [
+    pytest.param("\nReason: `a.py` stays read-only.\n- `b.py`\n", ["b.py"], [("a.py", "prose path")],
+                 id="prose-path-is-not-owned"),
+    pytest.param("\n- `b.py` (not a hub; do not split)\n", ["b.py"], [], id="negation-in-trailing-prose"),
+    pytest.param("\n- Do not touch `c.py`\n", [], [("c.py", 'dropped by negated lead-in "not"')], id="negated-bullet"),
+    pytest.param("\nDo not touch the following:\n- `d.py`\n- `e.py`\n", [],
+                 [("d.py", 'dropped by negated lead-in "not"'), ("e.py", 'dropped by negated lead-in "not"')],
+                 id="negated-lead-in-list"),
+    pytest.param("\n1. `f.py`\n* `g.py::sym`\n", ["f.py", "g.py"], [], id="numbered-and-star-and-symbol"),
+    pytest.param("\n- `h.py`\n  - `i.py` (never edit)\n", ["h.py", "i.py"], [], id="indented-sub-bullet"),
+    pytest.param("\n- `j.py`, see also `k.py`\n", ["j.py"], [("k.py", "prose path")], id="mid-bullet-path"),
+    pytest.param("\n- add `l.py`\n", [], [("l.py", "prose path")], id="lead-in-word-before-path"),
+])
+def test_amendment_adds_only_path_opening_bullets_3025(text, added, ignored):
+    assert _amend(text.replace("\n", chr(10)))[0] == added
+    assert _amend(text.replace("\n", chr(10)))[1] == ignored
+
+
+def test_a_comment_that_is_not_an_amendment_still_adds_nothing_3025():
+    gh, git = _scope(["src/a.py"], comments=("Maintainer ruling:\n- `src/a.py`".replace("\n", chr(10)),))
+    with pytest.raises(land_pr.LandError, match="outside slice card"):
+        _run(1218, gh, git, dry_run=True)
+
+
+def test_check_card_lists_paths_added_and_ignored_per_amendment_3025(monkeypatch, capsys):
+    amendment = {"body": "**Card amendment (T):** reads `scripts/a.py`.\n- `scripts/b.py` (not a hub)".replace("\n", chr(10))}
+    monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [amendment]))
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    assert land_pr.main(["--check-card", "2000"]) == 0
+    out = capsys.readouterr().out
+    assert "amendment 1 adds 1 path(s):" in out
+    assert "  added scripts/b.py" in out
+    assert "  ignored scripts/a.py (prose path)" in out
