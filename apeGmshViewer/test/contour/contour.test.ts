@@ -1,7 +1,8 @@
 // V4c1 (#1756): the contour's pure parts (fields, labels, colormaps, ranges
 // and what the legend says about them), the reducer's guards, and the seams:
 // the history-scan cancel, a reload that loses the field, a partial write
-// refused per component.
+// refused per component. VF-a (#2939): the viewport's contour surfaces (the
+// faces, the frame-extrusion fill) sample the colormap per fragment.
 
 import assert from "node:assert/strict";
 import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
@@ -11,17 +12,23 @@ import { join, relative, sep } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
+import * as THREE from "three";
 import { ResultsHost } from "../../src/main/results.ts";
 import { LadrunoError, openLadruno } from "../../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { mountHeader } from "../../src/panels/header.ts";
 import { contourLines, mountLegend, rampCss } from "../../src/panels/legend.ts";
-import { contourKey } from "../../src/renderer/contour.ts";
-import { CMAPS, CMAP_NAMES, climOf, fieldsOf, gaussFields, LADRUNO_AXIS_MAP, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, sampleCmap, vertexValues } from "../../src/state/contour.ts";
+import { colormapTexture, NO_DATA_U, RAMP_TEXELS, shownAt, TEXTURE_WIDTH } from "../../src/renderer/colormapTexture.ts";
+import { contourColours, contourKey, toLinear } from "../../src/renderer/contour.ts";
+import { Viewport } from "../../src/renderer/viewport.ts";
+import { CMAPS, CMAP_NAMES, climOf, columnOf, fieldsOf, gaussFields, LADRUNO_AXIS_MAP, MAGNITUDE, NO_DATA_RGB, nodalFields, primitiveColours, rampT, sampleCmap, vertexValues } from "../../src/state/contour.ts";
 import { classifyFieldDimension, contourFieldsOf, contourView, noticesOf, resolveFieldUnits } from "../../src/state/selectors.ts";
 import { Store } from "../../src/state/store.ts";
-import type { ContourScan } from "../../src/state/types.ts";
-import { opened, STAGED_RESULTS, tick, until } from "./harness.ts";
+import type { ContourCmap, ContourScan, MeshInfo, State } from "../../src/state/types.ts";
+import { opened, STAGED, STAGED_RESULTS, tick, until } from "./harness.ts";
+
+const FRAME3D_MODEL = fileURLToPath(new URL("../../fixtures/ladruno_frame3d.h5", import.meta.url));
+const FRAME3D_LADRUNO = fileURLToPath(new URL("../../fixtures/ladruno_frame3d.ladruno", import.meta.url));
 
 // -- fields and labels ----------------------------------------------------------
 
@@ -448,6 +455,10 @@ test("global Units control in #header renders Native (when undeclared) & Units d
   const fileNameEl = new FakeDomEl("span");
   const fileStatsEl = new FakeDomEl("span");
   const legendEl = new FakeDomEl("aside");
+  const displayEl = new FakeDomEl("aside");
+  const deformEl = new FakeDomEl("aside");
+  const scaleEl = new FakeDomEl("div");
+  const contourEl = new FakeDomEl("aside");
   headerEl.append(fileNameEl, fileStatsEl);
   (globalThis as { document?: unknown }).document = {
     title: "",
@@ -458,6 +469,10 @@ test("global Units control in #header renders Native (when undeclared) & Units d
       if (id === "file-name") return fileNameEl;
       if (id === "file-stats") return fileStatsEl;
       if (id === "legend") return legendEl;
+      if (id === "display") return displayEl;
+      if (id === "deform") return deformEl;
+      if (id === "viewport-scale") return scaleEl;
+      if (id === "contour") return contourEl;
       return null;
     },
   };
@@ -478,9 +493,79 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     // #legend has NO .contour-units dropdowns, but keeps the contoured field's
     // own units note: the header's tooltip only ever describes displacement.
     assert.equal(legendEl.all((e) => e.className.includes("contour-units")).length, 0);
-    assert.ok(legendEl.textContent.includes("Units: not stored in the results file."));
+    // The scale keeps the contoured field's own units note, as its title's tooltip;
+    // the card states neither: the header's tooltip only ever describes displacement.
+    assert.ok(!legendEl.textContent.includes("Units:"));
+    assert.equal(legendEl.all((e) => e.className === "contour-title").length, 0);
+    assert.equal(scaleEl.all((e) => e.className === "vs-title")[0]!.title, "Units: not stored in the results file.");
+    // The colour range is set on the scale in the viewport, not on the card.
+    assert.equal(legendEl.all((e) => e.className.includes("contour-modes")).length, 0);
+    assert.equal(scaleEl.all((e) => e.className.includes("contour-modes")).length, 1);
+    // The field picker is on the Contour card, not on Physical groups.
+    assert.equal(legendEl.all((e) => e.className.includes("contour-field")).length, 0);
+    assert.equal(contourEl.all((e) => e.className.includes("contour-field")).length, 1);
+    // The scale is the only colour bar.
+    assert.equal(legendEl.all((e) => e.className.includes("contour-ramp")).length, 0);
+    assert.equal(scaleEl.all((e) => e.className.includes("vs-ramp")).length, 1);
+    // The Contour card carries no units note, title, range modes or colour bar either.
+    for (const cls of ["contour-units", "contour-title", "contour-modes", "contour-ramp"]) assert.equal(contourEl.all((e) => e.className.includes(cls)).length, 0, cls);
+    assert.ok(!contourEl.textContent.includes("Units:"));
+    // A step in contour mode rebuilds the Contour card and the scale, never the group rows (a click on one stays).
+    const rowOf = () => legendEl.all((e) => e.className.startsWith("legend-row"))[0];
+    const row0 = rowOf();
+    assert.ok(row0, "Physical groups lists its rows while a contour is on");
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 0 } });
+    assert.equal(rowOf(), row0, "the same row element after a step change");
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+    // A colormap set elsewhere than its own select (Spotlight, the agent) still reaches the Display card's select.
+    const other = CMAP_NAMES.find((n) => n !== h.store.get().contour.cmap)!;
+    h.store.dispatch({ type: "setContourCmap", cmap: other });
+    const cmapShown = () => displayEl.all((e) => e.className === "contour-cmap")[0]!.children.find((o) => typeof o !== "string" && o.selected) as FakeDomEl | undefined;
+    assert.equal(cmapShown()?.value, other, "the Display card shows the colormap in use");
+    // The switch: Physical groups has no contour button; off returns to the mode contour came from.
+    assert.ok(!legendEl.all((e) => e.tagName === "BUTTON").some((b) => b.textContent === "contour"));
+    const toggle = () => contourEl.all((e) => e.className.includes("contour-toggle"))[0]!;
+    toggle().trigger("click");
+    assert.equal(h.store.get().visibility.colourBy, "group");
+    assert.equal(scaleEl.hidden, true, "no contour, no scale");
+    assert.equal(contourEl.all((e) => e.className.includes("contour-field")).length, 0, "the field picker shows only while on");
+    h.store.dispatch({ type: "setColourBy", by: "role" });
+    toggle().trigger("click");
+    assert.equal(h.store.get().visibility.colourBy, "contour");
+    assert.equal(scaleEl.hidden, false, "contour on, scale shown");
+    toggle().trigger("click");
+    assert.equal(h.store.get().visibility.colourBy, "role", "off returns to by role, the mode it came from");
+    assert.equal(contourEl.hidden, false, "the card stays while a mesh is loaded");
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    // With no mesh there is nothing to colour: the card is hidden.
+    const unEmpty = mountLegend(new Store());
+    assert.equal(contourEl.hidden, true, "no mesh, no Contour card");
+    unEmpty();
+    unLegend();
+    unLegend = mountLegend(h.store);
+    // An element field picked while contoured goes the Contour card's own way, and until its rows are joined to the
+    // mesh there are no values: the scale is hidden, then shown once they are.
+    const mixed = (name: string) => fileURLToPath(new URL(`../../fixtures/${name}`, import.meta.url));
+    assert.ok(await h.effects.open(mixed("elem_mixed.h5")));
+    assert.ok(await h.effects.openResults(mixed("elem_mixed.results.h5")));
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    h.store.dispatch({ type: "setContourField", field: "displacement", component: "|magnitude|" });
+    await until(() => contourView(h.store.get()).state === "ready", "the nodal contour");
+    assert.equal(scaleEl.hidden, false, "the nodal contour shows its scale");
+    const row1 = rowOf();
+    h.store.dispatch({ type: "setContourField", field: "stress", component: "stress_xx", source: "element" });
+    assert.equal(contourView(h.store.get()).state, "unavailable", "the join is not pending: this case no longer tests the hide");
+    assert.equal(rowOf(), row1, "the pick went the Contour card's own way");
+    assert.equal(scaleEl.hidden, true, "no values joined yet, no scale");
+    await until(() => contourView(h.store.get()).state === "element", "the element rows joined");
+    assert.equal(scaleEl.hidden, false, "the scale shows once the rows are joined");
+    assert.ok(await h.effects.open(STAGED));
+    assert.ok(await h.effects.openResults(STAGED_RESULTS));
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+    h.store.dispatch({ type: "setContourField", field: "displacement", component: "|magnitude|" });
 
-    // 2. Selecting source and target in #header dispatches setContourUnits and updates #legend contour-title & tooltip
+    // 2. Selecting source and target in #header dispatches setContourUnits and updates the scale's title & tooltip
     const srcSel = headerEl.all((e) => e.className === "header-units-source")[0]!;
     srcSel.value = "kN_m_s";
     srcSel.trigger("change");
@@ -491,7 +576,7 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     assert.equal(h.store.get().contour.targetUnits, "N_mm_s");
     const unitsWrap = headerEl.all((e) => e.className === "header-units")[0]!;
     assert.equal(unitsWrap.title, "Units: N-mm-tonne-s (converted from kN-m-tonne-s).");
-    assert.match(legendEl.all((e) => e.className === "contour-title")[0]!.textContent, /\[mm\]/);
+    assert.match(scaleEl.all((e) => e.className === "vs-title")[0]!.textContent, /\[mm\]/);
 
     // Resetting Native select to "" resets sourceUnits to null when undeclared
     const srcSelAfter = headerEl.all((e) => e.className === "header-units-source")[0]!;
@@ -739,9 +824,10 @@ test("#2214: a fixture copy whose DISPLACEMENT labels are X,Y contours X and Y a
  * `refused: part <k> of <stem>` for a part file, which the reader refuses (any
  * other open error fails the test). The rows of the fixtures on main at
  * c394ebce8 were recorded there, before #2214; the rest were added as their
- * fixtures landed (#2241 parts2d, simplex_gp tet/tri).
+ * fixtures landed (#2241 parts2d, simplex_gp tet/tri, #3014 crack_bricks).
  */
 const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
+  "deform_2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "ladruno_frame3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz]",
   "ladruno_modes.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] MODES_OF_VIBRATION(R)[Rz=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] MODES_OF_VIBRATION(R)[Rz=Rz]",
   "ladruno_parts2d.part-0.ladruno": "refused: part 0 of ladruno_parts2d",
@@ -749,6 +835,8 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "ladruno_parts2d.short.part-1.ladruno": "refused: part 1 of ladruno_parts2d.short",
   "ladruno_portal3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy z=Uz] MODES_OF_VIBRATION(R)[x=Rx y=Ry z=Rz]",
   "ladruno_quad2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "ladruno_springs3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
+  "ladruno_cracks3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
   "ladruno_truss2d.badstamp.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "ladruno_truss2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "ladruno_truss2d.stamped.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
@@ -761,6 +849,7 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "beam3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
   "bezier_tet10.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
   "bezier_tri6.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "crack_bricks.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
   "energy.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "fiberbeam.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "node_envelope.ladruno": "-",
@@ -770,6 +859,24 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "truss2d.part-1.ladruno": "refused: part 1 of truss2d",
   "tet.ladruno": "-",
   "tri.ladruno": "-",
+  // VU10 (#2694): the synthetic variant pair.
+  "plate_uncracked.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "plate_cracked.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  "plate_remeshed.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
+  // M2-S0 (#2979): the fork's MPM fixtures. A particle-only stage has no FE contour.
+  "particles_v1m2.ladruno": "-",
+  "particles_mixed_v1m2.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | -",
+  // M2-S6 (#2990): the fork's torn file (a fourth output whose OFFSETS entry holds the fill).
+  "particles_torn_v1m2.ladruno": "-",
+  // M2-S7 (#2991): the torn-stage fixtures (two particle-only stages each).
+  "particles_torn_last_stage_v1m2.ladruno": "- | -",
+  "particles_torn_early_stage_v1m2.ladruno": "- | -",
+  "particles_two_stages_v1m2.ladruno": "- | -",
+  // #3013: the B-spline grid fixtures (particles_v1m2.ladruno with only GRID/BASIS rewritten).
+  "particles_bspline2_v1m2.ladruno": "-",
+  "particles_bspline3_v1m2.ladruno": "-",
+  // M2-S8 (#3003): a recorder run of the release build, killed (flags 0x05); MODEL_STAGE[2]'s empty modes group is no mode stage.
+  "killed_swmr.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] | MODES_OF_VIBRATION(U)[magnitude x=Ux y=Uy] | DISPLACEMENT[magnitude x=Ux y=Uy]",
 };
 
 /** The repository root, and the directories the golden below scans for `.ladruno` files. */
@@ -778,6 +885,11 @@ const CONTOUR_GOLDEN_DIRS: readonly URL[] = [
   new URL("apeGmshViewer/fixtures/", REPO_ROOT),
   new URL("tests/fixtures/ladruno/", REPO_ROOT),
   new URL("tests/fixtures/simplex_gp/", REPO_ROOT),
+  new URL("apeGmshViewer/test/fixtures/vu10/", REPO_ROOT),
+  new URL("apeGmshViewer/test/fixtures/vu10/cracked/", REPO_ROOT),
+  new URL("apeGmshViewer/test/fixtures/compare_render/remeshed/", REPO_ROOT),
+  new URL("tests/fixtures/mpm/", REPO_ROOT),
+  new URL("tests/fixtures/ladruno_killed/", REPO_ROOT),
 ];
 
 /** `git ls-files '*.ladruno'` at the repo root (sorted, `/`-separated), or the reason git could not answer. */
@@ -840,4 +952,174 @@ test("#2214: every committed .ladruno contours as before (magnitude and axis gro
     }
   }
   assert.deepEqual(got, CONTOUR_GOLDEN);
+});
+
+// -- VF-a (#2939): the surfaces sample the colormap per fragment ------------------------
+
+/** The viewport's mesh-building methods on a minimal receiver: the class needs WebGL to construct, `rebuild` and `recolour` do not. */
+interface ViewportBuild {
+  rebuild(s: State, info: MeshInfo): void;
+  recolour(s: State): void;
+  faces: THREE.Mesh | null;
+  frameFaces: THREE.Mesh | null;
+  drawn: { triMap: Int32Array } | null;
+}
+function viewportOn(h: Awaited<ReturnType<typeof opened>>): ViewportBuild {
+  const v = Object.create(Viewport.prototype) as Record<string, unknown>;
+  Object.assign(v, {
+    store: h.store,
+    blobs: h.blobs,
+    content: new THREE.Group(),
+    highlight: new THREE.Group(),
+    ghost: new THREE.Group(),
+    markers: new THREE.Group(),
+    lineMaterials: [],
+    host: { clientWidth: 800, clientHeight: 600 },
+    activeTheme: "dark",
+    stepSource: () => h.effects.currentStep(),
+    combinationSource: () => null,
+    dispSource: () => null,
+    full: null,
+    drawn: null,
+    contourApplied: null,
+    caps: { setDim: () => {} },
+    requestRender: () => {},
+  });
+  return v as unknown as ViewportBuild;
+}
+
+/** Where a texture coordinate sits on the ramp (the inverse of colormapTexture's `rampU` at a texel centre). */
+const tOfU = (u: number): number => (u * TEXTURE_WIDTH - 0.5) / (RAMP_TEXELS - 1);
+
+/** `got` is the ramp's colour (linear) at `t`, to one texel: the oracle is state/contour.ts `sampleCmap`, never the texture. */
+function onRampAt(got: readonly number[], cmap: ContourCmap, t: number, what: string): void {
+  const i = Math.round(Math.min(1, Math.max(0, t)) * (RAMP_TEXELS - 1));
+  const near = [-1, 0, 1].map((k) => sampleCmap(cmap, Math.min(1, Math.max(0, (i + k) / (RAMP_TEXELS - 1)))).map(toLinear));
+  const err = Math.min(...near.map((w) => Math.max(...w.map((x, c) => Math.abs(x - got[c]!)))));
+  assert.ok(err < 1e-6, `${what}: ${got} is not ${cmap} at ${t} (${err})`);
+}
+
+/** Barycentric points inside a triangle: its centroid, an edge midpoint and an off-centre point. */
+const BARY = [
+  [1 / 3, 1 / 3, 1 / 3],
+  [0.5, 0.5, 0],
+  [0.2, 0.3, 0.5],
+] as const;
+
+/** Every fragment of a contoured mesh shows the ramp at its interpolated ramp position (three points per triangle). */
+function fragmentsOnRamp(mesh: THREE.Mesh, cmap: ContourCmap, what: string): void {
+  const m = mesh.material as THREE.MeshStandardMaterial;
+  assert.equal(m.vertexColors, false, `${what}: no per-vertex RGB`);
+  assert.equal(m.map, colormapTexture(cmap), `${what}: the contour's colormap texture`);
+  const uv = mesh.geometry.getAttribute("uv");
+  assert.ok(uv, `${what}: ramp coordinates`);
+  assert.equal(uv.count, mesh.geometry.getAttribute("position").count, `${what}: one coordinate per vertex`);
+  const map = m.map as THREE.DataTexture;
+  for (let t = 0; t < uv.count / 3; t++) {
+    const u = [0, 1, 2].map((k) => uv.getX(3 * t + k));
+    for (const w of BARY) {
+      const at = w[0] * u[0]! + w[1] * u[1]! + w[2] * u[2]!;
+      onRampAt(shownAt(map, at), cmap, w[0] * tOfU(u[0]!) + w[1] * tOfU(u[1]!) + w[2] * tOfU(u[2]!), `${what} triangle ${t}`);
+    }
+  }
+}
+
+test("VF-a: the viewport's contour faces sample the colormap per fragment at the closed-form value, and a colormap change swaps the texture in place", async () => {
+  const h = await opened();
+  try {
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    h.store.dispatch({ type: "setContourField", field: "displacement", component: "displacement_x" });
+    h.store.dispatch({ type: "setContourRange", range: "step" });
+    await until(() => {
+      const v = contourView(h.store.get());
+      const st = h.effects.currentStep();
+      return v.state === "ready" && v.stepMeasured && st?.stage === 2 && st.step === 1;
+    }, "the step shown, measured");
+    let s = h.store.get();
+    const vp = viewportOn(h);
+    vp.rebuild(s, s.mesh!);
+    const faces = vp.faces!;
+    assert.ok(faces, "the model has faces");
+    fragmentsOnRamp(faces, "jet", "faces");
+    // The vertex positions on the ramp are the closed-form value through the contour's range (oracle.test.ts's oracle).
+    const view = contourView(s);
+    assert.ok(view.state === "ready");
+    const uv = faces.geometry.getAttribute("uv");
+    const step = h.effects.currentStep()!;
+    const triNodes = h.blobs.get(s.mesh!.vertexNodes.tri) as Float64Array;
+    const values = vertexValues(triNodes, columnOf(h.blobs.get(view.nodeIds) as Float64Array), view.component.datasets.map((d) => step.nodal[d]!), false);
+    const triMap = vp.drawn!.triMap; // the stage's active cells
+    assert.equal(uv.count, 3 * triMap.length, "one coordinate per drawn vertex");
+    for (let d = 0; d < triMap.length; d++) {
+      for (let k = 0; k < 3; k++) {
+        const x = values[3 * triMap[d]! + k]!;
+        const t = rampT(x, view.clim.min!, view.clim.max!);
+        assert.ok(Math.abs(tOfU(uv.getX(3 * d + k)) - t) <= 0.5 / (RAMP_TEXELS - 1) + 1e-6, `drawn triangle ${d} vertex ${k}: the ramp position of ${x}`);
+      }
+    }
+    // A colormap change recolours in place: the same mesh, its texture swapped.
+    h.store.dispatch({ type: "setContourCmap", cmap: "viridis" });
+    s = h.store.get();
+    vp.recolour(s);
+    assert.equal(vp.faces, faces, "no rebuild");
+    fragmentsOnRamp(faces, "viridis", "faces after the colormap change");
+  } finally {
+    h.effects.dispose();
+  }
+});
+
+test("VF-a: no data on the faces is the no-data texel on every fragment, never a blend with the ramp", async () => {
+  const h = await opened();
+  try {
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    const s = h.store.get();
+    assert.equal(contourView(s).state, "unavailable", "off the results phases the contour cannot colour");
+    const vp = viewportOn(h);
+    vp.rebuild(s, s.mesh!);
+    const m = vp.faces!.material as THREE.MeshStandardMaterial;
+    const uv = vp.faces!.geometry.getAttribute("uv");
+    const grey = NO_DATA_RGB.map(toLinear);
+    for (let i = 0; i < uv.count; i++) {
+      assert.equal(uv.getX(i), Math.fround(NO_DATA_U), `vertex ${i}: the no-data texel`);
+      assert.deepEqual(shownAt(m.map as THREE.DataTexture, uv.getX(i)).map((x) => Math.round(x * 1e6)), grey.map((x) => Math.round(x * 1e6)));
+    }
+  } finally {
+    h.effects.dispose();
+  }
+});
+
+test("VF-a: the frame-extrusion fill samples the colormap per fragment from its segment's line coordinates", async () => {
+  const h = await opened(FRAME3D_MODEL, FRAME3D_LADRUNO);
+  try {
+    h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 2 } });
+    h.store.dispatch({ type: "setColourBy", by: "contour" });
+    h.store.dispatch({ type: "toggleExtrudeFrames", on: true });
+    await until(() => {
+      const v = contourView(h.store.get());
+      const st = h.effects.currentStep();
+      return v.state === "ready" && v.stepMeasured && st?.stage === 0 && st.step === 2;
+    }, "the step shown, measured");
+    const s = h.store.get();
+    assert.ok(s.mesh!.frameExtrusion?.hasExtrudableFrames, "the fixture extrudes its frames");
+    const vp = viewportOn(h);
+    vp.rebuild(s, s.mesh!);
+    assert.ok(vp.frameFaces, "the extruded frames are drawn");
+    fragmentsOnRamp(vp.frameFaces, "jet", "frame fill");
+    // Every fill coordinate is one of its beams' end coordinates (the contour's line values), never a colour.
+    const view = contourView(s);
+    assert.ok(view.state === "ready");
+    const drawn = Int32Array.from({ length: s.mesh!.linePositions.shape[0]! }, (_, i) => i);
+    const cc = contourColours(s, view, s.mesh!, h.blobs, h.effects.currentStep(), drawn, new Int32Array(0))!;
+    const ends = new Set(Array.from(cc.lineU));
+    const uv = vp.frameFaces.geometry.getAttribute("uv");
+    let spans = 0;
+    for (let i = 0; i < uv.count; i++) assert.ok(ends.has(uv.getX(i)), `fill vertex ${i}: a beam-end coordinate`);
+    for (let t = 0; t < uv.count / 3; t++) if (new Set([0, 1, 2].map((k) => uv.getX(3 * t + k))).size > 1) spans++;
+    assert.ok(spans > 0, "some fill triangles span two beam ends: the per-fragment lookup is exercised");
+    assert.ok(vp.faces, "and the slabs");
+    fragmentsOnRamp(vp.faces, "jet", "slabs");
+  } finally {
+    h.effects.dispose();
+  }
 });

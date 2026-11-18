@@ -7,7 +7,9 @@
     python scripts/land_pr.py <number> --owned-only   # only check 9 (Owned files), on any PR
 
 The checks run in order and the first failure refuses, naming the check and
-the lesson. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
+the lesson. Check 6 requires the five required checks green on the head, and
+``app-tests`` too when the PR changes a path that lane's filter names (APP_PATHS:
+``apeGmshViewer/`` and the pairing oracle's inputs, #2864); it is not in the ruleset. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
 ADR's Status to Accepted is refused outright, and an edit to a baseline file
 (the freeze census, the retirement ledger) needs the ``human-gate`` label. The maintainer's web merge is the
 exception path for both, by design. Check 9 (lesson #1788) refuses a ``program``
@@ -19,7 +21,12 @@ alone on any PR, merged ones included.
 Checks 10 and 11 are lesson #1877 (3af31061 merged #1698 into a red ``main``).
 Check 10 refuses while ``main``'s latest completed Tests run is red, when main's
 head H has no run, and, while H's run is in progress, unless the PR's checks ran
-on a base that contains H; a read that fails refuses. The ``fixes-red-main``
+on a base that contains H or the group rule admits it (#2919): the latest
+verified commit G is green, at most GROUP_MAX - 1 commits sit in G..H, every run
+there is a first attempt still queued or in progress with no required job
+finished other than green, and the PR's files are disjoint from
+G..H's, read by SHA at landing time; ``land`` re-reads main's head before the
+merge and refuses if it moved. A read that fails refuses. The ``fixes-red-main``
 label, for the fix or the revert, overrides it. Check 11 refuses a PR that touches ``tests/`` or a BASELINE file
 when its required checks ran on a merge base more than STALE_COMMITS commits, or
 STALE_HOURS hours, behind ``main``. The base is read from the job log's
@@ -27,7 +34,10 @@ STALE_HOURS hours, behind ``main``. The base is read from the job log's
 
 Check 12 (#2138 bumped ``FORK_PIN`` with only the stock lane run; the fork side went red that night, #2143) refuses
 a PR that changes ``FORK_PIN`` unless a ``live-fork`` ``workflow_dispatch`` run on the PR head SHA completed
-green. ``live-fork`` is not a required check, so nothing else proves a new pin. No label overrides it.
+green. ``live-fork`` is not a required check, so nothing else proves a new pin. Since #3023 the same holds for
+a PR that changes a ``ladruno_fork``-marked test, a file under ``tests/opensees/integration_ladruno/``, or a
+``src/`` path containing ``ladruno``: those skip on the stock lanes (#2889 merged green and left ``live-fork``
+red on ``main``, #2907). No label overrides it, ``fixes-red-main`` included.
 
 Whatever copy is invoked, the rules that run are origin/main's: ``main``
 fetches origin/main and re-executes ``git show origin/main:scripts/land_pr.py``
@@ -72,6 +82,29 @@ Real = Callable[[str], bool]
 #: reported is a refusal: zero checks visible means a conflict or a stalled
 #: Actions, not green (#630).
 REQUIRED_CHECKS = ("lock-tests", "emit-cost-gate", "static-gates", "suite", "live-stock")
+#: VH0 (#2864): a PR that changes what the app lane checks also needs that lane, tests.yml's
+#: `app-tests` job (the name must equal the job key there). The job's first step runs the
+#: checks only when the PR changes a path in its `git diff ... --` pathspec list: the app
+#: (ADR 0112), the workflow itself, and the .ladruno pairing oracle's test, fixture and
+#: stamp_provenance (#2129). On any other PR the job reports green without running them, so
+#: it stays out of REQUIRED_CHECKS and the ruleset, and check 6 adds it per PR. APP_PATHS is
+#: that pathspec list, in its order; tests/test_land_pr.py asserts the two are equal.
+APP_CHECK = "app-tests"
+APP_PATHS = (
+    "apeGmshViewer/",
+    ".github/workflows/tests.yml",
+    "architecture/schemas/",
+    "tests/fixtures/ladruno/",
+    "tests/fixtures/mpm/",
+    "tests/fixtures/simplex_gp/",
+    "tests/fixtures/user_results/",
+    "tests/results/user/test_user_fingerprint.py",
+    "src/apeGmsh/results/_gauss_extrapolation.py",
+    "examples/shoebuckle_arch.py",
+    "*.ladruno",
+    "tests/test_app_ladruno_pairing_oracle.py",
+    "src/apeGmsh/results/readers/_ladruno_provenance.py",
+)
 PR_FIELDS = (
     "state,isDraft,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup,"
     "labels,body,closingIssuesReferences"
@@ -170,12 +203,25 @@ MAIN_PAGE = 30
 MAIN_COMMITS = f"repos/{{owner}}/{{repo}}/commits?sha=main&per_page={MAIN_PAGE}"
 MAIN_COMMITS_JQ = "[.[].sha]"
 MAIN_RUNS = f"repos/{{owner}}/{{repo}}/actions/workflows/tests.yml/runs?branch=main&event=push&per_page={MAIN_PAGE}"
-MAIN_RUNS_JQ = "[.workflow_runs[] | {id, head_sha, status, conclusion}]"
+MAIN_RUNS_JQ = "[.workflow_runs[] | {id, head_sha, status, conclusion, run_attempt}]"
 #: The jobs of one main Tests run (the latest attempt); only REQUIRED_CHECKS among them judge main.
 MAIN_JOBS = "repos/{{owner}}/{{repo}}/actions/runs/{run}/jobs?per_page=100"
 MAIN_JOBS_JQ = "{total: .total_count, jobs: [.jobs[] | {name, status, conclusion}]}"
 #: A required job that ended so is red; any other non-success (cancelled, skipped) asks for a re-run.
 RED_CONCLUSIONS = ("failure", "timed_out")
+#: Check 10's group rule (#2919, the owner's ruling of 2026-11-12): while H's run is in progress, a
+#: PR whose checks ran on a base without H may still land as one of at most GROUP_MAX landings on
+#: the last verified commit G. GROUP_MAX - 1 commits may sit in G..H (H counted, G not).
+GROUP_MAX = 3
+#: `compare/G...H`, read at landing time by SHA: the commits (oldest first) and the net changed files.
+GROUP_JQ = (
+    "{status, ahead: .ahead_by, behind: .behind_by, commits: [.commits[].sha], "
+    "files: [.files[] | [.filename, .previous_filename]]}"
+)
+#: The compare API lists at most 300 files; a listing that long may be cut, so it refuses.
+COMPARE_FILES_CAP = 300
+#: Set on the PR record when the group rule admitted it: `land` re-reads main's head before the merge.
+GROUP_TIP = "_group_tip"
 FIXES_RED_MAIN = "fixes-red-main"
 UNVERIFIED = (
     "Merge main and re-run, or wait for main's run; the fix or the revert of a red main lands "
@@ -524,24 +570,47 @@ def _card_paths(body: str, real: Real | None = None) -> list[str] | None:
     return paths if found else None
 
 
-def _amendment_paths(
-    text: str, card: int, real: Real | None = None, skipped: list[tuple[str, str]] | None = None
-) -> list[str]:
-    """The paths a `**Card amendment` comment adds. A negated line adds none, nor do
-    the lines it governs (#1872). Every exclusion ends at a heading or a bold label;
-    the widest one in force wins, and a narrower negation inside it never shortens it.
+def _opening_paths(line: str, real: Real | None = None) -> list[str]:
+    """The path a list item opens with: the item's first backticked span, when the line is
+    a list item ("- ", "* " or "1. ") whose text starts with that span (`path::symbol` is
+    `path`). Empty for every other line, and for a first span that is not a path."""
+    lead = _LEADING_SPAN.match(line)
+    if lead is None:
+        return []
+    close = line.find("`", lead.end())
+    return _line_paths(line[: close + 1], real) if close > 0 else []
 
-    - LIST: a negated line ending in ":", or a negated bullet that names no path ("Do
+
+def _amendment_paths(
+    text: str,
+    card: int,
+    real: Real | None = None,
+    skipped: list[tuple[str, str]] | None = None,
+    ignored: list[tuple[str, str]] | None = None,
+) -> list[str]:
+    """The paths a `**Card amendment` comment adds (#3025). A path counts only when its
+    backtick span opens a list item; the bullet's trailing prose, negation words included,
+    does not affect it. A backticked path anywhere else (prose, mid-bullet, after a lead-in
+    word) adds nothing. The card body's Owned parsing (`_card_paths`) is unchanged.
+
+    A negation still drops the lines it governs (#1872). Every exclusion ends at a heading
+    or a bold label; the widest one in force wins, and a narrower negation inside it never
+    shortens it. A line that opens with a path is always added; if its prose negates,
+    it then drops what it governs, as below (a trailing ":" makes it a LIST, otherwise an ITEM):
+
+    - LIST: a negated line ending in ":", or a negated bullet that opens with no path ("Do
       not touch the following"), opens a list. It runs across blank lines and ends at
       the first non-list line that follows a blank line.
     - PARA: any other negated line that is not a bullet excludes to the paragraph's
       end (a blank line).
-    - ITEM: a negated bullet that names a path excludes itself, its sub-items and its
-      unmarked continuation lines, up to a sibling or shallower bullet or a blank line,
-      so one "do not" bullet does not drop the siblings of a prose amendment.
+    - ITEM: a negated bullet that names a path ("- Do not touch `c.py`", or "- `a.py` (never touch
+      the helpers below)", which still adds `a.py`) excludes itself (unless it opens with its path), its sub-items and its unmarked continuation lines, up to a sibling
+      or shallower bullet or a blank line.
 
-    `skipped`, when given, collects (line, negation word) for each skipped line that has
-    a backtick (the lines check 9 prints); the word is the governing line's (`--check-card`)."""
+    `skipped`, when given, collects (line, negation word) for each dropped line that opens
+    with a path (the only ones that could have added one; check 9 prints every dropped line). `ignored` collects (path, reason) for each
+    backticked path that added nothing: "prose path", or 'dropped by negated lead-in "<word>"'
+    (`--check-card`)."""
     paths: list[str] = []
     mode, depth, after_blank = _FREE, -1, False
     word = ""
@@ -558,7 +627,10 @@ def _amendment_paths(
         after_blank = not line.strip()
         if mode == _PARA and line.rstrip(" *").endswith(":"):
             mode = _LIST  # a negated paragraph whose last line ends in ":" introduces a negated list (#2326)
+        opening = _opening_paths(line, real)
         found_word = _negation_word(line)
+        negated_opening = bool(opening) and found_word is not None
+        before = mode
         if found_word is not None:
             bullet = _BULLET.match(line) is not None
             # Without `real`: "- Do not touch `FORK_PIN`" still names no path, so it keeps
@@ -569,13 +641,34 @@ def _amendment_paths(
                 new = _ITEM if bullet else _PARA
             if new > mode:
                 mode, depth, word = new, indent, found_word
+        if negated_opening and before == _FREE:
+            # "- `a.py` ... do not touch these:" adds its own path, then drops the list it governs;
+            # without the colon it drops its own sub-items (the ITEM rule). Siblings stay (#3025)
+            paths += opening
+            if ignored is not None:
+                rest = _line_paths(line, real)
+                for path in opening:
+                    rest.remove(path)
+                ignored.extend((p, "prose path") for p in rest)
+            continue
         if mode != _FREE:
             if "`" in line:
-                if skipped is not None:
-                    skipped.append((line.strip(), word))
+                if opening:  # a path-opening bullet that a list drop took: it could have added its path
+                    if skipped is not None:
+                        skipped.append((line.strip(), word))
+                    reason = f'dropped by negated lead-in "{word}"'
+                else:  # a prose line adds nothing either way
+                    reason = "prose path"
+                if ignored is not None:
+                    ignored.extend((p, reason) for p in _line_paths(line, real))
                 print(f"check 9: skipped a negated card-amendment line on #{card}: {line.strip()!r}")
             continue
-        paths += _line_paths(line, real)
+        paths += opening
+        if ignored is not None:
+            rest = _line_paths(line, real)
+            for path in opening:
+                rest.remove(path)
+            ignored.extend((p, "prose path") for p in rest)
     return paths
 
 
@@ -697,19 +790,29 @@ def check_card(card: int, gh: Runner, git: Runner) -> int:
         return 1
     allowed = list(owned)
     skipped: list[tuple[str, str]] = []
+    reports: list[tuple[list[str], list[tuple[str, str]]]] = []
     for comment in issue.get("comments") or []:
         text = _text(comment.get("body"))
         if _AMENDMENT.match(text):
-            allowed += _amendment_paths(text, card, real, skipped)
+            ignored: list[tuple[str, str]] = []
+            added = _amendment_paths(text, card, real, skipped, ignored)
+            allowed += added
+            reports.append((added, ignored))
     print(f"check-card: slice card #{card}'s Owned set ({len(allowed)} path(s)):")
     for path in allowed:
         print(f"  {path}")
+    for number, (added, ignored) in enumerate(reports, 1):
+        print(f"check-card: amendment {number} adds {len(added)} path(s):")
+        for path in added:
+            print(f"  added {path}")
+        for path, reason in ignored:
+            print(f"  ignored {path} ({reason})")
     if skipped:
-        print(f"check-card: {len(skipped)} amendment line(s) skipped by a negation:")
+        print(f"check-card: {len(skipped)} amendment line(s) dropped by a negation:")
         for line, word in skipped:
             print(f"  skipped (negation {word!r}): {line}")
-        print("check-card: a skipped amendment line may hold paths the card meant to own; "
-              "restate the amendment as a bold label plus a bullet list of paths (#2326).")
+        print("check-card: a dropped amendment line may hold paths the card meant to own; "
+              "restate the amendment as a bold label plus a bullet list that opens each item with its path (#2326).")
         return 1
     if not allowed:
         print(f"check-card: #{card} names no backticked path, so check 9 would refuse it.")
@@ -770,14 +873,80 @@ def _check_bases(number: int, pr: dict[str, Any], gh: Runner, check_no: int) -> 
     return bases
 
 
-def check_main_green(number: int, pr: dict[str, Any], gh: Runner, bases: Bases) -> None:
-    """Check 10 (lesson #1877; T's ruling on #1877). main's latest completed Tests run is
-    green, and a run still in progress on main's head H admits only a PR whose required
-    checks ran on a base that contains H. #1858 and #1866 landed while 3af31061's run was
-    in progress, on bases without it, and the latest completed run (6f66fd23) was green."""
+def _group(
+    number: int, rows: list[FileRow], gh: Runner, order: list[str], latest: str,
+    reported: dict[str, list[tuple[int, str, str, str | None]]], by_sha: dict[str, list[dict[str, Any]]],
+) -> tuple[bool, str]:
+    """Check 10's group rule (#2919). G (`latest`) is green, which the caller has proved. The PR
+    lands as landing k+1 on G, where k commits sit in G..H, when every Tests run in G..H is a
+    first attempt still queued or in progress (a queued run with a finished job is a re-run),
+    no required job in G..H has completed with anything but success, k + 1 <= GROUP_MAX, and its
+    files are disjoint from G..H's. A run that completed in G..H never had all five required jobs
+    finish (else its commit would be G), so it proves nothing and refuses: startup_failure, a
+    missing job. G..H is read now, by SHA, and must agree with main's commit order. Returns
+    (admitted, the verdict for the message)."""
+    k = order.index(latest)
+    tip = order[0]
+    where = f"G = {latest[:12]} (green), {k} commit(s) in G..H, so this landing would be {k + 1} of {GROUP_MAX}"
+    for sha in reversed(order[:k]):
+        for run in by_sha.get(sha, []):
+            said = f"the Tests run on {sha[:12]} ({run['id']})"
+            if run.get("run_attempt") != 1:  # a re-run of failed jobs lists only its own attempt's jobs
+                return False, (f"{where}; refused: {said} is on attempt {run.get('run_attempt')}, and a "
+                               f"re-run can hide an earlier attempt's failure; files: not read")
+            if run["status"] not in ("queued", "in_progress"):
+                return False, (f"{where}; refused: {said} is {run['status']} ({run['conclusion']}) without "
+                               f"all five required jobs green, so it proves nothing; files: not read")
+            if run["status"] == "queued" and any(job[0] == run["id"] and job[2] == "completed"
+                                                 for job in reported.get(sha, [])):
+                return False, (f"{where}; refused: {said} is queued with jobs already completed, which is a "
+                               f"re-run; files: not read")
+        for run_id, name, status, conclusion in reported.get(sha, []):
+            if status == "completed" and conclusion != "success":
+                return False, (f"{where}; refused: required job {name!r} of the Tests run on {sha[:12]} "
+                               f"({run_id}) already reported {conclusion}, not success; files: not read")
+    if k + 1 > GROUP_MAX:
+        return False, f"{where}; refused: the group on G is full; files: not read"
+    try:
+        listing = json.loads(gh(["api", f"repos/{{owner}}/{{repo}}/compare/{latest}...{tip}", "--jq", GROUP_JQ]))
+        commits = [str(sha) for sha in listing["commits"]]
+        if (listing["status"], int(listing["ahead"]), int(listing["behind"]), commits) != (
+            "ahead", k, 0, list(reversed(order[:k]))
+        ):
+            raise ValueError(
+                f"compare reads {listing['status']}, ahead {listing['ahead']}, behind {listing['behind']}, "
+                f"commits {[sha[:12] for sha in commits]}, but main's order puts {k} commit(s) after G"
+            )
+        changed = {str(name) for pair in listing["files"] for name in pair if name}
+        if not changed or len(listing["files"]) >= COMPARE_FILES_CAP:
+            raise ValueError(f"G..H lists {len(listing['files'])} file(s), which cannot be judged")
+    except _UNREADABLE as exc:
+        raise LandError(
+            f"check 10: main unverified at {tip[:12]}: G..H ({latest[:12]}...{tip[:12]}) could not be read "
+            f"({exc!r}), so #{number} cannot land in a group on G. {UNVERIFIED}"
+        ) from exc
+    mine = {name for row in rows for name in (row[0], row[2]) if name}
+    shared = sorted(mine & changed)
+    if shared:
+        more = f" and {len(shared) - 1} more" if len(shared) > 1 else ""
+        return False, f"{where}; refused: files overlap G..H on {shared[0]}{more}"
+    return True, f"{where}; files: disjoint from G..H's {len(changed)}"
+
+
+def check_main_green(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner, bases: Bases) -> None:
+    """Check 10 (lesson #1877; T's ruling on #1877; the group rule, #2919). main's latest
+    completed Tests run, on G, is green. While the run on main's head H is in progress, a PR
+    lands when its required checks ran on a base that contains H, or by the group rule
+    (`_group`): at most GROUP_MAX landings on G, only while every run in G..H is a first
+    attempt still pending with no required job finished other than green, and each
+    file-disjoint from G..H. #1858 and #1866 landed while
+    3af31061's run was in progress, on bases without it; 3af31061's lock-tests had already
+    failed, so the group rule refuses both too."""
     if FIXES_RED_MAIN in {lab["name"] for lab in pr["labels"]}:
         print(f"check 10: OVERRIDDEN by the {FIXES_RED_MAIN!r} label; main's state is not read.")
         return
+    #: The required jobs read for each commit newer than G, so the group rule needs no second read.
+    reported: dict[str, list[tuple[int, str, str, str | None]]] = {}
     try:
         order = json.loads(gh(["api", MAIN_COMMITS, "--jq", MAIN_COMMITS_JQ]))
         if not order or not all(re.fullmatch(r"[0-9a-f]{40}", str(sha)) for sha in order):
@@ -802,6 +971,7 @@ def check_main_green(number: int, pr: dict[str, Any], gh: Runner, bases: Bases) 
             if {job[1] for job in found} >= set(REQUIRED_CHECKS) and all(job[2] == "completed" for job in found):
                 latest, jobs = sha, [(run_id, name, conclusion) for run_id, name, _status, conclusion in found]
                 break
+            reported[sha] = found
     except _UNREADABLE as exc:
         raise LandError(f"check 10: main unverified: its Tests runs could not be read ({exc!r}). {UNVERIFIED}") from exc
     if latest is None:
@@ -837,15 +1007,43 @@ def check_main_green(number: int, pr: dict[str, Any], gh: Runner, bases: Bases) 
         except _UNREADABLE as exc:
             raise LandError(f"check 10: main unverified at {tip[:12]}: compare with {base[:12]} failed ({exc!r}). {UNVERIFIED}") from exc
         if status not in ("ahead", "identical"):
-            raise LandError(
-                f"check 10: main unverified at {tip[:12]}: its Tests run is in progress and #{number}"
-                f"'s required checks in {where} ran on base {base[:12]}, which does not contain it "
-                f"(compare: {status}). {UNVERIFIED}"
+            admitted, verdict = _group(number, rows, gh, order, latest, reported, by_sha)
+            if not admitted:
+                pending = all(run["status"] in ("queued", "in_progress") for run in by_sha[tip])
+                state = "is in progress" if pending else "ended without all five required jobs green"
+                raise LandError(
+                    f"check 10: main unverified at {tip[:12]}: its Tests run {state} and #{number}"
+                    f"'s required checks in {where} ran on base {base[:12]}, which does not contain it "
+                    f"(compare: {status}). {UNVERIFIED} Group rule (#2919): {verdict}."
+                )
+            pr[GROUP_TIP] = tip
+            print(
+                f"check 10: main's Tests run on {tip[:12]} is in progress and #{number}'s checks ran on a base "
+                f"without it; admitted by the group rule (#2919): {verdict}."
             )
+            return
     print(
         f"check 10: main's Tests run on {tip[:12]} is in progress; the latest completed one "
         f"({latest[:12]}) is green, and the PR's checks ran on a base that contains {tip[:12]}."
     )
+
+
+def confirm_group_tip(number: int, pr: dict[str, Any], gh: Runner) -> None:
+    """Before a merge the group rule admitted, main's head must still be the H check 10 judged:
+    a landing between check 10 and the merge would leave G..H, and so the group size and the
+    disjointness, stale (#2919). A failed read refuses."""
+    tip = pr.get(GROUP_TIP)
+    if tip is None:
+        return
+    try:
+        now = json.loads(gh(["api", MAIN_COMMITS, "--jq", MAIN_COMMITS_JQ]))[0]
+    except _UNREADABLE as exc:
+        raise LandError(f"check 10: main's head could not be re-read before the merge ({exc!r}); refusing.") from exc
+    if now != tip:
+        raise LandError(
+            f"check 10: main moved from {str(tip)[:12]} to {str(now)[:12]} after check 10 admitted #{number} by "
+            f"the group rule, so its picture of G..H is stale; run land_pr again (#2919)."
+        )
 
 
 def check_fresh_base(number: int, rows: list[FileRow], gh: Runner, bases: Bases) -> None:
@@ -882,40 +1080,105 @@ def check_fresh_base(number: int, rows: list[FileRow], gh: Runner, bases: Bases)
 #: Check 12: the file a pin bump edits, and the fork lane that must have run on the new pin.
 PIN_FILE = "FORK_PIN"
 LIVE_FORK_RUNS_JSON = "databaseId,status,conclusion,headSha,url"
+#: #3023 (#2889 -> #2907): fork-only changes, which the stock required lanes skip. A file under
+#: FORK_TESTS, a `.py` under tests/ whose content applies the `ladruno_fork` marker, or a src/
+#: path containing "ladruno" (any case) needs the same green dispatch as a pin bump.
+FORK_TESTS = "tests/opensees/integration_ladruno/"
+FORK_MARK = re.compile(r"\bmark\.ladruno_fork\b")
 
 
-def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner) -> None:
-    """Check 12 (#2138 -> #2143). A PR that changes ``FORK_PIN`` needs a ``live-fork`` run with
-    ``event == workflow_dispatch`` on its head SHA, completed and successful. Neither ``scope-ok``
-    nor ``human-gate`` overrides it, and it applies to every PR. A PR that leaves the pin alone
-    makes no run-list call."""
-    if not any(PIN_FILE in (row[0], row[2]) for row in rows):
-        print(f"check 12: #{number} does not change {PIN_FILE}; no live-fork dispatch is required.")
-        return
+def _fork_only(rows: list[FileRow], head: str, git: Runner) -> list[str]:
+    """The changed paths only the fork lane exercises. Either name of a rename triggers. A test's
+    content is read at the head, or on origin/main (fetched by `main`) for a name the PR deletes
+    or renames away. The reads are local `git show`s; one that fails refuses."""
+    hits: list[str] = []
+    for path, status, previous, _changes, _patch in rows:
+        for name in (path, previous):
+            if not name or name in hits:
+                continue
+            if name.startswith(FORK_TESTS) or (name.startswith("src/") and "ladruno" in name.lower()):
+                hits.append(name)
+                continue
+            if not (name.startswith("tests/") and name.endswith(".py")):
+                continue
+            rev = head if name == path and status != "removed" else "origin/main"
+            try:
+                text = git(["show", f"{rev}:{name}"])
+            except _UNREADABLE as exc:
+                raise LandError(
+                    f"check 12: {name} could not be read at {rev[:12]} ({exc!r}), so whether it applies "
+                    f"the ladruno_fork marker is unknown; refusing."
+                ) from exc
+            if FORK_MARK.search(text):
+                hits.append(name)
+    return hits
+
+
+def check_fork_pin(number: int, pr: dict[str, Any], rows: list[FileRow], gh: Runner, git: Runner) -> None:
+    """Check 12 (#2138 -> #2143; #2889 -> #2907). A PR that changes ``FORK_PIN``, or a fork-only
+    test or src file (`_fork_only`), needs a ``live-fork`` run with ``event == workflow_dispatch``
+    on its head SHA, completed and successful. No label overrides it (``scope-ok``,
+    ``human-gate`` and ``fixes-red-main`` included), and it applies to every PR. A PR that
+    changes none of these makes no run-list call."""
     head = pr["headRefOid"]
     dispatch = f"gh workflow run live-fork.yml --ref {pr['headRefName']}"
+    if any(PIN_FILE in (row[0], row[2]) for row in rows):
+        what, proof, again = PIN_FILE, "A new pin is proven by the fork lane", ""
+    else:
+        fork = _fork_only(rows, head, git)
+        if not fork:
+            print(f"check 12: #{number} does not change {PIN_FILE}; no live-fork dispatch is required.")
+            return
+        shown = ", ".join(fork[:5]) + (f" (+{len(fork) - 5} more)" if len(fork) > 5 else "")
+        what = f"fork-only files ({shown})"
+        proof = "Fork-only tests and src skip on the stock lanes (#2889 -> #2907); they are proven by the fork lane"
+        again = f" #{number} changes {what}; start a run with `{dispatch}`."
     listing = gh(["run", "list", "--workflow", "live-fork.yml", "--event", "workflow_dispatch",
                   "--commit", head, "--json", LIVE_FORK_RUNS_JSON])
     runs = [run for run in json.loads(listing) if run.get("headSha") == head]
     if not runs:
         raise LandError(
-            f"check 12: #{number} changes {PIN_FILE} but no live-fork workflow_dispatch run exists on {head[:12]}. "
-            f"A new pin is proven by the fork lane, which is not a required check (#2138 -> #2143). Start one "
+            f"check 12: #{number} changes {what} but no live-fork workflow_dispatch run exists on {head[:12]}. "
+            f"{proof}, which is not a required check (#2138 -> #2143). Start one "
             f"with `{dispatch}`, wait for it to finish green, then land."
         )
     latest = max(runs, key=lambda run: run.get("databaseId") or 0)  # only the newest dispatch counts
     if latest.get("status") != "completed":
         raise LandError(
             f"check 12: the newest live-fork dispatch run on {head[:12]} is {latest.get('status')}, not completed "
-            f"({latest.get('url')}). Pending is a refusal, not a wait."
+            f"({latest.get('url')}). Pending is a refusal, not a wait.{again}"
         )
     if latest.get("conclusion") != "success":
         raise LandError(
             f"check 12: the newest live-fork dispatch run on {head[:12]} concluded {latest.get('conclusion')} "
-            f"({latest.get('url')}); a {PIN_FILE} change needs it green. Re-run it with "
+            f"({latest.get('url')}); a {what} change needs it green. Re-run it with "
             f"`gh run rerun {latest.get('databaseId')}` or start a new one with `{dispatch}`."
         )
-    print(f"check 12: {PIN_FILE} changed; live-fork dispatch run {latest.get('url')} is green on {head[:12]}.")
+    print(f"check 12: {what} changed; live-fork dispatch run {latest.get('url')} is green on {head[:12]}.")
+
+
+def _app_path(name: str) -> bool:
+    """Whether git's pathspec list APP_PATHS matches `name`: a spec matches itself and, as a
+    leading directory, everything under it; a spec with `*` is a git wildcard pathspec, whose
+    `*` also crosses `/` (`*.ladruno` matches `a/b/x.ladruno`, not `x.ladruno.bak`)."""
+    for spec in APP_PATHS:
+        if "*" in spec:
+            if fnmatch.fnmatchcase(name, spec):
+                return True
+        elif name == spec.rstrip("/") or name.startswith(spec.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def _required_checks(number: int, rows: list[FileRow]) -> tuple[str, ...]:
+    """Check 6's list: REQUIRED_CHECKS, plus APP_CHECK when a changed file is in
+    APP_PATHS. Both names of a rename count, and a deletion is a changed file (#2864)."""
+    app = sorted({name for row in rows for name in (row[0], row[2]) if name and _app_path(name)})
+    if not app:
+        return REQUIRED_CHECKS
+    more = f" and {len(app) - 1} more" if len(app) > 1 else ""
+    print(f"check 6: #{number} changes {app[0]}{more}, which the {APP_CHECK} lane checks; {APP_CHECK!r} is required too.")
+    return (*REQUIRED_CHECKS, APP_CHECK)
 
 
 def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
@@ -956,11 +1219,13 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
     runs: dict[str, list[dict[str, Any]]] = {}
     for run in pr["statusCheckRollup"]:  # every run per name: a rerun does not hide a failure
         runs.setdefault(run.get("name") or run.get("context"), []).append(run)
-    for name in REQUIRED_CHECKS:
+    for name in _required_checks(number, rows):
         if name not in runs:
+            why = (f" #{number} changes a path the {APP_CHECK} lane checks, so that lane must be green "
+                   f"on its head (#2864)." if name == APP_CHECK else "")
             raise LandError(
                 f"check 6: required check {name!r} has not reported on {head[:12]}. Zero "
-                f"checks visible means a conflict or a stalled Actions, not green (#630)."
+                f"checks visible means a conflict or a stalled Actions, not green (#630).{why}"
             )
         for run in runs[name]:
             if not _green(run):
@@ -978,9 +1243,9 @@ def check(number: int, gh: Runner, git: Runner) -> dict[str, Any]:
             found.append(_check_bases(number, pr, gh, check_no))
         return found[0]
 
-    check_main_green(number, pr, gh, bases)
+    check_main_green(number, pr, rows, gh, bases)
     check_fresh_base(number, rows, gh, bases)
-    check_fork_pin(number, pr, rows, gh)
+    check_fork_pin(number, pr, rows, gh, git)
     return pr
 
 
@@ -1110,6 +1375,7 @@ def land(
     if dry_run:
         print(f"dry-run: #{number} passes checks 1-12 at {head[:12]}; not merging.")
         return 0
+    confirm_group_tip(number, pr, gh)
     gh(["pr", "merge", str(number), "--squash", "--match-head-commit", head])  # never retried
     return prove(number, gh, git, sleep, head, pr["headRefName"])
 

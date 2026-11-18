@@ -35,8 +35,29 @@
 //   other encoding, or a JSON value of the wrong shape), never coerced. Lineage
 //   exists only when both hashes are present; pairing itself is the next slice.
 //
+// - particles (ADR 0134 D3): at `INFO@FORMAT_MINOR_VERSION >= 2` a stage's
+//   MODEL/PARTICLES and RESULTS/ON_PARTICLES are read by reader/ladrunoParticles.ts
+//   (`particles`), and the stage lists its ON_PARTICLES bucket in `unread` as
+//   state/results.ts's PARTICLES_UNREAD (the FE stage does not read it). Below
+//   minor 2 a particle group is not read, and the index warns (C2-MINOR); a part
+//   file that holds one is refused by name (C2-PART: Contract 2 is serial only).
+// - a killed fork run opens by the reader rule of the fork's 232a §2.5 (reader/h5open.ts
+//   `openH5ByRule`: plain, else SWMR-read, else a repaired copy; never the file itself);
+//   `opened` says which step, and the particle stages follow the stage rule for it.
+// - a killed recorder run (M2-S8 #3003; ladruno_schema_v1.md §7b.2 at the release
+//   ladruno-v20261116, the FORK_PIN): in a file without particles, a LAST stage that does
+//   not read was torn while laid out and is skipped after a plain open or a repair of a
+//   0x01 file, and refused after step 2 (SWMR-read, or a repaired copy of a 0x05 file);
+//   an earlier stage that does not read refuses the file. On a killed file (superblock
+//   flags other than 0x00) every stage is cut to T', the fewest rows any of its streaming
+//   results holds in DATA, TIME or STEP (`committedSteps`, the fork's
+//   `ladruno_format.committed_steps`; Python's `_ladruno_open.committed_steps`). A cleanly
+//   closed file is read as it is. h5wasm takes no file lock, so a run that is still
+//   writing reads as the contract's locking-off SWMR reader reads it: its committed prefix.
+//
 // Browser-safe: no Node import.
 
+import { PARTICLES_UNREAD } from "../state/results.ts";
 import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
@@ -45,13 +66,16 @@ import { uniqueNodeIds } from "./ladrunoChecks.ts";
 import { spatialDimOf } from "./ladrunoInfo.ts";
 import { collectModelLocalAxes, collectStepLocalAxes, resolveLocalAxes, rowOf, sortedUniqueIds, stationLocalAxes, warnModelLocalAxes, type FrameRows, type LocalAxesReads, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 import { readColumnsBySlab } from "./ladrunoNodal.ts";
+import { isH5Error, LadrunoParticles, particleEvidence, type PCtors, type PGroup } from "./ladrunoParticles.ts";
 import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
-import { openH5 } from "./h5open.ts";
+import { openH5ByRule, type H5RuleOpenable, type OpenStep } from "./h5open.ts";
 
 export { quaternionToZRec, type LocalAxesSource } from "./ladrunoLocalAxes.ts";
 
 /** `INFO@GENERATOR` of every file this reader opens (schema §2, "reader branch key"). */
 export const LADRUNO_GENERATOR = "Ladruno";
+/** The first `INFO@FORMAT_MINOR_VERSION` whose stages may hold particles (the fork's contract §2.1: the minor is the feature flag). */
+export const LADRUNO_PARTICLES_MINOR = 2;
 /** The `INFO@FORMAT_VERSION` values this reader opens; equal to Python's `LADRUNO_SUPPORTED_FORMAT_VERSIONS`. */
 export const LADRUNO_SUPPORTED_FORMAT_VERSIONS: readonly number[] = [1] as const;
 
@@ -66,10 +90,14 @@ const MODAL_GROUPS = ["MODES_OF_VIBRATION(U)", "MODES_OF_VIBRATION(R)"];
 const UNREAD_BUCKETS = new Set(["ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS", "ENVELOPES"]);
 const STAGE_CHILDREN = new Set(["MODEL", "RESULTS"]);
 
-/** The consumer-owned attributes of schema §7b.1, in its order. */
-export const PROVENANCE_ATTRS = ["model_hash", "fem_hash", "stage_names", "element_index_space", "unsupported", "writer", "units"] as const;
+/**
+ * The consumer-owned attributes of schema §7b.1, in its order, then
+ * `stage_display_names` (W4c #2823): the names a `stage_names=` rename shows
+ * in place of the program's. Binding never comes from them.
+ */
+export const PROVENANCE_ATTRS = ["model_hash", "fem_hash", "stage_names", "element_index_space", "unsupported", "writer", "units", "stage_display_names"] as const;
 export type ProvenanceAttr = (typeof PROVENANCE_ATTRS)[number];
-const PROVENANCE_JSON_LISTS = new Set<ProvenanceAttr>(["stage_names", "unsupported"]);
+const PROVENANCE_JSON_LISTS = new Set<ProvenanceAttr>(["stage_names", "unsupported", "stage_display_names"]);
 
 const H5T_INTEGER = 0;
 const H5T_FLOAT = 1;
@@ -84,6 +112,18 @@ export class LadrunoError extends Error {
   constructor(kind: LadrunoErrorKind, message: string) {
     super(message);
     this.kind = kind;
+  }
+}
+
+/**
+ * A group or dataset the layout names is absent (a `layout` refusal, as before). Apart from
+ * other `layout` refusals only so that a particle file's stage rule can tell "this stage's
+ * objects are missing or do not read" (a stage torn while laid out, or damage: 232a §2.5)
+ * from a schema refusal (a bad `KIND`, a repeated node id), which still refuses the file.
+ */
+export class LadrunoMissingError extends LadrunoError {
+  constructor(message: string) {
+    super("layout", message);
   }
 }
 
@@ -115,7 +155,7 @@ interface LFile extends LGroup {
 export type ProvenanceFact =
   | { state: "present"; value: string }
   | { state: "absent" }
-  /** not a scalar variable-length UTF-8 string, or (stage_names, unsupported) not a JSON array of strings */
+  /** not a scalar variable-length UTF-8 string, or (stage_names, unsupported, stage_display_names) not a JSON array of strings */
   | { state: "malformed"; reason: string };
 
 export type LadrunoProvenance =
@@ -126,6 +166,8 @@ export type LadrunoProvenance =
       attrs: Record<ProvenanceAttr, ProvenanceFact>;
       /** `stage_names` decoded, or null when it is not present and well formed */
       stageNames: string[] | null;
+      /** `stage_display_names` decoded (shown in place of `stage_names`, never matched), or null when it is not present and well formed */
+      stageDisplayNames: string[] | null;
       /** `unsupported` decoded, or null when it is not present and well formed */
       unsupported: string[] | null;
       /** `units` decoded when it is a valid `UnitSystemId`, else null */
@@ -134,9 +176,13 @@ export type LadrunoProvenance =
       other: string[];
     };
 
-/** The pairing hashes, copied byte-equal from a model.h5's /meta/lineage by the stamp. */
+/**
+ * The pairing hashes, copied byte-equal from a model.h5's /meta/lineage by the stamp.
+ * `modelHash` is null for a stamp against a bare FEMData archive (`fem.to_h5`), which
+ * has no OpenSees model to hash: it pairs by `fem_hash` alone (ADR 0133 D1, D2).
+ */
 export interface LadrunoLineage {
-  modelHash: string;
+  modelHash: string | null;
   femHash: string;
 }
 
@@ -169,7 +215,7 @@ export interface LadrunoIndex {
   fileKinds: Record<string, string>;
   modes: LadrunoMode[];
   provenance: LadrunoProvenance;
-  /** both hashes present and well formed, else null with `lineageReason` */
+  /** a well-formed `fem_hash`, with `model_hash` when stamped (well formed or the file is unpaired), else null with `lineageReason` */
   lineage: LadrunoLineage | null;
   lineageReason: string | null;
   /** Consistent unit system stamped on `INFO/PROVENANCE@units`, or null when absent/malformed */
@@ -255,6 +301,32 @@ export interface LadrunoLocalAxes {
   /** (nElements,) provenance of each element's recorded frame (`"step_local_axes"`, `"model_local_axes"`, or `null` when unrecorded). */
   sources: (LocalAxesSource | null)[];
 }
+
+/**
+ * One step of a stage's zero-length springs: the 2-node elements whose ends
+ * coincide in `MODEL/NODES`, read from their global `force` bucket
+ * (`P<node>_<dof>`, node-major). The force is node j's translational
+ * resisting force, so it needs no spring frame: a skewed (`-orient`) or an
+ * interface spring reads the same as an axis-aligned one.
+ */
+export interface LadrunoSpringStep {
+  /** (n,) element ids */
+  elementIds: Float64Array;
+  /** (n * 2,) end nodes `[iNode, jNode]` per spring, from `MODEL/ELEMENTS/<group>/CONNECTIVITY` */
+  nodes: Float64Array;
+  /** (n * 3,) node j's force along global x, y, z (0 past the spatial dimension) */
+  force: Float64Array;
+  time: number;
+}
+
+/** A `force` bucket's springs: its DATA, the bucket rows that are springs, and node j's translation columns (-1: none). */
+interface SpringBucket {
+  dataDs: LDataset;
+  rows: number[];
+  cols: [number, number, number];
+  ids: Float64Array;
+  nodes: Float64Array;
+}
 /** Where one component of one stage lives: a 3-D DATA[T, n, c] or a 2-D MODE_<k>[n, c]. */
 interface Column {
   path: string;
@@ -267,6 +339,62 @@ interface Column {
  * opens one file of a partitioned set, for reader/ladrunoParts.ts only: the set
  * is what the app reads, never one part alone (#2188).
  */
+/** In a `tornSnapshots` skip set: every modes snapshot of the stage. */
+const ALL_SNAPSHOTS = "*";
+
+/** The `RESULTS` families whose result groups stream (schema §7.0). */
+const STREAMING_FAMILIES = ["ON_NODES", "ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS"];
+
+/**
+ * T' of one stage (schema §7b.2, the crash rule): the fewest rows any of its streaming results
+ * (a group holding a DATA dataset beside TIME and STEP, under RESULTS/ON_NODES, ON_ELEMENTS,
+ * ON_DOMAIN or ON_REGIONS; a modes result's DATA is a group, and is none) holds in DATA, TIME or
+ * STEP; `n` null for a stage with no streaming result. A stage that does not read, as the fork's
+ * `stage_report` reads it (any error while its groups are listed or a shape is read), is `why`.
+ * The fork's `ladruno_format.committed_steps`; Python's `_ladruno_open.committed_steps`.
+ */
+export function committedSteps(stage: LGroup, h5: ResultsH5): { n: number | null } | { why: string } {
+  const isGroup = (x: unknown): x is LGroup => x instanceof h5.Group;
+  const isDataset = (x: unknown): x is LDataset => x instanceof h5.Dataset;
+  const rows = (d: unknown, path: string): number => {
+    if (!isDataset(d)) throw new Error(`${path} is not a dataset`);
+    const shape = d.shape;
+    if (shape === null || shape.length < 1) throw new Error(`${path} has no row axis`);
+    return shape[0]!;
+  };
+  try {
+    let n: number | null = null;
+    if (!stage.keys().includes("RESULTS")) return { n };
+    const res = stage.get("RESULTS");
+    if (!isGroup(res)) throw new Error(`${stage.path}/RESULTS is not a group`);
+    for (const fam of STREAMING_FAMILIES) {
+      if (!res.keys().includes(fam)) continue;
+      const top = res.get(fam);
+      if (!isGroup(top)) throw new Error(`${res.path}/${fam} is not a group`);
+      const stack: LGroup[] = [top];
+      while (stack.length > 0) {
+        const g = stack.pop()!;
+        for (const name of g.keys()) {
+          const item = g.get(name);
+          if (!isGroup(item)) continue;
+          const keys = item.keys();
+          if (!keys.includes("DATA")) {
+            stack.push(item);
+            continue;
+          }
+          const data = item.get("DATA");
+          if (!isDataset(data) || !keys.includes("STEP") || !keys.includes("TIME")) continue;
+          const m = Math.min(rows(data, `${item.path}/DATA`), rows(item.get("TIME"), `${item.path}/TIME`), rows(item.get("STEP"), `${item.path}/STEP`));
+          n = n === null ? m : Math.min(n, m);
+        }
+      }
+    }
+    return { n };
+  } catch (err) {
+    return { why: (err instanceof Error ? err.message : String(err)).split("\n")[0]! };
+  }
+}
+
 export function openLadruno(h5: ResultsH5, path: string, opts: { part?: boolean } = {}): LadrunoFile {
   const base = path.split(/[\\/]/).pop() ?? path;
   const part = PART_FILE.exec(base);
@@ -276,11 +404,14 @@ export function openLadruno(h5: ResultsH5, path: string, opts: { part?: boolean 
       `${path} is part ${part.groups!.idx} of the partitioned set ${part.groups!.stem}.part-<N>.ladruno; this reader reads one file, not a part set`,
     );
   }
-  const f = openH5(h5, path) as unknown as LFile;
+  // The reader rule's open (232a §2.5, M2-S7 #2991): plain, else SWMR-read (flags 0x05),
+  // else a repaired copy (flags 0x01); a live writer's lock is an H5BusyError.
+  const opened = openH5ByRule(h5 as unknown as H5RuleOpenable<LFile>, path);
+  const f = opened.file;
   // h5wasm does not throw when HDF5 cannot open a file: it returns a File whose id is negative.
   if (Number(f.file_id) < 0) throw new LadrunoError("open", `HDF5 could not open ${path} (truncated, or not an HDF5 file)`);
   try {
-    return new LadrunoFile(h5, f, path, opts.part === true);
+    return new LadrunoFile(h5, f, path, opts.part === true, { step: opened.step, repaired: opened.repaired, flags: opened.flags });
   } catch (err) {
     f.close();
     throw err;
@@ -294,12 +425,35 @@ export class LadrunoFile {
   private readonly columns = new Map<string, Map<string, Column>>();
   private readonly nodeColumn = new Map<string, Map<number, number>>();
   private readonly gauss: LadrunoGauss;
+  /** Each stage's spring buckets, found once (`springBuckets`). */
+  private readonly springs = new Map<string, SpringBucket[]>();
+  /**
+   * The particle stages (ADR 0134 D3; reader/ladrunoParticles.ts), indexed at open
+   * and read by output on request; null below FORMAT_MINOR_VERSION 2, where a
+   * particle group is not read (the index warns).
+   */
+  readonly particles: LadrunoParticles | null;
+  /**
+   * The reader-rule step that opened the file (232a §2.5), whether `f` is a repaired copy (the
+   * user's file is never written), and the user's file's superblock flags at the open (null for
+   * a version-0/1 superblock).
+   */
+  readonly opened: { step: OpenStep; repaired: boolean; flags: number | null };
+  /** Whether the file's superblock says a writer never closed it (flags other than 0x00): its stages are cut to T' (schema §7b.2). */
+  readonly killed: boolean;
 
-  constructor(h5: ResultsH5, f: LFile, path: string, part = false) {
+  constructor(h5: ResultsH5, f: LFile, path: string, part = false, opened: { step: OpenStep; repaired: boolean; flags?: number | null } = { step: 1, repaired: false }) {
     this.h5 = h5;
     this.f = f;
+    this.opened = { step: opened.step, repaired: opened.repaired, flags: opened.flags ?? null };
+    this.killed = this.opened.flags !== null && this.opened.flags !== 0x00;
     this.gauss = new LadrunoGauss(h5, f, (kind, message) => new LadrunoError(kind, message));
     const warnings: string[] = [];
+    if (opened.step === 2) {
+      warnings.push(`${path}: a killed run (a plain open refuses it: superblock flags 0x05, or a stored end-of-allocation past the file's end), opened ${opened.repaired ? "through a repaired copy because SWMR-read refused it" : "SWMR-read"} (the reader rule's step 2, 232a §2.5); the file is not changed`);
+    } else if (opened.step === 3) {
+      warnings.push(`${path}: a run killed while a stage was laid out (superblock flags 0x01), opened through a repaired copy (the reader rule's step 3, 232a §2.5); the file is not changed`);
+    }
     const info = this.gate(path);
     const formatMinorVersion = optionalInt(info, "FORMAT_MINOR_VERSION") ?? 0;
     const formatVersion = optionalInt(info, "FORMAT_VERSION")!;
@@ -321,12 +475,111 @@ export class LadrunoFile {
       if (!STAGE_NAME.test(n)) throw new LadrunoError("layout", `/${n}: a MODEL_STAGE whose id is not an integer`);
     }
     stageNames.sort((a, b) => Number(STAGE_NAME.exec(a)![1]) - Number(STAGE_NAME.exec(b)![1]));
-    const hosts = stageNames.map((name, i) => this.readHost(this.group(f, name), `stage_${i}`, warnings));
-    const modes = this.layModes(hosts, warnings);
+    const stageGroups = stageNames.map((name, i) => ({ id: `stage_${i}`, group: this.group(f, name) }));
+    const ctors = h5 as unknown as PCtors;
+    // Which stages carry particles, from what survives damage (a torn stage's links may not list).
+    const evidence = stageGroups.map((s) => particleEvidence(s.group as unknown as PGroup, ctors));
+    // Each stage read as the fork's stage_report reads it (schema §7b.2): T', or why it does not read.
+    const reads = stageGroups.map((s) => committedSteps(s.group, this.h5));
+    const withParticles = stageGroups.filter((_s, i) => evidence[i] === true);
+    if (part && withParticles.length > 0) {
+      throw new LadrunoError(
+        "unsupported",
+        `${path} is one part of a partitioned run and ${withParticles.map((s) => s.group.path).join(", ")} holds particles; particle results are serial only (the fork's MPM contract §2.2, C2-PART)`,
+      );
+    }
+    const readsParticles = formatMinorVersion >= LADRUNO_PARTICLES_MINOR;
+    if (!readsParticles && withParticles.length > 0) {
+      warnings.push(
+        `${withParticles.map((s) => s.group.path).join(", ")} holds a particle group, and INFO@FORMAT_MINOR_VERSION is ${formatMinorVersion}: a file with particles writes minor >= ${LADRUNO_PARTICLES_MINOR} (C2-MINOR), so its particles are not read`,
+      );
+    }
+    // In a file with particles, a stage whose own groups do not read (a stage torn while laid out, or
+    // damage) never refuses the whole file: it becomes an empty host, and the stage rule of 232a §2.5
+    // decides (the particle stage rule below, or `hostRule` for an FE stage). A file without particles
+    // reads as before (its recorder rule, ladruno_schema_v1.md §7b.2, is #3003's).
+    const particleFile = readsParticles && withParticles.length > 0;
+    if (!particleFile) {
+      // The recorder file's stage rule (schema §7b.2, #3003); a particle file keeps 232a §2.5's below.
+      reads.forEach((r, i) => {
+        if (!("why" in r)) return;
+        const where = `${path} ${stageGroups[i]!.group.path.slice(1)}`;
+        if (this.opened.step === 2) {
+          throw new LadrunoError("layout", `${where} does not read in a file killed with SWMR armed (superblock flags 0x05, opened ${this.opened.repaired ? "through a repaired copy" : "SWMR-read"}), where every stage must read: corruption (schema §7b.2): ${r.why}`);
+        }
+        if (i < reads.length - 1) {
+          throw new LadrunoError("layout", `${where} does not read and is not the file's last stage, so it is corruption (schema §7b.2): ${r.why}`);
+        }
+        if (this.opened.flags === null) {
+          throw new LadrunoError("layout", `${where} does not read, and the file's superblock is not one the SWMR recorder writes, so the torn-last-stage rule does not apply: ${r.why}`);
+        }
+        warnings.push(`${where} was torn while it was laid out (the last stage of a killed run) and holds no committed step; it is skipped (schema §7b.2): ${r.why}`);
+      });
+      if (reads.length > 0 && "why" in reads[reads.length - 1]!) {
+        stageGroups.pop();
+        evidence.pop();
+        reads.pop();
+      }
+    }
+    // A killed file's stage stops at T'; a cleanly closed one is read as it is.
+    const cutOf = (i: number): number | null => {
+      const r = reads[i]!;
+      return this.killed && "n" in r ? r.n : null;
+    };
+    const hostFailures = new Map<string, string>();
+    const hosts = stageGroups.map((s, i) => {
+      if (!particleFile) return this.readHost(s.group, s.id, warnings, readsParticles, cutOf(i));
+      try {
+        const h = this.readHost(s.group, s.id, warnings, readsParticles, cutOf(i));
+        if (h.onNodes) this.discoverModes(h.onNodes, []);
+        return h;
+      } catch (err) {
+        // Only a read failure (h5wasm's plain Error) or a missing object marks a stage whose groups do not
+        // read; a schema or contract refusal (a bad KIND, a repeated node id, ...) refuses the file as before.
+        if (!(err instanceof LadrunoMissingError) && !isH5Error(err)) throw err;
+        hostFailures.set(s.id, err.message);
+        return this.emptyHost(s.group, s.id, err.message, evidence[i] !== false);
+      }
+    });
+    const modes = this.layModes(hosts, warnings, path);
     const stages: StageInfo[] = [];
     for (const h of hosts) {
       stages.push(h.stage);
       for (const m of modes.stages) if (m.host === h.stage.id) stages.push(m.stage);
+    }
+    this.particles = readsParticles
+      ? new LadrunoParticles(ctors, f as unknown as PGroup, stageGroups.map((s, i) => ({ id: s.id, group: s.group as unknown as PGroup, fileKind: hosts[i]!.fileKind })), dim, opened.step)
+      : null;
+    for (const r of this.particles?.refused ?? []) {
+      warnings.push(`${r.group}: its particles are refused and not read: ${r.reason}`);
+      // PARTICLES_UNREAD says the particles read (state/results.ts `particlesOnly`); a refused stage says why it did not.
+      const unread = hosts.find((h) => h.stage.id === r.stageId)!.stage.unread;
+      const at = unread.indexOf(PARTICLES_UNREAD);
+      if (at >= 0) unread[at] = `ON_PARTICLES (particles refused, not read: ${r.reason})`;
+    }
+    for (const s of this.particles?.skipped ?? []) {
+      // The last stage of a killed run, torn while laid out (232a §2.5): named, holding no output.
+      warnings.push(`${s.group}: its particles are skipped: ${s.reason}`);
+      const unread = hosts.find((h) => h.stage.id === s.stageId)!.stage.unread;
+      const at = unread.indexOf(PARTICLES_UNREAD);
+      if (at >= 0) unread[at] = `ON_PARTICLES (skipped, torn while laid out: no output)`;
+    }
+    hostFailures.forEach((reason, id) => {
+      const i = stageGroups.findIndex((s) => s.id === id);
+      const group = stageGroups[i]!.group.path;
+      if (this.particles?.stages.some((s) => s.stageId === id)) {
+        warnings.push(`${group}: its FE groups do not read and are not indexed (${reason}); its particles read`);
+      } else if (evidence[i] !== false) {
+        warnings.push(`${group}: its groups do not read (${reason})`);
+      } else {
+        // An FE stage of a particle file, under the same rule (232a §2.5).
+        const fate = i < stageGroups.length - 1 ? "refused: it is not the file's last stage, so it is corruption" : opened.step === 2 ? "refused: corruption in a file opened SWMR-read, where every stage must read" : "skipped: torn while it was laid out (the last stage of a killed run)";
+        warnings.push(`${group}: its groups do not read (${reason}); ${fate} (232a §2.5)`);
+      }
+    });
+    for (const s of this.particles?.stages ?? []) {
+      if (s.torn !== null) warnings.push(`${s.group}/RESULTS/ON_PARTICLES: ${s.nOutputs} output${s.nOutputs === 1 ? "" : "s"} read; ${s.torn}`);
+      for (const x of s.refusedFields) warnings.push(`${s.group}/RESULTS/ON_PARTICLES/${x.field}: refused and not read: ${x.reason}`);
     }
     const provenance = this.readProvenance(info);
     const { lineage, reason } = lineageOf(provenance);
@@ -414,7 +667,8 @@ export class LadrunoFile {
     if (j === undefined) throw new LadrunoError("argument", `stage ${stageId} records no node ${nodeId}`);
     const col = this.column(s, component);
     const ds = this.datasetAt(col.path);
-    return toFloat64(col.modal ? ds.slice([[j, j + 1], [col.col, col.col + 1]]) : ds.slice([[], [j, j + 1], [col.col, col.col + 1]]), ds.path);
+    // The stage's steps only: a killed file's DATA may hold rows past T' (schema §7b.2).
+    return toFloat64(col.modal ? ds.slice([[j, j + 1], [col.col, col.col + 1]]) : ds.slice([[0, s.nSteps], [j, j + 1], [col.col, col.col + 1]]), ds.path);
   }
 
   /** One Gauss-group component at `step`: (E * G,), element-major (reader/results.ts `readGaussStep`). */
@@ -818,6 +1072,114 @@ export class LadrunoFile {
     };
   }
 
+  // -- zero-length springs --------------------------------------------------
+
+  /** How many zero-length springs `stageId` records a global `force` for (`readSpringStep`); 0 on a mode stage. */
+  springCount(stageId: string, warningsOut?: string[]): number {
+    return this.springBuckets(stageId, warningsOut).reduce((n, b) => n + b.rows.length, 0);
+  }
+
+  /** The springs' node-j force at `step` of `stageId`, bucket by bucket in file order. */
+  readSpringStep(stageId: string, step: number): LadrunoSpringStep {
+    const s = this.stage(stageId);
+    if (!Number.isInteger(step) || step < 0 || step >= s.nSteps) {
+      throw new LadrunoError("argument", `step ${step} is outside stage ${stageId} (0..${s.nSteps - 1})`);
+    }
+    const buckets = this.springBuckets(stageId);
+    const n = buckets.reduce((k, b) => k + b.rows.length, 0);
+    const out: LadrunoSpringStep = { elementIds: new Float64Array(n), nodes: new Float64Array(n * 2), force: new Float64Array(n * 3), time: s.time[step]! };
+    let k = 0;
+    for (const b of buckets) {
+      const width = b.dataDs.shape![2]!;
+      const raw = toFloat64(b.dataDs.slice([[step, step + 1], [], []]), b.dataDs.path);
+      for (const r of b.rows) {
+        out.elementIds[k] = b.ids[r]!;
+        out.nodes[k * 2] = b.nodes[r * 2]!;
+        out.nodes[k * 2 + 1] = b.nodes[r * 2 + 1]!;
+        for (let c = 0; c < 3; c++) out.force[k * 3 + c] = b.cols[c]! >= 0 ? raw[r * width + b.cols[c]!]! : 0;
+        k++;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The stage's `force` buckets that hold zero-length springs: a bucket of 2-node
+   * elements (`CONNECTIVITY` rows `[eid, iNode, jNode]`) whose columns name node j's
+   * translations, keeping the rows whose two nodes coincide in `MODEL/NODES` (a truss
+   * shares the spelling, never the zero length). A bucket the rule cannot read warns
+   * once, at open, and is left out.
+   */
+  private springBuckets(stageId: string, warningsOut?: string[]): SpringBucket[] {
+    const memo = this.springs.get(stageId);
+    if (memo) return memo;
+    const found: SpringBucket[] = [];
+    this.springs.set(stageId, found);
+    const s = this.stage(stageId);
+    if (s.kind === "mode") return found;
+    const hostGrp = this.group(this.f, s.name);
+    const forceGrp = this.optionalSubgroup(hostGrp, ["RESULTS", "ON_ELEMENTS", "force"]);
+    const modelElements = this.optionalSubgroup(hostGrp, ["MODEL", "ELEMENTS"]);
+    const nodesGrp = this.optionalSubgroup(hostGrp, ["MODEL", "NODES"]);
+    const nodeIdDs = nodesGrp ? this.optionalDataset(nodesGrp, "ID") : null;
+    const coordDs = nodesGrp ? this.optionalDataset(nodesGrp, "COORDINATES") : null;
+    if (!forceGrp || !modelElements || !nodeIdDs || !coordDs) return found;
+    const ndm = this.inferSpatialDim();
+    const cshape = coordDs.shape ?? [];
+    if (ndm === null || cshape.length !== 2 || cshape[1]! < 1) return found;
+    const nodeIds = intsAsNumbers(nodeIdDs);
+    const coords = toFloat64(coordDs.value, coordDs.path);
+    const cw = cshape[1]!;
+    const at = new Map<number, number>();
+    let span = 0;
+    nodeIds.forEach((id, i) => at.set(id, i));
+    for (const v of coords) if (Number.isFinite(v)) span = Math.max(span, Math.abs(v));
+    // Coincident within a part in 1e9 of the model's extent: a zeroLength's two nodes are one point.
+    const tol = 1e-9 * Math.max(span, 1);
+    const coincide = (a: number, b: number): boolean => {
+      const ia = at.get(a), ib = at.get(b);
+      if (ia === undefined || ib === undefined) return false;
+      for (let c = 0; c < cw; c++) if (!(Math.abs(coords[ia * cw + c]! - coords[ib * cw + c]!) <= tol)) return false;
+      return true;
+    };
+    for (const key of forceGrp.keys()) {
+      const bucket = this.optionalGroup(forceGrp, key);
+      const grp = modelGroupFor(modelElements, key, (n) => this.optionalGroup(modelElements, n));
+      const conn = grp ? this.optionalDataset(grp, "CONNECTIVITY") : null;
+      const shape = conn?.shape ?? [];
+      // Only 2-node element groups can hold a spring; any other (a quad's `force`) is no concern here.
+      if (!bucket || !conn || shape.length !== 2 || shape[1] !== 3 || conn.metadata.type !== H5T_INTEGER) continue;
+      const raw = intsAsNumbers(conn);
+      const ends = new Map<number, [number, number]>();
+      for (let r = 0; r < shape[0]!; r++) ends.set(raw[r * 3]!, [raw[r * 3 + 1]!, raw[r * 3 + 2]!]);
+      const parsed = this.parseBucketBlocks(bucket);
+      if ("reason" in parsed) {
+        warningsOut?.push(`force bucket ${JSON.stringify(key)} is unreadable: ${parsed.reason} Its springs are left out.`);
+        continue;
+      }
+      const nodes = new Float64Array(parsed.ids.length * 2).fill(Number.NaN);
+      const rows: number[] = [];
+      parsed.ids.forEach((eid, r) => {
+        const e = ends.get(eid);
+        if (!e) return;
+        nodes[r * 2] = e[0];
+        nodes[r * 2 + 1] = e[1];
+        if (coincide(e[0], e[1])) rows.push(r);
+      });
+      if (rows.length === 0) continue;
+      const block = parsed.blocks.length === 1 && parsed.blocks[0]!.level === 0 && parsed.blocks[0]!.multiplicity === 1 ? parsed.blocks[0]! : null;
+      const cols = block ? nodeJTranslations(block.compNames, ndm) : null;
+      if (!block || !cols) {
+        warningsOut?.push(
+          `force bucket ${JSON.stringify(key)} holds ${rows.length} zero-length element(s), but its columns (${block ? block.compNames.join(",") : "not one element-level block"}) do not name node j's translations as P<node>_<dof>: its spring arrows are left out.`,
+        );
+        continue;
+      }
+      found.push({ dataDs: parsed.dataDs, rows, cols: cols.map((c) => (c < 0 ? -1 : block.colStart + c)) as [number, number, number], ids: parsed.ids, nodes });
+    }
+    return found;
+  }
+
   /**
    * Per-element local frames from `RESULTS/ON_ELEMENTS/LOCAL_AXES` (at `step`, when
    * `options?.step !== undefined`) and `MODEL/LOCAL_AXES/<class>/{ID, FRAME}` (reference).
@@ -870,7 +1232,28 @@ export class LadrunoFile {
 
   // -- stages -----------------------------------------------------------------
 
-  private readHost(g: LGroup, id: string, warnings: string[]): { stage: StageInfo; fileKind: string; onNodes: LGroup | null } {
+  /**
+   * A stage whose groups do not read, in a file with particles: no FE result, its `KIND` if the
+   * object header still gives it (the particle reader checks it), and the reason in `unread`.
+   */
+  private emptyHost(g: LGroup, id: string, reason: string, particles: boolean): { stage: StageInfo; fileKind: string; onNodes: LGroup | null } {
+    let kind: unknown;
+    try {
+      const a = g.attrs["KIND"];
+      kind = a === undefined ? undefined : oneValue(a.value);
+    } catch (err) {
+      if (!isH5Error(err)) throw err;
+    }
+    const fileKind = typeof kind === "string" ? kind : "";
+    this.columns.set(id, new Map());
+    const unread = [`(the stage's groups do not read: ${reason})`];
+    if (particles) unread.push(PARTICLES_UNREAD);
+    const stage: StageInfo = { id, name: g.path.slice(1), kind: KIND_MAP[fileKind] ?? "static", time: new Float64Array(0), nSteps: 0, partition: "partition_0", nodes: null, gauss: [], unread };
+    return { stage, fileKind, onNodes: null };
+  }
+
+  /** `cut`: T' of a killed file's stage (schema §7b.2), or null to read the stage as it is. */
+  private readHost(g: LGroup, id: string, warnings: string[], readsParticles: boolean, cut: number | null = null): { stage: StageInfo; fileKind: string; onNodes: LGroup | null } {
     const kindAttr = g.attrs["KIND"];
     const kind = kindAttr === undefined ? undefined : oneValue(kindAttr.value);
     if (typeof kind !== "string" || !(kind in KIND_MAP)) {
@@ -888,7 +1271,8 @@ export class LadrunoFile {
         else if (UNREAD_BUCKETS.has(b)) {
           const bg = this.group(results, b);
           for (const r of bg.keys()) unread.push(`${b}/${r}`);
-        } else unread.push(`${b} (not a RESULTS bucket this reader knows)`);
+        } else if (b === "ON_PARTICLES" && readsParticles) unread.push(PARTICLES_UNREAD);
+        else unread.push(`${b} (not a RESULTS bucket this reader knows)`);
       }
     }
     const refused: NodalInfo["refused"] = [];
@@ -896,14 +1280,14 @@ export class LadrunoFile {
     if (onNodes) {
       for (const name of onNodes.keys()) {
         if (MODAL_GROUPS.includes(name)) continue;
-        const r = this.checkResult(onNodes, name);
+        const r = this.checkResult(onNodes, name, cut);
         if ("reason" in r) refused.push({ component: name, reason: r.reason });
         else accepted.push({ name, ...r });
       }
     }
     // The stage's time is its first readable nodal result's; one that disagrees is refused.
     const first = accepted[0];
-    const time = first ? first.time : this.otherTime(results);
+    const time = first ? first.time : this.otherTime(results, cut);
     const ids = first ? first.ids : new Float64Array(0);
     const cols = new Map<string, Column>();
     const components: string[] = [];
@@ -941,8 +1325,11 @@ export class LadrunoFile {
     return { stage, fileKind: kind, onNodes };
   }
 
-  /** One ON_NODES result, or why it is refused (the seams "degenerate names" and "partial writes"). */
-  private checkResult(onNodes: LGroup, name: string): { group: LGroup; labels: string[]; ids: Float64Array; time: Float64Array } | { reason: string } {
+  /**
+   * One ON_NODES result, or why it is refused (the seams "degenerate names" and "partial writes").
+   * `cut` (a killed file's T', schema §7b.2): its step axes need hold only T' rows, and it is read to T'.
+   */
+  private checkResult(onNodes: LGroup, name: string, cut: number | null = null): { group: LGroup; labels: string[]; ids: Float64Array; time: Float64Array } | { reason: string } {
     const g = onNodes.get(name);
     const path = `${onNodes.path}/${name}`;
     if (!(g instanceof this.h5.Group)) return { reason: `${path} is not a group` };
@@ -967,21 +1354,26 @@ export class LadrunoFile {
     const [T, n, c] = shape as [number, number, number];
     const nTime = timeDs!.shape![0]!;
     const nStep = stepDs!.shape![0]!;
-    if (T !== nTime || T !== nStep) {
+    if (cut !== null) {
+      // T' is the fewest rows of every streaming result, so this holds unless the file changed under the read.
+      if (T < cut || nTime < cut || nStep < cut) {
+        return { reason: `${dataDs!.path} holds ${T} steps, TIME ${nTime} and STEP ${nStep}, fewer than the stage's ${cut} committed steps` };
+      }
+    } else if (T !== nTime || T !== nStep) {
       return { reason: `${dataDs!.path} holds ${T} steps, TIME ${nTime} and STEP ${nStep}: the step axes disagree (a recorder stopped mid-step)` };
     }
     if (n !== idShape[0]) return { reason: `${dataDs!.path} has ${n} node rows and ${idDs!.path} ${idShape[0]} node ids (a partial write)` };
     if (c !== labels.length) return { reason: `${dataDs!.path} has ${c} component columns and COMPONENTS names ${labels.length} (${labels.join(",")})` };
-    return { group: grp, labels, ids, time: toFloat64(timeDs!.value, timeDs!.path) };
+    return { group: grp, labels, ids, time: toFloat64(cut === null ? timeDs!.value : timeDs!.slice([[0, cut]]), timeDs!.path) };
   }
 
-  /** The time axis of a stage with no readable nodal result: the first TIME under another bucket (Python `_time_for_group`). */
-  private otherTime(results: LGroup | null): Float64Array {
+  /** The time axis of a stage with no readable nodal result: the first TIME under another bucket (Python `_time_for_group`), to `cut` on a killed file. */
+  private otherTime(results: LGroup | null, cut: number | null = null): Float64Array {
     if (!results) return new Float64Array(0);
     for (const b of ["ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS"]) {
       if (!results.keys().includes(b)) continue;
       const t = this.findTime(this.group(results, b));
-      if (t) return toFloat64(t.value, t.path);
+      if (t) return toFloat64(cut === null ? t.value : t.slice([[0, cut]]), t.path);
     }
     return new Float64Array(0);
   }
@@ -1001,8 +1393,13 @@ export class LadrunoFile {
   // -- modes ------------------------------------------------------------------
 
   /** Python `discover_modes` per host, then `mode_stage_layout` over the file. */
-  private layModes(hosts: { stage: StageInfo; onNodes: LGroup | null }[], warnings: string[]): { stages: { host: string; stage: StageInfo }[]; facts: LadrunoMode[] } {
-    const perHost = hosts.map((h) => (h.onNodes ? this.discoverModes(h.onNodes, warnings) : []));
+  private layModes(hosts: { stage: StageInfo; onNodes: LGroup | null }[], warnings: string[], path: string): { stages: { host: string; stage: StageInfo }[]; facts: LadrunoMode[] } {
+    // The modes-snapshot crash rule (schema §7b.2) follows the stage rule: on a killed file opened plainly or
+    // through a repaired copy (flags 0x01) a damaged snapshot is skipped with every later one; on one opened at
+    // step 2 (flags 0x05) it refuses by name; on a cleanly closed file one that does not open refuses by name.
+    const rule = !this.killed ? "clean" : this.opened.step === 2 ? "refuse" : "skip";
+    const skip = this.tornSnapshots(hosts, warnings, rule, path);
+    const perHost = hosts.map((h) => (h.onNodes ? this.discoverModes(h.onNodes, warnings, skip.get(h.stage.id)) : []));
     const nSets = perHost.reduce((n, sets) => n + sets.length, 0);
     const stages: { host: string; stage: StageInfo }[] = [];
     const facts: LadrunoMode[] = [];
@@ -1022,20 +1419,116 @@ export class LadrunoFile {
   }
 
   /**
+   * The modes snapshots the crash rule of schema §7b.2 skips (Python's `_buckets.torn_mode_snapshots`).
+   * The snapshots are taken in stage order, then by step. A snapshot is damaged when it does not open, or
+   * lacks a `MODE_<j>`: its `MODE_<j>` keys have a gap, or the modal groups disagree on its modes. A smaller
+   * snapshot after a larger one is not damage: the writer stores one snapshot per eigen call, with that
+   * call's mode count. `rule` follows the stage rule: "skip" (a killed file opened plainly or through a
+   * repaired copy, flags 0x01) skips the first damaged snapshot with every later one, in its stage and every
+   * later stage, and a warning names them; "refuse" (flags 0x05, where every stage must read) refuses any
+   * damage by name; "clean" (a cleanly closed file, or a superblock the SWMR recorder never wrote) refuses
+   * by name only a snapshot that does not open, and `discoverModes` reads the rest as before.
+   * Returns stage id -> skipped `STEP_<k>` keys (`ALL_SNAPSHOTS`: the stage's modes DATA does not list).
+   */
+  private tornSnapshots(hosts: { stage: StageInfo; onNodes: LGroup | null }[], warnings: string[], rule: "skip" | "refuse" | "clean", path: string): Map<string, Set<string>> {
+    const isGroup = (x: unknown): x is LGroup => x instanceof this.h5.Group;
+    const isDataset = (x: unknown): x is LDataset => x instanceof this.h5.Dataset;
+    const child = (g: LGroup, name: string): unknown => {
+      if (!g.keys().includes(name)) throw new Error(`${g.path} has no ${name}`);
+      return g.get(name);
+    };
+    const groupOf = (g: LGroup, name: string): LGroup => {
+      const x = child(g, name);
+      if (!isGroup(x)) throw new Error(`${g.path}/${name} is not a group`);
+      return x;
+    };
+    const whole = rule !== "clean";
+    const order: { host: { stage: StageInfo; onNodes: LGroup }; groups: string[]; step: string | null }[] = [];
+    for (const h of hosts) {
+      if (!h.onNodes) continue;
+      const host = { stage: h.stage, onNodes: h.onNodes };
+      try {
+        let groups = MODAL_GROUPS.filter((n) => h.onNodes!.keys().includes(n));
+        // discoverModes refuses a group without DATA by name.
+        if (!whole) groups = groups.filter((n) => groupOf(h.onNodes!, n).keys().includes("DATA"));
+        const keys = new Set<string>();
+        for (const g of groups) for (const k of groupOf(groupOf(h.onNodes, g), "DATA").keys()) if (k.startsWith("STEP_")) keys.add(k);
+        const steps = [...keys].sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
+        for (const step of steps) order.push({ host, groups, step });
+      } catch {
+        order.push({ host, groups: [], step: null });
+      }
+    }
+    const readSnapshot = (e: (typeof order)[number]): void => {
+      if (e.step === null) throw new Error("its modes DATA does not list");
+      const counts: number[] = [];
+      for (const name of e.groups) {
+        const data = groupOf(groupOf(e.host.onNodes, name), "DATA");
+        if (!data.keys().includes(e.step)) {
+          if (whole) throw new Error(`${data.path} has no ${e.step}`);
+          continue;
+        }
+        const sg = groupOf(data, e.step);
+        const keys = sg.keys().filter((k) => k.startsWith("MODE_"));
+        for (const k of keys) {
+          const ds = sg.get(k);
+          if (!isDataset(ds) || ds.shape === null) throw new Error(`${sg.path}/${k} does not open as a dataset`);
+        }
+        const idx = keys.map((k) => Number(k.slice(5))).sort((a, b) => a - b);
+        if (whole && (idx.length === 0 || idx.some((x, i) => x !== i))) throw new Error(`${sg.path} holds modes [${idx.join(", ")}], not MODE_0..MODE_<m-1>: it lacks a mode`);
+        counts.push(idx.length);
+      }
+      if (whole && new Set(counts).size > 1) throw new Error(`${e.step}: the modal groups ${e.groups.join(", ")} hold ${counts.join(", ")} modes: one lacks a mode`);
+    };
+    let tornAt = -1;
+    let why = "";
+    for (let i = 0; i < order.length; i++) {
+      try {
+        readSnapshot(order[i]!);
+      } catch (err) {
+        tornAt = i;
+        why = (err instanceof Error ? err.message : String(err)).split("\n")[0]!;
+        break;
+      }
+    }
+    const skip = new Map<string, Set<string>>();
+    if (tornAt < 0) return skip;
+    const torn = order.slice(tornAt);
+    const first = torn[0]!;
+    const where = `${path} ${first.host.stage.name}/${first.step ?? "DATA"}`;
+    if (rule === "refuse") {
+      throw new LadrunoError("layout", `the modes snapshot ${where} does not read whole (${why}) in a file killed with SWMR armed (superblock flags 0x05), where every snapshot must read: corruption (schema §7b.2)`);
+    }
+    if (rule === "clean") {
+      throw new LadrunoError("layout", `the modes snapshot ${where} does not open (${why}) in a file a writer closed, so it is corruption, not a snapshot a kill left half written (schema §7b.2)`);
+    }
+    for (const e of torn) {
+      const set = skip.get(e.host.stage.id) ?? new Set<string>();
+      set.add(e.step ?? ALL_SNAPSHOTS);
+      skip.set(e.host.stage.id, set);
+    }
+    warnings.push(
+      `the modes snapshot ${first.host.stage.name}/${first.step ?? "DATA"} does not read whole (${why}); it was being written when the run was killed, so it is skipped with every later snapshot (schema §7b.2): ${torn.map((e) => `${e.host.stage.name}/${e.step ?? "DATA"}`).join(", ")}`,
+    );
+    return skip;
+  }
+
+  /**
    * Every modal set under ON_NODES, ordered by step, modes by index. The
    * translational group is the reference; the rotational one, when both
    * exist, lists the same steps, modes and eigenvalues, or the file is
    * refused. A group without DATA, or a MODE_<k> without LAMBDA, is refused.
    */
-  private discoverModes(onNodes: LGroup, warnings: string[]): { stepKey: string; modes: { key: string; index: number; lambda: number }[] }[] {
+  private discoverModes(onNodes: LGroup, warnings: string[], skip?: Set<string>): { stepKey: string; modes: { key: string; index: number; lambda: number }[] }[] {
     const names = MODAL_GROUPS.filter((n) => onNodes.keys().includes(n));
-    if (names.length === 0) return [];
+    if (names.length === 0 || skip?.has(ALL_SNAPSHOTS)) return [];
     const perGroup = names.map((name) => {
       const g = this.group(onNodes, name);
       if (!g.keys().includes("DATA")) throw new LadrunoError("layout", `${g.path} has no DATA group; the modal record is incomplete`);
       const data = this.group(g, "DATA");
       const sets: { stepKey: string; modes: { key: string; index: number; lambda: number }[] }[] = [];
       for (const stepKey of keyed(data, "STEP_", warnings)) {
+        if (skip?.has(stepKey)) continue;
         const sg = this.group(data, stepKey);
         const modes = keyed(sg, "MODE_", warnings).map((key) => {
           const ds = this.dataset(sg, key);
@@ -1130,6 +1623,7 @@ export class LadrunoFile {
     const g = this.group(info, "PROVENANCE");
     const attrs = {} as Record<ProvenanceAttr, ProvenanceFact>;
     let stageNames: string[] | null = null;
+    let stageDisplayNames: string[] | null = null;
     let unsupported: string[] | null = null;
     let units: UnitSystemId | null = null;
     for (const name of PROVENANCE_ATTRS) {
@@ -1141,6 +1635,7 @@ export class LadrunoFile {
           continue;
         }
         if (name === "stage_names") stageNames = list;
+        else if (name === "stage_display_names") stageDisplayNames = list;
         else unsupported = list;
       }
       if (fact.state === "present" && name === "element_index_space" && fact.value !== "fem") {
@@ -1163,7 +1658,7 @@ export class LadrunoFile {
     }
     const known = new Set<string>(PROVENANCE_ATTRS);
     const other = Object.keys(g.attrs).filter((k) => !known.has(k)).sort();
-    return { state: "present", attrs, stageNames, unsupported, units, other };
+    return { state: "present", attrs, stageNames, stageDisplayNames, unsupported, units, other };
   }
 
   // -- helpers ----------------------------------------------------------------
@@ -1185,7 +1680,7 @@ export class LadrunoFile {
 
   private group(parent: LGroup, name: string): LGroup {
     const path = parent.path === "/" ? `/${name}` : `${parent.path}/${name}`;
-    if (!parent.keys().includes(name)) throw new LadrunoError("layout", `missing group ${path}`);
+    if (!parent.keys().includes(name)) throw new LadrunoMissingError(`missing group ${path}`);
     const g = parent.get(name);
     if (!(g instanceof this.h5.Group)) throw new LadrunoError("layout", `${path} is not a group`);
     return g as unknown as LGroup;
@@ -1193,7 +1688,7 @@ export class LadrunoFile {
 
   private dataset(parent: LGroup, name: string): LDataset {
     const path = parent.path === "/" ? `/${name}` : `${parent.path}/${name}`;
-    if (!parent.keys().includes(name)) throw new LadrunoError("layout", `missing dataset ${path}`);
+    if (!parent.keys().includes(name)) throw new LadrunoMissingError(`missing dataset ${path}`);
     const d = parent.get(name);
     if (!(d instanceof this.h5.Dataset)) throw new LadrunoError("layout", `${path} is not a dataset`);
     return d as unknown as LDataset;
@@ -1582,12 +2077,17 @@ function provenanceFact(attr: LAttr | undefined, name: string): ProvenanceFact {
   return { state: "present", value: attr.value };
 }
 
-/** Lineage only when both hashes are present and well formed; otherwise why not. */
+/**
+ * Lineage from a well-formed `fem_hash`, with `model_hash` when that is present and well
+ * formed; otherwise why not. An absent `model_hash` is a stamp against a bare FEMData
+ * archive, paired by `fem_hash` alone (ADR 0133 D2); a malformed one is never read as absent.
+ */
 function lineageOf(p: LadrunoProvenance): { lineage: LadrunoLineage | null; reason: string | null } {
   if (p.state === "absent") return { lineage: null, reason: p.reason };
   const m = p.attrs.model_hash;
   const f = p.attrs.fem_hash;
-  if (m.state === "present" && f.state === "present") return { lineage: { modelHash: m.value, femHash: f.value }, reason: null };
+  if (f.state === "present" && m.state === "present") return { lineage: { modelHash: m.value, femHash: f.value }, reason: null };
+  if (f.state === "present" && m.state === "absent") return { lineage: { modelHash: null, femHash: f.value }, reason: null };
   const why = (key: string, x: ProvenanceFact) => (x.state === "absent" ? `INFO/PROVENANCE has no @${key}` : x.state === "malformed" ? x.reason : null);
   const reasons = [why("model_hash", m), why("fem_hash", f)].filter((r): r is string => r !== null);
   return { lineage: null, reason: `${reasons.join("; ")}: the file is not stamped for pairing (schema §7b.1)` };
@@ -1682,6 +2182,43 @@ function intsAsNumbers(ds: LDataset): Float64Array {
   }
   if (v instanceof Int32Array || v instanceof Uint32Array || v instanceof Int16Array || v instanceof Int8Array) return Float64Array.from(v);
   throw new LadrunoError("dtype", `${ds.path} is not an integer dataset`);
+}
+
+// -- spring helpers -----------------------------------------------------------
+
+/**
+ * The columns of node j's translations 1..`ndm` (then -1 up to 3) in a 2-node
+ * element's `force` names, or null when they cannot be told apart. OpenSees
+ * spells the columns `P<node>_<dof>` (trusses, zeroLength) or `P<dof>_<node>`
+ * (continua); the vector is node-major either way, so the index that runs
+ * 1, 1, ..., 2, 2 while the other restarts at 1 is the node.
+ */
+export function nodeJTranslations(names: readonly string[], ndm: number): [number, number, number] | null {
+  const pairs = names.map((n) => /^P(\d+)_(\d+)$/.exec(n));
+  if (pairs.length === 0 || pairs.some((m) => m === null)) return null;
+  const idx = pairs.map((m) => [Number(m![1]), Number(m![2])] as const);
+  const nodeAt = [0, 1].filter((p) => {
+    const q = 1 - p;
+    let seen2 = false;
+    for (let i = 0; i < idx.length; i++) {
+      const node = idx[i]![p]!, dof = idx[i]![q]!;
+      const prev = i > 0 ? idx[i - 1]! : null;
+      if (node !== 1 && node !== 2) return false;
+      if (node === 2) seen2 = true;
+      if (prev && node < prev[p]!) return false;
+      if (dof !== (prev && prev[p] === node ? prev[q]! + 1 : 1)) return false;
+    }
+    return seen2;
+  });
+  if (nodeAt.length !== 1) return null;
+  const p = nodeAt[0]!;
+  const out: [number, number, number] = [-1, -1, -1];
+  for (let d = 1; d <= Math.min(ndm, 3); d++) {
+    const i = idx.findIndex((x) => x[p] === 2 && x[1 - p] === d);
+    if (i < 0) return null;
+    out[d - 1] = i;
+  }
+  return out;
 }
 
 // -- line-station & local-axes helpers ----------------------------------------

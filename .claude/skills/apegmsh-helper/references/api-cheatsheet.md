@@ -22,18 +22,23 @@ into labels.
 ```python
 from apeGmsh import apeGmsh, Part
 
-g = apeGmsh(model_name=None, verbose=False,
-            save_to=None, overwrite=True)   # model_name=None -> the running script's stem
+g = apeGmsh(model_name=None, units=None, verbose=False,
+            save_to=None, overwrite=True)   # all keyword-only; model_name=None -> the running script's stem
 g.begin()           # opens gmsh, wires composites
 g.is_active         # True while session is open
 g.name              # the model name ("" in a notebook / -c / stdin with no model_name=)
-g.save(path=None)   # explicit neutral-zone checkpoint (uses save_to if path None)
-g.end()             # closes gmsh; writes <dir>/<model_name>.h5 + <model_name>.geometry.h5
-                    # beside the script (save_to= overrides the path). No model_name and no
-                    # script file: nothing written, one warning. Pass model_name= in notebooks.
+g.save(path=None)   # explicit neutral-zone checkpoint; path None -> save_to, and with
+                    # neither path nor save_to it RAISES RuntimeError
+g.end()             # closes gmsh; ALWAYS writes <model_name>.h5 + <model_name>.geometry.h5
+                    # (ADR 0112 D1). save_to=None does NOT mean "no save": it means the
+                    # conventional dir = $APEGMSH_ARTIFACT_DIR if set, else the __main__
+                    # script's folder, else cwd. save_to=<file|dir> only moves THIS write.
+                    # No model_name and no script file: nothing written, one warning.
+                    # There is no user-facing opt-out; point APEGMSH_ARTIFACT_DIR at a
+                    # scratch dir to keep artifacts out of your source tree.
 
 # Preferred form
-with apeGmsh(model_name="...", save_to="m.h5") as g:
+with apeGmsh(model_name="...", units="N_m_s", save_to="m.h5") as g:
     ...             # begin/end run automatically; m.h5 written on exit
 ```
 
@@ -176,12 +181,24 @@ other (whole-model weld) rather than one object/tool pair.
 ### `g.model.transforms` — rigid-body & generative ops (`_Transforms`)
 
 ```
-translate(dimtags, dx, dy, dz)        rotate(dimtags, x, y, z, ax, ay, az, angle)
-scale(dimtags, x, y, z, sx, sy=None, sz=None)   mirror(dimtags, a, b, c, d)   copy(dimtags)
-extrude(dimtags, dx, dy, dz, *, num_elems=None, recombine=False)
-revolve(dimtags, x, y, z, ax, ay, az, angle, *, num_elems=None)
-sweep(dimtags, curves, *, num_elems=None)        thru_sections(wires, *, make_solid=True)
+translate(tags, dx, dy, dz, *, dim=3, sync=True)
+rotate(tags, angle, *, ax=0, ay=0, az=1, cx=0, cy=0, cz=0, dim=3, sync=True)   # radians
+scale(tags, sx, sy, sz, *, cx=0, cy=0, cz=0, dim=3, sync=True)
+mirror(tags, a, b, c, d, *, dim=3, sync=True)     copy(tags, *, dim=3, sync=True)
+extrude(tags, dx, dy, dz, *, dim=2, num_elements=None, heights=None, recombine=False, sync=True) -> list[DimTag]
+revolve(tags, angle, *, x=0, y=0, z=0, ax=0, ay=0, az=1, dim=2,
+        num_elements=None, heights=None, recombine=False, sync=True) -> list[DimTag]   # radians
+sweep(profiles, path, *, dim=2, trihedron="DiscreteTrihedron", label=None, sync=True)
+thru_sections(wires, *, make_solid=True, make_ruled=False, max_degree=-1, continuity="",
+              parametrization="", smoothing=False, label=None, sync=True)
 ```
+`tags` takes an int / label / PG name / `(dim, tag)` / a list of any mix;
+`dim=` is only the fallback for bare ints. Everything after the leading
+positionals is **keyword-only**: the gmsh-style positional
+`revolve(dimtags, x, y, z, ax, ay, az, angle)` raises `TypeError`. A
+quarter turn of surface `"profile"` about the global z axis through the
+origin is `revolve("profile", math.pi / 2, x=0, y=0, z=0, ax=0, ay=0, az=1)`.
+`# src/apeGmsh/core/_model_transforms.py (revolve, extrude, rotate)`
 
 ### `g.model.io` — CAD I/O + health diagnostics (`_IO`)
 
@@ -240,10 +257,13 @@ the selection into a label/PG without raw tags:
 
 ```python
 (g.model.select("block", dim=3)        # or select(None, dim=2) for "all surfaces"
-   .in_box(xmin, ymin, zmin, xmax, ymax, zmax)   # .in_sphere/.on_plane/.crossing_plane/.nearest_to/.where
+   .in_box((xmin, ymin, zmin), (xmax, ymax, zmax))   # two 3-tuples lo, hi — NOT 6 numbers
+                                       # .in_sphere/.on_plane/.crossing_plane/.nearest_to/.where
    .to_label("loaded_faces"))           # or .to_physical("BC") / .to_dataframe() / .result().tags()
 ```
-`# src/apeGmsh/core/Model.py:152` — verbs compose with `|` `&` `-` `^`.
+`# src/apeGmsh/core/Model.py:152`, `src/apeGmsh/core/_selection.py (in_box(lo, hi))` — verbs compose with `|` `&` `-` `^`.
+The entity family's box is closed `[lo, hi]` and rejects `inclusive=`
+(see gotchas.md, "`in_box` is half-open").
 
 ---
 
@@ -615,7 +635,7 @@ kinematic_coupling(master_label, slave_label, *, master_point=(0,0,0), dofs=None
     k=None|"auto", k_alpha=None, host=None, kr=None,
     enforce="penalty"|"al", bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None)
 distributing_coupling(master_label, slave_label, *, master_point=(0,0,0),  # RBE3 → LadrunoDistributingCoupling (tag 33011)
-    weighting="uniform"|"area", k=None|"auto", k_alpha=None, host=None, kr=None,
+    weighting="uniform"|"area"|"footprint", footprint=None, k=None|"auto", k_alpha=None, host=None, kr=None,
     enforce="penalty"|"al", bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None)
 #   master_label / slave_label may be a labelled g.decouple_node (string label=
 #   or the handle) — resolve binds the singleton tag; no post-mesh retarget.
@@ -629,7 +649,10 @@ the reference node with correct moment-arm transport (`u_i = u_R + θ_R × d_i`)
 `distributing_coupling` (RBE3) makes the reference a weighted-average rigid-body
 fit of the independents and **adds no stiffness** (set stays flexible).
 `weighting="area"` is tributary-area over the slave surface (requires meshed
-faces). Coupling knobs (commit `818b91eb`): `k="auto"` scales the penalty off
+faces). `weighting="footprint"` with `footprint=[(x, y, z), ...]` (a convex
+planar polygon) weights each node by its share of the faces' overlap with the
+polygon, and keeps only the nodes with a share: a uniform pressure over the
+footprint, which need not follow the mesh. Coupling knobs (commit `818b91eb`): `k="auto"` scales the penalty off
 the host element diagonal (`K_t = k_alpha·max|K_host|`, needs `host=`); `host=`
 is the **FEM element id** (the bridge translates to the ops tag at emit);
 `bipenalty_wcap` sets bipenalty via host frequency (needs `host=`, exclusive
@@ -1026,9 +1049,10 @@ env.labels / env.physical_groups / env.phase / env.unnamed
 ```
 fem = g.mesh.queries.get_fem_data(dim=3)
 fem.info / fem.nodes / fem.elements / fem.inspect / fem.mesh_selection
-fem.assess() / fem.render("mesh.png")     # verdict + mesh still; see assess.md
-results.assess(figures=True)              # + render_pack; closed view= set
-results.render("uz.png", view="contour")  # mesh|contour|deformed|reactions
+fem.assess() / fem.render("mesh.png")     # verdict + mesh still (apeGmshViewer on Windows); see assess.md
+results.assess(figures=True)              # + render_pack; apegmsh-view/1 on Windows, VTK on Linux
+results.render("uz.png", view="contour")  # mesh|contour|deformed (+reactions on Linux); assess.md
+results.path                              # read-only Path of the source file (a .ladruno: what Windows stills draw), or None
 
 FEMData.from_gmsh(dim=3, session=g, ndf=6, remove_orphans=False)
 FEMData.from_msh("bridge.msh", dim=2)

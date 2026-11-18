@@ -1,0 +1,14 @@
+{
+ "Uncracked": {
+  "fem_hash": "d7bf21b6d7dd29ea55c0492eade9a5f5",
+  "model_hash": "194d6d4f42fb8cd722e8ea405a24a29d"
+ },
+ "Cracked": {
+  "fem_hash": "d7bf21b6d7dd29ea55c0492eade9a5f5",
+  "model_hash": "05337d99b871aed88bc2b3c7a727adb3"
+ },
+ "Remeshed": {
+  "fem_hash": "f56d4b1536096d072159d4ff023ed140",
+  "model_hash": "fb5908e618cf4bbdf2bfcedc8d21d8ad"
+ }
+}

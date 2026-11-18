@@ -431,3 +431,41 @@ test("every colour in the app comes from src/theme/tokens.ts: no colour literal 
   assert.deepEqual(checkSelectCss(css), []);
   assert.equal(checkSelectCss(".contour-cmap { background: var(--hover); }").length, 1, "the select CSS lint catches a planted translucent background");
 });
+
+test("the renderer's CSS and HTML hold no control bytes: a merge once turned the collapse arrow's CSS escape into one", () => {
+  for (const name of ["style.css", "index.html"]) {
+    const text = readFileSync(join(src, "renderer", name), "utf8");
+    const at = [...text].findIndex((c) => c < " " && c !== "\t" && c !== "\n" && c !== "\r");
+    assert.equal(at, -1, `${name} has a control byte at character ${at}`);
+  }
+});
+
+test("an app-chrome still draws every card and the banner open, so no closed arrow or closed-header rule reaches it", () => {
+  // Innermost blocks only, so a rule inside @media is read as itself.
+  const ungatedIn = (css: string): string[] => {
+    const ungated: string[] = [];
+    for (const [, selectors, body] of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{};]+)\{([^{}]*)\}/g)) {
+      if (!/content:\s*["'](\\0*25b8|▸)/i.test(body!) && !/margin(-bottom)?:\s*0(px)?\s*(!important\s*)?(;|$)/.test(body!)) continue;
+      for (const sel of selectors!.split(",").map((x) => x.trim())) {
+        if (/\[data-collapsed|#banner:not\(\[data-open/.test(sel) && !sel.startsWith('body:not([data-still-chrome="app"])')) ungated.push(sel);
+      }
+    }
+    return ungated;
+  };
+  assert.deepEqual(ungatedIn(readFileSync(join(src, "renderer", "style.css"), "utf8")), []);
+  for (const planted of [
+    '#legend[data-collapsed="true"] > h3::before { content: "\\25B8"; }',
+    '#legend[data-collapsed="true"] > h3::before { content: "▸"; }',
+    '#legend[data-collapsed="true"] > h3 { margin-bottom: 0 }',
+    '@media (min-width: 1px) { #legend[data-collapsed="true"] > h3::before { content: "\\25b8"; } }',
+    '#x { color: red; } #banner:not([data-open]) > .banner-summary::before { content: "\\25b8\\a0"; }',
+    "#legend[data-collapsed=\"true\"] > h3::before { content: '\\25b8'; }",
+    "#legend[data-collapsed='true'] > h3::before { content: \"\\25b8\"; }",
+    '#legend[data-collapsed] > h3::before { content: "\\25b8"; }',
+    '#legend[data-collapsed="true"] > h3 { margin-bottom: 0 !important; }',
+    '#legend[data-collapsed="true"] > h3 { margin: 0; }',
+    '#banner:not([data-open="true"]) > .banner-summary::before { content: "\\25b8\\a0"; }',
+  ]) {
+    assert.equal(ungatedIn(planted).length, 1, `the lint misses ${planted}`);
+  }
+});

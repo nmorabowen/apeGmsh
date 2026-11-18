@@ -1269,3 +1269,38 @@ test("regression: Citardauq root stability, companion shear closure gating, mult
   }
 });
 
+test("W4d #2843: a results stage is matched to /opensees/stages by its program name, never its display name", () => {
+  const setup = makeSyntheticBeamSetup();
+  const stageDef = (index: number, name: string) => ({
+    index,
+    path: `/opensees/stages/stage_00${index}`,
+    name,
+    attrs: { name },
+    analysis: null,
+    patterns: [],
+    recorders: [],
+    bcs: { fix: null, mass: null },
+    other: [],
+  });
+  // The root pattern's timeSeries is Linear: stage s0 resolves, stage s1 refuses (case 4 above).
+  const definitions: Definitions = { ...setup.definitions, stages: [stageDef(0, "s0"), stageDef(1, "s1")] };
+  const at = (name: string, programName?: string) =>
+    resolveStageSpanLoads({
+      definitions,
+      ndm: 2,
+      resultsStage: { id: "stage_0", name, kind: "static", ...(programName === undefined ? {} : { programName }) },
+      time: 1.0,
+    });
+  // Shown as "Base load", program stage s1: s1's refusal. Matched on `name`, "Base load" matches no stage.
+  const renamed = at("Base load", "s1");
+  assert.equal(renamed.ok, false);
+  if (!renamed.ok) assert.match(renamed.reason, /non-Constant timeSeries/);
+  assert.equal(at("Base load", "s0").ok, true);
+  // Shown as "s1" but program stage s0: s0, never the display name's stage.
+  assert.equal(at("s1", "s0").ok, true);
+  // A stage that carries no program name is refused, never matched by its display name.
+  const bare = at("s0");
+  assert.equal(bare.ok, false);
+  if (!bare.ok) assert.match(bare.reason, /results stage 's0' carries no program name/);
+});
+

@@ -3,13 +3,13 @@
 ``spec.emit_default`` on the fork writes a ``.ladruno`` and opens it with
 ``Results.from_ladruno(model_h5=...)``. The file's ``MODEL`` group has no
 physical groups or labels; the FEMData archived in ``model_h5`` does, and
-the route must bind it, as ``from_mpco`` does.
+the route must bind it.
 
-The oracle is the same model and load run again through the stock route
-(the fork module with its fork signal hidden writes a ``.mpco``, read with
-``from_mpco``): every ``pg=`` and ``label=`` read of the fork run equals
-the MPCO read at ``rtol=1e-12``, and the tip equals ``P L / E A``. One
-build cannot write both formats in one run, so the model runs twice.
+The oracle is the live domain: every ``pg=`` and ``label=`` read of the
+fork run equals ``ops.nodeDisp`` at every step at ``rtol=1e-12``, and the
+tip equals ``P L / E A``. (It was the same run on the stock route, read
+with ``from_mpco``; that route now refuses an unstaged in-process program,
+ADR 0131 D5.)
 
 A raw deck over a FEMData-only archive (``fem.to_h5``, no bridge, no
 ``ndm``) is read by group too; its oracle is the live domain's
@@ -56,21 +56,6 @@ _LABEL = "truss.tip"
 _DISP = ("displacement_x", "displacement_y")
 
 
-class StockView:
-    """The fork module with its fork signal hidden: ``kind == "stock"``
-    (as in ``test_default_format_ladruno_live.py``)."""
-
-    _HIDDEN = frozenset({"ladrunoBuild", "ladrunoSchema"})
-
-    def __init__(self, ops: Any) -> None:
-        self._ops = ops
-
-    def __getattr__(self, name: str) -> Any:
-        if name in StockView._HIDDEN:
-            raise AttributeError(name)
-        return getattr(self._ops, name)
-
-
 def _fem() -> FEMData:
     """The two-node truss with its physical groups and one node label."""
     node_ids = np.array([1, 2], dtype=np.int64)
@@ -109,31 +94,33 @@ def _spec(fem: FEMData) -> ResolvedRecorderSpec:
     )
 
 
-def _run(tmp_path: Path, *, stock: bool) -> "tuple[Any, list, float]":
-    """One run of the truss on the default route, fork or stock."""
+def _run(tmp_path: Path) -> "tuple[Any, list, np.ndarray]":
+    """One run of the truss on the fork's default route, and the live
+    displacements ``[step, dof, node]`` of nodes 1 and 2."""
     from apeGmsh.opensees._target import backend_info_of
     from apeGmsh.opensees.emitter.live import get_ops
 
-    opspy = get_ops()
-    assert backend_info_of(opspy).kind == "fork"
-    ops = StockView(opspy) if stock else opspy
+    ops = get_ops()
+    assert backend_info_of(ops).kind == "fork"
     fem = _fem()
     bridge = truss_bridge(fem)
     tmp_path.mkdir()
     model = tmp_path / "model.h5"
     bridge.h5(str(model))
     bridge.run()
+    live = np.zeros((TRUSS_STEPS, 2, 2))
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             with _spec(fem).emit_default(tmp_path / "run", model_h5=model,
                                          ops=ops) as run:
-                for _ in range(TRUSS_STEPS):
-                    assert opspy.analyze(1) == 0
-        tip = float(opspy.nodeDisp(2, 1))
+                for k in range(TRUSS_STEPS):
+                    assert ops.analyze(1) == 0
+                    for j, n in enumerate((1, 2)):
+                        live[k, :, j] = [ops.nodeDisp(n, d) for d in (1, 2)]
     finally:
-        opspy.wipe()
-    return run, caught, tip
+        ops.wipe()
+    return run, caught, live
 
 
 def _read(res: Results, component: str, **sel: str) -> "tuple[np.ndarray, np.ndarray]":
@@ -144,18 +131,14 @@ def _read(res: Results, component: str, **sel: str) -> "tuple[np.ndarray, np.nda
 @pytest.fixture(scope="module")
 def runs(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Any]":
     tmp = tmp_path_factory.mktemp("default_route_groups")
-    fork, fork_caught, fork_tip = _run(tmp / "fork", stock=False)
-    stock, stock_caught, stock_tip = _run(tmp / "stock", stock=True)
-    return {"fork": fork, "fork_caught": fork_caught, "fork_tip": fork_tip,
-            "stock": stock, "stock_caught": stock_caught}
+    fork, fork_caught, live = _run(tmp / "fork")
+    return {"fork": fork, "fork_caught": fork_caught, "live": live}
 
 
-def test_the_two_routes_ran(runs) -> None:
+def test_the_fork_route_ran(runs) -> None:
     assert runs["fork"].route == "fork" and runs["fork_caught"] == []
     assert runs["fork"].path.suffix == ".ladruno" and runs["fork"].path.exists()
-    assert runs["stock"].route == "mpco"
-    assert [w.category for w in runs["stock_caught"]] == [DefaultRouteWarning]
-    np.testing.assert_allclose(runs["fork_tip"], TRUSS_TIP, rtol=1e-12)
+    np.testing.assert_allclose(runs["live"][-1, 0, 1], TRUSS_TIP, rtol=1e-12)
 
 
 @pytest.mark.parametrize(
@@ -163,25 +146,23 @@ def test_the_two_routes_ran(runs) -> None:
     [({"pg": "Tip"}, [2]), ({"pg": "Bar"}, [1, 2]), ({"label": _LABEL}, [2])],
     ids=["pg-Tip", "pg-Bar", "label"],
 )
-def test_group_reads_equal_the_mpco_route(runs, sel, nodes) -> None:
+def test_group_reads_equal_the_live_domain(runs, sel, nodes) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         res = runs["fork"].results()
-        ref = runs["stock"].results()
     try:
-        for comp in _DISP:
+        for d, comp in enumerate(_DISP):
             ids, vals = _read(res, comp, **sel)
-            ref_ids, ref_vals = _read(ref, comp, **sel)
             np.testing.assert_array_equal(ids, nodes)
-            np.testing.assert_array_equal(ids, ref_ids)
             assert vals.shape == (TRUSS_STEPS, len(nodes))
-            np.testing.assert_allclose(vals, ref_vals, rtol=1e-12, atol=0.0)
+            cols = [n - 1 for n in nodes]
+            np.testing.assert_allclose(vals, runs["live"][:, d, cols],
+                                       rtol=1e-12, atol=0.0)
         ids, ux = _read(res, "displacement_x", **sel)
         tip_col = list(ids).index(2)
         np.testing.assert_allclose(ux[-1, tip_col], TRUSS_TIP, rtol=1e-12)
     finally:
         res.close()
-        ref.close()
 
 
 # ---------------------------------------------------------------------------
@@ -244,14 +225,20 @@ def test_a_raw_deck_over_a_femdata_archive_reads_by_group(
     finally:
         ops.wipe()
     assert run.route == "fork" and caught == []
-    # A FEMData archive carries no model_hash, so the fork file cannot be
-    # stamped: that is the one warning (no ModelFemMismatchWarning).
+    # A FEMData archive carries no model_hash: the fork file is stamped with
+    # fem_hash alone and pairs by it, with no warning (ADR 0133, #2233).
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         res = run.results()
-    assert [w.category for w in caught] == [DefaultRouteWarning], [
-        str(w.message) for w in caught]
-    assert "unstamped" in str(caught[0].message)
+    assert caught == [], [str(w.message) for w in caught]
+    import h5py
+
+    with h5py.File(archive, "r") as m:
+        want = m["meta/lineage"].attrs["fem_hash"]
+    (stamped,) = sorted((tmp_path).glob("run*.ladruno"))
+    with h5py.File(stamped, "r") as f:
+        prov = f["INFO/PROVENANCE"].attrs
+        assert "model_hash" not in prov and prov["fem_hash"] == want
     try:
         for d, comp in enumerate(_DISP):
             ids, vals = _read(res, comp, **sel)

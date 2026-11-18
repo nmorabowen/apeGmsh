@@ -1,0 +1,3 @@
+### FIXED — the `app-tests` CI lane runs when a file the viewer's tests read outside `apeGmshViewer/` changes (#2995)
+
+The lane's path filter watched only `apeGmshViewer/` and the pairing oracle's inputs, so a change to `architecture/schemas/` (#2989) skipped every step and reported success while `main` went red. The filter now also covers every outside path the viewer's tests read: `architecture/schemas/`, `tests/fixtures/{ladruno,mpm,simplex_gp,user_results}/`, `tests/results/user/test_user_fingerprint.py`, `src/apeGmsh/results/_gauss_extrapolation.py`, `examples/shoebuckle_arch.py`, and any `*.ladruno` file.

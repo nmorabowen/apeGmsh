@@ -1,10 +1,17 @@
-// Legend panel: the colour mode (by physical group, by the structural role
-// the file records, or, V4c1, a nodal contour) and its rows. A click on a
-// group's row hides or shows it (`setHidden`); "show all" clears the hidden
-// set. In contour mode it is also the field picker: the field, its
-// component, the colour range mode and the colormap, and the ramp with its
-// min and max, the range mode in words, and the no-data colour. It
-// dispatches events and reads selectors, nothing else.
+// Legend panel (the Physical groups card): colour by physical group or by the
+// structural role the file records, and its rows. A click on a group's row
+// hides or shows it (`setHidden`); "show all" clears the hidden set. It
+// dispatches events and reads selectors, nothing else. ADR 0130 D1 (VU3b):
+// the field picker lists two groups, Results (what the recorder wrote) and
+// User Results (the set's `.user.h5` entries). VU16: a state-free nodal user
+// result is picked there and drawn as a contour; any other is listed only.
+//
+// This module also fills the Display card (what is drawn, and the contour
+// colormap), the Deformed card, the Contour card (V4c1: the switch, the field
+// and its component, the Gauss draw mode, what the file refuses and the no-data
+// colour), and the contour scale in the viewport, which
+// shows whenever a contour is drawn, whether or not the cards are open, and
+// holds the colour range controls.
 
 import {
   CMAP_NAMES,
@@ -18,16 +25,25 @@ import {
   legendEntryColour,
   legendOf,
   NO_DATA_RGB,
+  gaussNotesOf,
+  gaussUnavailable,
+  NODE_SIZE_MAX,
+  NODE_SIZE_MIN,
+  fixedRangeFrom,
   rampCss,
-  RANGE_MODES,
+  rangeKindOf,
+  rangeOptionsOf,
   resolveFieldUnits,
   roleLegendOf,
   scaleLabel,
+  userResultPickOf,
   type ContourView,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { ColourBy, ContourCmap, ContourSource, GaussMode, LegendEntry } from "../state/types.ts";
+import type { ColourBy, ContourCmap, ContourRange, ContourSource, GaussMode, LegendEntry, UserResult } from "../state/types.ts";
+import { isHeadingToggleTarget, toggleCardCollapse } from "../ui/collapse.ts";
 import { byId, el, listen } from "../ui/dom.ts";
+import { fillScale, mountScaleChrome, type ScaleChrome } from "../ui/scaleChrome.ts";
 
 export { fmtValue, rampCss } from "../state/selectors.ts";
 
@@ -47,20 +63,40 @@ const css = (rgb: readonly number[]): string => `rgb(${rgb.map((c) => Math.round
  */
 export function contourLines(
   s: State,
-  v: Extract<ContourView, { state: "ready" | "element" }>,
-): { title: string; min: string; max: string; range: string; units: string; state: string | null; topology: string | null; axes: string | null } {
+  v: Extract<ContourView, { state: "ready" | "element" | "combination" | "difference" | "user" }>,
+): { title: string; min: string; max: string; ticks: string[]; range: string; units: string; state: string | null; topology: string | null; axes: string | null } {
   const c = v.clim;
   const constant = c.min !== null && c.max !== null && c.min === c.max;
   const stageKind = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage]?.kind : undefined;
-  const u = resolveFieldUnits(v.field, s.contour.source, s.contour.sourceUnits, s.contour.targetUnits, stageKind, s.contour.declaredUnits);
+  // VU16: a user result's columns are named by its writer (footfall's `footfall_ratio`), so no unit is inferred from a name.
+  const u =
+    v.state === "user"
+      ? { factor: 1, unit: null, note: "as the user file stores it: its writer names the columns, so no unit is converted" }
+      : resolveFieldUnits(v.field, s.contour.source, s.contour.sourceUnits, s.contour.targetUnits, stageKind, s.contour.declaredUnits);
   const unitSuffix = u.unit ? ` [${u.unit}]` : "";
+  // VU7b-2: a User Combination's scale names the combination, and says when it can be no deformed shape.
+  // VU10: a difference's scale names the window variant and the compare variant it subtracts.
+  const what = v.state === "combination" ? `${v.name} · ` : v.state === "difference" ? `${v.window} − ${v.compare} · ` : "";
   return {
-    title: `${v.field} · ${v.component.label}${unitSuffix}`,
+    title: `${what}${v.field} · ${v.component.label}${unitSuffix}`,
     min: c.min === null ? "no finite value" : fmtValue(c.min * u.factor),
     max: c.max === null ? "" : constant ? "(constant)" : fmtValue(c.max * u.factor),
+    // The scale is the only colour bar, so it also says when there is no range to show.
+    ticks: c.min === null || c.max === null ? ["no finite value"] : constant ? [fmtValue(c.min * u.factor), "(constant)"] : [0, 0.25, 0.5, 0.75, 1].map((f) => fmtValue((c.min! + (c.max! - c.min!) * f) * u.factor)),
     range: c.label,
     units: u.note,
-    state: !v.stepMeasured ? `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading` : null,
+    state:
+      v.state === "user"
+        ? `User result, one state: ${v.finite.toLocaleString()} of ${v.nodes.toLocaleString()} nodes hold a value; contour only, never a deformed shape`
+        : v.state === "difference"
+        ? "Difference: window minus compare (read-only)"
+        : v.state === "combination"
+        ? v.signed
+          ? "User Combination: signed"
+          : "User Combination: unsigned, shown as a contour only (ADR 0130 D4)"
+        : !v.stepMeasured
+          ? `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading`
+          : null,
     topology: v.state === "element" ? v.topologyLabel : null,
     axes: v.state === "element" && v.component.local ? "Axes: local (the component's name says so)." : null,
   };
@@ -87,13 +123,38 @@ export const SURFACE_OPACITY_PRESETS: readonly { readonly label: "solid" | "ghos
 
 export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => () => void): () => void {
   const legend = byId("legend");
+  const display = byId("display");
+  const deformCard = byId("deform");
+  const viewportScale = byId("viewport-scale");
+  const contourCard = byId("contour");
+  let scaleChrome: ScaleChrome | null = null;
+  let refusalsOpen = false;
   let unlisten: (() => void)[] = [];
+  // The Contour card and the scale have their own listeners: they rebuild on every step, the other cards do not.
+  let contourUnlisten: (() => void)[] = [];
+  // Turning contour off returns to the mode it was turned on from.
+  let lastBy: "group" | "role" = "group";
   let lastContour = "";
   let lastDeform = "";
   let lastTheme = "";
+  type SizeControls = { slider: HTMLInputElement; label: HTMLElement; auto: HTMLElement; of: (s: State) => { size: number | null; auto: boolean } };
+  let sizeControls: SizeControls[] = [];
+  // Updated in place: rebuilding the card under a dragged slider would drop the drag.
+  const syncSizeControls = (s: State) => {
+    for (const c of sizeControls) {
+      const { size, auto } = c.of(s);
+      if (size !== null) c.slider.value = String(size);
+      c.label.textContent = size === null ? "" : `${size} px`;
+      c.auto.className = "node-auto" + (auto ? " on" : "");
+    }
+  };
+  let lastGauss = "";
   const render = (s: State, prev: State | null) => {
     const theme = document.documentElement?.dataset?.["theme"] === "light" ? "light" : "dark";
     const contour = s.visibility.colourBy === "contour";
+    if (s.visibility.colourBy !== "contour") lastBy = s.visibility.colourBy;
+    syncSizeControls(s);
+    const gaussSig = `${s.gaussPoints.on}|${gaussUnavailable(s) ?? ""}|${gaussNotesOf(s).join("|")}`;
     if (
       prev &&
       theme === lastTheme &&
@@ -103,34 +164,55 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       s.visibility.edges === prev.visibility.edges &&
       s.visibility.opacity === prev.visibility.opacity &&
       s.visibility.extrudeFrames === prev.visibility.extrudeFrames &&
-      s.visibility.showOffsets === prev.visibility.showOffsets
+      s.visibility.showOffsets === prev.visibility.showOffsets &&
+      s.nodes.on === prev.nodes.on &&
+      s.supports === prev.supports &&
+      s.contour.cmap === prev.contour.cmap &&
+      gaussSig === lastGauss
     ) {
-      // In contour mode the legend follows the pick, the step and the ranges, and (V4d) the deformed shape's
-      // state in every mode; it is rebuilt only when what it says changed.
-      if (deformSignature(s) === lastDeform && (!contour || contourSignature(s) === lastContour)) {
+      // (V4d) The cards follow the deformed shape's state in every mode, and the Contour card alone follows
+      // the pick, the step and the ranges: a step rebuilds it, never the group rows under the pointer.
+      if (deformSignature(s) === lastDeform) {
+        if (contour && contourSignature(s) !== lastContour) renderContourCard(s);
         return;
       }
     }
     lastTheme = theme;
+    lastGauss = gaussSig;
     lastDeform = deformSignature(s);
     for (const u of unlisten) u();
     unlisten = [];
     legend.hidden = s.mesh === null;
+    viewportScale.hidden = true;
     const byRole = s.visibility.colourBy === "role";
-    const head = el("h3", undefined, contour ? "Contour" : byRole ? "Structural roles" : "Physical groups");
+    const head = el("h3", undefined, byRole ? "Structural roles" : "Physical groups");
     legend.replaceChildren(head);
-    if (!byRole && !contour && s.visibility.hidden.length) {
+    if (!byRole && s.visibility.hidden.length) {
       const all = el("button", "legend-all", "show all");
       unlisten.push(listen(all, "click", () => store.dispatch({ type: "showAll" })));
       head.append(all);
     }
     const modes = el("div", "legend-mode");
-    for (const m of MODES) {
+    // Contour colouring is switched on its own card; these two colour by the declarations.
+    for (const m of MODES.filter((x) => x.by !== "contour")) {
       const b = el("button", s.visibility.colourBy === m.by ? "on" : "", m.label);
       unlisten.push(listen(b, "click", () => store.dispatch({ type: "setColourBy", by: m.by })));
       modes.append(b);
     }
     legend.append(modes);
+    display.hidden = s.mesh === null;
+    display.replaceChildren(el("h3", undefined, "Display"));
+    const labelled = (label: string, row: HTMLElement) => {
+      const line = el("div", "display-row");
+      line.append(el("span", "display-label", label), row);
+      display.append(line);
+    };
+    const pendingBtn = (label: string, why: string) => {
+      const b = el("button", undefined, label);
+      b.disabled = true;
+      b.title = why;
+      return b;
+    };
     if (s.mesh && (s.mesh.counts.faceCells > 0 || s.mesh.counts.solidCells > 0)) {
       const surfacesOn = s.visibility.opacity > 0;
       const meshRow = el("div", "legend-mode legend-mesh");
@@ -146,41 +228,91 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         unlisten.push(listen(b, "click", () => store.dispatch({ type: "setOpacity", value: p.opacity })));
         meshRow.append(b);
       }
-      legend.append(meshRow);
+      labelled("Mesh", meshRow);
     }
     const fe = s.mesh?.frameExtrusion;
-    if (fe && (fe.hasExtrudableFrames || fe.hasJointOffsets)) {
-      const frameRow = el("div", "legend-mode legend-frames");
-      if (fe.hasExtrudableFrames) {
-        const extrudeBtn = el("button", "frame-extrude" + (s.visibility.extrudeFrames ? " on" : ""), "extrude");
-        extrudeBtn.title = "toggle 3-D frame cross-section extrusion";
-        unlisten.push(listen(extrudeBtn, "click", () => store.dispatch({ type: "toggleExtrudeFrames" })));
-        frameRow.append(extrudeBtn);
-      }
-      if (fe.hasJointOffsets) {
-        const offsetsBtn = el("button", "frame-offsets" + (s.visibility.showOffsets ? " on" : ""), "offsets");
-        offsetsBtn.title = "toggle rigid joint-offset links (-jntOffset / InsertionPoint / -endZones)";
-        unlisten.push(listen(offsetsBtn, "click", () => store.dispatch({ type: "toggleShowOffsets" })));
-        frameRow.append(offsetsBtn);
-      }
-      legend.append(frameRow);
-      if (s.visibility.extrudeFrames && fe.extrusionSkippedUnoriented > 0) {
-        const n = fe.extrusionSkippedUnoriented;
-        legend.append(
-          el(
-            "div",
-            "legend-note",
-            `${n.toLocaleString()} frame ${n === 1 ? "element" : "elements"} drawn as 1-D ${n === 1 ? "line" : "lines"} (no 3-D section orientation / vecxz recorded).`,
-          ),
-        );
-      }
+    const frameRow = el("div", "legend-mode legend-frames");
+    const extrudeBtn = el("button", "frame-extrude" + (s.visibility.extrudeFrames ? " on" : ""), "extrude");
+    extrudeBtn.disabled = !fe?.hasExtrudableFrames;
+    extrudeBtn.title = fe?.hasExtrudableFrames ? "toggle 3-D frame cross-section extrusion" : "this model has no frames with a recorded section to extrude";
+    unlisten.push(listen(extrudeBtn, "click", () => store.dispatch({ type: "toggleExtrudeFrames" })));
+    const offsetsBtn = el("button", "frame-offsets" + (s.visibility.showOffsets ? " on" : ""), "offsets");
+    offsetsBtn.disabled = !fe?.hasJointOffsets;
+    offsetsBtn.title = fe?.hasJointOffsets ? "toggle rigid joint-offset links (-jntOffset / InsertionPoint / -endZones)" : "this model records no rigid joint offsets";
+    unlisten.push(listen(offsetsBtn, "click", () => store.dispatch({ type: "toggleShowOffsets" })));
+    frameRow.append(extrudeBtn, offsetsBtn);
+    labelled("Frames", frameRow);
+    if (fe && s.visibility.extrudeFrames && fe.extrusionSkippedUnoriented > 0) {
+      const n = fe.extrusionSkippedUnoriented;
+      display.append(
+        el(
+          "div",
+          "legend-note",
+          `${n.toLocaleString()} frame ${n === 1 ? "element" : "elements"} drawn as 1-D ${n === 1 ? "line" : "lines"} (no 3-D section orientation / vecxz recorded).`,
+        ),
+      );
     }
-    if (contour) {
-      lastContour = contourSignature(s);
-      renderContour(s);
-      renderDeform(s);
-      return;
+    const nodesRow = el("div", "legend-mode");
+    const nodesOn = s.nodes.on;
+    const showNodes = el("button", "node-show" + (nodesOn ? " on" : ""), "show");
+    showNodes.title = "toggle the node markers";
+    unlisten.push(listen(showNodes, "click", () => store.dispatch({ type: "setNodes", on: !store.get().nodes.on })));
+    nodesRow.append(showNodes, pendingBtn("numbers", "not built yet"));
+    labelled("Nodes", nodesRow);
+    sizeControls = [];
+    const sizeRow = (what: string, of: SizeControls["of"], set: (size: number | null) => void) => {
+      const row = el("div", "node-size-row");
+      const slider = el("input", "node-size");
+      slider.type = "range";
+      slider.min = String(NODE_SIZE_MIN);
+      slider.max = String(NODE_SIZE_MAX);
+      slider.step = "1";
+      slider.title = `${what} marker size on screen`;
+      unlisten.push(listen(slider, "input", () => set(Number(slider.value))));
+      const label = el("span", "node-size-label");
+      const auto = el("button", "node-auto", "auto");
+      auto.title = "let the app choose the size for this model";
+      unlisten.push(listen(auto, "click", () => set(null)));
+      row.append(slider, label, auto);
+      labelled("Size", row);
+      sizeControls.push({ slider, label, auto, of });
+    };
+    if (nodesOn) sizeRow("node", (x) => x.nodes, (size) => store.dispatch({ type: "setNodeSize", size }));
+    // Gauss points and beam stations: results data, so the row says why it cannot when no stage records them.
+    const gaussOn = s.gaussPoints.on;
+    const why = gaussUnavailable(s);
+    const gaussRow = el("div", "legend-mode");
+    const showGauss = el("button", "gauss-show" + (gaussOn ? " on" : ""), "show");
+    showGauss.disabled = why !== null && !gaussOn;
+    showGauss.title = why ?? "toggle the Gauss point and beam station markers";
+    unlisten.push(listen(showGauss, "click", () => store.dispatch({ type: "setGaussPoints", on: !store.get().gaussPoints.on })));
+    gaussRow.append(showGauss);
+    labelled("Gauss", gaussRow);
+    if (gaussOn) {
+      sizeRow("Gauss point", (x) => x.gaussPoints, (size) => store.dispatch({ type: "setGaussSize", size }));
+      if (why) display.append(el("div", "legend-note", `${why}.`));
+      for (const n of gaussNotesOf(s)) display.append(el("div", "legend-note", n));
     }
+    syncSizeControls(s);
+    const supportsRow = el("div", "legend-mode");
+    // BC: the restraint glyphs at the supports (renderer/loads.ts SupportsLayer), from the model alone.
+    const bc = el("button", "supports-show" + (s.supports.on ? " on" : ""), "BC");
+    bc.title = "draw the supports: an arrow into the node per restrained translation, a half circle per restrained rotation";
+    unlisten.push(listen(bc, "click", () => store.dispatch({ type: "setSupports", on: !store.get().supports.on })));
+    supportsRow.append(bc);
+    labelled("Supports", supportsRow);
+    const cm = el("select", "contour-cmap");
+    cm.title = "contour colormap";
+    for (const name of CMAP_NAMES) {
+      const o = el("option", undefined, name);
+      o.value = name;
+      o.selected = name === s.contour.cmap;
+      cm.append(o);
+    }
+    unlisten.push(listen(cm, "change", () => store.dispatch({ type: "setContourCmap", cmap: cm.value as ContourCmap })));
+    labelled("Contour", cm);
+    deformCard.hidden = !s.phase.axis.some((k) => k.kind === "results");
+    renderContourCard(s);
     let rows: LegendEntry[];
     if (byRole) {
       const r = roleLegendOf(s);
@@ -215,8 +347,8 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
   const renderDeform = (s: State) => {
     if (!s.phase.axis.some((k) => k.kind === "results")) return;
     const lines = deformLines(s);
-    const box = el("div", "deform");
-    box.append(el("div", "deform-title", "Deformed shape"));
+    const box = deformCard;
+    box.replaceChildren(el("h3", undefined, "Deformed"));
     const modes = el("div", "legend-mode deform-modes");
     const on = el("button", "deform-toggle" + (s.deform.on ? " on" : ""), "deformed");
     on.disabled = !lines.available && !s.deform.on;
@@ -254,7 +386,25 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       m.append(chip, el("span", undefined, lines.partial));
       box.append(m);
     }
-    legend.append(box);
+  };
+
+  /** The Contour card: its switch, then (while on) the field, its draw mode and what the file refuses; and the viewport scale. */
+  const renderContourCard = (s: State) => {
+    for (const u of contourUnlisten) u();
+    contourUnlisten = [];
+    const contour = s.visibility.colourBy === "contour";
+    viewportScale.hidden = true;
+    contourCard.hidden = s.mesh === null;
+    contourCard.replaceChildren(el("h3", undefined, "Contour"));
+    const contourRow = el("div", "legend-mode");
+    const contourBtn = el("button", "contour-toggle" + (contour ? " on" : ""), "contour");
+    contourBtn.title = contour ? `colour ${lastBy === "role" ? "by structural role" : "by physical group"} again` : "colour the model by a result field";
+    contourUnlisten.push(listen(contourBtn, "click", () => store.dispatch({ type: "setColourBy", by: store.get().visibility.colourBy === "contour" ? lastBy : "contour" })));
+    contourRow.append(contourBtn);
+    contourCard.append(contourRow);
+    lastContour = contour ? contourSignature(s) : "";
+    if (contour) renderContour(s);
+    scaleChrome?.clamp();
   };
 
   const renderContour = (s: State) => {
@@ -266,22 +416,36 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       ...(picker?.elements ?? []).map((f) => ({ source: "element" as const, name: f.name, components: f.components })),
     ];
     const valueOf = (source: ContourSource, name: string) => `${source}:${name}`;
-    if (options.length) {
+    const user = userResultsGroup(s);
+    // VU16: a user result that can be drawn is an option too; it is never offered over a User Combination.
+    const onCombination = s.phase.at?.kind === "combination";
+    for (const r of user?.rows ?? []) {
+      if (r.pick && !onCombination) options.push({ source: "user", name: r.pick.name, components: r.pick.components.map((k) => ({ key: k, label: k })) });
+    }
+    if (options.length || user) {
       const row = el("div", "contour-pick");
       const field = el("select", "contour-field");
-      field.title = "field: nodal, or element (Gauss points)";
-      if (s.contour.field === null) {
-        // Nothing picked (a re-read cleared the pick): a placeholder, so picking the first field is a change.
+      field.title = "field: Results (nodal, or element Gauss points), or User Results";
+      if (s.contour.field === null || !options.length) {
+        // Nothing picked (a re-read cleared the pick, or only User Results are listed): a placeholder, so picking the first field is a change.
         const o = el("option", undefined, "pick a field");
         o.disabled = true;
         o.selected = true;
         field.append(o);
       }
+      // ADR 0130 D1: the Results group, by source, then the User Results group.
       for (const source of ["nodal", "element"] as const) {
         const of = options.filter((x) => x.source === source);
         if (!of.length) continue;
         const group = el("optgroup");
-        group.label = source === "nodal" ? "nodal" : picker?.elementsVerified ? "element (Gauss points)" : "element (Gauss points, unverified file)";
+        group.label =
+          s.phase.at?.kind === "combination"
+            ? `User Combination ${s.phase.at.name} · nodal`
+            : source === "nodal"
+              ? "Results · nodal"
+              : picker?.elementsVerified
+                ? "Results · element (Gauss points)"
+                : "Results · element (Gauss points, unverified file)";
         for (const f of of) {
           const o = el("option", undefined, f.name);
           o.value = valueOf(f.source, f.name);
@@ -290,43 +454,88 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         }
         field.append(group);
       }
-      const current = options.find((f) => f.source === s.contour.source && f.name === s.contour.field) ?? options[0]!;
-      const comp = el("select", "contour-component");
-      comp.title = "component";
-      for (const c of current.components) {
-        const o = el("option", undefined, c.label);
-        o.value = c.key;
-        o.selected = c.key === s.contour.component;
-        comp.append(o);
+      if (user) {
+        // VU16: a state-free nodal user result is picked here; any other row is disabled and says why.
+        const group = el("optgroup");
+        group.label = user.label;
+        for (const r of user.rows) {
+          const o = el("option", undefined, r.text);
+          o.title = r.title;
+          if (r.pick && !onCombination) {
+            o.value = valueOf("user", r.pick.name);
+            o.selected = s.contour.source === "user" && s.contour.field === r.pick.name;
+          } else {
+            o.disabled = true;
+            if (r.pick) o.title = `${r.title}; not drawn over User Combination ${s.phase.at?.kind === "combination" ? s.phase.at.name : ""}`;
+          }
+          group.append(o);
+        }
+        field.append(group);
       }
-      unlisten.push(
+      row.append(field);
+      const current = options.find((f) => f.source === s.contour.source && f.name === s.contour.field) ?? options[0];
+      if (current) {
+        const comp = el("select", "contour-component");
+        comp.title = "component";
+        for (const c of current.components) {
+          const o = el("option", undefined, c.label);
+          o.value = c.key;
+          o.selected = c.key === s.contour.component;
+          comp.append(o);
+        }
+        contourUnlisten.push(listen(comp, "change", () => store.dispatch({ type: "setContourField", field: current.name, component: comp.value, source: current.source })));
+        row.append(comp);
+      }
+      contourUnlisten.push(
         listen(field, "change", () => {
-          const f = options.find((x) => valueOf(x.source, x.name) === field.value)!;
+          const f = options.find((x) => valueOf(x.source, x.name) === field.value);
+          if (!f) throw new Error(`contour picker: ${JSON.stringify(field.value)} is not a Results field or a user result`);
           store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: f.source });
         }),
-        listen(comp, "change", () => store.dispatch({ type: "setContourField", field: current.name, component: comp.value, source: current.source })),
       );
-      row.append(field, comp);
-      legend.append(row);
+      contourCard.append(row);
+      // The User Results group, spelled out: a closed picker shows one option, and a still shows none.
+      if (user) {
+        const box = el("div", "user-results");
+        box.append(el("div", "legend-note user-results-head", user.label));
+        for (const r of user.rows) {
+          const line = el("div", "legend-note user-result" + (r.refused ? " refused-field" : ""), r.text);
+          line.title = r.title;
+          if (r.stale) line.style.cssText = "color: var(--interp-text);";
+          box.append(line);
+        }
+        if (user.note) box.append(el("div", "legend-note", user.note));
+        contourCard.append(box);
+      }
     }
-    for (const r of picker?.refused ?? []) legend.append(el("div", "legend-note refused-field", `${r.component}: not read (${r.reason})`));
+    // What the file cannot give is stated in a count that opens, so a long list leaves the field readout in view.
+    const refusals: string[] = [];
+    for (const r of picker?.refused ?? []) refusals.push(`${r.component}: not read (${r.reason})`);
     for (const f of picker?.fields ?? []) {
-      if (f.magnitudeRefused) legend.append(el("div", "legend-note refused-field", `${f.name} magnitude: refused, ${f.magnitudeRefused}`));
+      if (f.magnitudeRefused) refusals.push(`${f.name} magnitude: refused, ${f.magnitudeRefused}`);
     }
     for (const f of picker?.elements ?? []) {
-      if (f.refused) legend.append(el("div", "legend-note refused-field", `element field ${f.name}: refused, ${f.refused}`));
+      if (f.refused) refusals.push(`element field ${f.name}: refused, ${f.refused}`);
+    }
+    if (refusals.length) {
+      const box = el("details", "legend-refusals");
+      box.open = refusalsOpen;
+      box.append(el("summary", "legend-note refused-field", `${refusals.length} ${refusals.length === 1 ? "field" : "fields"} refused`));
+      for (const r of refusals) box.append(el("div", "legend-note refused-field", r));
+      contourUnlisten.push(listen(box, "toggle", () => { refusalsOpen = box.open; }));
+      contourCard.append(box);
     }
     if (s.contour.source === "element") {
       const modes = el("div", "legend-mode contour-gauss");
       for (const m of GAUSS_MODES) {
         const b = el("button", s.contour.gauss === m.mode ? "on" : "", m.label);
         b.title = m.title;
-        unlisten.push(listen(b, "click", () => store.dispatch({ type: "setContourGauss", mode: m.mode })));
+        contourUnlisten.push(listen(b, "click", () => store.dispatch({ type: "setContourGauss", mode: m.mode })));
         modes.append(b);
       }
-      legend.append(modes);
+      contourCard.append(modes);
     }
-    if (v.state !== "ready" && v.state !== "element") {
+    if (v.state !== "ready" && v.state !== "element" && v.state !== "combination" && v.state !== "difference" && v.state !== "user") {
       const note =
         v.state === "unavailable"
           ? `Nothing to colour: ${v.reason}.`
@@ -335,42 +544,44 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
             : v.state === "not-yet"
               ? `Not drawn: ${v.reason}.`
               : "";
-      legend.append(el("div", "legend-note" + (v.state === "refused" ? " refused-field" : ""), note));
-      legend.append(noDataRow());
+      contourCard.append(el("div", "legend-note" + (v.state === "refused" ? " refused-field" : ""), note));
+      contourCard.append(noDataRow());
       return;
     }
     const lines = contourLines(s, v);
-    legend.append(el("div", "contour-title", lines.title));
-    if (lines.topology) legend.append(el("div", "legend-note contour-topology", lines.topology));
-    if (lines.axes) legend.append(el("div", "legend-note contour-axes", lines.axes));
-    const ramp = el("div", "contour-ramp");
-    ramp.style.backgroundImage = rampCss(v.cmap);
-    legend.append(ramp);
-    const ends = el("div", "contour-ends");
-    ends.append(el("span", "contour-min", lines.min), el("span", "contour-max", lines.max));
-    legend.append(ends);
-    legend.append(el("div", "contour-range", lines.range));
-    if (lines.state) legend.append(el("div", "legend-note", lines.state));
     // The unit choice lives in the header; this field's own provenance note
-    // (e.g. "not declared — select source") stays with the legend it describes.
-    legend.append(el("div", "legend-note", lines.units));
-    legend.append(noDataRow());
+    // (e.g. "not declared — select source") stays with the scale it describes.
+    fillScale(viewportScale, { title: lines.title, tooltip: lines.units, ramp: rampCss(v.cmap), ticks: lines.ticks, range: lines.range }, contourUnlisten, () => {
+      render(store.get(), null);
+      scaleChrome?.clamp();
+      scaleChrome?.save();
+    });
+    viewportScale.hidden = false;
+    scaleChrome?.clamp();
+    if (lines.topology) contourCard.append(el("div", "legend-note contour-topology", lines.topology));
+    if (lines.axes) contourCard.append(el("div", "legend-note contour-axes", lines.axes));
+    if (lines.state) contourCard.append(el("div", "legend-note", lines.state));
+    contourCard.append(noDataRow());
 
     const modes = el("div", "legend-mode contour-modes");
-    for (const m of RANGE_MODES) {
-      const b = el("button", s.contour.range === m.range ? "on" : "", m.label);
-      unlisten.push(
+    // VF2-d (#2956): the one range rule (state/contour.ts `rangeOptionsOf`), which the command palette offers too.
+    for (const m of rangeOptionsOf(rangeKindOf(s), s.contour.range)) {
+      const b = el("button", m.on ? "on" : "", m.label);
+      if (m.title) b.title = m.title;
+      contourUnlisten.push(
         listen(b, "click", () => {
+          // The view's own range: it leaves a fixed range for `m.range`; otherwise there is nothing to change.
+          if (m.own && store.get().contour.range !== "fixed") return;
           if (m.range !== "fixed") return store.dispatch({ type: "setContourRange", range: m.range });
-          // A fixed range starts from the range shown, when it has one.
-          const c = contourView(store.get());
-          const from = store.get().contour.fixed ?? ((c.state === "ready" || c.state === "element") && c.clim.min !== null && c.clim.max !== null && c.clim.min < c.clim.max ? { min: c.clim.min, max: c.clim.max } : null);
+          // A fixed range starts from the stored one, else the range shown, when it has one (selectors `fixedRangeFrom`, the palette's too).
+          const from = fixedRangeFrom(store.get());
           if (from) store.dispatch({ type: "setContourRange", range: "fixed", fixed: from });
         }),
       );
       modes.append(b);
     }
-    legend.append(modes);
+    // The range is set where it is read: on the scale in the viewport.
+    viewportScale.append(modes);
     if (s.contour.range === "fixed" && s.contour.fixed) {
       const box = el("div", "contour-fixed");
       const lo = el("input", "contour-fixed-min");
@@ -386,21 +597,21 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
         if (Number.isFinite(min) && Number.isFinite(max) && min < max) store.dispatch({ type: "setContourRange", range: "fixed", fixed: { min, max } });
         else lo.setCustomValidity("min must be below max");
       };
-      unlisten.push(listen(lo, "change", apply), listen(hi, "change", apply));
+      contourUnlisten.push(listen(lo, "change", apply), listen(hi, "change", apply));
       box.append(lo, hi);
-      legend.append(box);
+      viewportScale.append(box);
     }
-    const cm = el("select", "contour-cmap");
-    cm.title = "colormap";
-    for (const name of CMAP_NAMES) {
-      const o = el("option", undefined, name);
-      o.value = name;
-      o.selected = name === v.cmap;
-      cm.append(o);
-    }
-    unlisten.push(listen(cm, "change", () => store.dispatch({ type: "setContourCmap", cmap: cm.value as ContourCmap })));
-    legend.append(cm);
+    scaleChrome?.clamp();
   };
+
+  // The cards this module fills collapse from their headers like the others (ui/collapse.ts).
+  const unlistenCards = [display, deformCard, contourCard].map((card) =>
+    listen(card, "click", (e: MouseEvent) => {
+      if (isHeadingToggleTarget(e.target instanceof Element ? e.target : null, card)) toggleCardCollapse(card);
+    }),
+  );
+  // Only a real window has a place to drag in; the Node tests mount this panel without one.
+  scaleChrome = typeof window === "undefined" ? null : mountScaleChrome(viewportScale, "apegmsh.viewer.contourScale");
 
   render(store.get(), null);
   const unsubscribe = store.subscribe(render);
@@ -411,6 +622,9 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
   return () => {
     unsubscribe();
     unsubTheme?.();
+    for (const u of unlistenCards) u();
+    for (const u of contourUnlisten) u();
+    scaleChrome?.dispose();
     for (const u of unlisten) u();
   };
 }
@@ -463,13 +677,58 @@ function deformSignature(s: State): string {
   return JSON.stringify([s.phase.axis.some((k) => k.kind === "results"), s.deform.on, s.deform.scale, s.deform.ghost, deformLines(s)]);
 }
 
+const TARGET_WORD: Readonly<Record<UserResult["target"], string>> = { nodes: "nodal", elements: "element", entities: "entity", domain: "whole model" };
+
+/** One row of the User Results group; `pick` is set when the row can be drawn as a contour (VU16). */
+export interface UserResultRow {
+  text: string;
+  title: string;
+  stale: boolean;
+  refused: boolean;
+  pick: { name: string; components: string[] } | null;
+}
+
+/**
+ * ADR 0130 D1, D7: the contour picker's User Results group, from the set's
+ * `.user.h5`: one row per entry (its target, per state or state-free, and
+ * stale with the reason, A6) and one per refused entry, or the zone's refusal.
+ * VU16: a state-free nodal entry can be picked (`pick`; a stale one is picked
+ * and refused with its reason); any other is listed only, and the title says
+ * why (selectors `userResultPickOf`). Null when the file has none.
+ */
+export function userResultsGroup(s: State): { label: string; rows: UserResultRow[]; note: string | null } | null {
+  const u = s.user;
+  if (u?.status !== "ready" || u.info.results === null) return null;
+  const r = u.info.results;
+  const file = u.path.split(/[\\/]/).pop() ?? u.path;
+  if (!r.ok) return { label: "User Results", rows: [{ text: "refused", title: `/results of ${file}: ${r.reason}`, stale: false, refused: true, pick: null }], note: null };
+  let listed = 0;
+  const rows: UserResultRow[] = r.items.map((x) => {
+    const what = `${TARGET_WORD[x.target]}, ${x.perState ? "per state" : "state-free"}`;
+    const p = userResultPickOf(s, x.name);
+    if (!p.ok) listed++;
+    return {
+      text: `${x.name} (${what}${x.stale.stale ? ", stale" : ""})`,
+      title:
+        `${x.name}: a ${what} user result of ${file}${x.linear ? ", linear" : ""}, on the ${x.basis === "results" ? "results" : "model"} basis` +
+        `${x.stale.stale ? `; stale: ${x.stale.reason || "no reason given"}` : ""}${p.ok ? "" : `; not drawn: ${p.reason}`}`,
+      stale: x.stale.stale,
+      refused: false,
+      pick: p.ok ? { name: x.name, components: [...x.components] } : null,
+    };
+  });
+  for (const x of r.refused) rows.push({ text: `${x.name || "(no name)"} (refused, ${x.reason})`, title: `${x.name}: refused, ${x.reason}: ${x.detail}`, stale: false, refused: true, pick: null });
+  return { label: "User Results", rows, note: listed ? "A state-free nodal user result is drawn as a contour; a per-state or non-nodal one is listed only." : null };
+}
+
 /** What the contour legend shows, as one string: it is rebuilt only when this changes. */
 function contourSignature(s: State): string {
   const v = contourView(s);
   const picker = contourFieldsOf(s);
   return JSON.stringify([
-    v.state === "ready" || v.state === "element" ? contourLines(s, v) : v,
-    v.state === "ready" || v.state === "element" ? v.cmap : null,
+    userResultsGroup(s),
+    v.state === "ready" || v.state === "element" || v.state === "combination" || v.state === "difference" || v.state === "user" ? contourLines(s, v) : v,
+    v.state === "ready" || v.state === "element" || v.state === "combination" || v.state === "difference" || v.state === "user" ? v.cmap : null,
     picker,
     s.contour.source,
     s.contour.gauss,

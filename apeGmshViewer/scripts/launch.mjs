@@ -3,12 +3,17 @@
 //   node scripts/launch.mjs view     [model.h5]
 //   node scripts/launch.mjs measure  <model.h5>          prints one MEASUREMENTS row
 //   node scripts/launch.mjs capture  <model.h5> <out.png>
+//   node scripts/launch.mjs measure  <x.ladruno | x.particles.h5> [--scrub-ms=N]     ADR 0134 D5: the particle row
+//   node scripts/launch.mjs capture  <x.ladruno | x.particles.h5> <out.png> [--colour=FIELD/COMPONENT] [--output=K] [--grid=1]
 //   node scripts/launch.mjs render   <spec.json> <outdir>  ADR 0128 D3, D4: one PNG per shot + manifest.json
 //   node scripts/launch.mjs describe <file.h5> <outdir>    ADR 0128 D4: describe.json
+//   node scripts/launch.mjs present  <spec.json>           ADR 0128 D5: offer the spec to the running window
+//   node scripts/launch.mjs snapshot <outdir>              ADR 0128 D6: the running window's view as a spec
 //
 // render exits with the app's code: 0 every shot drawn, 1 a shot refused (or
-// the run failed), 2 the spec refused (no PNG). The only process started is
-// the Electron binary from node_modules.
+// the run failed), 2 the spec refused (no PNG). present and snapshot too: 0
+// done, 1 no window is running (nothing opens), 2 the spec or `<outdir>`
+// refused. The only process started is the Electron binary from node_modules.
 
 import electronBinary from "electron";
 import { spawn } from "node:child_process";
@@ -26,21 +31,43 @@ const flags = process.argv.slice(2).filter((a) => a.startsWith("--"));
 const [mode, file, outArg] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
 const uncapped = flags.includes("--uncapped");
 const pick = flags.find((f) => f.startsWith("--pick="))?.slice("--pick=".length);
+// ADR 0134 D5 (M2-S4 #2983): measure or capture on a `.ladruno` or a `<stem>.particles.h5` runs the particle layer
+// (src/main/modes/measure.ts `particleRun`). Capture takes `--colour=FIELD/COMPONENT` (POSITION/1) and `--output=K`;
+// measure takes `--scrub-ms=N` (the scrub of outputs, 6000 by default).
+const particleFile = /\.(ladruno|particles\.h5)$/i.test(file ?? "");
+const passed = (name) => flags.find((f) => f.startsWith(`--${name}=`) && f.length > name.length + 3);
 const badFlag = flags.find(
   (f) =>
     !(f === "--uncapped" && mode === "measure") &&
-    !(f.startsWith("--pick=") && f.length > "--pick=".length && mode === "capture"),
+    !(f.startsWith("--pick=") && f.length > "--pick=".length && mode === "capture") &&
+    !(particleFile && mode === "capture" && (f === passed("colour") || f === passed("output") || f === "--grid=1")) &&
+    !(particleFile && mode === "measure" && f === passed("scrub-ms")),
 );
 if (badFlag) {
-  console.error(`unknown flag ${badFlag}; only "measure ... --uncapped" and "capture ... --pick=<type>" take one`);
+  console.error(
+    `unknown flag ${badFlag}; only "measure ... --uncapped", "capture ... --pick=<type>", and on a particle file "capture ... --colour=FIELD/COMPONENT --output=K --grid=1" or "measure ... --scrub-ms=N" take one`,
+  );
   process.exit(2);
 }
 
-if (!["view", "measure", "capture", "render", "describe"].includes(mode ?? "")) {
-  console.error("usage: launch.mjs view|measure|capture [model.h5] [out.png], or render <spec.json> <outdir>, or describe <file.h5> <outdir>");
+if (!["view", "measure", "capture", "render", "describe", "present", "snapshot"].includes(mode ?? "")) {
+  console.error("usage: launch.mjs view|measure|capture [model.h5] [out.png], or render <spec.json> <outdir>, or describe <file.h5> <outdir>, or present <spec.json>, or snapshot <outdir>");
   process.exit(2);
 }
-if (mode === "render" || mode === "describe") {
+if (mode === "present" || mode === "snapshot") {
+  // ADR 0128 D5, D6: these reach the running window, and never open one.
+  if (!file) {
+    console.error(mode === "present" ? "launch.mjs present <spec.json>" : "launch.mjs snapshot <outdir>");
+    process.exit(2);
+  }
+  if (mode === "present" && !existsSync(file)) {
+    console.error(`no such file: ${file}`);
+    process.exit(2);
+  }
+  const target = mode === "present" ? `--spec=${resolve(file)}` : `--out=${resolve(file)}`;
+  const child = spawn(electronBinary, [root, `--mode=${mode}`, target], { stdio: "inherit" });
+  child.on("exit", (code) => process.exit(code ?? 1));
+} else if (mode === "render" || mode === "describe") {
   // ADR 0128 D4: an agent mode writes into its folder only; the app writes and exits with the code.
   const what = mode === "render" ? "<spec.json>" : "<file.h5>";
   if (!file || !outArg) {
@@ -84,6 +111,7 @@ function runViewMeasureCapture() {
   if (file) args.push(`--file=${resolve(file)}`);
   if (uncapped) args.push("--uncapped=1");
   if (pick) args.push(`--pick=${pick}`);
+  for (const name of ["colour", "output", "scrub-ms", "grid"]) if (passed(name)) args.push(passed(name));
   if (out) args.push(`--out=${out}`);
 
   const child = spawn(electronBinary, args, { stdio: "inherit" });
@@ -103,6 +131,11 @@ function runViewMeasureCapture() {
     if (!existsSync(out)) {
       console.error(`measure failed: electron exited ${code} without a result`);
       process.exit(1);
+    }
+    // A particle run prints its own MEASUREMENTS row from main (src/main/modes/measure.ts `printParticleRow`).
+    if (particleFile) {
+      console.log(`measure: wrote ${out}`);
+      process.exit(code ?? 0);
     }
     printRow(JSON.parse(readFileSync(out, "utf8")));
   });

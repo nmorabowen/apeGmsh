@@ -244,3 +244,9 @@ adds a verb, a record field or an archive path.
 2. **Loads by label (ruling D4).** There is no `p.load(label=)`. The
    idiom is `p.load(node=ops.nodes.one(label=...), forces=...)`.
    `ops.nodes.one` raises unless the label picks exactly one node (D5).
+
+## Superseded in part by ADR 0131 (2026-11-03)
+
+[ADR 0131](0131-all-in-ladruno.md) supersedes D3's first route, "an `MPCO`
+recorder → `Results.from_mpco`", and adds a route for a `Ladruno` recorder.
+The rest of D3 stands.

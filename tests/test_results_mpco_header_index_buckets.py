@@ -21,6 +21,7 @@ named warning beside the header-0 read.
 """
 from __future__ import annotations
 
+import re
 import warnings
 from pathlib import Path
 
@@ -39,11 +40,10 @@ from apeGmsh.opensees._response_catalog import (
     lookup,
 )
 from apeGmsh.results import Results
-from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning, MPCOReader
-from apeGmsh.results.readers._mpco_layer_io import LayerBucketUnreadWarning
-from apeGmsh.results.readers._mpco_nodal_io import (
-    NodalForceBucketSkippedWarning,
-)
+from apeGmsh.results.readers._buckets import MPCOBucketSkippedWarning
+from apeGmsh.results.readers._mpco import MPCOReader
+from apeGmsh.results.readers._buckets import LayerBucketUnreadWarning
+from apeGmsh.results.readers._buckets import NodalForceBucketSkippedWarning
 from apeGmsh.results.readers._protocol import ResultLevel
 from tests.conftest import _stub_model_h5_path
 
@@ -650,9 +650,20 @@ def test_live_mixed_concrete_damage_reads_both_headers(tmp_path: Path) -> None:
         stage = next(k for k in f if k.startswith("MODEL_STAGE"))
         keys = {g: sorted(f[f"{stage}/RESULTS/ON_ELEMENTS/{g}"])
                 for g in ("material.damage", "material.stress")}
+    # The contract is the header split: one class, custom index 0, headers
+    # 0 and 1 on one Gauss rule. The rule id is the fork's self-description
+    # (0 before WP-227, nmorabowen/OpenSees#1068; 401 = Hex GL2 after it),
+    # so it is read from the file rather than pinned here.
+    rules: set[int] = set()
     for got in keys.values():
-        assert got == [f"{ELE_TAG_LadrunoBrick}-LadrunoBrick[0:0:0]",
-                       f"{ELE_TAG_LadrunoBrick}-LadrunoBrick[0:0:1]"], keys
+        assert len(got) == 2, keys
+        for hdr, key in enumerate(got):
+            m = re.fullmatch(
+                rf"{ELE_TAG_LadrunoBrick}-LadrunoBrick\[(\d+):0:{hdr}\]", key,
+            )
+            assert m is not None, keys
+            rules.add(int(m.group(1)))
+    assert len(rules) == 1, keys
 
     with Results.from_mpco(mpco, fem=fem, model_h5=model_h5) as r:
         for k, comp in enumerate(("damage_tension", "damage_compression")):

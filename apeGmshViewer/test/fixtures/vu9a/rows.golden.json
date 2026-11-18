@@ -1,0 +1,147 @@
+{
+ "plots": [
+  "int steps",
+  "profile ok"
+ ],
+ "refused": [
+  [
+   "sets",
+   1,
+   "",
+   "empty-name"
+  ],
+  [
+   "sets",
+   2,
+   " padded",
+   "empty-name"
+  ],
+  [
+   "sets",
+   3,
+   "twin",
+   "duplicate"
+  ],
+  [
+   "sets",
+   4,
+   "twin",
+   "duplicate"
+  ],
+  [
+   "sets",
+   5,
+   "both",
+   "bad-param"
+  ],
+  [
+   "sets",
+   6,
+   "fem ids",
+   "bad-param"
+  ],
+  [
+   "sets",
+   7,
+   "none",
+   "bad-members"
+  ],
+  [
+   "sets",
+   8,
+   "again",
+   "bad-members"
+  ],
+  [
+   "sets",
+   9,
+   "no model hash",
+   "bad-param"
+  ],
+  [
+   "plots",
+   0,
+   "drift",
+   "duplicate"
+  ],
+  [
+   "plots",
+   1,
+   "old grammar",
+   "unknown-grammar"
+  ],
+  [
+   "plots",
+   2,
+   "not json",
+   "bad-json"
+  ],
+  [
+   "plots",
+   3,
+   "a list",
+   "bad-json"
+  ],
+  [
+   "plots",
+   4,
+   "nan",
+   "bad-json"
+  ],
+  [
+   "plots",
+   5,
+   "dup key",
+   "bad-json"
+  ],
+  [
+   "plots",
+   6,
+   "open key",
+   "bad-plot"
+  ],
+  [
+   "plots",
+   7,
+   "float steps",
+   "bad-plot"
+  ],
+  [
+   "plots",
+   9,
+   "each in xy",
+   "bad-plot"
+  ],
+  [
+   "plots",
+   10,
+   "profile float step",
+   "bad-plot"
+  ],
+  [
+   "plots",
+   12,
+   "huge float",
+   "bad-json"
+  ],
+  [
+   "plots",
+   13,
+   "drift",
+   "duplicate"
+  ],
+  [
+   "views",
+   1,
+   "v2",
+   "unknown-grammar"
+  ]
+ ],
+ "revision": 7,
+ "sets": [
+  "ok"
+ ],
+ "views": [
+  "iso"
+ ]
+}

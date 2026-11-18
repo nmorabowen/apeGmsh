@@ -229,6 +229,20 @@ class TestDistributingCouplingChainPhase:
         # area weighting pulled the quad face and computed tributary areas
         assert recs[0].weights is not None
 
+    def test_footprint_uses_boundary_faces(self, tmp_path: Path) -> None:
+        g = _from_h5(_pg_interface_fem(), tmp_path)
+        # a 0.5 x 0.5 square in the unit quad: a quarter of its area per node
+        g.constraints.distributing_coupling(
+            "ref", "m_face", master_point=(0.5, 0.5, 1.0),
+            weighting="footprint",
+            footprint=[(0.1, 0.2, 0.0), (0.6, 0.2, 0.0),
+                       (0.6, 0.7, 0.0), (0.1, 0.7, 0.0)])
+
+        recs = list(g._fem.elements.constraints.interpolations())
+        assert len(recs) == 1
+        assert recs[0].master_nodes == [1, 2, 3, 4]
+        np.testing.assert_allclose(recs[0].weights, [0.0625] * 4)
+
 
 class TestPenaltyChainPhase:
     def test_penalty_routes_node_pair_records(self, tmp_path: Path) -> None:

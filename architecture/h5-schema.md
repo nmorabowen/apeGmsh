@@ -1830,19 +1830,62 @@ exists; hashed.
   `/opensees/decl_params` records must equal those rows, or the reader
   raises `MalformedH5Error`. From this minor the rows are the replay's
   only source for every line.
-- **Stage scope (interim).** A stage-claimed equation tie's lines are not
-  stored yet: the `VERBS` row stays `ledger` with an empty stage store
-  (`{scope}/constraints/equationConstraint|`), and the replay refuses such
-  a tie by name, citing #2448, which adds the stage rows.
-- **Reader refusals** (`H5Model.equation_constraints`, all
-  `MalformedH5Error`): the group in a file below 2.35.0
-  (`h5_reader.EQUATION_CONSTRAINT_FROM`), a missing column, columns that
-  disagree in length, a row with no retained term, a DOF below 1, a zero
-  or non-finite coefficient, and the group inside a stage.
+- **Stage scope (opensees 2.40.0).** The lines of an equation tie a
+  stage claims are rows of that stage block, in the same columns, beside
+  a row-aligned stage MP sequence (#2448; a 2.35 through 2.39 writer
+  dropped them):
+
+  ```
+  /opensees/stages/stage_NNN/constraints/
+      equationConstraint/               the columns above, one row per line the stage wrote
+      equationConstraint_emit_index     i8 (N,)   the stage's MP emit_index of each row
+  ```
+
+  The emit index comes from the stage's one sequence, which also stamps
+  `equalDOF_emit_index`, `rigidLink_emit_index`,
+  `rigidDiaphragm_emit_index` and `embeddedNode_emit_index`, so the
+  replay merges the five kinds back into the bridge's order inside the
+  stage. Their `/opensees/program` calls carry the stage's ordinal and the
+  same store template. A partitioned stage captures each line once.
+  Written only when a stage writes a line; hashed. `equationConstraint`
+  is no `ledger` verb any more (ADR 0114, amendment of 2026-10-23).
+- **Reader refusals** (`H5Model.equation_constraints` and
+  `H5Model.stages`, all `MalformedH5Error`): the global group in a file
+  below 2.35.0 (`h5_reader.EQUATION_CONSTRAINT_FROM`), a stage group in a
+  file below 2.40.0 (`h5_reader.STAGE_EQUATION_CONSTRAINT_FROM`), a stage
+  group without its `equationConstraint_emit_index` or the reverse, an
+  emit-index length that differs from the rows, a missing column, columns
+  that disagree in length, a row with no retained term, a DOF below 1,
+  and a zero or non-finite coefficient.
 - **Replay refusal.** An `enforce="equation"` record of the neutral zone
-  whose lines are not all among the stored tie rows (matched as a
-  multiset) refuses with `BridgeError`: every archive below 2.35.0 (#2416),
-  a stage-claimed tie (#2448), and a 2.35 file that lost rows.
+  whose lines are not all among the stored tie rows, global and stage
+  (matched as a multiset), refuses with `BridgeError`: every archive below
+  2.35.0 (#2416), a stage-claimed tie in an archive below 2.40.0 (#2448),
+  and a file that lost rows. A pre-2.40 archive stores nothing a
+  stage-claimed tie's lines could be rebuilt from, so it never replays;
+  nor does a `to_h5` rewrite of one, although it is stamped 2.40.0. A
+  stored `equationConstraint_emit_index` that is not a 1-D integer
+  dataset is malformed.
+- **Ghost SP rows (#2530).** A partitioned stage whose MP tie (any kind)
+  crosses ranks declares a ghost of each far node, and the ghost re-plays
+  its owner's SP history into the stage: the global fixes, then each
+  earlier stage's fixes and releases (ADR 0027 INV-2; a zero-weight
+  master's included). The stage's `bcs/fix` and `remove_sp` stores keep
+  those rows. The deck replay drops them by their
+  `/opensees/decls/rows` declaration: a declaration's home is the first
+  scope (global `bcs/fix`, then stage 0, 1, ...) whose `fix` or
+  `remove_sp` rows name it, and a stage row whose declaration's home is
+  an earlier scope is a ghost's. The stage's own rows stay, a deliberate
+  re-fix with an earlier mask after a release included. `to_h5` echoes
+  every row, and its capture helpers walk the stages as stored. A
+  partitioned archive whose global `bcs/fix` or stage `fix` / `remove_sp`
+  store has no declaration column covering its rows (below opensees
+  2.25.0, or a rewrite of one) refuses with `BridgeError` when a stage row
+  repeats an earlier `fix` (node and mask) or `remove_sp` (node and DOF).
+  That holds for every MP kind, so such an archive with a deliberate
+  same-mask re-fix after a release refuses even without equation rows. No
+  schema bump: the writer is unchanged (ADR 0114, amendment note of
+  2026-11-13).
 - **Rewrite.** `OpenSeesModel.to_h5` keeps the rows. A rewrite of a
   pre-2.35 archive stores its `apeSees.equation_constraint` rows and links
   the source's last `K` global `equationConstraint` calls to them; its
@@ -2242,21 +2285,21 @@ This section describes the layout those modules write at results zone
 `/meta` holds only the lineage, and the model is embedded under `/model`
 rather than written at the root.
 
-Six writers produce the file, and files from a seventh, deleted writer stay readable. `source_type` names the writer, but it is a stamp, not proof of origin:
+Four writers produce the file, and files from three former writers stay readable. `source_type` names the writer, but it is a stamp, not proof of origin:
 
 | `source_type` | Writer | `/model` | `/opensees` | Stages |
 |---|---|---|---|---|
-| `eigen` | `EigenResult.to_native` (`ops.eigen(n)`, `opensees/analysis/eigen.py`) | yes | yes: the bridge's zone | one `mode` stage per mode |
-| `eigen` | `capture_live_modes` (`results/live/_modes.py`), a plain openseespy deck | yes | no: the deck is not the bridge's | one `mode` stage per mode |
+| `eigen` | `EigenResult.to_native` (`ops.eigen(n)`, `opensees/analysis/eigen.py`), the explicit native export; `EigenResult.results()` and `to_ladruno` write a `.ladruno` | yes | yes: the bridge's zone | one `mode` stage per mode |
+| `eigen` (legacy) | `capture_live_modes` (`results/live/_modes.py`), a plain openseespy deck, before #2768. It now writes a stamped `.ladruno` ([Modes in a `.ladruno`](#modes-in-a-ladruno)) | yes | no: the deck is not the bridge's | one `mode` stage per mode |
 | `domain_capture` (legacy) | the in-process `DomainCapture`, deleted in #2191; its files stay readable until the native format retires | yes | yes when the bridge archived a `model.h5` sidecar, else absent | the user's `begin_stage` calls, then one `mode` stage per mode |
 | `tcl_recorders` | the recorder transcoder (`Results.from_recorders`) | yes | when `model=` is given | one stage per transcode |
 | `parallel_modal` | `ParallelModalResult` harvest (`opensees/analysis/modal.py`) | yes | no | one `mode` stage per mode |
 | `footfall_walking` | `FootfallResult` (`opensees/analysis/footfall_result.py`) | no | no | one `static` stage named `footfall` |
-| `domain_capture` (the `NativeWriter.open` default) | `make_demo_results` (`results/demo.py`): synthetic nodal displacements, no element groups | yes | yes | one `static` stage named `pushover` |
+| `domain_capture` (legacy, the `NativeWriter.open` default) | `make_demo_results` (`results/demo.py`) before #2778: synthetic nodal displacements, no element groups. It now writes `demo_results.ladruno` (ADR 0131 D10) | yes | yes | one `static` stage named `pushover` |
 
 Because `domain_capture` is also `NativeWriter.open`'s default, that stamp
-does not prove that `DomainCapture` wrote the file: the demo writer, or
-any caller that keeps the default, stamps it too.
+does not prove that `DomainCapture` wrote the file: the demo's files from
+before #2778, or any caller that keeps the default, carry it too.
 
 ### Layout
 
@@ -2384,11 +2427,11 @@ Who writes it:
 |---|---|
 | recorder transcoder (`tcl_recorders`) | `"fem"` when it can prove it, whatever apeGmsh version emitted the recorders; otherwise absent (below) |
 | `DomainCapture` (`domain_capture`, legacy files; the writer was deleted in #2191) | `"fem"` on every capture from #1764 on. An element-scoped capture refused unless a `{fem_eid: ops_tag}` pairing covered every recorded id ([Domain capture eras](#domain-capture-eras)) |
-| `EigenResult.to_native`, `capture_live_modes` (`eigen`) | never: they write nodal rows only |
-| `make_demo_results` (`domain_capture`) | `"fem"`, from #1764 on. It writes nodal rows only, in every version |
+| `EigenResult.to_native`, and `capture_live_modes` before #2768 (`eigen`) | never: they write nodal rows only |
+| `make_demo_results` (`domain_capture`, legacy files; it writes a `.ladruno` since #2778) | `"fem"`, from #1764 until #2778. It wrote nodal rows only, in every version |
 | `ParallelModalResult` (`parallel_modal`) | never: absent |
 | `FootfallResult` (`footfall_walking`) | never: absent |
-| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder and `make_demo_results` are the callers in `src/` |
+| `NativeWriter` itself | only when a caller invokes `stamp_element_index_space`; the transcoder is the caller in `src/` |
 | MPCO (`Results.from_mpco`) | writes no `results.h5` at all: it reads the `.mpco` file directly |
 
 The transcoder labels element rows with the recorder spec's FEM ids. Those
@@ -2646,6 +2689,66 @@ in. Nothing in `results.h5` or `/model` records that system.
   ([`element_index_space`](#element_index_space)). Such a file reads as
   unverified.
 
+### Modes in a `.ladruno`
+
+Modes are written to a `.ladruno` by default (ADR 0131 D10), not to a
+native file. `EigenResult.to_ladruno` and `EigenResult.results()` write
+them for a bridge solve, `ParallelModalResult.to_ladruno` for a parallel
+modal harvest, and `capture_live_modes` (from #2768) for a plain
+openseespy deck. All three go through the Python writer
+`write_modes`
+([`results/readers/_ladruno_writer.py`](../src/apeGmsh/results/readers/_ladruno_writer.py)),
+in the layout the fork recorder writes for `modesOfVibration` +
+`modesOfVibrationRotational`. The fork owns that format (ADR 0122 D4);
+this is the subset the writer emits:
+
+```
+modes.ladruno
+├── INFO                                 GENERATOR="Ladruno", FORMAT_VERSION=1,
+│   │                                    FORMAT_MINOR_VERSION=1, SPATIAL_DIM,
+│   │                                    STORED_PRECISION="f64", one partition
+│   └── PROVENANCE                       the apeGmsh stamp (below)
+└── MODEL_STAGE[1]                       KIND="eigen", STEP=0, TIME=0.0
+    ├── MODEL/NODES/{ID, COORDINATES}    every fem node; the first ndm coordinates
+    ├── MODEL/ELEMENTS                   empty: no element buckets are written
+    ├── MODEL/SECTION_ASSIGNMENTS        empty
+    └── RESULTS/ON_NODES
+        ├── MODES_OF_VIBRATION(U)        COMPONENTS="Ux[,Uy[,Uz]]" (ndm columns)
+        └── MODES_OF_VIBRATION(R)        COMPONENTS="Rz" (ndm=2) or "Rx,Ry,Rz" (ndm=3)
+
+each MODES_OF_VIBRATION(*) group:
+    ├── ID [n x 1]
+    └── DATA/STEP_0/MODE_<k>             [n x nComp], k 0-based; attrs MODE,
+                                         LAMBDA, OMEGA, FREQUENCY, PERIOD
+```
+
+One `eigen` stage holds every mode. The vectors are the raw
+`nodeEigenvector` values, unscaled. A rotation slot holds the rotation
+only where the DOF roles say so, and 0.0 elsewhere. A non-positive
+eigenvalue writes `OMEGA = FREQUENCY = PERIOD = 0` with a warning on the
+bridge's export; `capture_live_modes` refuses it and writes nothing.
+
+`INFO/PROVENANCE` carries the stamp of `stamp_provenance`
+([`results/readers/_ladruno_provenance.py`](../src/apeGmsh/results/readers/_ladruno_provenance.py)):
+`fem_hash` and `model_hash`, copied byte-equal from the archive's
+`/meta/lineage`, plus `unsupported` (`["elements"]`), `writer`,
+`opensees_backend` and `opensees_build_sha`, and `units` when the
+archive declares a unit system. The full owned set also holds
+`stage_names` and `element_index_space`, which a modes file does not
+carry (`PROVENANCE_ATTRS` plus `units` in that module). A bridge archive (`ops.h5`)
+is stamped with both hashes. A bare FEMData archive (`fem.to_h5`) holds no
+`model_hash`, so its stamp carries **`fem_hash` alone**, and the file pairs
+to the archive whose `/meta/lineage@fem_hash` matches it (ADR 0133 D1,
+D2). That is a pairing, not a fallback. An archive with no `fem_hash`, or
+an empty one, refuses the stamp, and a refused stamp leaves no file.
+
+`Results.from_ladruno(path, model_h5=...)` reads each mode as its own
+`kind="mode"` stage named `mode_<k>`, with `mode_index` 1..n and
+`eigenvalue`, `frequency_hz` and `period_s`; `results.modes` lists them. The
+`eigen` stage itself reads as a `static` stage with no steps.
+`capture_live_modes` refuses an output path with an `.h5` suffix, the
+model archive's.
+
 ## `<stem>.user.h5`: user results (ADR 0130)
 
 The set's user file: combinations, the modal table, spectra, user results and
@@ -2653,8 +2756,11 @@ non-mesh entities. apeGmsh owns it, and the recorder's `.ladruno` never holds an
 of this ([ADR 0130](decisions/0130-states-quantities-and-the-user-results-file.md),
 Amendment 1). Python writes every zone; the app writes only `/combinations`.
 
-No writer or reader exists yet: slice VU1 implements this and adds the zones to
-the [registry](#zone-registry).
+`apeGmsh.results.user` writes and reads `/meta`, `/combinations`, `/results`,
+`/modes`, `/spectra` and `/entities`, which are in the [registry](#zone-registry).
+The app reads `/meta`, `/combinations` and the `/results` index (slice VU3a). It
+checks `/modes` as a zone only (version and columns, for staleness), and lists
+`/spectra` and `/entities` by name only.
 
 Types are `i1`, `i4`, `f8` and vlen UTF-8, never `int64`
 ([integer policy](#integer-policy-for-the-adr-0112-zones)). Columns in one table
@@ -2699,6 +2805,8 @@ Readers ignore unknown attributes and groups.
     lambda, sa_period, gamma, sa, damping    f8 (M,)    sa_period: 0 = own period
   reference/RESULTS/...  S = 1: the reference state's values
   RESULTS/..., MODEL/... as /results, S = M; labels are recorder spellings
+                         1.0.0: ON_NODES and ON_DOMAIN only; a reader refuses
+                         a case holding any other family ("not in spectra 1.0.0")
 
 /results/r<k>/           one user result
   @name, @KIND="static"
@@ -2717,7 +2825,9 @@ Readers ignore unknown attributes and groups.
     ON_ENTITIES/values/  ENTITY_KIND str, ENTITY_ROW i4 (n,) in place of ID
     ON_DOMAIN/values/    n = 1, no ID
   MODEL/ELEMENTS/<bucket>/
-    @TOPOLOGY, @PARAM_DOMAIN, @NUM_GP
+    @TOPOLOGY, @PARAM_DOMAIN, @FAMILY    all required
+    @ORDER               i4 (ndir,); required, each >= 1
+    @NUM_GP              i4
     QUADRATURE/GP_PARAM  f8 (G,ndir)
 
 /entities
@@ -2742,11 +2852,38 @@ Readers ignore unknown attributes and groups.
     host_element         i4 (P,); -1 = none
 ```
 
+In a `/spectra` case, `modes/sa` is the `Sa` the mode's response was scaled by:
+`@scale` times `Sa(T)` at the mode's `sa_period`, or at its own period where
+`sa_period` is 0. `spectrum/Sa` is the spectrum unscaled, so `@scale · Sa`
+interpolated at those periods gives `modes/sa`.
+
+In `/entities`, `@element_index_space` covers every element id the zone holds:
+a cut's `element_ids` and a point's `host_element`, both OpenSees tags. Python writes
+all three tables, empty ones included (`K = 0`, offsets `[0]`). A row of
+`<kind>_offsets` is `[offsets[i], offsets[i+1])` of its column, starting at 0 and
+ending at the column's length. A missing table, a malformed column or offsets that
+break this rule refuse the zone. A bad row refuses alone, keeping its position, and
+the zone still opens. A row is bad when its name breaks the name rule (`empty-name`),
+when another row of its table shares the name (`duplicate`, both rows), or, with
+`bad-param`, when it has a coordinate that is not finite, a cut with no element, a
+non-unit `normal`, a `side` other than `positive` or `negative`, or a bounding
+polygon of one or two vertices (an empty polygon row means none), a storey with no
+node, or a point set with no point or a `host_element` below `-1`. A writer refuses
+every bad row. A cut's moments are about its `reference`. An `ON_ENTITIES` result
+names a row by `ENTITY_KIND` (`cut`, `storey` or `point_set`, for the tables `cuts`,
+`storeys` and `point_sets`) and `ENTITY_ROW`, its 0-based row there. A reader
+refuses an entry with any other kind, and refuses alone, as `unresolved`, an entry
+naming a row that `/entities` does not hold or refuses. A write refuses such an
+entry, and when a model-hash change drops `/entities` (`drop_stale`), every
+`ON_ENTITIES` result is dropped with it.
+
 A `/results` or `/spectra` group is a small stage, so the `.ladruno` read path
 reads it. `STEP` and `TIME` are `0..S-1`; the state of a row is in `STATES` or
 `modes`, never in `STEP`. A stage carries its own `GP_PARAM`, because the
 `.ladruno` does not always have one to borrow: the slab's `ASDShellT3` bucket has
-none.
+none. `@FAMILY` and `@ORDER` are required because the `.ladruno` read path needs
+them to place `GP_PARAM`: a barycentric rule's frame differs between `lagrange` and
+`bernstein`, and a group with no `@ORDER` reads as an old conversion.
 
 **Names.** A name is data in `@name` or a table column, never a link. It is
 non-empty NFC UTF-8 with no control characters and no leading or trailing
@@ -2773,14 +2910,17 @@ whitespace, and compares byte-equal.
 | `envelope` | list | `max`, `min` or `absmax` |
 
 "List" excludes whole cases. A whole case first sums the modes that share a
-`sa_period`. A finite `damping` overrides; NaN takes the case's per-mode column.
+`sa_period`. A finite `damping` must be in (0,1) and overrides; NaN takes the case's
+per-mode column. `cqc` over `mode` terms with NaN damping is `bad-param`, because no
+damping source exists for modes; a whole-case row keeps NaN.
 `λ ≤ 0` is refused. Terms join on the result label, the ID and the Gauss index,
 and a missing row is NaN. Only `linear` can be signed, and only if all its terms
 are. Sign is never stored.
 
 **Refusal** is per row at read, never at open, with the reason `empty-name`,
 `duplicate`, `clash`, `unknown-rule`, `no-terms`, `bad-param`, `bad-term`,
-`unresolved` or `cycle`. Malformed columns refuse the zone.
+`unresolved` or `cycle`. A row in a cycle or reaching one reads `cycle`. Malformed
+columns refuse the zone, and so does a non-UTF-8 cell.
 
 **`/opensees/combinations`** in `model.h5` has this layout at `g0`, is versioned
 by the opensees zone, is in `MODEL_HASH_EXCLUDED_CHILDREN`, and resolves only
@@ -2792,10 +2932,18 @@ summing rule needs `@linear=1`, and `envelope` reads the terms' stored rows.
 
 **Staleness.** `rf1` is SHA-256, in index order over every part of the paired
 `.ladruno`, of: `GENERATOR`, `FORMAT_VERSION`, `RUN_ID`; each stage's `KIND`; each
-result's path, shape, dtype, `TIME` and `STEP`; each mode's `LAMBDA`; and the
-last slab of the stage's first nodal result (first element bucket if it has no
-nodal result), little-endian as stored. `INFO/PROVENANCE` is excluded. A native
-`results.h5` uses `native:<lineage hash>`.
+result's path, shape, dtype, `TIME` and `STEP`, in every family under `RESULTS`
+(`ON_NODES`, `ON_ELEMENTS`, then the rest by name: `ENVELOPES`, `ON_DOMAIN`,
+`ON_REGIONS`); each mode's `LAMBDA`; and one sample per stage, little-endian as
+stored: the last slab of the stage's first nodal result, else of its first element
+bucket, else the first result of any other family under `RESULTS` (its last slab, or
+every statistic of an envelope, which has no time axis). `INFO/PROVENANCE` is
+excluded. Values outside the sample are not hashed, so these are not seen: a rewrite
+of earlier steps under an identical last slab, and, on a stage with a nodal or
+element slab, a rewrite of `ON_DOMAIN`, `ON_REGIONS` or `ENVELOPES` values that keeps
+every shape, `TIME` and `STEP`. A real re-run moves the sampled slab or `RUN_ID`. The
+byte encoding is in `results/user/_fingerprint.py`. A native `results.h5` uses
+`native:<lineage hash>`.
 
 | Zone | Stale when |
 |---|---|
@@ -2807,14 +2955,334 @@ nodal result), little-endian as stored. `INFO/PROVENANCE` is excluded. A native
 A write that changes `@results_hash` rewrites or explicitly drops the
 `@basis=results` entries.
 
-**Writing.** Every write goes to `<stem>.user.h5.partial` in the same folder and
-then replaces the file, so a killed writer leaves the previous file whole. The
-app adds a generation to a copy and never rewrites one, because h5wasm cannot
+**Writing.** Each writer creates its own `<stem>.user.h5.<host>-<pid>-<random>.partial`
+in the same folder, opened exclusively, and then replaces the file, so a killed writer
+leaves the previous file whole. The name is per writer because, on Windows, opening a
+shared name for writing truncates it before failing on the lock, which destroys the
+other writer's data. A writer verifies its partial, bit-comparing the `DATA` it
+wrote, and compares `/meta@revision` immediately before the replace: if it moved, the
+write refuses, so the second of two writers refuses rather than overwriting. A small
+window remains between that comparison and the replace. A writer deletes only its
+own partial on failure. It sweeps a leftover only if the leftover names this host and
+its PID is not alive, because a set may live in a synced folder, where another
+machine's live writer has a PID this host cannot see. `<host>` is the machine name in
+lower case, with each run of characters other than `a-z0-9` replaced by `_`; a writer
+that cannot tell its host sweeps nothing. A failed sweep does not fail the write. A zone group with no version key refuses the write.
+The app follows the same rules: it adds a generation to its own copy (this name, not
+ADR 0130 A4's fixed one) and never rewrites a generation, because h5wasm cannot
 delete a link or rewrite a vlen dataset. Earlier generations are its backup.
 
-**Variants.** `<study>.variants.json` beside the sets holds `version` and a list
-of `{label, path, params}`. `path` is relative. A source address holds no path or
-hash, so a cross-variant term cannot be written.
+**Variants.** `<study>.variants.json` beside the sets holds `format`, `version`
+and the list `variants` of `{label, path, params}`. `path` names a variant's
+model file `<stem>.h5`, relative to the manifest's folder and confined to it. The
+definition is [`<study>.variants.json`](#studyvariantsjson-the-variants-manifest-adr-0132)
+below ([ADR 0132](decisions/0132-workspace-file-and-variants-manifest.md) D8 and
+D9). A source address holds no path or hash, so a cross-variant term
+cannot be written.
+
+## `<stem>.workspace.h5`: what the user makes (ADR 0132)
+
+Decided in [ADR 0132](decisions/0132-workspace-file-and-variants-manifest.md)
+(Accepted 2026-11-03); no code writes it yet, and VU9a is its first writer. It holds what a user makes in
+apeGmshViewer: named node and element sets, plot definitions and saved views. It
+holds **definitions only, never result values**: values stay in `.user.h5`
+`/results`, written by Python. It is a file of its own, separate from `.user.h5`,
+and it sits beside `<stem>.h5` with the same stem. It is read only as part of that
+set, and it never names a member of another set. The app and Python both read and
+write it.
+
+**Pairing.** `.workspace.h5` is a suffix of its own in the set's pairing rule,
+matched case-insensitively and before `.h5` (longest suffix first, as
+`.geometry.h5`, `.results.h5` and `.user.h5` already are), so `slab.workspace.h5`
+pairs with `slab.h5` and is never read as a model with the stem `slab.workspace`.
+The open set gains a `workspace` slot beside `model`, `geometry`, `results` and
+`user` (the app's `OpenSet`). Both are VU9a's code changes.
+
+Types are `i4`, `f8` and vlen UTF-8, as in `.user.h5`. Columns in one table share
+a length. Every table is written, empty ones included (`K = 0`, offsets `[0]`);
+a missing table refuses the file. Readers ignore unknown attributes and groups,
+as in `.user.h5`. A writer does not copy what it does not know, which is why it
+refuses to write over a newer file (Version).
+
+```text
+/meta
+  @workspace_schema_version   "1.0.0"; the file's one version key
+  @revision                   i4 >= 1; every save adds 1
+  @writer                     e.g. "apeGmshViewer 0.9.0", "apeGmsh 1.4.0"
+  @save_id                    random per save, 8 to 64 of A-Za-z0-9_-
+
+/sets
+  name, kind, id_space              str (K,)
+  fem_hash, model_hash              str (K,)
+  member_offsets                    i4 (K+1,)
+  ids                               i4 (M,)      in the user's order
+  xyz                               f8 (M,3)
+
+/plots
+  name, grammar, body               str (P,)     body: one plot, as JSON text
+
+/views
+  name, grammar, body               str (V,)     body: one shot, as JSON text
+```
+
+**Version.** One key versions the whole file, because every save rebuilds the
+whole file (Writing), and plots and views carry their own grammar tag per row. The
+floor rule is ADR 0113's, current and floor `1.0.0`. Python refuses a newer minor
+(D2 there). The app opens a same-major newer file **read-only** with one banner
+naming both versions (D7 there), ignoring tables and attributes it does not know.
+**No writer writes over a file newer than it knows**, minor included, because it
+would drop what it cannot read; that write refuses, `newer`. The zone joins the
+[registry](#zone-registry) when its writer constant exists (VU9a).
+
+**Names** follow the `.user.h5` rule (Names, above) and are unique within a table;
+two rows with one name both refuse, `duplicate`.
+
+### `/sets`
+
+Row `k` is one set. Its members are `[member_offsets[k], member_offsets[k+1])` of
+`ids` and `xyz`; offsets start at 0, never decrease, and end at `M`.
+
+| Column | Meaning |
+|---|---|
+| `kind` | `nodes` or `elements`; a set holds one kind |
+| `id_space` | `opensees` in 1.0.0: the tags the deck and the `.ladruno` use. A node's tag is its FEM id (the bridge emits every node under its FEM id). An element's tag is an `/opensees/element_meta/*/ids` entry, so a bridge-minted element (`fem_eid = -1`) can be saved |
+| `fem_hash` | `<stem>.h5` `/meta/lineage@fem_hash` when the set was saved or last confirmed |
+| `model_hash` | `<stem>.h5` `/meta/lineage@model_hash` at the same moment. Required (non-empty) for an element set; `""` for a node set, which never reads it |
+| `ids` | the members, in order, no tag twice in a set |
+| `xyz` | row `i` is node `ids[i]`'s coordinates, or element `ids[i]`'s centroid: the mean of its nodes' coordinates, its nodes taken from `/elements` through `fem_eids`, or from `inline_connectivity` for a minted row |
+
+**The verdict.** On open, each set is checked against the paired `<stem>.h5`. Let
+`D` be the diagonal of the bounding box of every node in `/nodes`, and
+`tol = 1e-9 · D` (`0` when `D = 0`). A member **matches** when the model has its
+tag (in `/nodes`, or in `/opensees/element_meta`), the distance from its stored
+`xyz` to that tag's position in the model is at most `tol`, **and no other model
+item of the set's kind lies within `tol` of the stored `xyz`**. A member whose
+position fits more than one model item is ambiguous and counts as unmatched; a
+reader never picks one of the candidates. Two zero-length elements on one node
+pair share a centroid, and their two nodes share a position, so a swap of either
+pair would otherwise read `moved` and a plot would read the wrong spring.
+
+The **identity hashes** of a row are its `fem_hash` for a node set, and its
+`fem_hash` **and** `model_hash` for an element set. An element tag is an OpenSees
+tag, and under `element_tags="sequential"` (the default, ADR 0111 D2) the bridge
+numbers elements in declaration order: swapping two element declarations shifts
+every tag while `fem_hash` stays equal, and only `model_hash`, which covers
+`/opensees/element_meta`, moves. A node's tag is its FEM id, which `fem_hash`
+covers.
+
+| Check | Verdict | What a reader does |
+|---|---|---|
+| every identity hash equals the model's | `current` | use the set |
+| an identity hash differs, every member matches | `moved` | use it; the next save writes the model's hashes into the row |
+| an identity hash differs, some members match | `partial`, "k of n" | list it; a plot that reads it refuses (`stale-set`) until a human accepts the survivors, which rewrites the row with the matching members, in order, and the model's hashes |
+| an identity hash differs, no member matches | `lost` | list it; never drop it silently; a human deletes it |
+
+A model with no `fem_hash` (or, for an element set, no `model_hash`) compares as
+different. An element set on a model with no `/opensees` zone refuses,
+`no-tag-map`, and an element-set row with an empty `model_hash` refuses,
+`bad-param`. Because an ambiguous member is unmatched, a set holding a zero-length
+element or a coincident shell reads at best `partial` once an identity hash moves.
+Accepting the survivors drops the ambiguous members, and a human picks them again
+in the current model. A nearest-coordinate match is only an
+offer: the app shows the largest distance, and a human confirms. The verdict uses
+the model, not `results_hash`: a set is a fact about the mesh, and `rf1` moves on
+every re-run of an unchanged one.
+
+A row refuses alone, `bad-members`, when it has no member or a tag twice, and
+`bad-param` for a `kind` or `id_space` other than those above. Malformed columns
+or offsets refuse the table.
+
+Worked case: a frame whose roof nodes 31 to 33 sit at z = 9 and base nodes 1 to 3
+at z = 0. Re-meshed with a new label, so `fem_hash` moves while no node moves,
+`roof` reads `moved`. If base node 3 has moved 0.5 along x, `base` reads
+`partial`, 2 of 3. If every node of a column line has moved 0.5 up, that set reads
+`lost`. An element set `springs` holds zero-length elements 501 and 502, both on the
+node pair 3–103 at (12, 0, 0); after a declaration swap `model_hash` moves, each tag
+still sits at (12, 0, 0), but each position fits two elements, so both members are
+ambiguous and `springs` reads `lost`, 0 of 2, never `moved`.
+
+### `/plots`
+
+`grammar` is `apegmsh-plot/1` in 1.0.0; another value refuses the row,
+`unknown-grammar`. `body` is one JSON object (UTF-8, no `NaN`, no duplicate key;
+`bad-json` otherwise), with closed keys (`bad-plot` names the key):
+
+| `kind` | Keys | Draws |
+|---|---|---|
+| `history` | `over`, `series` (non-empty list) | each series against the sweep axis |
+| `xy` | `over`, `x` (one series), `y` (non-empty list) | each `y` against `x`, one point per swept state; `x` and every `y` reduce to one value |
+| `profile` | `state`, `axis`, `series` (non-empty list) | each series over the target's members at one state; every series has `reduce: "each"` |
+
+A **series** is:
+
+| Key | Meaning |
+|---|---|
+| `label` | optional legend text, a name |
+| `quantity` | `{group, field, component}`: `group` is `results` (the `.ladruno`) or `user_results` (a `.user.h5` `/results` entry by `@name`); `field` and `component` as the legend shows them, e.g. `DISPLACEMENT` and `Ux`. 1.0.0 plots nodal quantities only |
+| `target` | `{kind, name}`: `kind` is `set` (a row of `/sets`), or `physical`, `label` or `mesh_selection` (read-only, from `<stem>.h5`, its nodes in ascending order) |
+| `reduce` | `each` (one curve per member, in order), `sum`, `mean`, `min`, `max` or `absmax` |
+| `minus` | optional `{target, reduce}`, the same quantity reduced to one value and subtracted (a drift) |
+| `scale` | optional finite number, default 1 |
+
+The value at a state is `scale · (reduce(target) − reduce(minus.target))`, or, for
+`each`, per member, `scale · (value − reduce(minus.target))`.
+
+The **sweep address** `over` (`history`, `xy`) is
+`{"kind": "stage", "source": <name>, "steps": [from, to], "axis": "time" | "step"}`.
+`source` is the stage's stamped name, else `stage_<i>`. `steps` is optional and
+inclusive: `-1` is the last step, a step below `-1` refuses, and no `steps` is every
+step. A sweep over modes, a spectrum case or a combination is not in 1.0.0.
+
+The **state** of a `profile` is the source address above, `{kind, source, step,
+mode}`, verbatim; a user result under a combination follows ADR 0130 A5. Its
+`axis` is `member` (the 0-based position), `x`, `y`, `z` (the member's coordinate in
+the current model) or `path` (the distance along the members, from the first).
+
+At evaluation a plot refuses, and draws nothing, for `unresolved` (a target, stage,
+field or component the set lacks), `stale-set`, `stale` (a stale source under ADR
+0130 A6, unless the human asks to draw it), `bad-target` (a nodal quantity on an
+element set) or `bad-address`. It never falls back to another source.
+
+### `/views`
+
+`grammar` is `apegmsh-view/1`, and `body` is one shot object of that spec, as
+JSON text ([ADR 0128](decisions/0128-agent-views-in-apegmshviewer.md) D1). The app
+validates it by wrapping it as `{"spec": "apegmsh-view/1", "files": {"model":
+"<stem>.h5"}, "shots": [shot]}` for the view-spec validator
+(`apeGmshViewer/src/spec/spec.ts`), and refuses the row with the validator's key and
+reason (`bad-shot`). Python checks only that `body` is a JSON object. A saved view
+is applied by the compile that applies an offer (ADR 0128 INV-2); one another writer
+added is listed and never applied by itself (D5 there).
+
+### Writing
+
+A save **rebuilds the whole file**: the writer creates a new HDF5 file and never
+opens the existing one for append. The file is small, so this costs little, and it
+needs no link delete and no vlen rewrite, which h5wasm 0.10.3 lacks. That is why
+this file has no generations, unlike `.user.h5` `/combinations`. Not yet probed:
+that h5wasm creates such a file, with zero-length vlen columns, which h5py then
+reads. VU9a probes it before building on it.
+
+1. Read the file on disk, if any, and keep its `/meta@revision`. A file that is not
+   HDF5, or has no `/meta@workspace_schema_version`, or one that is not a version
+   string, is **unreadable**. A file newer than the writer refuses the write,
+   `newer`.
+2. Build the new content: `revision` is the old one plus 1 (1 for a new or
+   unreadable file), a fresh `save_id`, and every row the writer did not change
+   copied verbatim, refused rows included.
+3. Write it to `<stem>.workspace.h5.<host>-<pid>-<random>.partial` in the same
+   folder, created exclusively; `<host>` as in `.user.h5`.
+4. Reopen the partial and verify it: every table, and `ids` and `xyz` bit-equal to
+   what was meant; otherwise delete the partial and refuse, `partial-mismatch`.
+5. Immediately before the replace, read `/meta@revision` on disk again. If it moved
+   (or a file appeared or vanished), delete the partial and refuse,
+   `revision-moved`. A small window remains, as in `.user.h5`.
+6. If the old file was unreadable, rename it aside to
+   `<stem>.workspace.h5.unreadable-<YYYYMMDDTHHMMSSZ>` (adding `-<n>` if that name
+   exists; never overwriting a file), and say so: the app with a banner naming the
+   aside file, Python with a warning. Then rename the partial onto the target.
+   Otherwise replace the target with the partial in one rename.
+7. Sweep leftover partials by the `.user.h5` rule. A failed sweep does not fail the
+   write.
+
+The app recognises its own save when the watcher reports a change: the file's
+`@save_id` is the one it wrote. Any other change reloads the definitions.
+
+A writer never writes a row that would refuse, and never writes a set member the
+model lacks (`bad-row`). Without `<stem>.h5` beside it, a write refuses,
+`unpaired`.
+
+**Who reads and writes what.** The app reads every table, gives the verdicts,
+evaluates plots, validates views, and writes every table. Python
+(`apeGmsh.results.user`, a thin reader and writer that VU9a names) reads every table
+and the verdicts, writes sets (taking coordinates and centroids from `<stem>.h5`),
+plots and views, and does not evaluate plots in 1.0.0. Python reads a set's members
+as tags, for example for `results.nodes.get(ids=...)`.
+
+**File-level refusals:** `not-hdf5`, `no-version`, `bad-version`, `too-old`, `newer`
+(Python; the app opens read-only), `major`, `missing-table`, `bad-meta` (`/meta@revision`
+is not an integer >= 1; such a file is unreadable, so a writer renames it aside;
+erratum, #2806). **Row refusals:**
+`empty-name`, `duplicate`, `bad-members`, `bad-param`, `no-tag-map`,
+`unknown-grammar`, `bad-json`, `bad-plot`, `bad-shot`.
+
+## `<study>.variants.json`: the variants manifest (ADR 0132)
+
+Decided in ADR 0132 (D8, D9; Accepted 2026-11-03), completing ADR 0130 A7. It lists the sets of one
+study that differ in stiffness or another parameter. `<study>` is any name that is
+also a file name. The app reads it and never writes it; Python, a pipeline or a
+human writes it, Python through a partial and a replace. The JSON Schema is
+[`schemas/variants.schema.json`](schemas/variants.schema.json), with examples in
+`schemas/examples/`.
+
+```json
+{ "format": "apegmsh-variants", "version": "1.0.0",
+  "variants": [
+    { "label": "Uncracked", "path": "slab_uncracked.h5",
+      "params": { "state": "uncracked", "Ie/Ig": 1.0 } },
+    { "label": "Bischoff D+SD+0.25L", "path": "bischoff/slab_pass2.h5",
+      "params": { "state": "cracked", "bischoff": "D+SD+0.25L", "pass": 2 } } ] }
+```
+
+| Key | Type | Meaning |
+|---|---|---|
+| `format` | `"apegmsh-variants"` | another value refuses the file, `not-a-manifest` |
+| `version` | string `MAJOR.MINOR.PATCH`, never a number | ADR 0113's floor rule, current and floor `1.0.0`; the app opens a same-major newer file with one banner |
+| `variants` | non-empty list | the rows, in display order |
+| `label` | name | unique in the file |
+| `path` | string | the variant's model file `<stem>.h5`; the set pairs from it by the app's pairing rules |
+| `params` | object, may be empty | name to a string, a number or a boolean; never null, a list or an object. Rows may have different keys; a key a row lacks shows blank |
+
+UTF-8; writers write no byte-order mark and readers strip one. A reader refuses
+`NaN` and `Infinity` tokens, a number that overflows to infinity (`1e400`; the
+schema bounds every number by the largest finite double), and, in Python, a
+duplicate key.
+
+**Unknown keys and a newer minor.** The JSON Schema is the 1.0 schema: its
+`version` accepts `1.0.x` only, and its keys are closed. At or below the reader's
+version an unknown key refuses the file at the top and the row inside `variants`.
+Python refuses a newer minor before it validates anything. The app, opening a
+same-major newer file read-only, drops every key the 1.0 schema does not name, at
+any depth, sets `version` aside, and validates the rest with the 1.0 schema; a row
+that then fails refuses alone, as at 1.0.
+
+**`path`.** Relative to the folder that holds the manifest, with `/` as the
+separator. It may enter subfolders. No segment is empty, `.` or `..`, and no
+folder segment ends in a dot or a space, which Windows strips, so two rows could
+otherwise name one folder. It has no backslash, colon, control character or
+leading `/`, so it cannot be absolute or name a drive. Its last segment is a
+non-empty stem followed by `.h5` (`.h5` alone and `x/.h5` refuse). It is a model
+file: it ends in none of the reserved suffixes `.geometry.h5`, `.results.h5`,
+`.user.h5`, `.workspace.h5`, `.particles.h5` or `.ladruno` (nor a `.part-<N>.ladruno`). Every suffix
+is matched case-insensitively, as the app's `classify` matches them, so
+`slab.USER.h5` refuses too. The schema checks this form. A reader then joins it to the manifest's
+folder, resolves links and junctions, and requires the result to lie inside the
+manifest's folder, itself resolved (`escapes`), and the file to exist (`missing`).
+Rows are compared by the app's path rule, case-folded on Windows and macOS
+(`duplicate-path`, both rows).
+
+**Row refusals:** `empty-name` (a label or a `params` key), `duplicate` (a label,
+both rows), `bad-path`, `escapes`, `missing`, `duplicate-path`, `bad-param`. A bad
+row refuses alone, and the manifest still opens. **File refusals:** `not-a-manifest`,
+`bad-version`, `too-old`, `newer` (Python), `major`, and `bad-envelope` (a top-level key
+the schema does not name, or `variants` missing or empty; erratum, #2806).
+
+**Opening a variant** (ADR 0132 D9, under owner ruling option A, #2753). Main reads
+a manifest only from a path the user gave: a dialog, a drop or argv. It keeps the
+rows that pass, with their resolved paths. The page names a variant by its row index
+and label, and never sends a path; main refuses a request whose label does not match
+its row. When the watched manifest changes, main re-reads the same path.
+
+A compare set lives in a **compare slot** of its own, apart from the window set (the
+set on screen, which `windowSet` returns). `model:open` runs the `ungestured` check
+and `followModel`, so it would adopt a compare model; VU10 therefore adds a
+compare-model door that reads a manifest row's model without adopting it (it never
+touches `windowSet`, the gesture records or `followModel`), and a results host of the
+compare set's own, so `results:open` and `results:close` for the window set never
+touch it. Compare reads (results, geometry, `.user.h5`) name the compare slot
+explicitly. Nothing writes into a compare set, neither `/combinations` nor its
+workspace. At most one set fills the slot. Switching to a variant is a different
+act: main opens that row's set as the window set, which the app may then write.
 
 ## Cross-references
 
@@ -2861,13 +3329,19 @@ call `validate_zone_version(...)` for each zone before reading it.
 | Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current | Floor |
 |---|---|---|---|---|---|
 | neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/partitions`, `/parts`, `/constraints`, `/reinforce_ties`, `/embed_ties`, `/rebar_elements`, `/contacts`, `/contact_planes`, `/interfaces`, `/loads`, `/masses`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../src/apeGmsh/mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.36.0** | **2.10.0** |
-| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.39.0** | **2.12.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py) `SCHEMA_VERSION` | **2.40.0** | **2.12.0** |
 | results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root; layout in [`results.h5`](#resultsh5-the-native-results-file)) | [`results/schema/_versions.py`](../src/apeGmsh/results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.2.0** | **1.0.0** |
 | cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../src/apeGmsh/cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 | none of its own: it rides the opensees floor |
 | geometry (ADR 0112 D2) | `geometry_schema_version` | `/geometry` (sibling `<stem>.geometry.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `GEOMETRY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | provenance (ADR 0112 D3) | `provenance_schema_version` | `/provenance` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `PROVENANCE_SCHEMA_VERSION` | **1.1.0** | **1.0.0** |
 | assembly (ADR 0117 D5) | `assembly_schema_version` | `/assembly` (`Assembly.h5` archives only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `ASSEMBLY_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 | sequence (ADR 0112 D2b) | `sequence_schema_version` | `/sequence` | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `SEQUENCE_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| user_meta (ADR 0130) | `user_meta_schema_version` | `/meta` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `USER_META_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| combinations (ADR 0130) | `combinations_schema_version` | `/combinations` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `COMBINATIONS_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| user_results (ADR 0130) | `user_results_schema_version` | `/results` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `USER_RESULTS_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| modes (ADR 0130) | `modes_schema_version` | `/modes` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `MODES_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| spectra (ADR 0130) | `spectra_schema_version` | `/spectra` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `SPECTRA_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
+| entities (ADR 0130) | `entities_schema_version` | `/entities` (`<stem>.user.h5` only) | [`opensees/_internal/schema_version.py`](../src/apeGmsh/opensees/_internal/schema_version.py) `ENTITIES_SCHEMA_VERSION` | **1.0.0** | **1.0.0** |
 
 > The geometry, provenance, assembly and sequence keys never fall back to the legacy
 > envelope: they postdate it, so an absent key means the zone was not
@@ -3435,6 +3909,18 @@ detail lives in the `SCHEMA_VERSION` docstring in
   Additive minor: a 2.38.x `OpenSeesModel` refuses a 2.39.x file (INV-4). A
   2.38.x `ModelData` has no version check, so its rewrite drops the group
   and stamps 2.38; `ModelData.from_h5` applies the floor check from 2.39.0.
+- `2.40.0` — #2448 (chain K; the maintainer's ruling (a) on #2447, the
+  ADR 0114 amendment of 2026-10-23 that reverses #1341 Q3 for
+  `equationConstraint`): a stage block's `constraints` group gains
+  [`equationConstraint`](#opensees-constraints-equationconstraint-optional-opensees-2350)
+  and `equationConstraint_emit_index`, the lines of every
+  `enforce="equation"` tie the stage claims, so a replay writes them in
+  the stage's own position. `equationConstraint` leaves the `VERBS`
+  ledger. Below this minor the replay refuses a stage-claimed tie by
+  name. The group is written only when a stage writes a line, so every
+  other archive keeps its bytes and hash. A 2.39 reader refuses the stage
+  group by name, hence the minor. Additive minor (a 2.39.x reader refuses
+  a 2.40.x file, INV-4).
 
 This is the **current** opensees-zone version (`SCHEMA_VERSION` in
 [`opensees/emitter/h5.py`](../src/apeGmsh/opensees/emitter/h5.py)); check that constant

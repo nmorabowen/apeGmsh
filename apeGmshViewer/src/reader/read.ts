@@ -196,16 +196,37 @@ export const NEUTRAL_TARGET = { major: 2, minor: 36 } as const;
  * declares. The app does not read it yet, so nothing here reads differently;
  * it is hash-excluded, so model_hash is unchanged.
  *
+ * opensees 2.40.0 (#2448, h5-schema.md "Stage scope (opensees 2.40.0)"): a
+ * stage block's `constraints` group may hold `equationConstraint` (the
+ * global group's columns) and `equationConstraint_emit_index`, the lines of
+ * the equation ties the stage claims. Replay data the app does not read, so
+ * nothing here reads differently. The rows are hashed: a 2.40 re-emit of a
+ * model with such a tie has a new model_hash, which the results pairing
+ * shows as a plain mismatch.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 39 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 40 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
 /** The root `/sequence` zone (ADR 0112 D2(b), V0 decision 8: "1.0.0"), read here when a file carries it. */
 export const SEQUENCE_TARGET = { major: 1, minor: 0 } as const;
+/**
+ * The `<stem>.user.h5` zones the app reads (ADR 0130 slice VU3a, reader/userFile.ts):
+ * `/meta`, `/combinations` and the index of `/results`, each at its first version,
+ * and `/modes` checked as a zone (its version and columns; the staleness table
+ * needs it). `/spectra` is read as an index of its cases (VU7), and `/entities`
+ * whole (VU8, reader/userEntities.ts): its cuts, storeys and point sets.
+ */
+export const USER_META_TARGET = { major: 1, minor: 0 } as const;
+export const COMBINATIONS_TARGET = { major: 1, minor: 0 } as const;
+export const USER_RESULTS_TARGET = { major: 1, minor: 0 } as const;
+export const MODES_TARGET = { major: 1, minor: 0 } as const;
+export const SPECTRA_TARGET = { major: 1, minor: 0 } as const;
+export const ENTITIES_TARGET = { major: 1, minor: 0 } as const;
 /**
  * The lowest minor of each zone this reader opens, under the zone's target
  * major (ADR 0113 D1/D7: one floor table, the only place the version check
@@ -214,11 +235,11 @@ export const SEQUENCE_TARGET = { major: 1, minor: 0 } as const;
  * first era whose files open (2.11 is the 0-based rank flip, but every 2.11
  * writer stamped a neutral zone below the neutral floor, so no 2.11 file
  * opens); the ADR 0112 zones (geometry, provenance, sequence) start at their
- * first version. tests/test_app_floor_drift.py compares every row with
- * Python's `reader_floor(zone)`.
+ * first version, and so do the `.user.h5` zones (ADR 0130). tests/test_app_floor_drift.py
+ * compares every row with Python's `reader_floor(zone)`.
  * TODO(V4): results 1.0 joins this table with the app's results reader.
  */
-export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0 } as const;
+export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0, user_meta: 0, combinations: 0, user_results: 0, modes: 0, spectra: 0, entities: 0 } as const;
 
 /**
  * ADR 0113 D7, the app's rule for one zone's `/meta/<key>` stamp:
@@ -420,11 +441,14 @@ class Reader {
         `${g.path}/connectivity has ${connectivity.length} values for ${ids.length} x ${npe}`,
       );
     }
+    const name = a["gmsh_name"];
+    if (name !== undefined && typeof name !== "string") throw new SchemaError(`${g.path}@gmsh_name is not a string`);
     return {
       alias,
       code: num(a["code"], `${g.path}@code`),
       dim: num(a["dim"], `${g.path}@dim`),
       npe,
+      gmshName: name ?? null,
       ids,
       connectivity,
     };
@@ -1737,6 +1761,161 @@ function unionAxisAlignedRects(
 }
 
 /**
+ * The outline of the union of simple CCW polygons that tile without overlap
+ * and meet along shared edges (a cold-formed HSS: four wall rects and four
+ * quarter-ring corners), or `undefined` when that union cannot be drawn
+ * exactly. Every edge is split at the other polygons' vertices lying on it;
+ * an edge met by its reverse is interior and cancels; what is left is chained
+ * into loops (outer CCW, holes CW, the order `sectionProfileOf` already uses).
+ * It fails closed on a `null` input, a repeated edge (overlap), a vertex with
+ * more than one way on (pinch), crossing edges, a point covered twice, or a
+ * loop area that differs from the summed patch area.
+ */
+function unionTiledPolygons(
+  polys: readonly ([number, number][] | null)[],
+): [number, number][][] | undefined {
+  if (polys.length === 0 || polys.some((p) => p === null || p.length < 3)) return undefined;
+  const rings = polys as [number, number][][];
+  if (rings.some((r) => signedArea2D(r) <= 0)) return undefined;
+  const scale = Math.max(...rings.flat().map(([y, z]) => Math.max(Math.abs(y), Math.abs(z))), 1e-300);
+  const tol = 1e-7 * scale;
+
+  // Shared vertex table: points within tol are one vertex
+  const verts: [number, number][] = [];
+  const vid = (y: number, z: number): number => {
+    for (let i = 0; i < verts.length; i++) {
+      if (Math.abs(verts[i]![0] - y) <= tol && Math.abs(verts[i]![1] - z) <= tol) return i;
+    }
+    verts.push([y, z]);
+    return verts.length - 1;
+  };
+  for (const r of rings) for (const [y, z] of r) vid(y, z);
+
+  // Directed edges, split at every vertex lying strictly inside them
+  const edges = new Map<string, number>();
+  for (const r of rings) {
+    for (let i = 0; i < r.length; i++) {
+      const a = vid(...r[i]!);
+      const b = vid(...r[(i + 1) % r.length]!);
+      if (a === b) continue;
+      const [ay, az] = verts[a]!;
+      const [by, bz] = verts[b]!;
+      const dy = by - ay, dz = bz - az;
+      const len2 = dy * dy + dz * dz;
+      const len = Math.sqrt(len2);
+      const inner: [number, number][] = [];
+      for (let k = 0; k < verts.length; k++) {
+        if (k === a || k === b) continue;
+        const [py, pz] = verts[k]!;
+        const t = ((py - ay) * dy + (pz - az) * dz) / len2;
+        if (t * len <= tol || (1 - t) * len <= tol) continue;
+        if (Math.abs((py - ay) * dz - (pz - az) * dy) / len <= tol) inner.push([t, k]);
+      }
+      inner.sort((u, v) => u[0] - v[0]);
+      const chain = [a, ...inner.map(([, k]) => k), b];
+      for (let j = 0; j + 1 < chain.length; j++) {
+        const key = `${chain[j]},${chain[j + 1]}`;
+        if (edges.has(key)) return undefined; // the same edge twice: overlapping patches
+        edges.set(key, 1);
+      }
+    }
+  }
+  // Interior edges: an edge met by its reverse
+  for (const key of [...edges.keys()]) {
+    const [u, v] = key.split(",");
+    const rev = `${v},${u}`;
+    if (edges.has(key) && edges.has(rev)) {
+      edges.delete(key);
+      edges.delete(rev);
+    }
+  }
+  const segs = [...edges.keys()].map((k) => k.split(",").map(Number) as [number, number]);
+  if (segs.length < 3) return undefined;
+
+  // No two boundary edges may cross or touch away from a shared end vertex
+  const cross = (o: [number, number], p: [number, number], q: [number, number]): number =>
+    (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]);
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      const [a, b] = segs[i]!;
+      const [c, d] = segs[j]!;
+      if (a === c || a === d || b === c || b === d) continue;
+      const A = verts[a]!, B = verts[b]!, C = verts[c]!, D = verts[d]!;
+      const d1 = cross(A, B, C), d2 = cross(A, B, D), d3 = cross(C, D, A), d4 = cross(C, D, B);
+      if (d1 === 0 && d2 === 0) {
+        // Collinear: they meet only if their spans along the line overlap
+        const ax = Math.abs(B[0] - A[0]) >= Math.abs(B[1] - A[1]) ? 0 : 1;
+        const lo1 = Math.min(A[ax]!, B[ax]!), hi1 = Math.max(A[ax]!, B[ax]!);
+        const lo2 = Math.min(C[ax]!, D[ax]!), hi2 = Math.max(C[ax]!, D[ax]!);
+        if (Math.min(hi1, hi2) - Math.max(lo1, lo2) >= -tol) return undefined;
+      } else if (d1 * d2 <= 0 && d3 * d4 <= 0) {
+        return undefined;
+      }
+    }
+  }
+
+  // Chain into loops: each boundary vertex has exactly one way on
+  const next = new Map<number, number>();
+  for (const [u, v] of segs) {
+    if (next.has(u)) return undefined;
+    next.set(u, v);
+  }
+  const seen = new Set<number>();
+  const loops: [number, number][][] = [];
+  for (const start of next.keys()) {
+    if (seen.has(start)) continue;
+    const raw: [number, number][] = [];
+    let curr = start;
+    while (!seen.has(curr)) {
+      seen.add(curr);
+      raw.push(verts[curr]!);
+      const n = next.get(curr);
+      if (n === undefined) return undefined;
+      curr = n;
+    }
+    if (curr !== start) return undefined;
+    const simp = simplifyLoop2D(raw);
+    if (simp.length < 3) return undefined;
+    loops.push(simp);
+  }
+
+  // Every point is covered at most once: just left of each loop the winding is 1
+  const winding = (y: number, z: number): number => {
+    let w = 0;
+    for (const loop of loops) {
+      for (let i = 0; i < loop.length; i++) {
+        const [y0, z0] = loop[i]!;
+        const [y1, z1] = loop[(i + 1) % loop.length]!;
+        const side = (y1 - y0) * (z - z0) - (y - y0) * (z1 - z0);
+        if (z0 <= z && z1 > z && side > 0) w++;
+        else if (z0 > z && z1 <= z && side < 0) w--;
+      }
+    }
+    return w;
+  };
+  for (const loop of loops) {
+    const [y0, z0] = loop[0]!;
+    const [y1, z1] = loop[1]!;
+    const len = Math.hypot(y1 - y0, z1 - z0);
+    const off = Math.min(1e-4 * scale, 0.25 * len);
+    const my = 0.5 * (y0 + y1) - ((z1 - z0) / len) * off;
+    const mz = 0.5 * (z0 + z1) + ((y1 - y0) / len) * off;
+    if (winding(my, mz) !== 1) return undefined;
+  }
+  const patchArea = rings.reduce((acc, r) => acc + signedArea2D(r), 0);
+  const loopArea = loops.reduce((acc, l) => acc + signedArea2D(l), 0);
+  if (Math.abs(loopArea - patchArea) > 1e-6 * patchArea) return undefined;
+
+  loops.sort((a, b) => {
+    const aa = signedArea2D(a);
+    const ab = signedArea2D(b);
+    if ((aa > 0) !== (ab > 0)) return aa > 0 ? -1 : 1;
+    return Math.abs(ab) - Math.abs(aa);
+  });
+  return loops;
+}
+
+/**
  * Resolve a 2-D cross-section boundary polygon (`SectionProfile`) in OpenSees
  * `(y_local, z_local)` from a `/opensees/sections/<name>` `OpsObject` and any
  * `/opensees/computed_sections` sidecar `outline_yz`.
@@ -1807,6 +1986,16 @@ export function sectionProfileOf(
         if (loops.length > 0) return { loops, source: "patches" };
       } else if (drawable && families === 1 && quads.length === 1) {
         return { loops: [quads[0]!], source: "patches" };
+      } else if (drawable && families === 2 && rects.length > 0 && circs.length > 0) {
+        // A rect + circ mix (a cold-formed HSS: walls plus quarter-ring corners)
+        const loops = unionTiledPolygons([
+          ...rects.map((r) => rectLoop(r.yMin, r.yMax, r.zMin, r.zMax)),
+          ...circs.map((c) =>
+            Math.abs(c.a1 - c.a0) >= 359.9
+              ? null
+              : circSectorLoop(c.yC, c.zC, c.intR, c.extR, c.a0, c.a1)),
+        ]);
+        if (loops) return { loops, source: "patches" };
       }
     }
   }

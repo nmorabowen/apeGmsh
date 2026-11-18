@@ -20,8 +20,10 @@
 //   element connectivity, `MeshInfo.vertexNodes`), never a node found by
 //   position: coincident nodes (interfaces, ties) keep their own values.
 
+import type { Combined } from "../combination/evaluate.ts";
 import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
 import type { NodeTopology } from "./extrapolation.ts";
+import { DERIVED_SCALARS, derivedTensorOf, planeDigestOf, type DerivedName, type DerivedTensor, type TensorFamily } from "./tensor.ts";
 import { CMAP_NAMES, type ContourCmap, type ContourRange, type ContourScan, type ContourSource, type ContourState, type DeclPath, type Decl, type GaussGroup, type GaussMode, type ResultsStage, type State } from "./types.ts";
 export { CMAP_NAMES };
 
@@ -102,7 +104,7 @@ export const LADRUNO_AXIS_MAP: Readonly<Record<string, (typeof AXES)[number]>> =
  * its own component, labelled as the file names it (`Rz`, `RMz`, ...), never
  * as the z of a rotation vector.
  */
-const LADRUNO_ROTATION = new Set([
+export const LADRUNO_ROTATION = new Set([
   // §7.1.1
   "ROTATION",
   "MODES_OF_VIBRATION(R)",
@@ -237,8 +239,9 @@ export function defaultPick(stage: ResultsStage | undefined): { field: string; c
   return e && ec ? { field: e.name, component: ec.key, source: "element" } : null;
 }
 
-/** Whether a stage has the pick (`componentOf` for nodal, `elementComponentOf` for element). */
+/** Whether a stage has the pick (`componentOf` for nodal, `elementComponentOf` for element); VU16: a user result is no stage's. */
 export function hasPick(stage: ResultsStage, source: ContourSource, field: string, component: string): boolean {
+  if (source === "user") return false;
   return source === "element" ? elementComponentOf(stage, field, component) !== null : componentOf(stage, field, component) !== null;
 }
 
@@ -258,11 +261,16 @@ export function contourKeys(path: string, stageId: string, step: number, field: 
 export function contourKeysOf(s: State): { step: string; scan: string } | null {
   const at = s.phase.at;
   const c = s.contour;
-  if (at?.kind !== "results" || !s.results || c.field === null || c.component === null) return null;
+  // VU16: a user result is no results step's, so it has no step or scan key.
+  if (at?.kind !== "results" || !s.results || c.field === null || c.component === null || c.source === "user") return null;
   const st = s.results.stages[at.stage];
   // V4c2b: a node-located mode names itself too (its range is not the flat cells' range).
   const field = c.source !== "element" ? c.field : c.gauss === "cell" ? `elem:${c.field}` : `elem:${c.field}@${c.gauss}`;
-  return st ? contourKeys(s.results.path, st.id, at.step, field, c.component) : null;
+  // VA6d: a derived scalar's values depend on the model's plane map too (its zz recovery), so its keys name it:
+  // a model re-read with another plane type or ν measures and scans again, never reusing the old range.
+  const derived = st && c.source === "element" ? elementComponentOf(st, c.field, c.component)?.component.derived : undefined;
+  const component = derived ? `${c.component}|plane:${planeDigestOf(s.decls)}` : c.component;
+  return st ? contourKeys(s.results.path, st.id, at.step, field, component) : null;
 }
 
 /** A component key as a sentence names it: `magnitude`, or the dataset name. */
@@ -538,6 +546,70 @@ export const RANGE_MODES: readonly { range: ContourRange; label: string }[] = [
   { range: "fixed", label: "fixed" },
 ];
 
+/**
+ * What a contour's colours range over (#2902 item 2; VF2 #2949). A user
+ * result and a User Combination have one state (their own range, "one state,
+ * no history"), and a difference ranges over the step shown; every other
+ * contour ranges over its stage's history or the step shown, by the mode.
+ */
+export type RangeKind = "steps" | "user" | "combination" | "difference";
+
+/**
+ * The range kind of the contour `contourView` (selectors.ts) draws, read from
+ * the branches it takes before any Results field: the difference, a compare
+ * user result, a User Combination phase, then a user result. The legend and
+ * the command palette both ask it, so they offer the same range modes.
+ */
+export function rangeKindOf(s: State): RangeKind {
+  if (s.variants.difference) return "difference";
+  if (s.variants.shown !== null) return "user";
+  if (s.phase.at?.kind === "combination") return "combination";
+  if (s.contour.source === "user") return "user";
+  return "steps";
+}
+
+/** One colour-range choice: `own` is a one-range view's own range (on unless the range is fixed). */
+export interface RangeOption {
+  range: ContourRange;
+  own: boolean;
+  label: string;
+  title: string | null;
+  on: boolean;
+}
+
+/**
+ * The colour-range choices for a contour of `kind` with the range mode
+ * `range`, the one rule the legend's scale and the command palette offer. A
+ * one-range kind would show its one range under two names as "history" and
+ * "this step", so it offers it once, `own` (leaving a fixed range sets
+ * `range`, and otherwise it does nothing), beside "fixed". Every other contour
+ * offers RANGE_MODES as they are.
+ */
+export function rangeOptionsOf(kind: RangeKind, range: ContourRange): readonly RangeOption[] {
+  let one: { label: string; title: string; back: ContourRange };
+  switch (kind) {
+    case "steps":
+      return RANGE_MODES.map((m) => ({ range: m.range, own: false, label: m.label, title: null, on: range === m.range }));
+    case "user":
+    case "combination":
+      one = { label: "own range", title: `one state: no history and no step to range over, so the colours span this ${kind === "user" ? "user result" : "combination"}'s own range`, back: "history" };
+      break;
+    case "difference":
+      one = { label: "this step", title: "a difference is read at the step shown only: there is no history to range over", back: "step" };
+      break;
+    default: {
+      const unknown: never = kind;
+      throw new Error(`unknown contour range kind ${JSON.stringify(unknown)}`);
+    }
+  }
+  const fixed = RANGE_MODES.find((m) => m.range === "fixed");
+  if (!fixed) throw new Error("RANGE_MODES has no fixed mode");
+  return [
+    { range: one.back, own: true, label: one.label, title: one.title, on: range !== "fixed" },
+    { range: fixed.range, own: false, label: fixed.label, title: null, on: range === "fixed" },
+  ];
+}
+
 // -- vertices -------------------------------------------------------------------
 
 /** The column of each node id in a field's `_ids`. */
@@ -571,6 +643,71 @@ export function vertexValues(vertexNodes: Float64Array, column: ReadonlyMap<numb
     out[i] = Number.isFinite(v) ? v : NaN;
   }
   return out;
+}
+
+/** A combination's nodal value as a contour column (`combinedColumn`). */
+export interface CombinedColumn {
+  /** the combination */
+  name: string;
+  /** the field's one label (`DISPLACEMENT/Ux`) */
+  label: string;
+  /** node ids, in the field's row order: `columnOf(ids)` joins them to the vertices */
+  ids: Float64Array;
+  /** one value per id; NaN is "not defined here" (drawn as no data) */
+  values: Float64Array;
+  /** the finite min and max, null when no value is finite */
+  range: { min: number; max: number } | null;
+  /** whether it may draw as a deformed shape: an unsigned value is a contour only (ADR 0130 D4, A3) */
+  signed: boolean;
+}
+
+/**
+ * VU7b-1 (#2740): a combination's value for one nodal quantity
+ * (combination/evaluate.ts `Combined`) as the column a nodal contour colours
+ * by; `vertexValues(vertexNodes, columnOf(ids), [values], false)` then gives
+ * each vertex. A combination is evaluated per component (ADR 0130 D4), so its
+ * field holds one label and has no magnitude. A field keyed by anything but a
+ * node id, or with another number of labels, is not a nodal contour: it throws.
+ */
+export function combinedColumn(c: Combined): CombinedColumn {
+  const f = c.field;
+  if (f.keyNames.length !== 1 || f.keyNames[0] !== "id") throw new RangeError(`${JSON.stringify(c.name)} is keyed by (${f.keyNames.join(", ")}), not by node id: it is not a nodal contour`);
+  if (f.components.length !== 1) throw new RangeError(`${JSON.stringify(c.name)} holds ${f.components.length} labels; a nodal contour colours by one`);
+  const ids = new Float64Array(f.keys.length);
+  f.keys.forEach((k, i) => {
+    const id = k[0];
+    if (typeof id !== "number") throw new RangeError(`${JSON.stringify(c.name)} has a node id that is not a number: ${JSON.stringify(id)}`);
+    ids[i] = id;
+  });
+  const values = Float64Array.from(f.values);
+  return { name: c.name, label: f.components[0]!, ids, values, range: finiteRange([values], false), signed: c.signed };
+}
+
+/**
+ * VU10 (ADR 0132 D9.5): the window variant minus the compare variant for one
+ * nodal dataset, joined by node id, as the column a nodal contour colours by
+ * (`columnOf(ids)` then joins it to the vertices). One value per window node:
+ * a node the compare rows lack, or a value that is not finite on either side,
+ * is NaN (no data), never 0. `missing` counts those window nodes.
+ */
+export function differenceColumn(
+  windowIds: Float64Array,
+  windowValues: Float64Array,
+  compareIds: Float64Array,
+  compareValues: Float64Array,
+): { ids: Float64Array; values: Float64Array; range: { min: number; max: number } | null; missing: number } {
+  if (windowIds.length !== windowValues.length) throw new RangeError(`difference: the window has ${windowIds.length} node ids and ${windowValues.length} values`);
+  if (compareIds.length !== compareValues.length) throw new RangeError(`difference: the compare set has ${compareIds.length} node ids and ${compareValues.length} values`);
+  const other = columnOf(compareIds);
+  const values = new Float64Array(windowIds.length);
+  let missing = 0;
+  for (let i = 0; i < windowIds.length; i++) {
+    const j = other.get(windowIds[i]!);
+    const d = j === undefined ? NaN : windowValues[i]! - compareValues[j]!;
+    values[i] = Number.isFinite(d) ? d : NaN;
+    if (Number.isNaN(values[i]!)) missing++;
+  }
+  return { ids: Float64Array.from(windowIds), values, range: finiteRange([values], false), missing };
 }
 
 /**
@@ -610,6 +747,13 @@ const ELEMENT_SUFFIXES = new Set(["x", "y", "z", "xx", "yy", "zz", "xy", "yz", "
 export interface ElementComponent extends FieldComponent {
   /** the name says its axes are local (`_local_` before the axis, h5-schema.md's component naming rule) */
   local: boolean;
+  /**
+   * VA6d (#2766): a scalar derived from the field's tensor (`von_mises_stress`),
+   * not a dataset of the file: its `datasets` are the tensor components read
+   * with the step, and the effects compute it at every Gauss point
+   * (state/tensor.ts `derivedGroupValues`). Absent for a stored component.
+   */
+  derived?: { name: DerivedName; tensor: Extract<DerivedTensor, { ok: true }> };
 }
 
 export interface ElementField {
@@ -626,6 +770,12 @@ export interface ElementField {
    * from the others. Null when it can.
    */
   refused: string | null;
+  /**
+   * VA6d: the derived scalars of the field's tensor that are not offered,
+   * each with why (an incomplete or ambiguous tensor). Set by
+   * `elementContourFields` only; a spec naming one is refused with its reason.
+   */
+  derivedRefused?: { name: DerivedName; reason: string }[];
 }
 
 /**
@@ -690,9 +840,36 @@ export function gaussFields(groups: readonly GaussGroup[]): ElementField[] {
   });
 }
 
-/** The element field and component of a stage that a pick names, or null when the stage does not have it. */
+/**
+ * VA6d (#2766): the element fields a contour offers: `gaussFields` (the
+ * stored components, what main reads), each followed by the derived scalars
+ * of its tensor (state/tensor.ts `DERIVED_SCALARS`) when its components make
+ * a complete one; a derived scalar its tensor cannot give is listed in
+ * `derivedRefused` with why, never offered. The picker, the spec's
+ * `--describe` and compile, and the reducer's check all read this one list,
+ * so a window and a still offer the same components.
+ */
+export function elementContourFields(groups: readonly GaussGroup[]): ElementField[] {
+  return gaussFields(groups).map((f) => {
+    const own = groups.filter((g) => f.groups.includes(g.id));
+    const names = f.components.map((c) => c.key);
+    const derived: ElementComponent[] = [];
+    const derivedRefused: { name: DerivedName; reason: string }[] = [];
+    for (const [name, family] of Object.entries(DERIVED_SCALARS) as [DerivedName, TensorFamily][]) {
+      const t = derivedTensorOf(own, names, family);
+      if (t === null) continue;
+      if (!t.ok) derivedRefused.push({ name, reason: t.reason });
+      // A stored component of the same key would make the pick ambiguous (a stored name carries its field's prefix, so no known writer does this).
+      else if (names.includes(name)) derivedRefused.push({ name, reason: `the field stores a component named ${name}, so the name does not say which is meant` });
+      else derived.push({ key: name, label: name, datasets: t.components, magnitude: false, local: false, derived: { name, tensor: t } });
+    }
+    return derived.length || derivedRefused.length ? { ...f, components: [...f.components, ...derived], derivedRefused } : f;
+  });
+}
+
+/** The element field and component of a stage that a pick names (a derived scalar included), or null when the stage does not have it. */
 export function elementComponentOf(stage: ResultsStage, field: string, component: string): { field: ElementField; component: ElementComponent } | null {
-  const f = gaussFields(stage.gauss).find((x) => x.name === field);
+  const f = elementContourFields(stage.gauss).find((x) => x.name === field);
   const c = f?.components.find((x) => x.key === component);
   return f && c ? { field: f, component: c } : null;
 }

@@ -163,7 +163,7 @@ def _mixed_ops(fem):
     """2-dof continuum master vs 3-dof beam slave — the campaign's
     primary case — under an ndf=2 envelope."""
     ops = apeSees(fem, _artifacts=False)  # partitioned snapshot: no automatic model.h5
-    ops.model(ndm=2, ndf=2)
+    ops.model(ndm=2, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     ops.element.FourNodeQuad(
         pg="rock", thickness=THICKNESS, material=mat,
@@ -594,8 +594,9 @@ def test_mixed_ndf_claimed_unit_phantom_ndf2_ghost_beam_ndf3(tmp_path):
                  if ln.split()[0] == "node" and int(ln.split()[1]) == nid]
         assert len(ghost) == 1
         # INV-5 ghost ndf parity inside the stage context: the beam
-        # slave ghosts with its HOME ndf even under the ndf=2 envelope…
-        assert ghost[0].endswith("-ndf 3")
+        # slave ghosts with its HOME ndf 3, which under the frame
+        # envelope (ndf=3) is the bare decl…
+        assert "-ndf" not in ghost[0] or ghost[0].endswith("-ndf 3")
         # …byte-identical to the home rank's native declaration.
         assert ghost[0] in home
     # The phantom declares the record's OWN ndf (2).

@@ -3,9 +3,11 @@
 // ledger (`SPOTLIGHT_EVENT_LEDGER`).
 
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import * as h5wasm from "h5wasm/node";
 import { openModel } from "../src/reader/node.ts";
 import { focusOf } from "../src/renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "../src/renderer/visible.ts";
@@ -13,12 +15,15 @@ import { BlobStore } from "../src/state/blobs.ts";
 import { loadModel } from "../src/state/load.ts";
 import {
   clauseLabel,
+  contourView,
   elementsOfDecl,
   hiddenElementsOf,
   indexOf,
   inspectedBatchOf,
   inspectedGroupsOf,
   parseSearchText,
+  rangeKindOf,
+  rangeOptionsOf,
   runSearchTerms,
   searchResultsOf,
   selectedElementsOf,
@@ -26,8 +31,16 @@ import {
   spotlightViewOf,
   windowContentOf,
 } from "../src/state/selectors.ts";
+import { FIXED_NOTHING_TO_START, spotlightViewOf as spotlightViewWith } from "../src/state/spotlight.ts";
 import { initialState, reduce, Store, type State } from "../src/state/store.ts";
 import type { EventType } from "../src/state/types.ts";
+import { harness, opened } from "./contour/harness.ts";
+import { readUserResultColumn, readUserSet, type UserH5 } from "../src/reader/userFile.ts";
+import { UserResultFeed } from "../src/renderer/contour.ts";
+import { userEventOf } from "../src/state/reduce.ts";
+
+await h5wasm.ready;
+const H5 = h5wasm as unknown as UserH5;
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 const shoeModel = await openModel(join(fixtures, "shoebuckle.h5"));
@@ -44,7 +57,7 @@ const defLoaded: State = reduce(initialState, { type: "fileLoaded", artifact: "m
 
 test("SPOTLIGHT_EVENT_LEDGER classifies every EventType with a non-empty command/description or reason", () => {
   const entries = Object.entries(SPOTLIGHT_EVENT_LEDGER) as [EventType, (typeof SPOTLIGHT_EVENT_LEDGER)[EventType]][];
-  assert.equal(entries.length, 80, "all 80 store events are classified in SPOTLIGHT_EVENT_LEDGER");
+  assert.equal(entries.length, 131, "all 131 store events (VU9a added the seven workspace events, VU19 the four compare-door events, M2-S4 the ten particle events, the Cracks card setCracks) are classified in SPOTLIGHT_EVENT_LEDGER");
   const exposedCommands = new Set<string>();
   for (const [eventType, entry] of entries) {
     if (entry.kind === "expose") {
@@ -486,6 +499,7 @@ test("spotlightViewOf exposes contour, unit, deform, and step drill-downs when p
         {
           id: "stage_000",
           name: "gravity",
+          programName: "gravity",
           kind: "static",
           time: [0, 0.5, 1.0],
           nodal: ["displacement_x", "displacement_y", "displacement_z"],
@@ -704,4 +718,153 @@ test("edge cases: quoted field values, param operator preservation, pinned-claus
   assert.equal(vHelp.items[0]!.id, "cmd:help", "'?' ranks Help & Examples at #1");
   const sHelpMode = reduce(loaded, { type: "openSpotlight", mode: "help" });
   assert.ok(spotlightViewOf(sHelpMode).items.length >= 5, "help mode lists step-by-step interactive examples");
+});
+
+test("Show Nodes: Enter and Alt+Enter both toggle the markers, as every display toggle does", () => {
+  const item = spotlightViewOf(reduce(loaded, { type: "openSpotlight", query: "nodes" })).items.find((i) => i.id === "cmd:toggle-nodes");
+  assert.ok(item, "the nodes command is offered on a loaded model");
+  for (const events of [item.events, item.altEvents ?? []]) {
+    const next = events.reduce((st, e) => reduce(st, e), loaded);
+    assert.equal(next.nodes.on, true, "both turn the markers on from off");
+  }
+});
+
+test("VA6d (#2766): the contour-field palette lists a derived scalar from the picker's catalog, and picking it sets the same contour", async () => {
+  const fx = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
+  const h = await opened(fx("elem_mixed.h5"), fx("elem_mixed.results.h5"));
+  try {
+    let s = reduce(h.store.get(), { type: "setPhase", at: { kind: "results", stage: 0, step: 1 } });
+    s = reduce(s, { type: "openSpotlight" });
+    s = reduce(s, { type: "setSpotlightMode", mode: "contourField" });
+    const items = spotlightViewOf(s).items.filter((i) => i.id.startsWith("val:cfield-elem-stress-"));
+    assert.deepEqual(
+      items.map((i) => i.id),
+      ["stress_xx", "stress_xy", "stress_yy", "von_mises_stress"].map((k) => `val:cfield-elem-stress-${k}`),
+    );
+    const vm = items.at(-1)!;
+    assert.equal(vm.title, "stress · von_mises_stress");
+    assert.equal(vm.detail, "Element Gauss contour, derived from stress_xx, stress_yy, stress_xy");
+    const next = vm.action.events.reduce((st, e) => reduce(st, e), s);
+    assert.deepEqual([next.contour.source, next.contour.field, next.contour.component], ["element", "stress", "von_mises_stress"]);
+  } finally {
+    h.effects.dispose();
+    h.host.close();
+  }
+});
+
+test("VF2-d (#2956): the palette offers the one range rule the legend offers, for every contour kind and range mode, fixed with or without a stored range", () => {
+  // The oracle is the one rule (state/contour.ts rangeOptionsOf, re-exported through selectors.ts), which
+  // panels/legend.ts now reads too, at the kind of each view the scale draws. The fixture holds no results,
+  // user file or compare set, so contourView (selectors.ts) draws none of these; each State is pinned to its
+  // view by the branch contourView takes, read from what it refuses with, and the view to its range kind.
+  const base: State = reduce(loaded, { type: "setColourBy", by: "contour" });
+  const footfall = { name: "footfall", component: "footfall_ratio" };
+  const combination = { ...base.phase, at: { kind: "combination" as const, name: "ULS" } };
+  const KIND = { ready: "steps", element: "steps", user: "user", combination: "combination", difference: "difference" } as const;
+  const kinds: readonly [string, keyof typeof KIND, State, RegExp][] = [
+    ["a nodal Results field", "ready", { ...base, contour: { ...base.contour, source: "nodal" } }, /^unavailable: no results file pairs/],
+    ["an element Results field", "element", { ...base, contour: { ...base.contour, source: "element" } }, /^unavailable: no results file pairs/],
+    ["a user result", "user", { ...base, contour: { ...base.contour, source: "user", field: "footfall", component: "footfall_ratio" } }, /^refused user: /],
+    ["a compare user result", "user", { ...base, variants: { ...base.variants, shown: footfall } }, /^refused user: .*compare variant/],
+    ["a User Combination", "combination", { ...base, phase: combination }, /^unavailable: the user file is not read/],
+    // The branch order: a compare user result is shown over a combination phase, and the difference over both.
+    ["a compare user result over a combination", "user", { ...base, phase: combination, variants: { ...base.variants, shown: footfall } }, /^refused user: .*compare variant/],
+    ["the difference", "difference", { ...base, variants: { ...base.variants, difference: true } }, /^refused difference: /],
+    ["the difference over a compare user result and a combination", "difference", { ...base, phase: combination, variants: { ...base.variants, shown: footfall, difference: true } }, /^refused difference: /],
+  ];
+  for (const [what, view, k, branch] of kinds) {
+    for (const range of ["history", "step", "fixed"] as const) {
+      for (const stored of [{ min: -1, max: 2 }, null]) {
+        const at = `${what} at ${range}, ${stored ? "a stored fixed range" : "no stored fixed range"}`;
+        const s: State = { ...k, contour: { ...k.contour, range, fixed: stored }, spotlight: { ...k.spotlight, open: true, mode: "contourRange", query: "" } };
+        const v = contourView(s);
+        const reached = v.state === "refused" ? `refused ${v.code}: ${v.reason}` : v.state === "unavailable" ? `unavailable: ${v.reason}` : v.state;
+        assert.match(reached, branch, `${what}: contourView takes another branch`);
+        // The rule's kind is the view's: the legend reads rangeKindOf(s) for the view it draws.
+        assert.equal(rangeKindOf(s), KIND[view], `${at}: range kind`);
+        const items = spotlightViewOf(s).items;
+        const rule = rangeOptionsOf(KIND[view], range);
+        // "fixed" is listed whether or not a range is stored, as the legend's scale lists it.
+        assert.deepEqual(
+          items.map((i) => [i.title, i.active === true]),
+          rule.map((b) => [`Range: ${b.label}`, b.on]),
+          at,
+        );
+        for (const [i, b] of rule.entries()) {
+          // The rule's tooltip, where it has one: it names what the one range is ("this user result's own range").
+          if (b.title !== null) assert.equal(items[i]!.detail, b.title, `${at}: ${b.label} tooltip`);
+          // Picking a range does what the legend's button does: the own range leaves a fixed range, and otherwise dispatches nothing;
+          // "fixed" starts from the stored range, and with none and no range shown (nothing is drawn here) changes nothing.
+          const events = items[i]!.action.events;
+          const next = events.reduce(reduce, s);
+          if (b.range === "fixed") {
+            if (stored) assert.deepEqual([next.contour.range, next.contour.fixed], ["fixed", stored], `${at}: picking fixed`);
+            else {
+              assert.ok(!events.some((e) => e.type === "setContourRange"), `${at}: picking fixed with nothing to start from sets no range`);
+              // #2957 review item 3: the hint says the pick changes nothing and names the way to a fixed range: a typed
+              // `min max` in this list, which stores one, so the legend's min and max boxes then appear (legend.ts).
+              assert.equal(items[i]!.detail, FIXED_NOTHING_TO_START, `${at}: fixed hint`);
+              const typed = spotlightViewOf({ ...s, spotlight: { ...s.spotlight, query: "-1 2" } }).items.find((x) => x.id === "val:range-fixed-custom");
+              assert.ok(typed, `${at}: a typed min max is offered`);
+              assert.deepEqual(typed.action.events.reduce(reduce, s).contour.fixed, { min: -1, max: 2 }, `${at}: the typed range is stored`);
+            }
+          } else if (b.own && range !== "fixed") assert.ok(!events.some((e) => e.type === "setContourRange"), `${at}: picking ${b.label} sets no range`);
+          else assert.equal(next.contour.range, b.range, `${at}: picking ${b.label}`);
+        }
+        // The root entry names the mode as the list does.
+        const entry = spotlightViewOf({ ...s, spotlight: { ...s.spotlight, mode: "root", query: "contour range" } }).items.find((i) => i.id === "cmd:contour-range");
+        if (entry) assert.equal(entry.title, `Set Contour Range… (currently ${rule.find((b) => b.on)!.label})`, `${at}: entry`);
+      }
+    }
+  }
+  // state/spotlight.ts cannot read the range shown (selectors.ts imports it), so its range list refuses without the hand-in.
+  const s: State = { ...base, spotlight: { ...base.spotlight, open: true, mode: "contourRange", query: "" } };
+  assert.throws(() => spotlightViewWith(s), /needs the range a fixed range starts from/);
+});
+
+test("VF2 (#2949): a user result drawn with no results file (VU16) offers the contour range entry, as the legend does", async (t) => {
+  const entryOf = (s: State) => spotlightViewOf(reduce(s, { type: "openSpotlight", mode: "root", query: "contour range" })).items.find((i) => i.id === "cmd:contour-range");
+  // The plate (test/fixtures/vu16) has no results file; its .user.h5 is read and its footfall ratio drawn, as the legend's test draws it.
+  const vu16 = (name: string) => fileURLToPath(new URL(`./fixtures/vu16/${name}`, import.meta.url));
+  const plate = vu16("plate.h5");
+  const plateUser = vu16("plate.user.h5");
+  const h = harness();
+  t.after(() => h.host.close());
+  assert.ok(await h.effects.open(plate), `plate did not load: ${h.store.get().artifacts.model?.error}`);
+  const list = (d: string) => readdirSync(d);
+  h.store.dispatch({ type: "userOpened", path: plateUser });
+  h.store.dispatch(userEventOf(plateUser, readUserSet(H5, plateUser, plate, null, list)));
+  const feed = new UserResultFeed(h.store, async (req) => readUserResultColumn(H5, req.path, plate, null, list, req.name, req.component));
+  h.store.dispatch({ type: "setColourBy", by: "contour" });
+  h.store.dispatch({ type: "setContourField", field: "footfall", component: "footfall_ratio", source: "user" });
+  await feed.check();
+  const drawn = h.store.get();
+  assert.equal(contourView(drawn).state, "user", "the user result draws");
+  assert.ok(!drawn.phase.axis.some((k) => k.kind === "results"), "with no results step");
+  for (const range of ["history", "step", "fixed"] as const) {
+    const entry = entryOf({ ...drawn, contour: { ...drawn.contour, range, fixed: { min: -1, max: 2 } } });
+    assert.ok(entry, `a drawn user result at ${range}: the entry is offered`);
+    assert.equal(entry.title, `Set Contour Range… (currently ${rangeOptionsOf("user", range).find((b) => b.on)!.label})`);
+    assert.equal(entry.action.nextMode, "contourRange");
+  }
+  assert.equal(entryOf({ ...drawn, visibility: { ...drawn.visibility, colourBy: loaded.visibility.colourBy } }), undefined, "contours off: no entry");
+
+  // VF2-d (#2956): with no stored fixed range the list still offers "fixed", and picking it starts from the range shown:
+  // the user result's own min and max (the column's, test/state/userResult.test.ts against W3's golden), as the legend's button does.
+  const v = contourView(drawn);
+  assert.ok(v.state === "user" && v.clim.min !== null && v.clim.max !== null && v.clim.min < v.clim.max, "a finite range is shown");
+  assert.equal(drawn.contour.fixed, null, "precondition: no fixed range is stored");
+  const list2 = spotlightViewOf(reduce(drawn, { type: "openSpotlight", mode: "contourRange", query: "" }));
+  const fixed = list2.items.find((i) => i.title === "Range: fixed");
+  assert.ok(fixed, "fixed is offered with no stored range");
+  assert.equal(fixed.detail, `Fixed range, starting from the range shown [${v.clim.min}, ${v.clim.max}]`);
+  const after = fixed.action.events.reduce(reduce, drawn);
+  assert.deepEqual([after.contour.range, after.contour.fixed], ["fixed", { min: v.clim.min, max: v.clim.max }]);
+
+  // shoebuckle.h5 alone has no .user.h5: the user branch refuses, the legend draws no range buttons, and the palette offers no entry.
+  const contours = reduce(loaded, { type: "setColourBy", by: "contour" });
+  const refused: State = { ...contours, contour: { ...contours.contour, source: "user", field: "footfall", component: "footfall_ratio" } };
+  assert.equal(contourView(refused).state, "refused");
+  assert.equal(entryOf(refused), undefined, "a refused user result: no entry");
+  assert.equal(entryOf({ ...contours, contour: { ...contours.contour, source: "nodal" } }), undefined, "a Results field with no results step: no entry");
 });

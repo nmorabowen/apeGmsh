@@ -20,7 +20,10 @@ Oracles:
   ``"ladruno"`` and ``opensees_build_sha`` is that hash and, in the
   ``live-fork`` lane (``APEGMSH_FORK_PIN_ENFORCE=1``), the ``FORK_PIN``
   sha; a copy stamped with defaults from this process reads ``"unknown"``
-  (#2196, #2208 F4, §7b.1 at fork PR #997).
+  (#2196, #2208 F4, §7b.1 at fork PR #997);
+* a copy stamped against the run's bare FEMData archive (``fem.to_h5``)
+  carries ``fem_hash`` alone, equal to the bridge archive's, with no
+  warning, and ``validate()`` passes on it too (ADR 0133 D1, #2233).
 
 Gated by the ``ladruno_fork`` marker (root conftest auto-skips off-fork).
 """
@@ -34,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -83,7 +87,8 @@ def _chain(ops: Any, integrator: Any, analysis: Any) -> "dict[str, Any]":
 def run(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
     tmp = tmp_path_factory.mktemp("provenance_live")
     ladruno, model_h5, deck = tmp / "r.ladruno", tmp / "model.h5", tmp / "deck.py"
-    ops = modal_bridge(build_cantilever_fem())
+    fem = build_cantilever_fem()
+    ops = modal_bridge(fem)
     ops.recorder.Ladruno(file=str(ladruno), nodal_responses=("displacement",))
     tip = ops.nodes.one(label="tip")
     with ops.stage(name="gravity") as s:
@@ -129,11 +134,22 @@ def run(tmp_path_factory: pytest.TempPathFactory) -> "dict[str, Path]":
     foreign = tmp / "foreign" / "r.ladruno"
     foreign.parent.mkdir()
     shutil.copy(ladruno, foreign)
+    fem_only = tmp / "fem_only" / "r.ladruno"    # the recorder's file, unstamped
+    fem_only.parent.mkdir()
+    shutil.copy(ladruno, fem_only)
     stamp_provenance(foreign, model_h5)
     # The caller that ran the analysis passes the build it ran on.
     stamp_provenance(ladruno, model_h5, opensees_build_sha=build)
+    # The same run against the mesh alone: a bare FEMData archive, the
+    # #2342 route's model (ADR 0133 D1). It has no stages, so no warning.
+    fem_h5 = tmp / "fem.h5"
+    fem.to_h5(str(fem_h5))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        stamp_provenance(fem_only, fem_h5)
     return {"ladruno": ladruno, "model_h5": model_h5, "tmp": tmp,
-            "build": build, "foreign": foreign}
+            "build": build, "foreign": foreign, "fem_h5": fem_h5,
+            "fem_only": fem_only}
 
 
 def _fork_validate(tmp: Path) -> Any:
@@ -201,3 +217,30 @@ def test_a_default_stamp_from_another_process_is_unknown(run) -> None:
         prov = f["INFO/PROVENANCE"].attrs
         assert prov["opensees_backend"] == "ladruno"
         assert prov["opensees_build_sha"] == "unknown"
+
+
+def test_a_femdata_archive_stamps_the_run_by_fem_hash_alone(run) -> None:
+    """ADR 0133 D1 (#2233): the bare FEMData archive has no model_hash, so
+    the stamp carries fem_hash alone, the bridge archive's own fem_hash."""
+    with h5py.File(run["fem_h5"], "r") as m, \
+            h5py.File(run["model_h5"], "r") as b, \
+            h5py.File(run["fem_only"], "r") as f:
+        prov, lineage = f["INFO/PROVENANCE"].attrs, m["meta/lineage"].attrs
+        assert "model_hash" not in lineage
+        assert "model_hash" not in prov
+        assert prov["fem_hash"] == lineage["fem_hash"]
+        assert prov["fem_hash"] == b["meta/lineage"].attrs["fem_hash"]
+
+
+def test_fork_validate_passes_on_the_fem_hash_only_file(run, monkeypatch) -> None:
+    spec = _fork_validate(run["tmp"])
+    monkeypatch.syspath_prepend(str(spec))
+    saved = {k: sys.modules[k] for k in ("ladruno_format", "ladruno_basis")
+             if k in sys.modules}
+    try:
+        ladruno_format = importlib.import_module("ladruno_format")
+        assert ladruno_format.validate(str(run["fem_only"])) == []
+    finally:
+        for k in ("ladruno_format", "ladruno_basis"):
+            sys.modules.pop(k, None)
+        sys.modules.update(saved)

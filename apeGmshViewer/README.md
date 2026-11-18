@@ -84,11 +84,39 @@ Then:
   "fem"` marks the element rows as FEM ids. Nodal components keep the file's
   names (`DISPLACEMENT/Ux`), and contour like any other. A file re-stamped
   while open is re-read, never shown under the old stamp.
-- **Deformed shape.** On a results stage, **deformed** in the legend moves
+- **Display.** The Display card in the left rail holds what is drawn: mesh
+  edges and surfaces, frame extrusion and joint offsets, and the contour
+  colormap. A control that does not apply is greyed, with the reason in its
+  tooltip. Every left-rail card starts collapsed; a click on its title opens it.
+  **show** on the Nodes row draws a filled circle at every drawn node, following
+  the deformed shape, hidden groups and section cuts. They turn on at a size
+  chosen for the model (a share of the median element edge at the fit view,
+  3 to 10 px); the slider sets your own, which stays until **auto** is pressed.
+  **show** on the Gauss row does the same for the Gauss points and beam
+  stations of the results stage shown: each point is its element's corners
+  weighted by the corner shape functions at the point's natural coordinates
+  (linear corners, so a curved element's points sit on its straight-sided
+  counterpart), and moves by the same weights of the corners' displacements.
+  A group the file gives no usable coordinates or verified element ids for is
+  counted in a note, never guessed.
+- **Cracks.** On a results stage that records a smeared-crack material's
+  `material.crackPattern` (ASDConcrete3D), the **Cracks** card draws a disc
+  in each crack plane at every Gauss point. The disc's normal is the crack
+  vector, and its colour is the opening, from **min opening** to the largest
+  opening on screen. A crack smaller than **min opening** is not drawn.
+  **size** scales the discs (1 is 0.4 x the Gauss spacing across). Seen
+  edge-on, a disc is the segment Python's `results.plot.cracks` draws. The
+  discs follow the deformed shape and the section planes. Inside a solid they
+  show through lowered surface opacity, hidden faces or a section cut. The
+  nine components are read as the `.ladruno` names them (`<result>/C1x`) or
+  as a `.results.h5` does (`crack_c1_x`).
+- **Banner.** The banner is one line, a count of each kind of message; a
+  click opens the full list.
+- **Deformed shape.** On a results stage, **deformed** in the Deformed card moves
   every drawn node to `x + scale · u`, with `u` the file's nodal
   `displacement_x`, `_y` and `_z` at the step shown (rotations are not
   used). The scale defaults to **1** (true scale); any other scale is
-  stated in the legend. **reference ghost** draws the undeformed mesh behind
+  stated in the card. **reference ghost** draws the undeformed mesh behind
   it at 0.3 opacity. Beams and trusses stay straight chords between their
   displaced end nodes. It composes with contours (the deformed mesh is
   coloured), stage activation and the time scrubber, and a click picks what
@@ -101,18 +129,22 @@ Then:
   2-D (`/meta/ndm` 2, neutral 2.34.0 on): it is never drawn from the
   surviving axes. The outline edges follow their own nodes, like the
   faces; the ghost keeps the undeformed ones.
-- **Nodal contours.** On a results stage, **contour** in the legend colours
+- **Nodal contours.** On a results stage, **contour** on the Contour card (under
+  Line diagram; Physical groups keeps colouring by group or role) colours
   the mesh by a nodal field at the step shown: pick the field and its
   component (`x`, `y`, `z` as the file names them, the **magnitude** for a
   translational vector such as displacement, velocity, acceleration or
   reaction force, `[k]` for an unnamed component). The colour range is the
   field's **whole history** on that stage by default: main reads every step
   in the background, and until it is done the range is the step's own, with
-  "range: this step (history scan n%)" in the legend. **this step** and
-  **fixed** (your min and max) are the other modes, and the legend always
-  says which is in use. The colormap defaults to **jet** (or turbo, viridis,
-  plasma, inferno, magma, coolwarm, RdBu_r, RdBu, bwr, seismic, BrBG or
-  Spectral). A
+  "range: this step (history scan n%)" on the scale. A contour draws its
+  scale in the viewport whether or not its card is open: horizontal, top
+  left, with a button for vertical; drag it anywhere, and it comes back where
+  you left it on the next launch. The range is set on the scale: **this step**
+  and **fixed** (your min and max) are the other modes, and the scale always
+  says which is in use. The colormap, in the Display card, defaults to **jet**
+  (or turbo, viridis, plasma, inferno, magma, coolwarm, RdBu_r, RdBu, bwr,
+  seismic, BrBG or Spectral). A
   node the field does not record (not in its `_ids`, or NaN) is **no data**,
   in the grey the legend names: every face or line that touches it is drawn
   in it, never as zero and never blended from its neighbours. The file
@@ -184,7 +216,7 @@ through Node's type stripping; nothing is compiled for the tests).
 | `npm test` | reader, chain resolution, mesh and navigation tests, on the fixture and on synthetic files |
 | `npm start -- <model.h5>` | open the app on a file; without a file, drop one on the window |
 | `npm run measure -- <model.h5> [--uncapped]` | print one [MEASUREMENTS.md](MEASUREMENTS.md) row; `--uncapped` lifts the vsync cap and prints the throughput row; with a `<stem>.results.h5` beside the model, also the contour scrub row (V4c1) and the same scrub with the deformed shape on (V4d); the deformed scrub with six section planes cutting and their gizmos drawn (V4e1, V4e2) goes to the result JSON as `clip`, and the same scrub with the six planes capped (V4e3) as `caps` (no row is printed for either); with a `<stem>.ladruno` beside the model, also the `.ladruno` read row: index time and one-step read time with the dataset's chunks and filters, and the same for `<stem>.results.h5` of the same run when it exists (V4L-c) |
-| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; one `<out>.window-<kind>.png` per model-definition window; and, when the model has a `<stem>.results.h5` beside it, one `<out>.results-<i>-<stage>.png` per results stage at its last step, then the contour stills `<out>.contour-<n>-<what>.png` (the scan running, its first and last step, one component, and 1280 px), then the deformed-shape stills `<out>.deform-<n>-<what>.png` (scale 1 and 10 with the ghost, with a contour, two staged views, and 1280 px), then the element-contour stills, then the section-plane stills `<out>.clip-<n>-<what>.png` (before, one plane cutting a solid hollow, a corner cut, flip, an offset, Custom, six planes, a 7th refused, a click that misses cut-away geometry and the same click with the cuts off, the deformed contoured model cut at two steps, and 1280 px), then the plane-gizmo stills `<out>.gizmo-<n>-<what>.png` (one plane, three planes, mid-drag, rotated, and a legend over a gizmo taking the press), and the cut-face stills `<out>.caps-<n>-<what>.png`, taken before the section-plane stills (a flat-fill cap, the cap carrying the contour, two planes trimming each other's caps, a deformed step, and the caps off; on a mesh with no volumetric cell, one still of the panel saying it gets no cap) |
+| `npm run capture -- <model.h5> <out.png> [--pick=<OpenSees type>]` | write a still from a hidden window, with a beam selected (or an element of the `--pick` type); a second still `<out>.chain-end.png` when the chain is taller than the window; `<out>.framed.png`, `<out>.groups.png` and `<out>.role.png`; one `<out>.window-<kind>.png` per model-definition window; and, when the model has a `<stem>.results.h5` beside it, one `<out>.results-<i>-<stage>.png` per results stage at its last step, then the contour stills `<out>.contour-<n>-<what>.png` (the scan running, its first and last step, one component, and 1280 px), then the deformed-shape stills `<out>.deform-<n>-<what>.png` (scale 1 and 10 with the ghost, with a contour, two staged views, and 1280 px), then the element-contour stills, then the section-plane stills `<out>.clip-<n>-<what>.png` (before, one plane cutting a solid hollow, a corner cut, flip, an offset, Custom, six planes, a 7th refused, a click that misses cut-away geometry and the same click with the cuts off, the deformed contoured model cut at two steps, and 1280 px), then the plane-gizmo stills `<out>.gizmo-<n>-<what>.png` (one plane, three planes, mid-drag, rotated, and a legend over a gizmo taking the press), and the cut-face stills `<out>.caps-<n>-<what>.png`, taken before the section-plane stills (a flat-fill cap, the cap carrying the contour, two planes trimming each other's caps, a deformed step, and the caps off; on a mesh with no volumetric cell, one still of the panel saying it gets no cap), then, on a stage that records a crack pattern, the crack stills `<out>.cracks-<n>-<what>.png` (every crack, iso; the side view, edge-on, faces hidden; a minimum opening; and deformed) |
 | `npm run profile -- <model.h5> [--scenarios=a,b] [--reps=5] [--out=<dir>]` | drive a real window over the DevTools protocol through named scenarios (load, orbit, store events, results, contour, scrub, field switches, deformed, hover) and write `result.json` and a ranked `summary.md`: per scenario its time, fps, renderer and main CPU profiles with the top functions by self and inclusive time, the GC share and the machine's load, and the cost of one store event per subscriber. A scenario that changed nothing fails the run. Method and findings: [MEASUREMENTS.md](MEASUREMENTS.md#profiler-npm-run-profile) |
 | `npm run dist` | build the Windows installer into `out/installer/` (see [Install](#install-windows)) |
 

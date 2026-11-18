@@ -153,6 +153,7 @@ The full link specs are in the chain issues.
 | S1 → S3 | `_StageBuilder` + procedures → `build/` layers → `nd`/compose/h5io | C2 + C3; S1 must need ≤1 fix in 7 days |
 | K0 → K4 | `VERBS` design → archive completeness → round-trip oracle → fork loader (KC1–6) → dated flip | C1 + C2; F2 for K3 |
 | R0 → R6 | Silent-defect follow-ups → read-back-by-label ADR (architect pair) → implement it → stage/solver ergonomics · advisory model-script lint → re-cut the rule card → validation loop | R1 ratified and the `apesees.py` lock free for R2; R2 + R3 for R5; human gate at R6 |
+| M1 → M3 | MPM particle sets and particle results, the apeGmsh half of the fork's MPM driver program (chain issue #2972): the ADR → lattice seeding, `.ladruno` particle readers and the viewer points layer → the `FORK_PIN` bump and the bridge primitives | the fork hands T the ADR draft for M1; M1 ratified and accepted for M2; the fork slice released for M3; `live-fork` green and owner D7 on the stills |
 
 **Waves:**
 
@@ -192,7 +193,7 @@ All `prog-*` agents follow this protocol.
 2. **Stay in scope.** Edit only the files the card says you own. Never read a file over 2,000 lines whole: use `python scripts/nav.py map|at|where|refs|family` once it exists, otherwise grep an outline and read ranges.
 3. **Python.** Use `C:\Users\nmora\venv\opensees_venv\Scripts\python.exe`. Probes need `PYTHONPATH=<your worktree>/src`, because the editable install points at another checkout. Running `pytest` from the worktree root is fine. Never import openseespy or opensees inside the shared pytest process unless the card calls for a live test.
 4. **Verify.** Run the card's commands exactly. A fix must prove its regression test fails with the fix reverted, and the PR body must say so. Warn-as-contract changes are verified with `pytest -W error::<Category>`.
-5. **Survive the watchdog.** Tool calls die at 600 s and sessions at the account or rate limit; work has survived only when it was pushed. Push the branch before any long step (an empty skeleton commit is fine), commit WIP after each verified step, and `git push` before every long run (suite, build, review wait). Open the PR when verification is done. Keep scratch files (PR body, probe scripts, logs, pid files) in a per-slice directory outside the worktree, `<system temp>/prog-<slice>/`, unique to the slice; never in a shared scratchpad and never under the worktree. `git status --porcelain` in the worktree must be empty before you report, or `land_pr.py` check 4 refuses. Run long commands in the background with a pid file and poll; never pipe the primary command.
+5. **Survive the watchdog.** Tool calls die at 600 s and sessions at the account or rate limit; work has survived only when it was pushed. Push the branch before any long step (an empty skeleton commit is fine), commit WIP after each verified step, and `git push` before every long run (suite, build, review wait). Open the PR when verification is done. Keep scratch files (PR body, probe scripts, logs, pid files) in a per-slice directory outside the worktree, `<system temp>/prog-<slice>/`, unique to the slice; never in a shared scratchpad and never under the worktree. `git status --porcelain` in the worktree must be empty before you report, or `land_pr.py` check 4 refuses. Run verification in the foreground with an explicit timeout below the 600 s tool limit, split by file or marker when it would not fit; never pipe the primary command. Only a command that cannot be split may run in the background, with a pid file, and you poll it within the same turn: never end a turn waiting on your own background job (#3005's first builder sat idle 2.5 h that way; owner ruling 2026-11-17). Never create a junction or symlink into any worktree; install dependencies locally (lesson #2900).
 6. **Land-ready PR.**
    - Commit with the attribution trailer your harness specifies.
    - Open the PR with `python scripts/open_program_pr.py --title <t> --body-file <f> [--label <x>]`. It refuses a body with no `Slice: #<n>` line and refuses at 8 or more counted program PRs (§3 WIP); it adds `program` and `--base main`. Write the body to a file in that same per-slice directory.
@@ -208,6 +209,7 @@ All `prog-*` agents follow this protocol.
 8. **Report.** Send the orchestrator at most 300 words: the PR URL, what changed, the verification result, risks and follow-ups. Long material goes in the PR body.
 9. **If blocked,** stop and report rather than improvise. That covers a red gate, an ambiguous card, or scope that must grow.
 10. **A suggested fix needs its own probe** (#2591; #2578, #2587). A fix from a review finding or a coordinator note is probed against the card's oracle before the builder pushes it (the PR body names the probe) and again by the delta reviewer; for an engine-dependent change, on every engine version the deck can run on, stock and fork. A suggestion states its scope limits.
+11. **Never end a turn to wait for a go-ahead** (#2767). Finish, or commit and push a WIP branch before any stop (blocked, question, scope growth) and name the branch and head SHA in the report. A harness removes the worktree of a worker that ends its turn with an unchanged tree, and a resume lands in the orchestrator's worktree. Re-dispatch a stopped worker fresh on its branch; never resume it. The orchestrator derives Owned lists itself, or through a read-only auditor or Explore agent, before dispatch, so a brief never says "report, then wait for my go".
 
 ## 8. Kill criteria and KPIs
 
@@ -217,7 +219,7 @@ The kill criteria are measured weekly by the triage (#1202). The fallback in eve
 |---|---|
 | Strict fix-prefixed PR share above 25% for 4 weeks (baseline 22%) | Stop splits, keep the gates. |
 | A split PR needs more than 2 fixes within 7 days | Revert the split. |
-| Non-program PRs below 50% of the trailing monthly mean for 2 months | The program is starving the product. |
+| Non-program PRs below 50% of the trailing monthly mean for 2 months | The program is starving the product. Chain V PRs count as product (non-program) for this measure, and the weekly triage reports V separately (maintainer, 2026-11-10). |
 | A phase runs past 2× its estimate | Cancel the next phase. |
 | A shadow registry or path reaches 30 days without a flip | Delete it. S3's families list is exempt: it is gate configuration. |
 | The fork lane is not green within 30 days of the pin | Make an explicit C-or-D decision. |
@@ -288,6 +290,6 @@ Ledger: chain issue #<n>; board #1203; charter internal_docs/program/PROGRAM.md.
 
 ## 11. Program end and expiries
 
-The program closes when chains A, B, C, N, X, S1–S3 and K0–K2 are done, the KPIs are on target (the close-target column of §8; maintainer, 2026-10-19), and the structural targets in §8 are met. F3 and later, K3 and K4 then continue as normal gated work.
+The program closes when chains A, B, C, N, X, S1–S3 and K0–K2 are done, the KPIs are on target (the close-target column of §8; maintainer, 2026-10-19), and the structural targets in §8 are met. F3 and later, K3 and K4 then continue as normal gated work. Chain V (apeGmshViewer: V0–V5 and its VA, VU and VH links) is product work, not a close criterion; it uses T's landing machinery (hub locks, review, the landing token) and continues as normal gated work (maintainer, 2026-11-10).
 
 `internal_docs/program/prototypes/` **expires on 2026-11-30**. Delete each prototype when the link that productionizes it lands; X4's retirement ledger tracks this.

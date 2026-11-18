@@ -11,7 +11,13 @@
 //    directly to `src/state/search.ts` (`parseSearchText`, `runSearchTerms`,
 //    `indexOfModel`), so Spotlight and the Search window never drift.
 
-import { CMAP_NAMES, fieldsOf, gaussFields, RANGE_MODES } from "./contour.ts";
+import { gaussUnavailable } from "./gaussNotes.ts";
+import { reactionComponentsOf } from "./loads.ts";
+import { springCountOf } from "./springs.ts";
+import { tensorFields } from "./tensor.ts";
+import { crackFieldOf } from "./cracks.ts";
+import { vectorFieldOf } from "./vectors.ts";
+import { CMAP_NAMES, elementContourFields, fieldsOf, rangeKindOf, rangeOptionsOf } from "./contour.ts";
 import { clauseLabel, indexOfModel, parseSearchText, runSearchTerms, type ParsedTerm } from "./search.ts";
 import {
   WINDOW_KINDS,
@@ -65,6 +71,42 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   zoneRefused: { kind: "system", reason: "dispatched by the loader when a schema zone version is refused" },
   sourceResult: { kind: "system", reason: "dispatched by effects with the outcome of a go-to-source request" },
   resultsLoaded: { kind: "system", reason: "dispatched by effects when results metadata finishes reading" },
+  // ADR 0134 D5 (M2-S4 #2983): the particle points layer. The effects read the index and push each frame; the
+  // set* events have no panel control yet (a follow-up): the particle harness dispatches them.
+  particlesOpened: { kind: "system", reason: "dispatched by effects when the set's particles start reading" },
+  particlesLoaded: { kind: "system", reason: "dispatched by effects with the particle index as read" },
+  particlesFailed: { kind: "system", reason: "dispatched by effects when the particle index cannot be read" },
+  particlesClosed: { kind: "system", reason: "dispatched by effects when the open set holds no particles" },
+  particleFrame: { kind: "system", reason: "dispatched by effects to report the particle frame pushed to the viewport" },
+  setParticleStage: { kind: "gesture", reason: "the particle stage shown; no panel control yet (ADR 0134 D5 follow-up), the particle harness picks it" },
+  setParticleOutput: { kind: "gesture", reason: "the particle output scrub; no panel control yet (ADR 0134 D5 follow-up), the particle harness scrubs it" },
+  setParticleColour: { kind: "gesture", reason: "the particle colour field; no panel control yet (ADR 0134 D5 follow-up), the particle harness picks it" },
+  setParticleGrid: { kind: "gesture", reason: "the particle grid wire box; no panel control yet (ADR 0134 D5 follow-up)" },
+  setParticlesOn: { kind: "gesture", reason: "the particle layer's visibility; no panel control yet (ADR 0134 D5 follow-up)" },
+  userOpened: { kind: "system", reason: "dispatched by the app's user-file feed when the set's .user.h5 is read" },
+  userRead: { kind: "system", reason: "dispatched by the app's user-file feed with the user:read answer" },
+  combinationRead: { kind: "system", reason: "dispatched by the app's combination feed with the evaluator's answer for the User Combination shown" },
+  userResultRead: { kind: "system", reason: "dispatched by the app's user-result feed with main's user:readResult answer for the user result picked" },
+  // VU10 (ADR 0132 D9): the variants panel and its runner
+  variantsRead: { kind: "system", reason: "dispatched by the variant runner with main's study: the manifest the user opened, its rows and main's compare slot" },
+  variantSwitch: { kind: "gesture", reason: "a row of the variants panel; it names a manifest row by index and label, which only the panel lists" },
+  variantSwitched: { kind: "system", reason: "dispatched by the variant runner when main answered a switch" },
+  variantCompare: { kind: "gesture", reason: "the Compare control of a row of the variants panel, or its close" },
+  compareOpened: { kind: "system", reason: "dispatched by the variant runner when main's compare door answered" },
+  setDifference: { kind: "gesture", reason: "the Difference toggle of the variants panel, offered only while a compare set is open" },
+  differenceRead: { kind: "system", reason: "dispatched by the variant runner with the read of the difference shown" },
+  compareModelRead: { kind: "system", reason: "dispatched by the variant runner when main's compare:model door answered for the open compare set" },
+  compareUserRead: { kind: "system", reason: "dispatched by the variant runner when main's compare:userRead door answered for the open compare set" },
+  showCompareUser: { kind: "gesture", reason: "the Draw control of a compare user result in the variants panel, offered only while the compare set's user file is read, or its Hide" },
+  compareUserResultRead: { kind: "system", reason: "dispatched by the variant runner with main's compare:userReadResult answer for the compare user result shown" },
+  workspaceReading: { kind: "system", reason: "dispatched by the effects when a read of the window set's workspace starts" },
+  workspaceRead: { kind: "system", reason: "dispatched by the effects with main's read of the window set's <stem>.workspace.h5" },
+  setWorkspaceKind: { kind: "gesture", reason: "the Nodes / Elements toggle of the sets panel, which says what a click picks into a new set" },
+  workspaceSave: { kind: "gesture", reason: "a control of the sets panel (save, rename, delete, accept); a save names a set the selection fills, which only the panel holds" },
+  workspaceSaved: { kind: "system", reason: "dispatched by the effects when main's workspace:save door answered" },
+  workspacePreview: { kind: "system", reason: "dispatched by the effects with the members a save would take from the selection now" },
+  dismissWorkspaceAside: { kind: "gesture", reason: "the close control of the banner that names an unreadable workspace's aside file" },
+  userClosed: { kind: "system", reason: "dispatched by the app's user-file feed when the set has no .user.h5" },
   resultStep: { kind: "system", reason: "dispatched by effects to report step fetch status" },
   contourElementJoin: { kind: "system", reason: "dispatched by effects after verifying element contour join" },
   contourStepRange: { kind: "system", reason: "dispatched by effects after measuring step min/max" },
@@ -79,6 +121,13 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setClipPose: { kind: "gesture", reason: "continuous 3D gizmo rotation drag; Spotlight exposes discrete plane normal/offset controls instead" },
   setCamera: { kind: "gesture", reason: "ViewCube face, edge and corner clicks, its drag, rotate and home buttons; named views reach it through the ADR 0128 view spec" },
   setTheme: { kind: "gesture", reason: "the ViewCube's Dark / Light dropdown" },
+  offerReceived: { kind: "system", reason: "dispatched by the offer runner when --present reaches the window (ADR 0128 D5)" },
+  offerAssessed: { kind: "system", reason: "dispatched by the offer runner when it judges a listed offer against the open set" },
+  applyOffer: { kind: "gesture", reason: "the Apply button of an offer in the offers panel; an offer exists only because an agent made it" },
+  backOffer: { kind: "gesture", reason: "the Back button of the offers panel; it has no meaning apart from an applied offer" },
+  offerApplied: { kind: "system", reason: "dispatched by the offer runner when an applied offer's view is drawn" },
+  offerRefused: { kind: "system", reason: "dispatched by the offer runner when the drawn view refuses an offer" },
+  offerBackDone: { kind: "system", reason: "dispatched by the offer runner when Back has finished" },
   openSpotlight: { kind: "gesture", reason: "Ctrl+K / header trigger that opens the Spotlight palette itself" },
   closeSpotlight: { kind: "gesture", reason: "Escape / backdrop gesture that closes the Spotlight palette" },
   setSpotlightMode: { kind: "gesture", reason: "internal drill-down navigation within the Spotlight palette" },
@@ -137,9 +186,20 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setLineDiagramFill: { kind: "expose", command: "toggle-line-diagram-fill", description: "Toggle 3-D line diagram ribbon fill" },
   setLineDiagramFlipSign: { kind: "expose", command: "toggle-line-diagram-flip-sign", description: "Toggle 3-D line diagram tension-side / sign convention" },
   setLineDiagramRange: { kind: "expose", command: "set-line-diagram-range", description: "Set 3-D line diagram colour range mode (history, step, or fixed)" },
+  setSupports: { kind: "expose", command: "toggle-supports", description: "Toggle the restraint glyphs at the supports (the Display card's BC)" },
+  setPrincipal: { kind: "expose", command: "toggle-principal", description: "Toggle or configure the principal stress or strain arrows at the Gauss points" },
+  setCracks: { kind: "expose", command: "toggle-cracks", description: "Toggle or configure the smeared-crack discs at the Gauss points" },
+  setReactions: { kind: "expose", command: "toggle-reactions", description: "Toggle or configure the reaction-force arrows of the results step" },
+  setSprings: { kind: "expose", command: "toggle-springs", description: "Toggle or configure the zero-length spring force arrows of the results step" },
+  setVectors: { kind: "expose", command: "toggle-vectors", description: "Toggle or configure the nodal vector arrows of the results step" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
   toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },
   toggleShowOffsets: { kind: "expose", command: "toggle-show-offsets", description: "Toggle rigid joint-offset links and markers on or off" },
+  setNodes: { kind: "expose", command: "toggle-nodes", description: "Toggle the node markers on or off" },
+  setNodeSize: { kind: "expose", command: "set-node-size", description: "Set the node markers' size, or let the app choose it" },
+  setGaussPoints: { kind: "expose", command: "toggle-gauss-points", description: "Toggle the Gauss point and beam station markers on or off" },
+  setGaussSize: { kind: "expose", command: "set-gauss-size", description: "Set the Gauss point markers' size, or let the app choose it" },
+  gaussMeasured: { kind: "system", reason: "dispatched by the viewport after placing the Gauss markers of a stage" },
 };
 
 // ---- Spotlight Item Model ---------------------------------------------------
@@ -340,6 +400,25 @@ function drillDownItem(id: string, badge: string, title: string, detail: string,
   });
 }
 
+/** The root entry to the contour range list, named by the mode the list marks on (VF2 #2949). */
+function contourRangeEntry(s: State): { item: SpotlightItem; keywords: string } {
+  const kind = rangeKindOf(s);
+  const on = rangeOptionsOf(kind, s.contour.range).find((r) => r.on);
+  if (!on) throw new Error(`no contour range option is on for ${kind} at ${s.contour.range}`);
+  return {
+    item: drillDownItem(
+      "cmd:contour-range",
+      "contour",
+      `Set Contour Range… (currently ${on.label})`,
+      kind === "steps"
+        ? "Switch between whole-history, current step, or custom fixed min/max range"
+        : `Switch between this ${kind === "difference" ? "difference's step" : "result's own"} range and a custom fixed min/max range`,
+      "contourRange",
+    ),
+    keywords: "set contour range clim history step fixed min max own",
+  };
+}
+
 function commandItem(
   id: string,
   badge: string,
@@ -510,6 +589,37 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       });
     }
 
+    if (s.mesh) {
+      out.push({
+        item: commandItem(
+          "cmd:toggle-nodes",
+          "display",
+          s.nodes.on ? "Hide Nodes" : "Show Nodes",
+          `Node markers are currently ${s.nodes.on ? "ON" : "OFF"}`,
+          [{ type: "setNodes", on: !s.nodes.on }],
+          s.nodes.on,
+          [{ type: "setNodes", on: !s.nodes.on }],
+        ),
+        keywords: "nodes points markers circles toggle",
+      });
+    }
+
+    // Offered when the Display row can do something, or to turn the markers off.
+    if (s.results && (s.gaussPoints.on || gaussUnavailable(s) === null)) {
+      out.push({
+        item: commandItem(
+          "cmd:toggle-gauss-points",
+          "display",
+          s.gaussPoints.on ? "Hide Gauss Points" : "Show Gauss Points",
+          `Gauss point and beam station markers are currently ${s.gaussPoints.on ? "ON" : "OFF"}`,
+          [{ type: "setGaussPoints", on: !s.gaussPoints.on }],
+          s.gaussPoints.on,
+          [{ type: "setGaussPoints", on: !s.gaussPoints.on }],
+        ),
+        keywords: "gauss integration points stations markers toggle",
+      });
+    }
+
     if (s.mesh?.frameExtrusion?.hasJointOffsets) {
       out.push({
         item: commandItem(
@@ -634,6 +744,84 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
     });
   }
 
+  if (reactionComponentsOf(s)) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-reactions",
+        "loads",
+        s.reactions.on ? "Turn Off Reaction Arrows" : "Turn On Reaction Arrows",
+        `Reaction forces of the step on screen, pointing at the supports, are currently ${s.reactions.on ? "ON" : "OFF"}`,
+        [{ type: "setReactions", on: !s.reactions.on }],
+        s.reactions.on,
+        [{ type: "setReactions", on: !s.reactions.on }],
+      ),
+      keywords: "reactions reaction forces supports arrows toggle results",
+    });
+  }
+
+  if (springCountOf(s) > 0) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-springs",
+        "loads",
+        s.springs.on ? "Turn Off Spring Force Arrows" : "Turn On Spring Force Arrows",
+        `Zero-length spring forces of the step on screen are currently ${s.springs.on ? "ON" : "OFF"}`,
+        [{ type: "setSprings", on: !s.springs.on }],
+        s.springs.on,
+        [{ type: "setSprings", on: !s.springs.on }],
+      ),
+      keywords: "springs spring zerolength zero-length interface forces arrows toggle results",
+    });
+  }
+
+  // selectors.principalFieldsOf, restated: the selectors import this module.
+  const shownStage = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage] : undefined;
+  if (s.mesh && shownStage && s.results?.elementIndex?.verified && tensorFields(shownStage.gauss).some((f) => f.groups.length > 0)) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-principal",
+        "loads",
+        s.principal.on ? "Turn Off Principal Arrows" : "Turn On Principal Arrows",
+        `Principal stress or strain directions at the Gauss points are currently ${s.principal.on ? "ON" : "OFF"}`,
+        [{ type: "setPrincipal", on: !s.principal.on }],
+        s.principal.on,
+        [{ type: "setPrincipal", on: !s.principal.on }],
+      ),
+      keywords: "principal stress strain directions gauss tension compression arrows toggle results",
+    });
+  }
+  // selectors.crackFieldOf, restated for the same reason.
+  if (s.mesh && shownStage && s.results?.elementIndex?.verified && crackFieldOf(shownStage.gauss)?.groups.length) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-cracks",
+        "loads",
+        s.cracks.on ? "Turn Off Cracks" : "Turn On Cracks",
+        `Smeared-crack discs at the Gauss points are currently ${s.cracks.on ? "ON" : "OFF"}`,
+        [{ type: "setCracks", on: !s.cracks.on }],
+        s.cracks.on,
+        [{ type: "setCracks", on: !s.cracks.on }],
+      ),
+      keywords: "cracks crack pattern width opening concrete asdconcrete3d gauss discs toggle results",
+    });
+  }
+
+  const vectorField = vectorFieldOf(s);
+  if (vectorField) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-vectors",
+        "loads",
+        s.vectors.on ? "Turn Off Vector Arrows" : "Turn On Vector Arrows",
+        `${vectorField.name} of the step on screen, arrows starting at the nodes, is currently ${s.vectors.on ? "ON" : "OFF"}`,
+        [{ type: "setVectors", on: !s.vectors.on }],
+        s.vectors.on,
+        [{ type: "setVectors", on: !s.vectors.on }],
+      ),
+      keywords: "vectors vector field displacement velocity acceleration rotation arrows glyphs toggle results",
+    });
+  }
+
   if (s.phase.axis.some((k) => k.kind === "results")) {
     out.push({
       item: drillDownItem(
@@ -655,16 +843,7 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       ),
       keywords: "set contour gauss topology mode cell node averaged discrete extrapolation",
     });
-    out.push({
-      item: drillDownItem(
-        "cmd:contour-range",
-        "contour",
-        `Set Contour Range… (currently ${s.contour.range})`,
-        "Switch between whole-history, current step, or custom fixed min/max range",
-        "contourRange",
-      ),
-      keywords: "set contour range clim history step fixed min max",
-    });
+    out.push(contourRangeEntry(s));
     out.push({
       item: drillDownItem(
         "cmd:contour-cmap",
@@ -721,6 +900,14 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       ),
       keywords: "set line diagram beam moment shear axial ribbon mvy mz vy n toggle",
     });
+  } else if (
+    s.visibility.colourBy === "contour" &&
+    rangeKindOf(s) === "user" &&
+    (s.variants.shown !== null ? s.variants.compareUser?.status : s.user?.status) === "ready"
+  ) {
+    // VF2 (#2949): a user result draws with no results file (VU16), and the legend offers its range there too,
+    // once its user file is read; with none read the legend shows the refusal and no range.
+    out.push(contourRangeEntry(s));
   }
 
   if (resStage) {
@@ -823,7 +1010,23 @@ function declSpotlightItem(
   });
 }
 
-function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: string): SpotlightItem[] {
+/**
+ * The range a pick of "fixed" starts from (state/selectors.ts
+ * `fixedRangeFrom`, the legend's too). It reads the contour view, which this
+ * module cannot import (selectors.ts imports it), so selectors.ts hands it in.
+ */
+export type FixedRangeFrom = (s: State) => { min: number; max: number } | null;
+
+/**
+ * The palette's "fixed" with no stored range and no range shown: picking it
+ * changes nothing (as the legend's button), and the legend's min and max
+ * boxes appear only once a fixed range is stored, so the way to one is the
+ * typed `min max` this list turns into "Set Fixed Range [min, max]".
+ */
+export const FIXED_NOTHING_TO_START =
+  "No range is shown to start from, so picking this changes nothing: type a min and a max into this list (as `min max`) to set a fixed range";
+
+function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: string, fixedFrom: FixedRangeFrom | undefined): SpotlightItem[] {
   const items: SpotlightItem[] = [];
   const low = q.trim().toLowerCase();
   const section = MODE_META[mode].label ?? "Options";
@@ -990,7 +1193,9 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
               ? "Mesh (undeformed model)"
               : k.kind === "stage"
                 ? `Stage ${k.index + 1}`
-                : `Results Stage ${k.stage + 1}: ${s.results?.stages[k.stage]?.name || s.results?.stages[k.stage]?.id || k.stage}`;
+                : k.kind === "results"
+                  ? `Results Stage ${k.stage + 1}: ${s.results?.stages[k.stage]?.name || s.results?.stages[k.stage]?.id || k.stage}`
+                  : `User Combination ${k.name}`;
         const active =
           s.phase.at?.kind === k.kind &&
           (k.kind !== "results" || (s.phase.at.kind === "results" && s.phase.at.stage === k.stage));
@@ -1092,14 +1297,15 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
           if (filter(it)) items.push(it);
         }
       }
-      for (const f of gaussFields(st.gauss)) {
+      // VA6d (#2766): the picker's catalog, so a derived scalar (von_mises_stress) is listed where the picker lists it.
+      for (const f of elementContourFields(st.gauss)) {
         for (const c of f.components) {
           const active = s.contour.source === "element" && s.contour.field === f.name && s.contour.component === c.key;
           const it = commandItem(
             `val:cfield-elem-${f.name}-${c.key}`,
             "element",
             `${f.name} · ${c.label}`,
-            `Element Gauss contour (${c.datasets.join(", ")})`,
+            c.derived ? `Element Gauss contour, derived from ${c.datasets.join(", ")}` : `Element Gauss contour (${c.datasets.join(", ")})`,
             [
               { type: "setColourBy", by: "contour" },
               { type: "setContourField", field: f.name, component: c.key, source: "element" },
@@ -1156,20 +1362,38 @@ function buildDrillDownItems(s: State, mode: Exclude<SpotlightMode, "root">, q: 
           ),
         );
       }
-      for (const r of RANGE_MODES) {
-        if (r.range === "fixed" && !s.contour.fixed) continue;
+      // VF2 (#2949): the legend's rule (state/contour.ts rangeOptionsOf), so a one-range contour offers its own range once.
+      // VF2-d (#2956): "fixed" is offered with no stored range too, as the legend offers it, and starts from the same range.
+      if (!fixedFrom) throw new Error("spotlightViewOf: the contour range list needs the range a fixed range starts from; read it through state/selectors.ts spotlightViewOf");
+      const from = fixedFrom(s);
+      for (const r of rangeOptionsOf(rangeKindOf(s), s.contour.range)) {
+        // As the legend: the own range leaves a fixed range for `r.range`, and otherwise changes nothing (it only closes the palette);
+        // "fixed" starts from the stored range, else the range shown, and with neither changes nothing.
+        const pick: readonly Event[] =
+          r.range === "fixed"
+            ? from
+              ? [{ type: "setContourRange", range: "fixed", fixed: from }]
+              : [{ type: "closeSpotlight" }]
+            : r.own && r.on
+              ? [{ type: "closeSpotlight" }]
+              : [{ type: "setContourRange", range: r.range }];
         const it = commandItem(
-          `val:range-${r.range}`,
+          r.own ? "val:range-own" : `val:range-${r.range}`,
           "range",
           `Range: ${r.label}`,
-          r.range === "history"
-            ? "Scale colours across all steps of the stage"
-            : r.range === "step"
-              ? "Scale colours to the min/max of the current step"
-              : `Fixed range [${s.contour.fixed?.min}, ${s.contour.fixed?.max}]`,
-          [{ type: "setContourRange", range: r.range }],
-          s.contour.range === r.range,
-          [{ type: "setContourRange", range: r.range }],
+          r.title ??
+            (r.range === "history"
+              ? "Scale colours across all steps of the stage"
+              : r.range === "step"
+                ? "Scale colours to the min/max of the current step"
+                : !from
+                  ? FIXED_NOTHING_TO_START
+                  : s.contour.fixed
+                    ? `Fixed range [${from.min}, ${from.max}]`
+                    : `Fixed range, starting from the range shown [${from.min}, ${from.max}]`),
+          pick,
+          r.on,
+          pick,
           section,
         );
         if (filter(it)) items.push(it);
@@ -1535,8 +1759,11 @@ function isDuplicateLabelRow(s: State, r: { kind: DeclKind; name: string }): boo
 
 /**
  * Pure selector returning what Spotlight (`Ctrl+K`) renders for `s`.
+ * `fixedFrom` is the range a pick of "fixed" starts from; the contour range
+ * list refuses to build without it (state/selectors.ts `spotlightViewOf`
+ * hands it in, VF2-d #2956), and no other list reads it.
  */
-export function spotlightViewOf(s: State): SpotlightView {
+export function spotlightViewOf(s: State, fixedFrom?: FixedRangeFrom): SpotlightView {
   const { open, mode, query, clauses } = s.spotlight;
   const meta = MODE_META[mode];
   const clauseViews: SpotlightClauseView[] = clauses.map((c, idx) => ({
@@ -1558,7 +1785,7 @@ export function spotlightViewOf(s: State): SpotlightView {
       query,
       clauses: clauseViews,
       summary: null,
-      items: buildDrillDownItems(s, mode, query),
+      items: buildDrillDownItems(s, mode, query, fixedFrom),
       hint,
     };
   }

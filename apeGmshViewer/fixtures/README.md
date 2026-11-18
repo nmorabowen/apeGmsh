@@ -228,20 +228,34 @@ The V4d 2-D pair (#1765). `deform_2d.h5` is composed by the bridge with
 `/meta/ndm` is the declared dimension): a 2 x 1 rectangle of 4 x 2
 `FourNodeQuad` (`Panel`) at z = 0, a tie of 4 `Truss` segments (`Tie`) along
 y = 1.5, and the rectangle's boundary lines, which gmsh meshes and the
-extraction keeps (20 nodes, 30 cells). `deform_2d.results.h5` holds one static
-stage, `load`, of 3 steps with `displacement_x` and `displacement_y` only (the
-shorthand is clipped to `ndm`, so a 2-D file has no `displacement_z`):
+extraction keeps (20 nodes, 30 cells).
+
+`deform_2d.ladruno` (V1a, #2763; ADR 0131 D10 stage 0) replaces the native
+`deform_2d.results.h5`. It is written by `write_nodal_history`
+(`_ladruno_writer.py`) in the fork recorder's `-N displacement` layout: one
+static `MODEL_STAGE[1]` of 3 steps, `TIME` = 1/3, 2/3, 1, whose
+`ON_NODES/DISPLACEMENT` holds `Ux,Uy` only (`ndm` columns, so a 2-D file has
+no `Uz`):
 
     s = 0.01 (k + 1)
-    displacement_x = s y,   displacement_y = s (0.5 x + 0.25 y)
+    Ux = s y,   Uy = s (0.5 x + 0.25 y)
 
-The file is written by this checkout's apeGmsh, whose `/opensees` and results
-zones are a minor ahead of what this app reads, so it opens with those two
-banners. The values are synthetic; no solve runs.
+It is stamped against the committed `deform_2d.h5` (ADR 0122 D3: `model_hash`
+`04344b85…`, `fem_hash` `5cfb615f…`), so the app pairs the two by
+`model_hash` and opens them with no banner. No engine solved the values, so
+`PROVENANCE@opensees_backend` is `"unknown"`. No element bucket is written
+(`PROVENANCE@unsupported` is `["elements"]`); the elements bind from
+`deform_2d.h5`. The file passes the fork's `ladruno_format.validate()` at
+`FORK_PIN`. The stage has no name of its own, because the model declares no
+`ops.stage`, so it reads as `MODEL_STAGE[1]`.
+
+`--deform-ladruno` rewrites the `.ladruno` alone, against the `deform_2d.h5`
+already here. `--deform` composes the model again and writes both. A fresh
+compose writes this checkout's schema versions, and so another `model_hash`.
 
 ```powershell
 $env:PYTHONPATH = "src"
-& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --deform
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe scripts/make_viewer_results_fixtures.py --deform-ladruno
 ```
 
 ## `elem_*` (V4c2a, #1833)
@@ -383,7 +397,21 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   components (`LadrunoReader.read_gauss`), written by
   `tests/fixtures/ladruno/make_viewer_gauss_oracle.py` (outside the app, which never
   imports apeGmsh: ADR 0112 D4); `test/results/ladrunoGauss.test.ts` compares
-  the app's reader against it.
+  the app's reader against it. `ladruno_quad2d.principal.oracle.json` holds
+  Python's principal frame of the stress and strain at step 1
+  (`_derived.principal_frame` over the same reads: per Gauss point the values
+  p1 >= p2 >= p3 and their sign-canonical unit vectors), written by
+  `tests/fixtures/ladruno/make_viewer_principal_oracle.py`;
+  `test/results/ladrunoPrincipal.test.ts` compares state/principal.ts against it.
+  The same script writes `principal_random.oracle.json`: `principal_frame` of
+  300 seeded random 3-D tensors with distinct values, whose signed vectors
+  `test/tensor.test.ts` checks (the canonical sign the `arrow` head draws).
+- `ladruno_cracks3d.ladruno` and `ladruno_cracks3d.h5` are the Python suite's
+  fork run `tests/fixtures/ladruno/crack_bricks.ladruno`, stamped, and its
+  model, written by hand (`--cracks`). It has three ASDConcrete3D `stdBrick`
+  elements pulled along x. The third has cracked from step 0, and the first two
+  never crack. It records `material.crackPattern` (9 columns per Gauss point)
+  and `material.crackWidth`. `test/cracks.test.ts` draws its crack discs.
 - `ladruno_parts2d.part-0.ladruno`, `ladruno_parts2d.part-1.ladruno` and
   `ladruno_parts2d.h5` (#2188) are a 2-rank OpenSeesMP run (fork build
   `80dd3f13d`, which writes `PARTITION_REDUCTION`, WP-126) and its model,
@@ -395,6 +423,17 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   app: no Python under it imports apeGmsh, ADR 0112 D4).
   `test/results/ladrunoParts.test.ts` compares the stitch against it and
   mutates scratch copies of the set.
+- `ladruno_springs3d.ladruno` and `ladruno_springs3d.h5` are a fork run (fork
+  build `79e0623670`, FORMAT_MINOR_VERSION 0) and the model.h5 it pairs with:
+  two 3-D `zeroLength` springs from a fixed node to a coincident free node, one
+  along the global axes (`-dir 1 2 3`) and one skewed (`-dir 1 2 -orient 1 1 0
+  -1 1 0`), recorded with `force`, `basicForce`, `localForce`, the deformations
+  and the material state. `force` holds both springs in one bucket (global,
+  `P<node>_<dof>`); the per-direction tokens split by slot count into
+  `19-ZeroLength[1:0:0]` and `[1:0:1]`, and the fork writes no `-dir` code and no
+  `LOCAL_AXES` for them. The script checks the closed forms (node j's `force` is
+  the load times the load factor) and stamps the file; the model is written by
+  hand. `test/springs.test.ts` reads it for the Springs card.
 
 The test, `test/results/ladruno.test.ts`, edits scratch copies through h5wasm
 for every refusal: another `GENERATOR`, `FORMAT_VERSION = 2`, a part-file name,
@@ -412,6 +451,10 @@ modal record.
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --quad2d
 $env:PYTHONPATH = "src"
 & C:\Users\nmb\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_viewer_gauss_oracle.py
+# and the zero-length springs and their model (fork build)
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --springs
+# and the crack bricks and their model (no fork run: a stamped copy of the suite's crack_bricks.ladruno)
+& C:\Users\nmb\venv\opensees_venv\Scripts\python.exe apeGmshViewer/fixtures/make_ladruno_fixtures.py --cracks
 ```
 
 The part set needs OpenSeesMP from a fork build with WP-126 and its MPI

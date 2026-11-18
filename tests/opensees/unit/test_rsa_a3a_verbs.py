@@ -144,6 +144,7 @@ class _FakeBuilt:
 def _fake_run(ops: apeSees, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ops, "build", lambda: _FakeBuilt())
     monkeypatch.setattr(live, "LiveOpsEmitter", _FakeLive)
+    monkeypatch.setattr(live, "refuse_fork_chain_before_wipe", lambda bm: None)
 
 
 def test_residual_modes_runs_eigen_then_residual_then_properties(

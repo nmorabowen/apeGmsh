@@ -82,18 +82,35 @@ FOREIGN_NODE_DECL_RE_PY = re.compile(
 )
 
 
-def _strip_foreign_node_decls(block: str) -> list[str]:
+# A ghost whose home ndf EQUALS the model envelope is declared without
+# ``-ndf`` (on its home rank and as a ghost alike: byte parity holds),
+# e.g. a 3-dof beam node under a frame envelope ``ndf=3``.  Callers whose
+# compared portion carries such ghosts opt in to stripping these too.
+BARE_NODE_DECL_RE_TCL = re.compile(r"^\s*node\s+\S+(?:\s+\S+){1,3}\s*$")
+BARE_NODE_DECL_RE_PY = re.compile(
+    r"^\s*ops\.node\((?:[^,'\"]+,\s*){1,3}[^,'\")]+\)\s*$")
+
+
+def _strip_foreign_node_decls(
+    block: str, *, envelope_ndf_decls: bool = False,
+) -> list[str]:
     """Return ``block.splitlines()`` with foreign-node decl lines removed.
 
     A line is a foreign-node decl when it matches either the Tcl or
-    the Py regex above.  Empty lines and other content pass through
-    unchanged.
+    the Py regex above (or, with ``envelope_ndf_decls``, a node decl
+    with no ``-ndf`` at all).  Empty lines and other content pass
+    through unchanged.
     """
     out: list[str] = []
     for line in block.splitlines():
         if FOREIGN_NODE_DECL_RE_TCL.match(line):
             continue
         if FOREIGN_NODE_DECL_RE_PY.match(line):
+            continue
+        if envelope_ndf_decls and (
+            BARE_NODE_DECL_RE_TCL.match(line)
+            or BARE_NODE_DECL_RE_PY.match(line)
+        ):
             continue
         out.append(line)
     return out
@@ -104,6 +121,7 @@ def assert_partition_blocks_equivalent(
     block_b: str,
     *,
     label: str = "",
+    envelope_ndf_decls: bool = False,
 ) -> None:
     """Assert two per-rank emit blocks are byte-equivalent modulo
     foreign-node decl prefixes.
@@ -127,6 +145,10 @@ def assert_partition_blocks_equivalent(
         Optional human-readable identifier included in the assertion
         message — useful when many block pairs are checked in one
         test.
+    envelope_ndf_decls:
+        Also strip node decls with no ``-ndf``: ghosts whose home ndf
+        equals the model envelope (see :data:`BARE_NODE_DECL_RE_TCL`).
+        Only for portions that hold no native node decls.
 
     Raises
     ------
@@ -134,8 +156,10 @@ def assert_partition_blocks_equivalent(
         If the stripped portions differ.  The message includes a
         ``difflib`` unified diff so the divergence is easy to read.
     """
-    stripped_a = _strip_foreign_node_decls(block_a)
-    stripped_b = _strip_foreign_node_decls(block_b)
+    stripped_a = _strip_foreign_node_decls(
+        block_a, envelope_ndf_decls=envelope_ndf_decls)
+    stripped_b = _strip_foreign_node_decls(
+        block_b, envelope_ndf_decls=envelope_ndf_decls)
     if stripped_a == stripped_b:
         return
     diff = "\n".join(

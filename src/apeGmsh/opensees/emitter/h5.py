@@ -168,11 +168,11 @@ class H5LedgerWarning(UserWarning):
 
     A ``ledger`` row of ``VERBS`` (ADR 0114, Q3) is a verb ``H5Emitter``
     counts and drops: ``/opensees`` carries no record of the call, so a
-    deck replayed from the file omits it (the contact and embed rows and a
-    stage-claimed ``enforce="equation"`` tie's ``equationConstraint`` lines;
-    some persist in the neutral zone instead). A global ``equationConstraint``
-    line is not counted: from opensees 2.35.0 it is a
-    ``/opensees/constraints/equationConstraint`` row that replay re-emits.
+    deck replayed from the file omits it (the contact and embed rows; some
+    persist in the neutral zone instead). ``equationConstraint`` is not a
+    ledger verb: every line is a ``{scope}/constraints/equationConstraint``
+    row that replay re-emits (global from opensees 2.35.0, a stage's from
+    2.40.0).
     The bridge raises it at most once per ``apeSees`` instance for each
     distinct set of ledgered verbs. It is not an ``H5FeatureDeferredWarning``,
     so the automatic ``model.h5`` write does not silence it."""
@@ -730,7 +730,20 @@ class H5RefusedVerb(NotImplementedError):
 #:     a 2.39.x file (rule D5). A 2.38.x ``ModelData`` has no version check
 #:     and its rewrite drops the group, so ``ModelData.from_h5`` checks too
 #:     from 2.39.0.
-SCHEMA_VERSION: str = "2.39.0"
+#:   * 2.40.0 — stage equationConstraint lines archived: additive — a stage
+#:     block's ``constraints`` group gains ``equationConstraint`` (the
+#:     global group's columns) and ``equationConstraint_emit_index``, the
+#:     lines of every ``enforce="equation"`` tie the stage claims, stamped
+#:     from the stage's MP sequence, so a replay writes them in the stage's
+#:     own position. ``equationConstraint`` is no VERBS ledger verb (ADR
+#:     0114 D1 as amended). Written only when a stage writes a line, so
+#:     every other archive keeps its bytes and hash; the rows are hashed.
+#:     A 2.39 reader refuses the group by name, and a replay of a 2.39
+#:     archive refuses a stage-claimed equation tie (it stores no line),
+#:     hence the bump: a 2.40 reader opens 2.12 through 2.40 and refuses
+#:     the stage group below 2.40.0; a 2.39.x reader REFUSES a 2.40.x
+#:     file.
+SCHEMA_VERSION: str = "2.40.0"
 
 #: Oldest opensees-zone minor the reader opens (ADR 0113 (#1303)). The
 #: zone's last non-additive minor is 2.11.0, the 0-based rank flip, but
@@ -1450,8 +1463,9 @@ class H5Emitter(
         return dataclasses.replace(
             stamp, requires=tuple(sorted(set(stamp.requires) | extra)))
 
-    # The three counters tests read, derived from the ledger so the two
-    # cannot drift.
+    # The two counters tests read, derived from the ledger so the two
+    # cannot drift. ``equationConstraint`` left the ledger at opensees
+    # 2.40.0, so it has no counter.
     @property
     def _skipped_embed_ties(self) -> int:
         return self._ledger_counts["embedded_node"]
@@ -1459,10 +1473,6 @@ class H5Emitter(
     @property
     def _skipped_contacts(self) -> int:
         return self._ledger_counts["contact_surface"]
-
-    @property
-    def _skipped_equation_constraints(self) -> int:
-        return self._ledger_counts["equationConstraint"]
 
     # =====================================================================
     # Output — write the buffered model to disk

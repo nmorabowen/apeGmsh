@@ -35,8 +35,9 @@ folder.
 | Method | When |
 |---|---|
 | `ResolvedRecorderSpec.emit_default` (recommended) | Record an in-process OpenSees run on the route the build supports: `run.ladruno` on the Ladruno fork, `run.mpco` on a stock build with MPCO, classic `.out` files in `run_out/` on pip openseespy. Read it back with `run.results()`. |
-| `EigenResult.results()` | Open the modes of a bridge eigen solve as a `Results`, one stage per mode (`to_native(path)` keeps the file). An `EigenResult` comes only from `apeSees.eigen(n)` on a model built through the bridge. |
-| `capture_live_modes(model_h5, n, path)` | The modes of a plain openseespy deck: solves `ops.eigen(n)` on the live domain and writes one native stage per mode, read with `Results.from_native` (notebook 17). |
+| `EigenResult.results()` | Open the modes of a bridge eigen solve as a `Results`, one `kind="mode"` stage per mode, through a temporary `.ladruno` (`to_ladruno(path)` keeps the file; `to_native(path)` is the explicit native export). An `EigenResult` comes only from `apeSees.eigen(n)` on a model built through the bridge. |
+| `capture_live_modes(model_h5, n, path)` | The modes of a plain openseespy deck: solves `ops.eigen(n)` on the live domain and writes a stamped `.ladruno` (one `eigen` stage holding every mode; an `.h5` path refuses), read with `Results.from_ladruno(path, model_h5=model_h5)` (notebook 17). A `fem.to_h5` archive pairs by `fem_hash` alone (ADR 0133). |
+| `Results.from_ladruno` | Open a `.ladruno` against its model archive (`model_h5=`): the fork recorder's runs, and the modes files above. |
 | `Results.from_recorders` | Run OpenSees with disk-backed `.out` recorders, then read them back. |
 | `Results.from_native` | Open an existing apeGmsh native HDF5 file (e.g. the modes file `to_native` wrote). |
 

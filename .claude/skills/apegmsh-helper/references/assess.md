@@ -30,8 +30,8 @@ report = fem.assess()                       # findings only
 report = osm.assess()                       # OpenSeesModel, solver zone
 report = osm.assess(results=results)        # + RES.ZERO_U cross-check
 report = results.assess()                   # + lineage as RES.LINEAGE
-report = results.assess(figures=True)       # + results.render_pack
-report = fem.assess(figures=True)           # + fem.render → mesh.png
+report = results.assess(figures=True)       # + results.render_pack (apegmsh-view/1 on Windows, VTK on Linux)
+report = fem.assess(figures=True)           # + fem.render → mesh.png (same split)
 
 print(report.text)                          # 40–80 lines markdown
 for path in report.figures:                 # () if skipped / figures=False
@@ -51,14 +51,14 @@ for f in report.findings:
 `# verified: tests/assess/test_assess.py`, `tests/assess/test_assess_opensees.py`
 
 `figures=True` default is `False`. Headless stays cheap. Pass `True`
-when you need eyes. `APEGMSH_SKIP_VIEWER=1` or no GL: findings still
-run, `figures` is `()`, prints
+when you need eyes. `APEGMSH_SKIP_VIEWER=1` (any platform, any source), or
+no GL on the Linux VTK path: findings still run, `figures` is `()`, prints
 `[skip viewer] APEGMSH_SKIP_VIEWER set` or
 `[skip viewer] no GL context` (exact). Skip ≠ pass.
 Unbound `results.render` / `render_pack` raise even under that env
 (need `model=` / `model_h5=` / `bind`).
 
-`results.render` / `render_pack` stills are drawn by
+On **Linux and macOS**, `results.render` / `render_pack` stills are drawn by
 `ResultsSession.render` (VTK offscreen; one session mesh view per
 still). Closed `view=`: `mesh` / `contour` / `deformed` / `reactions`.
 Refused with a `ValueError` that names the alternative:
@@ -68,6 +68,45 @@ displacement / velocity / acceleration. No `setup=`. In-process
 is the default; `python -m apeGmsh.viewers render …` is the
 out-of-kernel door so a GL crash does not kill the notebook.
 
+**On Windows** (ADR 0128 slice 6) every still verb draws through
+apeGmshViewer (`apegmsh-view/1`, via `agent_view.render_stills`, below),
+not VTK: `fem.render`, `results.render` / `render_pack`,
+`results.assess(figures=True)`, the `python -m apeGmsh.viewers render …`
+door and studio `render(path=)`. Each PNG is the render canvas only
+(`"chrome": "model"`: scale bar and axes, no app panels). `fem.render`
+writes the snapshot to a temporary `model.h5` first.
+
+- **Sources.** A Results is drawn from the file `results.path` names, which
+  must be a **`.ladruno` beside its `<stem>.h5`** (the door also reads a
+  model `.h5`). Every other source is refused with a `ValueError` naming
+  `.ladruno`: `.mpco`, a native `.h5`, recorders, a Results with no file,
+  and a `to_units(...)` view. A missing `<stem>.h5` is a
+  `FileNotFoundError`, and a door `--model-h5` that is not that
+  `<stem>.h5` is refused.
+- **Pairing.** The bound FEMData must be the `<stem>.h5` mesh. Node ids and
+  coordinates must match exactly, and each element must have the same node
+  set; element ids, type names and node order are ignored. A `fem=` or
+  `bind()` override of another mesh is refused as an override. A `.ladruno`
+  whose stamped `fem_hash` is not the `<stem>.h5`'s is refused with
+  "do not pair".
+- **The pack** is one spec: `mesh.png`, `contour.png`, `deformed.png`
+  (auto-scaled: 0.12 of the model diagonal over the largest |u|), the
+  app's `manifest.json`, and the matplotlib `history.png`. There is no
+  `reactions.png`. Its contour is the starter component (uz, ux, uy, then
+  the first nodal), even when that component is all zero.
+- **Stored Gauss components** (e.g. `stress_xx`) draw as the app's element
+  field (VA6e, #2794): the `.ladruno` token and its own column label
+  (`stress` / `stress/sigma11`), averaged as v1 drew them (one Gauss point:
+  `cell_averaged`; more: `node`, extrapolated to the corners). The app draws
+  element results only from a file stamped `element_index_space = "fem"`.
+- **Refused shots:** `view="reactions"`, a velocity or acceleration
+  `deform`, a derived scalar such as `von_mises_stress`, and a component
+  the file holds in more than one column.
+- **Errors and cameras.** No installed app is an error (exit 2 /
+  `FileNotFoundError`), never a skip; only `APEGMSH_SKIP_VIEWER=1` skips,
+  for any source, in process and from `python -m apeGmsh.viewers render`.
+  `camera xy|xz|yz` become the app's `top|-y|+x`.
+
 Live session (needs an open Gmsh kernel; `from_h5` / closed →
 `RuntimeError`): `g.model.render("geom.png")` (BRep, coarse tessellation
 if no mesh), `g.mesh.render("mesh.png")` (live Gmsh, not `fem.render`).
@@ -75,6 +114,64 @@ Snapshot mesh stills stay on `fem.render`.
 
 Do not call `g.model.viewer()` / `g.mesh.viewer()` / `results.viewer()`
 / `show_web` / `gui()` for diagnosis.
+
+## Viewer stills — apeGmshViewer (ADR 0128)
+
+The installed apeGmshViewer takes stills headlessly, drawn exactly as the
+human sees the set, each with a manifest of the numbers behind it. One
+call goes from the saved files to PNGs plus the manifest:
+
+```python
+from apeGmsh.agent_view import render_stills, AgentViewError
+
+spec = {
+    "spec": "apegmsh-view/1",
+    "files": {"model": "frame.h5"},          # results found by pairing; relative = cwd
+    "shots": [
+        {"name": "mesh", "camera": "iso", "chrome": "model"},
+        {"name": "uz-last", "stage": "gravity", "step": "last",
+         "contour": {"field": "displacement", "component": "z"},
+         "deform": {"scale": 10, "ghost": True},
+         "caption": "Vertical displacement, gravity stage, last step."},
+    ],
+}
+try:
+    manifest = render_stills(spec, "out/stills")   # out: absent or empty
+except AgentViewError as e:
+    print(e)              # names every refusal: spec key, shot reason, stderr
+    e.manifest            # this run's manifest, or None; drawn shots are in it
+```
+
+- The app is the only validator: an unknown key or value refuses the whole
+  spec and names it (`shots[0].camera`); a stage, step or field the file
+  lacks refuses that shot, and the other shots still run. Any refusal
+  raises; the shim never returns a manifest with a refused shot, and
+  never reads a `manifest.json` that was in `out` before the run.
+- The executable is `$APEGMSH_VIEWER`, else the per-user install
+  (`%LOCALAPPDATA%\Programs\apegmsh-viewer\apeGmshViewer.exe`). A
+  `$APEGMSH_VIEWER` that names no file raises; it is never passed over.
+- `chrome: "model"` draws the model alone, with the scale bar on any
+  contour, for a report figure; `chrome: "app"` (the default) is the window
+  with its panels. Batch stills default to the `light` theme, contours to
+  jet. Colours and fonts are the app's; a spec cannot name one.
+- Field and component names are the file's, as the legend shows them
+  (`DISPLACEMENT/Ux` for a `.ladruno`). To write a spec that will not
+  refuse, ask the set what it offers first:
+  `apeGmshViewer --describe frame.h5 --out <empty dir>` writes
+  `describe.json` (stages, steps, fields, groups); `find_viewer()` gives
+  the executable.
+- **Quote values from the manifest, never from the pixels** (ADR 0128 D3):
+  each `shots[i]` entry has the resolved camera, the file hashes, stage,
+  step and time, the contour range and its mode, `extrema` (value, node or
+  element id, position), the no-data count, the deformed scale and every
+  banner line. `png` paths are relative to `out`.
+- **Voice (ADR 0128 D8).** Every caption, offer name and summary written
+  from a manifest is in English, in the office voice (ape-tono):
+  impersonal, declarative and complete, a value given beside its
+  reference. "Peak vertical displacement −12.4 mm at node 57, gravity
+  stage, last step; limit L/360 = 16.7 mm." Not "Looks like the max is
+  around 12!". The app does not rewrite captions; the voice is the
+  agent's duty.
 
 ## Finding catalog (v1 + Amendments 1, 4) → next action
 

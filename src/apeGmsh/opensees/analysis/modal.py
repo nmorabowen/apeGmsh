@@ -360,6 +360,8 @@ class ModalPropertiesResult:
     ----------
     eigenvalues
         1-D ``np.ndarray`` of ``λ_i = ω_i²`` in OpenSees order.
+    unorm
+        ``True`` when ``properties`` came from ``modalProperties -unorm``.
     properties
         The raw ``modalProperties -return`` dict — per-mode series keyed
         ``partiFactor<C>`` / ``partiMass<C>`` / ``partiMassesCumu<C>`` /
@@ -391,6 +393,11 @@ class ModalPropertiesResult:
     # Implementation handle for lazy mode-shape access. Underscore-
     # prefixed; not part of the user-facing surface.
     _live: "LiveOpsEmitter"
+
+    #: Whether ``properties`` came from ``modalProperties -unorm``: its
+    #: factors are then in the displacement-normalised basis, not the
+    #: domain eigenvectors' (the basis caveat above).
+    unorm: bool = False
 
     @property
     def omega(self) -> np.ndarray:
@@ -1469,7 +1476,9 @@ class ParallelModalResult:
         ``model_h5`` is the bridge archive the deck was emitted from
         (``ops.h5``). ``MODEL/NODES`` is its fem, ``MODEL/ELEMENTS`` is
         empty (``INFO/PROVENANCE@unsupported`` says so), and the file is
-        stamped against it::
+        stamped against it. Its ``stage_names`` is the stage's own
+        ``MODEL_STAGE[1]``: the modes are no program stage, so a staged
+        archive never names the stage after one (#2824)::
 
             res = ParallelModalResult.from_job(job_dir)
             p = res.to_ladruno("modes.ladruno", model_h5="model.h5")

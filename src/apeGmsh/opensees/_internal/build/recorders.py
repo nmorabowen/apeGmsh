@@ -218,6 +218,7 @@ def _emit_recorder_declaration(
                     record, decl, emitter, fem,
                     element_record_response_tokens,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                    element_plan=element_plan,
                 )
         finally:
             emitter.recorder_declaration_end()
@@ -255,15 +256,34 @@ def _emit_nodes_record(
     # translator to keep its import scoped to the
     # _emit_recorder_declaration function.
     grouped: dict[str, tuple[int, ...]] = {}
+    pressure: "tuple[str, int] | None" = None
     if record.components:
         if not node_ndf and element_plan is not None:
             # A caller without the bridge's effective map: the inferred
             # one (no ops.ndf overlay is known here).
             node_ndf = _inferred_node_ndf(fem, element_plan, int(decl.ndm))
-        layout = _node_record_layout(
+        comps = layout_components(record.components)
+        if comps:
+            layout = _node_record_layout(
+                record, decl, node_ids, element_plan, node_ndf=node_ndf)
+            raw_groups = group(comps, layout)  # type: ignore[operator]
+            grouped = {deck_node_token(tok, element_plan): dofs
+                       for tok, dofs in raw_groups.items()}
+        pressure = node_pressure_slot(
             record, decl, node_ids, element_plan, node_ndf=node_ndf)
-        grouped = group(record.components, layout)  # type: ignore[operator]
     record_name = record.name or "default"
+    if pressure is not None:
+        # p is one more line, in the slot its u-p class keeps it in; the
+        # file is named for the component, not the response token.
+        response, p_dof = pressure
+        args_p: list[int | float | str] = [
+            "-file", _recorder_file_path(
+                decl.file_root, decl.name, record_name, "pressure"),
+        ]
+        if record.dt is not None:
+            args_p += ["-dT", record.dt]
+        args_p += ["-time", "-node", *node_ids, "-dof", p_dof, response]
+        emitter.recorder("Node", *args_p)
 
     for ops_token, dofs in grouped.items():
         file_path = _recorder_file_path(
@@ -327,6 +347,84 @@ def _node_layout(ndf: int, ndm: int) -> tuple[int, ...]:
     return tuple(range(min(ndf, ndm)))
 
 
+#: The scalar node component a u-p node carries; never a layout slot.
+PORE_PRESSURE = "pore_pressure"
+
+
+def layout_components(components: Iterable[str]) -> tuple[str, ...]:
+    """``components`` without :data:`PORE_PRESSURE`: the ones the node
+    DOF layout places (:func:`_node_record_layout`)."""
+    return tuple(c for c in components if c != PORE_PRESSURE)
+
+
+def node_pressure_slot(
+    record: RecorderRecord,
+    decl: RecorderDeclaration,
+    node_ids: tuple[int, ...],
+    element_plan: "ElementPlan | None",
+    *,
+    node_ndf: "Mapping[int, int] | None" = None,
+) -> "tuple[str, int] | None":
+    """``(response token, DOF)`` of the recorder line that writes
+    ``record``'s ``pore_pressure``, or ``None`` when it records none.
+
+    The u-p class on each node decides where p lives
+    (:data:`~apeGmsh.opensees._readback.UP_PRESSURE_SLOT`): ``LadrunoUP``
+    in DOF ``ndm + 1`` of ``disp``, stock ``SSPquadUP`` in DOF 3 of
+    ``vel``. OpenSees' own ``pressure`` node response is the PFEM
+    pressure constraint, so it is never the one used. Raises a
+    :class:`BridgeError` naming the node when a node carries no p, when
+    the record's nodes keep it in different slots, or when there is no
+    element plan to tell (a hand-written deck).
+    """
+    if PORE_PRESSURE not in record.components:
+        return None
+    from ..._readback import pressure_slot, rotation_roles
+
+    where = f"recorder.declare({decl.name!r})"
+    if element_plan is None:
+        raise BridgeError(
+            f"{where}: {PORE_PRESSURE!r} needs the bridge's element plan to "
+            "know which u-p element keeps p where; record it with "
+            "ops.recorder.Node(response=..., dofs=...) instead."
+        )
+    roles = rotation_roles(element_plan, node_ids)
+    ndf_of = node_ndf or {}
+    slots: dict[tuple[str, int], int] = {}
+    for n in node_ids:
+        try:
+            slot = pressure_slot(
+                roles, n, int(decl.ndm), int(ndf_of.get(n, decl.ndf)))
+        except ValueError as e:
+            raise BridgeError(
+                f"{where}: {e}. Narrow the selector to the u-p nodes that "
+                f"carry p, or drop {PORE_PRESSURE!r}."
+            ) from e
+        slots.setdefault(slot, n)
+    if len(slots) > 1:
+        shown = ", ".join(f"node {n}: {r} DOF {d}"
+                          for (r, d), n in slots.items())
+        raise BridgeError(
+            f"{where}: the record's nodes keep p in different slots "
+            f"({shown}); declare each u-p family in its own record."
+        )
+    return next(iter(slots))
+
+
+def deck_node_token(token: str, element_plan: "ElementPlan | None") -> str:
+    """The node response a deck writes for ``token``: ``reaction``
+    becomes ``reactionIncInertia`` in a model holding a damping-coupled
+    u-p element (:data:`~apeGmsh.opensees._readback.DYNAMIC_REACTION_CLASSES`:
+    SSPquadUP's coupling force sits in C*v, so only the dynamic reaction
+    holds it)."""
+    if token != "reaction" or element_plan is None:
+        return token
+    from ..._readback import needs_dynamic_reactions
+
+    names = (type(spec).__name__ for spec, sub in element_plan if len(sub))
+    return "reactionIncInertia" if needs_dynamic_reactions(names) else token
+
+
 def _node_record_layout(
     record: RecorderRecord,
     decl: RecorderDeclaration,
@@ -351,8 +449,8 @@ def _node_record_layout(
       (:meth:`~apeGmsh.opensees._readback.RotationRoles.refusal`, the
       rule ``.read`` applies): a u-p node's DOF ``ndm + 1`` is pore
       pressure, never a rotation.
-    - ``pore_pressure`` refuses: OpenSees' ``recorder Node ... pressure``
-      response is the PFEM pressure constraint, not a u-p pressure DOF.
+    - ``pore_pressure`` is left out: it is not a slot of the layout, and
+      :func:`node_pressure_slot` places it (its own recorder line).
 
     The layouts ``_load_dof_layout`` names place a spatial slot at the
     same DOF wherever they hold it, so one ``-dof`` list serves every
@@ -367,17 +465,8 @@ def _node_record_layout(
 
     where = f"recorder.declare({decl.name!r})"
     ndm = int(decl.ndm)
-    spatial = {c: node_component_spatial(c) for c in record.components}
-    pressure = [c for c, s in spatial.items() if s is not None and s[1] < 0]
-    if pressure:
-        raise BridgeError(
-            f"{where}: {pressure[0]!r} is not recorded by a declared node "
-            "record: the OpenSees 'pressure' node response is the PFEM "
-            "pressure constraint, not a u-p pressure DOF. Record the u-p "
-            f"pressure DOF ({ndm + 1}) with ops.recorder.Node(response="
-            "'disp', dofs=...) on the u-p vertex nodes, or with "
-            "ops.recorder.MPCO."
-        )
+    comps = layout_components(record.components)
+    spatial = {c: node_component_spatial(c) for c in comps}
 
     if element_plan is None:
         ndfs = {n: int(decl.ndf) for n in node_ids}
@@ -405,8 +494,7 @@ def _node_record_layout(
     first: "tuple[int, dict[str, tuple[int, ...]]] | None" = None
     for n, layout in layouts.items():
         try:
-            grouped = group_node_components_by_ops_token(
-                record.components, layout)
+            grouped = group_node_components_by_ops_token(comps, layout)
         except ValueError as e:
             raise BridgeError(
                 f"{where}: node {n} (ndm={ndm}, ndf={ndfs[n]}) has no DOF "
@@ -493,6 +581,7 @@ def _emit_element_level_record(
     response_tokens: object,  # callable; passed in to keep imports local
     *,
     fem_eid_to_ops_tag: "FemToOpsTagMap | None" = None,
+    element_plan: "ElementPlan | None" = None,
 ) -> None:
     """Emit one element-level :class:`RecorderRecord` (elements / gauss /
     line_stations).
@@ -502,6 +591,11 @@ def _emit_element_level_record(
     ``element_record_response_tokens`` helper), and issues one
     ``emitter.recorder("Element", ...)`` call for the canonical group
     plus one per ``raw=`` token.
+
+    A gauss strain record on a class that answers no element-level
+    ``strains`` (:func:`_per_material_strain_points`: Tri31) emits one
+    ``material <gp> strain`` line per Gauss point instead, to
+    ``<file_root>/<decl.name>__<record_name>__gauss_material<gp>.out``.
 
     For ``line_stations`` records, also emits a paired
     ``integrationPoints`` recorder writing to ``<file>_gpx.out`` —
@@ -539,7 +633,23 @@ def _emit_element_level_record(
             record.category, record.components, record_name=record.name,
             sigma_zz_capable=sigma_zz_capable,
         )
-        if tokens is not None:
+        n_points = None if tokens is None else _per_material_strain_points(
+            record, decl, tuple(tokens), elem_ids, element_plan,
+            by_ops_tag=fem_eid_to_ops_tag is not None,
+        )
+        if n_points is not None:
+            for gp in range(1, n_points + 1):
+                args_gp: list[int | float | str] = ["-file", _recorder_file_path(
+                    decl.file_root, decl.name, record_name,
+                    f"{record.category}_material{gp}",
+                )]
+                if record.dt is not None:
+                    args_gp += ["-dT", record.dt]
+                args_gp += ["-time", "-ele", *elem_ids,
+                            "material", str(gp), "strain"]
+                emitter.recorder("Element", *args_gp)
+            emitted_canonical = True
+        elif tokens is not None:
             file_path = _recorder_file_path(
                 decl.file_root, decl.name, record_name, record.category,
             )
@@ -586,6 +696,149 @@ def _emit_element_level_record(
         args += ["-ele", *elem_ids]
         args.append("integrationPoints")
         emitter.recorder("Element", *args)
+
+
+def _per_material_strain_points(
+    record: RecorderRecord,
+    decl: RecorderDeclaration,
+    tokens: tuple[str, ...],
+    elem_ids: tuple[int, ...],
+    element_plan: "ElementPlan | None",
+    *,
+    by_ops_tag: bool,
+) -> "int | None":
+    """The Gauss-point count when ``record``'s strain is recorded per
+    material, else ``None`` (the record keeps its element-level tokens).
+
+    A class in
+    :data:`~apeGmsh.opensees._response_catalog.PER_MATERIAL_STRAIN_CLASSES`
+    (Tri31) has no element-level ``strains`` response: a ``recorder
+    Element ... strains`` on it writes the time column alone. Its strain
+    is read per Gauss point (``material <gp> strain``), and the point
+    count is the class's entry in
+    :data:`~apeGmsh.opensees._response_catalog.RESPONSE_CATALOG`.
+
+    - With the element plan (the bridge), the record's classes are those
+      of the plan specs its elements belong to. A record that spans a
+      per-material class and any other class raises a
+      :class:`BridgeError` naming both: one response cannot serve both.
+      An explicit ``element_class_name`` that is not the record's one
+      class raises where either it or a planned class is per-material.
+    - Without the plan (``ModelData``: a hand-written deck), an explicit
+      ``element_class_name`` naming a per-material class is honoured. A
+      strain record with neither keeps ``strains`` unchanged: there is
+      nothing to resolve its class from (out of scope of #2892).
+    """
+    if record.category != "gauss" or tokens != ("strains",):
+        return None
+    from ..._response_catalog import needs_per_material_strain
+
+    token = "strain"  # the catalog token of the ``strains`` keyword
+    where = (f"recorder.declare({decl.name!r}) gauss record "
+             f"{record.name or 'default'!r}")
+    explicit = record.element_class_name
+    if element_plan is None:
+        if explicit is None or not needs_per_material_strain(explicit, token):
+            return None
+        return _strain_gauss_points(explicit, where)
+
+    classes = _record_element_classes(
+        elem_ids, element_plan, by_ops_tag=by_ops_tag, where=where)
+    per_material = [c for c in classes if needs_per_material_strain(c, token)]
+    if explicit is not None and set(classes) != {explicit} and (
+        per_material or needs_per_material_strain(explicit, token)
+    ):
+        raise BridgeError(
+            f"{where}: element_class_name={explicit!r} contradicts the "
+            f"record's elements, which are {_shown_classes(classes)}. Drop "
+            "element_class_name (the bridge reads the class from the "
+            "element plan), or narrow the selector to that class."
+        )
+    if not per_material:
+        return None
+    if len(classes) > 1:
+        other = next(c for c in classes if c != per_material[0])
+        raise BridgeError(
+            f"{where}: the record spans {per_material[0]!r} (element "
+            f"{classes[per_material[0]]}), whose strain records only per "
+            f"Gauss point (material <gp> strain), and {other!r} (element "
+            f"{classes[other]}), which records element-level strains; all "
+            f"classes: {_shown_classes(classes)}. Declare each class's "
+            "groups in their own record."
+        )
+    return _strain_gauss_points(per_material[0], where)
+
+
+def _shown_classes(classes: "Mapping[str, int]") -> str:
+    return ", ".join(f"{c!r} (element {t})" for c, t in classes.items())
+
+
+def _record_element_classes(
+    elem_ids: tuple[int, ...],
+    element_plan: "ElementPlan",
+    *,
+    by_ops_tag: bool,
+    where: str,
+) -> "dict[str, int]":
+    """``{C++ class: FEM eid of its first element}`` over ``elem_ids``,
+    from the plan specs whose rows hold them.
+
+    ``elem_ids`` are emitted OpenSees tags when ``by_ops_tag`` (the
+    bridge translated them), else FEM eids. An element in no planned
+    spec raises a :class:`BridgeError`: its class is unknown.
+    """
+    import numpy as np
+
+    from ..._element_capabilities import Unknown, element_capability
+
+    ids = np.asarray(elem_ids, dtype=np.int64)
+    covered = np.zeros(ids.shape, dtype=bool)
+    out: dict[str, int] = {}
+    for spec, rows in element_plan:
+        if not len(rows):
+            continue
+        if not by_ops_tag:
+            keys = rows.eids
+        elif rows.tags is not None:
+            keys = rows.tags
+        else:
+            keys = np.arange(rows.tag_start, rows.tag_start + len(rows),
+                             dtype=np.int64)
+        hit = np.isin(ids, keys)
+        if not hit.any():
+            continue
+        covered |= hit
+        py_name = type(spec).__name__
+        cap = element_capability(py_name)
+        name = py_name if cap is Unknown else (cap.cpp_class_name or py_name)
+        if name not in out:
+            # Report the FEM eid the user selects by (``ids=``, the mesh),
+            # never the OpenSees tag it was translated to.
+            row = int(np.flatnonzero(keys == ids[hit][0])[0])
+            out[name] = int(rows.eids[row])
+    if not covered.all():
+        what = "OpenSees element tag" if by_ops_tag else "element"
+        raise BridgeError(
+            f"{where}: {what} {int(ids[~covered][0])} belongs to no "
+            "planned element spec, so its class, and whether it records "
+            "strain element-level or per Gauss point, is unknown."
+        )
+    return out
+
+
+def _strain_gauss_points(class_name: str, where: str) -> int:
+    """The Gauss-point count of ``class_name``'s catalogued strain."""
+    from ..._response_catalog import RESPONSE_CATALOG
+
+    counts = {int(layout.n_gauss_points) for (c, _rule, t), layout
+              in RESPONSE_CATALOG.items() if c == class_name and t == "strain"}
+    if len(counts) != 1:
+        raise BridgeError(
+            f"{where}: {class_name!r} records strain per Gauss point, but "
+            f"the response catalog gives it {len(counts)} strain point "
+            "counts; one is needed to write one recorder line per point."
+        )
+    return int(next(iter(counts)))
 
 
 def _resolve_element_targets(

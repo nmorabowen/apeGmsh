@@ -910,9 +910,15 @@ class ConstraintResolver:
                 "node sets."
             )
         weights = None
-        if getattr(defn, "weighting", "uniform") == "area":
+        weighting = getattr(defn, "weighting", "uniform")
+        if weighting == "area":
             weights = self._tributary_areas(
                 independents, slave_face_conn, name=defn.name,
+            )
+        elif weighting == "footprint":
+            independents, weights = self._footprint_weights(
+                set(independents), slave_face_conn, defn.footprint,
+                name=defn.name,
             )
         ctrl = getattr(defn, "control", None)
         control = ctrl if (ctrl is not None and not ctrl.is_default) else None
@@ -924,6 +930,57 @@ class ConstraintResolver:
             weights=weights,
             control=control,
         )
+
+    def _footprint_weights(
+        self,
+        candidates: set[int],
+        face_conn: "ndarray | None",
+        footprint,
+        *,
+        name: str | None = None,
+    ) -> tuple[list[int], ndarray]:
+        """Overlap-area weights of a footprint over a face set.
+
+        ``footprint`` is a tuple of convex planar polygons. Each slave
+        face, projected onto a polygon's plane, is clipped by it; the
+        overlap area is split equally among the face's nodes, and the
+        shares of all the polygons add. Returns the nodes with a positive
+        share (among ``candidates``, sorted) and their weights in that
+        order. Fails loud when the footprint overlaps no face.
+        """
+        from ._footprint import face_overlap_shares
+
+        label = f" {name!r}" if name else ""
+        if face_conn is None or np.asarray(face_conn).size == 0:
+            raise ValueError(
+                f"distributing_coupling{label}: weighting='footprint' needs "
+                "the slave surface's face connectivity, but none was "
+                "resolved — is the slave label a meshed surface?"
+            )
+        conn = np.asarray(face_conn, dtype=np.int64)
+        order = np.argsort(self.node_tags, kind="stable")
+        pos = np.searchsorted(self.node_tags, conn, sorter=order)
+        idx = order[np.clip(pos, 0, len(order) - 1)]
+        if not np.array_equal(self.node_tags[idx], conn):
+            raise ValueError(
+                f"distributing_coupling{label}: a slave face names a node "
+                "the resolver does not know."
+            )
+        face_coords = self.node_coords[idx]
+        acc: dict[int, float] = {}
+        for poly in footprint:  # one or more convex polygons; shares add
+            for f, s in face_overlap_shares(face_coords, np.asarray(poly, float)):
+                for nid in conn[f]:
+                    if int(nid) in candidates:
+                        acc[int(nid)] = acc.get(int(nid), 0.0) + s
+        nodes = sorted(t for t, w in acc.items() if w > 0.0)
+        if not nodes:
+            raise ValueError(
+                f"distributing_coupling{label}: weighting='footprint' — the "
+                "footprint overlaps no face of the slave surface (check its "
+                "position and that it lies in the surface's plane)."
+            )
+        return nodes, np.array([acc[t] for t in nodes], dtype=float)
 
     def _tributary_areas(
         self,

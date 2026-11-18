@@ -15,6 +15,9 @@
 //   modes), through the same join and plan as the surfaces. The cap's clim,
 //   colormap and no-data colour are the contour's. No data stays no data
 //   (state/slice.ts), never 0. With no contour the cap is one flat fill.
+//   VF-a (#2939): as the surfaces, a cap samples the colormap per fragment
+//   from per-vertex ramp coordinates (renderer/colormapTexture.ts), so a
+//   coarse cut shows only ramp colours, never an RGB blend between corners.
 // - Trim and exemption: each cap is cut by the other active planes
 //   geometrically (`sliceSolids`' trims) and is clip-exempt (the stamping in
 //   renderer/clip.ts skips its subtree): it lies on its own plane, where the
@@ -28,14 +31,15 @@
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
 import { cutsOf, type Cut } from "../state/clip.ts";
-import { columnOf, elementCellValues, gaussCellValues, isNodeTopology, NO_DATA_RGB, primitiveColours, vertexValues } from "../state/contour.ts";
+import { columnOf, elementCellValues, gaussCellValues, isNodeTopology, vertexValues } from "../state/contour.ts";
 import { vertexDisplacements } from "../state/deform.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners } from "../state/extrapolation.ts";
 import { activationNow, contourView, deformView, hiddenElementsOf, NO_SOLID_CELLS, type ContourView } from "../state/selectors.ts";
 import { SOLID_CORNERS, SOLID_SHAPES, sliceSolids, sliceExtent, solidShapeOf, type Slice, type Solids } from "../state/slice.ts";
 import type { Decl, DeclPath, State } from "../state/types.ts";
 import { DARK_ROLE } from "../theme/tokens.ts";
-import { elementJoinAt, toLinear, type StepValues } from "./contour.ts";
+import { colormapTexture, noDataRamp, primitiveRamp, rampUv, toLinear } from "./colormapTexture.ts";
+import { differenceHeld, elementJoinAt, userResultOnHand, type CombinationColumnOf, type StepValues } from "./contour.ts";
 
 /** How far a cap steps into the discarded half: a fraction of its own extent (the Qt S3 measurement: less speckles against the gizmo quad). */
 export const CAP_STEP = 1e-3;
@@ -44,6 +48,18 @@ export const CAP_STEP = 1e-3;
 export const CAP_FILL: readonly [number, number, number] = (() => {
   const n = parseInt(DARK_ROLE.concrete.slice(1), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+})();
+
+/** The flat fill as a one-texel texture (linear): a cap with no contour samples it as a contoured cap samples its colormap. */
+export const CAP_FILL_TEXTURE: THREE.DataTexture = (() => {
+  const t = new THREE.DataTexture(Float32Array.from([...CAP_FILL.map(toLinear), 1]), 1, 1, THREE.RGBAFormat, THREE.FloatType);
+  t.name = "cap fill";
+  t.colorSpace = THREE.NoColorSpace;
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  return t;
 })();
 
 /** Why a model gets no cap (the panel shows it: selectors `cutFaceNote`). */
@@ -216,6 +232,18 @@ export function capKeys(s: State): { cuts: string; slice: string; colour: string
       values = `read ${v.reads}|${v.keys.step}|${v.topology}|join ${v.joinKey}`;
       colour = `${v.clim.min}|${v.clim.max}|${v.cmap}`;
       break;
+    case "combination":
+      values = `combination ${v.key}`;
+      colour = `${v.clim.min}|${v.clim.max}|${v.cmap}`;
+      break;
+    case "difference":
+      values = `difference ${v.key}`;
+      colour = `${v.clim.min}|${v.clim.max}|${v.cmap}`;
+      break;
+    case "user":
+      values = `user ${v.key}|read ${v.read}`;
+      colour = `${v.clim.min}|${v.clim.max}|${v.cmap}`;
+      break;
     default:
       values = `no-data:${v.reason}`;
       colour = "no-data";
@@ -240,14 +268,21 @@ function row(step: StepValues, name: string, what: string): Float64Array {
   return r;
 }
 
-/** The cap pass's inputs from the state, the blobs and the effects' step data. */
-export function capInputs(s: State, blobs: BlobStore, step: StepValues | null): CapInputs {
+/**
+ * The cap pass's inputs from the state, the blobs and the effects' step data.
+ * VU7b-2: `combination` is the User Combination column on hand (renderer/contour.ts
+ * `CombinationFeed.held`); a combination contour waits until it is the read shown.
+ */
+export function capInputs(s: State, blobs: BlobStore, step: StepValues | null, combination: CombinationColumnOf | null = null): CapInputs {
   const t = solidTable(s, blobs);
   if ("none" in t) return t;
   // Wait, before any work, while the step shown is not all here: its data, its measured range, its element component.
   const d = deformView(s);
   const deformed = d.state === "loading" || d.state === "ready" || d.state === "partial";
   const v = contourView(s);
+  if (v.state === "combination" && combination?.key !== v.key) return { wait: true };
+  if (v.state === "difference" && differenceHeld.current?.key !== v.key) return { wait: true };
+  if (v.state === "user" && userResultOnHand(v) === null) return { wait: true };
   if ((deformed || v.state === "ready" || v.state === "element") && !stepIsShown(s, step)) return { wait: true };
   if ((v.state === "ready" || v.state === "element") && !v.stepMeasured) return { wait: true };
   if (v.state === "element" && (step!.element !== v.component.key || !step!.gauss)) return { wait: true };
@@ -295,27 +330,56 @@ export function capInputs(s: State, blobs: BlobStore, step: StepValues | null): 
       }
       break;
     }
+    case "combination": {
+      // Checked above: the column on hand is the read shown.
+      const held = combination!.column;
+      values = vertexValues(sub.cornerNodes, columnOf(held.ids), [held.values], false);
+      break;
+    }
+    case "difference": {
+      // Checked above: the column on hand is the read shown.
+      const held = differenceHeld.current!;
+      values = vertexValues(sub.cornerNodes, columnOf(held.ids), [held.values], false);
+      break;
+    }
+    case "user": {
+      // Checked above: the column on hand is the read shown.
+      const held = userResultOnHand(v)!;
+      values = vertexValues(sub.cornerNodes, columnOf(held.ids), [held.values], false);
+      break;
+    }
     default:
       values = new Float64Array(sub.solids.slot.length).fill(NaN);
   }
   return { solids: sub.solids, fem: sub.fem, xyz, values, cuts: cutsOf(s.clip) };
 }
 
-/** The linear vertex colours of a cap: the contour's ramp, clim and no-data rule, or the flat fill. */
-export function capColours(slice: Slice, view: ContourView): Float32Array {
+/**
+ * How a cap is shaded (VF-a): per-vertex texture coordinates and the texture
+ * they index. A contour's are its ramp coordinates (the contour's clim and
+ * no-data rule) into its colormap; no contour is the flat fill.
+ */
+export function capShade(slice: Slice, view: ContourView): { u: Float32Array; texture: THREE.DataTexture } {
   const n = slice.cell.length;
-  let rgb: Float32Array;
-  if (view.state === "off") {
-    rgb = new Float32Array(9 * n);
-    for (let i = 0; i < rgb.length; i += 3) rgb.set(CAP_FILL, i);
-  } else if (view.state === "ready" || view.state === "element") {
-    rgb = primitiveColours(slice.values!, Int32Array.from({ length: n }, (_, i) => i), 3, view.clim, view.cmap).rgb;
-  } else {
-    rgb = new Float32Array(9 * n);
-    for (let i = 0; i < rgb.length; i += 3) rgb.set(NO_DATA_RGB, i);
+  switch (view.state) {
+    case "off":
+      return { u: new Float32Array(3 * n).fill(0.5), texture: CAP_FILL_TEXTURE };
+    case "ready":
+    case "element":
+    case "combination":
+    case "difference":
+    case "user":
+      return { u: primitiveRamp(slice.values!, Int32Array.from({ length: n }, (_, i) => i), 3, view.clim).u, texture: colormapTexture(view.cmap) };
+    case "unavailable":
+    case "refused":
+    case "not-yet":
+      // No data: the no-data texel, which every colormap's texture has.
+      return { u: noDataRamp(3 * n), texture: colormapTexture("jet") };
+    default: {
+      const unknown: never = view;
+      throw new Error(`caps: unknown contour view ${JSON.stringify(unknown)}`);
+    }
   }
-  for (let i = 0; i < rgb.length; i++) rgb[i] = toLinear(rgb[i]!);
-  return rgb;
 }
 
 /** One cap drawn: its plane, its slice and its mesh. */
@@ -334,8 +398,8 @@ export class CapLayer {
   note: string | null = null;
   private caps: Cap[] = [];
   private keys: { cuts: string; slice: string; colour: string } | null = null;
-  /** One material for every cap (a re-slice makes geometry only); its colour dims them with the model. */
-  private readonly material = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.75, metalness: 0 });
+  /** One material for every cap (a re-slice makes geometry only); its colour dims them with the model, its map is the shade's texture. */
+  private readonly material = new THREE.MeshStandardMaterial({ map: CAP_FILL_TEXTURE, side: THREE.DoubleSide, roughness: 0.75, metalness: 0 });
 
   constructor() {
     this.root.name = "section caps";
@@ -367,7 +431,7 @@ export class CapLayer {
    * the colour key did, kept while the step shown is still on its way. True
    * when the drawing changed.
    */
-  sync(s: State, blobs: BlobStore, step: StepValues | null, dragging: boolean): boolean {
+  sync(s: State, blobs: BlobStore, step: StepValues | null, dragging: boolean, combination: CombinationColumnOf | null = null): boolean {
     const keys = capKeys(s);
     if (!keys) {
       this.note = null;
@@ -393,7 +457,7 @@ export class CapLayer {
       }
       return changed;
     }
-    const inputs = capInputs(s, blobs, step);
+    const inputs = capInputs(s, blobs, step, combination);
     if ("wait" in inputs) {
       // The step is on its way: keep the caps while they are still on the same planes, else hide them.
       const show = this.keys?.cuts === keys.cuts && this.caps.length > 0;
@@ -416,7 +480,7 @@ export class CapLayer {
       if (!slice) return; // the plane cuts no drawn cell: no cap, never an empty one
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(Float32Array.from(slice.positions), 3));
-      g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(slice.positions.length), 3));
+      g.setAttribute("uv", new THREE.BufferAttribute(new Float32Array((2 * slice.positions.length) / 3), 2));
       // Flat: every vertex has the plane's normal (lit the same from either side: the material is double-sided).
       const normal = new Float32Array(slice.positions.length);
       for (let k = 0; k < normal.length; k += 3) normal.set(cut.normal, k);
@@ -456,9 +520,11 @@ export class CapLayer {
   }
 
   private paint(c: Cap, view: ContourView): void {
-    const a = c.mesh.geometry.getAttribute("color") as THREE.BufferAttribute;
-    (a.array as Float32Array).set(capColours(c.slice, view));
+    const shade = capShade(c.slice, view);
+    const a = c.mesh.geometry.getAttribute("uv") as THREE.BufferAttribute;
+    (a.array as Float32Array).set(rampUv(shade.u));
     a.needsUpdate = true;
+    this.material.map = shade.texture;
   }
 
   private clear(): void {

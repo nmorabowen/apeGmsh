@@ -36,7 +36,13 @@ def assess_results(
     figures: bool = False,
     out_dir: str | Path | None = None,
 ) -> AssessmentReport:
-    """Run the v1 Results catalog. ``figures=True`` calls ``render_pack``."""
+    """Run the v1 Results catalog. ``figures=True`` calls ``render_pack``.
+
+    On Windows that pack is one ``apegmsh-view/1`` spec drawn by
+    apeGmshViewer from the ``.ladruno`` the Results read (ADR 0128
+    slice 6, parity plan G5 and R22b): another source is refused by
+    name, and no app raises (G9). Linux keeps the VTK pack (G2).
+    """
     findings: list[Finding] = []
     skipped: list[tuple[str, str]] = []
 
@@ -128,7 +134,8 @@ def _results_figures(
         return (), None
     if results.fem is None:
         return (), NO_STILLS
-    # Broker method — lazy-imports viewers.render (INV-1).
+    # Broker method — lazy-imports viewers.render (INV-1). On Windows it
+    # draws the one v2 pack spec (G5); a refusal propagates (G9).
     written = results.render_pack(resolve_out_dir(out_dir))
     if not written:
         return (), NO_STILLS

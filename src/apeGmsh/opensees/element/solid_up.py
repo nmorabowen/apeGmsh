@@ -1,11 +1,13 @@
 """
-``element LadrunoUP`` — unified Biot u-p saturated-porous continuum.
+u-p (solid + pore pressure) elements: ``LadrunoUP`` and stock ``SSPquadUP``.
 
 Split out of :mod:`apeGmsh.opensees.element.solid` (program slice S4) as a
 pure move; the public path ``apeGmsh.opensees.element.LadrunoUP`` is unchanged.
 """
 from __future__ import annotations
 
+import bisect
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -14,7 +16,10 @@ from .._element_capabilities import (
     LADRUNO_UP_TH_NODE_COUNTS,
 )
 from .._internal.tag_resolution import (
+    MISSING_FEM_ELEMENT_ID,
     current_element_nodes,
+    current_fem_element_id,
+    is_slot_type_probe,
     resolve_tag,
 )
 from .._internal.types import Element, NDMaterial, Primitive
@@ -23,7 +28,7 @@ if TYPE_CHECKING:
     from ..emitter.base import Emitter
 
 
-__all__ = ["LadrunoUP"]
+__all__ = ["LadrunoUP", "SSPquadUP"]
 
 
 # LadrunoUP ``-formulation`` selector: std (full integration) or bbar
@@ -408,3 +413,232 @@ class LadrunoUP(Element):
         # default — elided like formulation='std'.
         emitter.element("LadrunoUP", tag, *args)
 
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class SSPquadUP(Element):
+    """``element SSPquadUP`` — stock OpenSees 4-node u-p plane quad.
+
+    The stabilized single-point Biot u-p quadrilateral of the UWelements
+    family (McGann, Arduino & Mackenzie-Helnwein; class tag ``120``),
+    shipped by **stock** OpenSees and openseespy.  Plane strain, 2-D only,
+    gmsh quad4 cells verbatim; every node is ``ndf = 3`` (ux, uy, p) and
+    apeGmsh infers that per node, so ``ops.model(ndm=2, ndf=3)`` is all
+    the model declaration needs.
+
+    Tcl signature (``OPS_SSPquadUP``, ``SSPquadUP.cpp:65``)::
+
+        element SSPquadUP $tag $n1 $n2 $n3 $n4 $matTag \
+            $t $fBulk $fDen $k1 $k2 $e $alpha <$b1 $b2>
+
+    The parser is positional and counts its arguments: exactly 13, 15
+    (with ``b1 b2``) or 19 (plus the four side pressures, not exposed
+    here).  Any other count silently drops the tail, so ``body`` is
+    emitted as the pair or not at all.
+
+    **The pore-pressure contract (read p from VELOCITY).**  This is the
+    upstream ∫p·dt trick, the opposite of :class:`LadrunoUP`'s honest p:
+
+    * the pore pressure is the **velocity** of DOF 3 —
+      ``nodeVel(node, 3)``, ``recorder Node -dof 3 vel``;
+      ``nodeDisp(node, 3)`` is ∫p dt and is NOT a pressure;
+    * a drained boundary is ``fix`` on DOF 3 (p = 0), e.g.
+      ``ops.fix(pg="Top", dofs=(0, 0, 1))``;
+    * the coupling term Q·p sits in the element's DAMPING matrix, so a
+      plain ``reactions`` misses the fluid share of a support reaction:
+      form them with ``reactions -dynamic`` or record
+      ``reactionIncInertia``.  The bridge does both for you in a model
+      holding an SSPquadUP: the live ``.read("reaction_force_*")`` forms
+      ``reactions -dynamic`` and ``recorder.declare`` writes
+      ``reactionIncInertia`` (both also carry the inertia M·a);
+    * the analysis must be transient (Newmark with γ ≥ 0.5; p is a rate
+      variable), and a geostatic step is usually run at a high
+      permeability and then dropped with ``s.update_parameter("hPerm",
+      k1, pg=...)`` / ``"vPerm"`` (``SSPquadUP::setParameter`` also
+      takes ``b1`` / ``b2``; any other name goes to the material).
+
+    Because DOF 3 of a 2-D node is the slot a frame node calls
+    ``rotation_z``, the results route never reads it as a rotation on an
+    SSPquadUP node (it joins the u-p families of ``_readback``).  Ask for
+    the canonical ``pore_pressure`` instead: ``ops.nodes.get(pg=...)
+    .read("pore_pressure")`` reads ``nodeVel(n, 3)``,
+    ``ops.recorder.declare(nodes=("pore_pressure",), ...)`` writes
+    ``recorder Node ... -dof 3 vel``, and ``ops.results`` reads it back
+    as ``pore_pressure``.
+
+    It forwards ``materialState`` to its material, so a staged
+    ``updateMaterialStage`` sweep reaches every element (measured, the
+    census in ``test_md_stage_route_elements.py``).
+
+    Parameters
+    ----------
+    pg
+        Physical-group label whose quad4 cells are realized as SSPquadUP
+        elements at fan-out time.
+    material
+        A 2-D-capable :class:`NDMaterial`; the element copies it as
+        ``PlaneStrain``.  It sees the effective stress only, and its
+        ``rho`` is the saturated mixture density (the body force is
+        ``rho * body``).
+    thickness
+        Out-of-plane thickness, > 0.
+    fluid_bulk
+        Fluid bulk modulus ``K_f`` (raw; the element forms
+        ``n / K_f`` itself), > 0.
+    fluid_density
+        Fluid mass density, >= 0 (seepage body-force term).
+    perm
+        ``(k1, k2)`` horizontal and vertical permeability as
+        ``k_hydraulic / γ_w`` (units L³·T/M), each >= 0.
+    void_ratio
+        Void ratio ``e`` (> 0); the element takes porosity
+        ``n = e / (1 + e)``.
+    alpha
+        Pressure-stabilization parameter (NOT Biot's α), >= 0, one value
+        for every element of ``pg``.  McGann et al. recommend
+        ``alpha = 0.25 * h**2 / (K + 4G/3)`` with ``h`` the element size
+        and ``K``, ``G`` the skeleton moduli.  Exactly one of ``alpha`` /
+        ``alpha_per_area``.
+    alpha_per_area
+        Per-element stabilization: each element gets
+        ``alpha_e = alpha_per_area * A_e`` from its own area ``A_e``, i.e.
+        McGann's rule with ``alpha_per_area = 0.25 / (K + 4G/3)``.  Use it
+        on a graded mesh: alpha scales with h**2, so one value per group
+        over-stabilizes the small cells and under-stabilizes the large
+        ones, and a graded u-p strip diverged with every single value
+        tried (the group's mean, largest and smallest cell) while the
+        per-element rule converged.  ``ops.element.SSPquadUP`` measures
+        the areas from the FEM snapshot into ``element_areas``.
+    element_areas
+        ``((fem_element_id, area), ...)`` for ``alpha_per_area``; filled
+        by the bridge namespace, not by hand.  An element emitted with no
+        entry raises.
+    body
+        Optional ``(b1, b2)`` body **acceleration** (e.g. ``(0, -9.81)``),
+        multiplied by the material density for the solid and by
+        ``fluid_density`` for the fluid.  Always on; an ``eleLoad
+        -selfWeight`` pattern scales it instead.
+    """
+
+    pg: str
+    material: NDMaterial
+    thickness: float
+    fluid_bulk: float
+    fluid_density: float
+    perm: tuple[float, float]
+    void_ratio: float
+    alpha: float | None = None
+    body: tuple[float, float] | None = None
+    alpha_per_area: float | None = None
+    element_areas: tuple[tuple[int, float], ...] | None = None
+
+    def __post_init__(self) -> None:
+        from .solid import _check_soil_dimension
+
+        _check_soil_dimension(
+            "SSPquadUP", self.material, plane_type="PlaneStrain")
+        if self.thickness <= 0:
+            raise ValueError(
+                f"SSPquadUP: thickness must be > 0, got {self.thickness!r}."
+            )
+        if self.fluid_bulk <= 0:
+            raise ValueError(
+                f"SSPquadUP: fluid_bulk must be > 0, got "
+                f"{self.fluid_bulk!r}."
+            )
+        if self.fluid_density < 0:
+            raise ValueError(
+                f"SSPquadUP: fluid_density must be >= 0, got "
+                f"{self.fluid_density!r}."
+            )
+        if len(self.perm) != 2 or any(k < 0 for k in self.perm):
+            raise ValueError(
+                f"SSPquadUP: perm must be (k1, k2) with each >= 0 "
+                f"(k_hydraulic / gamma_w), got {self.perm!r}."
+            )
+        if self.void_ratio <= 0:
+            raise ValueError(
+                f"SSPquadUP: void_ratio must be > 0, got "
+                f"{self.void_ratio!r}."
+            )
+        if (self.alpha is None) == (self.alpha_per_area is None):
+            raise ValueError(
+                "SSPquadUP: pass exactly one of alpha= (one value for the "
+                "group) or alpha_per_area= (alpha_e = alpha_per_area * A_e "
+                f"per element); got alpha={self.alpha!r}, "
+                f"alpha_per_area={self.alpha_per_area!r}."
+            )
+        if self.alpha is not None and self.alpha < 0:
+            raise ValueError(
+                f"SSPquadUP: alpha (the stabilization parameter) must be "
+                f">= 0, got {self.alpha!r}."
+            )
+        if self.alpha_per_area is not None:
+            if self.alpha_per_area < 0:
+                raise ValueError(
+                    f"SSPquadUP: alpha_per_area must be >= 0, got "
+                    f"{self.alpha_per_area!r}."
+                )
+            if self.element_areas is None:
+                raise ValueError(
+                    "SSPquadUP: alpha_per_area needs element_areas; "
+                    "declare it through ops.element.SSPquadUP, which "
+                    "measures them from the FEM snapshot."
+                )
+            ids = [eid for eid, _ in self.element_areas]
+            if ids != sorted(set(ids)):
+                raise ValueError(
+                    "SSPquadUP: element_areas must be sorted by element "
+                    "id, one entry per element."
+                )
+            if any(area <= 0 for _, area in self.element_areas):
+                raise ValueError(
+                    "SSPquadUP: every element area must be > 0 (a zero "
+                    "or negative area is a collapsed cell)."
+                )
+        if self.body is not None and len(self.body) != 2:
+            raise ValueError(
+                f"SSPquadUP: body must be (b1, b2), got {self.body!r}."
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+    def _alpha_for(self, emitter: "Emitter") -> float:
+        """The stabilization value of the element being emitted."""
+        if self.alpha is not None:
+            return self.alpha
+        assert self.alpha_per_area is not None
+        assert self.element_areas is not None
+        eid = current_fem_element_id(emitter)
+        if eid == MISSING_FEM_ELEMENT_ID and is_slot_type_probe(emitter):
+            # The replay's type dry run: any element's value has the type.
+            return self.alpha_per_area * self.element_areas[0][1]
+        # element_areas is sorted by id (the namespace builds it so):
+        # a binary search keeps a large group's emit linear-log.
+        i = bisect.bisect_left(self.element_areas, (eid, -math.inf))
+        found = (i < len(self.element_areas)
+                 and self.element_areas[i][0] == eid)
+        if eid == MISSING_FEM_ELEMENT_ID or not found:
+            raise ValueError(
+                f"SSPquadUP on pg={self.pg!r}: alpha_per_area has no area for "
+                f"FEM element {eid}; the group's elements were measured "
+                "when the element was declared."
+            )
+        return self.alpha_per_area * self.element_areas[i][1]
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        nodes = current_element_nodes(emitter)
+        if len(nodes) != 4:
+            raise ValueError(
+                f"SSPquadUP: expected 4 node tags, got {len(nodes)}."
+            )
+        mat_tag = resolve_tag(emitter, self.material)
+        args: list[int | float | str] = [
+            *nodes, mat_tag, self.thickness, self.fluid_bulk,
+            self.fluid_density, *self.perm, self.void_ratio,
+            self._alpha_for(emitter),
+        ]
+        if self.body is not None:
+            args += [*self.body]
+        emitter.element("SSPquadUP", tag, *args)

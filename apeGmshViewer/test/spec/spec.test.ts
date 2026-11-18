@@ -63,7 +63,6 @@ test("D2: a wrong type refuses the spec and names the key", () => {
   refused(base({}, { stage: "s", deform: { scale: "10" } }), "shots[0].deform.scale", /finite number; got "10"/);
   refused(base({}, { stage: "s", deform: { scale: 0 } }), "shots[0].deform.scale", /must be positive/);
   refused(base({}, { stage: "s", deform: { ghost: "yes" } }), "shots[0].deform.ghost", /true or false/);
-  refused(base({}, { stage: "s", deform: { ghost: true } }), "shots[0].deform.ghost", /is not drawn by apegmsh-view\/1: the reference ghost does not draw the same pixels twice/);
   refused(base({}, { camera: { eye: [1, 0], target: [0, 0, 0], up: [0, 0, 1] } }), "shots[0].camera.eye", /three numbers/);
   refused(base({}, { camera: { eye: [0, 0, 0], target: [0, 0, 0], up: [0, 0, 1] } }), "shots[0].camera.eye", /differ from the target/);
   refused(base({}, { isolate: [] }), "shots[0].isolate", /non-empty list/);
@@ -92,6 +91,22 @@ test("D2: contradictory keys refuse the spec: colour_by against contour, a step 
   refused(base({ shots: [{ name: "Uz" }, { name: "uz" }] }), "shots[1].name", /already the name of shots\[0\]/);
 });
 
+test("VF2-d (#2956): a user-result shot names a compare variant's own user result by variant (compare) plus entry (contour.field)", () => {
+  const study = { files: { model: MODEL, variants: "study.variants.json" } };
+  const user = { field: "footfall", component: "ratio", source: "user" };
+  const v = validateSpec(base(study, { compare: "Cracked", contour: user }));
+  assert.ok(v.ok, JSON.stringify(v));
+  const s = v.spec.shots[0]!;
+  assert.deepEqual([s.compare, s.contour?.source, s.contour?.field, s.contour?.component, s.stage], ["Cracked", "user", "footfall", "ratio", null]);
+  // Still a user result: no stage, no step, no combination, no shape; and the compare needs the variants manifest.
+  refused(base({}, { compare: "Cracked", contour: user }), "shots[0].compare", /no files\.variants/);
+  refused(base(study, { compare: "Cracked", stage: 0, contour: user }), "shots[0].stage", /a user result has no state/);
+  refused(base(study, { compare: "Cracked", contour: user, deform: {} }), "shots[0].deform", /contour only/);
+  refused(base(study, { compare: "Cracked", combination: "ULS", contour: user }), "shots[0].compare", /combination across variants/);
+  // A compare of any other contour is still the difference, held to a nodal contour of a stage.
+  refused(base(study, { compare: "Cracked", contour: { field: "displacement", component: "x" } }), "shots[0].compare", /needs a stage: a difference/);
+});
+
 test("D9: layers are a closed set per chrome; transparent needs model mode", () => {
   refused(base({}, { layers: { legend: false } }), "shots[0].layers.legend", /not a key/);
   refused(base({}, { layers: { scale_bar: false } }), "shots[0].layers.scale_bar", /not a layer of chrome "app"/);
@@ -106,6 +121,16 @@ test("D9: layers are a closed set per chrome; transparent needs model mode", () 
 });
 
 // ---- the defaults ---------------------------------------------------------------
+
+test("#2664: deform.ghost is off unless asked for, and a shot may ask for it", () => {
+  const ghost = (deform: Record<string, unknown>) => {
+    const v = validateSpec(base({}, { stage: "s", deform }));
+    assert.ok(v.ok);
+    return v.ok ? v.spec.shots[0]!.deform?.ghost : null;
+  };
+  assert.equal(ghost({ scale: 10, ghost: true }), true);
+  assert.equal(ghost({ scale: 10 }), false);
+});
 
 test("D1/D8/D9: a minimal spec states every default (light theme, iso, last step, every app panel on)", () => {
   const v = validateSpec(base());
@@ -185,9 +210,7 @@ for (const [name, body, key] of [
   ["wrong-type", JSON.stringify(base({ size: "big" })), "size"],
   ["no-model", JSON.stringify(base({ files: { model: "missing.h5" } })), "files.model"],
   ["not-a-model", JSON.stringify(base({ files: { model: join(FIX, "contour_staged.results.h5") } })), "files.model"],
-  ["results-elsewhere", JSON.stringify(base({ files: { model: MODEL, results: join(FIX, "deform_2d.results.h5") } })), "files.results"],
-  // Maintainer ruling on #2651: the reference ghost is not pixel-identical between two frames.
-  ["ghost", JSON.stringify(base({}, { stage: "base", deform: { scale: 10, ghost: true } })), "shots[0].deform.ghost"],
+  ["results-elsewhere", JSON.stringify(base({ files: { model: MODEL, results: join(FIX, "deform_2d.ladruno") } })), "files.results"],
   ["fit-selection", JSON.stringify(base({}, { camera: "fit-selection" })), "shots[0].camera"],
 ] as const) {
   test(`D2: a refused spec (${name}) writes manifest.json naming ${key}, and no PNG`, () => {
