@@ -846,18 +846,6 @@
       "skill": "references/results.md",
       "symbol": "Results.viewer"
     },
-    "apeGmsh": {
-      "doc": "Standalone single-model Gmsh session with all composites.",
-      "signature": "apeGmsh(*, model_name: 'str | None' = None, units: 'Any' = None, verbose: 'bool' = False, save_to: 'str | Path | None' = None, overwrite: 'bool' = True, _artifacts: 'bool' = True) -> 'None'",
-      "skill": "references/api-cheatsheet.md",
-      "symbol": "apeGmsh"
-    },
-    "apeSees": {
-      "doc": "The OpenSees bridge.",
-      "signature": "apeSees(fem: \"'FEMData'\", *, units: \"'Any'\" = None, default_orientation: 'Orientation | None | _UnsetType' = <UNSET>, opensees: \"'OpenSeesTarget | None'\" = None, element_tags: 'ElementTagMode' = 'sequential', _artifacts: 'bool' = True) -> 'None'",
-      "skill": "references/opensees-bridge.md",
-      "symbol": "apeSees"
-    },
     "g.begin": {
       "doc": "Open a Gmsh session, create composites.",
       "signature": "begin(*, verbose: 'bool | None' = None) -> \"'_SessionBase'\"",

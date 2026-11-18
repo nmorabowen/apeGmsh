@@ -31,7 +31,6 @@ _SKILL_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("ops.damping", "references/opensees-bridge.md"),
     ("ops.stage", "references/opensees-bridge.md"),
     ("ops.", "references/opensees-bridge.md"),
-    ("apeSees", "references/opensees-bridge.md"),
     ("g.rebar", "references/rebar.md"),
     ("g.compose", "references/compose.md"),
     ("g.mesh.queries.get_fem_data", "references/fem-broker.md"),
@@ -112,7 +111,6 @@ def committed_index_drift(path: Path | None = None) -> list[str]:
 def _walk_session(entries: dict[str, dict[str, str]]) -> None:
     from apeGmsh._core import apeGmsh as Session
 
-    _harvest_ctor(Session, "apeGmsh", entries)
     _harvest_class(Session, "g", entries, depth=0, skip_init_nested=True)
     for attr, mod, cls_name, _lazy in Session._COMPOSITES:
         if attr.startswith("_"):
@@ -124,7 +122,6 @@ def _walk_session(entries: dict[str, dict[str, str]]) -> None:
 def _walk_apesees(entries: dict[str, dict[str, str]]) -> None:
     from apeGmsh.opensees.apesees import apeSees
 
-    _harvest_ctor(apeSees, "apeSees", entries)
     _harvest_class(apeSees, "ops", entries, depth=0)
 
 
