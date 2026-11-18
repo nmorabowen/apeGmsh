@@ -24,6 +24,7 @@
 
 import { openH5 } from "./h5open.ts";
 import {
+  C1_BASES,
   exactFloat,
   exactInt,
   floats,
@@ -79,7 +80,7 @@ export interface ParticleSet {
   /** `PLANE_STRAIN_THICKNESS` when ndm = 2, else null */
   thickness: number | null;
   units: { length: string; force: string; time: string; system: string };
-  grid: ParticleGrid;
+  grid: ParticleGrid<(typeof C1_BASES)[number]>;
   bodies: ParticleBody[];
   /** (N,) strictly increasing */
   ids: Float64Array;
@@ -148,7 +149,7 @@ function readSet(ctors: PCtors, f: PGroup, path: string): ParticleSet {
   const wantVoigt = ndm === 3 ? "11,22,33,12,23,13" : "11,22,12";
   if (voigt !== wantVoigt) throw new ParticleContractError("C1-VOIGT", `${path}: VOIGT_ORDER is ${JSON.stringify(voigt)}; expected ${JSON.stringify(wantVoigt)} for NDM ${ndm}`);
 
-  const grid = readGrid(requiredGroup(f, "GRID", ctors, "C1-REQ"), ndm, "C1-GRID");
+  const grid = readGrid(requiredGroup(f, "GRID", ctors, "C1-REQ"), ndm, "C1-GRID", "C1-BASIS", C1_BASES);
   const bodies = readBodies(requiredGroup(f, "BODIES", ctors, "C1-REQ"), ctors, "C1-BODY");
   const particles = requiredGroup(f, "PARTICLES", ctors, "C1-REQ");
   for (const name of particles.keys()) {

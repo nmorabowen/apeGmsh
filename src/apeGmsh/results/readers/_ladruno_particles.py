@@ -32,6 +32,8 @@ What this module accepts and refuses, by the contract:
 * ``UNIT_SYSTEM``, when it names an apeGmsh unit system, must agree with
   ``UNIT_LENGTH`` / ``UNIT_FORCE`` / ``UNIT_TIME``; a mismatch is refused
   (C2-UNIT), so nothing converts from the wrong base (#2991).
+* ``GRID/BASIS`` is one of :data:`C2_BASES` (232a §2.4, amendment 232i);
+  any other value refuses the stage by name (C2-GRID, #3013).
 
 A killed run (M2-S7 #2991): :class:`ParticleFile` opens the file by the
 reader rule's three open steps (``_ladruno_open.py``), then applies the
@@ -68,6 +70,13 @@ FORMAT_MINOR_VERSION_PARTICLES = 2
 
 #: ``int64`` ids a browser reads exactly (contract §0).
 SAFE_INTEGER = 2 ** 53 - 1
+
+#: ``MODEL/PARTICLES/GRID/BASIS`` values Contract 2 allows (C2-GRID): 232a §2.4's
+#: amendment 232i (OpenSees#1099, release ``ladruno-v20261118``) added the
+#: quadratic and cubic B-splines with no minor bump, so any other value is
+#: refused by name. The fork checker's ``C2_BASES`` (``ladruno_format.py``).
+#: Contract 1 (the particle-set file) keeps ``gimp | linear`` (C1-BASIS).
+C2_BASES = ("gimp", "linear", "bspline2", "bspline3")
 
 _STAGE_PREFIX = "MODEL_STAGE["
 _PART_FILE_RE = re.compile(r"\.part-\d+\.ladruno$", re.IGNORECASE)
@@ -369,7 +378,7 @@ class ParticleGrid:
     origin: ndarray        # (ndm,) float64
     cell_size: ndarray     # (ndm,) float64
     num_cells: ndarray     # (ndm,) int32
-    basis: str             # "gimp" | "linear"
+    basis: str             # one of C2_BASES
 
 
 @dataclass(frozen=True)
@@ -500,11 +509,17 @@ class ParticleStage:
         if "GRID" not in self._model:
             raise ParticleFormatError(f"{where} is missing (C2-GRID).")
         attrs = self._model["GRID"].attrs
+        basis = _attr_text(attrs, "BASIS", where, required=True)
+        if basis not in C2_BASES:
+            raise ParticleFormatError(
+                f"{where}: BASIS is {basis!r}; Contract 2 allows "
+                f"{' | '.join(C2_BASES)} (C2-GRID)."
+            )
         return ParticleGrid(
             origin=_attr_array(attrs, "ORIGIN", where, "<f8"),
             cell_size=_attr_array(attrs, "CELL_SIZE", where, "<f8"),
             num_cells=_attr_array(attrs, "NUM_CELLS", where, "<i4"),
-            basis=_attr_text(attrs, "BASIS", where, required=True),
+            basis=basis,
         )
 
     def bodies(self) -> "dict[int, str]":
