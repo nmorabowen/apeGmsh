@@ -305,12 +305,9 @@ export function resolveChain(model: ModelFile, ref: ElementRef): Chain {
       },
     );
     hits = femIndex(model).get(femId) ?? [];
-    if (!model.opensees) {
-      r.problems.push("the file has no /opensees zone: there is no definition chain");
-    } else if (hits.length === 0) {
-      // A mesh cell the bridge was not asked to emit is legitimate (#2672): a fact, not a problem.
-      fields.push(MESH_ONLY_FIELD);
-    }
+    if (!model.opensees) r.problems.push("the file has no /opensees zone: there is no definition chain");
+    // A mesh cell the bridge was not asked to emit is legitimate (#2672): a fact, not a problem.
+    if (hits.length === 0) fields.push(MESH_ONLY_FIELD);
   } else {
     const meta = model.opensees?.elementMeta[ref.metaIndex];
     if (!meta) throw new RangeError(`no element_meta ${ref.metaIndex}`);
