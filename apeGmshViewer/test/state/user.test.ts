@@ -636,11 +636,18 @@ test("mounted, the bar shows each family as a button; with no mesh the user fami
     assert.match(bar.style["cssText"] ?? "", /max-width: calc\(100vw - 684px\); flex-wrap: wrap;/);
     // The scrubber keeps its least width on a line, else it wraps to a line of its own.
     const box = bar.all((e) => e.className === "scrubber")[0]!;
-    assert.match(box.style["cssText"] ?? "", /flex: 1 1 0; min-width: 340px;/);
+    assert.match(box.style["cssText"] ?? "", /flex: 1 1 0; min-width: 396px;/);
     // The drawn height is published for #left-rail on the scrubber row, rounded up.
     assert.equal(root.get("--phase-bar-h"), "77px");
     assert.doesNotMatch(bar.style["cssText"] ?? "", /z-index/, "the bar is not stacked over the left rail");
     assert.deepEqual([families()[3]!.style["flex"], families()[3]!.style["whiteSpace"]], ["0 0 auto", "nowrap"]);
+    // A step change updates the scrubber in place: replacing the slider would end a drag under the pointer.
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
+    const slider = bar.all((e) => e.className === "results-step")[0]!;
+    assert.deepEqual(bar.all((e) => e.className === "play-speed")[0]!.children.map((o) => (o as FakeEl).textContent), ["×1", "×2", "×4", "×8", "×16"]);
+    store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 1 } });
+    assert.equal(bar.all((e) => e.className === "results-step")[0], slider);
+    assert.equal(slider.value, "1");
     // A disabled family dispatches nothing.
     const n = dispatched.length;
     families()[3]!.click();
