@@ -6,8 +6,9 @@ Accepted is the acceptance. The pointer in ADR 0112 lands with it (ADR 0121 D5).
 **Owner:** nmora
 
 **Rulings:** the owner's answers in the design session of 2026-11-18. The engine
-is `OpenSees.exe` run by the app. The tester is an in-app window. 3D nD gets a
-new fork command. The first materials are Steel02, Concrete02,
+is `OpenSees.exe` run by the app. The owner's first answer on hosting was an
+in-app window; D5 now leaves hosting to a shared decision. 3D nD gets a new fork
+command. The first materials are Steel02, Concrete02,
 `LadrunoUniaxialJ2`, `LadrunoRebarBuckling`, `LadrunoBondSlip` and
 `LadrunoCohesiveHinge`. The first version offers strain protocols, parameter
 overrides and stress control. D7 and D8 are the session's proposed defaults and
@@ -109,13 +110,17 @@ following `$decl` values in `decl_params`, with the file's tags unchanged so
 reference slots stay valid. A reference that cannot be resolved refuses the run.
 A file with no `decl_params` can test only a material with no references.
 
-### D5 — An in-app window, inside the one-way data flow
+### D5 — A tool for a shared host, inside the one-way data flow
 
-A new `WindowKind`, `materialTest`, joins the registry, opened by a **Test**
-button on uniaxial rows of the Materials & sections window. It follows ADR 0112
-D6: the panel dispatches events, an effect calls main over IPC, and results
-return as store events. Runs live in the store as session state, separate from
-model state. The owner approves the screen from a screenshot (ADR 0112 D7).
+This ADR does not decide where the tester is hosted. The owner is choosing one
+hosting model for several viewer tools, and the tester is written as a tool that
+host will mount. No host, layout or plot component is built for the tester alone.
+"The window" in this ADR means the tester's surface, wherever it is mounted.
+
+The tool follows ADR 0112 D6: its surface dispatches events, an effect calls main
+over IPC, and results return as store events. Runs live in the store as session
+state, separate from model state. The owner approves the screen from a screenshot
+(ADR 0112 D7).
 
 ### D6 — What can be set
 
@@ -165,7 +170,8 @@ zero or at a confinement value is designed in that slice.
 
 | Slice | Delivers | Done when |
 |---|---|---|
-| **S1 (first)** | `materialTest.ts` runner, script generator with D3 and D4, the wall rule, the window with strain protocols and the response plot | All six first materials plot from a real `model.h5`; hostile-token tests pass; the owner approves the screen |
+| **S1 (first)** | `materialTest.ts` runner, script generator with D3 and D4, strain protocols, the wall rule, and the tool's IPC, events and store state, with no UI | All six first materials return validated runs from a real `model.h5`; hostile-token tests pass |
+| S1b | The tool's surface and response plot, mounted in the shared host. Waits for the hosting decision | The six materials plot; the owner approves the screen |
 | S2 | Overrides by slot, overlays, the other plots, CSV | An override is compared with the declared curve |
 | S3 | Stress control | The D6 acceptance cases pass, including softening materials |
 | S4 | The fork's nD tester and the `FORK_PIN` bump | Fork tests pass and the pin is merged |
@@ -197,6 +203,8 @@ executable. A run against the real fork belongs in the nightly `live-fork` lane.
 
 ## Open questions
 
+- The shared hosting model for viewer tools (D5), which gates S1b and the
+  plotting component D7 will use.
 - Better names for unnamed argument slots, written by the bridge into the file.
   This is a schema change with its own decision, and D6 does not wait for it.
 - The nD stress-control and confinement design (S4, S5).
