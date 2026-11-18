@@ -15,7 +15,9 @@ import subprocess
 import sys
 import textwrap
 import time
+import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 import h5py
@@ -26,13 +28,15 @@ from apeGmsh.results.user import (
     VariantDef,
     ViewDef,
     WorkspaceFile,
+    WorkspaceRenamedAside,
     WorkspaceWriteRefused,
+    _writer,
     read_variants,
     write_variants,
     write_workspace,
 )
 
-from tests.results.user._user_helpers import REPO
+from tests.results.user._user_helpers import HOLDERS, ON_WINDOWS, REPO, held_open
 from tests.results.user._workspace_helpers import frame
 
 SCRIPT = textwrap.dedent(
@@ -153,35 +157,13 @@ def test_a_later_write_survives_and_sweeps_the_dead_writers_partial(saved: Path)
     assert not _partials(saved), "this host's dead partial was not swept"
 
 
-HOLDERS = {
-    "h5py": "import h5py, sys, time; f = h5py.File(sys.argv[1], 'r')",
-    "handle": "import sys, time; f = open(sys.argv[1], 'rb')",
-}
-ON_WINDOWS = pytest.mark.skipif(
-    sys.platform != "win32",
-    reason="only Windows blocks replacing a file another process holds open")
-
-
 @ON_WINDOWS
 @pytest.mark.parametrize("holder", sorted(HOLDERS))
 def test_a_held_workspace_refuses_the_write_and_stays_whole(saved: Path, holder: str) -> None:
     """#2857: a reader's handle on the old file is a typed refusal, not a raw OSError."""
     before = _digest(saved)
-    code = HOLDERS[holder] + "; print('ready', flush=True); time.sleep(60)"
-    proc = subprocess.Popen([sys.executable, "-c", code, str(saved)],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    try:
-        assert proc.stdout is not None
-        line = proc.stdout.readline().strip()
-        assert line == "ready", f"the holder never opened the file: {line!r}"
-        with pytest.raises(WorkspaceWriteRefused) as caught:
-            write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
-    finally:
-        proc.kill()  # only the holder this test started
-        proc.wait(timeout=30)
-        for stream in (proc.stdout, proc.stderr):
-            if stream:
-                stream.close()
+    with held_open(saved, holder), pytest.raises(WorkspaceWriteRefused) as caught:
+        write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
     assert caught.value.reason == "held-open"
     assert str(saved) in str(caught.value) and "another program holds" in str(caught.value)
     assert isinstance(caught.value.__cause__, PermissionError)
@@ -189,6 +171,46 @@ def test_a_held_workspace_refuses_the_write_and_stays_whole(saved: Path, holder:
     assert not _partials(saved), "the refused write left its partial behind"
     assert sorted(p.name for p in saved.parent.iterdir()) == ["frame.h5", saved.name]
     write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])  # released: it goes
+    assert [v.name for v in WorkspaceFile(saved).views] == ["iso", "later"]
+
+
+@ON_WINDOWS
+def test_a_held_unreadable_workspace_refuses_before_anything_is_renamed(saved: Path) -> None:
+    """#2886: the rename aside meets the holder too; nothing is renamed or replaced."""
+    saved.write_bytes(b"not an HDF5 file")
+    with held_open(saved, "handle"), warnings.catch_warnings():
+        warnings.simplefilter("error", WorkspaceRenamedAside)  # no rename may be announced
+        with pytest.raises(WorkspaceWriteRefused) as caught:
+            write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
+    assert caught.value.reason == "held-open"
+    assert str(saved) in str(caught.value) and "renamed aside" in str(caught.value)
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert saved.read_bytes() == b"not an HDF5 file", "the held file changed"
+    assert sorted(p.name for p in saved.parent.iterdir()) == ["frame.h5", saved.name], (
+        "a partial or an aside file was left behind")
+    with pytest.warns(WorkspaceRenamedAside):  # released: it is renamed aside and replaced
+        write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
+    assert [v.name for v in WorkspaceFile(saved).views] == ["later"]
+
+
+@ON_WINDOWS
+def test_a_holder_that_lets_go_within_the_retries_does_not_refuse(
+    saved: Path, monkeypatch,
+) -> None:
+    """The refusal comes only after every retry: a holder gone by then is no refusal."""
+    holder = open(saved, "rb")  # this process's own handle blocks the replace too
+    waits: list[float] = []
+
+    def let_go(seconds: float) -> None:
+        waits.append(seconds)
+        holder.close()
+
+    monkeypatch.setattr(_writer, "time", SimpleNamespace(sleep=let_go))
+    try:
+        write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
+    finally:
+        holder.close()
+    assert waits, "the first replace was not blocked: the test proved nothing"
     assert [v.name for v in WorkspaceFile(saved).views] == ["iso", "later"]
 
 

@@ -29,7 +29,8 @@ from typing import Any, Mapping, Optional, Sequence, Union
 from ._errors import UserFileRefused, UserWriteRefused
 from ._names import name_problem
 from ._workspace import RowRefusal, finite_number, strict_json
-from ._writer import _fsync, _host_token, _replace, _sweep_dead_partials
+from ._writer import (
+    _fsync, _held_detail, _held_open, _host_token, _replace, _sweep_dead_partials)
 
 __all__ = [
     "VARIANTS_FORMAT",
@@ -379,7 +380,9 @@ def write_variants(
     is carried verbatim, refused ones included (INV-2). A given row must pass
     every rule but existence, which a reader checks per row: a pipeline may list
     its variants before it runs them. An existing manifest that is newer than this
-    writer, or that does not read, is never overwritten.
+    writer, or that does not read, is never overwritten. On Windows, a manifest
+    another program still holds open after the retries refuses the write
+    (``held-open``); the old file stays whole and the partial is removed.
     """
     target = Path(path)
     if not target.name.lower().endswith(SUFFIX) or len(target.name) == len(SUFFIX):
@@ -448,7 +451,12 @@ def write_variants(
         if _digest(target) != digest:
             raise VariantsWriteRefused(
                 "revision-moved", f"{target} changed while this write ran; nothing was replaced")
-        _replace(partial, target)
+        try:
+            _replace(partial, target)
+        except PermissionError as exc:
+            if not _held_open(target, exc):
+                raise
+            raise VariantsWriteRefused("held-open", _held_detail(target, exc)) from exc
     except FileExistsError as exc:
         raise VariantsWriteRefused("partial-mismatch", f"{partial} exists: {exc}") from exc
     except BaseException:
