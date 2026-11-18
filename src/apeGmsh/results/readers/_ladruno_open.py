@@ -293,7 +293,7 @@ def open_ladruno(path: "str | Path", *,
 
 
 # ---------------------------------------------------------------------
-# The recorder file's stage rule and crash rule (schema §7b.2, M2-S8 #3003)
+# The recorder file's stage rule and crash rule (schema §7b.2)
 # ---------------------------------------------------------------------
 
 _STAGE_PREFIX = "MODEL_STAGE["
