@@ -1,0 +1,3 @@
+### A held `.user.h5`, variants manifest or unreadable workspace refuses the write by name
+
+On Windows, a write onto a file another program holds open no longer escapes as a raw `PermissionError`. `write_user_file` raises `UserWriteRefused` (message starting `held-open:`), `write_variants` raises `VariantsWriteRefused` with reason `held-open`, and `write_workspace` now also refuses as `held-open` when an unreadable old workspace cannot be renamed aside because it is held. Each names the file; the old file stays whole and the partial is removed. A read-only file keeps its own error, and a POSIX `PermissionError` is unchanged. `architecture/h5-schema.md` lists `held-open` for all three files (#2886).
