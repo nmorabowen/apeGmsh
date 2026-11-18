@@ -554,7 +554,7 @@ export function releaseAware<T extends { addEventListener(type: string, l: (e: E
   target: T,
   after: () => void,
 ): T {
-  const RELEASE = new Set(["pointerup", "pointercancel", "pointerleave"]);
+  const RELEASE = new Set(["pointerup", "pointercancel", "pointerleave", "lostpointercapture"]);
   const wrapped = new Map<string, Map<(e: Event) => void, (e: Event) => void>>();
   return new Proxy(target, {
     get(t, prop) {
