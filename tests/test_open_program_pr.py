@@ -34,12 +34,16 @@ def _iso(hours_ago):
     return (NOW - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _pr(n, *, gate=False, green=False, approved=False, decision="", created=3.0):
+def _pr(n, *, gate=False, green=False, approved=False, decision="", created=3.0,
+        author="OWNER"):
     checks = [{"__typename": "CheckRun", "name": c, "status": "COMPLETED",
                "conclusion": "SUCCESS" if green else "FAILURE",
                "startedAt": _iso(2), "completedAt": _iso(1.9)}
               for c in pp.REQUIRED_CHECKS]
-    comments = ([{"body": f"Review-verdict: Opus approve {HEAD}", "createdAt": _iso(1)}]
+    # ``gh pr list --json comments`` carries ``authorAssociation`` on every comment;
+    # program_probe.verdicts counts only OWNER, MEMBER and COLLABORATOR (#2878).
+    comments = ([{"body": f"Review-verdict: Opus approve {HEAD}", "createdAt": _iso(1),
+                  "authorAssociation": author}]
                 if approved else [])
     return {"number": n, "title": f"pr {n}", "createdAt": _iso(created),
             "updatedAt": _iso(0.5), "isDraft": False, "headRefOid": HEAD,
@@ -109,6 +113,17 @@ def test_eight_counted_refuses(body, capsys):
 def test_eight_open_one_gated_approved_green_opens(body):
     gh = FakeGh([_pr(n) for n in range(7)] + [_pr(99, gate=True, green=True, approved=True)])
     assert _open(gh, body) == 0
+
+
+@pytest.mark.parametrize("author", ["NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", None])
+def test_outsider_approval_does_not_exclude(author):
+    """The WIP count shares the author filter: only a repo member's approve frees a slot."""
+    pr = _pr(1, gate=True, green=True, approved=True, author=author)
+    if author is None:
+        del pr["comments"][0]["authorAssociation"]
+    counted, excluded = pp.wip_count([pr])
+    assert [why for _, why in counted] == ["human-gate, green but not approved: counts"]
+    assert not excluded
 
 
 def test_stale_approval_does_not_exclude():

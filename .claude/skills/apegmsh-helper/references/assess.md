@@ -94,11 +94,17 @@ writes the snapshot to a temporary `model.h5` first.
   app's `manifest.json`, and the matplotlib `history.png`. There is no
   `reactions.png`. Its contour is the starter component (uz, ux, uy, then
   the first nodal), even when that component is all zero.
+- **Stored Gauss components** (e.g. `stress_xx`) draw as the app's element
+  field (VA6e, #2794): the `.ladruno` token and its own column label
+  (`stress` / `stress/sigma11`), averaged as v1 drew them (one Gauss point:
+  `cell_averaged`; more: `node`, extrapolated to the corners). The app draws
+  element results only from a file stamped `element_index_space = "fem"`.
 - **Refused shots:** `view="reactions"`, a velocity or acceleration
-  `deform`, and any component that is not a recorded nodal axis component
-  (stored Gauss components are not drawn yet).
+  `deform`, a derived scalar such as `von_mises_stress`, and a component
+  the file holds in more than one column.
 - **Errors and cameras.** No installed app is an error (exit 2 /
-  `FileNotFoundError`), never a skip; only `APEGMSH_SKIP_VIEWER=1` skips.
+  `FileNotFoundError`), never a skip; only `APEGMSH_SKIP_VIEWER=1` skips,
+  for any source, in process and from `python -m apeGmsh.viewers render`.
   `camera xy|xz|yz` become the app's `top|-y|+x`.
 
 Live session (needs an open Gmsh kernel; `from_h5` / closed →

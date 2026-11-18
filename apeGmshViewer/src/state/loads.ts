@@ -45,7 +45,8 @@ function inactiveElements(s: State): { mask: Uint8Array } | null {
     const row = s.sequence.stages.rows[at.index];
     stageName = row && nameCol >= 0 ? String(row[nameCol] ?? "") : null;
   } else if (at?.kind === "results" && s.results) {
-    stageName = s.results.stages[at.stage]?.name ?? null;
+    // W4d #2843: /sequence is matched by the program name, never the display name.
+    stageName = s.results.stages[at.stage]?.programName ?? null;
   } else if (s.stage !== null) {
     const nameCol = s.sequence.stages.columns.indexOf("name");
     const row = s.sequence.stages.rows[s.stage];
@@ -379,21 +380,22 @@ function resolveActiveStage(s: State): { index: number | null; label: string; ti
   if (at?.kind === "results" && s.results) {
     const resSt = s.results.stages[at.stage];
     const time = resSt && resSt.kind !== "mode" && resSt.time[at.step] !== undefined ? resSt.time[at.step]! : null;
-    if (resSt && resSt.name) {
-      const defMatch = s.definitions?.stages.find((st) => st.name === resSt.name);
+    // W4d #2843: matched by the program name; the label shows the stage's own (display) name.
+    if (resSt && resSt.programName) {
+      const defMatch = s.definitions?.stages.find((st) => st.name === resSt.programName);
       if (defMatch) {
-        return { index: defMatch.index, label: `stage ${defMatch.index} · ${defMatch.name}`, time };
+        return { index: defMatch.index, label: `stage ${defMatch.index} · ${resSt.name || defMatch.name}`, time };
       }
       if (s.sequence.status === "ready") {
         const nameCol = s.sequence.stages.columns.indexOf("name");
         const orderCol = s.sequence.stages.columns.indexOf("order");
         if (nameCol >= 0) {
-          const rowIdx = s.sequence.stages.rows.findIndex((r) => String(r[nameCol] ?? "") === resSt.name);
+          const rowIdx = s.sequence.stages.rows.findIndex((r) => String(r[nameCol] ?? "") === resSt.programName);
           if (rowIdx >= 0) {
             const ord = orderCol >= 0 && typeof s.sequence.stages.rows[rowIdx]![orderCol] === "number"
               ? (s.sequence.stages.rows[rowIdx]![orderCol] as number)
               : rowIdx;
-            return { index: ord, label: `stage ${ord} · ${resSt.name}`, time };
+            return { index: ord, label: `stage ${ord} · ${resSt.name || resSt.programName}`, time };
           }
         }
       }

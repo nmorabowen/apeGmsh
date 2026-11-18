@@ -56,6 +56,8 @@ const EXPECT: Record<string, { file: string } | { row: number; code: string }> =
   "variants.path-not-model.json": { row: 1, code: "bad-path" },
   "variants.path-user-sibling-uppercase.json": { row: 1, code: "bad-path" },
   "variants.path-workspace-sibling.json": { row: 1, code: "bad-path" },
+  // M2-S5 (#2989) added this example to the schema corpus; a .particles.h5 is a set sibling, never a variant's model.
+  "variants.path-particles-sibling.json": { row: 1, code: "bad-path" },
   "variants.version-number.json": { file: "bad-version" },
   "variants.wrong-list-key.json": { file: "bad-envelope" },
 };
@@ -156,6 +158,14 @@ test("the path form: the schema's rules, case-folded suffixes, .ladruno and part
   for (const no of ["", "/a.h5", "a\\b.h5", "C:a.h5", "./a.h5", "a//b.h5", "a/../b.h5", "a./b.h5", "a /b.h5", ".h5", "x/.h5", "a.Geometry.h5", "a.RESULTS.h5", "a.user.H5", "a.workspace.h5", "a.ladruno", "a.part-0.ladruno", "a.json"]) {
     assert.notEqual(pathProblem(no), null, no);
   }
+});
+
+// #2985 review, finding 5: a variant row named a seeded particle set (ADR 0134 D1) as its model.
+test("the path form: a <stem>.particles.h5 is a sibling of a set, never a model file, whatever its case", () => {
+  for (const no of ["a.particles.h5", "sub/a.PARTICLES.H5", "a.Particles.h5"]) {
+    assert.match(pathProblem(no) ?? "", /names a sibling of a set \(.*\.particles\.h5.*\), not a model file/, no);
+  }
+  assert.equal(pathProblem("particles.h5"), null, "a model whose stem is `particles` is still a model");
 });
 
 test("rowOf: the page names a row by index and label; a mismatch, a refused row or a path is refused", () => {

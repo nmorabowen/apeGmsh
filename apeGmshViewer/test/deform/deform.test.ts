@@ -78,7 +78,7 @@ async function showDeformed(h: H, stage: number, k: number, scale: number) {
 }
 
 const stage = (over: Partial<ResultsStage>): ResultsStage => ({
-  id: "stage_0", name: "pushover", kind: "static", time: [0, 1], nodal: [], refusedNodal: [], gauss: [], unread: [], ...over,
+  id: "stage_0", name: "pushover", programName: "pushover", kind: "static", time: [0, 1], nodal: [], refusedNodal: [], gauss: [], unread: [], ...over,
 });
 const NDM3: SpatialNdm = { ndm: 3, source: "test" };
 const NDM2: SpatialNdm = { ndm: 2, source: "test" };

@@ -110,6 +110,14 @@ def _scan_dash_R(mpco_args: tuple) -> int | None:
     return int(args[args.index("-R") + 1])
 
 
+def _scan_dash_RN(mpco_args: tuple) -> int | None:
+    """Pull the ``-RN <tag>`` value out of a Ladruno arg tail, or None if absent."""
+    args = list(mpco_args)
+    if "-RN" not in args:
+        return None
+    return int(args[args.index("-RN") + 1])
+
+
 # ---------------------------------------------------------------------------
 # Test 1 — region emitted per-rank under partitioning, recorder global
 # ---------------------------------------------------------------------------
@@ -338,9 +346,10 @@ def test_mpco_region_unpartitioned_byte_identical_to_pre_change() -> None:
 def test_ladruno_region_emitted_per_rank_under_partitioning() -> None:
     """ADR 0064: a region-filtered Ladruno rides the SAME INV-4 per-rank
     machinery as MPCO (it inherits ``FilterableRecorder``). The
-    ``recorder ladruno ... -R <tag>`` line emits once globally; the
-    ``region <tag> -node ... -ele ...`` command emits per-rank with the
-    rank-owned intersection; the tag is the same scalar everywhere.
+    ``recorder ladruno ... -R <tag> -RN <ntag>`` line emits once globally;
+    the ``region <tag> -ele ...`` and ``region <ntag> -node ...`` commands
+    emit per-rank with the rank-owned intersection; each tag is the same
+    scalar everywhere.
     """
     fem = make_two_column_frame_partitioned()
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
@@ -377,20 +386,14 @@ def test_ladruno_region_emitted_per_rank_under_partitioning() -> None:
         "the global ``recorder ladruno`` line must carry ``-R <tag>``"
     )
 
-    # Per-rank: each rank emits one region with the same shared tag.
+    # Per-rank: nodes AND elements filtered, so each rank emits TWO
+    # regions (one MeshRegion cannot hold both lists; fork WP-234): an
+    # element region under -R and a node region under -RN, each tag the
+    # same scalar on every rank.
+    recorder_RN_tag = _scan_dash_RN(lad_globals[0][1])
+    assert recorder_RN_tag is not None and recorder_RN_tag != recorder_R_tag
     per_rank = _per_rank_calls(rec)
     assert set(per_rank) == {0, 1}
-    region_r0 = _region_calls(per_rank[0])
-    region_r1 = _region_calls(per_rank[1])
-    assert len(region_r0) == 1
-    assert len(region_r1) == 1
-    tag0 = int(region_r0[0][1][0])
-    tag1 = int(region_r1[0][1][0])
-    assert tag0 == tag1 == recorder_R_tag, (
-        f"region tag must be the SAME scalar across ranks AND the "
-        f"recorder ``-R`` reference; got r0={tag0}, r1={tag1}, "
-        f"-R={recorder_R_tag}"
-    )
 
     def _scan_flag(args: tuple, flag: str) -> list:
         if flag not in args:
@@ -405,14 +408,16 @@ def test_ladruno_region_emitted_per_rank_under_partitioning() -> None:
 
     # "Base" -> nodes (1, 3): rank 0 owns 1, rank 1 owns 3. "Cols" ->
     # FEM eids (1, 2) -> ops tags (2, 3) after the element fan-out.
-    r0_nodes = sorted(int(x) for x in _scan_flag(region_r0[0][1], "-node"))
-    r1_nodes = sorted(int(x) for x in _scan_flag(region_r1[0][1], "-node"))
-    r0_eles = sorted(int(x) for x in _scan_flag(region_r0[0][1], "-ele"))
-    r1_eles = sorted(int(x) for x in _scan_flag(region_r1[0][1], "-ele"))
-    assert r0_nodes == [1]
-    assert r1_nodes == [3]
-    assert r0_eles == [2]
-    assert r1_eles == [3]
+    expect = {0: ([1], [2]), 1: ([3], [3])}
+    for rank, (nodes, eles) in expect.items():
+        regions = {int(c[1][0]): c[1] for c in _region_calls(per_rank[rank])}
+        assert set(regions) == {recorder_R_tag, recorder_RN_tag}, (
+            f"rank {rank}: region tags {sorted(regions)} must be the "
+            f"recorder's -R {recorder_R_tag} and -RN {recorder_RN_tag}")
+        ele_region, node_region = regions[recorder_R_tag], regions[recorder_RN_tag]
+        assert "-node" not in ele_region and "-ele" not in node_region
+        assert sorted(int(x) for x in _scan_flag(node_region, "-node")) == nodes
+        assert sorted(int(x) for x in _scan_flag(ele_region, "-ele")) == eles
 
 
 # ---------------------------------------------------------------------------

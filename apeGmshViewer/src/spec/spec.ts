@@ -39,7 +39,8 @@ export const BACKGROUNDS = ["theme", "transparent"] as const;
 export type Background = (typeof BACKGROUNDS)[number];
 
 export const GAUSS_MODES: readonly GaussMode[] = ["cell", "cell_averaged", "node", "node_discrete"];
-export const CONTOUR_SOURCES = ["nodal", "element"] as const;
+/** VU16: `user` is a state-free ON_NODES user result of the set's `.user.h5` (`field` its name, `component` one of its columns). */
+export const CONTOUR_SOURCES = ["nodal", "element", "user"] as const;
 
 /** The size bounds of a still, in CSS pixels (the render window is at device scale 1). */
 export const MIN_SIZE = 64;
@@ -58,15 +59,27 @@ export type SpecRange = { mode: "history" } | { mode: "step" } | { mode: "fixed"
 export interface SpecContour {
   field: string;
   component: string;
-  /** null: the field's own kind (a nodal field, else an element field); ./compile.ts refuses a name both kinds have */
-  source: "nodal" | "element" | null;
+  /**
+   * null: the field's own kind (a nodal field, else an element field);
+   * ./compile.ts refuses a name both kinds have. VU16: `user` names a
+   * state-free user result of the set's `.user.h5`; it is never inferred, and
+   * the shot shows no stage, step, combination or deformed shape. With the
+   * shot's `compare` (VF2-d, #2956) it names the compare variant's own one.
+   */
+  source: "nodal" | "element" | "user" | null;
   range: SpecRange;
   cmap: ContourCmap;
   gauss: GaussMode;
 }
 
 export interface SpecDeform {
-  scale: number;
+  /**
+   * The deformed shape's scale; null when the spec leaves it out (G3, VA6c
+   * #2765): the render mode then takes the auto scale of the step drawn
+   * (state/deform.ts `autoDeformScale`), and the manifest records it with
+   * `scale_auto`.
+   */
+  scale: number | null;
   ghost: boolean;
 }
 
@@ -76,6 +89,12 @@ export interface SpecClip {
   /** the plane is { x : normal . x = offset }, with the normal as given (state/clip.ts) */
   offset: number;
   flip: boolean;
+}
+
+/** VU18: a manifest row as a shot names it: both must match the row main reads (D9.2). */
+export interface SpecVariant {
+  index: number;
+  label: string;
 }
 
 export interface SpecShot {
@@ -94,9 +113,21 @@ export interface SpecShot {
    * VU10 (ADR 0132 D9.5): a variant of `files.variants`, by label, opened as
    * the compare set; the contour then shows the window variant minus it, at
    * the shot's stage and step. Absent or null: none. Needs a nodal contour of a
-   * stage; never with a combination or a deformed shape.
+   * stage; never with a combination or a deformed shape. VF2-d (#2956): with a
+   * user-result contour (`contour.source: "user"`) it names the compare
+   * variant's own user result instead, `contour.field` its entry and
+   * `contour.component` its column: by variant plus entry, never by the
+   * display string the legend shows (`<variant>: <entry>`).
    */
   compare?: string | null;
+  /**
+   * VU18 (ADR 0132 D9.2): a row of `files.variants`, named by its index and
+   * label as the page names one (never a path); the shot draws that row's set
+   * instead of the spec's. Main re-reads the manifest for every shot that
+   * names one (D9.3) and refuses the shot when the row no longer answers to
+   * both. Absent or null: the spec's own set.
+   */
+  variant?: SpecVariant;
   step: SpecStep;
   camera: SpecCamera;
   colour_by: "group" | "role" | "contour";
@@ -208,8 +239,9 @@ function contour(v: unknown, key: string): SpecContour {
 
 function deform(v: unknown, key: string): SpecDeform {
   const o = object(v, key, ["scale", "ghost"]);
-  const scale = o["scale"] === undefined ? 1 : finite(o["scale"], `${key}.scale`);
-  if (!(scale > 0)) throw new SpecError(`${key}.scale`, `must be positive; got ${scale}`);
+  // G3: a scale left out is the auto scale (null), never 1.
+  const scale = o["scale"] === undefined ? null : finite(o["scale"], `${key}.scale`);
+  if (scale !== null && !(scale > 0)) throw new SpecError(`${key}.scale`, `must be positive; got ${scale}`);
   const ghost = o["ghost"] === undefined ? false : bool(o["ghost"], `${key}.ghost`);
   return { scale, ghost };
 }
@@ -231,6 +263,15 @@ function step(v: unknown, key: string): SpecStep {
   if (v === "first" || v === "last") return v;
   if (typeof v === "number" && Number.isInteger(v) && v >= 0) return v;
   throw new SpecError(key, `must be "first", "last" or a step index (an integer from 0); got ${show(v)}`);
+}
+
+/** VU18: `{ index, label }`, both required; whether the row answers to them is main's to say, per shot (D9.2, D9.3). */
+function variantRow(v: unknown, key: string): SpecVariant {
+  const o = object(v, key, ["index", "label"]);
+  for (const k of ["index", "label"]) if (!(k in o)) throw new SpecError(`${key}.${k}`, "is required: a variant row is named by its index and its label");
+  const index = o["index"];
+  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) throw new SpecError(`${key}.index`, `must be a row index of files.variants (an integer from 0); got ${show(index)}`);
+  return { index, label: text(o["label"], `${key}.label`) };
 }
 
 function stage(v: unknown, key: string): string | number {
@@ -281,7 +322,7 @@ interface Defaults {
 }
 
 function shot(v: unknown, key: string, d: Defaults): SpecShot {
-  const o = object(v, key, ["name", "caption", "stage", "combination", "compare", "step", "camera", "colour_by", "contour", "deform", "clip", "isolate", "chrome", "layers", "background"]);
+  const o = object(v, key, ["name", "caption", "stage", "combination", "compare", "variant", "step", "camera", "colour_by", "contour", "deform", "clip", "isolate", "chrome", "layers", "background"]);
   const name = text(o["name"], `${key}.name`);
   if (!NAME.test(name)) throw new SpecError(`${key}.name`, `is the PNG's file name: letters, digits, _, . and -, starting with a letter or digit, at most 100 characters; got ${show(name)}`);
   const c = o["contour"] === undefined ? null : contour(o["contour"], `${key}.contour`);
@@ -295,14 +336,31 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
     throw new SpecError(`${key}.step`, comb !== null ? "a User Combination is one state: it has no step" : "needs a stage: a step is a position in a results stage");
   }
   // VU10: a compare names a variant; the shot then shows a difference, of a nodal contour at a stage, never a shape.
+  // VF2-d (#2956): with a user-result contour it names that variant's own user result instead (`contour.field` its entry).
   const cmp = o["compare"] === undefined || o["compare"] === null ? null : text(o["compare"], `${key}.compare`);
   if (cmp !== null) {
     if (!d.variants) throw new SpecError(`${key}.compare`, "names a variant, and the spec has no files.variants to find it in");
     if (comb !== null) throw new SpecError(`${key}.compare`, "a combination across variants is refused: a User Combination is of the window variant's own states");
-    if (st === null) throw new SpecError(`${key}.compare`, "needs a stage: a difference is of a results step");
-    if (!c) throw new SpecError(`${key}.compare`, "needs a contour: a difference is shown as a contour");
-    if (c.source === "element") throw new SpecError(`${key}.compare`, "a difference is of a nodal component; contour.source is \"element\"");
-    if (o["deform"] !== undefined) throw new SpecError(`${key}.deform`, "a difference is never a deformed shape");
+    if (c?.source !== "user") {
+      if (st === null) throw new SpecError(`${key}.compare`, "needs a stage: a difference is of a results step");
+      if (!c) throw new SpecError(`${key}.compare`, "needs a contour: a difference is shown as a contour");
+      if (c.source === "element") throw new SpecError(`${key}.compare`, "a difference is of a nodal component; contour.source is \"element\"");
+      if (o["deform"] !== undefined) throw new SpecError(`${key}.deform`, "a difference is never a deformed shape");
+    }
+  }
+  // VU18: a variant names the row whose set the shot draws; it needs the manifest, and is never its own compare set.
+  const row = o["variant"] === undefined || o["variant"] === null ? null : variantRow(o["variant"], `${key}.variant`);
+  if (row !== null) {
+    if (!d.variants) throw new SpecError(`${key}.variant`, "names a variant row, and the spec has no files.variants to find it in");
+    if (cmp !== null && cmp === row.label) throw new SpecError(`${key}.compare`, `is ${show(cmp)}, the variant the shot draws; a compare set is another variant`);
+  }
+  // VU16: a user result is one state of its own file: it is shown at no stage or step, over no combination, never subtracted, never a shape.
+  // VF2-d (#2956): with `compare` it is the compare variant's own user result, still never subtracted from the window's.
+  if (c?.source === "user") {
+    if (st !== null) throw new SpecError(`${key}.stage`, "a user result has no state: a shot of one names no stage");
+    if (o["step"] !== undefined) throw new SpecError(`${key}.step`, "a user result has no state: it has no step");
+    if (comb !== null) throw new SpecError(`${key}.combination`, "a shot shows a User Combination or a user result, not both");
+    if (o["deform"] !== undefined) throw new SpecError(`${key}.deform`, "a user result is shown as a contour only, never as a deformed shape");
   }
   const caption = o["caption"] === undefined ? null : text(o["caption"], `${key}.caption`);
   const chrome = o["chrome"] === undefined ? d.chrome : oneOf(o["chrome"], `${key}.chrome`, CHROMES);
@@ -320,6 +378,7 @@ function shot(v: unknown, key: string, d: Defaults): SpecShot {
     stage: st,
     ...(comb === null ? {} : { combination: comb }),
     ...(cmp === null ? {} : { compare: cmp }),
+    ...(row === null ? {} : { variant: row }),
     step: o["step"] === undefined ? "last" : step(o["step"], `${key}.step`),
     camera: o["camera"] === undefined ? "iso" : camera(o["camera"], `${key}.camera`),
     colour_by: colourBy,
@@ -382,6 +441,16 @@ function validate(raw: unknown): ViewSpec {
     const k = s.name.toLowerCase();
     if (seen.has(k)) throw new SpecError(`shots[${i}].name`, `${show(s.name)} is already the name of shots[${seen.get(k)}] (names are file names, compared ignoring case)`);
     seen.set(k, i);
+  }
+  // VU18: the render mode reads the spec set's `.user.h5` once, before the shots, and never a variant row's. A spec
+  // that names a row draws every shot with no user file, so no shot of it may show a User Combination or a user result.
+  const switching = shots.findIndex((s) => s.variant !== undefined);
+  if (switching >= 0) {
+    const why = `shots[${switching}] names a variant row, and a spec that draws variant rows reads no .user.h5 (the render mode does not read a row's user file)`;
+    for (const [i, s] of shots.entries()) {
+      if (s.combination != null) throw new SpecError(`shots[${i}].combination`, `${why}: a User Combination cannot be shown`);
+      if (s.contour?.source === "user") throw new SpecError(`shots[${i}].contour.source`, `${why}: a user result cannot be shown`);
+    }
   }
   return {
     spec: SPEC_VERSION,

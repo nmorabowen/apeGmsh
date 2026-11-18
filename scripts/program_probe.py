@@ -93,6 +93,9 @@ _VERDICT = re.compile(
     re.MULTILINE,
 )
 _SLICE = re.compile(r"Slice:\s*#(\d+)")
+# Who may post a verdict (#2878). The repo is public, so a stranger's comment
+# must not count; a comment with no association field does not count either.
+VERDICT_AUTHORS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 # The required-check list and the green test live in land_pr.py; one copy.
 _spec = importlib.util.spec_from_file_location(
@@ -143,9 +146,15 @@ def fetch(gh: Runner, repo: str) -> dict[str, list[dict]]:
 
 
 def verdicts(pr: dict) -> list[dict]:
-    """Every ``Review-verdict`` line on the PR, oldest comment first."""
+    """Every ``Review-verdict`` line on the PR, oldest comment first.
+
+    Only comments whose ``authorAssociation`` (the ``gh --json comments`` key)
+    is in ``VERDICT_AUTHORS`` count.
+    """
     found = []
     for c in sorted(pr.get("comments") or [], key=lambda c: c["createdAt"]):
+        if c.get("authorAssociation") not in VERDICT_AUTHORS:
+            continue
         for m in _VERDICT.finditer(c.get("body") or ""):
             found.append({"model": m["model"], "verdict": m["verdict"],
                           "sha": m["sha"], "at": _ts(c["createdAt"])})

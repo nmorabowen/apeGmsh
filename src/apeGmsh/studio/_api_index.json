@@ -3936,6 +3936,84 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.model"
     },
+    "ops.mpm.analyze": {
+      "doc": "``mpm analyze``: ``steps`` explicit steps of size ``dt``.",
+      "signature": "analyze(steps: 'int', dt: 'float') -> 'Analyze'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.analyze"
+    },
+    "ops.mpm.body": {
+      "doc": "An MPM body: the elements of physical group ``pg``, lattice-seeded",
+      "signature": "body(pg: 'str', *, material: \"'NDMaterial | str'\", density: 'float', ppc: 'int', name: 'str | None' = None) -> 'Body'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.body"
+    },
+    "ops.mpm.damping": {
+      "doc": "``mpm damping local``: local non-viscous damping.",
+      "signature": "damping(alpha: 'float') -> 'Damping'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.damping"
+    },
+    "ops.mpm.fix": {
+      "doc": "``mpm fix``: zero grid-velocity ``components`` on ``face``.",
+      "signature": "fix(face: 'str', components: 'str') -> 'Fix'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.fix"
+    },
+    "ops.mpm.flip": {
+      "doc": "``mpm flip``: the FLIP fraction.",
+      "signature": "flip(alpha: 'float') -> 'Flip'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.flip"
+    },
+    "ops.mpm.gravity": {
+      "doc": "``mpm gravity``: the body force per unit mass.",
+      "signature": "gravity(*g: 'float') -> 'Gravity'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.gravity"
+    },
+    "ops.mpm.grid": {
+      "doc": "``mpm grid``: the background grid (one per model).",
+      "signature": "grid(*, origin: 'Sequence[float]', h: 'float', cells: 'Sequence[int]', basis: 'str | None' = None) -> 'Grid'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.grid"
+    },
+    "ops.mpm.massCutoff": {
+      "doc": "``mpm massCutoff``: the active-node mass cutoff.",
+      "signature": "massCutoff(c: 'float') -> 'MassCutoff'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.massCutoff"
+    },
+    "ops.mpm.output": {
+      "doc": "``mpm output``: the particle results file (``.ladruno``).",
+      "signature": "output(path: 'str', *, every: 'int | None' = None, dt: 'float | None' = None, fields: 'Sequence[str] | None' = None, compress: 'int | None' = None, flush: 'float | None' = None) -> 'Output'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.output"
+    },
+    "ops.mpm.safety": {
+      "doc": "``mpm safety``: the time-step safety factor.",
+      "signature": "safety(s: 'float') -> 'Safety'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.safety"
+    },
+    "ops.mpm.timeSeries": {
+      "doc": "``mpm timeSeries``: the factor on gravity (a series or its name).",
+      "signature": "timeSeries(series: \"'_TimeSeriesPrimitive | str'\") -> 'TimeSeries'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.timeSeries"
+    },
+    "ops.mpm.units": {
+      "doc": "``mpm units``: the unit symbols of the set and the results.",
+      "signature": "units(length: 'str', force: 'str', time: 'str', *, system: 'str | None' = None) -> 'Units'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.units"
+    },
+    "ops.mpm.wall": {
+      "doc": "``mpm wall``: a stationary Coulomb wall on ``face``.",
+      "signature": "wall(face: 'str', mu: 'float') -> 'Wall'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.wall"
+    },
     "ops.nDMaterial.ASDConcrete3D": {
       "doc": "Register a Petracca plastic-damage :class:`ASDConcrete3D` from physics.",
       "signature": "ASDConcrete3D(*, E: 'float', v: 'float', fc: 'float', ft: 'float | None' = None, Gf: 'float | None' = None, Gc: 'float | None' = None, lch_ref: 'float | None' = None, rho: 'float' = 0.0, Kc: 'float' = 0.6666666666666666, eta: 'float' = 0.0, cdf: 'float' = 0.0, implex: 'bool' = False, tangent: 'str' = 'secant', units: 'str' = 'MPa-mm-N', name: 'str | None' = None) -> 'ASDConcrete3D'",

@@ -102,12 +102,12 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 #left-rail > * { pointer-events: auto; }
 #left-rail > [hidden] { display: none; }
 
-#line-diagram, #loads, #reactions, #vectors, #principal, #springs {
+#line-diagram, #loads, #reactions, #vectors, #principal, #cracks, #springs {
   flex: 0 1 auto; min-height: 0; overflow: auto;
   padding: 10px 12px; border-radius: 10px;
   background: var(--panel); border: 1px solid var(--line);
 }
-#line-diagram[hidden], #loads[hidden], #reactions[hidden], #vectors[hidden], #principal[hidden], #springs[hidden] { display: none; }
+#line-diagram[hidden], #loads[hidden], #reactions[hidden], #vectors[hidden], #principal[hidden], #cracks[hidden], #springs[hidden] { display: none; }
 .loads-patterns { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
 .loads-pattern-title { overflow-wrap: anywhere; }
 
@@ -118,7 +118,7 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 }
 .legend-refusals > summary { cursor: pointer; }
 .line-diagram-span-badge { max-height: 4.2em; overflow-y: auto; }
-#legend h3, #line-diagram h3, #loads h3, #reactions h3, #vectors h3, #principal h3, #springs h3, #inspector h3 {
+#legend h3, #line-diagram h3, #loads h3, #reactions h3, #vectors h3, #principal h3, #cracks h3, #springs h3, #inspector h3 {
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
@@ -128,6 +128,7 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 .chip.stripe2 { background-image: repeating-linear-gradient(45deg, transparent 0 2px, var(--bg-0) 2px 3px); }
 /* The Principal card's ramp, -max to +max: wide enough to read the sign. */
 .chip.principal-ramp { flex: 1; min-width: 60px; }
+.chip.cracks-ramp { flex: 1; min-width: 60px; }
 .legend-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
 .legend-note { color: var(--muted); font-size: 13px; max-width: 260px; margin: 4px 0 2px; }
 .legend-mode { display: flex; gap: 4px; margin: 0 0 8px; }
@@ -241,7 +242,7 @@ code { font-family: var(--mono); }
 .sibling { color: var(--muted); }
 .legend-row.clickable { cursor: pointer; }
 .legend-row.hidden-group { opacity: 0.4; text-decoration: line-through; }
-#legend h3, #line-diagram h3, #loads h3, #reactions h3, #vectors h3, #principal h3, #springs h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
+#legend h3, #line-diagram h3, #loads h3, #reactions h3, #vectors h3, #principal h3, #cracks h3, #springs h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
 .legend-all, .pin {
   margin-left: auto; padding: 0 6px; border-radius: 4px; cursor: pointer;
   font: 600 11px var(--font); letter-spacing: 0; text-transform: none;
@@ -306,6 +307,17 @@ code { font-family: var(--mono); }
 .offer-caption { margin-top: 2px; font-size: 13px; color: var(--text); }
 .offer-note { margin-top: 2px; font-size: 12px; color: var(--muted); }
 .offer-reason { margin-top: 2px; font-size: 12px; color: var(--error); overflow-wrap: anywhere; }
+
+/* VU9a (ADR 0132 D3): the sets panel's verdict chips, beside the offers' and variants' rows in #rail.
+   current reads as settled (the accent), moved as interpreted (the warn tag), partial and lost as refusals. */
+.set-verdict { padding: 0 5px; border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.set-verdict[data-verdict="current"] { color: var(--accent); background: var(--accent-wash); border-color: transparent; }
+.set-verdict[data-verdict="moved"] { color: var(--interp-text); background: var(--interp-wash); border-color: var(--interp); }
+.set-verdict[data-verdict="partial"], .set-verdict[data-verdict="lost"], .set-verdict[data-verdict="refused"] { color: var(--error); background: var(--error-wash); border-color: var(--error-line); }
+.sets-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin: 6px 0; }
+.sets-form input { min-width: 0; padding: 2px 6px; border-radius: 5px; font: 13px var(--font); color: var(--text); background: var(--faint); border: 1px solid var(--line); }
+.sets-kind { display: flex; gap: 4px; margin: 4px 0; }
+.sets-held { margin-top: 4px; padding: 6px 8px; border-radius: 6px; font-size: 12px; color: var(--text); background: var(--error-wash); border: 1px solid var(--error-line); overflow-wrap: anywhere; }
 
 /* V2g: the sources listing, below the inspector in #rail (design brief on
    #1426). Capped at 40% of the rail while the inspector shows. */
@@ -479,25 +491,25 @@ code { font-family: var(--mono); }
 .vc-theme { flex: 0 0 auto; }
 
 /* Universal collapsible panels (ui/collapse.ts): every <aside> in #rail, #legend, #line-diagram, and #loads */
-#rail > aside > h3:first-child, #legend > h3:first-child, #line-diagram > h3:first-child, #loads > h3:first-child, #reactions > h3:first-child, #vectors > h3:first-child, #principal > h3:first-child, #springs > h3:first-child {
+#rail > aside > h3:first-child, #legend > h3:first-child, #line-diagram > h3:first-child, #loads > h3:first-child, #reactions > h3:first-child, #vectors > h3:first-child, #principal > h3:first-child, #cracks > h3:first-child, #springs > h3:first-child {
   cursor: pointer; user-select: none;
 }
-#rail > aside > h3:first-child::before, #legend > h3:first-child::before, #line-diagram > h3:first-child::before, #loads > h3:first-child::before, #reactions > h3:first-child::before, #vectors > h3:first-child::before, #principal > h3:first-child::before, #springs > h3:first-child::before {
+#rail > aside > h3:first-child::before, #legend > h3:first-child::before, #line-diagram > h3:first-child::before, #loads > h3:first-child::before, #reactions > h3:first-child::before, #vectors > h3:first-child::before, #principal > h3:first-child::before, #cracks > h3:first-child::before, #springs > h3:first-child::before {
   content: "\25be"; font-size: 11px; color: var(--muted);
 }
-#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before, #loads > h3:first-child:hover::before, #reactions > h3:first-child:hover::before, #vectors > h3:first-child:hover::before, #principal > h3:first-child:hover::before, #springs > h3:first-child:hover::before {
+#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before, #loads > h3:first-child:hover::before, #reactions > h3:first-child:hover::before, #vectors > h3:first-child:hover::before, #principal > h3:first-child:hover::before, #cracks > h3:first-child:hover::before, #springs > h3:first-child:hover::before {
   color: var(--accent);
 }
-body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #vectors[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #principal[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #springs[data-collapsed="true"] > h3:first-child::before {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #vectors[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #principal[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #cracks[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #springs[data-collapsed="true"] > h3:first-child::before {
   content: "\25b8";
 }
-body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"], body:not([data-still-chrome="app"]) #legend[data-collapsed="true"], body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"], body:not([data-still-chrome="app"]) #loads[data-collapsed="true"], body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"], body:not([data-still-chrome="app"]) #vectors[data-collapsed="true"], body:not([data-still-chrome="app"]) #principal[data-collapsed="true"], body:not([data-still-chrome="app"]) #springs[data-collapsed="true"] {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"], body:not([data-still-chrome="app"]) #legend[data-collapsed="true"], body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"], body:not([data-still-chrome="app"]) #loads[data-collapsed="true"], body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"], body:not([data-still-chrome="app"]) #vectors[data-collapsed="true"], body:not([data-still-chrome="app"]) #principal[data-collapsed="true"], body:not([data-still-chrome="app"]) #cracks[data-collapsed="true"], body:not([data-still-chrome="app"]) #springs[data-collapsed="true"] {
   flex: 0 0 auto; overflow: hidden; padding-top: 8px; padding-bottom: 8px;
 }
-body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #vectors[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #principal[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #springs[data-collapsed="true"] > h3:first-child {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #vectors[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #principal[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #cracks[data-collapsed="true"] > h3:first-child, body:not([data-still-chrome="app"]) #springs[data-collapsed="true"] > h3:first-child {
   margin-bottom: 0;
 }
-body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #vectors[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #principal[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #springs[data-collapsed="true"] > :not(:first-child) {
+body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #vectors[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #principal[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #cracks[data-collapsed="true"] > :not(:first-child), body:not([data-still-chrome="app"]) #springs[data-collapsed="true"] > :not(:first-child) {
   display: none;
 }
 #inspector[data-collapsed="true"] + #sources { max-height: 100%; }
@@ -513,12 +525,36 @@ body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > :not(
 .viewport-scale[hidden] { display: none; }
 .viewport-scale[data-moved] { position: fixed; }
 #scale-stack {
-  position: fixed; left: 324px; top: 102px; pointer-events: none;
+  /* VF (#2944 review): the stack's box ends 16 px off the bottom, as #left-rail's does.
+     It only sizes the box: the scales keep their height and are not shrunk or clipped
+     (pointer-events: none, no overflow), so the cap on `top` below is what keeps them on screen. */
+  position: fixed; left: 324px; top: 102px; bottom: 16px; pointer-events: none;
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
 }
-#banner:not([hidden]) ~ #scale-stack { top: 168px; }
+#banner:not([hidden]) ~ #scale-stack {
+  /* VF (#2924 item 7): below the banner's measured height, as #left-rail is, so an
+     app-chrome still (which draws the whole list) never covers the legend; never above 168 px.
+     In a still the scales now sit at the box's foot (VF3, below); this top bounds the box.
+     A banner can grow to 100vh - 180px (above), which would put the scales off the
+     bottom: they start by half the height at the latest, over the banner's tail. */
+  top: min(max(168px, calc(var(--banner-top, 58px) + var(--banner-h, 0px) + 8px)), max(168px, 50vh));
+}
+/* VF (#2944 review): over the banner's tail in an app-chrome still, where the banner is
+   drawn open at z-index 20 (above). In the window the open banner stays on top.
+   VF3 (#2959): an app-chrome still draws the banner's whole list, so under it the scales
+   reached into a mesh that a fit frames about the viewport's centre (about 60 px into
+   extrap_plane's 2-D still once the plane line made the banner taller). In a still the
+   scales sit at the foot of the stack's box instead, 64 px off the bottom (clear of the
+   Windows menu, 16 px + about 32 px, as #windows is): the fit leaves that margin as wide
+   as the top one, and no banner grows into it. The box keeps its top, so a stack taller
+   than the box grows upward over the banner's tail, never off the bottom. */
+body[data-still-chrome="app"] #scale-stack { z-index: 21; bottom: 64px; justify-content: flex-end; }
 #scale-stack:not(:has(> :not([hidden]))) { display: none; }
 body[data-still-chrome="model"] #scale-stack { display: none; }
+/* ADR 0134 D5 (owner D7 on #2992): the particles' scale sits at the foot of the stack's box,
+   bottom left, clear of a particle cloud the fit frames in the middle of the window. */
+#particle-scale:not([data-moved]) { margin-top: auto; }
+.viewport-scale .particle-novalue { margin-top: 2px; font-size: 12px; }
 .vs-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin: 0 0 6px; }
 .vs-title { font-weight: 600; font-size: 13px; }
 .vs-orient {

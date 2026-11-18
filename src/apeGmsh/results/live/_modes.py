@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 
 from ...opensees._recorder_translate import LiveDomainFacts
-from ...opensees.analysis.eigen import _live_slots, _spatial, _warn_unresolved
+from ...opensees.analysis.eigen import _live_slots, _spatial
 from ...opensees.emitter.live import get_ops
 from ...opensees.opensees_model import OpenSeesModel
 from ..readers._ladruno_live import FORK_SUFFIX
@@ -46,6 +46,10 @@ _WHERE = "capture_live_modes"
 #: openseespy ignores a flag it does not know and solves with its default,
 #: so any other value refuses by name instead of being passed on.
 _SOLVERS = ("-genBandArpack", "-fullGenLapack")
+
+#: A spatial slot of ``ux..rz`` (the ``_node_layout`` index) -> the
+#: rotation component a refusal names.
+_ROTATION_NAMES = {3: "rotation_x", 4: "rotation_y", 5: "rotation_z"}
 
 
 def capture_live_modes(
@@ -68,8 +72,16 @@ def capture_live_modes(
     ``ux..rz`` by its own live ndf: the translations are the first
     ``min(3, ndm)`` slots. A rotation slot holds the rotation only where
     the live elements' DOF roles say so (a beam, shell or zero-length
-    element touches the node); elsewhere it is written as 0.0, and a slot
-    they cannot settle gets one ``RotationSlotUnresolvedWarning``.
+    element touches the node; an ``ASDEmbeddedNodeElement`` neither gives
+    nor takes one away); a u-p element's pressure is never written as a
+    rotation. A rotation slot the live classes cannot settle (a class the
+    tables do not know touches the node, or no rotational element does)
+    refuses by node, slot and class, rather than writing 0.0 over a
+    rotation (#2407), unless every rotation DOF of the node is fixed
+    (``ops.getFixedDOFs``) with no equation (``ops.nodeDOFs`` -1, as under
+    no handler, ``Plain`` or ``Transformation``): its modal value is then
+    exactly 0, and 0.0 is written there. Under ``Penalty`` or ``Lagrange``
+    a fixed DOF keeps an equation and moves, so it refuses.
 
     The file is stamped (``INFO/PROVENANCE``) against the model archive:
     a bridge archive with both ``model_hash`` and ``fem_hash``, a bare
@@ -138,7 +150,8 @@ def capture_live_modes(
         the solve returned
         another number of modes, or a
         non-positive or non-finite eigenvalue (a mechanism or an
-        unconverged solve). Nothing is written.
+        unconverged solve); or a node's rotation slot cannot be settled
+        from the live element classes. Nothing is written.
     ProvenanceStampRefused
         The stamp refused the archive (no ``/meta/lineage``, no
         ``fem_hash``, an empty hash). Nothing is written.
@@ -258,8 +271,13 @@ def _capture(
             "laid out. Nothing was written.")
 
     layouts, rotations, unresolved = _live_slots(facts, node_ids, ndf_of, ndm)
+    layout_of = dict(zip((int(n) for n in node_ids), layouts))
+    # A rotation slot fixed with no equation has a 0 modal value whatever
+    # it means, so the 0.0 written there is the live value.
+    unresolved = [(n, why) for n, why in unresolved
+                  if not _rotations_fixed(ops, n, layout_of[n])]
+    _refuse_unresolved(unresolved, layout_of)
     shapes = np.stack([_spatial(rows, layouts) for rows in vectors])
-    _warn_unresolved(_WHERE, unresolved, 3)
     all_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     # Written and stamped in a staging directory, then moved into place:
     # a refused stamp leaves nothing at out_path.
@@ -272,3 +290,39 @@ def _capture(
         source="live_modes", opensees_backend=solved_backend(ops),
         stacklevel=4,
     )
+
+
+def _rotations_fixed(ops: Any, node: int, layout: "tuple[int, ...]") -> bool:
+    """Whether every DOF of ``node`` that its layout lays on a rotation
+    slot is fixed and has no equation: ``ops.getFixedDOFs(node)`` lists it
+    and ``ops.nodeDOFs(node)`` numbers it -1. Only then is its eigenvector
+    entry exactly 0, so writing 0.0 there is exact (no handler, ``Plain``
+    or ``Transformation``). Under ``Penalty`` or ``Lagrange`` a fixed DOF
+    keeps an equation and moves in the modes, and a slot an ``equalDOF``
+    or ``rigidLink`` ties is not fixed: neither is settled here. Asked
+    after the solve, of a node whose slot is otherwise unsettled."""
+    dofs = [d + 1 for d, slot in enumerate(layout) if slot >= 3]
+    fixed = {int(v) for v in np.asarray(ops.getFixedDOFs(int(node))).ravel()}
+    eqs = [int(v) for v in np.asarray(ops.nodeDOFs(int(node))).ravel()]
+    return bool(dofs) and all(
+        d in fixed and d <= len(eqs) and eqs[d - 1] == -1 for d in dofs)
+
+
+def _refuse_unresolved(
+    unresolved: "list[tuple[int, str]]", layout_of: "dict[int, tuple[int, ...]]",
+) -> None:
+    """Refuse a capture with any node whose rotation slot the live element
+    classes cannot settle (#2407, ruling R6 = (A)): writing 0.0 there would
+    replace a rotation the live ``nodeEigenvector`` holds. Names the node,
+    its rotation slots and why (the blocking class, when one touches it)."""
+    if not unresolved:
+        return
+    node, why = unresolved[0]
+    slots = [_ROTATION_NAMES[s] for s in layout_of[node] if s >= 3]
+    raise ValueError(
+        f"{_WHERE}: node {node}'s rotation slots {slots} cannot be settled: "
+        f"{why}. Writing 0.0 there would replace the rotation the live "
+        f"nodeEigenvector may hold ({len(unresolved)} node(s): "
+        f"{[n for n, _ in unresolved[:10]]}). Nothing was written; capture "
+        "the modes through the bridge (apeSees(fem).eigen(...)), whose "
+        "model archive types every element.")

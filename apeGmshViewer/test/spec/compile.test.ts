@@ -20,7 +20,8 @@ import { describeSet, SPEC_MAGNITUDE, type SetDescription } from "../../src/spec
 import { validateSpec, type SpecShot } from "../../src/spec/spec.ts";
 import { viewVerdict } from "../../src/spec/verdict.ts";
 import { MAGNITUDE } from "../../src/state/contour.ts";
-import { contourView } from "../../src/state/selectors.ts";
+import { reduce } from "../../src/state/reduce.ts";
+import { compareUserName, contourView, variantRowOf } from "../../src/state/selectors.ts";
 import type { State } from "../../src/state/types.ts";
 import { opened, STAGED, STAGED_RESULTS, until } from "../contour/harness.ts";
 import { makeReactionSet, REACTION_COMPONENTS } from "./reactions.ts";
@@ -124,6 +125,13 @@ test("the four ADR 0094 views (mesh, contour, deformed, reactions) compile into 
   assert.deepEqual([s.visibility.colourBy, s.deform.on, s.deform.scale, s.deform.ghost], ["group", true, 10, false]);
   s = apply(plan(shotOf({ stage: 1, step: "first", deform: { scale: 10, ghost: true } }), d));
   assert.deepEqual([s.deform.on, s.deform.scale, s.deform.ghost], [true, 10, true]);
+  // G3 (VA6c, #2765): a scale left out is the auto scale, never 1 taken as asked: the plan says so (scale null) and sets no
+  // scale of its own, so the view stays at the base view's 1 (not the shot before's 10) until the render mode dispatches it.
+  const auto = plan(shotOf({ stage: 1, step: "first", deform: {} }), d);
+  assert.deepEqual(auto.deform, { scale: null, ghost: false });
+  assert.deepEqual(auto.events.filter((e) => e.type === "setDeformScale"), [{ type: "setDeformScale", scale: 1 }], "only the base view's scale");
+  s = apply(auto);
+  assert.deepEqual([s.deform.on, s.deform.scale, s.deform.ghost], [true, 1, false]);
   // reactions: the reaction magnitude, a fixed range, another colormap; the deformed shape is off again (each shot starts from the base view).
   s = apply(plan(shotOf({ stage: "unprop", step: 2, contour: { field: "reaction_force", component: "magnitude", range: { min: 0, max: 50 }, cmap: "viridis" } }), d));
   assert.deepEqual([s.contour.field, s.contour.component, s.contour.range, s.contour.fixed, s.contour.cmap, s.deform.on], ["reaction_force", MAGNITUDE, "fixed", { min: 0, max: 50 }, "viridis", false]);
@@ -189,6 +197,37 @@ test("D2: a field or a component the stage does not have is refused, naming it a
   refusal({ stage: "base", contour: { field: "velocity", component: "x" } }, d, /stage "base" has no field "velocity"; its fields are displacement \(nodal\)/);
   refusal({ stage: "base", contour: { field: "displacement", component: "rz" } }, d, /nodal field "displacement" of stage "base" has no component "rz"; its components are magnitude, displacement_x \(x\)/);
   refusal({ stage: "base", contour: { field: "displacement", component: "x", source: "element" } }, d, /has no element field "displacement"/);
+});
+
+test("VA6d: a derived scalar compiles to the pick the window makes; one the tensor cannot give is refused by its name, with why", async () => {
+  const h = await open(`${FIX}elem_mixed.h5`, `${FIX}elem_mixed.results.h5`);
+  const d = describe(h.store.get());
+  const shot = shotOf({ stage: "load", step: 1, contour: { field: "stress", component: "von_mises_stress", gauss: "node" } });
+  const p = plan(shot, d);
+  assert.deepEqual(p.contour, { field: "stress", component: "von_mises_stress", label: "von_mises_stress", source: "element" });
+  assert.deepEqual(
+    p.events.filter((e) => e.type === "setContourField" || e.type === "setContourGauss").slice(-2),
+    [
+      { type: "setContourField", field: "stress", component: "von_mises_stress", source: "element" },
+      { type: "setContourGauss", mode: "node" },
+    ],
+  );
+  // The reducer takes the pick the compiler made (it checks the same catalog).
+  for (const e of p.events) h.store.dispatch(e);
+  assert.equal(h.store.get().contour.component, "von_mises_stress");
+  // A stress field offers no strain scalar: an unknown component, listed with what there is.
+  refusal({ stage: "load", contour: { field: "stress", component: "von_mises_strain" } }, d, /element field "stress" of stage "load" has no component "von_mises_strain"; its components are stress_xx \(xx\), stress_xy \(xy\), stress_yy \(yy\), von_mises_stress$/);
+  // An ambiguous or incomplete tensor: the description's refusal, by name (state/tensor.ts `derivedTensorOf` writes it).
+  const ambiguous: SetDescription = {
+    ...d,
+    stages: d.stages.map((st) => ({
+      ...st,
+      fields: st.fields.map((f) =>
+        f.name === "stress" ? { ...f, components: f.components.filter((c) => !c.derived), refusedComponents: [{ key: "von_mises_stress", reason: "group g: its components name one stress slot twice" }] } : f,
+      ),
+    })),
+  };
+  refusal({ stage: "load", contour: { field: "stress", component: "von_mises_stress" } }, ambiguous, /^element field "stress" of stage "load" cannot give "von_mises_stress": group g: its components name one stress slot twice$/);
 });
 
 test("D2: a physical group the model does not have is refused", async () => {
@@ -299,4 +338,35 @@ test("D2: a step that could not be read is refused", async () => {
   for (const e of p.events) h.store.dispatch(e);
   h.store.dispatch({ type: "resultStep", status: { stage: 0, step: 1, status: "failed", error: "truncated dataset" } });
   assert.deepEqual(viewVerdict(h.store.get(), shot, p, ON), { kind: "refused", reason: 'step 1 of stage "base" could not be read: truncated dataset' });
+});
+
+test("VF2-d (#2956): a user-result shot with compare compiles to the compare variant's user result, by variant plus entry; an unknown variant is refused with the variants there are", async () => {
+  const h = await open(STAGED, STAGED_RESULTS);
+  const d = describe(h.store.get());
+  const shot = shotOf({ compare: "Cracked", contour: { field: "footfall", component: "ratio", source: "user" } }, { files: { model: "m.h5", variants: "s.variants.json" } });
+  const study = reduce(h.store.get(), {
+    type: "variantsRead",
+    study: { manifest: "s.variants.json", version: "1.0.0", newer: null, rows: [{ index: 0, label: "Uncracked", path: "u.h5", params: {} }, { index: 1, label: "Cracked", path: "c.h5", params: {} }], refused: [], active: 0, compare: null },
+  });
+  const c = compileShot(shot, d, undefined, (label) => variantRowOf(study, label));
+  assert.ok(c.ok, !c.ok ? c.reason : "");
+  const p = c.plan;
+  assert.deepEqual(p.compareUser, { variant: "Cracked", entry: "footfall", component: "ratio" });
+  // The still's scale and the legend name it by the display string; the plan keeps the variant and the entry apart.
+  assert.deepEqual(p.contour, { field: compareUserName("Cracked", "footfall"), component: "ratio", label: "ratio", source: "user" });
+  assert.deepEqual([p.phase, p.stage, p.step], [{ kind: "mesh" }, null, null]);
+  // The compare set is asked for by row; no difference, and no window pick (setContourField would end the compare result).
+  assert.deepEqual(p.events.slice(0, BASE_EVENTS.length), [...BASE_EVENTS]);
+  const own = p.events.slice(BASE_EVENTS.length);
+  assert.deepEqual(own.find((e) => e.type === "variantCompare"), { type: "variantCompare", row: { index: 1, label: "Cracked" } });
+  assert.ok(!own.some((e) => e.type === "setContourField" || (e.type === "setDifference" && e.on) || e.type === "showCompareUser"), JSON.stringify(own));
+  // Every shot starts with no compare user result drawn.
+  assert.ok(BASE_EVENTS.some((e) => e.type === "showCompareUser" && e.pick === null));
+  // An unknown variant: refused with the variants the manifest has.
+  const nope = compileShot({ ...shot, compare: "Bischoff" }, d, undefined, (label) => variantRowOf(study, label));
+  assert.equal(nope.ok, false);
+  assert.match(!nope.ok ? nope.reason : "", /the manifest has no variant "Bischoff"; its variants are "Uncracked", "Cracked"/);
+  // No variants manifest in this view: refused, never drawn as the window's own entry.
+  const none = compileShot(shot, d);
+  assert.match(!none.ok ? none.reason : "", /no variants manifest to find variant "Cracked"/);
 });

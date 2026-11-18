@@ -180,6 +180,7 @@ test("displacementAxes respects stage.refusedNodal for .ladruno DISPLACEMENT dat
   const stage: ResultsStage = {
     id: "MODEL_STAGE[1]",
     name: "gravity",
+    programName: "gravity",
     kind: "static",
     time: [0, 1],
     nodal: [],
@@ -653,7 +654,7 @@ test("Escalón 3: style.css prevents #banner/#line-diagram/#loads/#legend overla
   const html = readFileSync(new URL("../../src/renderer/index.html", import.meta.url), "utf8");
   assert.match(
     html,
-    /<div id="left-rail">\s*<aside id="display" hidden data-collapsed="true"><\/aside>\s*<aside id="deform" hidden data-collapsed="true"><\/aside>\s*<aside id="line-diagram" hidden data-collapsed="true"><\/aside>\s*<aside id="contour" hidden data-collapsed="true"><\/aside>\s*<aside id="loads" hidden data-collapsed="true"><\/aside>\s*<aside id="reactions" hidden data-collapsed="true"><\/aside>\s*<aside id="vectors" hidden data-collapsed="true"><\/aside>\s*<aside id="principal" hidden data-collapsed="true"><\/aside>\s*<aside id="springs" hidden data-collapsed="true"><\/aside>\s*<aside id="legend" hidden data-collapsed="true"><\/aside>\s*<\/div>/
+    /<div id="left-rail">\s*<aside id="display" hidden data-collapsed="true"><\/aside>\s*<aside id="deform" hidden data-collapsed="true"><\/aside>\s*<aside id="line-diagram" hidden data-collapsed="true"><\/aside>\s*<aside id="contour" hidden data-collapsed="true"><\/aside>\s*<aside id="loads" hidden data-collapsed="true"><\/aside>\s*<aside id="reactions" hidden data-collapsed="true"><\/aside>\s*<aside id="vectors" hidden data-collapsed="true"><\/aside>\s*<aside id="principal" hidden data-collapsed="true"><\/aside>\s*<aside id="cracks" hidden data-collapsed="true"><\/aside>\s*<aside id="springs" hidden data-collapsed="true"><\/aside>\s*<aside id="legend" hidden data-collapsed="true"><\/aside>\s*<\/div>/
   );
   assert.match(css, /#left-rail\s*\{[^}]*display:\s*flex;\s*flex-direction:\s*column;/);
   assert.match(css, /#banner:not\(\[hidden\]\)\s*~\s*#left-rail,\s*#banner:not\(\[hidden\]\)\s*~\s*#line-diagram/);

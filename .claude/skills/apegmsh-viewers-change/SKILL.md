@@ -153,11 +153,48 @@ The page is not trusted to name a path (owner ruling "option A", #2753). Read th
       the test parses. `preload.test.ts` loads the preload against the same stub. Every path a
       refusal test refuses is a readable file, so the door would read it without the check
       (`setDoors.test.ts` header). Run `npm test` in `apeGmshViewer/`.
-- [ ] **A door onto a second set reads it as a slot of its own.** VU10's compare doors
-      (`variants:compare`, `compare:readStep`, `compare:close`) take a manifest row by index
-      and label (`Study.row`, which resolves and confines it again at open time), never touch
-      `windowSet`, `dropped` or `followModel`, read through their own `ResultsHost`, and are
-      emptied in `pageLoading`. `test/main/variantDoors.test.ts` is the pattern.
+- [ ] **A door onto a second set reads it as a slot of its own.** There are six compare doors.
+      VU10's (`variants:compare`, `compare:readStep`, `compare:close`) take a manifest row by
+      index and label (`Study.row`, which resolves and confines it again at open time), never
+      touch `windowSet`, `dropped` or `followModel`, read through their own `ResultsHost`, and
+      are emptied in `pageLoading`. VU19's (`compare:model`, `compare:userRead`,
+      `compare:userReadResult`) take no row and no path: `exactKeys` refuses any key but
+      `name` and `component` (the last door's only), each reads the set in `study.compare`
+      (confined again by `study.confine`), its answer names the slot it read (`slotOf`), and
+      every one refuses with no compare slot. The compare `.user.h5` is judged against the
+      compare set's own model and results, and nothing is written (INV-6). The tests are the
+      pattern: `test/main/variantDoors.test.ts` (VU10, main's side),
+      `test/main/compareDoors.test.ts` (VU19, main's side, against Python's golden) and
+      `test/variants/doors.test.ts` (the spec, compiler, `Study` and preload around them).
+- [ ] **The one write door is `workspace:save`** (VU9a, #2803; `main/workspace.ts`). It takes
+      one edit with closed keys (`parseEdit`: a `path`, or any key the op does not name, is
+      `bad-request` before any read) and writes only `windowSet()`'s `<stem>.workspace.h5`;
+      `cannotWrite` refuses every mode but view. The owner's HG9 rules are code there: read
+      the target whole and close it (a Node or h5wasm handle on the target blocks the replace
+      on Windows, `EPERM`), map a blocked replace to `heldRefusal` (never a retry), and never
+      move a held readable file aside (an unreadable one, a truncated HDF5 file included, is
+      renamed aside as Python's writer does). Every edit carries `expect`, the `token` of the
+      read it was made on (the bytes' sha256, or `absent`); main refuses `stale` when the
+      window set's file is not those bytes, so a set switch or another writer never takes an
+      edit made on the old read (#2890 review). A new write follows `saveWorkspace`'s order (partial created
+      `"x"` through `reader/h5open.ts` `createH5`, verify, fsync, revision check, replace) and
+      its tests: `test/main/workspaceSave.test.ts` kills a child mid-save
+      (`workspaceKillDriver.ts`) and injects `EPERM` through `WorkspaceDisk`, because a real
+      hold blocks only on Windows and CI's `app-tests` runs on Linux.
+- [ ] **The second write door is `combinations:save`** (VU9b, #2693; `main/combinations.ts`):
+      ADR 0130 A4 into the window set's `.user.h5`, which can be gigabytes. It copies the file
+      to its own partial and appends there (`reader/h5open.ts` `appendH5` opens only a
+      `.partial` for writing: `a` on the live file corrupts it when killed, the probe on
+      #2693). Before the replace it closes the app's own `openH5` handles on the file
+      (`closeHandlesOn`; one blocks the rename on Windows as `held`), and it checks free
+      space before the copy. The save token is the path and `/meta@revision`, never a
+      whole-file digest. `test/main/combinationsSave.test.ts` holds one test per HG9 rule, the
+      kill at each step (`combinationsDriver.ts`) and a zone digest of every root group.
+- [ ] **h5wasm 0.10.3 write traps.** A dtype's width comes from its letter, not its digits:
+      `"<f8"` writes **f4** (use `"<d"`), `"<i4"` is i4 by luck of `i`. An empty array needs
+      an explicit dtype (it guesses integer). `"x"` on an existing name returns a negative
+      `file_id` instead of throwing (`createH5` throws). Prove a new layout with h5py reading
+      it back (`apeGmshViewer/test/fixtures/vu9a/README.md` has the round trip).
 
 ## Before the PR
 

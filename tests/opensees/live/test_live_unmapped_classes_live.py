@@ -635,7 +635,9 @@ def _warping(ops: Any) -> "tuple[FEMData, ResolvedRecorderRecord]":
                     "ForceBeamColumnWarping2d", [EID]))
 
 
-def _elastic_force_beam(ndm: int) -> "Callable[[Any], tuple[FEMData, ResolvedRecorderRecord]]":
+def _elastic_force_beam(
+    ndm: int, command: str = "elasticForceBeamColumn",
+) -> "Callable[[Any], tuple[FEMData, ResolvedRecorderRecord]]":
     def build(ops: Any) -> "tuple[FEMData, ResolvedRecorderRecord]":
         xyz = np.array([[0.0] * ndm, [L] + [0.0] * (ndm - 1)])
         ops.model("basic", "-ndm", ndm, "-ndf", 3 if ndm == 2 else 6)
@@ -648,7 +650,7 @@ def _elastic_force_beam(ndm: int) -> "Callable[[Any], tuple[FEMData, ResolvedRec
             ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
             ops.section("Elastic", 1, E, A_, IZ, IZ, E / 2.6, IZ)
         ops.beamIntegration("Lobatto", 1, 1, N_IP)
-        ops.element("elasticForceBeamColumn", EID, 1, 2, 1, 1)
+        ops.element(command, EID, 1, 2, 1, 1)
         return (_fem(1, "Line 2", 1, 1, xyz, [[1, 2]], [EID]),
                 _record("line_stations", ("axial_force", "bending_moment_z"),
                         ops.eleType(EID), [EID]))
@@ -659,10 +661,14 @@ def _elastic_force_beam(ndm: int) -> "Callable[[Any], tuple[FEMData, ResolvedRec
 #: answers 84 values for its 72 (ShellMITC9.cpp:518);
 #: ElasticForceBeamColumn2d/3d write an empty ``section force`` file (no
 #: nodal-force layout either); ForceBeamColumnWarping2d has no stock
-#: section it can invert ("could not invert flexibility").
+#: section it can invert ("could not invert flexibility"). MixedBeamColumn2d/3d
+#: type the rotation roles of a node only (``_ROTATION_TOKEN_FOR_LIVE_CLASS``,
+#: #2414); no catalog entry types their responses, so a record still refuses.
 UNMAPPED = {"ShellMITC9": _shell_mitc9,
             "ElasticForceBeamColumn2d": _elastic_force_beam(2),
             "ElasticForceBeamColumn3d": _elastic_force_beam(3),
+            "MixedBeamColumn2d": _elastic_force_beam(2, "mixedBeamColumn"),
+            "MixedBeamColumn3d": _elastic_force_beam(3, "mixedBeamColumn"),
             "ForceBeamColumnWarping2d": _warping}
 
 

@@ -134,3 +134,75 @@ test("VU11: with no set open, both doors refuse even the stem's user file", () =
   assert.equal(c.reason, "refused");
   assert.match(c.detail ?? "", /^user:readCase reads only the open set's user file, and no set is open; refused /);
 });
+
+// ---- VU16 (#2800): `user:readResult`, footfall's state-free user result ---------
+//
+// The same battery over two more sets: the VU16 plate (test/fixtures/vu16, written
+// by W3's own `FootfallResult.to_results`) with its own user file, and the plate's
+// model beside W3's five-node user file, whose fem_hash is another fem's.
+
+const VU16 = fileURLToPath(new URL("../fixtures/vu16/", import.meta.url));
+type Column = { ids: number[]; values: (number | null)[] };
+
+/** A root the driver reads, its set being `model` and `user` (copied as s.h5 and s.user.h5). */
+function vu16Root(tag: string, model: string, user: string): string {
+  const r = join(root, tag);
+  for (const d of ["set", "outside", "elsewhere"]) mkdirSync(join(r, d), { recursive: true });
+  copyFileSync(join(VU16, model), join(r, "set", "s.h5"));
+  for (const p of ["set/s.user.h5", "set/t.user.h5", "outside/s.user.h5", "elsewhere/s.user.h5"]) copyFileSync(join(VU16, user), join(r, p));
+  return r;
+}
+
+function runAt(r: string): Record<string, Answer> {
+  const stdout = execFileSync(process.execPath, [DRIVER, `--file=${join(r, "set", "s.h5")}`, `--dir=${r}`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
+  const line = stdout.split(/\r?\n/).find((l) => l.startsWith("USER_DOORS "));
+  assert.ok(line, `the driver printed no answers:\n${stdout}`);
+  return JSON.parse(line.slice("USER_DOORS ".length)) as Record<string, Answer>;
+}
+
+test("VU16: user:readResult gives the set's own footfall_ratio column, equal to what W3 wrote", () => {
+  const plate = runAt(vu16Root("vu16-plate", "plate.h5", "plate.user.h5"));
+  const r = resolved(plate, "readResult:paired") as { ok: boolean; detail?: string; column?: Column };
+  assert.equal(r.ok, true, r.detail);
+  const golden = JSON.parse(readFileSync(join(VU16, "plate.golden.json"), "utf8")) as { ids: number[]; components: string[]; data: (number | null)[][] };
+  const k = golden.components.indexOf("footfall_ratio");
+  assert.deepEqual(r.column!.ids, golden.ids);
+  r.column!.values.forEach((v, i) => {
+    const want = golden.data[i]![k]!;
+    if (want === null) assert.equal(v, null, `node ${golden.ids[i]}: NaN in the file, no value here`);
+    else assert.ok(v !== null && Math.abs(v - want) <= 1e-12 * Math.max(1, Math.abs(want)), `node ${golden.ids[i]}: ${v} vs ${want}`);
+  });
+  assert.ok(r.column!.values.some((v) => v === null) && r.column!.values.some((v) => v !== null), "the fixture holds both values and NaN");
+  // Confined as user:read is: a readable copy outside the set is refused, never read.
+  for (const name of ["sibling", "traversal", "elsewhere"]) {
+    const x = resolved(plate, `readResult:${name}`);
+    assert.equal(x.ok, false);
+    assert.equal(x.reason, "refused");
+    assert.match(x.detail ?? "", /^user:readResult reads only the open set's user file .*s\.user\.h5; refused /);
+  }
+  const other = resolved(plate, "readResult:otherComponent");
+  assert.equal(other.reason, "refused");
+  assert.match(other.detail ?? "", /user result 'footfall' has no component 'footfall_nope'; its components are footfall_ap, footfall_ratio, footfall_fdom/);
+  for (const name of ["bigint", "circular"]) {
+    const x = resolved(plate, `readResult:${name}`);
+    assert.equal(x.reason, "refused");
+    assert.match(x.detail ?? "", /^user:readResult needs \{ path, name, component \}; got /);
+  }
+});
+
+test("VU16: user:readResult refuses a stale entry with its A6 reason before reading it", () => {
+  const stale = runAt(vu16Root("vu16-stale", "plate.h5", "w3_bay.user.h5"));
+  const r = resolved(stale, "readResult:paired");
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "stale");
+  assert.match(r.detail ?? "", /^user result 'footfall' is stale \(A6\): fem_hash differs: [0-9a-f]+ here, [0-9a-f]+ in the model$/);
+});
+
+test("VU16: user:readResult refuses a user file with no such result by name (the San Ramón set)", () => {
+  const r = resolved(withSet, "readResult:paired");
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "refused");
+  assert.match(r.detail ?? "", /holds no user result 'footfall'$/);
+  const none = run(false);
+  assert.match(resolved(none, "readResult:paired").detail ?? "", /^user:readResult reads only the open set's user file, and no set is open; refused /);
+});

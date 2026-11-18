@@ -8,41 +8,74 @@
 // `goToSource` to the bridge; each is feature-detected here, so this module
 // works before and after that PR.
 
-import { CombinationRefused, evaluate, type CombinationTable } from "./combination/evaluate.ts";
+import { evaluateDraft } from "./combination/author.ts";
+import { CombinationRefused, evaluate, type CombinationTable, type Source } from "./combination/evaluate.ts";
 import type { ModelFile } from "./model/types.ts";
 import type { GeometryZone } from "./reader/geometry.ts";
 import type { LadrunoLineStationStep, LadrunoSpringStep } from "./reader/ladruno.ts";
 import type { ProvenanceZone } from "./reader/provenance.ts";
 import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZONE_FLOOR } from "./reader/read.ts";
+import type { UserColumnRead } from "./reader/userFile.ts";
 import { spectrumSource, type CaseQuantityName, type CaseRead, type SpectraStaleness, type SpectrumTarget } from "./reader/userSpectra.ts";
 import type { BlobStore } from "./state/blobs.ts";
 import { loadGeometry } from "./state/geometry.ts";
 import { loadModel } from "./state/load.ts";
-import { columnOf, combinedColumn, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isNodeTopology, joinElements, type CombinedColumn } from "./state/contour.ts";
+import { columnOf, combinedColumn, finiteRange, finiteRangeOf, gaussCellValues, gaussFields, isNodeTopology, joinElements, type CombinedColumn, type ElementComponent } from "./state/contour.ts";
+import { derivedGroupValues, planeDigestOf, planeMapOf, type DerivedName, type PlaneRecovery, type TensorGroup } from "./state/tensor.ts";
 import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type ExtrapPlan } from "./state/extrapolation.ts";
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
 import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
-import { contourView, deformView, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
+import { componentOf, particleRange, type ParticleFrame } from "./renderer/particles.ts";
+import { contourView, crackFieldOf, deformView, draftJudgedOf, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
 import { applyTheme } from "./theme/tokens.ts";
-import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ResultsInfo, StageElements, State, ZoneStatus } from "./state/types.ts";
+import { membersOf } from "./state/workspace.ts";
+import type { CombinationDraft, CombinationEdit, CombinationSaveIn, DraftCheck } from "./state/types.ts";
+import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ParticleStageInfo, ResultsInfo, ResultsStage, StageElements, State, WorkspaceEdit, WorkspaceIn, WorkspacePageEdit, WorkspaceSaveIn, ZoneStatus } from "./state/types.ts";
 
 const TARGET = { neutral: NEUTRAL_TARGET, opensees: OPENSEES_TARGET, geometry: GEOMETRY_TARGET, provenance: PROVENANCE_TARGET } as const;
+
+/** Two animation frames: what was pushed before the call is on screen after it (the particle harness). */
+const painted = (): Promise<void> => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 
 /** What the frame effect moves: the viewport (or a test double). `null` frames the whole model. */
 export interface FrameTarget {
   frameTo(focus: Focus | null): void;
   viewNormal?(): [number, number, number];
+  /** ADR 0134 D5: draw one particle frame, or none (renderer/viewport.ts `showParticles`) */
+  showParticles?(frame: ParticleFrame | null): void;
 }
 
 export interface OpenSet {
   model: string | null;
   geometry: string | null;
   results: string | null;
+  /**
+   * ADR 0134 D1: the set's `<stem>.particles.h5` (main/pairing.ts), drawn by the points
+   * layer (D5) when the set's results hold no particle stage, alone or beside a model.
+   * Absent from a bridge older than M2-S3, which never pairs one.
+   */
+  particles?: string | null;
+}
+
+/** ADR 0134 D5: a measure or capture run of the particle layer, as main hands it (main/modes/measure.ts `particleHarnessJob`). */
+export interface ParticleHarnessJob {
+  op: "measure" | "capture";
+  set: OpenSet;
+  /** the colour to show, or null for the default (POSITION's vertical component) */
+  colour: { field: string; component: number } | null;
+  /** the output to show, or null for the default (the last) */
+  output: number | null;
+  /** draw the grid's wire box (capture) */
+  grid: boolean;
+  /** when the launcher started the app (Date.now()), for the time to first frame */
+  t0: number;
+  /** how long the scrub of outputs runs (measure) */
+  scrubMs: number;
 }
 
 /** `window.viewer`, as preload.ts exposes it; the optional members arrive with V2f. */
@@ -129,6 +162,87 @@ export interface Bridge {
   goToSource?(file: string, line: number): Promise<{ ok: boolean; reason?: string }>;
   /** VU7b-1 (ADR 0130 D5): one result of one `/spectra` case, with its values (main's `user:readCase`); VU7b-2 exposes it in preload.ts. */
   readUserCase?(req: { path: string; case: string; target: SpectrumTarget; label: string }): Promise<CaseRead>;
+  /** VU16 (ADR 0130 D7): one component of a state-free ON_NODES user result, as a contour column (main's `user:readResult`). */
+  readUserResult?(req: { path: string; name: string; component: string }): Promise<UserColumnRead>;
+  /** VU9a (ADR 0132): the window set's `<stem>.workspace.h5` as main reads it (main's `workspace:read`; it takes no path) */
+  workspaceRead?(): Promise<WorkspaceIn>;
+  /** VU9a: one edit into that file (main's `workspace:save`; never a path) */
+  workspaceSave?(edit: WorkspaceEdit): Promise<WorkspaceSaveIn>;
+  /** VU9b (ADR 0130 A4): one combination edit into the window set's `.user.h5` (main's `combinations:save`; never a path) */
+  combinationsSave?(edit: CombinationEdit): Promise<CombinationSaveIn>;
+  /** ADR 0134 D5: the particle stages of the open results file (main's `particles:index`; main/results.ts `ParticleIndexAnswer`) */
+  particleIndex?(path: string): Promise<{ ok: true; path: string; stages: ParticleStageInfo[]; unread: { stage: string; reason: string }[] } | { ok: false; error: string; changed?: true }>;
+  /** ADR 0134 D5: one output of one particle stage (main's `particles:readOutput`; main/results.ts `ParticleOutputAnswer`) */
+  readParticleOutput?(req: { path: string; stage: string; output: number; field: string | null; seq: number }): Promise<
+    | { ok: true; seq: number; stage: string; output: number; step: number; time: number; ids: Float64Array; positions: Float64Array; values: Float64Array | null; nComp: number }
+    | { ok: false; seq: number; error: string; changed?: true }
+  >;
+  /** ADR 0134 D5: the window set's `<stem>.particles.h5`, read whole (main's `particles:set`; it takes no path) */
+  particleSet?(): Promise<{ ok: true; path: string; stage: ParticleStageInfo; ids: Float64Array; positions: Float64Array; values: Record<string, Float64Array> } | { ok: false; error: string }>;
+  /** ADR 0134 D5: main's particle measure or capture run, or null (every other run) */
+  particleHarness?(): Promise<ParticleHarnessJob | null>;
+  /** the capture run's still of the window as it shows now; main writes it to `--out` */
+  particleHarnessStill?(): Promise<string>;
+  /** the run's result (measure) or its end (capture); main writes it and exits */
+  particleHarnessDone?(result: unknown): Promise<void>;
+}
+
+/**
+ * VU9b (ADR 0130 A3; #2693): the check of a draft User Combination before it is
+ * offered for save. The readers' rules judge it beside the file's rows
+ * (selectors `draftJudgedOf`); then VU4's evaluator evaluates it for the first
+ * nodal quantity of the `/spectra` cases it reaches, read through main's
+ * `user:readCase` (combination/author.ts `evaluateDraft`). A stale `/spectra`
+ * is read for the check, and the preview says so. Null when there is no draft
+ * to check (no user file read). A bridge with no `readUserCase` throws.
+ */
+export async function checkCombinationDraft(bridge: Pick<Bridge, "readUserCase">, s: State, draft: CombinationDraft): Promise<DraftCheck | null> {
+  const j = draftJudgedOf(s, draft);
+  if (j === null) return null;
+  if (!j.ok) return { key: j.key, status: "refused", reason: j.reason, detail: j.detail };
+  let inner: Source | null = null;
+  if (j.cases.length) {
+    if (j.quantity === null) return { key: j.key, status: "ok", preview: null, note: `not evaluated here: the /spectra cases it reaches (${j.cases.join(", ")}) hold no nodal result` };
+    if (typeof bridge.readUserCase !== "function") throw new Error("this build's bridge has no readUserCase (main's user:readCase)");
+    const reads = new Map<string, CaseRead>();
+    for (const name of j.cases) reads.set(name, await bridge.readUserCase({ path: j.path, case: name, target: "nodes", label: j.quantity.label }));
+    inner = spectrumSource(reads, j.quantity, j.staleness, true);
+  }
+  const v = evaluateDraft(j.table, j.name, inner);
+  if (v.ok === "not-here") return { key: j.key, status: "ok", preview: null, note: v.note };
+  if (!v.ok) return { key: j.key, status: "refused", reason: v.refused.reason, detail: v.refused.detail };
+  const values = v.combined.field.values;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const x of values) {
+    if (!Number.isFinite(x)) continue;
+    if (x < min) min = x;
+    if (x > max) max = x;
+  }
+  const q = j.quantity!;
+  return {
+    key: j.key,
+    status: "ok",
+    preview: { label: `${q.label}/${q.component}`, nodes: v.combined.field.keys.length, range: min <= max ? { min, max } : null, signed: v.combined.signed },
+    note: j.staleness.stale ? `/spectra is stale (${j.staleness.reason || "no reason given"}): the value is shown, and the file lists the combination as stale` : null,
+  };
+}
+
+/** VU9b: carry one combination edit to main's door. A bridge with no `combinationsSave` throws: this build's preload has it. */
+export function saveCombinationEdit(bridge: Pick<Bridge, "combinationsSave">, edit: CombinationEdit): Promise<CombinationSaveIn> {
+  if (typeof bridge.combinationsSave !== "function") throw new Error("this build's bridge has no combinationsSave (main's combinations:save)");
+  return bridge.combinationsSave(edit);
+}
+
+/**
+ * VU16: the column of user result `name`'s `component` in the `.user.h5` at
+ * `path`, through main's `user:readResult` (which refuses a stale entry with
+ * A6's reason). A bridge with no `readUserResult` throws: this build's
+ * preload always has it, so its absence is a broken build, never "no result".
+ */
+export function userResultColumn(bridge: Pick<Bridge, "readUserResult">, req: { path: string; name: string; component: string }): Promise<UserColumnRead> {
+  if (typeof bridge.readUserResult !== "function") throw new Error("this build's bridge has no readUserResult (main's user:readResult)");
+  return bridge.readUserResult(req);
 }
 
 /** What `userCombinationColumn` answers: the contour column, or the evaluator's refusal. */
@@ -297,7 +411,10 @@ export interface StepData {
   stage: number;
   step: number;
   nodal: Record<string, Float64Array>;
-  /** V4c2a: the element component fetched with the step, or null; and its values by gauss group, (E * G,) element-major */
+  /**
+   * V4c2a: the element component fetched with the step, or null; and its values by gauss group, (E * G,) element-major.
+   * VA6d: a derived scalar's key (`von_mises_stress`), its values computed from the step's tensor read.
+   */
   element: string | null;
   gauss: Record<string, Float64Array>;
   /** The Principal card's tensor components fetched with the step, by component then group; absent with none asked */
@@ -310,6 +427,42 @@ export interface StepData {
   springs?: LadrunoSpringStep | null;
   /** Why the springs' read failed */
   springsError?: string | null;
+}
+
+/**
+ * VA6d: what a derived scalar reads with a step: its tensor components, and
+ * for each group its tensor slots, value count and the out-of-plane recovery
+ * (its element ids and the model's plane map, F1).
+ */
+interface DerivedRead {
+  name: DerivedName;
+  components: string[];
+  groups: { group: TensorGroup; n: number; plane: PlaneRecovery }[];
+}
+
+/** The read a derived element component needs, or null for a stored one; a group the stage does not list, or without its element ids, is an error. */
+function derivedReadOf(component: ElementComponent, st: ResultsStage, s: State, blobs: BlobStore): DerivedRead | null {
+  const d = component.derived;
+  if (!d) return null;
+  const map = planeMapOf(s.decls);
+  return {
+    name: d.name,
+    components: d.tensor.components,
+    groups: d.tensor.groups.map((group) => {
+      const g = st.gauss.find((x) => x.id === group.id);
+      if (!g) throw new Error(`${d.name}: stage ${st.id} has no gauss group ${group.id}`);
+      const eids = g.elementIds ? blobs.get(g.elementIds) : undefined;
+      if (!(eids instanceof Float64Array)) throw new Error(`${d.name}: the element ids of group ${group.id} are not loaded`);
+      return { group, n: g.nElements * g.nGauss, plane: { map, eids, nGauss: g.nGauss } };
+    }),
+  };
+}
+
+/** A derived scalar's values by gauss group, from one step's tensor read (state/tensor.ts `derivedGroupValues`). */
+function derivedBlocks(d: DerivedRead, tensor: Readonly<Record<string, Readonly<Record<string, Float64Array>>>>): Record<string, Float64Array> {
+  const out: Record<string, Float64Array> = {};
+  for (const { group, n, plane } of d.groups) out[group.id] = derivedGroupValues(d.name, group, n, tensor, plane);
+  return out;
 }
 
 export class Effects {
@@ -407,6 +560,9 @@ export class Effects {
     this.blobs = blobs;
     this.bridge = bridge;
     this.setWindowMs = opts.setWindowMs ?? 1000;
+    // VU9a: the sets panel's saves reach main in every mode; main writes only from the human's window and refuses the rest.
+    this.carryWorkspaceSaves();
+    this.previewWorkspace();
     // A file rewritten on disk (D1 rewrites on every run) is read again; one
     // that changes mid-read is re-read when that read ends (see `open`).
     this.off.push(
@@ -455,6 +611,9 @@ export class Effects {
       // The node markers' size, chosen when they turn on and the size is automatic.
       this.store.subscribe((s) => this.syncNodeSize(s)),
       this.store.subscribe((s) => this.syncGaussSize(s)),
+      // ADR 0134 D5: the particle index the set calls for, then the frame the state names.
+      this.store.subscribe((s) => this.syncParticles(s)),
+      this.store.subscribe((s) => this.syncParticleFrame(s)),
     );
     if (typeof this.bridge.onScanProgress === "function") {
       const off = this.bridge.onScanProgress((p) => {
@@ -495,6 +654,8 @@ export class Effects {
   /** Attach what `frameSelection` moves (the viewport). */
   setFrameTarget(target: FrameTarget | null): void {
     this.frameTarget = target;
+    // A particle frame pushed before the target was attached is drawn now.
+    if (target !== null && this.particleShown !== null) this.pushParticles(this.particleShown);
   }
 
   private readingGeometry = false;
@@ -828,7 +989,10 @@ export class Effects {
     }
     // V4c2b: a node-located topology's history scan carries the plan, so main measures the values drawn.
     const plan = v.state === "element" && isNodeTopology(v.topology) ? planFor({ ...v, topology: v.topology }, s, this.blobs) : undefined;
-    this.startScan(s, want, v.component.datasets, v.component.magnitude, v.state === "element", plan);
+    // VA6d: main's scan reads stored components only, so a derived scalar's history is scanned here, step by step.
+    const derived = v.state === "element" ? derivedReadOf(v.component, s.results!.stages[(s.phase.at as { stage: number }).stage]!, s, this.blobs) : null;
+    if (v.state === "element" && derived !== null) this.startDerivedScan(s, want, derived, v.groups, plan);
+    else this.startScan(s, want, v.component.datasets, v.component.magnitude, v.state === "element", plan);
   }
 
   /** The join last checked (its key); a re-read, another field or mesh checks again. */
@@ -863,6 +1027,73 @@ export class Effects {
       ? { key, ok: true, rows: j.rows, extrapolation: extrapolationVerdict(groups, cellLookup(s.decls, s.blocks, this.blobs)) }
       : { key, ok: false, code: j.code, reason: j.reason };
     queueMicrotask(() => this.store.dispatch({ type: "contourElementJoin", verdict }));
+  }
+
+  /**
+   * VA6d: the history range of a derived scalar. Main's scan reads one stored
+   * component, so this reads each step's tensor through the step reader (the
+   * read `fetchStep` makes), computes the scalar at every Gauss point and
+   * measures what is drawn: the element means, or the plan's node values for a
+   * node-located topology, as main's element scan does. One step at a time; a
+   * cancelled or replaced scan stops at its next step and never lands.
+   */
+  private startDerivedScan(s: State, key: string, d: DerivedRead, groups: readonly { id: string; nElements: number; nGauss: number }[], plan?: ExtrapPlan): void {
+    const info = s.results!;
+    const at = s.phase.at as { kind: "results"; stage: number };
+    const st = info.stages[at.stage]!;
+    const id = ++this.scanSeq;
+    this.scanRun = { id, key };
+    const total = st.time.length;
+    const report = (scan: ContourScan) => this.store.dispatch({ type: "contourScan", scan });
+    const fail = (error: string) => {
+      this.scanRun = null;
+      report({ key, status: "failed", done: 0, total, min: null, max: null, error });
+    };
+    const bridge = this.bridge;
+    queueMicrotask(async () => {
+      if (this.scanRun?.id !== id) return;
+      report({ key, status: "running", done: 0, total, min: null, max: null, error: null });
+      if (typeof bridge.readResultsStep !== "function") return fail("this build has no results reader");
+      let lo = Infinity;
+      let hi = -Infinity;
+      let lastProgress = performance.now();
+      for (let k = 0; k < total; k++) {
+        const res = await bridge
+          .readResultsStep({ path: info.path, stage: st.id, step: k, seq: -id, tensor: d.components })
+          .catch((err: unknown) => ({ ok: false as const, seq: -id, error: err instanceof Error ? err.message : String(err) }));
+        if (this.scanRun?.id !== id) return;
+        if (!res.ok) {
+          fail(res.error);
+          if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path: info.path });
+          return;
+        }
+        let r: { min: number; max: number } | null;
+        try {
+          const blocks = derivedBlocks(d, res.tensor ?? {});
+          const ordered = groups.map((g) => {
+            const b = blocks[g.id];
+            if (!b) throw new Error(`${d.name}: no values for group ${g.id}`);
+            return b;
+          });
+          r = plan ? planRange(applyPlan(plan, ordered)) : finiteRangeOf(ordered.map((b, i) => gaussCellValues(b, groups[i]!.nElements, groups[i]!.nGauss)));
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : String(err));
+        }
+        if (r && r.min < lo) lo = r.min;
+        if (r && r.max > hi) hi = r.max;
+        const now = performance.now();
+        if (k + 1 < total && now - lastProgress >= 100) {
+          lastProgress = now;
+          report({ key, status: "running", done: k + 1, total, min: null, max: null, error: null });
+        }
+      }
+      this.scanRun = null;
+      const finite = lo <= hi;
+      const min = finite ? lo : null;
+      const max = finite ? hi : null;
+      this.scanCache.set(key, { min, max, total });
+      report({ key, status: "done", done: total, total, min, max, error: null });
+    });
   }
 
   private startScan(s: State, key: string, components: string[], magnitude: boolean, element = false, plan?: ExtrapPlan): void {
@@ -1042,6 +1273,9 @@ export class Effects {
     // rows joined the mesh of a verified file: `contourView` is `element` for no other).
     const v = contourView(s);
     const element = v.state === "element" ? v.component.key : null;
+    // VA6d: a derived scalar is no dataset: its tensor components are read with the step (the Principal card's
+    // `tensor` read) and the scalar computed at every Gauss point when the step lands (`fetchStep`).
+    const derived = v.state === "element" ? derivedReadOf(v.component, st, s, this.blobs) : null;
     // The Gauss markers place beam stations from any one component's slab (the stations do not depend on it).
     const lineDiagram =
       s.lineDiagram.on && s.lineDiagram.component !== null && st.lineStations?.includes(s.lineDiagram.component)
@@ -1050,10 +1284,15 @@ export class Effects {
           ? (st.lineStations?.[0] ?? null)
           : null;
     // The Principal card reads the components of its tensor field (a verified file's only: `principalFieldOf`).
-    const components = s.principal.on ? principalFieldOf(s)?.components : undefined;
-    const tensor = components?.length ? components : null;
+    // The Cracks card reads its nine crack-vector components the same way.
+    const components = [
+      ...new Set([...((s.principal.on ? principalFieldOf(s)?.components : undefined) ?? []), ...((s.cracks.on ? crackFieldOf(s)?.components : undefined) ?? []), ...(derived?.components ?? [])]),
+    ];
+    const tensor = components.length ? components : null;
     const springs = s.springs.on && (st.springs ?? 0) > 0;
-    const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
+    // VA6d: a derived scalar's step also names the model's plane map, so a model re-read that changes it is fetched again.
+    const plane = derived !== null ? `|plane:${planeDigestOf(s.decls)}` : "";
+    const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}${plane}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
     const key = `${base}|${springs ? "springs" : ""}`;
     // The card turned off keeps the step fetched with its springs: they are only not drawn, and nothing is re-read.
     if (key === this.stepKey || (!springs && this.stepKey === `${base}|springs`)) return;
@@ -1061,7 +1300,7 @@ export class Effects {
     const seq = ++this.stepSeq;
     this.step = null;
     // Not from inside this listener: the other listeners have not seen `s` yet.
-    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor, springs));
+    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor, springs, derived));
   }
 
   private async fetchStep(
@@ -1074,6 +1313,7 @@ export class Effects {
     lineDiagram: LineStationComponent | null = null,
     tensor: string[] | null = null,
     springs = false,
+    derived: DerivedRead | null = null,
   ): Promise<void> {
     if (seq !== this.stepSeq) return;
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "loading", error: null } });
@@ -1087,7 +1327,8 @@ export class Effects {
         stage: stageId,
         step,
         seq,
-        ...(element !== null ? { element } : {}),
+        // A derived scalar is computed here from the tensor read, never asked of main by name.
+        ...(element !== null && derived === null ? { element } : {}),
         ...(lineDiagram !== null ? { lineDiagram } : {}),
         ...(tensor !== null ? { tensor } : {}),
         ...(springs ? { springs } : {}),
@@ -1101,12 +1342,22 @@ export class Effects {
       if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path });
       return;
     }
+    let gauss = res.gauss ?? {};
+    if (derived !== null) {
+      // VA6d: the derived scalar at every Gauss point of each group, where the element component would be.
+      try {
+        gauss = derivedBlocks(derived, res.tensor ?? {});
+      } catch (err) {
+        this.store.dispatch({ type: "resultStep", status: { stage, step, status: "failed", error: err instanceof Error ? err.message : String(err) } });
+        return;
+      }
+    }
     this.step = {
       stage,
       step,
       nodal: res.nodal,
       element,
-      gauss: res.gauss ?? {},
+      gauss,
       ...(res.tensor ? { tensor: res.tensor } : {}),
       lineDiagram: res.lineDiagram ?? null,
       lineDiagramError: res.lineDiagramError ?? null,
@@ -1313,6 +1564,291 @@ export class Effects {
     }
     if (set.model) void this.open(set.model);
     else this.store.dispatch({ type: "fileClosed", artifact: "model" });
+    // ADR 0134 D5 (M2-S4 #2983, replacing #2985's refusal): the set's `<stem>.particles.h5` is drawn when
+    // its results hold no particle stage, a set that holds nothing else too, with its notice (`syncParticles`).
+    this.particleSetPath = set.particles ?? null;
+    this.syncParticles(this.store.get());
+  }
+
+  // -- ADR 0134 D5: the particles -----------------------------------------------
+
+  /** the set's `<stem>.particles.h5`, from the last `openSet`; null when the set has none */
+  private particleSetPath: string | null = null;
+  /** what the particle index was read for: the source, path and results index (a re-read results file is re-indexed) */
+  private particleFor: { source: "results" | "set"; path: string; results: ResultsInfo | null } | null = null;
+  private particleToken = 0;
+  /** the seeded set, read whole: served here, one output, never asked of main again */
+  private particleSetData: { path: string; ids: Float64Array; positions: Float64Array; values: Record<string, Float64Array> } | null = null;
+  /** the particle frame pushed or being read: its key, request number, and the read generation (a re-read disposes the stage's buffers) */
+  private particleKey: string | null = null;
+  private particleSeq = 0;
+  private particleGen = 0;
+  /** the source and path whose first frame was fitted (a set with no mesh frames the camera on its particles once) */
+  private particleFitted: string | null = null;
+  /** the frame pushed last (null: none drawn), kept for a target attached after it */
+  private particleShown: ParticleFrame | null = null;
+
+  /** Which particles the store should hold: the results' particle stages, else the set's seeded set, else none. */
+  private particleSource(s: State): { source: "results" | "set"; path: string } | null | "wait" {
+    const r = s.artifacts.results;
+    if (r && (r.status === "opened" || (r.status === "ready" && r.stale))) return "wait";
+    if (r?.status === "ready" && s.results && s.results.stages.some((st) => st.unread.some((u) => u.startsWith("ON_PARTICLES")))) return { source: "results", path: s.results.path };
+    if (this.particleSetPath !== null) return { source: "set", path: this.particleSetPath };
+    return null;
+  }
+
+  /** Read the particle index the set calls for, when it is not the one read (latest wins). */
+  private syncParticles(s: State): void {
+    const want = this.particleSource(s);
+    if (want === "wait") return;
+    const had = this.particleFor;
+    if (want === null) {
+      if (had === null && s.particles === null) return;
+      this.particleFor = null;
+      this.particleToken++;
+      this.particleSetData = null;
+      queueMicrotask(() => {
+        if (this.store.get().particles !== null) this.store.dispatch({ type: "particlesClosed" });
+      });
+      return;
+    }
+    const results = want.source === "results" ? s.results : null;
+    if (had && had.source === want.source && had.path === want.path && had.results === results) return;
+    this.particleFor = { ...want, results };
+    const token = ++this.particleToken;
+    queueMicrotask(() => void this.readParticleIndex(want.source, want.path, token));
+  }
+
+  private async readParticleIndex(source: "results" | "set", path: string, token: number): Promise<void> {
+    if (token !== this.particleToken) return;
+    this.store.dispatch({ type: "particlesOpened", source, path });
+    const failed = (error: string) => {
+      if (token === this.particleToken) this.store.dispatch({ type: "particlesFailed", path, error });
+    };
+    const caught = (err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) });
+    if (source === "results") {
+      if (typeof this.bridge.particleIndex !== "function") return failed("this build's bridge has no particle reader (main's particles:index)");
+      const res = await this.bridge.particleIndex(path).catch(caught);
+      if (token !== this.particleToken) return;
+      if (!res.ok) {
+        failed(res.error);
+        // The file is not the one indexed: it is re-indexed, then its particles are read again.
+        if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path });
+        return;
+      }
+      this.particleSetData = null;
+      this.particleGen++;
+      this.store.dispatch({ type: "particlesLoaded", source, path, stages: res.stages, unread: res.unread });
+      return;
+    }
+    if (typeof this.bridge.particleSet !== "function") return failed("this build's bridge has no particle-set reader (main's particles:set)");
+    const res = await this.bridge.particleSet().catch(caught);
+    if (token !== this.particleToken) return;
+    if (!res.ok) return failed(res.error);
+    this.particleSetData = { path: res.path, ids: res.ids, positions: res.positions, values: res.values };
+    this.particleGen++;
+    this.store.dispatch({ type: "particlesLoaded", source, path, stages: [res.stage], unread: [] });
+  }
+
+  /** Push the particle frame the state names to the viewport when it is not the one pushed (latest wins). */
+  private syncParticleFrame(s: State): void {
+    const p = s.particles;
+    const st = p?.status === "ready" ? p.stages[p.stage] : undefined;
+    if (!p || !st || !p.on || st.nOutputs === 0) {
+      if (this.particleKey !== null || this.particleShown !== null) {
+        this.particleKey = null;
+        this.particleSeq++;
+        this.pushParticles(null);
+      }
+      return;
+    }
+    const colour = p.colour;
+    const key = `${p.source}|${p.path}|${this.particleGen}|${st.id}|${p.output}|${colour ? `${colour.field}/${colour.component}` : "plain"}|${p.grid}|${s.contour.cmap}`;
+    if (key === this.particleKey) return;
+    this.particleKey = key;
+    const seq = ++this.particleSeq;
+    queueMicrotask(() => void this.fetchParticleFrame(seq, p.source, p.path, p.stage, st, p.output, colour, p.grid, s.contour.cmap, s.mesh === null && s.geometry === null));
+  }
+
+  private async fetchParticleFrame(
+    seq: number,
+    source: "results" | "set",
+    path: string,
+    stage: number,
+    st: ParticleStageInfo,
+    output: number,
+    colour: { field: string; component: number } | null,
+    grid: boolean,
+    cmap: State["contour"]["cmap"],
+    noScene: boolean,
+  ): Promise<void> {
+    if (seq !== this.particleSeq) return;
+    const report = (status: "loading" | "ready" | "failed", error: string | null, count = 0, noValue = 0, range: { min: number; max: number } | null = null) =>
+      this.store.dispatch({ type: "particleFrame", frame: { stage, output, status, error, count, noValue, range } });
+    report("loading", null);
+    let positions: Float64Array;
+    let values: Float64Array | null = null;
+    let nComp = 0;
+    try {
+      if (source === "set") {
+        const d = this.particleSetData;
+        if (!d || d.path !== path) throw new Error(`the particle set ${path} is not read`);
+        positions = d.positions;
+        if (colour) {
+          values = d.values[colour.field] ?? null;
+          if (values === null) throw new Error(`the particle set has no ${colour.field}`);
+          nComp = values.length / (d.ids.length || 1);
+        }
+      } else {
+        if (typeof this.bridge.readParticleOutput !== "function") throw new Error("this build's bridge has no particle reader (main's particles:readOutput)");
+        const res = await this.bridge.readParticleOutput({ path, stage: st.id, output, field: colour?.field ?? null, seq });
+        if (seq !== this.particleSeq || res.seq !== seq) return;
+        if (!res.ok) {
+          report("failed", res.error);
+          if ("changed" in res && res.changed) this.store.dispatch({ type: "fileChanged", path });
+          return;
+        }
+        positions = res.positions;
+        values = res.values;
+        nComp = res.nComp;
+      }
+      if (seq !== this.particleSeq) return;
+      const scalar = colour && values ? componentOf(values, nComp, colour.component) : null;
+      const r = scalar ? particleRange(scalar) : { range: null, noValue: 0 };
+      const fitKey = `${source}|${path}`;
+      const fit = noScene && this.particleFitted !== fitKey;
+      if (fit) this.particleFitted = fitKey;
+      const frame: ParticleFrame = { stageKey: `${source}|${path}|${this.particleGen}|${st.id}`, ndm: st.ndm, positions, scalar, range: r.range, cmap, grid: grid ? st.grid : null, fit };
+      this.pushParticles(frame);
+      report("ready", null, positions.length / st.ndm, r.noValue, r.range);
+    } catch (err) {
+      if (seq === this.particleSeq) report("failed", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** Hand a particle frame (or none) to the frame target; a target that cannot draw particles fails loudly. */
+  private pushParticles(frame: ParticleFrame | null): void {
+    this.particleShown = frame;
+    const t = this.frameTarget;
+    if (t === null) return;
+    if (typeof t.showParticles !== "function") throw new Error("the frame target draws no particles (renderer/viewport.ts showParticles)");
+    t.showParticles(frame);
+  }
+
+  /** The particle frame pushed last (tests, the harness), or null. */
+  currentParticles(): ParticleFrame | null {
+    return this.particleShown;
+  }
+
+  /**
+   * ADR 0134 D5: main's particle measure or capture run (main/modes/measure.ts). It
+   * opens the job's set, waits for the first frame on screen, then either captures the
+   * still (capture) or scrubs every output for `scrubMs` and reports the time to first
+   * frame, the scrub rate and the memory (measure). Runs only in the Electron page.
+   */
+  async runParticleHarness(job: ParticleHarnessJob): Promise<void> {
+    const bridge = this.bridge;
+    if (typeof bridge.particleHarnessDone !== "function" || typeof bridge.particleHarnessStill !== "function") throw new Error("this build's bridge has no particle harness doors");
+    this.openSet(job.set);
+    const frameRead = (ms: number): Promise<State> =>
+      this.until((x) => {
+        const p = x.particles;
+        if (p?.status === "failed") throw new Error(`the particles did not read: ${p.error}`);
+        if (p?.frame?.status === "failed") throw new Error(`the particle frame did not read: ${p.frame.error}`);
+        return p?.status === "ready" && p.frame?.status === "ready" && p.frame.stage === p.stage && p.frame.output === p.output;
+      }, ms);
+    /** The frame the state names read and pushed, then on screen (two animation frames). */
+    const frameReady = async (ms: number): Promise<State> => {
+      const s = await frameRead(ms);
+      await painted();
+      return s;
+    };
+    let s = await frameReady(120000);
+    const firstFrameMs = Date.now() - job.t0;
+    if (job.colour) this.store.dispatch({ type: "setParticleColour", colour: job.colour });
+    if (job.output !== null) this.store.dispatch({ type: "setParticleOutput", output: job.output });
+    if (job.grid) this.store.dispatch({ type: "setParticleGrid", on: true });
+    s = await frameReady(60000);
+    // A still is framed on the particle cloud, centred (owner D7 on #2992), as the fit view frames it.
+    if (job.op === "capture") {
+      this.store.dispatch({ type: "setCamera", to: "fit" });
+      await painted();
+    }
+    if (job.op === "capture") {
+      // The still states what it shows: the banner's particle lines (field, unit, range, the particles with no value), opened.
+      const summary = typeof document === "undefined" ? null : document.querySelector<HTMLButtonElement>("#banner .banner-summary");
+      if (summary && document.getElementById("banner")?.dataset["open"] !== "true") summary.click();
+      await painted();
+      await bridge.particleHarnessStill();
+      await bridge.particleHarnessDone({ ok: true, notices: s.particles });
+      return;
+    }
+    const p = s.particles!;
+    const st = p.stages[p.stage]!;
+    const memFirst = typeof bridge.metrics === "function" ? await bridge.metrics() : null;
+    const t0 = performance.now();
+    const frames: number[] = [];
+    const reads: number[] = [];
+    let k = p.output;
+    while (performance.now() - t0 < job.scrubMs && st.nOutputs > 1) {
+      k = (k + 1) % st.nOutputs;
+      const a = performance.now();
+      this.store.dispatch({ type: "setParticleOutput", output: k });
+      // The read (main's hyperslab, the copy, the buffer fill) apart from the paint that follows it.
+      await frameRead(60000);
+      reads.push(performance.now() - a);
+      await painted();
+      frames.push(performance.now() - a);
+    }
+    const scrubMs = performance.now() - t0;
+    const memScrub = await bridge.metrics();
+    const median = (xs: number[]): number | null => {
+      const v = [...xs].sort((x, y) => x - y);
+      return v.length ? v[Math.floor(v.length / 2)]! : null;
+    };
+    const sorted = [...frames].sort((x, y) => x - y);
+    await bridge.particleHarnessDone({
+      file: p.path,
+      stage: st.name,
+      particles: Math.max(...st.counts),
+      outputs: st.nOutputs,
+      colour: p.colour,
+      firstFrameMs,
+      scrub: { frames: frames.length, ms: scrubMs, fps: frames.length / (scrubMs / 1000), medianFrameMs: sorted.length ? sorted[Math.floor(sorted.length / 2)]! : null, medianReadMs: median(reads) },
+      memory: { first: memFirst, scrub: memScrub },
+    });
+  }
+
+  /** The store state once `pred` holds (it may throw to fail the wait), or a timeout error after `ms`. */
+  private until(pred: (s: State) => boolean, ms: number): Promise<State> {
+    return new Promise((resolve, reject) => {
+      let done = false;
+      let off: () => void = () => {};
+      const check = (s: State) => {
+        if (done) return;
+        try {
+          if (!pred(s)) return;
+        } catch (err) {
+          done = true;
+          off();
+          clearTimeout(timer);
+          reject(err);
+          return;
+        }
+        done = true;
+        off();
+        clearTimeout(timer);
+        resolve(s);
+      };
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        off();
+        reject(new Error(`the particle harness waited ${ms} ms`));
+      }, ms);
+      off = this.store.subscribe((s) => check(s));
+      check(this.store.get());
+    });
   }
 
   /** Detach everything `attach` and the bridge subscriptions registered. */
@@ -1345,6 +1881,124 @@ export class Effects {
     else void this.open(this.bridge.pathForFile(f));
   }
 
+  /** Counts workspace reads: an answer that is not the latest read's is dropped. */
+  private workspaceSeq = 0;
+  /** The save request the effects carried last (`WorkspaceState.request.seq`). */
+  private workspaceRequest = 0;
+
+  /**
+   * VU9a (ADR 0132 D7): read the window set's workspace through main, which
+   * names the file and judges each set against the set's model. A build
+   * without the door reads nothing and says so; an answer the store cannot
+   * take is a refusal with the reason.
+   */
+  async readWorkspace(): Promise<void> {
+    const seq = ++this.workspaceSeq;
+    if (typeof this.bridge.workspaceRead !== "function") {
+      this.store.dispatch({ type: "workspaceRead", read: { status: "none", reason: "this build has no workspace door (main's workspace:read)" } });
+      return;
+    }
+    this.store.dispatch({ type: "workspaceReading" });
+    let read: WorkspaceIn;
+    try {
+      read = await this.bridge.workspaceRead();
+    } catch (err) {
+      read = { status: "none", reason: `workspace:read failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    if (seq !== this.workspaceSeq) return;
+    this.store.dispatch({ type: "workspaceRead", read });
+  }
+
+  /** The edit main is sent for a page edit: a create takes its members from the selection now (state/workspace.ts). */
+  private workspaceEditOf(s: State, edit: WorkspacePageEdit, expect: string): WorkspaceEdit | string {
+    if (edit.op !== "create") return { ...edit, expect };
+    const kind = s.workspace.kind;
+    const m = membersOf(s, kind, this.nodeTable(s));
+    if (!m.ok) return m.reason;
+    for (const n of m.notes) console.warn(`apeGmshViewer: ${n}`);
+    return { op: "create", name: edit.name, kind, ids: m.ids, expect };
+  }
+
+  /** VU9a: carry a `workspaceSave` to main and land its answer. */
+  private async saveWorkspace(seq: number, edit: WorkspacePageEdit, expect: string): Promise<void> {
+    const s = this.store.get();
+    const answer = (detail: string, reason: string): WorkspaceSaveIn => ({ ok: false, reason, detail, file: null, held: false });
+    const out = this.workspaceEditOf(s, edit, expect);
+    let result: WorkspaceSaveIn;
+    if (typeof out === "string") result = answer(out, "no-members");
+    else if (typeof this.bridge.workspaceSave !== "function") result = answer("this build has no workspace door (main's workspace:save)", "unavailable");
+    else {
+      try {
+        result = await this.bridge.workspaceSave(out);
+      } catch (err) {
+        result = answer(`workspace:save failed: ${err instanceof Error ? err.message : String(err)}`, "failed");
+      }
+    }
+    this.store.dispatch({ type: "workspaceSaved", seq, answer: result });
+    // The file on disk is not the read the edit was made on: read it again, so the panel shows what is there.
+    if (!result.ok && result.reason === "stale") void this.readWorkspace();
+  }
+
+  /**
+   * VU9a, view mode: the workspace is read once the model's read lands (its
+   * verdicts are judged against that model), again when the workspace file
+   * changes on disk (another writer, or this window's own save, which the
+   * reducer recognises by its `@save_id`), and closed with the model. A
+   * `workspaceSave` the panel dispatched goes to main.
+   */
+  private followWorkspace(): void {
+    this.off.push(
+      this.store.subscribe((s, prev) => {
+        const m = s.artifacts.model;
+        if (m === prev.artifacts.model) return;
+        // Another model: a read still on its way for the last one is dropped (#2890 review 1).
+        if (m?.path !== prev.artifacts.model?.path) this.workspaceSeq++;
+        if (m === null) {
+          this.workspaceSeq++;
+          if (s.workspace.read !== null) this.store.dispatch({ type: "workspaceRead", read: null });
+        } else if (m.status === "ready" && !(prev.artifacts.model?.status === "ready" && prev.artifacts.model.path === m.path && s.mesh === prev.mesh)) void this.readWorkspace();
+      }),
+    );
+    if (typeof this.bridge.onFileChanged === "function") {
+      const off = this.bridge.onFileChanged((path) => {
+        if (/\.workspace\.h5$/i.test(path)) void this.readWorkspace();
+      });
+      if (typeof off === "function") this.off.push(off);
+    }
+  }
+
+  /** The node table of the model on screen, from the BlobStore; null when the mesh was built without it. */
+  private nodeTable(s: State): { ids: ArrayLike<number>; xyz: ArrayLike<number> } | null {
+    return s.mesh?.nodes ? { ids: this.blobs.get(s.mesh.nodes.ids) as ArrayLike<number>, xyz: this.blobs.get(s.mesh.nodes.xyz) as ArrayLike<number> } : null;
+  }
+
+  /** VU9a: the members a save would take, recomputed when the selection, the kind or the mesh changes, so the panel lists them. */
+  private previewWorkspace(): void {
+    this.off.push(
+      this.store.subscribe((s, prev) => {
+        if (s.selection === prev.selection && s.workspace.kind === prev.workspace.kind && s.mesh === prev.mesh && s.decls === prev.decls && s.deform.on === prev.deform.on && s.workspace.deformedPicks === prev.workspace.deformedPicks) return;
+        queueMicrotask(() => {
+          const now = this.store.get();
+          const kind = now.workspace.kind;
+          const m = membersOf(now, kind, this.nodeTable(now));
+          this.store.dispatch({ type: "workspacePreview", preview: m.ok ? { kind, ids: m.ids, notes: m.notes } : { kind, reason: m.reason } });
+        });
+      }),
+    );
+  }
+
+  /** VU9a: a `workspaceSave` request the effects have not carried yet goes to main (every mode: main refuses where only the human's window writes). */
+  private carryWorkspaceSaves(): void {
+    this.off.push(
+      this.store.subscribe((s) => {
+        const r = s.workspace.request;
+        if (!r || r.seq === this.workspaceRequest) return;
+        this.workspaceRequest = r.seq;
+        void this.saveWorkspace(r.seq, r.edit, r.expect);
+      }),
+    );
+  }
+
   /** Attach the window and bridge listeners; the returned function detaches them. */
   attach(): () => void {
     const onDragOver = (e: DragEvent) => e.preventDefault();
@@ -1365,6 +2019,15 @@ export class Effects {
     if (typeof this.bridge.onOpen === "function") keep(this.bridge.onOpen((set) => this.openSet(set)));
     if (typeof this.bridge.onFileChanged === "function") {
       keep(this.bridge.onFileChanged((path) => this.store.dispatch({ type: "fileChanged", path })));
+    }
+    // VU9a: the window set's workspace follows the model on screen.
+    this.followWorkspace();
+    // ADR 0134 D5: main's particle measure or capture run, if this is one (main answers null to every other).
+    if (typeof this.bridge.particleHarness === "function") {
+      void this.bridge
+        .particleHarness()
+        .then((job) => (job ? this.runParticleHarness(job) : undefined))
+        .catch((err: unknown) => void this.bridge.fail(`the particle harness: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`));
     }
     return () => this.dispose();
   }

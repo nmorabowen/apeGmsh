@@ -89,6 +89,7 @@ from ._composites import (
     NodeResultsComposite,
 )
 from ._inspect import ResultsInspect
+from ._particles import ParticleResultsComposite
 from .readers._protocol import EigenMode, ResultsReader, StageInfo
 
 if TYPE_CHECKING:
@@ -407,6 +408,8 @@ class Results:
         # Composites
         self.nodes = NodeResultsComposite(self)
         self.elements = ElementResultsComposite(self)
+        # MPM particle outputs of a .ladruno (ADR 0134 D4).
+        self.particles = ParticleResultsComposite(self)
         self.inspect = ResultsInspect(self)
         self._plot: Optional["ResultsPlot"] = None
 
@@ -772,6 +775,14 @@ class Results:
         With ``model_h5=`` a one-file read gives NaN there, from the
         model's ``/opensees/nodes_ndf``; without it a rotation read over
         continuum elements warns ``AbsentDofWarning`` once (#1971).
+
+        MPM particles (ADR 0134 D3/D4): at ``INFO/FORMAT_MINOR_VERSION
+        >= 2`` a stage's particle group reads through
+        :attr:`particles` (``results.particles.get(component=...)``). An
+        all-particle file opens without ``model_h5=``: it has no FEM
+        (:attr:`fem` is ``None``), its broker wraps the empty stage
+        model, and a node or element read of a particle-only stage
+        refuses by name. A part file with particles is refused.
 
         Keys on ``INFO/GENERATOR="Ladruno"`` + a supported
         ``FORMAT_VERSION`` (the reader rejects a ``.mpco`` / foreign file
@@ -2665,6 +2676,7 @@ class Results:
         )
         new.nodes = NodeResultsComposite(new)
         new.elements = ElementResultsComposite(new)
+        new.particles = ParticleResultsComposite(new)
         new.inspect = ResultsInspect(new)
         new._plot = None
         # Custom scalar definitions (ADR 0076) follow stage / mode

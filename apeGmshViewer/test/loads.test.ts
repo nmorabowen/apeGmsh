@@ -548,6 +548,46 @@ function opsElementLoadsState(base: State, ndm: 2 | 3, args: readonly (string | 
   );
 }
 
+test("W4d #2843: the loads overlay hides an inactive element's load by the results stage's program name, never its display name", () => {
+  const tag = shoeState.decls[shoeState.mesh!.elements[0]!]!.element!.metas[0]!.tag;
+  const OWNED = "/opensees/stages/stage_001/owned_element_ids";
+  const loaded = opsElementLoadsState(shoeState, 2, [["-ele", tag, "-type", "-beamUniform", "-10.0", "0.0"]]);
+  // /sequence: the element is activated by stage "b", so it is inactive at stage "a".
+  const staged: State = {
+    ...loaded,
+    sequence: {
+      status: "ready",
+      version: "1.0.0",
+      attrs: { staged: 1 },
+      stages: { path: "/sequence/stages", columns: ["order", "name", "source"], rows: [[0, "a", "/opensees/stages/stage_000"], [1, "b", "/opensees/stages/stage_001"]] },
+      changes: { path: "/sequence/changes", columns: ["stage", "op", "what", "name", "count", "source"], rows: [[1, "activate", "element", "", 1, OWNED]] },
+    },
+    stageElements: { status: "ready", sets: { [OWNED]: [tag] } },
+  };
+  const onResults = (name: string, programName: string): State => ({
+    ...staged,
+    results: {
+      path: "staged.ladruno",
+      version: "1.0.0",
+      sourceType: "ladruno",
+      lineage: null,
+      partial: null,
+      stages: [{ id: "stage_0", name, programName, kind: "static", time: [1], nodal: [], refusedNodal: [], gauss: [], unread: [] }],
+      unavailableZones: [],
+      openseesVersion: null,
+      programDecl: null,
+    },
+    phase: { axis: [{ kind: "mesh" }, { kind: "results", stage: 0, step: 0 }], at: { kind: "results", stage: 0, step: 0 } },
+  });
+  assert.equal(nominal3D(staged, shoeBlobs).maxElementLoadMag, 10, "precondition: the load is drawn off the results phases");
+  // Shown as "Base load", program stage "a": the element is inactive, so its load is not drawn.
+  // Matched on the display name, "Base load" pairs with no /sequence stage and the load would be drawn.
+  assert.equal(nominal3D(onResults("Base load", "a"), shoeBlobs).maxElementLoadMag, 0);
+  assert.equal(nominal3D(onResults("Base load", "b"), shoeBlobs).maxElementLoadMag, 10, "active at stage b");
+  // Shown as "a" but program stage "b": active, never the display name's stage.
+  assert.equal(nominal3D(onResults("a", "b"), shoeBlobs).maxElementLoadMag, 10);
+});
+
 test("OpenSees-pattern beamUniform: the emitter's aL/bL and end values are decoded, not read as wz/wx (#2385 review 2)", () => {
   const decl = shoeState.decls[shoeState.mesh!.elements[0]!]!;
   const tag = decl.element!.metas[0]!.tag;
@@ -625,6 +665,7 @@ test("timeSeries scaling λ(t): Constant, Linear, Path, Trig, and scaleBySeries 
         {
           id: "stage_000",
           name: "gravity",
+          programName: "gravity",
           kind: "static",
           time: [0.25, 0.75],
           nodal: ["displacement_x"],
@@ -992,6 +1033,33 @@ test("stage-ordered remove_sp: stage 1 remove_sp removes earlier stage SP but pr
   const geom1 = nominal3D(sStage1, shoeBlobs);
   assert.equal(geom1.spArrows, 1);
   assert.ok(Math.abs(geom1.maxSpTranslationMag - 0.035) < 1e-9);
+
+  // W4d #2843: a results stage shown as "Base load" (a .ladruno display name) whose program
+  // name is stage_1 draws stage 1's loads, matched by the program name, and is labelled by
+  // its display name. Matched on `name`, it would match no stage and draw the global SP.
+  const onResults = (name: string, programName: string): State => ({
+    ...sWithStagedReplace,
+    results: {
+      path: "staged.ladruno",
+      version: "1.0.0",
+      sourceType: "ladruno",
+      lineage: null,
+      partial: null,
+      stages: [{ id: "stage_0", name, programName, kind: "static", time: [1], nodal: [], refusedNodal: [], gauss: [], unread: [] }],
+      unavailableZones: [],
+      openseesVersion: null,
+      programDecl: null,
+    },
+    phase: { axis: [{ kind: "mesh" }, { kind: "results", stage: 0, step: 0 }], at: { kind: "results", stage: 0, step: 0 } },
+  });
+  const sumR = loadsSummaryOf(onResults("Base load", "stage_1"));
+  assert.equal(sumR.activeStageIndex, 1, "matched to /opensees stage 1 by the program name");
+  assert.equal(sumR.activeStageLabel, "stage 1 · Base load");
+  assert.ok(Math.abs(sumR.peaks.spTranslation - 0.035) < 1e-9, "stage 1's SP, as on the stage-1 phase");
+  // A display name never matches: shown as "stage_1", program stage "other", it matches no stage.
+  const sumN = loadsSummaryOf(onResults("stage_1", "other"));
+  assert.equal(sumN.activeStageIndex, null);
+  assert.ok(Math.abs(sumN.peaks.spTranslation - 0.01) < 1e-9, "the global SP only, as with no stage picked");
 });
 
 test("3-D beam with nearly-parallel vecxz (||vecxz - (vecxz · xLocal) xLocal|| < 1e-6) fails closed with notice", () => {

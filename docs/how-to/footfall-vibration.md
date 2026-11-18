@@ -204,8 +204,32 @@ ran on.
 
 On a real floor with many response nodes, this file turns a table of
 per-node ratios into a map: red where the floor fails, green where it
-does not. [The worked two-bay slab](https://github.com/nmorabowen/apeGmsh/blob/main/examples/footfall_two_bay_shell.py)
-draws its map from this file.
+does not. apeGmshViewer draws it. Open the model; the Contour card lists
+`footfall` under **User Results**, and picking it colours the mesh by one
+of its three columns. Nodes outside the response set are drawn as no data
+(grey). The map is a contour only: the Deformed card is refused while it
+is shown. If the user file no longer pairs with the model (another
+`fem_hash`), the contour is refused with that reason.
+
+A still of the map comes from the app's `--render`, with
+`apeGmsh.agent_view.render_stills`. A user result belongs to no stage, so
+the shot names none:
+
+```python
+from apeGmsh.agent_view import render_stills
+
+render_stills({
+    "spec": "apegmsh-view/1",
+    "files": {"model": "footfall_bay.h5"},
+    "shots": [{"name": "footfall_ratio", "camera": "top", "chrome": "model",
+               "contour": {"field": "footfall", "component": "footfall_ratio",
+                           "source": "user"}}],
+}, "stills")
+```
+
+[The worked two-bay slab](https://github.com/nmorabowen/apeGmsh/blob/main/examples/footfall_two_bay_shell.py)
+writes its `footfall_ratio.png` this way. It falls back to matplotlib only
+when no viewer is installed.
 
 ## Why the 2nd edition, not Robot
 

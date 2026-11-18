@@ -570,4 +570,43 @@ for (const set of Object.keys(ORACLE.sets)) {
 }
 log("D3 manifest oracle: ok");
 
+// ---- 7: VA6d (#2766, G10), a derived scalar renders, and its manifest equals Python -------------
+// v1's default read (`gauss.get(component="von_mises_stress")`, plane="auto": elem_mixed's PlaneStrain sigma_zz
+// recovered, extrap_plane's left at 0 with no /opensees zone), reduced as the manifest oracle reduces a stored
+// component (the numbers and the script: test/contour/derived.test.ts, PR #2766).
+
+const DERIVED = [
+  { set: "elem_mixed", gauss: "cell", topology: "gauss_cell", holder: "element", min: [7.623975340988453, 2], max: [33.24432282360403, 16], history: [4.976444513907494, 33.24432282360403], unclassified: 0 },
+  { set: "extrap_plane", gauss: "node", topology: "gauss_node", holder: "node", min: [16.774003323595714, 13], max: [144.59875518136386, 5], history: [5.591334441198571, 144.59875518136386], unclassified: 15 },
+] as const;
+const near = (a: number | null | undefined, b: number) => typeof a === "number" && Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(b));
+for (const c of DERIVED) {
+  const shot = { stage: "load", step: 2, contour: { field: "stress", component: "von_mises_stress", gauss: c.gauss } };
+  const R = await render(`derived-${c.set}`, {
+    spec: "apegmsh-view/1",
+    files: { model: join(FIX, `${c.set}.h5`) },
+    size: [800, 600],
+    shots: [
+      { ...shot, name: "vm" },
+      { ...shot, name: "vm.model", chrome: "model" },
+    ],
+  });
+  assert.equal(R.code, 0, `${c.set}: ${R.shots.filter((s) => s.status !== "ok").map((s) => `${s.name}: ${s.reason}`).join("; ")}`);
+  assert.deepEqual(pngs(R.dir), R.shots.map((s) => s.png).sort(), "every PNG has its entry, and every entry its PNG");
+  for (const s of R.shots) {
+    const k = s.contour;
+    assert.ok(k?.drawn, `${c.set} ${s.name}: drawn`);
+    if (!k.drawn) continue;
+    assert.deepEqual([k.component, k.source, k.topology, k.derived?.from, k.derived?.plane.unclassified], ["von_mises_stress", "element", c.topology, ["stress_xx", "stress_yy", "stress_xy"], c.unclassified]);
+    assert.equal(k.derived?.warning === null, c.unclassified === 0, `${c.set} ${s.name}: the manifest warns iff an element's zz is left at 0 unclassified`);
+    const r = k.extrema.recorded!;
+    assert.ok(near(r.min.value, c.min[0]) && near(r.max.value, c.max[0]), `${c.set} ${s.name}: extrema [${r.min.value}, ${r.max.value}], Python [${c.min[0]}, ${c.max[0]}]`);
+    assert.deepEqual([r.min[c.holder], r.max[c.holder]], [c.min[1], c.max[1]], `${c.set} ${s.name}: the ${c.holder}s that hold them`);
+    assert.equal(k.range.history_scan.status, "done");
+    assert.ok(near(k.range.min, c.history[0]) && near(k.range.max, c.history[1]), `${c.set} ${s.name}: range [${k.range.min}, ${k.range.max}], Python ${c.history}`);
+  }
+  log(`  ${c.set}: von_mises_stress (${c.gauss}) renders and equals Python, in both chromes`);
+}
+log("VA6d derived scalars: ok");
+
 log(`render e2e: all checks passed; stills in ${OUT}`);

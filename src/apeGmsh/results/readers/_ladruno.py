@@ -24,18 +24,38 @@ Key layout facts (verified against fork build ``605affeb``, FORMAT_VERSION 1):
 * ``RESULTS/ON_NODES/<RESULT>`` (e.g. ``DISPLACEMENT``) — attr
   ``COMPONENTS`` (comma-joined labels ``"Ux,Uy"``); datasets ``ID[n,1]``,
   ``DATA[T,n,nComp]``, ``TIME[T]``, ``STEP[T]``.
+
+A killed run (M2-S8 #3003; fork schema §7b.2 at ``ladruno-v20261116``): the
+file opens by the reader rule (``_ladruno_open.open_ladruno``: plain, else
+SWMR-read, else a repaired copy; the user's file is never written), and its
+stages follow the stage rule (``_ladruno_open.stage_report``): a torn LAST
+stage is skipped after a plain open or a repaired copy, and refused after an
+SWMR-read open; an earlier stage that does not read refuses the file. On a
+killed file (superblock flags other than 0x00) every stage is cut to T', the
+fewest rows any of its streaming results holds in ``DATA``, ``TIME`` or
+``STEP``: the time vector, and so every time-series read, stops there. A
+cleanly closed file is read as it is. A live writer's lock is
+``_ladruno_open.LadrunoFileBusyError``.
 """
 from __future__ import annotations
 
 import warnings
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Sequence
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Sequence, cast
 
 import numpy as np
 from numpy import ndarray
 
 from ..._vocabulary import PER_ELEMENT_NODAL_FORCES
+from ...opensees._response_catalog import (
+    PER_MATERIAL_STRAIN_CLASSES,
+    catalog_token_for_keyword,
+    gauss_routing_for_canonical,
+    mpco_gauss_group_aliases,
+    needs_per_material_strain,
+    parse_mpco_element_key,
+)
 from .._slabs import (
     ElementSlab,
     FiberSlab,
@@ -48,6 +68,7 @@ from .._slabs import (
 from .._time import resolve_time_slice
 from ..schema._versions import LADRUNO_SUPPORTED_FORMAT_VERSIONS
 from . import _ladruno_element_io as _eio
+from . import _mpco_element_io as _melem
 from ._buckets import (
     _PROGRAM_STAGE_KINDS,
     PARTITION_REDUCTION_NONE,
@@ -64,15 +85,30 @@ from ._buckets import (
     attach_nodes_ndf,
     canonical_node_component,
     discover_modes,
+    is_modal_result_name,
     locate_node_component,
     modal_components,
     mode_stage_layout,
     model_node_ids,
     partition_reduction_from_name,
     read_mode_shape,
+    SNAPSHOTS_CLEAN,
+    SNAPSHOTS_REFUSE,
+    SNAPSHOTS_SKIP,
+    torn_mode_snapshots,
 )
 from ._ladruno_element_io import SpatialDimUnknown
 from ._ladruno_hyperslab import read_hyperslab
+from ._ladruno_open import (
+    LadrunoStages,
+    LadrunoStageSkippedWarning,
+    STEP_SWMR,
+    OpenedLadruno,
+    open_ladruno,
+    stage_report,
+)
+from ._ladruno_particles import ParticleStage, scan_particle_stages
+from ._mpco import MPCOStrainNotRecorded
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
 if TYPE_CHECKING:
@@ -196,9 +232,11 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
     (one part stamped, the other not, or with other names), or display
     names with no ``stage_names`` to bind by; and ``ValueError`` when the
     parts hold different numbers of ``MODEL_STAGE`` groups.
-    """
-    import h5py
 
+    Each file opens as :class:`LadrunoReader` opens it (the reader rule of
+    schema §7b.2), and its stages are the ones the stage rule reads: a torn
+    last stage the reader skips is not one of them (the reader warns).
+    """
     files = [Path(p) for p in paths]
     source = files[0].name if len(files) == 1 else f"{files[0].name} (+{len(files) - 1} parts)"
     per_part: list[list[tuple[str, Optional[str], bool, bool]]] = []
@@ -206,11 +244,12 @@ def read_stage_stamp(paths: "Sequence[str | Path]") -> StageStamp:
     shown: list[Optional[tuple[str, ...]]] = []
     transcoded = False
     for path in files:
-        with h5py.File(path, "r") as h5:
-            groups = sorted(
-                (k for k in h5.keys() if k.startswith(_STAGE_PREFIX)),
-                key=_stage_sort_key,
-            )
+        with open_ladruno(path) as opened:
+            h5 = opened.h5
+            with warnings.catch_warnings():
+                # The reader that reads the file warns of a skipped stage.
+                warnings.simplefilter("ignore", LadrunoStageSkippedWarning)
+                groups = list(stage_report(opened).names)
             rows = []
             for name in groups:
                 grp = h5[name]
@@ -452,17 +491,33 @@ def _repeated_rows(ids: ndarray) -> "dict[int, list[int]]":
 
     The fork writes ids ascending, so a strictly increasing list (one
     pairwise comparison) is accepted without sorting; any other list is
-    checked with ``np.unique``, so an unsorted list of distinct ids
-    passes. The comparison never subtracts: ``np.diff`` wraps in int64,
-    so ``[0, 2**63 - 1, -2, 0]`` would read as increasing.
+    sorted once, so an unsorted list of distinct ids passes. The
+    comparison never subtracts: ``np.diff`` wraps in int64, so
+    ``[0, 2**63 - 1, -2, 0]`` would read as increasing.
+
+    The ids come out ascending, each with its rows ascending. One stable
+    argsort finds them all, in O(N log N): a run of equal ids in sorted
+    order is one repeated id, and the stable sort keeps its rows in file
+    order (#2363; a scan of ``ids`` per repeated id was O(R·N)).
     """
     if ids.size < 2 or bool((ids[1:] > ids[:-1]).all()):
         return {}
-    uniq, counts = np.unique(ids, return_counts=True)
-    if uniq.size == ids.size:
+    order = np.argsort(ids, kind="stable")
+    ordered = ids[order]
+    same = ordered[1:] == ordered[:-1]
+    if not same.any():
         return {}
+    # A run of equal ids starts where the sorted id changes.
+    starts = np.flatnonzero(np.concatenate(([True], ~same)))
+    ends = np.append(starts[1:], ordered.size)
+    multi = ends - starts > 1
+    rows = order.tolist()
     return {
-        int(n): np.flatnonzero(ids == n).tolist() for n in uniq[counts > 1]
+        int(n): rows[s:e]
+        for n, s, e in zip(
+            ordered[starts[multi]].tolist(),
+            starts[multi].tolist(), ends[multi].tolist(),
+        )
     }
 
 #: Stage subgroups whose result groups carry a node ``ID`` list: the time
@@ -518,21 +573,95 @@ def _child(group: "h5py.Group", path: str):
     return cur
 
 
+class _StagesView:
+    """A file as a scan over its stages sees it: ``INFO`` and the
+    ``MODEL_STAGE`` groups the stage rule reads (schema §7b.2), never a torn
+    last stage it skipped."""
+
+    def __init__(self, h5: "h5py.File", names: "Sequence[str]") -> None:
+        self._h5 = h5
+        self._names = tuple(names)
+
+    def __iter__(self):
+        yield from ("INFO", *self._names)
+
+    def __contains__(self, name: object) -> bool:
+        return name == "INFO" or name in self._names
+
+    def __getitem__(self, name: str):
+        if name not in self:
+            raise KeyError(name)
+        return self._h5[name]
+
+
+def _per_material_strain_token(component: str) -> Optional[str]:
+    """The catalog token of ``component`` when it is a strain that a
+    :data:`PER_MATERIAL_STRAIN_CLASSES` class could answer, else ``None``
+    (a stress, or a component with no Gauss routing)."""
+    routing = gauss_routing_for_canonical(component)
+    if routing is None:
+        return None
+    if not any(needs_per_material_strain(cls, routing[1])
+               for cls in PER_MATERIAL_STRAIN_CLASSES):
+        return None
+    return routing[1]
+
+
+def _strain_bucket_ids(
+    stage: "h5py.Group", component: str, catalog_token: str,
+) -> "list[ndarray]":
+    """The ``ID`` rows of every bucket under a strain token of
+    ``stage``'s ``RESULTS/ON_ELEMENTS``: the group aliases the MPCO
+    reader scans for ``component`` (``strains``, ``material.strain``),
+    or a token the catalog reads as ``catalog_token``."""
+    import h5py
+
+    on_elements = _child(stage, "RESULTS/ON_ELEMENTS")
+    if on_elements is None:
+        return []
+    routing = gauss_routing_for_canonical(component)
+    aliases = mpco_gauss_group_aliases(routing[0]) if routing else ()
+    out: "list[ndarray]" = []
+    for token in on_elements:
+        if not (token in aliases or token == catalog_token
+                or catalog_token_for_keyword(token) == catalog_token):
+            continue
+        token_grp = on_elements[token]
+        if not isinstance(token_grp, h5py.Group):
+            continue
+        for bucket in token_grp.values():
+            if isinstance(bucket, h5py.Group) and "ID" in bucket:
+                out.append(np.asarray(bucket["ID"][...],
+                                      dtype=np.int64).ravel())
+    return out
+
+
 class LadrunoReader:
     """Reads one ``.ladruno`` file into the ``ResultsReader`` protocol."""
 
     def __init__(self, path: "str | Path") -> None:
-        import h5py
-
         self._path = Path(path)
-        self._h5: "h5py.File" = h5py.File(self._path, "r")
+        # The reader rule (schema §7b.2): a killed run opens SWMR-read, or
+        # through a repaired copy; a live writer's lock is busy.
+        self._opened: OpenedLadruno = open_ladruno(self._path)
+        self._h5: "h5py.File" = self._opened.h5
         # A file that fails the identity check (or any setup after the
         # open, or an interrupt) is closed before the original error
         # propagates, so it stays unlocked while the traceback lives.
         try:
             self._validate_identity()
+            # The stage rule: the stages that read, and each one's T' on a
+            # killed file. Every later walk over the stages uses these.
+            self._stage_rule: LadrunoStages = stage_report(self._opened)
             self._refuse_repeated_node_ids()
             self._refuse_malformed_local_axes()
+            # ADR 0134 D3: the MODEL_STAGE groups holding a particle
+            # group; a file the contract forbids is refused here.
+            self._particle_groups = scan_particle_stages(
+                cast("h5py.File", _StagesView(self._h5, self._stage_rule.names)),
+                self._path,
+            )
+            self._particle_stages: dict[str, ParticleStage] = {}
             self._stage_cache: Optional[list[StageInfo]] = None
             self._stage_to_grp: dict[str, str] = {}
             # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
@@ -581,10 +710,7 @@ class LadrunoReader:
         """
         import h5py
 
-        for stage in sorted(
-            (k for k in self._h5 if k.startswith(_STAGE_PREFIX)),
-            key=_stage_sort_key,
-        ):
+        for stage in self._stage_rule.names:
             nodes = _child(self._h5[stage], "MODEL/NODES")
             # A MODEL/NODES without an ID lists no node; the FEMData read
             # that needs it fails on that read.
@@ -635,10 +761,7 @@ class LadrunoReader:
         """
         import h5py
 
-        for stage in sorted(
-            (k for k in self._h5 if k.startswith(_STAGE_PREFIX)),
-            key=_stage_sort_key,
-        ):
+        for stage in self._stage_rule.names:
             axes = _child(self._h5[stage], "MODEL/LOCAL_AXES")
             if not isinstance(axes, h5py.Group):
                 continue
@@ -675,10 +798,39 @@ class LadrunoReader:
                 raise LadrunoRepeatedElementId(self._path, places)
 
     def close(self) -> None:
+        # Closes the file, and removes a repaired copy (reader rule step 3).
         try:
-            self._h5.close()
+            self._opened.close()
         except Exception:
             pass
+
+    @property
+    def open_step(self) -> int:
+        """The reader-rule step that opened the file (schema §7b.2): 1 a
+        plain open, 2 SWMR-read (a run killed with SWMR armed), 3 a repaired
+        copy (a run killed during a layout step)."""
+        return self._opened.step
+
+    @property
+    def killed(self) -> bool:
+        """Whether the file's superblock says a writer never closed it
+        (flags other than 0x00): its stages are then cut to T'."""
+        return self._stage_rule.killed
+
+    def committed_steps(self, stage_id: str) -> Optional[int]:
+        """T' of a host stage on a killed file (schema §7b.2), the rows every
+        read of it stops at; None on a cleanly closed file (no cut) or for a
+        stage with no streaming result. A mode stage has none."""
+        if self._stage_cache is None:
+            self.stages()
+        if stage_id in self._mode_refs:
+            return None
+        return self._stage_rule.committed[
+            self._resolve_stage_group(stage_id).name.lstrip("/")]
+
+    def _cut(self, grp: "h5py.Group") -> Optional[int]:
+        """The rows of ``grp``'s stage a read may use (T'), or None."""
+        return self._stage_rule.committed.get(grp.name.lstrip("/"))
 
     def __enter__(self) -> "LadrunoReader":
         return self
@@ -871,12 +1023,25 @@ class LadrunoReader:
         if self._stage_cache is not None:
             return list(self._stage_cache)
         hosts: list[StageInfo] = []
-        # Sort by the numeric stamp inside ``MODEL_STAGE[<k>]`` —
-        # lexicographic sorting would put MODEL_STAGE[10] before
-        # MODEL_STAGE[2] once a run reaches ten stages.
-        names = sorted(
-            (k for k in self._h5.keys() if k.startswith(_STAGE_PREFIX)),
-            key=_stage_sort_key,
+        # The stages the stage rule reads (schema §7b.2), sorted by the
+        # numeric stamp inside ``MODEL_STAGE[<k>]`` — lexicographic sorting
+        # would put MODEL_STAGE[10] before MODEL_STAGE[2] once a run
+        # reaches ten stages.
+        names = list(self._stage_rule.names)
+        # The modes-snapshot crash rule (schema §7b.2) follows the stage
+        # rule: on a killed file opened plainly or through a repaired copy
+        # (flags 0x01) a damaged snapshot is skipped with every later one;
+        # on one opened SWMR-read (flags 0x05) it refuses by name; on a
+        # cleanly closed file one that does not open refuses by name.
+        if not self._stage_rule.killed:
+            rule = SNAPSHOTS_CLEAN
+        elif self._opened.step == STEP_SWMR:
+            rule = SNAPSHOTS_REFUSE
+        else:
+            rule = SNAPSHOTS_SKIP
+        torn_snapshots = torn_mode_snapshots(
+            [(n, _child(self._h5[n], "RESULTS/ON_NODES")) for n in names],
+            source=self._path.name, rule=rule,
         )
         host_sets = []
         for i, name in enumerate(names):
@@ -895,6 +1060,7 @@ class LadrunoReader:
             host_sets.append(
                 [] if on_nodes is None else discover_modes(
                     on_nodes, source=f"{self._path.name} {name}",
+                    skip_steps=torn_snapshots.get(name, frozenset()),
                 )
             )
         # Each recorded mode is its own kind="mode" stage, listed
@@ -930,6 +1096,45 @@ class LadrunoReader:
                 "from it. Read the stage that recorded the analysis steps."
             )
 
+    def _refuse_on_particles(self, stage_id: str, what: str) -> None:
+        """Fail loud on a node or element read of a particle-only stage."""
+        grp = self._resolve_stage_group(stage_id)
+        if stage_id in self._mode_refs:
+            return
+        name = grp.name.lstrip("/")
+        if (name in self._particle_groups
+                and _attr_int(grp.attrs, "EMPTY_PARTITION", default=0) == 1):
+            raise ValueError(
+                f"{self._path.name}: stage {stage_id!r} ({name}) holds MPM "
+                f"particles only, so {what} cannot be read from it. Read "
+                "it with results.particles.get(...) (ADR 0134 D4)."
+            )
+
+    def particle_stage_ids(self) -> list[str]:
+        """The stage ids whose ``MODEL_STAGE`` holds a particle group."""
+        if self._stage_cache is None:
+            self.stages()
+        return [sid for sid, name in self._stage_to_grp.items()
+                if name in self._particle_groups]
+
+    def particle_stage(self, stage_id: str) -> ParticleStage:
+        """The particle group of ``stage_id`` (ADR 0134 D3), or a refusal."""
+        grp = self._resolve_stage_group(stage_id)
+        name = grp.name.lstrip("/")
+        if stage_id in self._mode_refs or name not in self._particle_groups:
+            raise ValueError(
+                f"{self._path.name}: stage {stage_id!r} holds no particle "
+                f"group; the stages with particles are "
+                f"{self.particle_stage_ids()}."
+            )
+        if stage_id not in self._particle_stages:
+            stage = ParticleStage(grp, where=f"{self._path.name} {name}")
+            # A stage the contract refuses is never cached: every access
+            # re-raises, and nothing of it is read in part.
+            stage.validate()
+            self._particle_stages[stage_id] = stage
+        return self._particle_stages[stage_id]
+
     def _resolve_stage_group(self, stage_id: str) -> "h5py.Group":
         if self._stage_cache is None:
             self.stages()
@@ -945,10 +1150,15 @@ class LadrunoReader:
         return self._h5[self._stage_to_grp[stage_id]]
 
     def _time_for_group(self, grp: "h5py.Group") -> ndarray:
-        """Read a stage's TIME axis from the first result that has one."""
+        """Read a stage's TIME axis from the first result that has one.
+
+        On a killed file the axis stops at the stage's T' (schema §7b.2),
+        so every read that resolves its steps against it stops there too.
+        """
         results = _child(grp, "RESULTS")
         if results is None:
             return np.array([], dtype=np.float64)
+        cut = self._cut(grp)
         # ON_NODES/<res>/TIME is the canonical source; fall back to any
         # ON_* result group carrying a TIME dataset.
         for bucket in ("ON_NODES", "ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS"):
@@ -957,15 +1167,23 @@ class LadrunoReader:
                 continue
             t = self._find_time_dataset(bgrp)
             if t is not None:
-                return np.asarray(t[...], dtype=np.float64).flatten()
+                rows = t[...] if cut is None else t[:cut]
+                return np.asarray(rows, dtype=np.float64).flatten()
         return np.array([], dtype=np.float64)
 
     @staticmethod
     def _find_time_dataset(group: "h5py.Group"):
-        """Depth-first search for a ``TIME`` dataset under ``group``."""
+        """Depth-first search for a ``TIME`` dataset under ``group``.
+
+        A modes result (``MODES_OF_VIBRATION(U|R)``) holds no ``TIME`` and is
+        not entered: its snapshots are read only by the modes-snapshot crash
+        rule, which skips one that does not open.
+        """
         import h5py
 
         for key in group:
+            if is_modal_result_name(key):
+                continue
             item = group[key]
             if key == "TIME" and isinstance(item, h5py.Dataset):
                 return item
@@ -1083,7 +1301,17 @@ class LadrunoReader:
         """
         fem = self.fem()
         if fem is None:
-            return None
+            if not self._particle_groups:
+                return None
+            # An all-particle file (ADR 0134 D3): every stage is the
+            # recorder's empty stage. The broker wraps that stage's
+            # empty MODEL group, so the file opens without model_h5=,
+            # and its node and element reads refuse by name.
+            from ...mesh.FEMData import FEMData
+            last = self.particle_stage_ids()[-1]
+            fem = FEMData.from_ladruno_model(
+                self._resolve_stage_group(last)["MODEL"])
+            fem.units = self.units
         from types import MappingProxyType
 
         from ...opensees.opensees_model import OpenSeesModel
@@ -1128,6 +1356,10 @@ class LadrunoReader:
         self, stage_id: str, level: ResultLevel,
     ) -> list[str]:
         grp = self._resolve_stage_group(stage_id)
+        if level is ResultLevel.PARTICLES:
+            if stage_id not in self.particle_stage_ids():
+                return []
+            return self.particle_stage(stage_id).components()
         if stage_id in self._mode_refs:
             on_nodes = _child(grp, "RESULTS/ON_NODES")
             if level is not ResultLevel.NODES or on_nodes is None:
@@ -1240,6 +1472,7 @@ class LadrunoReader:
         node_ids: "Optional[ndarray]" = None,
         time_slice: TimeSlice = None,
     ) -> NodeSlab:
+        self._refuse_on_particles(stage_id, f"node component {component!r}")
         slab = self._read_nodes_as_recorded(
             stage_id, component, node_ids=node_ids, time_slice=time_slice,
         )
@@ -1396,7 +1629,12 @@ class LadrunoReader:
             )
         cols = [c.strip() for c in _decode(eg.attrs["COMPONENTS"]).split(",")]
         ids = np.asarray(eg["ID"][...], dtype=np.int64).flatten()
-        time = np.asarray(eg["TIME"][...], dtype=np.float64).flatten()
+        # A killed file's stage stops at T' (schema §7b.2).
+        cut = self._cut(grp)
+        time = np.asarray(
+            eg["TIME"][...] if cut is None else eg["TIME"][:cut],
+            dtype=np.float64,
+        ).flatten()
         if region is None:
             row = 0
         else:
@@ -1543,6 +1781,7 @@ class LadrunoReader:
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> ElementSlab:
         self._refuse_on_mode(stage_id, f"element component {component!r}")
+        self._refuse_on_particles(stage_id, f"element component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         on_e = self._require_element_results(
@@ -1593,6 +1832,7 @@ class LadrunoReader:
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> LineStationSlab:
         self._refuse_on_mode(stage_id, f"line-station component {component!r}")
+        self._refuse_on_particles(stage_id, f"line-station component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
@@ -1643,11 +1883,25 @@ class LadrunoReader:
         element_ids: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> GaussSlab:
         self._refuse_on_mode(stage_id, f"gauss component {component!r}")
+        self._refuse_on_particles(stage_id, f"gauss component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
+        on_elements = _child(grp, "RESULTS/ON_ELEMENTS")
+        if ((on_elements is None or not len(on_elements))
+                and _per_material_strain_token(component) is not None):
+            # A part with no element results can still list a Tri31
+            # element the read covers. The partitioned reader drops such a
+            # part (MissingElementResults), so the listing is checked
+            # first.
+            bucket_ids, index_to_fem = self._element_read_translation(
+                element_ids)
+            self._refuse_unrecorded_strain(
+                grp, component, np.empty(0, dtype=np.int64),
+                element_ids=bucket_ids, index_to_fem=index_to_fem,
+            )
         on_e = self._require_element_results(
-            _child(grp, "RESULTS/ON_ELEMENTS"),
+            on_elements,
             family="gauss (stress / strain)", component=component,
             stage_id=stage_id,
         )
@@ -1655,6 +1909,11 @@ class LadrunoReader:
         result = _eio.read_gauss_slab(
             on_e, _child(grp, "MODEL/ELEMENTS"), component,
             t_idx=t_idx, element_ids=bucket_ids,
+        )
+        self._refuse_unrecorded_strain(
+            grp, component,
+            np.empty(0, dtype=np.int64) if result is None else result[1],
+            element_ids=bucket_ids, index_to_fem=index_to_fem,
         )
         if result is None:
             return _empty_gauss_slab(component, time, t_idx)
@@ -1666,12 +1925,123 @@ class LadrunoReader:
             time=time[t_idx],
         )
 
+    def _refuse_unrecorded_strain(
+        self,
+        stage: "h5py.Group",
+        component: str,
+        returned: ndarray,
+        *,
+        element_ids: "Optional[ndarray]",
+        index_to_fem: Any,
+    ) -> None:
+        """Raise :class:`MPCOStrainNotRecorded` when a strain read covers
+        elements of a class with no element-level strain response and the
+        file holds no strain row for them (#2895, the ``.ladruno`` side of
+        #2893).
+
+        The elements in scope are those of ``stage``'s ``MODEL/ELEMENTS``
+        listing (column 0 of each class group's ``CONNECTIVITY``) whose
+        class is in ``PER_MATERIAL_STRAIN_CLASSES`` and whose catalog
+        strain row carries ``component``, narrowed to ``element_ids``
+        (OpenSees tags; ``None`` asks for every element). An element is
+        recorded when the read returns a column for it (``returned``) or
+        its ID is in any strain-token bucket of the stage (``strains``,
+        ``material.strain``), as on the MPCO side: a bucket that holds
+        the element but not ``component`` answers like a stress read of
+        a missing column, so it is not refused. A stage that lists no
+        elements has none in scope.
+        """
+        import h5py
+
+        catalog_token = _per_material_strain_token(component)
+        # Not a strain read for any such class (a stress read): no listing
+        # is looked at.
+        if catalog_token is None:
+            return
+        elements = _child(stage, "MODEL/ELEMENTS")
+        if elements is None:
+            return
+        wanted = (None if element_ids is None
+                  else np.asarray(element_ids, dtype=np.int64))
+        in_scope: dict[str, list[ndarray]] = {}
+        for grp_name in elements:
+            grp = elements[grp_name]
+            if not (isinstance(grp, h5py.Group) and "CONNECTIVITY" in grp):
+                continue
+            conn = grp["CONNECTIVITY"]
+            if not (conn.ndim == 2 and conn.shape[0] and conn.shape[1]):
+                continue
+            tags = np.asarray(conn[:, 0], dtype=np.int64)
+            if wanted is not None:
+                tags = tags[np.isin(tags, wanted)]
+            if not tags.size:
+                continue
+            try:
+                key = parse_mpco_element_key(grp_name)
+            except ValueError as exc:
+                # Only a listing the read covers can hide such a class.
+                raise ValueError(
+                    f".ladruno gauss read of {component!r} in "
+                    f"{self._path.name}: the element listing {grp.name} "
+                    f"names no class ({exc}), and the read covers its "
+                    f"element(s) "
+                    f"{np.asarray(index_to_fem(tags), np.int64).tolist()}, "
+                    f"so it cannot tell whether they answer element-level "
+                    f"strain."
+                ) from exc
+            if not needs_per_material_strain(key.class_name, catalog_token):
+                continue
+            # A class whose strain row lacks the component would not answer
+            # it from any record; one with no row is kept in scope.
+            layout = _melem.catalog_layout(
+                key, catalog_token, where=grp.name,
+            )
+            answers = layout is None or component in (
+                layout.component_layout
+                + (_melem._PLANE_OUT_OF_PLANE.get(layout.component_layout),)
+            )
+            if not answers:
+                continue
+            in_scope.setdefault(key.class_name, []).append(tags)
+        if not in_scope:
+            return
+        recorded = np.concatenate(
+            [np.asarray(returned, dtype=np.int64).ravel()]
+            + _strain_bucket_ids(stage, component, catalog_token),
+        )
+        missing = {
+            cls: np.setdiff1d(np.concatenate(parts), recorded)
+            for cls, parts in in_scope.items()
+        }
+        missing = {cls: ids for cls, ids in missing.items() if ids.size}
+        if not missing:
+            return
+        listing = "; ".join(
+            f"{cls} element(s) "
+            f"{np.asarray(index_to_fem(ids), dtype=np.int64).tolist()}"
+            for cls, ids in sorted(missing.items())
+        )
+        classes = sorted(missing)
+        raise MPCOStrainNotRecorded(
+            f".ladruno gauss read of {component!r} in {self._path.name} "
+            f"covers {listing}, and the file holds no {component!r} rows "
+            f"for them. {', '.join(classes)} answers no element-level "
+            f"strain (ops.eleResponse(eid, 'strains') is empty), so a "
+            f"strains record leaves those elements out, and the read would "
+            f"drop them in silence. Record the strain with "
+            f"element_class_name={classes[0]!r} on the recorder "
+            f"declaration, which records it per Gauss point "
+            f"(material.strain), or read only elements of other classes "
+            f"(element_ids, or a physical group without them)."
+        )
+
     def read_fibers(
         self, stage_id: str, component: str, *,
         element_ids: "Optional[ndarray]" = None,
         gp_indices: "Optional[ndarray]" = None, time_slice: TimeSlice = None,
     ) -> FiberSlab:
         self._refuse_on_mode(stage_id, f"fiber component {component!r}")
+        self._refuse_on_particles(stage_id, f"fiber component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
@@ -1713,6 +2083,7 @@ class LadrunoReader:
         read, and a rank may hold no element.
         """
         self._refuse_on_mode(stage_id, f"layer component {component!r}")
+        self._refuse_on_particles(stage_id, f"layer component {component!r}")
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
         grp = self._resolve_stage_group(stage_id)
@@ -1743,6 +2114,7 @@ class LadrunoReader:
         # material stress/strain are already reachable via read_elements
         # (the ``force`` token) and read_gauss (``material.stress`` →
         # stress_xx). No bespoke spring slab. Always empty here.
+        self._refuse_on_particles(stage_id, f"spring component {component!r}")
         time = self.time_vector(stage_id)
         return _empty_spring_slab(
             component, time, resolve_time_slice(time_slice, time),

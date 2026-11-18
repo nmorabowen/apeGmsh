@@ -167,7 +167,9 @@ scheduled lane with 2 or more non-green nights, labelled with its owning chain
 (#2556). Then run `ListAgents`: if another session titled "T coordinator"
 is live, stop. Announce yourself to every live program session
 and ask each to report to you at every landing, blocker, maintainer question,
-lock handover and handoff.
+lock handover and handoff. When no T is live, an orchestrator that lands its
+own PRs says so on #1202, and a T that boots takes the token and the locks over
+from that comment (2026-11-10, c6786353968).
 
 **Locks.**
 - Only the holder carries a `lock:<file>` label. The queue order
@@ -213,10 +215,28 @@ no `Review-verdict` after about 6 h, (c) lock holders with no PR activity. Read
 the PR, then nudge the session with the exact next command. Reviewers run long
 checks in the background.
 
-**Landing order.** A `main` Tests run takes about 50 minutes, and check 10 waits
-for it, so serial landings can starve a PR that has been ready longest (3a #2111
-lost three heads in a row, 2026-10-16). Give the oldest ready PR the next green
-head, and tell the other sessions to hold their landings until it lands.
+**Landing token.** There is one landing token, and T holds it. Only the PR
+holding it runs `land_pr`. A session asks T for the token once its PR is
+review-approved, green and (for a `human-gate` PR) owner-approved, and gives the
+PR number and the head SHA. T grants it to one PR at a time, only when `main`'s
+latest Tests run is green, oldest ready PR first (T, 2026-11-03). The holder
+runs `land_pr` once, with no background landing loop, and reports the merge SHA;
+T verifies it with `compare` before the token moves. Before moving the token, T
+asks the current holder whether a `land_pr` run is in flight: two PRs held it
+for a moment once, and check 10 absorbed it (2026-11-10). After a landing, the
+next ready PR may merge `main` at once, so its checks run alongside `main`'s own
+run: check 10 allows a PR whose checks ran on a base containing `main`'s head.
+
+**Landing order.** A `main` Tests run takes about 50 minutes. Check 10 lets up
+to three file-disjoint PRs land on one green run (#2919): while the run on the
+head is in progress, a PR whose files miss everything landed since the last
+green commit G lands, as long as no more than two commits sit past G and each
+of their runs is a first attempt, still queued or running, with no required
+job finished other than green. A fourth PR, or one that shares a file
+with that group, waits for the next green head, and that wait can starve the PR
+ready longest (3a #2111 lost three heads in a row, 2026-10-16). Give the oldest
+ready PR the next slot, land a group one PR at a time, and tell the other
+sessions to hold their landings until it lands.
 
 **Red `main`.**
 1. Confirm it from `gh run list --branch main` first.
@@ -238,10 +258,14 @@ head, and tell the other sessions to hold their landings until it lands.
 9. Watch `main`'s run on the fix sha in a background loop, and broadcast the
    lift to every session yourself.
 
-**Approvals across merges.** A verdict binds to a SHA. An approval carries over
-only when the new delta is a merge of `main` that touches no PR file: compare
-the PR's own diff before and after, and post the carry-over with its reason. A
-hand-resolved conflict needs a delta review.
+**Approvals across merges.** A verdict binds to a SHA, and the
+`review-verdict` check reads only a `Review-verdict:` comment that names the
+current head in full. No approval carries over a push, not even a pure merge
+of `main`: dispatch the reviewer for a narrow review of the delta and post the
+new line. Reviewers do not post; T posts their verdict with a Bash heredoc or
+`--body-file` (a PowerShell here-string adds a BOM the check cannot read,
+#2737). Reviewers work from a `git archive` of the head, never a shared
+worktree.
 
 **Maintainer questions.**
 - Ask one question at a time, explaining what it means for their modelling,
@@ -264,13 +288,34 @@ hand-resolved conflict needs a delta review.
 - ADRs: `land_pr` check 7 refuses an agent landing an ADR whose status is
   Accepted, including amendments to one. The maintainer merges those PRs
   through the GitHub web page; put ADR edits in their own small PR so they hold
-  up nothing else.
+  up nothing else. When the maintainer tells T in T's own session to merge
+  one, T records the words on the PR, confirms the required checks are green,
+  runs `gh pr merge <n> --squash --match-head-commit <head>`, and verifies it
+  with `compare` (#3004, 2026-11-15).
+- "Merged" from the maintainer is a claim to check: read
+  `gh pr view <n> --json state` before closing a card or archiving a session
+  on it (#3004 was still open, blocked by pending checks).
 - Standing rules:
   - Qt viewers are in sunset: they get only changes that unblock CI or stop a
     user-facing crash.
   - Silent wrong answers go to chain B.
   - Opus reviews.
   - Sessions land their own green, approved PRs.
+
+**Fork facts.** A fork rule becomes a build instruction only once it is in
+the fork's merged text. Verify the merge yourself
+(`gh pr view <n> --repo nmorabowen/OpenSees`, then `compare/ladruno...<sha>`),
+and quote the contract section and the commit on the card. A slice builds
+and makes its fixtures at `FORK_PIN`; work that needs a later fork commit
+is a queued card that names the release it waits for. When two fork documents
+disagree, stop the slice, verify both quotes, and ask the fork sessions to
+settle it in one merged text before the builder writes code (the torn-stage
+rule on #2991, settled by OpenSees#1092).
+
+**Sessions.** Pass `model` on every `start_session`: a started session
+inherits the caller's model otherwise. A hook adds a `session` label to
+`archive_session`; when the first call returns no verdict, send it again with
+exactly the input the refusal quotes.
 
 **Wrap-up (batch end or large context).**
 1. Each session stops its workers, pushes any WIP, posts its §6 handoff with
@@ -293,3 +338,5 @@ hand-resolved conflict needs a delta review.
   message began; it can only propose one as a card. Starting a session in
   another folder (the fork) needs the maintainer's own words in your session.
 - On Windows, a script can die with 0xC000070A or exit 127 (#1376): retry once.
+- Git Bash rewrites `origin/main:<path>` into a Windows path list. Set
+  `MSYS_NO_PATHCONV=1` for `git show <ref>:<path>`.

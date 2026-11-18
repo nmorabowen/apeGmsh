@@ -20,7 +20,9 @@
 //   bucket's MODEL/ELEMENTS group, row g for GAUSS_ID g, never a TS table of rules.
 //   They are offered (for the Gauss-to-node extrapolation) only on PARAM_DOMAIN
 //   "[-1,1]", the domain state/extrapolation.ts's shape functions read; another
-//   domain ("[0,1]", "bary") warns and offers none, never a re-mapped guess. A
+//   domain ("[0,1]", or "bary" as BezierTri6 and BezierTet10 write) warns and
+//   offers none, never a re-mapped guess (a gauss_node contour then draws such a
+//   group's element means, state/extrapolation.ts meanFallbackGroups). A
 //   group with no QUADRATURE/GP_PARAM at all (the fork's recorder writes none for a
 //   class it has no rule for) is read the same way: G from GAUSS_ID, a warning, and
 //   no natural coordinates, so its values draw per element but are never placed;

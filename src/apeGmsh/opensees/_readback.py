@@ -333,6 +333,62 @@ def rotation_roles_from_tokens(
         targets,
     )
 
+# ---------------------------------------------------------------------------
+# Where each u-p family keeps its pore pressure, and which classes put a
+# share of the support reaction in the damping term
+# ---------------------------------------------------------------------------
+
+#: u-p class name -> (node response that carries p, DOF; ``None`` means
+#: ``ndm + 1``). ``LadrunoUP`` stores p in the displacement slot (honest
+#: p); stock ``SSPquadUP`` stores its time integral there, so p is the
+#: velocity of DOF 3. Every class of :data:`_UP_FAMILIES` has a row.
+UP_PRESSURE_SLOT: dict[str, tuple[str, "int | None"]] = {
+    "LadrunoUP": ("disp", None),
+    "SSPquadUP": ("vel", 3),
+}
+
+#: Classes whose coupling force (``SSPquadUP``: Q·p) sits in the element
+#: damping matrix, so a plain ``reactions`` misses part of a support
+#: reaction. A model holding one forms reactions with ``reactions
+#: -dynamic`` / records ``reactionIncInertia`` (flag 1 of
+#: ``Domain::calculateNodalReactions``: resisting force + C·v + M·a).
+DYNAMIC_REACTION_CLASSES: frozenset[str] = frozenset({"SSPquadUP"})
+
+
+def pressure_slot(
+    roles: RotationRoles, tag: int, ndm: int, ndf: int,
+) -> tuple[str, int]:
+    """``(node response, DOF)`` that carries node ``tag``'s pore pressure.
+
+    The u-p class on the node (:attr:`RotationRoles.blocked`) decides it
+    (:data:`UP_PRESSURE_SLOT`). Raises :class:`ValueError`, saying why,
+    when no u-p element touches the node or its ndf has no pressure DOF
+    (a Taylor-Hood mid-edge node).
+    """
+    name = roles.blocked.get(int(tag))
+    slot = UP_PRESSURE_SLOT.get(name) if name is not None else None
+    if slot is None:
+        raise ValueError(
+            f"node {tag} carries no pore pressure: no u-p element "
+            f"({', '.join(sorted(UP_PRESSURE_SLOT))}) touches it"
+        )
+    response, dof = slot
+    dof = ndm + 1 if dof is None else dof
+    if dof > ndf:
+        raise ValueError(
+            f"node {tag} (ndf={ndf}) carries no pore pressure: a {name} "
+            f"keeps p at DOF {dof} and this node is a displacement-only "
+            "(mid-edge) node"
+        )
+    return response, dof
+
+
+def needs_dynamic_reactions(class_names: "Iterable[str]") -> bool:
+    """True when a :data:`DYNAMIC_REACTION_CLASSES` class is among
+    ``class_names`` (element class names or tokens)."""
+    return not DYNAMIC_REACTION_CLASSES.isdisjoint(class_names)
+
+
 if TYPE_CHECKING:
     from ._internal.build.pg_expand import ElementPlanRows
     from ._internal.types import Element
@@ -351,6 +407,10 @@ __all__ = [
     "_ElementAccessor",
     "read_nodes",
     "read_elements",
+    "UP_PRESSURE_SLOT",
+    "DYNAMIC_REACTION_CLASSES",
+    "pressure_slot",
+    "needs_dynamic_reactions",
 ]
 
 
@@ -373,9 +433,12 @@ _NODE_PREFIXES: dict[str, tuple[str, int]] = {
 }
 _AXES: dict[str, int] = {"x": 0, "y": 1, "z": 2}
 
+#: The scalar node component a u-p node answers (:func:`pressure_slot`).
+PORE_PRESSURE = "pore_pressure"
+
 #: Every node component ``.read`` answers.
 NODE_COMPONENTS: tuple[str, ...] = tuple(
-    f"{p}_{a}" for p in _NODE_PREFIXES for a in _AXES)
+    f"{p}_{a}" for p in _NODE_PREFIXES for a in _AXES) + (PORE_PRESSURE,)
 
 #: Element component -> the ``eleResponse`` token that answers it with one
 #: value per element (Q7). R2 serves the truss axial force only.
@@ -451,14 +514,24 @@ class ReadSession:
         self._index: "tuple[np.ndarray, np.ndarray, np.ndarray] | None" = None
         self._rot_roles: "RotationRoles | None" = None
 
+    def roles(self) -> RotationRoles:
+        """The element plan's :class:`RotationRoles`, built once."""
+        if self._rot_roles is None:
+            self._rot_roles = rotation_roles(self.element_plan)
+        return self._rot_roles
+
     def rotation_refusal(self, tag: int) -> "str | None":
         """Why node ``tag``'s rotational DOF slots have no established
         meaning, or ``None`` when they do (:meth:`RotationRoles.refusal`,
         the rule the ``recorder.declare`` emit and ``ops.results`` apply
         too)."""
-        if self._rot_roles is None:
-            self._rot_roles = rotation_roles(self.element_plan)
-        return self._rot_roles.refusal(int(tag))
+        return self.roles().refusal(int(tag))
+
+    def dynamic_reactions(self) -> bool:
+        """The plan holds a :data:`DYNAMIC_REACTION_CLASSES` element."""
+        return needs_dynamic_reactions(
+            type(spec).__name__ for spec, sub in self.element_plan
+            if len(sub))
 
     def element_rows(
         self, ids: Sequence[int], where: str,
@@ -603,6 +676,8 @@ def read_nodes(
 ) -> np.ndarray:
     """``component`` at each node of ``tags``, in order, in model units at
     the last committed state."""
+    if component == PORE_PRESSURE:
+        return _read_pressures(bridge, tags, where=where)
     query, spatial = _node_component(component, where)
     session = live_session(bridge, where)
     ops = session.emitter.ops
@@ -633,12 +708,37 @@ def read_nodes(
                 )
         dofs.append(layout.index(spatial) + 1)
     if query == "nodeReaction":
-        ops.reactions()
+        # A damping-coupled u-p element (SSPquadUP) puts Q·p in C·v: only
+        # the dynamic form carries that share of the reaction.
+        if session.dynamic_reactions():
+            ops.reactions("-dynamic")
+        else:
+            ops.reactions()
     fetch = getattr(ops, query)
     return np.asarray(
         [float(fetch(int(t), d)) for t, d in zip(tags, dofs)],
         dtype=np.float64,
     )
+
+
+def _read_pressures(
+    bridge: "apeSees", tags: Sequence[int], *, where: str,
+) -> np.ndarray:
+    """``pore_pressure`` at each node of ``tags``: read where the node's
+    u-p class keeps it (:func:`pressure_slot`)."""
+    session = live_session(bridge, where)
+    ops = session.emitter.ops
+    query = {"disp": "nodeDisp", "vel": "nodeVel"}
+    out: list[float] = []
+    for tag in tags:
+        ndf = _node_ndf(ops, tag, where)
+        try:
+            response, dof = pressure_slot(
+                session.roles(), int(tag), session.ndm, ndf)
+        except ValueError as e:
+            raise BridgeError(f"{where}: {e}.") from e
+        out.append(float(getattr(ops, query[response])(int(tag), dof)))
+    return np.asarray(out, dtype=np.float64)
 
 
 def _layout_names(layout: tuple[int, ...], query: str) -> str:

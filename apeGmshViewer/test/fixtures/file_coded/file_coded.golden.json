@@ -1,0 +1,96 @@
+{
+  "tet": {
+    "blocks": {
+      "beziertet10": {
+        "cells": 1,
+        "code": -33001,
+        "dim": 3,
+        "gmshCode": 11,
+        "gmshName": "BezierTet10",
+        "npe": 10
+      },
+      "brick": {
+        "cells": 1,
+        "code": -56,
+        "dim": 3,
+        "gmshCode": 5,
+        "gmshName": "Brick",
+        "npe": 8
+      },
+      "tet10": {
+        "cells": 1,
+        "code": -256,
+        "dim": 3,
+        "gmshCode": 11,
+        "gmshName": "TenNodeTetrahedron",
+        "npe": 10
+      },
+      "tet4": {
+        "cells": 1,
+        "code": -179,
+        "dim": 3,
+        "gmshCode": 4,
+        "gmshName": "FourNodeTetrahedron",
+        "npe": 4
+      }
+    },
+    "file": "tet_model.h5",
+    "pythonCells": {
+      "hex": 1,
+      "tet": 3
+    },
+    "pythonSkipped": [],
+    "pythonSurfaceTriangles": 24
+  },
+  "tri": {
+    "blocks": {
+      "beziertri6": {
+        "cells": 1,
+        "code": -33000,
+        "dim": 2,
+        "gmshCode": 9,
+        "gmshName": "BezierTri6",
+        "npe": 6
+      },
+      "fournodequad": {
+        "cells": 1,
+        "code": -31,
+        "dim": 2,
+        "gmshCode": 3,
+        "gmshName": "FourNodeQuad",
+        "npe": 4
+      },
+      "ladrunolst": {
+        "cells": 1,
+        "code": -33016,
+        "dim": 2,
+        "gmshCode": 9,
+        "gmshName": "LadrunoLST",
+        "npe": 6
+      },
+      "sixnodetri": {
+        "cells": 1,
+        "code": -209,
+        "dim": 2,
+        "gmshCode": 9,
+        "gmshName": "SixNodeTri",
+        "npe": 6
+      },
+      "tri31": {
+        "cells": 1,
+        "code": -33,
+        "dim": 2,
+        "gmshCode": 2,
+        "gmshName": "Tri31",
+        "npe": 3
+      }
+    },
+    "file": "tri_model.h5",
+    "pythonCells": {
+      "quad": 1,
+      "tri": 4
+    },
+    "pythonSkipped": [],
+    "pythonSurfaceTriangles": 6
+  }
+}

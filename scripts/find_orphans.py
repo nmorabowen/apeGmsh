@@ -96,6 +96,21 @@ ACKNOWLEDGED: dict[tuple[int, str], tuple[str, str]] = {
         "post-merge commit a7237433 (-maxSubsteps, convergence-test gate, "
         "ADR 0103) landed as #1099",
     ),
+    (2628, "pushed-after-merge"): (
+        "#2636",
+        "orphaned commit 4e847b8a re-applied in #2636 (be0dc12f4cba); "
+        "lesson #2637",
+    ),
+    (2682, "merged-without-verdict"): (
+        "#2872",
+        "ADR amendment the maintainer merged from the web under the "
+        "standing ADR rule; owner ruling recorded on #2872 (2026-11-13)",
+    ),
+    (2656, "merged-without-verdict"): (
+        "#2872",
+        "VA0p, landed 2026-11-01; owner ruling recorded on #2872 "
+        "(2026-11-13)",
+    ),
 }
 
 
@@ -174,7 +189,10 @@ def verdict_required(fetch: Fetch, repo: str, pr: dict) -> bool:
     if "semantic" in labels:
         return True
     exempt = bool(_MOVE_EVIDENCE.search(pr.get("body") or ""))
-    for row in _paged(fetch, f"repos/{repo}/pulls/{pr['number']}/files"):
+    rows = _paged(fetch, f"repos/{repo}/pulls/{pr['number']}/files")
+    if len(rows) >= PER_PAGE * MAX_PAGES:
+        return True  # the listing hit the page cap: an unread path may need one
+    for row in rows:
         names = [n for n in (row.get("filename"), row.get("previous_filename")) if n]
         if any(_always_verdict(n) for n in names):
             return True
@@ -186,7 +204,8 @@ def verdict_required(fetch: Fetch, repo: str, pr: dict) -> bool:
 def has_head_approval(fetch: Fetch, repo: str, pr: dict) -> bool:
     """An approve bound to the merged head; the latest verdict at it decides."""
     comments = [
-        {"body": c.get("body"), "createdAt": c["created_at"]}
+        {"body": c.get("body"), "createdAt": c["created_at"],
+         "authorAssociation": c.get("author_association")}
         for c in _paged(fetch, f"repos/{repo}/issues/{pr['number']}/comments")
     ]
     probe_pr = {"headRefOid": pr["head"]["sha"], "comments": comments}
@@ -201,6 +220,8 @@ def find_unreviewed(fetch: Fetch, repo: str, since: datetime,
     findings: list[dict] = []
     for pr in merged_prs(fetch, repo, since):
         if not verdict_required(fetch, repo, pr):
+            continue
+        if (pr["number"], VERDICT_KIND) in ACKNOWLEDGED:
             continue
         if has_head_approval(fetch, repo, pr):
             continue

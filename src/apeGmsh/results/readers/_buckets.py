@@ -986,9 +986,12 @@ def eigen_scalars(
 
 def _mode_sets_of(
     data: "h5py.Group", group_name: str, source: str,
+    skip: "frozenset[str]" = frozenset(),
 ) -> "list[tuple[str, list[tuple[str, float]]]]":
     sets: "list[tuple[str, list[tuple[str, float]]]]" = []
     for step_key in _keyed(data, "STEP_"):
+        if step_key in skip:
+            continue
         modes: "list[tuple[str, float]]" = []
         for mode_key in _keyed(data[step_key], "MODE_"):
             attrs = data[step_key][mode_key].attrs
@@ -1006,6 +1009,7 @@ def _mode_sets_of(
 
 def discover_modes(
     on_nodes: "h5py.Group", *, source: str,
+    skip_steps: "frozenset[str]" = frozenset(),
 ) -> "list[tuple[str, list[ModeEntry]]]":
     """Every modal set under ``on_nodes``, as ``[(step_key, [ModeEntry])]``.
 
@@ -1013,10 +1017,12 @@ def discover_modes(
     the reference when present; the rotational group, when both exist,
     must list the same steps, modes and eigenvalues, or the file is
     refused. A ``MODE_<k>`` without a ``LAMBDA`` attribute is refused too:
-    a mode stage never invents its eigenvalue.
+    a mode stage never invents its eigenvalue. ``skip_steps`` names the
+    ``STEP_<k>`` snapshots :func:`torn_mode_snapshots` left out; they are
+    neither read nor listed.
     """
     names = sorted(_modal_groups(on_nodes), key=lambda n: (not n.endswith("(U)"), n))
-    if not names:
+    if not names or ALL_SNAPSHOTS in skip_steps:
         return []
     per_group = []
     for name in names:
@@ -1025,7 +1031,8 @@ def discover_modes(
                 f"{source}: ON_NODES/{name} has no DATA group; the modal "
                 "record is incomplete."
             )
-        per_group.append(_mode_sets_of(on_nodes[name]["DATA"], name, source))
+        per_group.append(_mode_sets_of(on_nodes[name]["DATA"], name, source,
+                                       skip_steps))
     for name, other in zip(names[1:], per_group[1:]):
         if other != per_group[0]:
             raise ValueError(
@@ -1045,6 +1052,149 @@ def discover_modes(
             ))
         out.append((step_key, entries))
     return out
+
+
+#: In a :func:`torn_mode_snapshots` skip set: every snapshot of the stage.
+ALL_SNAPSHOTS = "*"
+
+#: How :func:`torn_mode_snapshots` treats a damaged snapshot (fork schema
+#: §7b.2, the crash rule, which applies to a KILLED file only).
+#: ``SNAPSHOTS_SKIP``: a killed file opened plainly or through a repaired copy
+#: (flags 0x01): the snapshot being written is skipped with every later one.
+#: ``SNAPSHOTS_REFUSE``: a file killed with SWMR armed (flags 0x05), where
+#: every snapshot must read: any damage refuses by name.
+#: ``SNAPSHOTS_CLEAN``: a cleanly closed file (flags 0x00) or a superblock the
+#: SWMR recorder never wrote: :func:`discover_modes` reads it as before, and a
+#: snapshot that does not open refuses by name.
+SNAPSHOTS_SKIP = "skip"
+SNAPSHOTS_REFUSE = "refuse"
+SNAPSHOTS_CLEAN = "clean"
+
+
+class ModeSnapshotSkippedWarning(UserWarning):
+    """A ``.ladruno`` modes snapshot was being written when the run was
+    killed (fork schema §7b.2, the crash rule): a ``DATA/STEP_<k>`` that does
+    not open, or lacks a ``MODE_<j>``, is skipped with every later snapshot.
+    The warning names each one."""
+
+
+class ModeSnapshotCorrupt(ValueError):
+    """A ``.ladruno`` modes snapshot does not read where the file's state
+    says it must: a file killed with SWMR armed, or a cleanly closed file.
+    The message names the snapshot."""
+
+
+def _snapshot_modes(on_nodes: "h5py.Group", groups: "list[str]",
+                    step_key: str, *, whole: bool) -> None:
+    """Read snapshot ``step_key`` in every modal group. Every ``MODE_<j>``
+    must open (an HDF5 error is raised as it is). With ``whole``, each group
+    must also list ``MODE_0`` .. ``MODE_<m-1>`` with no gap and the groups
+    must agree on ``m``; otherwise ``ValueError`` says it lacks a mode."""
+    counts = []
+    for name in groups:
+        data = on_nodes[name]["DATA"]
+        if step_key not in data:
+            if whole:
+                raise ValueError(f"ON_NODES/{name} has no {step_key}")
+            continue
+        snap = data[step_key]
+        keys = [k for k in snap if k.startswith("MODE_")]
+        for k in keys:
+            _ = snap[k].shape
+        idx = sorted(int(k[len("MODE_"):]) for k in keys)
+        if whole and (not idx or idx != list(range(len(idx)))):
+            raise ValueError(
+                f"ON_NODES/{name}/DATA/{step_key} holds modes {idx}, not "
+                f"MODE_0..MODE_<m-1>: it lacks a mode")
+        counts.append(len(idx))
+    if whole and len(set(counts)) > 1:
+        raise ValueError(
+            f"{step_key}: the modal groups {groups} hold {counts} modes: one "
+            "lacks a mode")
+
+
+def torn_mode_snapshots(
+    stages: "Sequence[tuple[str, Optional[h5py.Group]]]", *, source: str,
+    rule: str,
+) -> "dict[str, frozenset[str]]":
+    """The modes snapshots the crash rule of fork schema §7b.2 skips.
+
+    ``stages`` are ``(MODEL_STAGE name, its RESULTS/ON_NODES or None)`` in
+    file order; the snapshots are taken in that order, then by step. A
+    snapshot is damaged when it does not open, or lacks a ``MODE_<j>``: its
+    ``MODE_<j>`` keys have a gap, or the modal groups disagree on its modes.
+    A smaller snapshot after a larger one is not damage: the writer stores
+    one snapshot per eigen call, with that call's mode count.
+
+    ``rule`` is one of :data:`SNAPSHOTS_SKIP` (the first damaged snapshot
+    was being written when the run was killed: it is skipped with every
+    later one, in its stage and every later stage, and
+    :class:`ModeSnapshotSkippedWarning` names them), :data:`SNAPSHOTS_REFUSE`
+    (any damage is :class:`ModeSnapshotCorrupt`) or :data:`SNAPSHOTS_CLEAN`
+    (only a snapshot that does not open is :class:`ModeSnapshotCorrupt`; a
+    gap or disagreeing groups read as :func:`discover_modes` reads them).
+    Returns ``{stage name: skipped STEP_<k> keys}``, empty unless ``rule``
+    is :data:`SNAPSHOTS_SKIP`.
+    """
+    if rule not in (SNAPSHOTS_SKIP, SNAPSHOTS_REFUSE, SNAPSHOTS_CLEAN):
+        raise ValueError(f"unknown modes-snapshot rule {rule!r}")
+    order: "list[tuple[str, Optional[str]]]" = []   # (stage, step_key or None: the stage's DATA does not list)
+    groups_of: "dict[str, list[str]]" = {}
+    for name, on_nodes in stages:
+        if on_nodes is None:
+            continue
+        try:
+            groups = sorted(_modal_groups(on_nodes),
+                            key=lambda n: (not n.endswith("(U)"), n))
+            if rule == SNAPSHOTS_CLEAN:  # discover_modes refuses a group without DATA by name
+                groups = [g for g in groups if "DATA" in on_nodes[g]]
+            keys: "set[str]" = set()
+            for g in groups:
+                keys.update(k for k in on_nodes[g]["DATA"] if k.startswith("STEP_"))
+            steps = sorted(keys, key=lambda k: int(k[len("STEP_"):]))
+        except Exception:  # noqa: BLE001 - a modes group that does not list is damage here
+            groups, steps = [], [None]  # type: ignore[list-item]
+        groups_of[name] = groups
+        order.extend((name, k) for k in steps)
+    torn_at, why, cause = None, "", None
+    on_nodes_of = dict(stages)
+    for i, (name, step_key) in enumerate(order):
+        try:
+            if step_key is None:
+                raise ValueError("its modes DATA does not list")
+            _snapshot_modes(on_nodes_of[name], groups_of[name], step_key,  # type: ignore[arg-type]
+                            whole=rule != SNAPSHOTS_CLEAN)
+        except Exception as e:  # noqa: BLE001 - any failure to read is the rule's input
+            torn_at, why, cause = i, (str(e).splitlines() or [type(e).__name__])[0], e
+            break
+    if torn_at is None:
+        return {}
+    first = order[torn_at]
+    where = f"{first[0]}/{first[1] or 'DATA'}"
+    if rule == SNAPSHOTS_REFUSE:
+        raise ModeSnapshotCorrupt(
+            f"{source}: the modes snapshot {where} does not read whole ({why}) "
+            "in a file killed with SWMR armed (superblock flags 0x05), where "
+            "every snapshot must read: corruption (fork schema section 7b.2)"
+        ) from cause
+    if rule == SNAPSHOTS_CLEAN:
+        raise ModeSnapshotCorrupt(
+            f"{source}: the modes snapshot {where} does not open ({why}) in a "
+            "file a writer closed, so it is corruption, not a snapshot a kill "
+            "left half written (fork schema section 7b.2)"
+        ) from cause
+    skipped: "dict[str, set[str]]" = {}
+    for name, step_key in order[torn_at:]:
+        # ALL_SNAPSHOTS: the stage's modes DATA does not list, so none of it is read.
+        skipped.setdefault(name, set()).add(step_key or ALL_SNAPSHOTS)
+    named = [f"{n}/{k or 'DATA'}" for n, k in order[torn_at:]]
+    warnings.warn(
+        f"{source}: the modes snapshot {where} does not read whole ({why}); it "
+        f"was being written when the run was killed, so it is skipped with "
+        f"every later snapshot (fork schema section 7b.2): {named}",
+        ModeSnapshotSkippedWarning, stacklevel=3,
+    )
+    return {n: frozenset(v) for n, v in skipped.items()}
 
 
 def modal_components(on_nodes: "h5py.Group") -> "list[str]":

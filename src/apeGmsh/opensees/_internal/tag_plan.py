@@ -1105,6 +1105,10 @@ def plan_tags(bm: BuiltModel, mode: TagMode) -> TagPlan:
     # Elements: every spec's fan-out, in the emit's topological order.
     # Each emit path made this allocation once, before any other
     # element-kind mint, so planning it here numbers it as they did.
+    # Under "sequential" it also reserves the "element" counter through
+    # the largest FEM id before its first mint (ADR 0111 D2), so the ops-only
+    # rows here and every MP-element and interface mint below land above
+    # every FEM id.
     elements = ElementTagPlan(specs=tuple(allocate_element_tags(
         element_specs, bm.fem, tags, element_tags=bm.element_tags,
     )))

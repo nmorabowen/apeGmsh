@@ -396,12 +396,14 @@ def _render_fem_app(path: Path, args: argparse.Namespace) -> int:
 
 
 def _render_results_app(path: Path, args: argparse.Namespace) -> int:
-    """The Windows results door: a ``.ladruno`` and its ``<stem>.h5``."""
+    """The Windows results door: a ``.ladruno`` and its ``<stem>.h5``; under
+    ``APEGMSH_SKIP_VIEWER=1`` any source skips, as in-process ``assess`` does."""
     from apeGmsh.agent_view import ladruno_files
+    from apeGmsh.viewers._stills import _env_skips
     from apeGmsh.viewers.session._results_stills import app_pack, app_still
 
-    files = ladruno_files(path, args.model_h5)
-    results = _open_results(path, Path(files["model"]))
+    files = None if _env_skips() else ladruno_files(path, args.model_h5)
+    results = _open_results(path, args.model_h5 if files is None else Path(files["model"]))
     try:
         if args.pack is not None:
             written = app_pack(

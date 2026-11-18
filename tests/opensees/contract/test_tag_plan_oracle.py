@@ -2086,7 +2086,10 @@ def test_partitioned_mp_elements_take_the_flat_tags() -> None:
     """The partitioned plan writes MP elements rank by rank, with the flat
     walk's tags (canonical numbering, ADR 0114 D4 amended, item 4).
 
-    The 20 bars take the element plan's tags, up to ``e``. The flat walk
+    The 20 bars take the element plan's tags, 2..21; their FEM ids run
+    to 44, and the planner reserves the ``element`` counter through
+    ``e`` = 44 before its first mint, so no MP-element tag equals a FEM id
+    (#2926). The flat walk
     numbers every rigid body, then every coupling, every tie, every
     reinforce tie, every rebar cell, each in declaration order (rank 3
     first), so kind ``k`` of rank ``r`` takes ``e + 1 + 4k + (3 - r)``.
@@ -2099,9 +2102,11 @@ def test_partitioned_mp_elements_take_the_flat_tags() -> None:
         return [(getattr(ln.record, "name", None) or ln.record.pg, ln.tag)
                 for ln in mp.lines]
 
-    e = max(t for _, t in _case("mp_ranks_4/flat").plan.elements.stream())
-    assert e == max(
-        t for _, t in _case("mp_ranks_4/partitioned").plan.elements.stream())
+    for name in ("mp_ranks_4/flat", "mp_ranks_4/partitioned"):
+        assert sorted(t for _, t in _case(name).plan.elements.stream()) == (
+            list(range(2, 22))), name
+    e = _case("mp_ranks_4/flat").seed["element"]
+    assert e == _case("mp_ranks_4/partitioned").seed["element"] == 44
     assert named("mp_ranks_4/partitioned") == [
         (f"{kind}{r}", e + 1 + 4 * k + (3 - r))
         for r in range(4)
@@ -2130,7 +2135,10 @@ def test_staged_mp_elements_number_after_the_global_pass() -> None:
             _case("mp_ranks_2/staged").plan.mp_elements.planned().lines}
     for name in ("mp_ranks_2/staged", "mp_ranks_2/staged_partitioned"):
         plan = _case(name).plan
-        e = max(t for _, t in plan.elements.stream())
+        # The planner's element seed: the bars' FEM ids run to 24, above
+        # their tags 2..11, so every MP element is numbered above it (#2926).
+        e = _case(name).seed["element"]
+        assert e == 24 > max(t for _, t in plan.elements.stream()), name
         mp = plan.mp_elements.planned()
         assert [ln.record.name for ln in mp.lines[-3:]] == [
             "rb0", "kc0", "tie1"], name

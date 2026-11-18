@@ -18,6 +18,7 @@
 // order of its shots, set the same state for each.
 
 import { MAGNITUDE } from "../state/contour.ts";
+import { compareUserName } from "../state/selectors.ts";
 import type { CameraRequest, DeclPath, Event, PhaseKey } from "../state/types.ts";
 import type { DescribedField, DescribedStage, SetDescription } from "./describe.ts";
 import { SPEC_MAGNITUDE } from "./describe.ts";
@@ -34,8 +35,19 @@ export interface ShotPlan {
   events: Event[];
   /** section planes: added by the render mode, which reads back each plane's id */
   clip: SpecClip[];
-  /** the drawn contour, as the store names it; null when the shot draws none */
-  contour: { field: string; component: string; label: string; source: "nodal" | "element" } | null;
+  /**
+   * the drawn contour, as the store names it; null when the shot draws none. VU16: `user` is a user result (`field` its
+   * name); VF2-d: a compare variant's (`compareUser`) has the display string the legend shows as its `field`
+   */
+  contour: { field: string; component: string; label: string; source: "nodal" | "element" | "user" } | null;
+  /**
+   * VF2-d (#2956): the compare variant's user result the shot draws, by variant and entry, or null. Its
+   * `showCompareUser` cannot be among `events`: the reducer takes it only once the compare set is open and
+   * its `.user.h5` read, which follow `variantCompare` from main. ./snapshot.ts `shownView` waits for them,
+   * refuses an entry or a component the file does not offer (listing what it offers), then dispatches it.
+   */
+  compareUser: { variant: string; entry: string; component: string } | null;
+  /** the shot's deformed shape; `scale` null is G3's auto scale, which the render mode dispatches once the step's displacement is read */
   deform: SpecDeform | null;
   /** applied after the view is drawn: a fit frames what is drawn (the deformed shape, an isolated group) */
   camera: CameraRequest;
@@ -57,6 +69,8 @@ export const BASE_EVENTS: readonly Event[] = [
   { type: "setLineDiagram", on: false },
   // A plane's gizmo is a handle for the hand; a still shows the cut, not the handle.
   { type: "setShowGizmos", on: false },
+  // VF2-d (#2956): no compare user result unless the shot names one (./snapshot.ts `shownView` draws it).
+  { type: "showCompareUser", pick: null },
   // VU10: no difference unless the shot compares (the compare set itself stays open for the next shot that names it).
   { type: "setDifference", on: false },
 ];
@@ -74,13 +88,24 @@ function stageOf(shot: SpecShot, d: SetDescription): { ok: true; stage: Describe
   const want = shot.stage!;
   if (!d.files.results) return { ok: false, reason: `the set has no results file, so it has no stage ${JSON.stringify(want)}` };
   if (d.pairing.state !== "paired") return { ok: false, reason: `the results are not drawn on this model: ${d.pairing.reason ?? d.pairing.state}` };
-  const names = d.stages.map((s) => JSON.stringify(s.name));
+  const names = d.stages.map((s) => (s.name === s.programName ? JSON.stringify(s.name) : `${JSON.stringify(s.name)} (program stage ${JSON.stringify(s.programName)})`));
   if (typeof want === "number") {
     const st = d.stages[want];
     return st ? { ok: true, stage: st } : { ok: false, reason: `the results have ${d.stages.length} stages (indices 0 to ${d.stages.length - 1}); stage ${want} is not one of them` };
   }
-  const hits = d.stages.filter((s) => s.name === want);
+  // W4d #2843: a stage answers to its program name and to its shown (display) name, so a
+  // spec keeps resolving after a `.ladruno` is renamed for display.
+  const byProgram = d.stages.filter((s) => s.programName === want);
+  const byShown = d.stages.filter((s) => s.name === want);
+  const hits = [...new Set([...byProgram, ...byShown])];
   if (hits.length === 0) return { ok: false, reason: `the results have no stage named ${JSON.stringify(want)}; their stages are ${list(names)}` };
+  const shownElsewhere = byProgram.length === 1 ? byShown.find((s) => s !== byProgram[0]) : undefined;
+  if (shownElsewhere) {
+    return {
+      ok: false,
+      reason: `${JSON.stringify(want)} is the program name of stage ${byProgram[0]!.index} and the shown name of stage ${shownElsewhere.index}; name the stage by its index`,
+    };
+  }
   if (hits.length > 1) return { ok: false, reason: `${hits.length} stages are named ${JSON.stringify(want)} (indices ${hits.map((s) => s.index).join(", ")}); name the stage by its index` };
   return { ok: true, stage: hits[0]! };
 }
@@ -107,6 +132,9 @@ function fieldOf(shot: SpecShot, st: DescribedStage): { ok: true; field: Describ
   // A component by its key (the dataset name, or "magnitude") or by the legend's label; one component only.
   const hits = f.components.filter((x) => x.key === c.component || x.label === c.component);
   if (hits.length === 0) {
+    // VA6d: a derived scalar the field's tensor cannot give is refused by its name, with why (never drawn from partial components).
+    const derived = f.refusedComponents?.find((x) => x.key === c.component);
+    if (derived) return { ok: false, reason: `${f.source} field ${JSON.stringify(f.name)} of stage ${label} cannot give ${JSON.stringify(c.component)}: ${derived.reason}` };
     const why = f.source === "nodal" && c.component === SPEC_MAGNITUDE && f.refused ? `: the magnitude is not offered (${f.refused})` : "";
     return {
       ok: false,
@@ -145,11 +173,20 @@ function combinationFieldOf(c: NonNullable<SpecShot["contour"]>, name: string, o
 }
 
 /**
+ * VU16: user result `name` of the set's `.user.h5` as a contour can take it
+ * (state/selectors.ts `userResultPickOf` on the open set): its components in
+ * `DATA` order, or why it cannot be drawn (absent, refused, per state, not on
+ * nodes). A stale one is found here; the render mode refuses it with A6's reason.
+ */
+export type UserResultOf = (name: string) => { ok: true; components: readonly string[] } | { ok: false; reason: string };
+
+/**
  * Compile one validated shot against the open set (INV-2: the one compiler D4,
  * D5 and D6 share). VU7b-2: `combinationFields` finds a combination shot's
- * component; without it, a combination shot is refused.
+ * component; without it, a combination shot is refused. VU16: `userResultOf`
+ * finds a user-result shot's component; without it, such a shot is refused.
  */
-export function compileShot(shot: SpecShot, d: SetDescription, combinationFields?: CombinationFields, variantOf?: VariantOf): Compiled {
+export function compileShot(shot: SpecShot, d: SetDescription, combinationFields?: CombinationFields, variantOf?: VariantOf, userResultOf?: UserResultOf): Compiled {
   const events: Event[] = [...BASE_EVENTS];
   let phase: PhaseKey = { kind: "mesh" };
   let stage: ShotPlan["stage"] = null;
@@ -175,7 +212,36 @@ export function compileShot(shot: SpecShot, d: SetDescription, combinationFields
     events.push({ type: "setPhase", at: phase });
   }
   events.push({ type: "setColourBy", by: shot.colour_by });
-  if (shot.contour && combination !== null) {
+  const compare = shot.compare ?? null;
+  let compareUser: ShotPlan["compareUser"] = null;
+  if (shot.contour?.source === "user" && compare !== null) {
+    // VF2-d (#2956): the compare variant's own user result, by variant plus entry (the spec validator held it to
+    // the mesh phase, as a window user result). The variant is found here; the entry and its component once the
+    // compare set's .user.h5 is read (./snapshot.ts `shownView`), which refuses either with what the file offers.
+    const c = shot.contour;
+    if (!variantOf) return { ok: false, reason: `this view has no variants manifest to find variant ${JSON.stringify(compare)} in` };
+    const v = variantOf(compare);
+    if (!v.ok) return v;
+    if (!v.open) events.push({ type: "variantCompare", row: v.row });
+    compareUser = { variant: v.row.label, entry: c.field, component: c.component };
+    contour = { field: compareUserName(v.row.label, c.field), component: c.component, label: c.component, source: "user" };
+    // No setContourField: that names the window's own .user.h5, and a pick ends a compare user result.
+    events.push(c.range.mode === "fixed" ? { type: "setContourRange", range: "fixed", fixed: { min: c.range.min, max: c.range.max } } : { type: "setContourRange", range: c.range.mode });
+    events.push({ type: "setContourCmap", cmap: c.cmap });
+  } else if (shot.contour?.source === "user") {
+    // VU16: the spec validator held a user-result shot to the mesh phase: no stage, step, combination, compare or shape.
+    const c = shot.contour;
+    const label = `user result ${JSON.stringify(c.field)}`;
+    if (!userResultOf) return { ok: false, reason: `this view has no user file to find ${label} in` };
+    const r = userResultOf(c.field);
+    if (!r.ok) return { ok: false, reason: `${label} cannot be drawn: ${r.reason}` };
+    if (!r.components.includes(c.component)) return { ok: false, reason: `${label} has no component ${JSON.stringify(c.component)}; its components are ${list([...r.components])}` };
+    contour = { field: c.field, component: c.component, label: c.component, source: "user" };
+    // The reducer refuses a name the user file does not list too (setContourField).
+    events.push({ type: "setContourField", field: c.field, component: c.component, source: "user" });
+    events.push(c.range.mode === "fixed" ? { type: "setContourRange", range: "fixed", fixed: { min: c.range.min, max: c.range.max } } : { type: "setContourRange", range: c.range.mode });
+    events.push({ type: "setContourCmap", cmap: c.cmap });
+  } else if (shot.contour && combination !== null) {
     const c = shot.contour;
     if (c.source === "element") return { ok: false, reason: `User Combination ${JSON.stringify(combination)} colours by a nodal component; contour.source is "element"` };
     if (!combinationFields) return { ok: false, reason: `this view has no user file to find User Combination ${JSON.stringify(combination)} in` };
@@ -199,8 +265,7 @@ export function compileShot(shot: SpecShot, d: SetDescription, combinationFields
     contour = { field: shot.contour.field, component: shot.contour.component, label: shot.contour.component, source: shot.contour.source ?? "nodal" };
   }
   // VU10: the window variant minus the compare variant (the spec validator held it to a nodal contour of a stage).
-  const compare = shot.compare ?? null;
-  if (compare !== null) {
+  if (compare !== null && compareUser === null) {
     if (!variantOf) return { ok: false, reason: `this view has no variants manifest to find variant ${JSON.stringify(compare)} in` };
     const v = variantOf(compare);
     if (!v.ok) return v;
@@ -208,7 +273,11 @@ export function compileShot(shot: SpecShot, d: SetDescription, combinationFields
     events.push({ type: "setDifference", on: true });
   }
   if (shot.deform) {
-    events.push({ type: "setDeform", on: true }, { type: "setDeformScale", scale: shot.deform.scale }, { type: "setReferenceGhost", on: shot.deform.ghost });
+    events.push({ type: "setDeform", on: true });
+    // G3 (VA6c, #2765): a scale left out stays at the base view's 1 here; the auto scale needs the step's
+    // displacement, so the render mode dispatches it once that is read (`plan.deform.scale` null says so).
+    if (shot.deform.scale !== null) events.push({ type: "setDeformScale", scale: shot.deform.scale });
+    events.push({ type: "setReferenceGhost", on: shot.deform.ghost });
   }
   if (shot.isolate.length) {
     const known = new Set(d.groups.map((g) => g.path));
@@ -217,5 +286,5 @@ export function compileShot(shot: SpecShot, d: SetDescription, combinationFields
     events.push({ type: "isolate", decls: shot.isolate as DeclPath[] });
   }
   const camera: CameraRequest = typeof shot.camera === "string" ? shot.camera : { eye: shot.camera.eye, target: shot.camera.target, up: shot.camera.up };
-  return { ok: true, plan: { phase, stage, combination, step, events, clip: shot.clip, contour, deform: shot.deform, camera } };
+  return { ok: true, plan: { phase, stage, combination, step, events, clip: shot.clip, contour, compareUser, deform: shot.deform, camera } };
 }

@@ -371,14 +371,29 @@ def test_declared_rotation_on_a_up_node_refuses_on_read(
 def test_a_rotational_slot_no_beam_establishes_refuses(
     run_dir: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DOF 3 of a u-p node at ndm=2, ndf=3 is pore pressure."""
+    """DOF 3 of a u-p node at ndm=2, ndf=3 is no rotation. Under ``vel``
+    on a LadrunoUP node it is the pressure RATE, which has no component."""
+    ops = up_bridge(build_footing_fem())
+    corner = ops.nodes.one(label="corner").tag
+    ops.recorder.Node(file="run/p.out", nodes=(corner,), dofs=(3,),
+                      response="vel", time_format="dt")
+    ran(ops, monkeypatch, write_rows("run/p.out", [1.0, 0.0]))
+    refuses(ops, "run/deck.py", run_dir,
+            r"DOF 3 of node .*LadrunoUP touches it")
+
+
+def test_the_slot_a_up_element_keeps_p_in_reads_as_pore_pressure(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LadrunoUP keeps p in displacement DOF ndm+1: a typed ``disp``
+    record of DOF 3 there is the pore pressure."""
     ops = up_bridge(build_footing_fem())
     corner = ops.nodes.one(label="corner").tag
     ops.recorder.Node(file="run/p.out", nodes=(corner,), dofs=(3,),
                       response="disp", time_format="dt")
-    ran(ops, monkeypatch, write_rows("run/p.out", [1.0, 0.0]))
-    refuses(ops, "run/deck.py", run_dir,
-            r"DOF 3 of node .*LadrunoUP touches it")
+    ran(ops, monkeypatch, write_rows("run/p.out", [1.0, 42.5]))
+    r = ops.results("run/deck.py")
+    assert r.nodes.get(ids=[corner], component="pore_pressure").item() == 42.5
 
 
 def test_a_staged_deck_text_record_refuses(
@@ -398,6 +413,47 @@ def test_a_staged_deck_text_record_refuses(
             r"is staged.*ops\.recorder\.Ladruno on the Ladruno fork build, "
             r"or with ops\.recorder\.MPCO on stock OpenSees \(its stages "
             r"are declared, so its \.mpco converts\)")
+
+
+def build_partitioned_cantilever_fem() -> Any:
+    """The cantilever of ``build_cantilever_fem``, in two partitions."""
+    import gmsh
+
+    from apeGmsh import apeGmsh
+
+    with apeGmsh(model_name="r2b_cantilever_np2", verbose=False) as g:
+        geo = g.model.geometry
+        base = geo.add_point(0.0, 0.0, 0.0)
+        tip = geo.add_point(L_BEAM, 0.0, 0.0)
+        line = geo.add_line(base, tip)
+        gmsh.model.mesh.setTransfiniteCurve(line, 5)
+        g.physical.add(1, [line], name="Beam")
+        g.labels.add(0, [base], "base")
+        g.labels.add(0, [tip], "tip")
+        g.mesh.generation.generate(dim=1)
+        g.mesh.partitioning.partition(2)
+        g.mesh.partitioning.renumber(base=1)
+        return g.mesh.queries.get_fem_data(dim=1)
+
+
+def test_a_partitioned_deck_text_record_refuses(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR 0123 slice 3: a partitioned deck's text recorders are written
+    per rank, so ``_classify`` refuses them and names the routes that
+    read a partitioned run. The run writes a well-formed ``tip.out``: the
+    refusal is the deck's partitioning, not a missing or partial file."""
+    fem = build_partitioned_cantilever_fem()
+    assert len(fem.partitions) == 2
+    ops = cantilever_bridge(fem)
+    typed_tip(ops)
+    ran(ops, monkeypatch, write_rows("run/tip.out", [1.0, UY]))
+    refuses(ops, "run/deck.py", run_dir,
+            r"is partitioned; its text recorders are written per rank\. "
+            r"Record a partitioned run with ops\.recorder\.Ladruno on the "
+            r"Ladruno fork build, or with ops\.recorder\.MPCO under declared "
+            r"ops\.stage\(\.\.\.\) blocks on stock OpenSees, or emit it with "
+            r"flat=True\.")
 
 
 def test_mpco_beside_text_records_refuses(

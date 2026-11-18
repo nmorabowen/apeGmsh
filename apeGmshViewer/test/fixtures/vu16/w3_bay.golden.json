@@ -1,0 +1,47 @@
+{
+ "name": "footfall",
+ "components": [
+  "footfall_ap",
+  "footfall_ratio",
+  "footfall_fdom"
+ ],
+ "ids": [
+  10,
+  20,
+  30,
+  40,
+  50
+ ],
+ "shape": [
+  1,
+  5,
+  3
+ ],
+ "data": [
+  [
+   1e-300,
+   0.25,
+   4.0
+  ],
+  [
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null
+  ],
+  [
+   0.0123456789,
+   1.1772,
+   16.326
+  ],
+  [
+   null,
+   null,
+   null
+  ]
+ ]
+}

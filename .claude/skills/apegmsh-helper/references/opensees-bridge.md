@@ -217,11 +217,14 @@ void_ratio=e, alpha=0.25*h**2/(K + 4*G/3), body=(0.0, -9.81))` emits
 `perm` is `k_hydraulic / gamma_w`; `body` is an acceleration (times the
 material `rho` = saturated density); `alpha` is pressure stabilization, not
 Biot's. ndf 3 is inferred per node. Its pore pressure is the **velocity**
-of DOF 3 (`nodeVel(n, 3)`, `recorder Node -dof 3 vel`); `nodeDisp(n, 3)` is
-the time integral. Drain a face with `ops.fix(pg="Top", dofs=(0, 0, 1))`.
-The coupling Q·p lives in the damping matrix, so support reactions need
-`reactions -dynamic` / `reactionIncInertia`; the bridge's
-`.read("reaction_force_*")` uses a plain `reactions` (skeleton share only).
+of DOF 3 (`nodeVel(n, 3)`); `nodeDisp(n, 3)` is the time integral. Ask for
+the canonical `pore_pressure`: `.read("pore_pressure")` and
+`ops.recorder.declare(nodes=("pore_pressure",), ...)` +`ops.results` read
+it from the right slot (SSPquadUP: vel DOF 3; LadrunoUP: disp DOF ndm+1).
+Drain a face with `ops.fix(pg="Top", dofs=(0, 0, 1))`. The coupling Q·p
+lives in the damping matrix, so in a model holding an SSPquadUP the bridge
+forms `reactions -dynamic` for `.read("reaction_force_*")` and records
+`reactionIncInertia` for declared reactions (both include M·a).
 Run it transient (Newmark γ ≥ 0.5, the C0 rung used γ=0.6, β=0.3025, with
 `UmfPack`), and change the permeability between stages with
 `s.update_parameter("hPerm" | "vPerm", k, pg="soil")`.
@@ -1173,6 +1176,22 @@ The canonical component vocabulary is the neutral top-level
 > records it on the fork with no declaration at all. Full emit/read contract:
 > `Ladruno_implementation/ladruno_apegmsh_contract.md` in the fork. The fork is
 > opt-in; stock `openseespy` (no `.ladruno`) stays first-class.
+>
+> **Filtering nodes and elements together.** `Ladruno(nodes_pg=..., elements_pg=...)`
+> (or `nodes=` / `elements=`) emits **two** regions, `region $t -ele ...` and
+> `region $tn -node ...`, and passes `-R $t -RN $tn`: `-N` rows cover the `-R`
+> element nodes plus the `-RN` nodes, `-E` rows the `-R` elements only. One
+> OpenSees region cannot carry both lists (`MeshRegion::setNodes` /
+> `setElements` each wipe both, and `-ele` rebuilds the nodes), so the old
+> single `region -node ... -ele ...` line silently dropped `nodes_pg`. Use it to
+> record nodes that have no recorded element, e.g. embedded rebar
+> (`g.rebar.place(coupling="embedded", emit_elements=True)`): keep the minted
+> truss elements out with `elements_pg="solids"` and put the bar nodes in
+> `nodes_pg`. Needs a fork build whose `ladrunoSchema` lists
+> `recorderLadrunoNodeRegion` (fork WP-234): the live route raises
+> `BridgeError` naming it on an older build, and a deck checks the running
+> build at its start. Only one selector side → one region, as before. MPCO
+> (stock, no `-RN`) still writes the single combined region.
 
 ## Native model.h5 — two zones + schema constants
 

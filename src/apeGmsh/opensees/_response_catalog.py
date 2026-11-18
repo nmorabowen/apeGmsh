@@ -2187,6 +2187,37 @@ def is_line_station_synthesis_catalogued(class_name: str) -> bool:
     return class_name in _ELASTIC_BEAM_NODAL_CLASSES
 
 
+#: OpenSees ``element`` command token -> the catalogued C++ classes it
+#: builds, for a line-stations ``element_class_name`` given as the command
+#: a user types. Each command builds its ``2d`` or ``3d`` class by
+#: the model's ``ndm``; the classes of one command share their station
+#: source (``section force`` or ``localForce``), so the token decides it
+#: without the ``ndm``. Commands whose classes the catalog does not list
+#: (``mixedBeamColumn``, ``timoshenkoBeamColumn``) are left out, and keep
+#: their "not listed" warning.
+LINE_STATION_CLASSES_FOR_COMMAND: "dict[str, tuple[str, ...]]" = {
+    "elasticBeamColumn": ("ElasticBeam2d", "ElasticBeam3d"),
+    "ElasticTimoshenkoBeam": (
+        "ElasticTimoshenkoBeam2d", "ElasticTimoshenkoBeam3d"),
+    "forceBeamColumn": ("ForceBeamColumn2d", "ForceBeamColumn3d"),
+    "dispBeamColumn": ("DispBeamColumn2d", "DispBeamColumn3d"),
+    "LadrunoForceBeamColumn": (
+        "LadrunoForceBeamColumn2d", "LadrunoForceBeamColumn3d"),
+    "LadrunoDispBeamColumn": (
+        "LadrunoDispBeamColumn2d", "LadrunoDispBeamColumn3d"),
+}
+
+
+def line_station_classes(name: str) -> "tuple[str, ...]":
+    """The C++ classes a line-stations ``element_class_name`` stands for.
+
+    A command token of :data:`LINE_STATION_CLASSES_FOR_COMMAND` resolves
+    to its classes; any other name is taken as a class name and returned
+    alone, catalogued or not.
+    """
+    return LINE_STATION_CLASSES_FOR_COMMAND.get(name, (name,))
+
+
 # ---------------------------------------------------------------------
 # Fiber / layer catalog access (Phase 11c)
 # ---------------------------------------------------------------------

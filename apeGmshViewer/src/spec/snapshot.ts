@@ -26,6 +26,7 @@ import type { ResolvedFiles } from "./files.ts";
 import { defaultOpacity } from "../state/reduce.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { MAGNITUDE } from "../state/contour.ts";
+import { compareUserPickOf, compareUserRequestOf } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { CameraPose, DeclPath, Event, Offer, OfferIn, State, Vec3, ViewMemo } from "../state/types.ts";
 import type { ThemeMode } from "../theme/tokens.ts";
@@ -237,7 +238,17 @@ export function viewMemoOf(s: State, pose: CameraPose | null, model: string): Vi
     loads: s.loads.on,
     camera: pose,
     theme: s.theme,
+    compareUser: compareUserMemoOf(s),
   };
+}
+
+/** VF (#2943): the compare user result drawn with the compare set it was drawn from, or null. */
+function compareUserMemoOf(s: State): ViewMemo["compareUser"] {
+  const { shown, compare } = s.variants;
+  if (shown === null) return null;
+  // The variants reducer draws one only on an open compare set and ends it with that set: one without is a broken state.
+  if (compare?.status !== "open") throw new Error(`viewMemoOf: the compare user result ${shown.name} ${shown.component} is drawn with no open compare set`);
+  return { set: { index: compare.index, label: compare.label }, pick: shown };
 }
 
 /** The shot's section planes through the store; each plane's id is the one the reducer gave it (INV-2: the render mode and an offer share this). */
@@ -300,6 +311,23 @@ export function restoreView(store: Store, memo: ViewMemo): void {
   d({ type: "setTheme", theme: memo.theme });
   memo.picks.forEach((pick, i) => d({ type: i === 0 ? "select" : "selectAdd", pick }));
   if (memo.camera) d({ type: "setCamera", to: memo.camera });
+  // VF (#2943): the compare user result the memo drew, or none. The contour pick above ends one
+  // (reduce.ts `withoutCompareUser`), so it is drawn again here, and only on the compare set it was
+  // drawn from: an offer can open another (`compare: <label>`), whose file may hold the same name.
+  // Last, so that a refusal reaches putBack's notice once the rest of the view is back.
+  const m = memo.compareUser;
+  if (m === null) {
+    d({ type: "showCompareUser", pick: null });
+    return;
+  }
+  const set = store.get().variants.compare;
+  if (set?.status !== "open" || set.index !== m.set.index || set.label !== m.set.label) {
+    // Nothing of another set stays drawn in its place.
+    d({ type: "showCompareUser", pick: null });
+    const now = set === null ? "no compare set is open" : `the compare set is now ${set.label} (row ${set.index}, ${set.status})`;
+    throw new Error(`the compare user result ${m.set.label}: ${m.pick.name} ${m.pick.component} is not drawn again: ${now}`);
+  }
+  d({ type: "showCompareUser", pick: m.pick });
 }
 
 // ---- the view read back as a spec (D1, D6) -------------------------------------
@@ -335,7 +363,8 @@ function shotDocument(s: SpecShot): Record<string, unknown> {
             gauss: c.gauss,
           },
         }),
-    ...(s.deform === null ? {} : { deform: s.deform }),
+    // G3: a scale left to the auto scale is left out, as the spec says it (spec.ts reads a written null as no number).
+    ...(s.deform === null ? {} : { deform: s.deform.scale === null ? { ghost: s.deform.ghost } : s.deform }),
     ...(s.clip.length ? { clip: s.clip } : {}),
     ...(s.isolate.length ? { isolate: s.isolate } : {}),
     chrome: s.chrome,
@@ -347,11 +376,15 @@ function shotDocument(s: SpecShot): Record<string, unknown> {
 /** D9: a snapshot writes the window as it is. */
 const WINDOW_LAYERS: Record<string, boolean> = Object.fromEntries(APP_LAYERS.map((k) => [k, true]));
 
-/** The stage as a spec names it: its name when that names one stage, else its index. */
+/**
+ * The stage as a spec names it: its program name (W4d #2843: it survives a
+ * display rename) when that names this one stage by either of a stage's names
+ * (compile.ts `stageOf` resolves both), else its index.
+ */
 function stageName(s: State, index: number): string | number {
   const stages = s.results?.stages ?? [];
-  const name = stages[index]?.name;
-  return name && stages.filter((x) => x.name === name).length === 1 ? name : index;
+  const name = stages[index]?.programName;
+  return name && stages.every((x, i) => i === index || (x.programName !== name && x.name !== name)) ? name : index;
 }
 
 function groupPaths(s: State): DeclPath[] {
@@ -438,6 +471,7 @@ function planKey(p: ShotPlan, groups: readonly string[]): string {
     phase: p.phase,
     events: p.events.filter((e) => !(e.type === "isolate" && everyGroup(e.decls))).map((e) => (e.type === "isolate" ? { ...e, decls: [...e.decls].sort() } : e)),
     contour: p.contour,
+    compareUser: p.compareUser,
     deform: p.deform,
   });
 }
@@ -469,6 +503,16 @@ export interface AppliedView {
   fold: boolean;
   shot: SpecShot;
   pose: CameraPose;
+  /** G3 (VA6c, #2765): the auto scale the click drew a `deform` with no scale at; null when the offer named its scale or drew no shape */
+  autoScale: number | null;
+}
+
+/** The applied shot as drawn: a deform it left to the auto scale, at the scale the click drew (G3). */
+function drawnShot(applied: AppliedView): SpecShot {
+  const d = applied.shot.deform;
+  if (d === null || d.scale !== null) return applied.shot;
+  if (applied.autoScale === null) throw new Error(`snapshot: applied offer ${applied.shot.name} left the deform scale to the auto scale, and no auto scale was drawn`);
+  return { ...applied.shot, deform: { ...d, scale: applied.autoScale } };
 }
 
 export interface Snapshot {
@@ -499,7 +543,8 @@ export function snapshotOf(s: State, pose: CameraPose | null, size: [number, num
     same(applied.files.model, model, applied.fold) &&
     same(applied.files.results, results, applied.fold) &&
     samePoseWithin(applied.pose, pose) &&
-    sameView(applied.shot, derived, describe(s))
+    // G3: the window draws an auto-scaled deform at the number; the offer's words leave it out, and the manifest recomputes it.
+    sameView(drawnShot(applied), derived, describe(s))
   ) {
     shot = { ...applied.shot, chrome: "app", layers: WINDOW_LAYERS, background: "theme" };
   }
@@ -550,6 +595,47 @@ export interface ShownDeps {
 }
 
 /**
+ * VF2-d (#2956): draw the compare variant's user result a plan names. The
+ * reducer takes `showCompareUser` only once the compare set is open and its
+ * `.user.h5` read, which follow the plan's `variantCompare` from main, so this
+ * waits for them (and for the compare model, whose mesh check decides whether
+ * there is a read at all), refuses an entry or a component the file does not
+ * offer with what it offers, dispatches the pick, and waits for its read to
+ * answer. Null once the pick is drawn or refused by the view itself (a stale
+ * entry, two meshes): ./verdict.ts then gives the app's own sentence.
+ */
+async function drawCompareUser(deps: ShownDeps, want: NonNullable<ShotPlan["compareUser"]>, t0: number): Promise<string | null> {
+  const what = `user result ${JSON.stringify(want.entry)} of the compare variant ${JSON.stringify(want.variant)}`;
+  const late = () => deps.now() - t0 >= SHOW_MS;
+  for (;;) {
+    const v = deps.store.get().variants;
+    const c = v.compare;
+    if (c === null) return `${what} is not drawn: no compare set is open${v.notice ? ` (${v.notice})` : ""}`;
+    if (c.label !== want.variant) return `${what} is not drawn: the compare set is ${JSON.stringify(c.label)}`;
+    if (c.status === "failed") return `${what} is not drawn: the compare set did not open: ${c.reason}`;
+    const read = (x: { status: string } | null) => x !== null && x.status !== "reading";
+    if (c.status === "open" && read(v.compareModel) && read(v.compareUser)) break;
+    if (late()) return `${what} is not drawn: the compare set, its model and its user file were not read within ${SHOW_MS / 1000} s`;
+    await deps.sleep(20);
+  }
+  const p = compareUserPickOf(deps.store.get(), want.entry);
+  if (!p.ok) return `${what} cannot be drawn: ${p.reason}`;
+  if (!p.entry.components.includes(want.component)) {
+    return `${what} has no component ${JSON.stringify(want.component)}; its components are ${p.entry.components.map((x) => JSON.stringify(x)).join(", ") || "none"}`;
+  }
+  deps.store.dispatch({ type: "showCompareUser", pick: { name: want.entry, component: want.component } });
+  for (;;) {
+    const s = deps.store.get();
+    const req = compareUserRequestOf(s);
+    // No read is asked for: the view refuses the pick (two meshes, a stale entry), and the verdict says why.
+    if (req === null) return null;
+    const r = s.variants.shownRead;
+    if ((r !== null && r.key === req.key && r.status !== "loading") || late()) return null;
+    await deps.sleep(20);
+  }
+}
+
+/**
  * Wait until the shot's view is on screen; null when it is, else the reason
  * it is refused (./verdict.ts). A contour or deformed shape the app answers
  * with `unavailable` or `refused` is refused with that reason once it has
@@ -558,6 +644,10 @@ export interface ShownDeps {
  */
 export async function shownView(deps: ShownDeps, shot: SpecShot, plan: ShotPlan): Promise<string | null> {
   const t0 = deps.now();
+  if (plan.compareUser !== null) {
+    const refused = await drawCompareUser(deps, plan.compareUser, t0);
+    if (refused !== null) return refused;
+  }
   let lastWhy: string | null = null;
   let since = t0;
   for (;;) {
@@ -586,6 +676,13 @@ export interface RunnerDeps {
   pose(): CameraPose | null;
   /** two painted frames */
   settle(): Promise<void>;
+  /**
+   * G3 (VA6c, #2765): the auto deform scale of the step on screen, or why it
+   * cannot be computed (renderer/agentRender.ts `autoScaleOf`, the render
+   * mode's own). A window that hands in none refuses an offer that leaves the
+   * deform scale out, with that reason: it never draws one at another scale.
+   */
+  autoScale?(s: State): { ok: true; scale: number } | { ok: false; reason: string };
   sleep?(ms: number): Promise<unknown>;
   now?(): number;
 }
@@ -694,11 +791,24 @@ export class OfferRunner {
       applyClip(store, c.plan);
       const why = await shownView(this.wait, p.shot, c.plan);
       if (why !== null) return await refuse(why);
+      // G3 (VA6c, #2765), as the render mode does (INV-2): a deform with no scale is drawn at the auto scale
+      // of its step, computed once the step's displacement is on screen, then waited for again.
+      let autoScale: number | null = null;
+      if (c.plan.deform !== null && c.plan.deform.scale === null) {
+        const auto = this.deps.autoScale
+          ? this.deps.autoScale(store.get())
+          : { ok: false as const, reason: "this window cannot read the step's displacement, so it cannot draw the auto deform scale" };
+        if (!auto.ok) return await refuse(auto.reason);
+        store.dispatch({ type: "setDeformScale", scale: auto.scale });
+        const again = await shownView(this.wait, p.shot, c.plan);
+        if (again !== null) return await refuse(again);
+        autoScale = auto.scale;
+      }
       store.dispatch({ type: "setCamera", to: "home" });
       store.dispatch({ type: "setCamera", to: c.plan.camera });
       await this.deps.settle();
       const pose = this.deps.pose();
-      this.applied.push(pose ? { files: p.files, fold: p.fold, shot: p.shot, pose } : null);
+      this.applied.push(pose ? { files: p.files, fold: p.fold, shot: p.shot, pose, autoScale } : null);
       store.dispatch({ type: "offerApplied", id, memo });
     } catch (err) {
       await refuse(`the app refused the view: ${err instanceof Error ? err.message : String(err)}`);

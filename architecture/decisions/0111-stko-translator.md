@@ -119,6 +119,23 @@ test pins every element-tag allocation site. `MeshSelection.ids`,
 `.connectivity` and its `(eid, conn)` iteration now share one order (the
 connectivity used to follow storage order while `.ids` did not).
 
+*Amendment (2026-11-12, #2926): the sequential rule.* Under the default
+`element_tags="sequential"`, an element OpenSees alone knows (an *ops-only*
+element: a node-pair spec, a `LadrunoMembrane` polygon, an MP element, an
+interface `zeroLength`) used to continue the physical-group run, so its tag
+could equal a paired element's FEM id and one id named two elements of the
+archive (#2076, warned by the reader since #2929). Now
+`allocate_element_tags` plans the paired rows first, as the contiguous run
+above the element primitives' seed that they always had, then reserves the
+`element` counter through `max(that run, the snapshot's largest element id)`
+(the same snapshot rule as `"fem"`) before its first mint, and only then
+numbers the ops-only rows, still in spec order. Every later element-kind mint
+draws from that counter, so every ops-only tag lands above every FEM id. A
+deck with no ops-only element is byte-identical; one with ops-only elements
+renumbers them only (and the paired rows of a spec declared after a node-pair
+spec, which close up the run). The plan is made once and read by every emit
+path, so a partitioned emit keeps the flat tags (ADR 0027).
+
 ### D3 — A registry keyed by `XOBJ_META`; anything else fails loudly, listed in full
 
 Every STKO type the translator can meet is a registry entry with a status:

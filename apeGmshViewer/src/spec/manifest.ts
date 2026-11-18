@@ -24,6 +24,11 @@
 //   shape's counts are of drawn nodes too. With a plane cutting, each carries
 //   a `limit`: they are counted before the cut.
 // - A tie takes the lowest id, so the answer never depends on row order.
+// - `deform.scale_auto` is true when the spec left the scale out (G3, VA6c
+//   #2765): `scale` is then the auto scale of the step drawn
+//   (state/deform.ts `autoDeformScale`, Python's `_auto_deform_scale`), and
+//   the entry recomputes it from the step's values and refuses a view drawn
+//   at any other scale.
 // - `position` is the reference position, in the model's coordinates, also
 //   under a deformed shape: a node's position, or the mean of an element's
 //   nodes. A discrete field names the element and its corner's node, and
@@ -32,12 +37,14 @@
 // Only `timing` varies between two runs of one spec on one machine: paths of
 // stills are relative to the manifest, and every number comes from the files.
 
-import type { CombinationColumnOf, DifferenceColumnOf, StepValues } from "../renderer/contour.ts";
+import { userResultOnHand, type CombinationColumnOf, type DifferenceColumnOf, type StepValues } from "../renderer/contour.ts";
 import { elementMaskOf, visibleMaps } from "../renderer/visible.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { columnOf, gaussCellValues, isNodeTopology, meshFemIds, vertexValues } from "../state/contour.ts";
+import { autoDeformScale } from "../state/deform.ts";
 import { applyPlan, cellLookup, planFor } from "../state/extrapolation.ts";
-import { activeCount, contourView, deformView, type ContourView } from "../state/selectors.ts";
+import type { PlaneStatement } from "../state/tensor.ts";
+import { activeCount, contourView, deformView, derivedPlaneOf, type ContourView } from "../state/selectors.ts";
 import type { ArtifactInfo, CameraPose, ContourScan, MeshInfo, State } from "../state/types.ts";
 import { bannerLines, describeSet } from "./describe.ts";
 import type { SpecShot, ViewSpec } from "./spec.ts";
@@ -74,13 +81,33 @@ export type ManifestContour =
       /** what the legend shows for the component */
       label: string;
       /** VU7b-2: `combination` is a User Combination's nodal value (`combination` names it) */
-      source: "nodal" | "element" | "combination" | "difference";
+      source: "nodal" | "element" | "combination" | "difference" | "user";
       /** VU7b-2, a combination's contour only: which, and whether it may draw as a deformed shape */
       combination?: { name: string; signed: boolean };
       /** VU10, a difference's contour only: the window variant minus the compare variant, by label */
       difference?: { window: string; compare: string };
+      /**
+       * VU16, a user result's contour only: the `.user.h5` entry (`field` too) and its basis (A6 judged it current).
+       * VF2-d (#2956): a compare variant's user result (VU19) states `compare`, its variant and its entry apart;
+       * `name` is then the display string the legend shows (`<variant>: <entry>`), which can equal a window
+       * entry of that literal name, so a reader tells the two apart by `compare`, never by `name`
+       */
+      user?: { name: string; basis: string; compare?: { variant: string; entry: string } };
+      /**
+       * VA6d, a derived scalar's contour only (`von_mises_stress`): the stored tensor components it is
+       * computed from, and what its out-of-plane normal is, by element (state/tensor.ts `planeStatement`);
+       * `warning` names the elements whose zz is left at 0 without the model saying it is 0 (v1 warns on them), else null
+       */
+      derived?: { from: string[]; plane: PlaneStatement; warning: string | null };
       /** element fields: how the values reach the screen (`element_mean`, `gauss_node`, ...); nodal: `nodal` */
       topology: string;
+      /**
+       * VF (#2940), only when some groups are not drawn as `topology` says: `topology` is `gauss_node` (`asked`),
+       * and `groups` have no natural coordinates (as a BezierTet10's barycentric Gauss points), so each of their
+       * elements gives its mean to its corners (`drawn`: `cell_averaged`); every other group is extrapolated.
+       * `reason` is the verdict that refused them
+       */
+      topology_fallback?: { asked: string; drawn: string; groups: string[]; reason: string };
       cmap: string;
       range: {
         min: number | null;
@@ -99,7 +126,16 @@ export type ManifestContour =
 
 export type ManifestDeform =
   | { state: "unavailable" | "refused"; reason: string }
-  | { state: "loading" | "ready" | "partial"; scale: number; ghost: boolean; drawn: number | null; undeformed: number | null; limit: string | null };
+  | {
+      state: "loading" | "ready" | "partial";
+      scale: number;
+      /** G3: the spec left the scale out, so `scale` is the auto scale of the step drawn */
+      scale_auto: boolean;
+      ghost: boolean;
+      drawn: number | null;
+      undeformed: number | null;
+      limit: string | null;
+    };
 
 export interface ManifestFile {
   path: string;
@@ -387,6 +423,13 @@ function contourOf(s: State, blobs: BlobStore, step: StepValues | null, combinat
     const c = columnContour(s, v, blobs, difference.ids, difference.values);
     return c.drawn ? { ...c, source: "difference", difference: { window: v.window, compare: v.compare }, range: { ...c.range, mode: v.clim.mode === "fixed" ? "fixed" : "step" } } : c;
   }
+  if (v.state === "user") {
+    // VU16: a state-free user result, from the column on screen (renderer/contour.ts `userResultHeld`).
+    const held = userResultOnHand(v);
+    if (!held) throw new Error(`manifest: the user-result column on hand is not the read the view shows (${v.key}, read ${v.read})`);
+    const c = columnContour(s, v, blobs, held.ids, held.values);
+    return c.drawn ? { ...c, source: "user", user: { name: v.name, basis: v.basis, ...(v.compare === null ? {} : { compare: { variant: v.compare.variant, entry: v.compare.entry } }) } } : c;
+  }
   return drawnContour(s, v, blobs, step);
 }
 
@@ -397,7 +440,7 @@ function combinationContour(s: State, v: Extract<ContourView, { state: "combinat
 }
 
 /** A contour from a column of node values on screen (a User Combination's, VU10's difference): no step data and no history scan. */
-function columnContour(s: State, v: Extract<ContourView, { state: "combination" | "difference" }>, blobs: BlobStore, ids: Float64Array, values: Float64Array): ManifestContour {
+function columnContour(s: State, v: Extract<ContourView, { state: "combination" | "difference" | "user" }>, blobs: BlobStore, ids: Float64Array, values: Float64Array): ManifestContour {
   const mesh = s.mesh;
   if (!mesh) throw new Error("manifest: a contour is drawn with no mesh");
   const seen = visibleOf(s, mesh, blobs);
@@ -431,6 +474,19 @@ function columnContour(s: State, v: Extract<ContourView, { state: "combination" 
   };
 }
 
+/** VA6d: a derived contour's components and its out-of-plane statement (never silent on a zz left at 0 unclassified), built by selectors `derivedPlaneOf`. */
+function derivedOf(s: State, blobs: BlobStore): NonNullable<Extract<ManifestContour, { drawn: true }>["derived"]> {
+  const d = derivedPlaneOf(s, blobs);
+  if (!d) throw new Error("manifest: the contour drawn is not a derived element contour");
+  return d;
+}
+
+/** VF2 (#2924 item 6): the banner's lines as panels/banner.ts draws them: the state's, then a derived contour's plane line. */
+function bannerOf(s: State, blobs: BlobStore): string[] {
+  const plane = derivedPlaneOf(s, blobs)?.warning ?? null;
+  return [...bannerLines(s), ...(plane === null ? [] : [plane])];
+}
+
 function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepValues | null): ManifestContour {
   const at = s.phase.at;
   if (at?.kind !== "results" || !step || step.stage !== at.stage || step.step !== at.step) {
@@ -448,7 +504,11 @@ function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepVal
     component: v.component.key,
     label: v.component.label,
     source: v.state === "ready" ? "nodal" : "element",
+    // VA6d: a derived scalar names the stored components it was computed from at each Gauss point.
+    ...(v.state === "element" && v.component.derived ? { derived: derivedOf(s, blobs) } : {}),
     topology: v.state === "ready" ? "nodal" : v.topology,
+    // VF (#2940): the groups of a gauss_node pick drawn cell_averaged, and why.
+    ...(v.state === "element" && v.fallback ? { topology_fallback: { asked: v.fallback.asked, drawn: v.fallback.drawn, groups: [...v.fallback.groups], reason: v.fallback.reason } } : {}),
     cmap: v.cmap,
     range: {
       min: v.clim.min,
@@ -466,9 +526,29 @@ function drawnContour(s: State, v: DrawnContour, blobs: BlobStore, step: StepVal
   };
 }
 
-function deformOf(s: State): ManifestDeform | null {
+/**
+ * G3: the auto scale of the step on hand, which the view must be drawn at:
+ * recomputed here from the step's displacement rows and every model node, so a
+ * view drawn at another scale (the base view's 1, a stale step's) cannot stand
+ * as the auto scale.
+ */
+function autoScaleOf(s: State, datasets: readonly [string, string, string | null], blobs: BlobStore, step: StepValues | null): number {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !step || step.stage !== at.stage || step.step !== at.step) {
+    throw new Error(`manifest: the auto deform scale needs the step the view shows, and the step data on hand is ${step ? `stage ${step.stage} step ${step.step}` : "none"}`);
+  }
+  const nodes = s.mesh?.nodes;
+  if (!nodes) throw new Error("manifest: the auto deform scale needs every model node's position, and the model's nodes are not read");
+  const [x, y, z] = datasets;
+  const auto = autoDeformScale([row(step, x), row(step, y), z === null ? null : row(step, z)], blobs.get(nodes.xyz));
+  if (s.deform.scale !== auto) throw new Error(`manifest: the deformed shape is drawn at scale ${s.deform.scale}, not the auto scale ${auto} of the step shown`);
+  return auto;
+}
+
+function deformOf(s: State, shot: SpecShot, blobs: BlobStore, step: StepValues | null): ManifestDeform | null {
   const v = deformView(s);
   const limit = cutting(s) ? CUT_COUNT : null;
+  const auto = shot.deform !== null && shot.deform.scale === null;
   switch (v.state) {
     case "off":
       return null;
@@ -476,11 +556,12 @@ function deformOf(s: State): ManifestDeform | null {
     case "refused":
       return { state: v.state, reason: v.reason };
     case "loading":
-      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: null, undeformed: null, limit };
     case "ready":
-      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: v.drawn, undeformed: 0, limit };
-    case "partial":
-      return { state: v.state, scale: v.scale, ghost: v.ghost, drawn: v.drawn, undeformed: v.missing, limit };
+    case "partial": {
+      const scale = auto ? autoScaleOf(s, v.datasets, blobs, step) : v.scale;
+      const counts = v.state === "loading" ? { drawn: null, undeformed: null } : { drawn: v.drawn, undeformed: v.state === "partial" ? v.missing : 0 };
+      return { state: v.state, scale, scale_auto: auto, ghost: v.ghost, ...counts, limit };
+    }
     default: {
       const unknown: never = v;
       throw new Error(`manifest: unknown deformed view ${JSON.stringify(unknown)}`);
@@ -518,23 +599,36 @@ export function manifestEntry(s: State, input: EntryInput): ManifestEntry {
     pairing: describeSet(s, []).pairing,
     ...placeOf(s),
     contour: contourOf(s, input.blobs, input.step, input.combination ?? null, input.difference ?? null),
-    deform: deformOf(s),
-    banner: bannerLines(s),
+    deform: deformOf(s, input.shot, input.blobs, input.step),
+    banner: bannerOf(s, input.blobs),
     layout: input.layout,
   };
 }
 
 /**
  * A refused shot's entry (D2): the app's reason and no still. A shot that
- * compiled names the stage and step it asked for, and the banner of its view;
- * one that did not (`at` null) applied nothing, so it has no view to report.
+ * compiled names the stage and step it asked for, and the banner of its view:
+ * the lines an ok entry states (`bannerOf`, so a derived contour's plane line
+ * too; VF3 #2959). One that did not (`at` null) applied nothing, so it has no
+ * view to report. A banner that cannot be stated (a drawn derived contour's
+ * element ids not on hand) throws, and the message carries the refusal's own
+ * reason, so the caller's catch keeps why the shot was refused.
  */
 export function refusedEntry(
   s: State,
   shot: SpecShot,
   reason: string,
   at: { stage: ManifestEntry["stage"]; step: number | null; time: number | null } | null,
+  blobs: BlobStore,
 ): ManifestEntry {
+  let banner: string[] = [];
+  if (at) {
+    try {
+      banner = bannerOf(s, blobs);
+    } catch (err) {
+      throw new Error(`manifest: the refused shot's banner cannot be stated (${err instanceof Error ? err.message : String(err)}); the shot was refused: ${reason}`);
+    }
+  }
   return {
     name: shot.name,
     status: "refused",
@@ -551,7 +645,7 @@ export function refusedEntry(
     time: at?.time ?? null,
     contour: null,
     deform: null,
-    banner: at ? bannerLines(s) : [],
+    banner,
     layout: null,
   };
 }

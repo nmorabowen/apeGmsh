@@ -125,8 +125,12 @@ export class Study {
   /** the manifest the user opened, and its last read */
   manifest: string | null = null;
   read: VariantsRead | null = null;
-  /** the compare slot: a row and the set paired from it */
-  compare: { row: VariantRow; set: OpenSet } | null = null;
+  /**
+   * The compare slot: a row, the set paired from it, and the `fem_hash` and
+   * `model_hash` its results and model were paired by when main opened it
+   * (VU19: the compare doors check the model against them again at each read).
+   */
+  compare: { row: VariantRow; set: OpenSet; lineage: { femHash: string; modelHash: string } } | null = null;
   /** called after a re-read of the watched manifest */
   onChange: (() => void) | null = null;
 
@@ -173,6 +177,20 @@ export class Study {
     const now = this.deps.recheck(this.manifest!, r.row);
     if (!now.ok) return { ok: false, reason: `variant row ${r.row.index} (${JSON.stringify(r.row.label)}) no longer opens (${now.code}): ${now.reason}` };
     return { ok: true, row: r.row, open: now.real };
+  }
+
+  /**
+   * VU18: `row` as the manifest says it now. An agent run watches nothing, so
+   * the render mode asks this for every shot that names a row: the same path
+   * is read again first (D9.3), never the rows of the first shot's read, and a
+   * file refused on that read refuses the row with its reason.
+   */
+  rowNow(index: unknown, label: unknown): ReturnType<Study["row"]> {
+    if (this.manifest === null) return { ok: false, reason: "no variants manifest is open" };
+    this.reread();
+    const r = this.read;
+    if (r !== null && !r.ok) return { ok: false, reason: `the variants manifest is refused on re-read (${r.code}): ${r.reason}` };
+    return this.row(index, label);
   }
 
   /** Why a file of an opened row's set lies outside the manifest's folder, or null (D9.4: the paired siblings are confined too). */

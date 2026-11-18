@@ -6,7 +6,9 @@
 // - F-FILLED: a solid whose field is 0 on every face shows its interior on the cap;
 // - F-EXEMPT: no plane cuts a cap (renderNow stamps the model, never the caps);
 // - F-LUT: the cap's clim, colormap and no-data colour are the contour's; a
-//   colormap change recolours the caps without slicing again;
+//   colormap change recolours the caps without slicing again; VF-a (#2939):
+//   the cap samples the colormap per fragment, so a point inside a coarse
+//   cap triangle shows a ramp colour, never an RGB blend of its corners;
 // - F-SETTLED: 0 slices during a gizmo drag (the caps hidden), 1 on release,
 //   1 per step of a scrub;
 // - F-TOGGLE: "Contour on cut face" off removes the caps, on brings them back;
@@ -23,8 +25,9 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
-import { CAP_FILL, CAP_STEP, capColours, capKeys, CapLayer, releaseAware, solidTable } from "../../src/renderer/caps.ts";
+import { CAP_FILL, CAP_STEP, capKeys, CapLayer, capShade, releaseAware, solidTable } from "../../src/renderer/caps.ts";
 import { sliderBox, SectionClip } from "../../src/renderer/clip.ts";
+import { colormapTexture, shownAt } from "../../src/renderer/colormapTexture.ts";
 import { toLinear } from "../../src/renderer/contour.ts";
 import { GizmoInteractor, PlaneGizmos } from "../../src/renderer/gizmo.ts";
 import { Viewport } from "../../src/renderer/viewport.ts";
@@ -85,6 +88,24 @@ const area = (pos: ArrayLike<number>): number => {
 };
 const capArea = (c: CapLayer) => c.drawn.reduce((a, x) => a + x.slice.area, 0);
 
+/**
+ * The linear colour each vertex of a cap shows (3 per vertex): its texture
+ * coordinate looked up in the material's map, as the GPU's NEAREST lookup
+ * does (VF-a: the cap carries ramp coordinates, not colours).
+ */
+function shown(mesh: THREE.Mesh): Float32Array {
+  const map = (mesh.material as THREE.MeshStandardMaterial).map as THREE.DataTexture;
+  assert.ok(map, "the cap samples a texture");
+  assert.ok(!(mesh.material as THREE.MeshStandardMaterial).vertexColors, "never per-vertex RGB");
+  const uv = mesh.geometry.getAttribute("uv").array as Float32Array;
+  const out = new Float32Array((3 * uv.length) / 2);
+  for (let v = 0; v < uv.length / 2; v++) out.set(shownAt(map, uv[2 * v]!), 3 * v);
+  return out;
+}
+
+/** How far a ramp texel can be from the ramp at the exact value: half a texel of the steepest ramp (jet's 4 per unit), linearised. */
+const RAMP_TOL = 3e-3;
+
 // ---- F-FILLED --------------------------------------------------------------------
 
 test("F-FILLED: a solid whose field is 0 on every face shows its interior on the cap", () => {
@@ -111,14 +132,16 @@ test("F-FILLED: a solid whose field is 0 on every face shows its interior on the
   assert.ok(Math.abs(cap.area - 9) < 1e-12, "the whole 3 x 3 section");
   assert.equal(Math.max(...cap.values!), 1, "the interior's 1 is on the cap");
   const view = { state: "ready", clim: { min: 0, max: 1 }, cmap: "jet" } as unknown as ContourView;
-  const rgb = capColours(cap, view);
+  const shade = capShade(cap, view);
+  const rgb = new Float32Array(3 * shade.u.length);
+  for (let v = 0; v < shade.u.length; v++) rgb.set(shownAt(shade.texture, shade.u[v]!), 3 * v);
   const zero = sampleCmap("jet", 0).map(toLinear), one = sampleCmap("jet", 1).map(toLinear);
   let ones = 0;
   for (let v = 0; v < cap.values!.length; v++) {
     const c = [rgb[3 * v]!, rgb[3 * v + 1]!, rgb[3 * v + 2]!];
     if (cap.values![v] === 1) {
       ones++;
-      assert.ok(c.every((x, k) => Math.abs(x - one[k]!) < 1e-6), "an interior vertex wears the top of the ramp");
+      assert.ok(c.every((x, k) => Math.abs(x - one[k]!) < 1e-6), "an interior vertex wears the top of the ramp (a texel centre)");
     }
   }
   assert.ok(ones > 0 && rgb.some((x, i) => Math.abs(x - zero[i % 3]!) > 1e-3), "the cap is not the skin's uniform colour");
@@ -183,11 +206,12 @@ test("F-LUT: the cap's clim and colormap are the contour's, and its values are t
   const view = contourView(h.store.get());
   assert.ok(view.state === "ready");
   const colour = (v: number, cmap: "jet" | "viridis") => sampleCmap(cmap, rampT(v, view.clim.min!, view.clim.max!)).map(toLinear);
-  const attr = () => cap.mesh.geometry.getAttribute("color").array as Float32Array;
+  const attr = () => shown(cap.mesh);
   for (let v = 0; v < cap.slice.values!.length; v++) {
     const want = colour(cap.slice.values![v]!, "jet");
-    for (let k = 0; k < 3; k++) assert.ok(Math.abs(attr()[3 * v + k]! - want[k]!) < 1e-6, "the jet colour of the value");
+    for (let k = 0; k < 3; k++) assert.ok(Math.abs(attr()[3 * v + k]! - want[k]!) < RAMP_TOL, "the jet colour of the value");
   }
+  assert.equal((cap.mesh.material as THREE.MeshStandardMaterial).map, colormapTexture("jet"), "the cap samples the contour's colormap");
   // A colormap change recolours the same cap (no new slice).
   const slices = caps.slices;
   h.store.dispatch({ type: "setContourCmap", cmap: "viridis" });
@@ -195,13 +219,14 @@ test("F-LUT: the cap's clim and colormap are the contour's, and its values are t
   assert.equal(caps.slices, slices, "no slice for a colormap change");
   for (let v = 0; v < cap.slice.values!.length; v++) {
     const want = colour(cap.slice.values![v]!, "viridis");
-    for (let k = 0; k < 3; k++) assert.ok(Math.abs(attr()[3 * v + k]! - want[k]!) < 1e-6, "the viridis colour of the value");
+    for (let k = 0; k < 3; k++) assert.ok(Math.abs(attr()[3 * v + k]! - want[k]!) < RAMP_TOL, "the viridis colour of the value");
   }
+  assert.equal((cap.mesh.material as THREE.MeshStandardMaterial).map, colormapTexture("viridis"), "the new colormap's texture");
   // With no contour, one flat fill that is not the no-data colour.
   h.store.dispatch({ type: "setColourBy", by: "group" });
   capsNow(h, caps);
   const fill = CAP_FILL.map(toLinear);
-  const flat = caps.drawn[0]!.mesh.geometry.getAttribute("color").array as Float32Array;
+  const flat = shown(caps.drawn[0]!.mesh);
   assert.ok(Array.from(flat).every((x, i) => Math.abs(x - fill[i % 3]!) < 1e-6), "the flat fill");
   assert.ok(Math.hypot(...CAP_FILL.map((c, k) => c - NO_DATA_RGB[k]!)) > 0.15, "the fill is far from the no-data colour");
 });
@@ -227,7 +252,7 @@ test("no data: a cut point next to a node with no data is no data on the cap, ne
     if (z > 1e-9) assert.notEqual(v[i], 0, "never 0 (displacement_x = s z is 0 only at z = 0)");
   }
   assert.ok(nan > 0, "the top's upper half is cut");
-  const rgb = cap.mesh.geometry.getAttribute("color").array as Float32Array;
+  const rgb = shown(cap.mesh);
   const grey = NO_DATA_RGB.map(toLinear);
   for (let t = 0; t < v.length / 3; t++) {
     if (![0, 1, 2].some((k) => Number.isNaN(v[3 * t + k]!))) continue;
@@ -245,8 +270,39 @@ test("no data: a contour that cannot colour (off the results phases) leaves the 
   const cap = caps.drawn[0]!;
   assert.ok(cap.slice.values!.every((x) => Number.isNaN(x)), "every cut point is no data");
   const grey = NO_DATA_RGB.map(toLinear);
-  const rgb = cap.mesh.geometry.getAttribute("color").array as Float32Array;
+  const rgb = shown(cap.mesh);
   assert.ok(Array.from(rgb).every((x, i) => Math.abs(x - grey[i % 3]!) < 1e-6), "the no-data colour");
+});
+
+// ---- VF-a: per-fragment colormap ------------------------------------------------------
+
+test("VF-a: inside a coarse cap triangle the colour is the ramp at the interpolated value, never an RGB blend of its corners", async () => {
+  // One unit hex whose bottom face is 0 at one corner and 1 at the opposite one: the cut at z = 0.5 is one
+  // square of two triangles whose corners span the whole jet ramp. The interpolated value at a triangle's
+  // centroid is the mean of its corners'; jet there is a ramp colour, and the mean of the corner colours is not.
+  const xyz = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1];
+  const value = [0, 0.5, 1, 0.5, 0, 0.5, 1, 0.5];
+  const solids: Solids = { shape: Uint8Array.of(SOLID_SHAPES.indexOf("hex")), start: Int32Array.of(0, 8), slot: Int32Array.from({ length: 8 }, (_, i) => i) };
+  const slice = sliceSolids(solids, Float64Array.from(xyz), Float64Array.from(value), { normal: [0, 0, -1], constant: 0.5 })!;
+  assert.ok(slice && slice.cell.length >= 2, "the cut is a coarse polygon of a few triangles");
+  const view = { state: "ready", clim: { min: 0, max: 1 }, cmap: "jet" } as unknown as ContourView;
+  const shade = capShade(slice, view);
+  assert.equal(shade.texture, colormapTexture("jet"));
+  let offRamp = 0;
+  for (let t = 0; t < slice.cell.length; t++) {
+    const vals = [0, 1, 2].map((k) => slice.values![3 * t + k]!);
+    if (Math.max(...vals) - Math.min(...vals) < 0.5) continue; // only the triangles that span the ramp tell
+    // What the GPU interpolates at the centroid: the corners' texture coordinate (the ramp, per fragment) ...
+    const u = (shade.u[3 * t]! + shade.u[3 * t + 1]! + shade.u[3 * t + 2]!) / 3;
+    const got = shownAt(shade.texture, u);
+    const mean = (vals[0]! + vals[1]! + vals[2]!) / 3;
+    const want = sampleCmap("jet", mean).map(toLinear);
+    for (let k = 0; k < 3; k++) assert.ok(Math.abs(got[k]! - want[k]!) < RAMP_TOL, `triangle ${t}: the ramp at ${mean}, got ${got} want ${want}`);
+    // ... where per-vertex RGB would have blended the corner colours, off the ramp.
+    const blend = [0, 1, 2].map((k) => vals.reduce((a, x) => a + sampleCmap("jet", x).map(toLinear)[k]!, 0) / 3);
+    if (Math.hypot(...blend.map((b, k) => b - want[k]!)) > 0.05) offRamp++;
+  }
+  assert.ok(offRamp > 0, "the RGB blend is off the ramp on this cut, so the test tells the two apart");
 });
 
 // ---- F-SETTLED -------------------------------------------------------------------------
@@ -640,12 +696,12 @@ for (const source of ["nodal", "element"] as const) {
     capsNow(h, caps);
     assert.equal(caps.slices, slices, "no slice for a range change");
     assert.equal(caps.drawn[0], cap, "the same cap, recoloured");
-    const rgb = cap.mesh.geometry.getAttribute("color").array as Float32Array;
+    const rgb = shown(cap.mesh);
     for (let i = 0; i < cap.slice.values!.length; i++) {
       const x = cap.slice.values![i]!;
       if (!Number.isFinite(x)) continue;
       const want = sampleCmap(v.cmap, rampT(x, fixed.min, fixed.max)).map(toLinear);
-      for (let k = 0; k < 3; k++) assert.ok(Math.abs(rgb[3 * i + k]! - want[k]!) < 1e-6, `vertex ${i}: the colour of ${x} in the fixed range`);
+      for (let k = 0; k < 3; k++) assert.ok(Math.abs(rgb[3 * i + k]! - want[k]!) < RAMP_TOL, `vertex ${i}: the colour of ${x} in the fixed range`);
     }
   });
 }

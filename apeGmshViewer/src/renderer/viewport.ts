@@ -19,16 +19,19 @@ import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import type { LadrunoLineStationStep } from "../reader/ladruno.ts";
 import { contourView, geometryPairing, gizmoPlanes, legendEntryColour, selectedElementsOf } from "../state/selectors.ts";
-import { combinationColours, contourColours, contourShownKey, differenceColours, elementColours, noDataColours, toLinear, type CombinationColumnOf, type StepValues } from "./contour.ts";
+import { colormapTexture, NO_DATA_U, rampUv } from "./colormapTexture.ts";
+import { combinationColours, contourColours, contourShownKey, differenceColours, elementColours, noDataShades, toLinear, userResultColours, type CombinationColumnOf, type ContourShades, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
 import { EntitiesLayer } from "./entities.ts";
+import { CracksLayer } from "./cracks.ts";
 import { LoadsLayer, PrincipalLayer, ReactionsLayer, SupportsLayer, VectorsLayer } from "./loads.ts";
 import { SpringsLayer } from "./springs.ts";
 import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
+import { particleBounds, ParticleLayer, type ParticleFrame, type ParticleLook } from "./particles.ts";
 import { deformedPositions } from "../state/deform.ts";
 import { dropUnplaced, gaussBasePositions, gaussDisplacements, gaussLayoutOf, type GaussLayout, type StationPoints } from "../state/gaussPoints.ts";
 import type { State, Store } from "../state/store.ts";
@@ -58,6 +61,30 @@ const INSPECTOR_PX = 470 + 28;
 
 /** The markers' size for the instant before the effects choose one. */
 const NODE_SIZE_FALLBACK = 5;
+/** ADR 0134 D5: the particles are framed in a sphere this much larger than their own, so an open banner leaves them in view. */
+const PARTICLE_FIT_MARGIN = 1.3;
+
+/**
+ * The sphere the camera fits for a particle frame: the cloud's own bounds (owner D7 on
+ * #2992: centred on the cloud, whether the grid's box is drawn or not), PARTICLE_FIT_MARGIN
+ * larger so an open banner leaves the particles in view; null with no particle.
+ */
+export function particleFitSphere(f: { positions: ParticleFrame["positions"]; ndm: ParticleFrame["ndm"] }): { center: [number, number, number]; radius: number } | null {
+  const b = particleBounds(f.positions, f.ndm);
+  return b ? { center: b.center, radius: b.radius * PARTICLE_FIT_MARGIN } : null;
+}
+
+/**
+ * The width kept clear for the right rail, the model framed left of it: none while the
+ * rail is collapsed or the window is narrow. ADR 0134 D5 (owner D7 on #2992): none for
+ * particles drawn alone (no mesh, no geometry) either. The rail's panels (inspector,
+ * section planes, sources) and its chrome (app.ts `mountCollapsibleChrome`) are a
+ * model's, so it shows nothing then, and the cloud is framed in the middle of the window.
+ */
+export function railKeptPx(width: number, railCollapsed: boolean, particlesAlone: boolean): number {
+  if (railCollapsed || particlesAlone) return 0;
+  return width > 1000 ? INSPECTOR_PX : 0;
+}
 
 export { SELECTION_COLOUR } from "./selection.ts";
 /**
@@ -153,12 +180,18 @@ export class Viewport {
   readonly reactions = new ReactionsLayer();
   readonly vectors = new VectorsLayer();
   readonly principal = new PrincipalLayer();
+  /** The Cracks card: a disc in each crack plane at the Gauss points (renderer/cracks.ts). */
+  readonly cracks = new CracksLayer();
   /** The Springs card: one force arrow per zero-length spring of the results step. */
   readonly springs = new SpringsLayer();
   /** The Display card's BC toggle: restraint glyphs at the supports. */
   readonly supports = new SupportsLayer();
   /** VU8: the `/entities` of the set's `.user.h5` (renderer/entities.ts). */
   readonly entities = new EntitiesLayer();
+  /** ADR 0134 D5: the MPM particles (renderer/particles.ts), filled per output by the effects (`showParticles`). */
+  readonly particles = new ParticleLayer();
+  /** the last particle frame shown, so a theme change can recolour it; null with none */
+  private particleFrame: ParticleFrame | null = null;
   /** V4d: every primitive's positions as drawn now (undeformed, or deformed at the step and scale its key names). */
   private full: FullPositions | null = null;
   /** V4d: the reference ghost (the undeformed mesh, faint) and the markers of drawn nodes with no displacement. */
@@ -212,7 +245,9 @@ export class Viewport {
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
     this.lineDiagram = new LineDiagramLayer(this.camera);
-    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.vectors.root, this.principal.root, this.springs.root, this.supports.root, this.entities.root);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.vectors.root, this.principal.root, this.cracks.root, this.springs.root, this.supports.root, this.entities.root);
+    // ADR 0134 D5: after the node layer's group (`content`), as the card asks.
+    this.scene.add(this.particles.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
     this.scene.add(this.ghost, this.markers, this.gaussGroup);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
@@ -287,6 +322,7 @@ export class Viewport {
     this.springs.setTheme(mode);
     this.supports.setTheme(mode);
     this.entities.setTheme(mode);
+    if (this.particleFrame) this.particles.show({ ...this.particleFrame, fit: false }, this.particleLook());
     const s = this.store.get();
     if (this.geometryInfo) {
       this.setGeometry(this.geometryInfo);
@@ -309,6 +345,7 @@ export class Viewport {
     const s = this.store.get();
     if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, null);
     else if (s.mesh) this.frame(s.mesh, null, null);
+    else this.fitParticles(null);
   }
 
   /**
@@ -321,6 +358,7 @@ export class Viewport {
     const s = this.store.get();
     if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, heading);
     else if (s.mesh) this.frame(s.mesh, heading, frameFocus(this.full, s.mesh, this.blobs, this.drawn, null, null));
+    else this.fitParticles(heading);
   }
 
   /**
@@ -528,9 +566,11 @@ export class Viewport {
     this.reactions.dispose();
     this.vectors.dispose();
     this.principal.dispose();
+    this.cracks.dispose();
     this.springs.dispose();
     this.supports.dispose();
     this.entities.dispose();
+    this.particles.dispose();
     this.halo.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
@@ -560,6 +600,7 @@ export class Viewport {
         this.reactions.setClippingPlanes(this.clip.planes);
         this.vectors.setClippingPlanes(this.clip.planes);
         this.principal.setClippingPlanes(this.clip.planes);
+        this.cracks.setClippingPlanes(this.clip.planes);
         this.springs.setClippingPlanes(this.clip.planes);
         this.supports.setClippingPlanes(this.clip.planes);
         this.requestRender();
@@ -569,6 +610,8 @@ export class Viewport {
     this.settleCaps(s);
     this.onGeometry(s, prev);
     if (!prev || s.mesh !== prev.mesh) {
+      // ADR 0134 D5: a mesh beside particles drawn alone (or its close) changes the rail's width (`panelWidth`).
+      if (this.particleFrame) this.syncCameraFrustum();
       this.setMesh(s.mesh);
       this.applyVisibility(s);
       this.setHighlight(s);
@@ -704,6 +747,41 @@ export class Viewport {
     this.content.add(this.nodePoints);
   }
 
+  /** ADR 0134 D5: the particle layer's colours from the theme (the node markers' plain colour and rim). */
+  private particleLook(): ParticleLook {
+    const t = themeTokens(this.activeTheme);
+    return { plain: toHexNumber(t.accent), rim: toHexNumber(t.bg0), grid: toHexNumber(t.muted) };
+  }
+
+  /**
+   * ADR 0134 D5: the effects' particle frame (effects.ts, through `FrameTarget`), or
+   * null to draw none. The first frame of a set with no mesh and no geometry frames
+   * the camera on the particles.
+   */
+  showParticles(frame: ParticleFrame | null): void {
+    this.particleFrame = frame;
+    this.particles.show(frame, this.particleLook());
+    // Particles alone keep no width for the right rail (`panelWidth`): drawn or cleared, the frustum follows.
+    this.syncCameraFrustum();
+    if (frame?.fit) this.fitParticles(null);
+    this.requestRender();
+  }
+
+  /**
+   * Fit the camera to the particles drawn (the scene has nothing else to frame: `home`,
+   * `fit`, a set's first frame); false when none is drawn. `fit` reads plan or
+   * isometric from the z extent of `pos`: a 2-D stage lies at z = 0.
+   */
+  private fitParticles(heading: Heading | null): boolean {
+    const f = this.particleFrame;
+    if (!f) return false;
+    const b = particleFitSphere(f);
+    if (!b) return false;
+    const z = f.ndm === 2 ? [0, 0] : [b.center[2] - b.radius, b.center[2] + b.radius];
+    this.fit(b.center, b.radius, new Float32Array([0, 0, z[0]!, 0, 0, z[1]!]), heading);
+    return true;
+  }
+
   /** Where the 3-D line diagram's step data comes from (app.ts wires the effects). */
   setLineDiagramSource(source: () => { key: string; step: LadrunoLineStationStep } | null): void {
     this.lineDiagramSource = source;
@@ -730,13 +808,14 @@ export class Viewport {
   }
 
   private syncLoads(s: State = this.store.get()): void {
-    // The Reactions, Vectors, Principal and Springs cards' glyphs follow the same inputs, plus the step's data.
+    // The Reactions, Vectors, Principal, Cracks and Springs cards' glyphs follow the same inputs, plus the step's data.
     const loads = this.loads.sync(s, this.blobs, this.full);
     const supports = this.supports.sync(s, this.blobs, this.full);
     const vectors = this.vectors.sync(s, this.blobs, this.full, this.stepSource());
     const principal = this.principal.sync(s, this.blobs, this.full, this.stepSource());
+    const cracks = this.cracks.sync(s, this.blobs, this.full, this.stepSource());
     const springs = this.springs.sync(s, this.blobs, this.full, this.stepSource());
-    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || vectors || principal || springs) {
+    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || vectors || principal || cracks || springs) {
       this.requestRender();
     }
   }
@@ -880,22 +959,26 @@ export class Viewport {
    * data and range are here, no data everywhere when nothing can be coloured
    * (the legend says why), else null (the step is still loading).
    */
-  private contourFor(s: State, info: MeshInfo, drawn: Drawn): { line: Float32Array; tri: Float32Array; key: string } | null {
+  private contourFor(s: State, info: MeshInfo, drawn: Drawn): ContourShades | null {
     const v = contourView(s);
     if (v.state === "off") throw new Error("viewport: contour colours while not colouring by contour");
     // V4c2a: a refused element field (an unverified file, disagreeing groups, rows that do not join) and a topology
     // not built yet are drawn as no data, never coloured "with a warning".
     if (v.state === "unavailable" || v.state === "refused" || v.state === "not-yet") {
-      return { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: `no-data:${v.reason}` };
+      return noDataShades(drawn.lineMap, drawn.triMap, `no-data:${v.reason}`);
     }
     if (v.state === "element") return elementColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
     if (v.state === "combination") return combinationColours(v, info, this.blobs, this.combinationSource(), drawn.lineMap, drawn.triMap);
     if (v.state === "difference") return differenceColours(v, info, this.blobs, drawn.lineMap, drawn.triMap);
+    if (v.state === "user") return userResultColours(v, info, this.blobs, drawn.lineMap, drawn.triMap);
     return contourColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
   }
 
-  /** Map per-segment start/end contour colours (`lineColours` on `drawnLineMap`) onto extruded prism triangles (`frameTriMap`). */
-  private frameTriContourColours(info: MeshInfo, drawnLineMap: Int32Array, lineColours: Float32Array, frameTriMap: Int32Array): Float32Array {
+  /**
+   * Map per-segment start/end contour ramp coordinates (`lineU` on `drawnLineMap`, 2 per segment) onto the
+   * extruded prism triangles (`frameTriMap`, 3 per triangle): the fill samples the colormap per fragment (VF-a).
+   */
+  private frameTriContourU(info: MeshInfo, drawnLineMap: Int32Array, lineU: Float32Array, frameTriMap: Int32Array): Float32Array {
     const fe = info.frameExtrusion!;
     const nSegs = info.linePositions.shape[0]!;
     const segToDrawn = new Int32Array(nSegs).fill(-1);
@@ -905,21 +988,15 @@ export class Viewport {
     const lineNodes = this.blobs.get(info.vertexNodes.line) as Float64Array;
     const triSegs = this.blobs.i32(fe.triSegments);
     const triNodes = this.blobs.get(fe.triNodes) as Float64Array;
-    const out = new Float32Array(frameTriMap.length * 9);
+    // A triangle of a segment that is not drawn stays no data (frameTriMap holds only drawn segments' triangles).
+    const out = new Float32Array(frameTriMap.length * 3).fill(NO_DATA_U);
     for (let dTri = 0; dTri < frameTriMap.length; dTri++) {
       const t = frameTriMap[dTri]!;
       const seg = triSegs[t]!;
       const d = segToDrawn[seg]!;
       if (d < 0) continue;
       const nodeI = lineNodes[2 * seg]!;
-      for (let v = 0; v < 3; v++) {
-        const isI = triNodes[3 * t + v] === nodeI;
-        const srcOff = 6 * d + (isI ? 0 : 3);
-        const dstOff = 9 * dTri + 3 * v;
-        out[dstOff] = lineColours[srcOff]!;
-        out[dstOff + 1] = lineColours[srcOff + 1]!;
-        out[dstOff + 2] = lineColours[srcOff + 2]!;
-      }
+      for (let v = 0; v < 3; v++) out[3 * dTri + v] = lineU[2 * d + (triNodes[3 * t + v] === nodeI ? 0 : 1)]!;
     }
     return out;
   }
@@ -948,16 +1025,9 @@ export class Viewport {
     if (contourShownKey(v) === this.contourApplied) return;
     const c = this.contourFor(s, info, this.drawn);
     if (!c || c.key === this.contourApplied) return;
-    if (this.faces) {
-      const a = this.faces.geometry.getAttribute("color") as THREE.BufferAttribute;
-      (a.array as Float32Array).set(c.tri);
-      a.needsUpdate = true;
-    }
-    if (this.frameFaces && this.frameTriMap) {
-      const a = this.frameFaces.geometry.getAttribute("color") as THREE.BufferAttribute;
-      (a.array as Float32Array).set(this.frameTriContourColours(info, this.drawn.lineMap, c.line, this.frameTriMap));
-      a.needsUpdate = true;
-    }
+    // VF-a: the surfaces take the ramp coordinates and sample the colormap per fragment.
+    if (this.faces) this.setRamp(this.faces, c.triU, c);
+    if (this.frameFaces && this.frameTriMap) this.setRamp(this.frameFaces, this.frameTriContourU(info, this.drawn.lineMap, c.lineU, this.frameTriMap), c);
     if (this.lines) {
       // LineSegmentsGeometry keeps the colours as one interleaved buffer, 6 floats per segment (start rgb, end rgb).
       const attr = this.lines.geometry.getAttribute("instanceColorStart") as THREE.InterleavedBufferAttribute;
@@ -966,6 +1036,15 @@ export class Viewport {
     }
     this.contourApplied = c.key;
     this.requestRender();
+  }
+
+  /** A contour surface's ramp coordinates, in place, and its material's colormap (VF-a). */
+  private setRamp(mesh: THREE.Mesh, u: Float32Array, c: ContourShades): void {
+    const a = mesh.geometry.getAttribute("uv") as THREE.BufferAttribute | undefined;
+    if (!a || a.count !== u.length) throw new Error(`viewport: a contour surface has ${a?.count ?? "no"} ramp coordinates for ${u.length} vertices`);
+    (a.array as Float32Array).set(rampUv(u));
+    a.needsUpdate = true;
+    (mesh.material as THREE.MeshStandardMaterial).map = colormapTexture(c.cmap);
   }
 
   /**
@@ -996,6 +1075,8 @@ export class Viewport {
     this.clear(this.geometryLayer);
     this.geometryLayer.visible = false;
     this.geometryInfo = g;
+    // ADR 0134 D5: a geometry beside particles drawn alone (or its close) changes the rail's width (`panelWidth`).
+    if (this.particleFrame) this.syncCameraFrustum();
     if (!g) return;
     const t = themeTokens(this.activeTheme);
     const curves = this.blobs.f32(g.curvePositions);
@@ -1033,9 +1114,8 @@ export class Viewport {
 
   /** Width kept clear for the right rail (inspector, sources): the model is framed left of it. */
   private panelWidth(): number {
-    if (this.railCollapsed) return 0;
-    const w = this.host.clientWidth || 1;
-    return w > 1000 ? INSPECTOR_PX : 0;
+    const alone = this.particleFrame !== null && !this.store.get().mesh && !this.geometryInfo;
+    return railKeptPx(this.host.clientWidth || 1, this.railCollapsed, alone);
   }
 
   private syncCameraFrustum(): void {
@@ -1198,10 +1278,13 @@ export class Viewport {
     const drawn = this.visible(s, info);
     this.drawn = drawn;
     const t = themeTokens(this.activeTheme);
-    // V4c1: a contour colours per vertex from the step on screen; until its
-    // data is here, every drawn primitive is no data (never a group colour).
+    // V4c1: a contour colours from the step on screen; until its data is
+    // here, every drawn primitive is no data (never a group colour). VF-a: the
+    // surfaces sample the colormap per fragment from per-vertex ramp
+    // coordinates (a `uv` attribute and the colormap texture as `map`); the
+    // group and role colours stay vertex colours.
     const contour = s.visibility.colourBy === "contour";
-    const cc = contour ? (this.contourFor(s, info, drawn) ?? { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: "no-data:loading" }) : null;
+    const cc = contour ? (this.contourFor(s, info, drawn) ?? noDataShades(drawn.lineMap, drawn.triMap, "no-data:loading")) : null;
     this.contourApplied = cc?.key ?? null;
     const source = contour ? { legend: [], line: new Int32Array(0), tri: new Int32Array(0), edge: toHexNumber(t.edge) } : this.colourSource(s, info);
     // V4d: the positions drawn are the deformed ones when the deformed shape
@@ -1214,10 +1297,12 @@ export class Viewport {
     if (tri.length) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
-      g.setAttribute("color", new THREE.BufferAttribute(cc ? cc.tri : this.colours(source.legend, source.tri, drawn.triMap, 3), 3));
+      if (cc) g.setAttribute("uv", new THREE.BufferAttribute(rampUv(cc.triU), 2));
+      else g.setAttribute("color", new THREE.BufferAttribute(this.colours(source.legend, source.tri, drawn.triMap, 3), 3));
       g.computeVertexNormals();
       const m = new THREE.MeshStandardMaterial({
-        vertexColors: true,
+        vertexColors: !cc,
+        map: cc ? colormapTexture(cc.cmap) : null,
         side: THREE.DoubleSide,
         flatShading: true,
         roughness: 0.75,
@@ -1264,20 +1349,19 @@ export class Viewport {
       if (fTri.length) {
         const fg = new THREE.BufferGeometry();
         fg.setAttribute("position", new THREE.BufferAttribute(fTri, 3));
-        let fCol: Float32Array;
         if (cc) {
-          fCol = this.frameTriContourColours(info, drawn.lineMap, cc.line, frameTriMap);
+          fg.setAttribute("uv", new THREE.BufferAttribute(rampUv(this.frameTriContourU(info, drawn.lineMap, cc.lineU, frameTriMap)), 2));
         } else if (s.visibility.colourBy === "role") {
           const r = roleColouring(s)!;
           const roleTri = Int32Array.from(this.blobs.i32(fe.triElement), (e) => r.byElement[e]!);
-          fCol = this.colours(r.legend, roleTri, frameTriMap, 3);
+          fg.setAttribute("color", new THREE.BufferAttribute(this.colours(r.legend, roleTri, frameTriMap, 3), 3));
         } else {
-          fCol = this.colours(source.legend, this.blobs.i32(fe.triGroup), frameTriMap, 3);
+          fg.setAttribute("color", new THREE.BufferAttribute(this.colours(source.legend, this.blobs.i32(fe.triGroup), frameTriMap, 3), 3));
         }
-        fg.setAttribute("color", new THREE.BufferAttribute(fCol, 3));
         fg.computeVertexNormals();
         const fm = new THREE.MeshStandardMaterial({
-          vertexColors: true,
+          vertexColors: !cc,
+          map: cc ? colormapTexture(cc.cmap) : null,
           side: THREE.DoubleSide,
           flatShading: true,
           roughness: 0.72,

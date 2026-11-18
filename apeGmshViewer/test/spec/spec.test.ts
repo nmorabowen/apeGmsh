@@ -91,6 +91,22 @@ test("D2: contradictory keys refuse the spec: colour_by against contour, a step 
   refused(base({ shots: [{ name: "Uz" }, { name: "uz" }] }), "shots[1].name", /already the name of shots\[0\]/);
 });
 
+test("VF2-d (#2956): a user-result shot names a compare variant's own user result by variant (compare) plus entry (contour.field)", () => {
+  const study = { files: { model: MODEL, variants: "study.variants.json" } };
+  const user = { field: "footfall", component: "ratio", source: "user" };
+  const v = validateSpec(base(study, { compare: "Cracked", contour: user }));
+  assert.ok(v.ok, JSON.stringify(v));
+  const s = v.spec.shots[0]!;
+  assert.deepEqual([s.compare, s.contour?.source, s.contour?.field, s.contour?.component, s.stage], ["Cracked", "user", "footfall", "ratio", null]);
+  // Still a user result: no stage, no step, no combination, no shape; and the compare needs the variants manifest.
+  refused(base({}, { compare: "Cracked", contour: user }), "shots[0].compare", /no files\.variants/);
+  refused(base(study, { compare: "Cracked", stage: 0, contour: user }), "shots[0].stage", /a user result has no state/);
+  refused(base(study, { compare: "Cracked", contour: user, deform: {} }), "shots[0].deform", /contour only/);
+  refused(base(study, { compare: "Cracked", combination: "ULS", contour: user }), "shots[0].compare", /combination across variants/);
+  // A compare of any other contour is still the difference, held to a nodal contour of a stage.
+  refused(base(study, { compare: "Cracked", contour: { field: "displacement", component: "x" } }), "shots[0].compare", /needs a stage: a difference/);
+});
+
 test("D9: layers are a closed set per chrome; transparent needs model mode", () => {
   refused(base({}, { layers: { legend: false } }), "shots[0].layers.legend", /not a key/);
   refused(base({}, { layers: { scale_bar: false } }), "shots[0].layers.scale_bar", /not a layer of chrome "app"/);

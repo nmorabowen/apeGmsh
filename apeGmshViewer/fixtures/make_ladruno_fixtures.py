@@ -349,6 +349,54 @@ def quad2d() -> None:
         plate["element_ids"] = np.arange(1, 7, dtype=np.int64)
 
 
+def cracks3d() -> None:
+    """Write ``ladruno_cracks3d.ladruno`` (the Python suite's fork run ``crack_bricks.ladruno``, stamped) and its model, by hand.
+
+    Three ``stdBrick`` elements of ASDConcrete3D in uniaxial tension along x, the
+    third cracked: ``material.crackPattern`` (9 columns per Gauss point, the crack
+    vectors) and ``material.crackWidth``. No fork run here: the source is
+    ``tests/fixtures/ladruno/crack_bricks.ladruno``
+    (``tests/fixtures/ladruno/_generate_fixtures.py``). The Brick's corner order
+    is gmsh's hex8, so the model's connectivity is the file's.
+    """
+    src = REPO / "tests" / "fixtures" / "ladruno" / "crack_bricks.ladruno"
+    out = HERE / "ladruno_cracks3d.ladruno"
+    shutil.copyfile(src, out)
+    with h5py.File(out, "r+") as f:
+        st = f["MODEL_STAGE[1]"]
+        conn = st["MODEL/ELEMENTS/56-Brick[401:0]/CONNECTIVITY"][()]
+        nodes = st["MODEL/NODES/COORDINATES"][()]
+        node_ids = st["MODEL/NODES/ID"][()].reshape(-1)
+        assert conn[:, 0].tolist() == [1, 2, 3], conn
+        cm = st["RESULTS/ON_ELEMENTS/material.crackPattern/56-Brick[401:0:0]/COLUMN_MAP"]
+        assert cm["GAUSS_ID"][()].reshape(-1).tolist() == list(range(8))
+        prov = f["INFO/PROVENANCE"]
+        for name, value in STAMP.items():
+            prov.attrs.create(name, data=value, dtype=VLEN_UTF8)
+    with h5py.File(HERE / "ladruno_cracks3d.h5", "w") as f:
+        meta = f.create_group("meta")
+        meta.attrs["neutral_schema_version"] = "2.35.0"
+        meta.attrs["opensees_schema_version"] = "2.24.0"
+        meta.attrs["ndm"] = np.int64(3)
+        meta.attrs["ndf"] = np.int64(3)
+        lin = meta.create_group("lineage")
+        lin.attrs["model_hash"] = STAMP["model_hash"]
+        lin.attrs["fem_hash"] = STAMP["fem_hash"]
+        g = f.create_group("nodes")
+        g["ids"] = node_ids.astype(np.int64)
+        g["coords"] = nodes.astype(np.float64)
+        hexa = f.create_group("elements").create_group("hexa8")
+        hexa.attrs["code"] = np.int64(5)
+        hexa.attrs["dim"] = np.int64(3)
+        hexa.attrs["npe"] = np.int64(8)
+        hexa["ids"] = conn[:, 0].astype(np.int64)
+        hexa["connectivity"] = conn[:, 1:].astype(np.int64)
+        bar = f.create_group("physical_groups").create_group("element_side").create_group("Bar")
+        bar.attrs["dim"] = np.int64(3)
+        bar.attrs["tag"] = np.int64(1)
+        bar["element_ids"] = conn[:, 0].astype(np.int64)
+
+
 _SPRINGS_RUN = r"""
 import sys
 import openseespy.opensees as ops
@@ -806,6 +854,7 @@ def main() -> None:
     ap.add_argument("--quad2d", action="store_true", help="also run the fork to write ladruno_quad2d.ladruno and its model")
     ap.add_argument("--parts", action="store_true", help="also run OpenSeesMP (2 ranks) to write the ladruno_parts2d part set and its model")
     ap.add_argument("--springs", action="store_true", help="also run the fork to write ladruno_springs3d.ladruno and its model")
+    ap.add_argument("--cracks", action="store_true", help="also stamp the suite's crack_bricks.ladruno as ladruno_cracks3d.ladruno and write its model")
     args = ap.parse_args()
     truss2d()
     stamped()
@@ -821,6 +870,8 @@ def main() -> None:
         parts()
     if args.springs:
         springs3d()
+    if args.cracks:
+        cracks3d()
 
 
 if __name__ == "__main__":

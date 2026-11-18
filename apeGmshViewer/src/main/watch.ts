@@ -19,6 +19,11 @@
 // the model and the results file too, so a `changed` of either is a reason to
 // read it again (`user:read`, main.ts).
 //
+// The `<stem>.workspace.h5` (ADR 0132 D1) is a member by the same rule: its
+// writers (the app's ./workspace.ts, and Python) replace it through a
+// `.partial` that is no candidate, and its appearing, being replaced or being
+// deleted is a `changed(<its path>)`, never a `reopened`.
+//
 // No Electron import: the tests run in Node.
 
 import { existsSync, statSync, watch, type FSWatcher } from "node:fs";
@@ -129,24 +134,26 @@ export class SetWatcher {
     const prev = this.set;
     this.set = next;
     // Model, geometry or results moved: the window re-reads the set.
-    if (!sameSet({ ...next, user: null }, { ...prev, user: null })) {
+    if (!sameSet({ ...next, user: null, workspace: null }, { ...prev, user: null, workspace: null })) {
       this.sink.reopened(next);
       return;
     }
-    // Only the user slot can differ here, and the user file appearing, being
-    // replaced or being deleted is never a reopen (which re-reads model, geometry
-    // and results and clears the step). Each path reports its own change: a model
-    // rewritten while the user file appears is two changes, never one (review of
-    // #2729: the re-run order emit, run, write_user_file).
-    const user = this.cands.user;
-    if (inSet(next, path) || samePath(path, user)) this.sink.changed(path);
-    if (!samePath(path, user) && !samePath(next.user, prev.user) && !this.polls.has(user)) {
-      // The user slot moved with no poll of its own running (its event was missed
+    // Only the user and workspace slots can differ here, and either file
+    // appearing, being replaced or being deleted is never a reopen (which
+    // re-reads model, geometry and results and clears the step). Each path
+    // reports its own change: a model rewritten while the user file appears is
+    // two changes, never one (review of #2729: the re-run order emit, run,
+    // write_user_file).
+    const members = [[this.cands.user, next.user, prev.user], [this.cands.workspace, next.workspace, prev.workspace]] as const;
+    if (inSet(next, path) || members.some(([own]) => samePath(path, own))) this.sink.changed(path);
+    for (const [own, now, before] of members) {
+      if (samePath(path, own) || samePath(now, before) || this.polls.has(own)) continue;
+      // The slot moved with no poll of its own running (its event was missed
       // or merged): report it here, once, under the signature it now has.
-      const now = signature(user);
-      if (this.reported.get(user) !== now) {
-        this.reported.set(user, now);
-        this.sink.changed(user);
+      const sig = signature(own);
+      if (this.reported.get(own) !== sig) {
+        this.reported.set(own, sig);
+        this.sink.changed(own);
       }
     }
   }

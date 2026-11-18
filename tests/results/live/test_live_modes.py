@@ -9,9 +9,12 @@ so the expected file is known entry by entry. The file is a ``.ladruno``
 * every written shape is the raw ``nodeEigenvector`` of its node and mode
   (no scaling), and every eigenvalue is the solve's, bit for bit, with
   ``f = √λ/2π`` and ``T = 2π/√λ`` (the native route's values);
-* a rotation slot holds the rotation only where a beam touches the node;
-  a 3-D solid node writes 0.0 there, and a node under an unknown class
-  writes 0.0 with one ``RotationSlotUnresolvedWarning``;
+* a rotation slot holds the rotation only where a beam touches the node,
+  and a 3-D solid node has none; an ``ASDEmbeddedNodeElement`` neither
+  gives nor takes one away, a rotation-only beam class
+  (``_ROTATION_TOKEN_FOR_LIVE_CLASS``) gives one, and a rotation slot an
+  unknown class (or no rotational class) leaves unsettled refuses by
+  node, slot and class, writing nothing (#2407, ruling R6 = (A));
 * the stamp: a FEMData (or its ``fem.to_h5`` archive) gives ``fem_hash``
   alone, byte-equal to the archive's (ADR 0133 D1); a refused stamp
   leaves no file and no staging directory;
@@ -37,7 +40,6 @@ import pytest
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
 from apeGmsh.mesh.FEMData import ElementComposite, FEMData, MeshInfo, NodeComposite
-from apeGmsh.opensees.analysis.eigen import RotationSlotUnresolvedWarning
 from apeGmsh.results import Results
 from apeGmsh.results.live import capture_live_modes
 from apeGmsh.results.writers import ProvenanceStampRefused
@@ -83,6 +85,10 @@ class FakeOps:
         self.vectors = {(n, k): rng.standard_normal(ndf[n]) * 10.0 ** (k - 3)
                         for n in coords for k in range(1, len(eigenvalues) + 1)}
         self.solved: "list[int]" = []
+        #: ``{node: [dof, ...]}`` the ``fix`` commands hold (1-based).
+        self.fixed: "dict[int, list[int]]" = {}
+        #: The handler keeps an equation at a fixed DOF (Penalty, Lagrange).
+        self.fixed_keep_equations = False
         #: The arguments of each ``eigen`` call.
         self.calls: "list[tuple[Any, ...]]" = []
 
@@ -106,6 +112,16 @@ class FakeOps:
 
     def eleNodes(self, tag: int) -> list[int]:
         return list(self.elements[tag][1])
+
+    def getFixedDOFs(self, n: int) -> list[int]:
+        return list(self.fixed.get(n, []))
+
+    def nodeDOFs(self, n: int) -> list[int]:
+        """-1 at a fixed DOF (no equation) unless the handler keeps one;
+        some equation number elsewhere."""
+        fixed = set(self.fixed.get(n, []))
+        return [-1 if d + 1 in fixed and not self.fixed_keep_equations
+                else 100 * n + d for d in range(self.ndf[n])]
 
     def eigen(self, *args: Any) -> list[float]:
         self.calls.append(args)
@@ -218,18 +234,155 @@ def test_solid_and_frame_rotations_only_on_beam_nodes(tmp_path: Path) -> None:
                 assert comps[f"rotation_{a}"][n] == want
 
 
-def test_an_unknown_class_writes_zero_rotations_with_one_warning(tmp_path: Path) -> None:
+_ROT3 = r"\['rotation_x', 'rotation_y', 'rotation_z'\]"
+
+
+def _refuses(fem: FEMData, ops: FakeOps, out: Path, match: str) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match=match):
+            capture_live_modes(fem, 2, out, ops=ops)
+    assert not out.exists()
+
+
+def test_an_unknown_class_refuses_by_node_slot_and_class(tmp_path: Path) -> None:
+    """#2407, ruling R6 = (A): the beam nodes of an unknown class would be
+    written as 0.0 rotations (with a warning, before); the capture now
+    refuses, naming the first node, its rotation slots and the class."""
     fem, ops = _solid_and_frame(beam_class="SomeUnknownBeam")
-    with pytest.warns(RotationSlotUnresolvedWarning, match=r"capture_live_modes") as rec:
+    _refuses(fem, ops, tmp_path / "modes.ladruno",
+             rf"capture_live_modes: node 9's rotation slots {_ROT3} cannot be "
+             r"settled: a SomeUnknownBeam touches it.*\(3 node\(s\): "
+             r"\[9, 10, 11\]\)\. Nothing was written")
+
+
+def test_an_unknown_class_beside_a_beam_still_refuses(tmp_path: Path) -> None:
+    """A node a known beam and an unknown class both touch: the unknown
+    class wins, so node 11 refuses by its name."""
+    fem, ops = _solid_and_frame()
+    ops.elements[4] = ("SomeUnknownLink", [11])
+    _refuses(fem, ops, tmp_path / "modes.ladruno",
+             rf"node 11's rotation slots {_ROT3} cannot be settled: a "
+             r"SomeUnknownLink touches it.*\(1 node\(s\): \[11\]\)")
+
+
+def test_an_unknown_class_on_translation_only_nodes_does_not_refuse(
+    tmp_path: Path,
+) -> None:
+    """An unknown class over ndf-3 nodes (no rotation slot) settles nothing
+    and refuses nothing: the beam nodes still read their rotations."""
+    fem, ops = _solid_and_frame()
+    ops.elements[1] = ("SomeUnknownSolid", list(range(1, 9)))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
-    assert len(rec) == 1
-    got = _read(p, fem)
-    # No node holds a rotation: the recorder layout writes the rotational
-    # group anyway, all 0.0, as the native route wrote no rotation.
-    for comps in got.values():
+    for k, comps in _read(p, fem).items():
+        for n in (9, 10, 11):
+            for d, a in enumerate(_AXES):
+                assert comps[f"rotation_{a}"][n] == float(ops.vectors[(n, k)][3 + d])
+
+
+def test_an_embedded_node_element_is_neutral(tmp_path: Path) -> None:
+    """#2407: an ``ASDEmbeddedNodeElement`` tying beam node 9 into the
+    brick (``-rot``) neither blocks nor gives a rotation: node 9 reads the
+    live rotations, as nodes 10 and 11 do. Before, the class was unknown,
+    and node 9 was written as 0.0."""
+    fem, ops = _solid_and_frame()
+    ops.elements[4] = ("ASDEmbeddedNodeElement", [9, 1, 2, 4, 5])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
+    for k, comps in _read(p, fem).items():
+        for n in (9, 10, 11):
+            for d, a in enumerate(_AXES):
+                assert comps[f"rotation_{a}"][n] == float(ops.vectors[(n, k)][3 + d])
+                assert comps[f"rotation_{a}"][n] != 0.0
+
+
+def test_a_node_only_an_embedded_node_element_touches_refuses(tmp_path: Path) -> None:
+    """Neutral is not rotational: an ndf-6 node that only an
+    ``ASDEmbeddedNodeElement`` touches has no element that makes its slots
+    rotations, so it refuses (no class to name)."""
+    fem, ops = _solid_and_frame()
+    ops.elements[3] = ("Truss", [10, 11])      # node 11: no rotational class
+    ops.elements[4] = ("ASDEmbeddedNodeElement", [11, 1, 2, 4, 5])
+    _refuses(fem, ops, tmp_path / "modes.ladruno",
+             rf"node 11's rotation slots {_ROT3} cannot be settled: no "
+             r"beam-column or shell \(or zero-length\) element touches it")
+
+
+def _truss_tail() -> "tuple[FEMData, FakeOps]":
+    """The solid-and-frame model with beam 3 swapped for a truss: node 11
+    (ndf 6) is touched by no rotational class."""
+    fem, ops = _solid_and_frame()
+    ops.elements[3] = ("Truss", [10, 11])
+    return fem, ops
+
+
+def test_a_fixed_rotation_slot_is_written_as_zero(tmp_path: Path) -> None:
+    """Review F1: node 11's rotation DOFs are all fixed, so their modal
+    value is 0 whatever the slot means, and the capture writes 0.0 there
+    instead of refusing."""
+    fem, ops = _truss_tail()
+    ops.fixed[11] = [1, 2, 3, 4, 5, 6]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
+    for k, comps in _read(p, fem).items():
         for a in _AXES:
-            assert set(comps[f"rotation_{a}"].values()) == {0.0}
-            assert len(comps[f"displacement_{a}"]) == 11
+            assert comps[f"rotation_{a}"][11] == 0.0
+        for n in (9, 10):
+            for d, a in enumerate(_AXES):
+                assert comps[f"rotation_{a}"][n] == float(ops.vectors[(n, k)][3 + d])
+
+
+@pytest.mark.parametrize("fixed, keep", [
+    ([], False), ([1, 2, 3], False), ([1, 2, 3, 4, 5], False),
+    ([1, 2, 3, 4, 5, 6], True),
+], ids=["none", "translations", "two-rotations", "fixed-with-equations"])
+def test_a_rotation_slot_not_all_fixed_still_refuses(
+    fixed: "list[int]", keep: bool, tmp_path: Path,
+) -> None:
+    """Delta review F1: a fixed DOF the handler keeps an equation for
+    (Penalty, Lagrange: ``nodeDOFs`` is no -1) moves in the modes, so it
+    refuses like an unfixed one."""
+    fem, ops = _truss_tail()
+    ops.fixed[11] = fixed
+    ops.fixed_keep_equations = keep
+    _refuses(fem, ops, tmp_path / "modes.ladruno",
+             rf"node 11's rotation slots {_ROT3} cannot be settled")
+
+
+@pytest.mark.parametrize("beam_class", ["MixedBeamColumn3d", "ElasticForceBeamColumn3d"])
+def test_a_rotation_only_beam_class_reads_its_rotations(
+    beam_class: str, tmp_path: Path,
+) -> None:
+    """#2414: a stock beam class the pairing does not type
+    (``_ROTATION_TOKEN_FOR_LIVE_CLASS``) still makes its nodes' slots
+    rotations, so they read the live vectors."""
+    fem, ops = _solid_and_frame(beam_class=beam_class)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
+    for k, comps in _read(p, fem).items():
+        for n in (9, 10, 11):
+            for d, a in enumerate(_AXES):
+                assert comps[f"rotation_{a}"][n] == float(ops.vectors[(n, k)][3 + d])
+
+
+def test_the_rotation_tables_type_rotational_families_only() -> None:
+    """Each rotation-only class takes a rotational family's token, apart
+    from the pairing table (so the pairing still refuses it), and the
+    neutral classes are in neither."""
+    from apeGmsh.opensees import _recorder_translate as rt
+    from apeGmsh.opensees._readback import _CLASS_FOR_TOKEN, _ROTATIONAL_FAMILIES
+
+    rot = rt._ROTATION_TOKEN_FOR_LIVE_CLASS
+    assert rot and not set(rot) & set(rt._TOKEN_FOR_LIVE_CLASS)
+    for name, token in rot.items():
+        assert issubclass(_CLASS_FOR_TOKEN[token], _ROTATIONAL_FAMILIES), name
+    assert not rt._ROTATION_NEUTRAL_LIVE_CLASSES & (
+        set(rot) | set(rt._TOKEN_FOR_LIVE_CLASS))
 
 
 # ---------------------------------------------------------------------------

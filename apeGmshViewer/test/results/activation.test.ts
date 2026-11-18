@@ -9,6 +9,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { compileShot } from "../../src/spec/compile.ts";
+import { describeSet } from "../../src/spec/describe.ts";
+import { viewShotOf } from "../../src/spec/snapshot.ts";
+import { validateSpec } from "../../src/spec/spec.ts";
 import { activationOf } from "../../src/state/activation.ts";
 import { activationNow, inactiveElements, noticesOf, resultsPairing } from "../../src/state/selectors.ts";
 import { reduce, type State } from "../../src/state/store.ts";
@@ -190,4 +194,84 @@ test("the ambiguous and absent states are a visible banner; filtered and unstage
   ]);
   assert.equal(inactiveElements(atStage(base, 3)), null, "absent hides nothing");
   assert.deepEqual(notices(base), [], "off the results phases there is no activation notice");
+});
+
+// W4d #2843 (the W4c delta review's reproducer): a stage shown by a display name
+// ("Base load", a .ladruno `stage_display_names` rename) still matches /sequence by
+// its program name. Matched on `name`, the stage reads `absent` ("no /sequence
+// stage is named \"Base load\"") and every element is drawn.
+const renamed = (s: State, k: number, name: string, programName = s.results!.stages[k]!.programName): State => ({
+  ...s,
+  results: { ...s.results!, stages: s.results!.stages.map((st, i) => (i === k ? { ...st, name, programName } : st)) },
+});
+
+test('W4d: a stage renamed for display ("Base load") is still filtered by its program name, and labelled by its display name', () => {
+  assert.equal(base.results!.stages[0]!.programName, "base", "a native file's program name is its stage name");
+  const t = atStage(renamed(base, 0, "Base load"), 0);
+  const now = activationNow(t)!;
+  assert.equal(now.activation.state, "filtered", JSON.stringify(now.activation));
+  if (now.activation.state !== "filtered") return;
+  assert.deepEqual(femIdsOf(base, now.activation.inactiveTags), oracle.hidden_fem_ids["base"], "the same elements as the un-renamed stage");
+  assert.equal(now.stageName, "Base load", "the banner and labels name the stage by its display name");
+  assert.ok(inactiveElements(t), "the inactive elements are hidden");
+  // The un-renamed stage again: the memo keys on both names, so nothing stale is served.
+  assert.equal(activationNow(atStage(base, 0))!.stageName, "base");
+});
+
+test("W4d: a display name never takes part in matching, even when it is another stage's program name", () => {
+  // Shown as "erect", but program stage "nope": absent by the program name, never erect's activation.
+  const t = atStage(renamed(base, 0, "erect", "nope"), 0);
+  const a = activationNow(t)!.activation;
+  assert.equal(a.state, "absent");
+  assert.match((a as { reason: string }).reason, /no \/sequence stage is named "nope"/);
+  assert.equal(inactiveElements(t), null);
+});
+
+test("W4d (review finding 2): a re-read that only stamps display names keeps the results position; another program name drops it", async () => {
+  const r = await stagedResults();
+  const at = { kind: "results" as const, stage: 1, step: 0 };
+  const s = reduce(base, { type: "setPhase", at });
+  assert.deepEqual(s.phase.at, at);
+  const reread = (name: string, programName: string): State =>
+    reduce(s, { type: "resultsLoaded", ...r, info: { ...r.info, stages: r.info.stages.map((st, i) => (i === 1 ? { ...st, name, programName } : st)) } });
+  const shown = reread("Erection", "erect");
+  assert.deepEqual(shown.phase.at, at, "a display rename is a label: the position is kept");
+  assert.equal(shown.results!.stages[1]!.name, "Erection");
+  assert.equal(reread("erect", "erect").phase.at?.kind, "results", "an unchanged re-read keeps it too");
+  assert.deepEqual(reread("erect", "lift").phase.at, { kind: "mesh" }, "another program stage under the same label: the phase leaves it for the mesh");
+});
+
+// W4d #2843, the spec side (Amendment 1): a spec names a stage by either of its names,
+// so one written against the program name keeps resolving after a display rename;
+// the two names hitting different stages refuses. A snapshot writes the program name.
+const specShot = (stage: string | number) => {
+  const v = validateSpec({ spec: "apegmsh-view/1", files: { model: "m.h5" }, shots: [{ name: "s", stage }] });
+  if (!v.ok) throw new Error(`${v.key}: ${v.reason}`);
+  return v.spec.shots[0]!;
+};
+const resolved = (s: State, stage: string) => {
+  const c = compileShot(specShot(stage), describeSet(s, []));
+  return c.ok ? c.plan.stage!.index : c.reason;
+};
+
+test("W4d: a spec resolves a renamed stage by its program name or its display name; the two names on different stages refuse", () => {
+  const d = describeSet(renamed(base, 0, "Base load"), []);
+  assert.deepEqual(
+    d.stages.map((st) => [st.name, st.programName]),
+    [["Base load", "base"], ["erect", "erect"], ["unprop", "unprop"], ["mode_1", "mode_1"]],
+  );
+  assert.equal(resolved(renamed(base, 0, "Base load"), "base"), 0, "the program name still resolves");
+  assert.equal(resolved(renamed(base, 0, "Base load"), "Base load"), 0, "and so does the display name");
+  assert.equal(resolved(base, "base"), 0);
+  // Stage 0 shown as "erect" while stage 1's program name is "erect": refused, never a guess.
+  assert.match(String(resolved(renamed(base, 0, "erect"), "erect")), /"erect" is the program name of stage 1 and the shown name of stage 0; name the stage by its index/);
+  assert.match(String(resolved(renamed(base, 0, "Base load"), "gravity")), /no stage named "gravity"; their stages are "Base load" \(program stage "base"\), "erect"/);
+});
+
+test("W4d: a snapshot names a renamed stage by its program name, or by its index when that name is ambiguous", () => {
+  const pose = { eye: [1, 1, 1] as [number, number, number], target: [0, 0, 0] as [number, number, number], up: [0, 0, 1] as [number, number, number] };
+  assert.equal(viewShotOf(atStage(renamed(base, 0, "Base load"), 0), pose).shot.stage, "base");
+  assert.equal(viewShotOf(atStage(base, 1), pose).shot.stage, "erect");
+  // Stage 1 shown as "base": "base" would hit two stages, so the snapshot names stage 0 by its index.
+  assert.equal(viewShotOf(atStage(renamed(base, 1, "base"), 0), pose).shot.stage, 0);
 });

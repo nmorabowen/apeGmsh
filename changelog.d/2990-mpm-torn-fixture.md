@@ -1,0 +1,5 @@
+### TESTS — the fork's torn particle file is vendored, and the Python reader is pinned on its 3 committed outputs (#2990)
+
+Fork commit `e30872e34` (OpenSees#1080) states the crash rule of contract 232a §2.5 in numbered steps, with a reference implementation, `committed_outputs`, and a torn fixture. `tests/fixtures/mpm/` now holds `particles_torn_v1m2.ladruno` and the updated `mpm_contracts.py` (blob shas in its README). The fixture is the all-particle file with a fourth output whose `OFFSETS` entry holds the fill value 0. `Results.from_ladruno` reads its 3 committed outputs, equal to `committed_outputs` and to the closed fixture, and warns about the ignored tail. The vendored closed-file validator still refuses the file (C2-OFF). The viewer's contour golden lists the file with no FE contour. No code changes.
+
+A registry whose columns differ in length is still refused (C2-REG). The merged contract makes the registry extensible within a stage and has no skip rule for a stage torn while it opened; that rule is proposed in OpenSees#1081, which has not merged.

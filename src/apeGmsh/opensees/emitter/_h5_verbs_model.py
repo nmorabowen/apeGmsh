@@ -382,34 +382,62 @@ class _H5ModelVerbsMixin(_H5Host):
         self, cnode: int, cdof: int, ccoef: float,
         retained: "Sequence[tuple[int, int, float]]",
     ) -> None:
-        # Opensees 2.35.0: a global line is one
-        # ``/opensees/constraints/equationConstraint`` row, so a replay
-        # writes it at its emit index. The global pass writes two kinds and
-        # the archive stores both: an ``enforce="equation"`` tie's line per
-        # tied DOF (ADR 0068), and an ``apeSees.equation_constraint`` row,
-        # whose ``/opensees/decl_params`` record the reader checks the rows
-        # against. A partitioned emit writes a tie on every rank that holds
-        # its slave or a master (ADR 0068 Open item 2); each line is
-        # captured once (ADR 0027 INV-1).
+        # Every line is one ``{scope}/constraints/equationConstraint`` row,
+        # so a replay writes it at its emit index. The global pass
+        # (opensees 2.35.0) writes two kinds and the archive stores both:
+        # an ``enforce="equation"`` tie's line per tied DOF (ADR 0068), and
+        # an ``apeSees.equation_constraint`` row, whose
+        # ``/opensees/decl_params`` record the reader checks the rows
+        # against. A stage block (opensees 2.40.0) stores the lines of the
+        # ties it claims, stamped from its MP sequence. A partitioned emit
+        # writes a tie on every rank that holds its slave or a master
+        # (ADR 0068 Open item 2); each line is captured once (ADR 0027
+        # INV-1).
         name = self._consume_pending_mp_name()
-        if self._stage_current is not None:
-            # A stage-claimed equation tie's lines are still dropped: the
-            # stage blocks have no store for them (VERBS store ``...|``),
-            # and the replay refuses such a tie by name.
-            self._ledger("equationConstraint")
-            return
         rec = EquationConstraintRecordRO(
             cnode=int(cnode), cdof=int(cdof), ccoef=float(ccoef),
             retained=tuple(
                 (int(rn), int(rd), float(rc)) for rn, rd, rc in retained),
             name=name,
         )
-        if self._partition_dup((
-            "equationConstraint", rec.cnode, rec.cdof, rec.ccoef,
-            rec.retained, rec.name,
-        )):
+        # Two equal records (one ``s.tie(name=...)`` over two equal ties)
+        # are two lines on every rank that writes them, so the key carries
+        # the line's occurrence on its rank: a replica on another
+        # rank repeats ``(line, n)``; the rank's second equal line does not.
+        if self._stage_current is not None:
+            blk = self._stage_current
+            line: "tuple[Any, ...]" = (
+                "stage_equationConstraint", blk.name, rec.cnode, rec.cdof,
+                rec.ccoef, rec.retained, rec.name)
+            if self._partition_dup((*line, self._rank_occurrence(line))):
+                return
+            blk.equation_constraint_seq.append(blk.next_emit_index())
+            blk.equation_constraints.append(rec)
+            return
+        line = ("equationConstraint", rec.cnode, rec.cdof, rec.ccoef,
+                rec.retained, rec.name)
+        if self._partition_dup((*line, self._rank_occurrence(line))):
             return
         self._equation_constraints.append(rec)
+
+    def _rank_occurrence(self, line: "tuple[Any, ...]") -> int:
+        """How many times the open partition bracket's rank has already
+        written ``line``, counted over every bracket of that rank: a rank
+        block is resumed once per stage (:meth:`partition_open`), and a
+        stage key names its stage. ``0`` outside a partition bracket,
+        where :meth:`_partition_dup` never dedupes.
+
+        The count lives in ``_partition_seen`` as ``("rank_occurrence",
+        rank, line, n)`` markers, a namespace no dedupe key starts with.
+        """
+        part = self._partition_current
+        if part is None:
+            return 0
+        n = 0
+        while ("rank_occurrence", part.rank, line, n) in self._partition_seen:
+            n += 1
+        self._partition_seen.add(("rank_occurrence", part.rank, line, n))
+        return n
 
     def embedded_rebar(
         self, ele_tag: int, *args: int | float | str,

@@ -15,20 +15,28 @@
 // camera is applied last, after the view is drawn, so a fit frames what is
 // drawn; it is reset to `home` first, so `fit` never keeps the heading of
 // the shot before it.
+//
+// VU18: a shot may name a variant row of the spec's `files.variants` by index
+// and label (`variant`). Before such a shot, main resolves the row afresh
+// (`renderVariant`: the manifest read again, D9.3) and names the row's set,
+// which this side opens in place of the one on screen; a later shot without a
+// row asks for the spec's set back. A row main refuses refuses the shot with
+// main's reason, and nothing is drawn for it from the set on screen.
 
 import * as THREE from "three";
 import type { Effects } from "../effects.ts";
 import { compileShot, type ShotPlan } from "../spec/compile.ts";
 import { describeSet, type SetDescription } from "../spec/describe.ts";
 import { manifestEntry, manifestOf, refusedEntry, type ManifestEntry } from "../spec/manifest.ts";
-import type { SpecShot, ViewSpec } from "../spec/spec.ts";
+import type { SpecShot, SpecVariant, ViewSpec } from "../spec/spec.ts";
 import { applyClip, shownView } from "../spec/snapshot.ts";
 import type { OnScreen } from "../spec/verdict.ts";
 import type { BlobStore } from "../state/blobs.ts";
-import { combinationFieldsOf, contourView, deformView, variantRowOf } from "../state/selectors.ts";
+import { autoDeformScale } from "../state/deform.ts";
+import { combinationFieldsOf, contourView, deformView, userResultPickOf, variantRowOf } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
-import type { State } from "../state/types.ts";
-import { combinationContourKey, contourKey, differenceContourKey, differenceHeld, elementContourKey, type CombinationColumnOf } from "./contour.ts";
+import type { State, VariantsIn } from "../state/types.ts";
+import { combinationContourKey, contourKey, differenceContourKey, differenceHeld, elementContourKey, userResultContourKey, type CombinationColumnOf } from "./contour.ts";
 import { composeStill, loadStillFonts, type ScaleBar } from "./stillLayers.ts";
 import type { Viewport } from "./viewport.ts";
 
@@ -36,9 +44,18 @@ export type RenderJob =
   | { mode: "render"; spec: ViewSpec; model: string; geometry: string | null; results: string | null }
   | { mode: "describe"; model: string | null; geometry: string | null; results: string | null };
 
+/** VU18: main's answer to `renderVariant`: the set the shot draws (the files to open), or why the row is refused. */
+export type VariantAnswer =
+  | { ok: true; row: SpecVariant | null; set: { model: string; geometry: string | null; results: string | null } }
+  | { ok: false; reason: string };
+
 /** The render mode's door to main (preload.ts); main writes every file, into `--out` only (INV-1). */
 export interface RenderBridge {
   renderJob(): Promise<RenderJob>;
+  /** VU18: the set the next shot draws: a variant row by index and label, or null for the spec's own set (main/modes/render.ts) */
+  renderVariant(row: SpecVariant | null): Promise<VariantAnswer>;
+  /** VU10: the study main holds now (preload.ts `variants`); read again after main changed the drawn set or the compare slot */
+  variants(): Promise<VariantsIn | null>;
   /** a model-mode still, composed here: main writes `<out>/<name>.png` */
   renderPng(name: string, png: Uint8Array): Promise<{ path: string }>;
   /** an app-mode still: main captures the page into `<out>/<name>.png` */
@@ -81,6 +98,8 @@ function contourOnScreen(s: State, viewport: Viewport, effects: Effects): boolea
   if (v.state === "combination") return viewport.contourApplied === combinationContourKey(v);
   // VU10: a difference is drawn from its own read, which waited for the window's step.
   if (v.state === "difference") return viewport.contourApplied === differenceContourKey(v);
+  // VU16: a user result is one state, read on its own, at whatever phase is shown.
+  if (v.state === "user") return viewport.contourApplied === userResultContourKey(v);
   // A shot may repeat the last shot's view: the applied key already matches while its step is read again, and the manifest needs that step's values.
   const at = s.phase.at;
   const step = effects.currentStep();
@@ -115,8 +134,9 @@ function screenAxes(viewport: Viewport): { x: [number, number]; y: [number, numb
 
 function scaleBarOf(s: State, plan: ShotPlan): ScaleBar | null {
   const v = contourView(s);
-  if ((v.state !== "ready" && v.state !== "element" && v.state !== "combination" && v.state !== "difference") || !plan.contour) return null;
+  if ((v.state !== "ready" && v.state !== "element" && v.state !== "combination" && v.state !== "difference" && v.state !== "user") || !plan.contour) return null;
   // VU7b-2: a combination's scale names the combination, as the app's does; VU10: a difference names its two variants.
+  // VU16: a user result's field is its name, so the title already names it.
   const what = v.state === "combination" ? `${v.name} · ` : v.state === "difference" ? `${v.window} − ${v.compare} · ` : "";
   return { title: `${what}${plan.contour.field} ${plan.contour.label}`, min: v.clim.min, max: v.clim.max, rangeLabel: v.clim.label, cmap: v.cmap };
 }
@@ -127,19 +147,46 @@ async function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+/**
+ * G3 (VA6c, #2765): the auto scale of the step on screen (state/deform.ts
+ * `autoDeformScale`, Python's `_auto_deform_scale`), from the displacement
+ * rows the effects read for it and every model node; or the reason it cannot
+ * be computed. Called once the view is on screen, so the displacement on hand
+ * must be the step's: anything else refuses, never a stale step's scale.
+ */
+export function autoScaleOf(s: State, effects: Effects, blobs: BlobStore): { ok: true; scale: number } | { ok: false; reason: string } {
+  const v = deformView(s);
+  if (v.state !== "ready" && v.state !== "partial") return { ok: false, reason: `the auto deform scale needs the deformed shape drawn, and it is ${v.state}` };
+  const disp = effects.currentDisplacement();
+  if (disp?.key !== v.keys.disp || !disp.nodal) return { ok: false, reason: "the auto deform scale needs the displacement of the step shown, and it is not read" };
+  const nodes = s.mesh?.nodes;
+  if (!nodes) return { ok: false, reason: "the auto deform scale needs every model node's position, and the model's nodes are not read" };
+  return { ok: true, scale: autoDeformScale(disp.nodal.rows, blobs.get(nodes.xyz)) };
+}
+
 async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: SetDescription): Promise<ShotResult> {
   const { store, viewport, bridge, layout, blobs, effects } = deps;
   const t0 = performance.now();
-  const compiled = compileShot(shot, d, (name) => combinationFieldsOf(store.get(), name), (label) => variantRowOf(store.get(), label));
+  const compiled = compileShot(
+    shot,
+    d,
+    (name) => combinationFieldsOf(store.get(), name),
+    (label) => variantRowOf(store.get(), label),
+    (name) => {
+      const p = userResultPickOf(store.get(), name);
+      return p.ok ? { ok: true, components: p.entry.components } : p;
+    },
+  );
   // Nothing was applied: this shot has no view to report, only the reason.
-  if (!compiled.ok) return { entry: refusedEntry(store.get(), shot, compiled.reason, null), ms: performance.now() - t0, shownMs: null };
+  if (!compiled.ok) return { entry: refusedEntry(store.get(), shot, compiled.reason, null, blobs), ms: performance.now() - t0, shownMs: null };
   const plan = compiled.plan;
   const at = {
     stage: plan.stage,
     step: plan.step,
     time: plan.stage && plan.step !== null ? (d.stages[plan.stage.index]?.times[plan.step] ?? null) : null,
   };
-  const refuse = (reason: string): ShotResult => ({ entry: refusedEntry(store.get(), shot, reason, at), ms: performance.now() - t0, shownMs: null });
+  // VF3 (#2959): the blob store, so the entry's banner carries a derived contour's plane line, as an ok entry's does.
+  const refuse = (reason: string): ShotResult => ({ entry: refusedEntry(store.get(), shot, reason, at, blobs), ms: performance.now() - t0, shownMs: null });
   try {
     for (const e of plan.events) store.dispatch(e);
     applyClip(store, plan);
@@ -147,8 +194,23 @@ async function takeShot(deps: RenderDeps, spec: ViewSpec, shot: SpecShot, d: Set
     return refuse(`the app refused the view: ${err instanceof Error ? err.message : String(err)}`);
   }
   // D9: layers are presentation; the view (and so any refusal) is decided before they are applied.
-  const why = await shownView({ store, onScreen: (st) => onScreenOf(st, viewport, effects), sleep, now: () => performance.now() }, shot, plan);
+  const shown = { store, onScreen: (st: State) => onScreenOf(st, viewport, effects), sleep, now: () => performance.now() };
+  const why = await shownView(shown, shot, plan);
   if (why !== null) return refuse(why);
+  // G3 (VA6c, #2765): a deform with no scale is drawn at the auto scale of its step. That needs the step's
+  // displacement, so the view is first waited for at the base view's scale (shownView settles a shape the
+  // app answers `unavailable` while a stage's node ids load), then redrawn at the auto scale and waited for again.
+  if (plan.deform !== null && plan.deform.scale === null) {
+    const auto = autoScaleOf(store.get(), effects, blobs);
+    if (!auto.ok) return refuse(auto.reason);
+    try {
+      store.dispatch({ type: "setDeformScale", scale: auto.scale });
+    } catch (err) {
+      return refuse(`the app refused the auto deform scale ${auto.scale}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const again = await shownView(shown, shot, plan);
+    if (again !== null) return refuse(again);
+  }
   const shownMs = performance.now() - t0;
   store.dispatch({ type: "setCamera", to: "home" });
   store.dispatch({ type: "setCamera", to: plan.camera });
@@ -230,6 +292,36 @@ async function openSet(deps: RenderDeps, job: { model: string | null; geometry: 
   return null;
 }
 
+/**
+ * VU18: draw `want` (a variant row, or null for the spec's set) for the next
+ * shot. Main resolves it now and names the set; each file that differs from
+ * the one on screen is opened, and a slot the set lacks is closed. Answers
+ * the description of the set now on screen, or why the shot cannot be drawn.
+ */
+async function drawSet(deps: RenderDeps, want: SpecVariant | null): Promise<{ ok: true; d: SetDescription } | { ok: false; reason: string }> {
+  const { store, effects, bridge, viewport } = deps;
+  const a = await bridge.renderVariant(want);
+  if (!a.ok) return a;
+  const on = store.get().artifacts;
+  const modelChanged = on.model?.path !== a.set.model || on.model.status !== "ready";
+  if (modelChanged && !(await effects.open(a.set.model))) {
+    return { ok: false, reason: `the model ${a.set.model} did not open: ${store.get().artifacts.model?.error ?? "unknown error"}` };
+  }
+  if (a.set.geometry === null) {
+    if (on.geometry !== null) store.dispatch({ type: "fileClosed", artifact: "geometry" });
+  } else if (modelChanged || on.geometry?.path !== a.set.geometry) await effects.openGeometry(a.set.geometry);
+  if (a.set.results === null) {
+    if (on.results !== null) store.dispatch({ type: "fileClosed", artifact: "results" });
+  } else if (modelChanged || on.results?.path !== a.set.results) await effects.openResults(a.set.results);
+  // VU9a: another model's set has another workspace (main reads the drawn set's).
+  if (modelChanged) await effects.readWorkspace();
+  // The study as main holds it now: the row on screen, and a compare slot main emptied because it is that row.
+  store.dispatch({ type: "variantsRead", study: await bridge.variants() });
+  viewport.renderNow();
+  await painted();
+  return { ok: true, d: describeSet(store.get(), drawnPositions(store.get(), deps.blobs)) };
+}
+
 export async function runAgentMode(deps: RenderDeps): Promise<void> {
   const { store, bridge } = deps;
   const job = await bridge.renderJob();
@@ -244,6 +336,9 @@ export async function runAgentMode(deps: RenderDeps): Promise<void> {
   // D8: the spec's theme (light by default for batch stills), before anything is drawn.
   store.dispatch({ type: "setTheme", theme: job.spec.theme });
   await loadStillFonts();
+  // VU18: a spec that draws variant rows shows no user file in any shot (spec.ts refuses its user shots):
+  // the spec set's `.user.h5`, read before the run, is not the file of a row's set.
+  if (job.spec.shots.some((s) => s.variant !== undefined)) store.dispatch({ type: "userClosed" });
   const failed = await openSet(deps, job);
   const d = describeSet(store.get(), drawnPositions(store.get(), deps.blobs));
   await bridge.renderDone({ manifest: manifestOf(job.spec, await takeShots(deps, job.spec, d, failed)) });
@@ -258,16 +353,39 @@ export async function runAgentMode(deps: RenderDeps): Promise<void> {
  */
 export async function takeShots(deps: RenderDeps, spec: ViewSpec, d: SetDescription, failed: string | null): Promise<ShotResult[]> {
   const shots: ShotResult[] = [];
+  // VU18: the row whose set is on screen; null is the spec's own set, which runAgentMode opened. "unknown" after a failed switch.
+  let on: SpecVariant | null | "unknown" = null;
   for (const shot of spec.shots) {
     if (failed) {
-      shots.push({ entry: refusedEntry(deps.store.get(), shot, failed, null), ms: 0, shownMs: null });
+      shots.push({ entry: refusedEntry(deps.store.get(), shot, failed, null, deps.blobs), ms: 0, shownMs: null });
       continue;
+    }
+    // VU18: a shot naming a row always asks main (the manifest is read again for it, D9.3); a shot of the spec's set asks only after another set was drawn.
+    const want = shot.variant ?? null;
+    if (want !== null || on !== null) {
+      const t0 = performance.now();
+      let sw: Awaited<ReturnType<typeof drawSet>>;
+      try {
+        sw = await drawSet(deps, want);
+      } catch (err) {
+        sw = { ok: false, reason: `the set did not open: ${err instanceof Error ? err.message : String(err)}` };
+      }
+      if (!sw.ok) {
+        on = "unknown";
+        const what = want === null ? "the spec's set" : `variant row ${want.index} (${JSON.stringify(want.label)})`;
+        const refused: ShotResult = { entry: refusedEntry(deps.store.get(), shot, `${what} is not drawn: ${sw.reason}`, null, deps.blobs), ms: performance.now() - t0, shownMs: null };
+        console.info(`apeGmshViewer: render ${shot.name}: refused (${refused.entry.reason})`);
+        shots.push(refused);
+        continue;
+      }
+      on = want;
+      d = sw.d;
     }
     let r: ShotResult;
     try {
       r = await takeShot(deps, spec, shot, d);
     } catch (err) {
-      r = { entry: refusedEntry(deps.store.get(), shot, `the shot failed: ${err instanceof Error ? err.message : String(err)}`, null), ms: 0, shownMs: null };
+      r = { entry: refusedEntry(deps.store.get(), shot, `the shot failed: ${err instanceof Error ? err.message : String(err)}`, null, deps.blobs), ms: 0, shownMs: null };
     }
     console.info(`apeGmshViewer: render ${shot.name}: ${r.entry.status}${r.entry.reason ? ` (${r.entry.reason})` : ""} in ${Math.round(r.ms)} ms`);
     shots.push(r);
