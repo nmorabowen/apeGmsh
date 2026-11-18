@@ -68,7 +68,7 @@ import type { ResultsH5 } from "../reader/results.ts";
 import { readUserFile, readUserResultColumn, readUserSet, type UserColumnRead, type UserH5 } from "../reader/userFile.ts";
 import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } from "../reader/userSpectra.ts";
 import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
-import { compareStagesOf, readParticleSet, ResultsHost, type ParticleOutputRequest, type ScanRequest, type StepRequest } from "./results.ts";
+import { compareStagesOf, readParticleSet, ResultsHost, type ParticleOutputRequest, type HingeHistoryRequest, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
 import { MaterialTestRunner } from "./materialTest.ts";
 import { OpenSession, Study } from "./session.ts";
@@ -570,6 +570,15 @@ ipcMain.handle("results:readStep", (_e, req: unknown) => {
   const f = setFile("results:readStep", "results", r.path);
   if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
   return resultsHost.readStep({ ...r, path: f.path });
+});
+ipcMain.handle("results:hingeHistory", (_e, req: unknown) => {
+  const r = req as HingeHistoryRequest | null;
+  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || typeof r.element !== "number" || typeof r.seq !== "number") {
+    return { ok: false, seq: -1, error: `results:hingeHistory: malformed request ${shown(req)}` };
+  }
+  const f = setFile("results:hingeHistory", "results", r.path);
+  if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
+  return resultsHost.readHingeHistory({ ...r, path: f.path });
 });
 ipcMain.handle("results:close", () => resultsHost.close());
 // V4c1 (#1756): the history-range scan of a contour's field; progress goes to

@@ -63,6 +63,7 @@ export function harness(opts: { scanOpts?: { chunkSteps?: number; paceMs?: numbe
     },
     openResults: (path: string) => host.open(path),
     readResultsStep: async (req) => host.readStep(req),
+    readHingeHistory: async (req) => host.readHingeHistory(req),
     scanResults: (req) => {
       calls.scans.push({ scanId: req.scanId, components: req.components, magnitude: req.magnitude });
       return host.scan(req, (p) => progress.forEach((cb) => cb(p)), opts.scanOpts ?? {});

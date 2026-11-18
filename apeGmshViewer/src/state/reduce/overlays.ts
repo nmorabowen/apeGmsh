@@ -4,16 +4,17 @@
 
 import type { OverlaysEvent } from "../types/events/overlays.ts";
 import { CMAP_NAMES } from "../contour.ts";
-import type { CracksState, LoadsState, PrincipalState, ReactionsState, SpringsState, State, SupportsState, VectorsState } from "../types.ts";
+import type { CracksState, HingesState, LoadsState, PrincipalState, ReactionsState, SpringsState, State, SupportsState, VectorsState } from "../types.ts";
 
 /** The seven overlay settings, each its own field of the state. */
-export type Overlays = Pick<State, "supports" | "principal" | "cracks" | "reactions" | "springs" | "vectors" | "loads">;
+export type Overlays = Pick<State, "supports" | "principal" | "cracks" | "reactions" | "springs" | "hinges" | "vectors" | "loads">;
 
 export const initialSupports: SupportsState = { on: false, scale: 1 };
 
 export const initialPrincipal: PrincipalState = { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true };
 export const initialCracks: CracksState = { on: false, minOpening: 0, cmap: "turbo", scale: 1 };
 export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
+export const initialHinges: HingesState = { on: false, colorBy: "rotation", size: 1, element: null, end: "i", axis: "z", history: null, notice: null };
 export const initialSprings: SpringsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", notice: null };
 export const initialVectors: VectorsState = { on: false, field: null, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant" };
 
@@ -142,6 +143,26 @@ export function reduceOverlays(o: Overlays, e: OverlaysEvent): Overlays {
         notice: e.notice !== undefined ? e.notice : cur.notice,
       };
       return (Object.keys(next) as (keyof SpringsState)[]).every((k) => next[k] === cur[k]) ? o : { ...o, springs: next };
+    }
+    case "setHinges": {
+      if (e.on !== undefined && typeof e.on !== "boolean") throw new RangeError(`setHinges: on ${JSON.stringify(e.on)}`);
+      if (e.colorBy !== undefined && !["rotation", "moment", "capacity"].includes(e.colorBy)) throw new RangeError(`setHinges: colorBy ${JSON.stringify(e.colorBy)}`);
+      if (e.size !== undefined && (typeof e.size !== "number" || !Number.isFinite(e.size) || e.size <= 0)) throw new RangeError(`setHinges: the size must be a finite number above 0; got ${JSON.stringify(e.size)}`);
+      if (e.end !== undefined && e.end !== "i" && e.end !== "j") throw new RangeError(`setHinges: end ${JSON.stringify(e.end)}`);
+      if (e.axis !== undefined && e.axis !== "z" && e.axis !== "y") throw new RangeError(`setHinges: axis ${JSON.stringify(e.axis)}`);
+      if (e.notice !== undefined && e.notice !== null && typeof e.notice !== "string") throw new RangeError(`setHinges: notice ${JSON.stringify(e.notice)}`);
+      const cur = o.hinges;
+      const next: HingesState = {
+        on: e.on ?? cur.on,
+        colorBy: e.colorBy ?? cur.colorBy,
+        size: e.size ?? cur.size,
+        element: e.element !== undefined ? e.element : cur.element,
+        end: e.end ?? cur.end,
+        axis: e.axis ?? cur.axis,
+        history: e.history !== undefined ? e.history : cur.history,
+        notice: e.notice !== undefined ? e.notice : cur.notice,
+      };
+      return (Object.keys(next) as (keyof HingesState)[]).every((k) => next[k] === cur[k]) ? o : { ...o, hinges: next };
     }
     case "setVectors": {
       for (const k of ["on", "thin"] as const) {

@@ -42,6 +42,7 @@ import { crackFieldOf as stageCrackField, type CrackField } from "./cracks.ts";
 export type { CrackField } from "./cracks.ts";
 import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
+import { hingeCapacityOf, hingeCurveOf, hingeMaterialDecl, hingeSitesOf, type HingeCurve, type HingeSite } from "./hinges.ts";
 import {
   beamLocalAxes,
   buildBeamChains,
@@ -180,6 +181,7 @@ export {
   type LoadsUnitLabels,
 } from "./loads.ts";
 export { springCountOf } from "./springs.ts";
+export { HINGE_COLUMN_NAMES, hingeSitesOf } from "./hinges.ts";
 // VU9a (ADR 0132): what the sets panel reads of the workspace slice.
 export { pickSummaryOf } from "./workspace.ts";
 export { cannotSave as workspaceCannotSave } from "./reduce/workspace.ts";
@@ -2161,4 +2163,104 @@ function differenceContour(s: State): ContourView {
   const clim: Clim =
     c.range === "fixed" ? climOf(c, null, null, "") : { min: r.range?.min ?? null, max: r.range?.max ?? null, mode: c.range, label: "range: this difference (the step shown)" };
   return { state: "difference", window: p.window, compare: p.compare, field: p.field, component: p.component, stageName: p.stageName, key: p.key, clim, cmap: c.cmap, nodes: r.nodes, missing: r.missing };
+}
+
+// -- the Hinges card ---------------------------------------------------------
+
+/** How the results file's element rows join the model's elements, for the hinge reads. */
+export function hingeJoinOf(s: State): LadrunoElementJoin {
+  return joinLadrunoElements(s.decls, resultsPairing(s), s.results?.elementIndexSpace ?? null);
+}
+
+/** The element the card plots: the last hinged element picked, the menu's, else the first hinged one. */
+export function hingeFocusOf(s: State): DeclPath | null {
+  const { sites } = hingeSitesOf(s.decls);
+  const hinged = new Set(sites.map((h) => h.decl));
+  for (let i = s.selection.decls.length - 1; i >= 0; i--) if (hinged.has(s.selection.decls[i]!)) return s.selection.decls[i]!;
+  for (let i = s.selection.picks.length - 1; i >= 0; i--) if (hinged.has(s.selection.picks[i]!.decl)) return s.selection.picks[i]!.decl;
+  if (s.hinges.element !== null && hinged.has(s.hinges.element)) return s.hinges.element;
+  return sites[0]?.decl ?? null;
+}
+
+/** What the effects must read for the card's plot, or null; or why nothing can be read. */
+export function hingeHistoryWanted(s: State): { path: string; stage: number; stageId: string; element: number } | { refused: string } | null {
+  const at = s.phase.at;
+  if (!s.hinges.on || at?.kind !== "results" || !s.results) return null;
+  const stage = s.results.stages[at.stage];
+  const focus = hingeFocusOf(s);
+  if (!stage || !focus || (stage.hinges ?? 0) === 0) return null;
+  const join = hingeJoinOf(s);
+  if (!join.ok) return { refused: join.reason };
+  const element = join.byDeclPath.get(focus);
+  if (element === undefined) return { refused: `${focus} has no element id in the results file's id space` };
+  return { path: s.results.path, stage: at.stage, stageId: stage.id, element };
+}
+
+export interface HingeChart {
+  readonly curve: HingeCurve;
+  /** the step on screen, an index into the curve */
+  readonly step: number;
+  /** the moment capacity `model.h5` names for this hinge and axis, or null */
+  readonly capacity: number | null;
+}
+
+export interface HingeView {
+  readonly count: number;
+  readonly refused: readonly string[];
+  readonly elements: readonly { readonly decl: DeclPath; readonly label: string }[];
+  readonly focus: DeclPath | null;
+  readonly ends: readonly ("i" | "j")[];
+  readonly end: "i" | "j" | null;
+  readonly axes: readonly ("z" | "y")[];
+  readonly axis: "z" | "y" | null;
+  readonly site: HingeSite | null;
+  readonly siteText: string | null;
+  /** how the marker colours are scaled, in words; null off a results step */
+  readonly scale: string | null;
+  readonly chart: HingeChart | null;
+  /** what is missing, by name */
+  readonly notes: readonly string[];
+}
+
+/** Everything the Hinges card shows. */
+export function hingeViewOf(s: State): HingeView {
+  const { sites, refused } = hingeSitesOf(s.decls);
+  const seen = new Map<DeclPath, string>();
+  for (const h of sites) if (!seen.has(h.decl)) seen.set(h.decl, `${h.type} ${h.tag}`);
+  const elements = [...seen].map(([decl, label]) => ({ decl, label }));
+  const focus = hingeFocusOf(s);
+  const here = sites.filter((h) => h.decl === focus);
+  const ends = (["i", "j"] as const).filter((e) => here.some((h) => h.end === e));
+  const end = ends.includes(s.hinges.end) ? s.hinges.end : (ends[0] ?? null);
+  const site = here.find((h) => h.end === end) ?? null;
+  const axes = site ? (["z", "y"] as const).filter((a) => (a === "z" ? site.z : site.y) !== null) : [];
+  const axis = axes.includes(s.hinges.axis) ? s.hinges.axis : (axes[0] ?? null);
+  const notes: string[] = [];
+  const capacity = site && axis ? hingeCapacityOf(s.decls, site, axis) : null;
+  let siteText: string | null = null;
+  if (site) {
+    const where = site.xi !== null ? `at xi = ${Number(site.xi.toPrecision(4))}` : site.offset > 0 ? `${Number(site.offset.toPrecision(4))} from node ${site.end}` : `at node ${site.end}`;
+    const mat = axis === "y" ? site.y : site.z;
+    const d = mat ? hingeMaterialDecl(s.decls, mat) : undefined;
+    siteText = `${site.biaxial ? "coupled biaxial hinge" : "hinge"} ${where}${d ? `, ${d.type} ${mat!.tag}` : ""}${capacity && "value" in capacity ? `, capacity ${Number(capacity.value.toPrecision(4))}` : ""}`;
+  }
+  if (capacity && "missing" in capacity) notes.push(`Capacity: ${capacity.missing}.`);
+  const at = s.phase.at;
+  let chart: HingeChart | null = null;
+  let scale: string | null = null;
+  if (at?.kind === "results" && s.results) {
+    const stage = s.results.stages[at.stage];
+    if ((stage?.hinges ?? 0) === 0) notes.push("This stage does not record hingeSummary, so the hinges have no output here.");
+    else {
+      scale = s.hinges.colorBy === "capacity" ? "colour: 0 to 1 x capacity" : `colour: 0 to the ${s.hinges.colorBy === "rotation" ? "largest rotation" : "largest moment"} of the stage`;
+      const wanted = hingeHistoryWanted(s);
+      if (wanted && "refused" in wanted) notes.push(`Hinge output is not joined to the model: ${wanted.refused}.`);
+      const h = s.hinges.history;
+      if (wanted && !("refused" in wanted) && h && h.stage === wanted.stage && h.element === wanted.element && end && axis) {
+        chart = { curve: hingeCurveOf(h, end, axis), step: Math.min(at.step, h.time.length - 1), capacity: capacity && "value" in capacity ? capacity.value : null };
+      }
+    }
+    if (s.hinges.notice) notes.push(s.hinges.notice);
+  }
+  return { count: sites.length, refused, elements, focus, ends, end, axes, axis, site, siteText, scale, chart, notes };
 }

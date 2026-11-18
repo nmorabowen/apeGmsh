@@ -38,6 +38,22 @@ function leadingNumbers(args: Param[]): number {
 // New-style syntax only: `transfTag integrationTag` then flags. The old style
 // `numIntgrPts secTag transfTag` also starts with numbers, so it is told
 // apart by its count of leading numeric args (3) and refused, never decoded.
+/** The Ladruno beams' hinge flags, each followed by one or two material tags (OPS_LadrunoForceBeamColumn, OPS_LadrunoDispBeamColumn). */
+const BEAM_HINGE_FLAG = /^-hinge(?:|Z|I|J|1|2|ZI|ZJ|IJ|ZIJ|Y|YI|YJ|Y1|Y2|YIJ)$/;
+const BEAM_BIAXIAL_FLAG = /^-hinge(?:Biaxial|C)(?:|I|J|1|2|IJ)$/;
+
+function beamHingeSlots(args: readonly Param[], from: number): { slot: number; family: OpsFamily; label: string }[] {
+  const slots: { slot: number; family: OpsFamily; label: string }[] = [];
+  for (let i = from; i < args.length; i++) {
+    const tok = args[i];
+    if (typeof tok !== "string") continue;
+    const family: OpsFamily | null = BEAM_BIAXIAL_FLAG.test(tok) ? "nDMaterial" : BEAM_HINGE_FLAG.test(tok) ? "uniaxialMaterial" : null;
+    if (!family) continue;
+    for (let k = i + 1, n = 0; n < 2 && isNum(args[k]); k++, n++) slots.push({ slot: k, family, label: n === 0 ? tok.slice(1) : `${tok.slice(1)}#2` });
+  }
+  return slots;
+}
+
 const beamWithIntegration: Decoder = (args) => {
   const n = leadingNumbers(args);
   return n === 2
@@ -46,6 +62,7 @@ const beamWithIntegration: Decoder = (args) => {
         slots: [
           { slot: 0, family: "geomTransf", label: "transfTag" },
           { slot: 1, family: "beamIntegration", label: "integrationTag" },
+          ...beamHingeSlots(args, n),
         ],
       }
     : { reason: `${n} leading numeric args; only the 2-tag form 'transfTag integrationTag' is decoded (old-style syntax is not)` };
@@ -123,32 +140,35 @@ const IMK_MAT_FLAGS_1: ReadonlySet<string> = new Set([
   "-shearHinge",
   "-shearHingeY",
   "-shearHingeZ",
-  "-hingeBiaxial",
-  "-hingeBiaxialI",
-  "-hingeBiaxialJ",
 ]);
+
+const IMK_ND_FLAGS_1: ReadonlySet<string> = new Set(["-hingeBiaxial", "-hingeBiaxialI", "-hingeBiaxialJ"]);
 
 const imkBeam: Decoder = (args) => {
   const n = leadingNumbers(args);
-  const collectFlagSlots = (baseSlots: { slot: number; family: "geomTransf" | "uniaxialMaterial"; label: string }[]) => {
+  const collectFlagSlots = (baseSlots: { slot: number; family: OpsFamily; label: string }[]) => {
     const slots = [...baseSlots];
     for (let i = n; i < args.length; i++) {
       const tok = args[i];
       if (typeof tok === "string" && IMK_MAT_FLAGS_1.has(tok) && isNum(args[i + 1])) {
         slots.push({ slot: i + 1, family: "uniaxialMaterial", label: tok.slice(1) });
         i += 1;
-      } else if (tok === "-hingeBiaxialIJ" && isNum(args[i + 1]) && isNum(args[i + 2])) {
-        slots.push(
-          { slot: i + 1, family: "uniaxialMaterial", label: "hingeBiaxialI" },
-          { slot: i + 2, family: "uniaxialMaterial", label: "hingeBiaxialJ" },
-        );
-        i += 2;
+      } else if (typeof tok === "string" && IMK_ND_FLAGS_1.has(tok) && isNum(args[i + 1])) {
+        slots.push({ slot: i + 1, family: "nDMaterial", label: tok.slice(1) });
+        i += 1;
+      } else if (tok === "-hingeBiaxialIJ" && isNum(args[i + 1])) {
+        slots.push({ slot: i + 1, family: "nDMaterial", label: "hingeBiaxialI" });
+        i += 1;
+        if (isNum(args[i + 1])) {
+          slots.push({ slot: i + 1, family: "nDMaterial", label: "hingeBiaxialJ" });
+          i += 1;
+        }
       }
     }
     return slots;
   };
   if (n === 4 || n === 6) {
-    const base: { slot: number; family: "geomTransf" | "uniaxialMaterial"; label: string }[] = [
+    const base: { slot: number; family: OpsFamily; label: string }[] = [
       { slot: 3, family: "geomTransf", label: "transfTag" },
     ];
     if (n === 6) {
@@ -163,7 +183,7 @@ const imkBeam: Decoder = (args) => {
     };
   }
   if (n === 7 || n === 9) {
-    const base: { slot: number; family: "geomTransf" | "uniaxialMaterial"; label: string }[] = [
+    const base: { slot: number; family: OpsFamily; label: string }[] = [
       { slot: 6, family: "geomTransf", label: "transfTag" },
     ];
     if (n === 9) {

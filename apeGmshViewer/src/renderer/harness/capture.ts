@@ -6,6 +6,7 @@ import { demoTarget } from "./pointer.ts";
 import { captureContours, captureDeform, captureElements, captureExtrudeResults, captureLineDiagrams, captureResults } from "./results.ts";
 import { captureCaps, captureClip, captureGizmo } from "./sections.ts";
 import { captureCracks } from "./cracks.ts";
+import { captureHinges } from "./hinges.ts";
 import { captureWorkspace } from "./workspace.ts";
 import { captureCombine } from "./combine.ts";
 
@@ -139,6 +140,8 @@ export async function runCapture(ctx: HarnessContext, cfg: HarnessConfig, file: 
   if (cfg.results) {
     const width = window.innerWidth, height = window.innerHeight;
     await captureResults(ctx, cfg.results, settle);
+    // The Hinges card's stills, only on a model that declares beam hinges (./hinges.ts).
+    await captureHinges(ctx, settle, width, height);
     // V4c1 (D7): the contour stills, at the capture window's own width, then 1280 px.
     await captureContours(ctx, settle, width, height);
     // V4d (D7): the deformed-shape stills, at the capture window's own width, then 1280 px.
@@ -156,7 +159,7 @@ export async function runCapture(ctx: HarnessContext, cfg: HarnessConfig, file: 
     await captureGizmo(ctx, settle, width, height);
     // The Cracks card's stills, only on a stage that records a crack pattern (./cracks.ts).
     await captureCracks(ctx, settle, width, height);
-  }
+  } else await captureHinges(ctx, settle, window.innerWidth, window.innerHeight);
   // VU9a (D7): the sets panel and the workspace's notices, only for a set with a <stem>.workspace.h5 (./workspace.ts).
   await captureWorkspace(ctx, settle);
   // VU9b (D7): the combination authoring panel, only for a set whose <stem>.user.h5 main read (./combine.ts).

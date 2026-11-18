@@ -3,6 +3,7 @@
 // panels import it from there. A slice file imports sibling files, never the barrel.
 
 import type { ContourCmap } from "./contour.ts";
+import type { DeclPath } from "./model.ts";
 
 /**
  * The Reactions card: the results step's reaction forces as arrows pointing at
@@ -103,6 +104,37 @@ export interface SpringsState {
   /** What each spring draws: the resultant, its global-axis components, or one of them (default resultant). */
   readonly component: ReactionComponent;
   /** Why the step on screen draws no spring arrows (its springs' read failed), or null */
+  readonly notice: string | null;
+}
+
+export type HingeEnd = "i" | "j";
+export type HingeAxis = "z" | "y";
+
+/** One element's `hingeSummary` over a results stage (reader/ladruno.ts `LadrunoHingeHistory`). */
+export interface HingeHistory {
+  /** the results stage index */
+  readonly stage: number;
+  /** the element, as the file's rows name it */
+  readonly element: number;
+  readonly time: readonly number[];
+  /** (nSteps * 8,) step-major, in state/hinges.ts `HINGE_COLUMN_NAMES` order */
+  readonly values: readonly number[];
+}
+
+/** The Hinges card: a marker per moment hinge and one hinge's curves (state/hinges.ts). */
+export interface HingesState {
+  readonly on: boolean;
+  /** What colours a marker on a results step. */
+  readonly colorBy: "rotation" | "moment" | "capacity";
+  /** Marker size multiplier (default 1, > 0). */
+  readonly size: number;
+  /** The element the card's menu chose; a viewport pick of a hinged element wins over it. */
+  readonly element: DeclPath | null;
+  readonly end: HingeEnd;
+  readonly axis: HingeAxis;
+  /** The plotted element's history (effects read it), or null */
+  readonly history: HingeHistory | null;
+  /** Why the step or the history was not read, or null */
   readonly notice: string | null;
 }
 

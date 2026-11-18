@@ -37,7 +37,10 @@ import {
   LadrunoFile,
   openLadruno,
   type LadrunoLineStationStep,
+  type LadrunoHingeHistory,
+  type LadrunoHingeStep,
   type LadrunoSpringStep,
+  HINGE_TOKEN,
   type LineStationComponent,
 } from "../reader/ladruno.ts";
 import { LadrunoPartSet, openLadrunoSet, partOf, partSiblings } from "../reader/ladrunoParts.ts";
@@ -54,6 +57,7 @@ import type { ProgramDecls } from "../model/types.ts";
 export type AnyLadruno = LadrunoFile | LadrunoPartSet;
 export type AnyResultsFile = ResultsFile | AnyLadruno;
 
+const hingeCountOf = (rf: AnyResultsFile, stage: string, warningsOut?: string[]): number => (rf instanceof LadrunoFile ? rf.hingeCount(stage, warningsOut) : 0);
 const isLadruno = (rf: AnyResultsFile): rf is AnyLadruno => rf instanceof LadrunoFile || rf instanceof LadrunoPartSet;
 const listDir = (dir: string): string[] => readdirSync(dir);
 
@@ -94,6 +98,8 @@ export interface ResultsStageMeta {
   lineStations?: LineStationComponent[];
   /** zero-length springs this stage records a global `force` for (.ladruno, one file; reader/ladruno.ts `springCount`) */
   springs?: number;
+  /** elements this stage records `hingeSummary` for (.ladruno, one file; reader/ladruno.ts `hingeCount`) */
+  hinges?: number;
   /** a `.ladruno` mode stage's eigen scalars (reader/ladruno.ts `LadrunoMode`); absent on every other stage */
   mode?: ModeFacts;
 }
@@ -168,7 +174,19 @@ export interface StepRequest {
   tensor?: string[];
   /** .ladruno: the zero-length springs' force at this step too */
   springs?: boolean;
+  /** .ladruno: the beams' `hingeSummary` at this step too */
+  hinges?: boolean;
 }
+
+export interface HingeHistoryRequest {
+  path: string;
+  stage: string;
+  /** the element, as the file's rows name it */
+  element: number;
+  seq: number;
+}
+
+export type HingeHistoryAnswer = ({ ok: true; seq: number; stage: string } & LadrunoHingeHistory) | { ok: false; seq: number; error: string; changed?: true };
 
 export type StepAnswer =
   /** `gauss`: the requested element component by group id, (E * G,) element-major; {} with no `element` */
@@ -186,6 +204,9 @@ export type StepAnswer =
       /** the springs' step when asked for (null: the read failed, `springsError` says why) */
       springs?: LadrunoSpringStep | null;
       springsError?: string;
+      /** the hinges' step when asked for (null: the read failed, `hingesError` says why) */
+      hinges?: LadrunoHingeStep | null;
+      hingesError?: string;
     }
   /** `changed`: the file on disk is not the one indexed; re-open it (`open`) before reading */
   | { ok: false; seq: number; error: string; changed?: true };
@@ -477,10 +498,11 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
         nodal: s.nodes ? [...s.nodes.components] : [],
         refusedNodal: s.nodes ? s.nodes.refused.map((r) => ({ ...r })) : [],
         gauss: s.gauss.map(gaussMeta),
-        unread: [...s.unread],
+        unread: hingeCountOf(rf, s.id, warningsOut) > 0 ? s.unread.filter((u) => u !== `ON_ELEMENTS/${HINGE_TOKEN}`) : [...s.unread],
         elementIndexSpace,
         lineStations: rf.availableLineStations(s.id, warningsOut),
         springs: rf instanceof LadrunoFile ? rf.springCount(s.id, warningsOut) : 0,
+        hinges: hingeCountOf(rf, s.id, warningsOut),
         ...(modes.has(s.id) ? { mode: modes.get(s.id)! } : {}),
       })),
     };
@@ -694,6 +716,17 @@ export class ResultsHost {
           springsError = message(err);
         }
       }
+      let hinges: LadrunoHingeStep | null | undefined;
+      let hingesError: string | undefined;
+      if (req.hinges) {
+        try {
+          if (!(rf instanceof LadrunoFile)) throw new Error(`${req.path} is not one .ladruno file: only it records the hinge results the viewer reads`);
+          hinges = rf.readHingeStep(s.id, req.step);
+        } catch (err) {
+          hinges = null;
+          hingesError = message(err);
+        }
+      }
       return {
         ok: true,
         seq: req.seq,
@@ -706,7 +739,22 @@ export class ResultsHost {
         ...(lineDiagramError !== undefined ? { lineDiagramError } : {}),
         ...(springs !== undefined ? { springs } : {}),
         ...(springsError !== undefined ? { springsError } : {}),
+        ...(hinges !== undefined ? { hinges } : {}),
+        ...(hingesError !== undefined ? { hingesError } : {}),
       };
+    } catch (err) {
+      return { ok: false, seq: req.seq, error: message(err) };
+    }
+  }
+
+  /** One element's `hingeSummary` over its stage. Another path is refused; a changed file answers `changed`. */
+  readHingeHistory(req: HingeHistoryRequest): HingeHistoryAnswer {
+    try {
+      const rf = this.handle(req.path);
+      if (!rf) return { ok: false, seq: req.seq, changed: true, error: `${req.path} changed on disk since it was indexed; it is read again before any hinge history` };
+      this.armIdle();
+      if (!(rf instanceof LadrunoFile)) throw new Error(`${req.path} is not one .ladruno file: only it records the hinge results the viewer reads`);
+      return { ok: true, seq: req.seq, stage: req.stage, ...rf.readHingeHistory(req.stage, req.element) };
     } catch (err) {
       return { ok: false, seq: req.seq, error: message(err) };
     }

@@ -9,7 +9,7 @@ import type { ContourState, DeformState, LineDiagramState, SpatialNdm, State } f
 import { initialCamera } from "./camera.ts";
 import { initialMaterialTest } from "./materialTest.ts";
 import { initialOffers } from "./offers.ts";
-import { initialCracks, initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./overlays.ts";
+import { initialCracks, initialHinges, initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./overlays.ts";
 import { initialVariants } from "./variants.ts";
 import { initialWorkspace } from "./workspace.ts";
 
@@ -86,6 +86,7 @@ export const initialState: State = {
   loads: initialLoads,
   reactions: initialReactions,
   springs: initialSprings,
+  hinges: initialHinges,
   principal: initialPrincipal,
   cracks: initialCracks,
   vectors: initialVectors,

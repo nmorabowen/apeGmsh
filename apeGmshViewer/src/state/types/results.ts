@@ -42,6 +42,8 @@ export interface ResultsStage {
   lineStations?: LineStationComponent[];
   /** zero-length springs this stage records a global `force` for (.ladruno); absent or 0 for none */
   springs?: number;
+  /** elements this stage records `hingeSummary` for (.ladruno); absent or 0 for none */
+  hinges?: number;
   /** a `.ladruno` mode stage's eigen scalars, as the file records them (its LAMBDA); absent elsewhere */
   mode?: ModeFacts;
 }
