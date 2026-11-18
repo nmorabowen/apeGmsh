@@ -37,6 +37,48 @@ export interface H5Openable<F> {
 
 const exact = new WeakSet<H5FS>();
 
+/** h5wasm's read binding: every `Dataset` read (`value`, `json_value`, `slice`, `to_array`) calls it. */
+interface H5ReadBinding {
+  get_dataset_data(file_id: bigint, path: string, count: bigint[] | null, offset: bigint[] | null, strides: bigint[] | null, ptr: bigint): number;
+  get_dataset_metadata(file_id: bigint, path: string): { size: number; total_size: number };
+  readonly HEAPU8: Uint8Array;
+}
+
+const checked = new WeakSet<object>();
+
+/**
+ * #3010: make a refused read throw, for every reader at once (see "A read that
+ * says when HDF5 refused it" below). Idempotent per module. A stand-in h5 with
+ * no `Module` (the open tests) has no reads to check.
+ */
+function checkedReads(mod: H5ReadBinding | null | undefined): void {
+  if (mod === undefined || mod === null || checked.has(mod)) return;
+  if (typeof mod.get_dataset_data !== "function" || typeof mod.get_dataset_metadata !== "function") {
+    throw new Error("h5wasm's Module has no get_dataset_data/get_dataset_metadata, so read errors cannot be checked (#3010); refusing to open HDF5 files (check the pinned h5wasm version)");
+  }
+  const read = mod.get_dataset_data;
+  mod.get_dataset_data = (file_id, path, count, offset, strides, ptr) => {
+    const status = read(file_id, path, count, offset, strides, ptr);
+    if (status >= 0) return status;
+    // h5wasm reclaims a variable-length buffer on the way out, even after a throw: zeroed, it holds nothing to free.
+    try {
+      const { size, total_size } = mod.get_dataset_metadata(file_id, path);
+      const n = count ? count.reduce((a, c) => a * Number(c), 1) : total_size;
+      mod.HEAPU8.fill(0, Number(ptr), Number(ptr) + size * n);
+    } catch {
+      // The dataset no longer opens, so the reclaim finds nothing to walk either.
+    }
+    throw new H5ReadError(`${path}: HDF5 refused to read this dataset (its chunk index or data does not read)`);
+  };
+  checked.add(mod);
+}
+
+/** What every open and create needs first: exact file ids, and reads that report a refusal. */
+function prepare(h5: { readonly FS: H5FS | null }): void {
+  exactInodes(h5.FS);
+  checkedReads((h5 as { Module?: H5ReadBinding | null }).Module);
+}
+
 /** Make `fs.fstat` report the exact 64-bit file id, or throw. Idempotent per FS. */
 function exactInodes(fs: H5FS | null): void {
   if (fs === null) throw new Error("h5wasm is not ready: await h5wasm.ready before opening an HDF5 file");
@@ -100,7 +142,7 @@ export function openH5<F>(h5: H5Openable<F>, path: string): F {
 
 /** `new File(path, mode)` with exact file ids, the handle tracked by `path` until its own close; `after` runs after that close. */
 function openTracked<F>(h5: H5RuleOpenable<F>, path: string, mode: "r" | "Sr", after?: () => void): F {
-  exactInodes(h5.FS);
+  prepare(h5);
   const f = new h5.File(path, mode);
   const handle = f as unknown as { close?: () => unknown; file_id?: bigint | number };
   // A failed open (negative id) holds nothing; a handle is tracked until its own close.
@@ -150,8 +192,11 @@ function openTracked<F>(h5: H5RuleOpenable<F>, path: string, mode: "r" | "Sr", a
 //
 // h5wasm's `Dataset.slice` and `.value` ignore H5Dread's status: when HDF5 cannot follow a
 // damaged chunk index it prints its error stack and h5wasm returns the uninitialised buffer as
-// data. `readRows` calls the same binding (`Module.get_dataset_data`, which returns the status)
-// and throws `H5ReadError` on a refusal, so a damaged dataset is never read as numbers.
+// data. Every one of those reads goes through one binding, `Module.get_dataset_data`, which does
+// return the status. `openH5` and its siblings wrap that binding once per module (`checkedReads`,
+// #3010), so any read of any dataset throws `H5ReadError` on a refusal, and a damaged dataset is
+// never read as numbers. A reader needs nothing more than a file opened here. `readRows` is the
+// typed, allocation-owning read the particle reader uses on the same binding.
 
 /** The h5wasm module export `readRows` reads through (`h5wasm.Module`, after `ready`). */
 export interface H5ReadModule {
@@ -402,7 +447,7 @@ export interface H5Appendable<F> {
  */
 export function appendH5<F extends { file_id: bigint | number }>(h5: H5Appendable<F>, path: string): F {
   if (!path.endsWith(".partial")) throw new Error(`appendH5 opens only a writer's own .partial for writing, never ${path} (HG9 rule 1: the live file is never opened for writing)`);
-  exactInodes(h5.FS);
+  prepare(h5);
   const f = new h5.File(path, "a");
   if (Number(f.file_id) < 0) throw new Error(`HDF5 could not open ${path} for appending`);
   return f;
@@ -416,7 +461,7 @@ export interface H5Creatable<F> {
 
 /** Create `path` for writing, exclusively (`"x"`: refused when the name exists), with HDF5 comparing exact file ids. */
 export function createH5<F extends { file_id: bigint | number }>(h5: H5Creatable<F>, path: string): F {
-  exactInodes(h5.FS);
+  prepare(h5);
   const f = new h5.File(path, "x");
   if (Number(f.file_id) < 0) throw new Error(`HDF5 could not create ${path} (it exists, or its folder refuses a new file)`);
   return f;
