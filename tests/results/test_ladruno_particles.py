@@ -1070,3 +1070,67 @@ def test_a_closed_fork_fixture_reads_every_stage_through_the_rule(fork, src) -> 
             assert pf.step == 1
             assert _states(pf) == [
                 (STAGE, "read", mc.committed_outputs(str(src), stage=STAGE))]
+
+
+# --- GRID/BASIS: the Contract-2 set (232a §2.4, amendment 232i; #3013) -------------------
+#
+# The oracle is the fork's checker at ``ladruno-v20261118``: ``ladruno_format.py`` holds
+# ``C2_BASES = ("gimp", "linear", "bspline2", "bspline3")`` and refuses any other value as
+# C2-GRID. The B-spline files are ``particles_v1m2.ladruno`` with only BASIS rewritten
+# (``tests/fixtures/mpm/make_basis_fixtures.py``); the viewer's ``ladrunoParticles.test.ts``
+# reads the same files and makes the same refused copies. This reader has no Contract-1
+# (particle-set) counterpart: C1-BASIS is the viewer's ``particleSet.test.ts``.
+
+BSPLINE = {v: MPM / f"particles_{v}_v1m2.ladruno" for v in ("bspline2", "bspline3")}
+
+
+def _set_basis(path: Path, value: str) -> None:
+    """The fixture generator's own edit, loaded by path (``sys.path`` is untouched)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_make_basis_fixtures", MPM / "make_basis_fixtures.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.set_basis(path, value)
+
+
+def test_the_contract_2_basis_set_is_the_forks() -> None:
+    from apeGmsh.results.readers._ladruno_particles import C2_BASES
+
+    assert C2_BASES == ("gimp", "linear", "bspline2", "bspline3")
+
+
+@pytest.mark.parametrize("basis", sorted(BSPLINE))
+def test_a_bspline_grid_reads_and_reports_its_basis(opened, basis) -> None:
+    path = BSPLINE[basis]
+    with h5py.File(path, "r") as f:
+        assert f[f"{REG}/GRID"].attrs["BASIS"].tolist() == [basis.encode()]
+    r = opened(path)
+    g = r.particles.grid()
+    assert g.basis == basis
+    np.testing.assert_array_equal(g.num_cells, [4, 4])
+    # Only BASIS differs from the GIMP fixture: every value reads as h5py reads it.
+    raw = _raw(path)
+    s = r.particles.get(component="POSITION", stage=_particle_stage_id(r))
+    np.testing.assert_array_equal(s.values, raw["DATA"]["POSITION"])
+    np.testing.assert_array_equal(s.offsets, raw["OFFSETS"])
+
+
+@pytest.mark.parametrize("basis", ["linear", "bspline2", "bspline3"])
+def test_every_contract_2_basis_reads_on_an_edited_copy(copy_of, opened, basis) -> None:
+    p = copy_of(PARTICLES, f"{basis}.ladruno")
+    _set_basis(p, basis)
+    assert opened(p).particles.grid().basis == basis
+
+
+@pytest.mark.parametrize("basis", ["bspline4", "bspline", "BSPLINE2", "quadratic"])
+def test_a_basis_outside_contract_2_refuses_the_stage_by_name(copy_of, opened, basis) -> None:
+    p = copy_of(PARTICLES, f"{basis}.ladruno")
+    _set_basis(p, basis)
+    r = opened(p)
+    match = (rf"GRID: BASIS is '{basis}'; Contract 2 allows "
+             r"gimp \| linear \| bspline2 \| bspline3 \(C2-GRID\)")
+    for access in (r.particles.grid, lambda: r.particles.get(component="POSITION")):
+        with pytest.raises(ParticleFormatError, match=match):
+            access()
