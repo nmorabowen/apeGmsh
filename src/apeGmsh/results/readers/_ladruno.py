@@ -85,12 +85,14 @@ from ._buckets import (
     attach_nodes_ndf,
     canonical_node_component,
     discover_modes,
+    is_modal_result_name,
     locate_node_component,
     modal_components,
     mode_stage_layout,
     model_node_ids,
     partition_reduction_from_name,
     read_mode_shape,
+    torn_mode_snapshots,
 )
 from ._ladruno_element_io import SpatialDimUnknown
 from ._ladruno_hyperslab import read_hyperslab
@@ -1022,6 +1024,15 @@ class LadrunoReader:
         # would put MODEL_STAGE[10] before MODEL_STAGE[2] once a run
         # reaches ten stages.
         names = list(self._stage_rule.names)
+        # The modes-snapshot crash rule (schema §7b.2) for a file the SWMR
+        # recorder wrote (a version-2/3 superblock): a snapshot that does not
+        # read whole is skipped with every later one.
+        torn_snapshots = (
+            {} if self._opened.flags is None else torn_mode_snapshots(
+                [(n, _child(self._h5[n], "RESULTS/ON_NODES")) for n in names],
+                source=self._path.name,
+            )
+        )
         host_sets = []
         for i, name in enumerate(names):
             stage_id = f"stage_{i}"
@@ -1039,6 +1050,7 @@ class LadrunoReader:
             host_sets.append(
                 [] if on_nodes is None else discover_modes(
                     on_nodes, source=f"{self._path.name} {name}",
+                    skip_steps=torn_snapshots.get(name, frozenset()),
                 )
             )
         # Each recorded mode is its own kind="mode" stage, listed
@@ -1151,10 +1163,17 @@ class LadrunoReader:
 
     @staticmethod
     def _find_time_dataset(group: "h5py.Group"):
-        """Depth-first search for a ``TIME`` dataset under ``group``."""
+        """Depth-first search for a ``TIME`` dataset under ``group``.
+
+        A modes result (``MODES_OF_VIBRATION(U|R)``) holds no ``TIME`` and is
+        not entered: its snapshots are read only by the modes-snapshot crash
+        rule, which skips one that does not open.
+        """
         import h5py
 
         for key in group:
+            if is_modal_result_name(key):
+                continue
             item = group[key]
             if key == "TIME" and isinstance(item, h5py.Dataset):
                 return item

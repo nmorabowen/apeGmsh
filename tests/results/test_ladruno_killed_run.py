@@ -267,6 +267,89 @@ def test_an_earlier_stage_that_does_not_read_refuses_the_file(tmp_path, lf, flag
         LadrunoReader(p)
 
 
+# --- the modes-snapshot crash rule --------------------------------------------------------
+
+MODES_U = "RESULTS/ON_NODES/MODES_OF_VIBRATION(U)/DATA"
+#: The object header of MODEL_STAGE[1]'s modes snapshot STEP_10 in KILLED (asserted below).
+STEP_10_OHDR = 260827
+
+
+def _mode_ids(reader: LadrunoReader) -> list:
+    return [s.id for s in reader.stages() if s.kind == "mode"]
+
+
+@pytest.mark.parametrize("flags", [0x00, 0x01, 0x05], ids=["0x00", "0x01", "0x05"])
+def test_a_modes_snapshot_that_does_not_open_is_skipped(tmp_path, lf, flags) -> None:
+    """Schema §7b.2: a ``DATA/STEP_<k>`` that does not open is the snapshot being
+    written; it is skipped (with every later one) and named, never a raw error."""
+    from apeGmsh.results.readers._buckets import ModeSnapshotSkippedWarning
+
+    p = _copy(tmp_path, lf, f"snap_ohdr_{flags:02x}.ladruno", flags,
+              eoa_to_size=flags == 0x00)
+    with open_ladruno(p) as o:
+        assert h5py.h5o.get_info(o.h5[f"{S1}/{MODES_U}/STEP_10"].id).addr == STEP_10_OHDR
+    raw = bytearray(p.read_bytes())
+    assert raw[STEP_10_OHDR:STEP_10_OHDR + 4] == b"OHDR"
+    raw[STEP_10_OHDR] ^= 0xFF
+    p.write_bytes(bytes(raw))
+    before = sha(p)
+    with pytest.warns(ModeSnapshotSkippedWarning, match=r"MODEL_STAGE\[1\]/STEP_10"):
+        with Results.from_ladruno(p) as results:
+            assert [s.kind for s in results.stages] == ["static", "static"]
+    with pytest.warns(ModeSnapshotSkippedWarning):
+        with LadrunoReader(p) as reader:
+            assert _mode_ids(reader) == []
+            assert [s.n_steps for s in reader.stages()] == [20, 15]
+    assert sha(p) == before
+
+
+def test_a_last_snapshot_that_lacks_a_mode_is_not_a_mode_stage(tmp_path, lf) -> None:
+    """A last-stage snapshot holding MODE_0 only, after a two-mode snapshot: it was
+    being written (MODE_1 not yet there), so it lists no mode stage."""
+    from apeGmsh.results.readers._buckets import ModeSnapshotSkippedWarning
+
+    p = _copy(tmp_path, lf, "partial_snapshot.ladruno", 0x00, eoa_to_size=True)
+    with h5py.File(p, "r+") as f:
+        src = f[f"{S1}/{MODES_U}/STEP_10"]
+        g = f[f"{S2}/{MODES_U}"].create_group("STEP_25")
+        f.copy(src["MODE_0"], g, "MODE_0")
+    lf.set_superblock(p, flags=0x01)
+    with pytest.warns(ModeSnapshotSkippedWarning, match=r"MODEL_STAGE\[2\]/STEP_25.*lacks a mode"):
+        with LadrunoReader(p) as reader:
+            assert _mode_ids(reader) == ["stage_0_mode_1", "stage_0_mode_2"]
+            assert [s.id for s in reader.stages()] == [
+                "stage_0", "stage_0_mode_1", "stage_0_mode_2", "stage_1"]
+
+
+# --- the energy read's cut ----------------------------------------------------------------
+
+def test_read_energy_stops_at_t_prime(tmp_path, lf) -> None:
+    """MODEL_STAGE[2] with 15 energy rows and 13 DISPLACEMENT/DATA rows, killed
+    (flags 0x05): T' = 13, and the energy history stops there."""
+    p = _copy(tmp_path, lf, "energy.ladruno", 0x00, eoa_to_size=True)
+    rows = np.arange(15 * 3, dtype=np.float64).reshape(15, 1, 3)
+    with h5py.File(p, "r+") as f:
+        stage = f[S2]
+        time = stage[f"{DISP}/TIME"][...]
+        steps = stage[f"{DISP}/STEP"][...]
+        eg = stage.require_group("RESULTS/ON_DOMAIN").create_group("energyBalance")
+        eg.attrs["COMPONENTS"] = np.bytes_("kinetic,strain,external")
+        eg.create_dataset("ID", data=np.array([[0]], dtype=np.int32))
+        eg.create_dataset("DATA", data=rows, maxshape=(None, 1, 3), chunks=(64, 1, 3))
+        eg.create_dataset("TIME", data=time, maxshape=(None,), chunks=(1024,))
+        eg.create_dataset("STEP", data=steps, maxshape=(None,), chunks=(1024,))
+        stage[f"{DISP}/DATA"].resize(13, axis=0)
+    lf.set_superblock(p, flags=0x05)
+    ref = {r["stage"]: r["committed"] for r in _reference_report(lf, p, 0x05)}
+    assert ref == {S1: 20, S2: 13}
+    with LadrunoReader(p) as reader:
+        names, values, t = reader.read_energy("stage_1")
+        assert names == ["kinetic", "strain", "external"]
+        assert values.shape == (13, 3)
+        np.testing.assert_array_equal(values, rows[:13, 0, :])
+        np.testing.assert_array_equal(t, time[:13])
+
+
 # --- a live writer ------------------------------------------------------------------------
 
 def test_a_live_writers_lock_is_busy_and_names_the_swmr_tail_read(tmp_path, lf, monkeypatch) -> None:

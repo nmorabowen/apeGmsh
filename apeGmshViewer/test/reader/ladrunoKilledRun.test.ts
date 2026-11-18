@@ -175,6 +175,52 @@ for (const flags of [0x00, 0x01, 0x05]) {
   });
 }
 
+// -- the modes-snapshot crash rule (schema §7b.2) ------------------------------------------
+
+const MODES_U = "RESULTS/ON_NODES/MODES_OF_VIBRATION(U)/DATA";
+/** The object header of MODEL_STAGE[1]'s STEP_10 snapshot in KILLED (h5py's address; Python's test asserts it too). */
+const STEP_10_OHDR = 260827;
+const modeIds = (f: LadrunoFile) => f.index.stages.filter((s) => s.kind === "mode").map((s) => s.id);
+
+for (const flags of [0x00, 0x01, 0x05]) {
+  test(`a modes snapshot that does not open is skipped and named, never a raw error (flags 0x0${flags})`, () => {
+    const path = flagged(KILLED, flags, `snap_ohdr_${flags}.ladruno`, flags === 0x00);
+    const b = readFileSync(path);
+    assert.equal(b.subarray(STEP_10_OHDR, STEP_10_OHDR + 4).toString("latin1"), "OHDR");
+    b[STEP_10_OHDR] = b[STEP_10_OHDR]! ^ 0xff;
+    writeFileSync(path, b);
+    const before = sha(path);
+    withFile(path, (f) => {
+      assert.deepEqual(steps(f), [["stage_0", 20], ["stage_1", 15]]);
+      assert.ok(f.index.warnings.some((w) => /modes snapshot MODEL_STAGE\[1\]\/STEP_10 does not read whole .* skipped with every later snapshot/.test(w)), f.index.warnings.join("\n"));
+    });
+    assert.equal(sha(path), before);
+  });
+}
+
+test("a last snapshot that lacks a mode (MODE_0 only, after a two-mode snapshot) is no mode stage", () => {
+  const base = join(tmp, "partial_base.ladruno");
+  repairCopy(KILLED, base);
+  const w = new h5wasm.File(base, "a");
+  try {
+    const mode0 = w.get(`MODEL_STAGE[1]/${MODES_U}/STEP_10/MODE_0`) as h5wasm.Dataset;
+    const snap = (w.get(`${S2}/${MODES_U}`) as h5wasm.Group).create_group("STEP_25");
+    const ds = snap.create_dataset({ name: "MODE_0", data: mode0.value as never, shape: mode0.shape! as number[], dtype: mode0.dtype as never });
+    ds.create_attribute("LAMBDA", new Float64Array([Number(oneOf(mode0.attrs["LAMBDA"]!.value))]), [1]);
+  } finally {
+    w.close();
+  }
+  const path = flagged(base, 0x01, "partial_snapshot.ladruno");
+  withFile(path, (f) => {
+    assert.deepEqual(modeIds(f), ["stage_0_mode_1", "stage_0_mode_2"]);
+    assert.ok(f.index.warnings.some((w) => /modes snapshot MODEL_STAGE\[2\]\/STEP_25 does not read whole \(.*lacks a mode\)/.test(w)), f.index.warnings.join("\n"));
+  });
+});
+
+function oneOf(v: unknown): unknown {
+  return ArrayBuffer.isView(v) ? (v as unknown as ArrayLike<unknown>)[0] : Array.isArray(v) ? v[0] : v;
+}
+
 test("a live writer's lock is H5BusyError, naming the SWMR tail read", () => {
   const real = superblockIo.readHead;
   superblockIo.readHead = () => {

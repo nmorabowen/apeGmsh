@@ -339,6 +339,9 @@ interface Column {
  * opens one file of a partitioned set, for reader/ladrunoParts.ts only: the set
  * is what the app reads, never one part alone (#2188).
  */
+/** In a `tornSnapshots` skip set: every modes snapshot of the stage. */
+const ALL_SNAPSHOTS = "*";
+
 /** The `RESULTS` families whose result groups stream (schema §7.0). */
 const STREAMING_FAMILIES = ["ON_NODES", "ON_ELEMENTS", "ON_DOMAIN", "ON_REGIONS"];
 
@@ -1391,7 +1394,9 @@ export class LadrunoFile {
 
   /** Python `discover_modes` per host, then `mode_stage_layout` over the file. */
   private layModes(hosts: { stage: StageInfo; onNodes: LGroup | null }[], warnings: string[]): { stages: { host: string; stage: StageInfo }[]; facts: LadrunoMode[] } {
-    const perHost = hosts.map((h) => (h.onNodes ? this.discoverModes(h.onNodes, warnings) : []));
+    // The modes-snapshot crash rule (schema §7b.2) for a file the SWMR recorder wrote (a version-2/3 superblock).
+    const skip = this.opened.flags === null ? new Map<string, Set<string>>() : this.tornSnapshots(hosts, warnings);
+    const perHost = hosts.map((h) => (h.onNodes ? this.discoverModes(h.onNodes, warnings, skip.get(h.stage.id)) : []));
     const nSets = perHost.reduce((n, sets) => n + sets.length, 0);
     const stages: { host: string; stage: StageInfo }[] = [];
     const facts: LadrunoMode[] = [];
@@ -1416,15 +1421,98 @@ export class LadrunoFile {
    * exist, lists the same steps, modes and eigenvalues, or the file is
    * refused. A group without DATA, or a MODE_<k> without LAMBDA, is refused.
    */
-  private discoverModes(onNodes: LGroup, warnings: string[]): { stepKey: string; modes: { key: string; index: number; lambda: number }[] }[] {
+  /**
+   * The modes snapshots the crash rule of schema §7b.2 skips (Python's `_buckets.torn_mode_snapshots`).
+   * The snapshots are taken in stage order, then by step. The first one that does not open, or lacks a
+   * `MODE_<j>`, was being written when the run was killed: it is skipped with every later one, in its
+   * stage and in every later stage, and a warning names them. A snapshot lacks a mode when its `MODE_<j>`
+   * keys have a gap, when the modal groups disagree on its modes, or, for the file's LAST snapshot only
+   * (the only one a kill can leave half written), when it holds fewer modes than the snapshot before it.
+   * Returns stage id -> skipped `STEP_<k>` keys (`ALL_SNAPSHOTS`: the stage's modes DATA does not list).
+   */
+  private tornSnapshots(hosts: { stage: StageInfo; onNodes: LGroup | null }[], warnings: string[]): Map<string, Set<string>> {
+    const isGroup = (x: unknown): x is LGroup => x instanceof this.h5.Group;
+    const isDataset = (x: unknown): x is LDataset => x instanceof this.h5.Dataset;
+    const child = (g: LGroup, name: string): unknown => {
+      if (!g.keys().includes(name)) throw new Error(`${g.path} has no ${name}`);
+      return g.get(name);
+    };
+    const groupOf = (g: LGroup, name: string): LGroup => {
+      const x = child(g, name);
+      if (!isGroup(x)) throw new Error(`${g.path}/${name} is not a group`);
+      return x;
+    };
+    const order: { host: { stage: StageInfo; onNodes: LGroup }; groups: string[]; step: string | null }[] = [];
+    for (const h of hosts) {
+      if (!h.onNodes) continue;
+      const host = { stage: h.stage, onNodes: h.onNodes };
+      try {
+        const groups = MODAL_GROUPS.filter((n) => h.onNodes!.keys().includes(n));
+        const keys = new Set<string>();
+        for (const g of groups) for (const k of groupOf(groupOf(h.onNodes, g), "DATA").keys()) if (k.startsWith("STEP_")) keys.add(k);
+        const steps = [...keys].sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
+        for (const step of steps) order.push({ host, groups, step });
+      } catch {
+        order.push({ host, groups: [], step: null });
+      }
+    }
+    const modesOf = (e: (typeof order)[number]): number => {
+      if (e.step === null) throw new Error("its modes DATA does not list");
+      const counts = e.groups.map((name) => {
+        const sg = groupOf(groupOf(groupOf(e.host.onNodes, name), "DATA"), e.step!);
+        const keys = sg.keys().filter((k) => k.startsWith("MODE_"));
+        const idx = keys.map((k) => Number(k.slice(5))).sort((a, b) => a - b);
+        if (idx.length === 0 || idx.some((x, i) => x !== i)) throw new Error(`${sg.path} holds modes [${idx.join(", ")}], not MODE_0..MODE_<m-1>: it lacks a mode`);
+        for (const k of keys) {
+          const ds = sg.get(k);
+          if (!isDataset(ds) || ds.shape === null) throw new Error(`${sg.path}/${k} is not a dataset`);
+          const lam = ds.attrs["LAMBDA"];
+          if (lam === undefined || typeof oneValue(lam.value) !== "number") throw new Error(`${sg.path}/${k} has no numeric LAMBDA`);
+        }
+        return idx.length;
+      });
+      if (new Set(counts).size > 1) throw new Error(`${e.step}: the modal groups ${e.groups.join(", ")} hold ${counts.join(", ")} modes: one lacks a mode`);
+      return counts[0]!;
+    };
+    let tornAt = -1;
+    let why = "";
+    let previous: number | null = null;
+    for (let i = 0; i < order.length; i++) {
+      try {
+        const m = modesOf(order[i]!);
+        if (i === order.length - 1 && previous !== null && m < previous) throw new Error(`it holds ${m} modes and the snapshot before it ${previous}: the last snapshot lacks a mode`);
+        previous = m;
+      } catch (err) {
+        tornAt = i;
+        why = (err instanceof Error ? err.message : String(err)).split("\n")[0]!;
+        break;
+      }
+    }
+    const skip = new Map<string, Set<string>>();
+    if (tornAt < 0) return skip;
+    const torn = order.slice(tornAt);
+    for (const e of torn) {
+      const set = skip.get(e.host.stage.id) ?? new Set<string>();
+      set.add(e.step ?? ALL_SNAPSHOTS);
+      skip.set(e.host.stage.id, set);
+    }
+    const first = torn[0]!;
+    warnings.push(
+      `the modes snapshot ${first.host.stage.name}/${first.step ?? "DATA"} does not read whole (${why}); it was being written when the run was killed, so it is skipped with every later snapshot (schema §7b.2): ${torn.map((e) => `${e.host.stage.name}/${e.step ?? "DATA"}`).join(", ")}`,
+    );
+    return skip;
+  }
+
+  private discoverModes(onNodes: LGroup, warnings: string[], skip?: Set<string>): { stepKey: string; modes: { key: string; index: number; lambda: number }[] }[] {
     const names = MODAL_GROUPS.filter((n) => onNodes.keys().includes(n));
-    if (names.length === 0) return [];
+    if (names.length === 0 || skip?.has(ALL_SNAPSHOTS)) return [];
     const perGroup = names.map((name) => {
       const g = this.group(onNodes, name);
       if (!g.keys().includes("DATA")) throw new LadrunoError("layout", `${g.path} has no DATA group; the modal record is incomplete`);
       const data = this.group(g, "DATA");
       const sets: { stepKey: string; modes: { key: string; index: number; lambda: number }[] }[] = [];
       for (const stepKey of keyed(data, "STEP_", warnings)) {
+        if (skip?.has(stepKey)) continue;
         const sg = this.group(data, stepKey);
         const modes = keyed(sg, "MODE_", warnings).map((key) => {
           const ds = this.dataset(sg, key);
