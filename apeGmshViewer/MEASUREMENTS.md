@@ -1139,6 +1139,8 @@ above.
 | `scrub` | clicks on step +1 on the longest stage, each to its step painted |
 | `switch-contour`, `switch-contour-element` | the legend's field picker to another nodal field, then to an element (Gauss) field, each to its own scan done |
 | `toggle-deformed` | clicks on **deformed**, on and off; if the shape is below a pixel at true scale, the scale is raised first (×10 steps) and stated |
+| `play` | **play** on the longest stage, up to 10 s, with every frame on screen recorded and judged for flicker |
+| `drag-slider` | a real mouse drag of the step slider from 10% to 90% of its track, recorded the same way; it must end near the pointer's step |
 | `orbit-contour` | the orbit again, with results, contour and deformed shape on |
 | `hover` | mouse moves over the canvas with a line diagram on; skipped, with the reason, on a stage with no line stations, where hover does nothing |
 | `store-event-results` | the store event again, with results and contour on |
@@ -1203,3 +1205,44 @@ refused ("INFO/PROVENANCE has no @element_index_space = "fem""), so
 `switch-contour-element` is skipped there. Before the profiler waited for the
 picked field's own scan, it passed that scenario on the previous field's
 finished scan. The stricter check is why it is reported as skipped now.
+
+### Baseline, 2026-11-18 (commit 1668bcfc)
+
+Ryzen AI 7 PRO 350, 1584x961 canvas, model files on a local disk. Other work
+ran on the machine, so a range brackets the runs and the load is stated.
+Times are median ms per operation; `npm run profile -- <model.h5> --reps=5`.
+
+| model | cells / nodes | steps | load | enter results | contour on | deformed toggle | step change | steps drawn in `play` |
+|---|---|---|---|---|---|---|---|---|
+| `shear_connection_tet` | 12.5k / 4.3k | 10 | 510 to 587 | 76 to 95 | 111 to 125 | 29 to 49 | 66 | 6 to 10 of 10 |
+| `yoo_slab_N56_75` | 24.4k / 11.2k | 4 | 2304 to 2445 | 333 to 529 | 302 to 443 | 63 to 233 | 231 to 362 | 2 of 4 |
+| `tims_c3b` (653 MB `.ladruno`, machine 75 to 100% busy) | 27.0k / 54.3k | 51 | 1384 | 651 | 941 | 61 | 274 | **2 of 51** |
+| `yoo_building_SLE_T2` (machine 77 to 100% busy) | 128.9k / 76.8k | 1 per stage | 228557 | 4686 | 2063 | 721 | no stage to walk | no stage to walk |
+
+- **Playback starves on `tims_c3b`.** The timer asks for a step every 100 ms
+  and each request replaces the one before, so 49 of 51 steps were never
+  drawn (0.3 steps/s; p95 frame 133 ms).
+- **The cost of a step is in the renderer.** On `tims_c3b` the step walk is
+  4660 ms busy in the renderer and 547 ms in main over 20 steps, about 27 ms
+  of read per step. `loadsSummaryOf` (#2836) is 71% of the renderer's time
+  there and 77% during `play`.
+- **The flicker is in the panels, not the 3-D view.** `play` counts 17 of 21
+  recorded frames as flicker in the Contour card on `shear_connection_tet`
+  and none in the viewport. The kept frames show the "step N loading" line
+  entering the Deformed and Contour cards and moving every card below.
+- **The slider cannot be dragged.** The phase bar replaces the slider on each
+  step: 2 replacements per drag, and every model's drag stops at the first
+  step or two (`tims_c3b`: step 3 where the pointer asked for about 45).
+  `drag-slider` reports `no-effect` until this is fixed.
+- **#2670 did not reproduce here.** `stress/sigma_xx` scanned 51 of 51 steps
+  in 714 ms in `switch-contour-element`, against about 600 s in the issue.
+  The scenario takes the picker's default Gauss mode, so the issue's exact
+  case still has to be repeated before it is closed.
+- **The building's load is 201 s of main-process time**, mostly HDF5 name
+  reads (#2835, not re-attributed by function here).
+
+`play` and `drag-slider` record each composited frame through the DevTools
+screencast (at most 960 px wide) and call a frame a flicker when it differs
+from both neighbours while they are close to each other
+(`scripts/profile/frames.ts`). The screencast drops frames under load, so a
+count is a lower bound; the first flicker frames are kept under `flicker/`.

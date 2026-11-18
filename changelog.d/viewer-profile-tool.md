@@ -4,7 +4,8 @@
 view-mode window and drives it over the DevTools protocol through named
 scenarios: load to the first frame, orbit, one store event, entering the
 results, contour on, scrub, switching the contour field (nodal and element),
-the deformed shape, hover, and the store event again with results on. For
+the deformed shape, playback and a slider drag recorded frame by frame to
+count flicker, hover, and the store event again with results on. For
 each scenario it records the time per operation, the frame rate, a CPU
 profile of the renderer and of the main process (top functions by self and
 inclusive time, mapped to `src/` through the bundles' source maps), the
