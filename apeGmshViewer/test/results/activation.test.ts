@@ -186,6 +186,18 @@ test("unbound: results paired by fem_hash only are never joined to /sequence nam
   assert.equal(activationNow(atStage(m, 0))!.activation.state, "ambiguous");
 });
 
+test("unstaged wins over a fem_hash pairing: no stages means nothing to bind, and no banner (#1754)", async () => {
+  const fem = await stagedResults(FEM_ONLY);
+  const load = await stagedModelLoad();
+  let s = reduce(base, { type: "fileLoaded", artifact: "model", load: { ...load, sequence: seqOf([""], [], 0) } });
+  s = reduce(s, { type: "fileOpened", artifact: "results", path: fem.info.path });
+  s = reduce(s, { type: "resultsLoaded", ...fem });
+  assert.deepEqual(resultsPairing(s), { state: "paired", by: "fem_hash" });
+  const t = atStage(s, 0);
+  assert.deepEqual(activationNow(t)!.activation, { state: "unstaged" });
+  assert.ok(!noticesOf(t).some((n) => n.includes("Stage activation")));
+});
+
 test("the ambiguous and absent states are a visible banner; filtered and unstaged are not", () => {
   const notices = (s: State) => noticesOf(s).filter((n) => /Stage activation/.test(n));
   assert.deepEqual(notices(atStage(base, 0)), []);
