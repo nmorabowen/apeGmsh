@@ -91,6 +91,9 @@ async function captureSets(ctx: HarnessContext, shot: (name: string) => Promise<
   store.dispatch({ type: "workspaceRead", read: { status: "ready", file: "capture.workspace.h5", token: "capture", version: "1", revision: 1, writer: null, saveId: null, readOnly: null, sets, plots: [], views: [], refused: [], broken: [] } });
   store.dispatch({ type: "clearSelection", kind: "element" });
   store.dispatch({ type: "setWorkspaceKind", kind: "elements" });
+  // The node box's markers and selected nodes would bury the element highlight; the node set holds them now.
+  store.dispatch({ type: "setNodes", on: false });
+  store.dispatch({ type: "clearSelection", kind: "node" });
   const toggle = () => {
     const b = document.querySelector<HTMLButtonElement>("#selection-bar button[aria-expanded]");
     if (!b) throw new Error("capture selection-sets: the selection bar has no Sets button");
