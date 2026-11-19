@@ -1,12 +1,12 @@
 // The workspace slice of the reducer (state/reduce.ts delegates here): VU9a's
-// read of the window set's `<stem>.workspace.h5`, the pick kind, and the save
+// read of the window set's `<stem>.workspace.h5` and the save
 // in flight (ADR 0132 D6, D7). It writes `workspace` only.
 
 import type { WorkspaceEvent } from "../types/events/workspace.ts";
 import { SET_KINDS, type WorkspaceIn, type WorkspaceState } from "../types/workspace.ts";
 
-/** VU9a: nothing read, node picks, no save asked. */
-export const initialWorkspace: WorkspaceState = { read: null, reading: false, kind: "nodes", preview: null, deformedPicks: false, seq: 0, request: null, saving: null, notice: null, aside: null, ownSaveId: null };
+/** VU9a: nothing read, no save asked. */
+export const initialWorkspace: WorkspaceState = { read: null, reading: false, preview: null, seq: 0, request: null, saving: null, notice: null, aside: null, ownSaveId: null };
 
 const STATUSES = ["none", "absent", "unreadable", "refused", "ready"];
 
@@ -59,9 +59,6 @@ export function reduceWorkspace(w: WorkspaceState, e: WorkspaceEvent): Workspace
       const same = fileOf(r) === fileOf(w.read);
       return { ...w, read: r, reading: false, notice: same ? w.notice : null, aside: same ? w.aside : null, ownSaveId: same ? w.ownSaveId : null };
     }
-    case "setWorkspaceKind":
-      if (!(SET_KINDS as readonly string[]).includes(e.kind)) throw new RangeError(`setWorkspaceKind: ${JSON.stringify(e.kind)} is not nodes or elements`);
-      return e.kind === w.kind ? w : { ...w, kind: e.kind };
     case "workspaceSave": {
       const why = cannotSave(w);
       if (why !== null) throw new Error(`workspaceSave: ${why}`);

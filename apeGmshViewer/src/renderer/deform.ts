@@ -17,7 +17,7 @@ import { deformedPositions, GHOST_OPACITY, missingMarkers } from "../state/defor
 import { deformView } from "../state/selectors.ts";
 import type { MeshInfo, State } from "../state/types.ts";
 import { DARK, OFFICE, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
-import { highlightObjects, selectionBounds, type Focus, type Prims } from "./selection.ts";
+import { selectionBounds, type Focus, type Prims } from "./selection.ts";
 
 /** Every primitive's positions (6 floats per segment, 9 per triangle, 6 per outline edge; original order), and what they show. */
 export interface FullPositions {
@@ -101,20 +101,6 @@ export function deformFull(base: FullPositions, disp: DisplacementData, scale: n
  */
 export function drawnPositions(full: FullPositions | null, info: MeshInfo, blobs: BlobStore): FullPositions {
   return full ?? basePositions(info, blobs);
-}
-
-/** The selection outline (thick lines and fill, selection.ts `highlightObjects`) over the drawn positions. */
-export function selectionOutline(
-  full: FullPositions | null,
-  info: MeshInfo,
-  blobs: BlobStore,
-  prims: readonly Prims[],
-  makeLines: (positions: Float32Array, widthPx: number) => THREE.Object3D,
-  showOffsets = false,
-): THREE.Object3D[] {
-  const pos = drawnPositions(full, info, blobs);
-  const linePos = showOffsets && pos.clearLine ? pos.clearLine : pos.line;
-  return highlightObjects(linePos, pos.tri, prims, makeLines);
 }
 
 /**

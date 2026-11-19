@@ -240,6 +240,7 @@ const EVERY: Record<EventType, Event> = {
   workspaceReading: { type: "workspaceReading" },
   workspaceRead: { type: "workspaceRead", read: { status: "absent", file: "x.workspace.h5", token: "absent" } },
   setWorkspaceKind: { type: "setWorkspaceKind", kind: "elements" },
+  selectNodes: { type: "selectNodes", tags: [1], mode: "replace" },
   workspaceSave: { type: "workspaceSave", edit: { op: "create", name: "roof" } },
   workspaceSaved: { type: "workspaceSaved", seq: 1, answer: { ok: false, reason: "held", detail: "held", file: "x.workspace.h5", held: true } },
   workspacePreview: { type: "workspacePreview", preview: { kind: "nodes", ids: [1], notes: [] } },
@@ -271,7 +272,7 @@ test("reducer purity: every event leaves a frozen state untouched and returns pl
   }
   assert.equal(
     Object.keys(EVERY).length,
-    135,
+    136,
     "decision 17's 20 events plus setHinges, selectAdd, fileClosed, requestSource, sourceResult, setLoaded (V2f), frameSelection, setColourBy, selectStage (V4f), resultsLoaded and resultStep (V4b), the five contour events (V4c1), setContourUnits (baseUnits), the four deformed-shape events (V4d), setContourGauss and contourElementJoin (V4c2a), the seven section-plane events (V4e1), the three gizmo events (V4e2: setClipPose, setShowGizmos, setClipGizmo), setCutFace (V4e3), the ten line-diagram events, the 12 Spotlight/Search/selectDecls events, setLoads, setReactions (the Reactions card), setVectors (the Vectors card), setSprings (the Springs card), setSupports (the Display card's BC), toggleExtrudeFrames, toggleShowOffsets, setCamera, cameraMoved and setTheme (VA1), and the seven offer events (VA5), setNodes and setNodeSize (node markers), and setGaussPoints, setGaussSize and gaussMeasured (Gauss markers), and userOpened, userRead and userClosed (ADR 0130, the .user.h5), and combinationRead (VU7b-2, the User Combination shown), and userResultRead (VU16, the user result picked), and setPrincipal (the Principal card), and setCracks (the Cracks card), and the seven variant events (VU10: variantsRead, variantSwitch, variantSwitched, variantCompare, compareOpened, setDifference, differenceRead), and the four compare-door events (VU19: compareModelRead, compareUserRead, showCompareUser, compareUserResultRead), and the seven workspace events (VU9a: workspaceReading, workspaceRead, setWorkspaceKind, workspaceSave, workspaceSaved, workspacePreview, dismissWorkspaceAside), and the ten particle events (M2-S4: particlesOpened, particlesLoaded, particlesFailed, particlesClosed, setParticleStage, setParticleOutput, setParticleColour, setParticleGrid, setParticlesOn, particleFrame)",
   );
 });
@@ -378,7 +379,7 @@ test("select, selectAdd (add and toggle-remove), clearSelection, pins; an undecl
   assert.deepEqual(toggled.selection.picks.map((p) => p.decl), [secondPath]);
   // Toggling the remaining element leaves an empty selection.
   const emptied = reduce(toggled, EVERY.selectAdd);
-  assert.deepEqual(emptied.selection, { decls: [], picks: [] });
+  assert.deepEqual(emptied.selection, { active: "element", decls: [], picks: [], nodes: [] });
   assert.throws(() => reduce(s, { type: "select", pick: pick("mesh/element/999999") }), /not a declaration/);
   assert.throws(() => reduce(s, { type: "selectAdd", pick: pick("mesh/element/999999") }), /not a declaration/);
   s = reduce(s, EVERY.inspectorPin);

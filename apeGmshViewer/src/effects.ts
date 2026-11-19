@@ -36,7 +36,7 @@ import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
 import { applyTheme } from "./theme/tokens.ts";
-import { membersOf } from "./state/workspace.ts";
+import { membersOf, setKindOf } from "./state/workspace.ts";
 import type { CombinationDraft, CombinationEdit, CombinationSaveIn, DraftCheck } from "./state/types.ts";
 import type { ArtifactKind, BlobRef, ContourScan, ElementJoinVerdict, Lineage, LineDiagramBeamSummary, LineStationComponent, ParticleStageInfo, ResultsInfo, ResultsStage, StageElements, State, WorkspaceEdit, WorkspaceIn, WorkspacePageEdit, WorkspaceSaveIn, ZoneStatus } from "./state/types.ts";
 
@@ -2015,7 +2015,7 @@ export class Effects {
   /** The edit main is sent for a page edit: a create takes its members from the selection now (state/workspace.ts). */
   private workspaceEditOf(s: State, edit: WorkspacePageEdit, expect: string): WorkspaceEdit | string {
     if (edit.op !== "create") return { ...edit, expect };
-    const kind = s.workspace.kind;
+    const kind = setKindOf(s);
     const m = membersOf(s, kind, this.nodeTable(s));
     if (!m.ok) return m.reason;
     for (const n of m.notes) console.warn(`apeGmshViewer: ${n}`);
@@ -2079,10 +2079,10 @@ export class Effects {
   private previewWorkspace(): void {
     this.off.push(
       this.store.subscribe((s, prev) => {
-        if (s.selection === prev.selection && s.workspace.kind === prev.workspace.kind && s.mesh === prev.mesh && s.decls === prev.decls && s.deform.on === prev.deform.on && s.workspace.deformedPicks === prev.workspace.deformedPicks) return;
+        if (s.selection === prev.selection && s.mesh === prev.mesh && s.decls === prev.decls) return;
         queueMicrotask(() => {
           const now = this.store.get();
-          const kind = now.workspace.kind;
+          const kind = setKindOf(now);
           const m = membersOf(now, kind, this.nodeTable(now));
           this.store.dispatch({ type: "workspacePreview", preview: m.ok ? { kind, ids: m.ids, notes: m.notes } : { kind, reason: m.reason } });
         });

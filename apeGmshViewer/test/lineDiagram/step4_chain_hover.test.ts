@@ -50,12 +50,12 @@ test("buildSelectedBeamChainsFromState returns [] when selection is empty or sel
   ];
 
   assert.deepEqual(
-    buildSelectedBeamChainsFromState({ selection: { decls: [], picks: [] } }, { beams }),
+    buildSelectedBeamChainsFromState({ selection: { active: "element", decls: [], picks: [], nodes: [] } }, { beams }),
     [],
   );
   assert.deepEqual(
     buildSelectedBeamChainsFromState(
-      { selection: { decls: ["opensees/element/ShellMITC4/100"], picks: [] } },
+      { selection: { active: "element", decls: ["opensees/element/ShellMITC4/100"], picks: [], nodes: [] } },
       { beams },
     ),
     [],

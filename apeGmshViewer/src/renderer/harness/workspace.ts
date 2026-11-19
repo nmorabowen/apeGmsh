@@ -4,8 +4,9 @@
 // earlier fixture's capture changes. `<out>.workspace-sets.png` is the sets
 // panel as main read the file: each set's verdict with its reason, or why the
 // file is unreadable or refused. On a file this app may write, the harness
-// then names a selection the way a human does: three elements clicked through
-// the viewport's own pick (`pickAt`, as a mouse click runs it), the name typed
+// then names a selection the way a human does: with Nodes active, three nodes
+// clicked through the viewport's own pick (`nodeAt`, as a mouse click runs it,
+// ADR 0138 D2), the name typed
 // into the panel's field and its Save clicked (`workspace-named.png`, then
 // `workspace-save-refused.png`: the capture mode is no human window, so main's
 // door refuses the save, read-only, and nothing is written). The last two
@@ -31,16 +32,17 @@ export async function captureWorkspace(ctx: HarnessContext, settle: (ms?: number
   };
   await shot("workspace-sets");
   if (read.status !== "ready" || read.readOnly !== null) return;
-  // A human's selection: three drawn elements, each clicked at its projected midpoint, Shift held. In Nodes the
-  // viewport highlights each clicked cell; the node markers are turned on, and the panel lists the node tags a save
-  // takes (the node of each cell nearest the click), as the effects computed them.
+  // A human's selection: Nodes active, and three drawn elements each clicked at its projected midpoint, Shift held:
+  // each click selects the node of the element nearest it, where it is drawn. The node markers are turned on, and
+  // the panel lists the node tags a save takes, as the effects computed them.
+  store.dispatch({ type: "setWorkspaceKind", kind: "nodes" });
   store.dispatch({ type: "clearSelection" });
   store.dispatch({ type: "setNodes", on: true });
   const drawn = store.get().mesh?.elements ?? [];
   for (const decl of [drawn[0], drawn[Math.floor(drawn.length / 2)], drawn[drawn.length - 1]]) {
     const pt = decl === undefined ? null : viewport.screenPointOf(decl);
-    const pick = pt ? viewport.pickAt(pt.x, pt.y) : null;
-    if (pick) store.dispatch({ type: "selectAdd", pick });
+    const tag = pt ? viewport.nodeAt(pt.x, pt.y) : null;
+    if (tag !== null) store.dispatch({ type: "selectNodes", tags: [tag], mode: "add" });
   }
   const input = document.querySelector<HTMLInputElement>('#sets input[data-role="set-name"]');
   if (!input) throw new Error("capture: the sets panel has no name field");
@@ -52,7 +54,7 @@ export async function captureWorkspace(ctx: HarnessContext, settle: (ms?: number
   if (!preview || !("ids" in preview) || preview.kind !== "nodes") throw new Error(`capture: the selection previews no node tags: ${JSON.stringify(preview)}`);
   await shot("workspace-named");
   const save = [...document.querySelectorAll<HTMLButtonElement>("#sets .sets-form button")].find((b) => !b.disabled);
-  if (!save) throw new Error("capture: the sets panel's Save is disabled with three elements selected and a name typed");
+  if (!save) throw new Error("capture: the sets panel's Save is disabled with three nodes selected and a name typed");
   save.click();
   for (let t = 0; t < 10000 && store.get().workspace.saving !== null; t += 50) await settle(50);
   await shot("workspace-save-refused");
@@ -70,6 +72,7 @@ export async function captureWorkspace(ctx: HarnessContext, settle: (ms?: number
   if (summary) document.querySelector<HTMLButtonElement>("#banner .banner-summary")?.click();
   store.dispatch({ type: "dismissWorkspaceAside" });
   store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setWorkspaceKind", kind: "elements" });
   store.dispatch({ type: "setNodes", on: false });
   // A set switch: another model opens, and the last set's workspace leaves the panel at once (nothing is saved against it).
   const model = store.get().artifacts.model?.path ?? "";

@@ -82,6 +82,7 @@ test("pickAt: a click on cut-away geometry is a miss; the same click with the cu
     renderer: { domElement: { getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 800 }) } },
     aim: (Viewport.prototype as unknown as { aim: unknown }).aim,
     pickOf: (Viewport.prototype as unknown as { pickOf: unknown }).pickOf,
+    hitAt: (Viewport.prototype as unknown as { hitAt: unknown }).hitAt,
   };
   // Client point over (0.5, 0.5, 2).
   const p = new THREE.Vector3(0.5, 0.5, 2).project(camera);

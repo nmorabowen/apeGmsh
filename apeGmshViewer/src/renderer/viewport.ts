@@ -24,7 +24,7 @@ import { combinationColours, contourColours, contourShownKey, differenceColours,
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
-import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
+import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
 import { EntitiesLayer } from "./entities.ts";
 import { CracksLayer } from "./cracks.ts";
@@ -54,7 +54,7 @@ import {
   type ProjectionMode,
   type ViewCamera,
 } from "./navigation.ts";
-import { fitDistance, focusOf, type Focus, hitElement, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
+import { fitDistance, focusOf, type Focus, type Hit, elementOutlines, highlightObjects, hitElement, nearestNodeOf, nodeVertexPositions, SELECTION_COLOUR, selectedPrims, SelectionHalo } from "./selection.ts";
 import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** The right rail's width plus its margins (style.css #rail: the inspector above the sources). */
@@ -335,7 +335,7 @@ export class Viewport {
     }
     if (s.mesh) {
       this.rebuild(s, s.mesh);
-      if (s.selection.decls.length) this.setHighlight(s, false);
+      if (s.selection.decls.length || s.selection.nodes.length) this.setHighlight(s, false);
       this.syncLineDiagram(s);
       this.syncLoads(s);
     }
@@ -545,8 +545,14 @@ export class Viewport {
     this.store.dispatch({ type: "hover", at: pick });
   }
 
-  /** A click at a client point: select (or toggle in the selection when `add` is true) what it picks; on a plain miss, clear the selection. */
+  /** A click at a client point: select (or toggle in the selection when `add` is true) what it picks in the active kind; on a plain miss, clear that kind. */
   private selectAt(x: number, y: number, add = false): void {
+    if (this.store.get().selection.active === "node") {
+      const tag = this.nodeAt(x, y);
+      if (tag !== null) this.store.dispatch({ type: "selectNodes", tags: [tag], mode: add ? "toggle" : "replace" });
+      else if (!add) this.store.dispatch({ type: "clearSelection", kind: "node" });
+      return;
+    }
     const pick = this.pickAt(x, y);
     if (add) {
       if (pick) this.store.dispatch({ type: "selectAdd", pick });
@@ -930,7 +936,7 @@ export class Viewport {
       if (this.frameEdges) this.frameEdges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
       if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, next, s.visibility.opacity);
       // The selection outline follows the moved vertices (no pulse: the selection did not change).
-      if (selectedElementsOf(s).length) this.setHighlight(s, false);
+      if (selectedElementsOf(s).length || s.selection.nodes.length) this.setHighlight(s, false);
       changed = true;
     }
     const ghost = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
@@ -1592,25 +1598,56 @@ export class Viewport {
     this.lineMaterials = this.lineMaterials.filter((m) => this.lines?.material === m || this.offsetLines?.material === m);
     const info = s.mesh;
     const selected = selectedElementsOf(s);
-    this.applyDim(selected.length > 0);
-    if (!info || selected.length === 0) {
+    const nodes = s.selection.nodes;
+    this.applyDim(selected.length > 0 || nodes.length > 0);
+    if (!info || !this.drawn || (selected.length === 0 && nodes.length === 0)) {
       this.halo.release();
       return this.requestRender();
     }
+    // ADR 0138 D8: an index over what is drawn. The fill shares the faces' position buffer, so it follows the deformed shape.
     const idx = this.indexOf(info);
-    const prims = selected.flatMap((path) => {
+    const mask = new Uint8Array(info.elements.length);
+    for (const path of selected) {
       const e = idx.byPath.get(path);
-      const p = e === undefined ? undefined : idx.prims.get(e);
-      return p ? [p] : [];
-    });
-    // V4d: the outline follows the drawn (possibly deformed) positions.
-    for (const o of selectionOutline(this.full, info, this.blobs, prims, (pos, width) => this.makeLines(pos, null, width, SELECTION_COLOUR), s.visibility.showOffsets)) this.highlight.add(o);
+      if (e !== undefined) mask[e] = 1;
+    }
+    const prims = selectedPrims(this.drawn, this.blobs.i32(info.lineElement), this.blobs.i32(info.triElement), mask);
+    const pos = drawnPositions(this.full, info, this.blobs);
+    const linePos = s.visibility.showOffsets && pos.clearLine ? pos.clearLine : pos.line;
+    const segs = new Float32Array(6 * prims.segments.length);
+    prims.segments.forEach((seg, k) => segs.set(linePos.subarray(6 * seg, 6 * seg + 6), 6 * k));
+    const vertexNodes = { line: this.blobs.get(info.vertexNodes.line) as Float64Array, tri: this.blobs.get(info.vertexNodes.tri) as Float64Array };
+    const faces = this.faces ? (this.faces.geometry.getAttribute("position") as THREE.BufferAttribute) : null;
+    const nodePos = nodes.length ? nodeVertexPositions(nodes, vertexNodes, this.drawn, pos) : new Float32Array(0);
+    const outline = this.faces ? elementOutlines(this.drawn.triMap, this.blobs.i32(info.triElement), mask, vertexNodes.tri, faces!.array as Float32Array) : new Float32Array(0);
+    const rim = toHexNumber(themeTokens(this.activeTheme).bg0);
+    // Twice a marker, so a selected node reads at a glance among the markers.
+    const size = Math.max(14, 2 * (s.nodes.size ?? NODE_SIZE_FALLBACK) + 2);
+    const objects = highlightObjects(
+      faces,
+      prims.triIndex,
+      segs,
+      outline,
+      nodePos,
+      (p, width) => this.makeLines(p, null, width, SELECTION_COLOUR),
+      (p) => makeNodePoints(p, size, SELECTION_COLOUR, rim),
+    );
+    for (const o of objects) this.highlight.add(o);
     if (pulse) this.halo.pulse();
     this.requestRender();
   }
 
   /** The element under a client-space point, or null. Lines win over faces. */
   pickAt(clientX: number, clientY: number): Pick | null {
+    const hit = this.hitAt(clientX, clientY);
+    if (!hit) return null;
+    const decl = this.store.get().mesh!.elements[hit.element];
+    if (decl === undefined) throw new Error(`viewport: element index ${hit.element} is not in the mesh`);
+    return this.pickOf(decl, [hit.point.x, hit.point.y, hit.point.z]);
+  }
+
+  /** The drawn primitive under a client-space point (renderer/selection.ts `hitElement`), or null. */
+  private hitAt(clientX: number, clientY: number): Hit | null {
     const info = this.store.get().mesh;
     const drawn = this.drawn;
     if (!info || !drawn) return null;
@@ -1620,7 +1657,7 @@ export class Viewport {
     this.aim(clientX, clientY);
     // The objects hold the drawn positions (deformed when the deformed shape shows, V4d).
     // V4e1: a hit the section planes cut away is a miss (C-PICK).
-    const hit = hitElement(
+    return hitElement(
       this.raycaster,
       this.lines,
       this.faces,
@@ -1634,10 +1671,23 @@ export class Viewport {
       this.frameTriMap,
       frameTriElement,
     );
-    if (!hit) return null;
-    const decl = info.elements[hit.element];
-    if (decl === undefined) throw new Error(`viewport: element index ${hit.element} is not in the mesh`);
-    return this.pickOf(decl, [hit.point.x, hit.point.y, hit.point.z]);
+  }
+
+  /**
+   * The node a click at a client-space point picks (ADR 0138 D2): the vertex
+   * of the hit primitive nearest the hit, where it is drawn. A frame face
+   * answers through its segment. Null on a miss.
+   */
+  nodeAt(clientX: number, clientY: number): number | null {
+    const info = this.store.get().mesh;
+    const hit = this.hitAt(clientX, clientY);
+    if (!info || !hit) return null;
+    const prim =
+      hit.prim.kind === "frame"
+        ? { kind: "line" as const, index: this.blobs.i32(info.frameExtrusion!.triSegments)[hit.prim.index]! }
+        : { kind: hit.prim.kind, index: hit.prim.index };
+    const vertexNodes = { line: this.blobs.get(info.vertexNodes.line) as Float64Array, tri: this.blobs.get(info.vertexNodes.tri) as Float64Array };
+    return nearestNodeOf(prim, [hit.point.x, hit.point.y, hit.point.z], vertexNodes, drawnPositions(this.full, info, this.blobs));
   }
 
   /**

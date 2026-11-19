@@ -2,7 +2,8 @@
 // Not re-exported by src/state/types.ts, which exports only the whole union.
 
 import type { ThemeMode } from "../../../theme/tokens.ts";
-import type { ArtifactKind, ColourBy, DeclPath, GeometryLoad, ModelLoad, PhaseKey, Pick } from "../model.ts";
+import type { SetKind } from "../workspace.ts";
+import type { ArtifactKind, ColourBy, DeclPath, GeometryLoad, ModelLoad, PhaseKey, Pick, TargetKind } from "../model.ts";
 
 export type ModelEvent =
   | { type: "fileOpened"; artifact: ArtifactKind; path: string }
@@ -16,7 +17,12 @@ export type ModelEvent =
   | { type: "select"; pick: Pick }
   | { type: "selectAdd"; pick: Pick }
   | { type: "selectDecls"; decls: readonly DeclPath[]; add?: boolean }
-  | { type: "clearSelection" }
+  /** clears one kind's selection: `kind`, else the active kind (ADR 0138 D6) */
+  | { type: "clearSelection"; kind?: TargetKind }
+  /** the sets panel's Nodes / Elements toggle: it makes that kind the active selection (ADR 0138 D2), which a new set takes */
+  | { type: "setWorkspaceKind"; kind: SetKind }
+  /** ADR 0138 D2: node tags into the node kind's selection; `toggle` removes a tag already there */
+  | { type: "selectNodes"; tags: readonly number[]; mode: "replace" | "add" | "toggle" }
   | { type: "hover"; at: Pick | DeclPath | null }
   | { type: "setHidden"; decls: readonly DeclPath[]; hidden: boolean }
   | { type: "isolate"; decls: readonly DeclPath[] }

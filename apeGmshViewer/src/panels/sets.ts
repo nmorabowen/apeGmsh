@@ -1,7 +1,7 @@
 // Sets panel (VU9a, ADR 0132 D3-D7): what the user makes, kept in the window
-// set's `<stem>.workspace.h5`. It names a set from the selection (Nodes: the
-// node of each clicked element nearest the click; Elements: the OpenSees
-// elements selected), renames and deletes sets, and shows each set's verdict
+// set's `<stem>.workspace.h5`. It names a set from the active selection (ADR
+// 0138 D2: Nodes, the nodes selected; Elements, the OpenSees elements
+// selected), renames and deletes sets, and shows each set's verdict
 // against the model on screen with its reason: current, moved, partial ("k of
 // n", with Accept for the survivors) or lost. Rows that refuse alone are
 // listed with their reason, never dropped; stored plots and views are listed
@@ -13,8 +13,8 @@
 // #2753). It takes no room with no set open.
 
 import type { State, Store } from "../state/store.ts";
-import { pickSummaryOf, workspaceCannotSave } from "../state/selectors.ts";
-import type { SetVerdictIn, WorkspaceSetIn, WorkspaceState } from "../state/types.ts";
+import { pickSummaryOf, setKindOf, workspaceCannotSave } from "../state/selectors.ts";
+import type { SetKind, SetVerdictIn, WorkspaceSetIn } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 
 const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path;
@@ -51,7 +51,7 @@ export function setsLines(s: State): {
   readOnly: string | null;
   canSave: boolean;
   why: string | null;
-  kind: WorkspaceState["kind"];
+  kind: SetKind;
   pick: { count: number; reason: string | null; ids: readonly number[] | null };
   sets: { name: string; kind: string; members: number; chip: string; verdict: string; reason: string; canAccept: boolean }[];
   refused: string[];
@@ -71,7 +71,7 @@ export function setsLines(s: State): {
       readOnly: null,
       canSave: false,
       why: workspaceCannotSave(w),
-      kind: w.kind,
+      kind: setKindOf(s),
       pick: pickSummaryOf(s),
       sets: [],
       refused: [],
@@ -88,7 +88,7 @@ export function setsLines(s: State): {
     readOnly: r.status === "ready" ? r.readOnly : null,
     canSave: why === null,
     why,
-    kind: w.kind,
+    kind: setKindOf(s),
     pick: pickSummaryOf(s),
     notice: w.notice === null ? null : { text: w.notice.held ? w.notice.detail : `Not saved (${w.notice.reason}): ${w.notice.detail}`, held: w.notice.held },
     saving: w.saving !== null,
@@ -163,7 +163,7 @@ export function mountSets(store: Store): () => void {
     // The kind a new set takes, and what the selection gives now.
     const kinds = el("div", "sets-kind");
     for (const k of ["nodes", "elements"] as const) {
-      const b = button(k === "nodes" ? "Nodes" : "Elements", k === "nodes" ? "A click takes the node of the clicked element nearest the click" : "A click takes the OpenSees elements of the clicked cell", false, () => store.dispatch({ type: "setWorkspaceKind", kind: k }), unlisten);
+      const b = button(k === "nodes" ? "Nodes" : "Elements", k === "nodes" ? "Clicks select nodes: the node nearest the click, where it is drawn" : "Clicks select elements", false, () => store.dispatch({ type: "setWorkspaceKind", kind: k }), unlisten);
       b.setAttribute("aria-pressed", String(lines.kind === k));
       // The inline button style wins over style.css, so the pressed kind is drawn here.
       if (lines.kind === k) b.style.cssText += " color: var(--accent-ink); background: var(--accent); border-color: transparent;";
@@ -171,8 +171,8 @@ export function mountSets(store: Store): () => void {
     }
     parts.push(kinds);
     const noun = lines.kind === "nodes" ? (lines.pick.count === 1 ? "node" : "nodes") : lines.pick.count === 1 ? "element" : "elements";
-    // The tags a save would take, as the effects computed them: in Nodes the viewport still highlights the clicked cells.
-    const picked = lines.pick.ids ? `${noun} ${lines.pick.ids.join(", ")}${lines.kind === "nodes" ? " (the node of each clicked cell nearest the click)" : ""}` : `${lines.pick.count} ${noun} selected`;
+    // The tags a save would take, as the effects computed them.
+    const picked = lines.pick.ids ? `${noun} ${lines.pick.ids.join(", ")}` : `${lines.pick.count} ${noun} selected`;
     const note = el("div", "offer-note", lines.pick.reason ?? picked);
     note.dataset["role"] = "set-members";
     parts.push(note);

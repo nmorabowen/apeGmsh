@@ -305,6 +305,26 @@ export type UnitSystemId = "kN_m_s" | "tf_m_s" | "kgf_m_s" | "N_mm_s" | "N_m_s" 
  */
 export type SpatialNdm = { ndm: 2 | 3; source: string } | { ndm: null; reason: string };
 
+/** ADR 0138 D1: the target kinds a click picks so far (Gauss points, hinges and fibres follow). */
+export const TARGET_KINDS = ["element", "node"] as const;
+export type TargetKind = (typeof TARGET_KINDS)[number];
+
+/**
+ * ADR 0138 D2: one selection per target kind, and the kind clicks act on.
+ * Switching kinds keeps the other kind's selection. Each kind's current
+ * target is its last member.
+ */
+export interface SelectionState {
+  /** the kind a click, a key and the sets panel act on */
+  active: TargetKind;
+  /** element kind: what is selected, in pick order (an element, or a group, label or material by name) */
+  decls: DeclPath[];
+  /** element kind: the pick behind each of `decls`, in the same order (`at` null for one chosen from a list) */
+  picks: Pick[];
+  /** node kind: node tags (FEM ids), in pick order */
+  nodes: number[];
+}
+
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
 export interface Pick {
   decl: DeclPath;
