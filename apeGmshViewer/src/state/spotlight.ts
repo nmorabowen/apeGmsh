@@ -103,6 +103,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   workspaceReading: { kind: "system", reason: "dispatched by the effects when a read of the window set's workspace starts" },
   workspaceRead: { kind: "system", reason: "dispatched by the effects with main's read of the window set's <stem>.workspace.h5" },
   setWorkspaceKind: { kind: "gesture", reason: "the Nodes / Elements toggle of the sets panel, which says what a click selects and what a new set takes" },
+  setSelectThrough: { kind: "gesture", reason: "the selection bar's Through toggle: how the next box drag reads the model, not a command run once" },
   selectSet: { kind: "gesture", reason: "a row of the selection bar's set list (select, add, subtract); the set is chosen from the list the workspace read holds" },
   undoSelection: { kind: "gesture", reason: "Ctrl+Z and the selection bar's Undo: a step back through the user's own picks, not a command run once" },
   redoSelection: { kind: "gesture", reason: "Ctrl+Y and Ctrl+Shift+Z: the undo of an undo, beside it" },

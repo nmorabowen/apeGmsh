@@ -595,6 +595,9 @@ function reduceEvent(s: State, e: Event): State {
       const same = nodes.length === s.selection.nodes.length && nodes.every((t, i) => t === s.selection.nodes[i]);
       return same ? s : { ...s, selection: { ...s.selection, nodes } };
     }
+    case "setSelectThrough":
+      if (typeof (e as { on: unknown }).on !== "boolean") throw new TypeError(`setSelectThrough: ${JSON.stringify((e as { on: unknown }).on)} is not a boolean`);
+      return s.selection.through === e.on ? s : { ...s, selection: { ...s.selection, through: e.on } };
     case "selectSet": {
       if (!["replace", "add", "remove"].includes(e.mode)) throw new RangeError(`selectSet: ${JSON.stringify(e.mode)} is not replace, add or remove`);
       const set = savedSets(s).find((x) => x.row === e.row);

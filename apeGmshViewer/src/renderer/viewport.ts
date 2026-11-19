@@ -642,11 +642,11 @@ export class Viewport {
       const src = this.pickSource(s);
       if (!src) return null;
       this.clearHoverTarget();
-      this.boxPicker = new BoxPicker(this.renderer, this.camera, s.selection.active, src, rect.width, rect.height);
+      this.boxPicker = new BoxPicker(this.renderer, this.camera, s.selection.active, src, rect.width, rect.height, s.selection.through);
     }
     const box = boxOf(ax - rect.left, ay - rect.top, bx - rect.left, by - rect.top);
     const found = this.boxPicker.query(box);
-    this.showBox(rect, box, found.length, s.selection.active, mode);
+    this.showBox(rect, box, found.length, s.selection.active, mode, s.selection.through);
     return found;
   }
 
@@ -674,7 +674,7 @@ export class Viewport {
     this.boxEl = null;
   }
 
-  private showBox(rect: DOMRect, box: PickBox, count: number, kind: "element" | "node", mode: SelectMode): void {
+  private showBox(rect: DOMRect, box: PickBox, count: number, kind: "element" | "node", mode: SelectMode, through: boolean): void {
     if (!this.boxEl) {
       this.boxEl = document.createElement("div");
       this.boxEl.className = "box-select";
@@ -689,7 +689,7 @@ export class Viewport {
     el.style.height = `${box.y1 - box.y0}px`;
     const noun = kind === "node" ? (count === 1 ? "node" : "nodes") : count === 1 ? "element" : "elements";
     const sign = mode === "add" ? "+ " : mode === "remove" ? "− " : "";
-    (el.firstChild as HTMLElement).textContent = `${sign}${count.toLocaleString()} ${noun}${kind === "element" ? (box.crossing ? " touching" : " inside") : ""}`;
+    (el.firstChild as HTMLElement).textContent = `${sign}${count.toLocaleString()} ${noun}${kind === "element" ? (box.crossing ? " touching" : " inside") : ""}${through ? " · through" : ""}`;
   }
 
   /** ADR 0138 D6: the target under a client point is marked and named, at most once a frame. */

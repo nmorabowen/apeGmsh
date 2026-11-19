@@ -323,6 +323,8 @@ export interface SelectionState {
   picks: Pick[];
   /** node kind: node tags (FEM ids), in pick order */
   nodes: number[];
+  /** ADR 0138 D7: a box selects through the model (every drawn target in it), not only what is visible */
+  through: boolean;
 }
 
 /**
