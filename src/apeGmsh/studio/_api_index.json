@@ -3978,6 +3978,18 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.mpm.grid"
     },
+    "ops.mpm.gridvel": {
+      "doc": "``mpm gridvel ... v``: a prescribed grid velocity in a box.",
+      "signature": "gridvel(name: 'str', box: 'Sequence[Sequence[float]]', v: 'Sequence[float | str]', *, start: 'float | None' = None, translate: 'str | None' = None, profile: 'Sequence[float] | None' = None) -> 'Gridvel'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.gridvel"
+    },
+    "ops.mpm.gridvelAffine": {
+      "doc": "``mpm gridvel ... affine``: grid velocity ``L (x - ref)`` in a box.",
+      "signature": "gridvelAffine(name: 'str', box: 'Sequence[Sequence[float]]', L: 'Sequence[Sequence[float]]', *, ref: 'Sequence[float] | None' = None) -> 'GridvelAffine'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.gridvelAffine"
+    },
     "ops.mpm.massCutoff": {
       "doc": "``mpm massCutoff``: the active-node mass cutoff.",
       "signature": "massCutoff(c: 'float') -> 'MassCutoff'",
