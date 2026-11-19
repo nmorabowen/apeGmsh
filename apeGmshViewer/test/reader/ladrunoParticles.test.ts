@@ -1030,7 +1030,7 @@ test("a refused HDF5 read is an error, never the buffer h5wasm hands back as dat
   const f = new h5wasm.File(path, "r");
   try {
     const ds = f.get("MODEL_STAGE[2]/RESULTS/ON_PARTICLES/STRESS/DATA") as h5wasm.Dataset;
-    assert.equal((ds.slice([[0, 1]]) as Float64Array).length, 3, "h5wasm's slice returns a buffer, whatever HDF5 said");
+    assert.throws(() => ds.slice([[0, 1]]), H5ReadError, "#3010: h5wasm's own slice is checked too, once any file was opened through h5open");
     assert.throws(() => readRows(h5wasm.Module as unknown as H5ReadModule, ds as unknown as H5RowsDataset, 0, 1), H5ReadError);
     const ok = f.get("MODEL_STAGE[1]/RESULTS/ON_PARTICLES/STRESS/DATA") as h5wasm.Dataset;
     assert.deepEqual(Array.from(readRows(h5wasm.Module as unknown as H5ReadModule, ok as unknown as H5RowsDataset, 0, 1) as Float64Array), [-3.67875, -7.3575, 0]);
