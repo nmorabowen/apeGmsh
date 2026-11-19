@@ -103,6 +103,8 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   workspaceReading: { kind: "system", reason: "dispatched by the effects when a read of the window set's workspace starts" },
   workspaceRead: { kind: "system", reason: "dispatched by the effects with main's read of the window set's <stem>.workspace.h5" },
   setWorkspaceKind: { kind: "gesture", reason: "the Nodes / Elements toggle of the sets panel, which says what a click selects and what a new set takes" },
+  undoSelection: { kind: "gesture", reason: "Ctrl+Z and the selection bar's Undo: a step back through the user's own picks, not a command run once" },
+  redoSelection: { kind: "gesture", reason: "Ctrl+Y and Ctrl+Shift+Z: the undo of an undo, beside it" },
   selectNodes: { kind: "gesture", reason: "a click on the model with Nodes active; Spotlight selects declarations by name, and a node is no declaration" },
   workspaceSave: { kind: "gesture", reason: "a control of the sets panel (save, rename, delete, accept); a save names a set the selection fills, which only the panel holds" },
   workspaceSaved: { kind: "system", reason: "dispatched by the effects when main's workspace:save door answered" },

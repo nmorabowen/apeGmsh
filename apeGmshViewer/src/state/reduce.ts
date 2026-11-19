@@ -288,8 +288,40 @@ function withLineDiagramPick(s: State, preserveNotice = false): State {
 }
 
 export function reduce(s: State, e: Event): State {
-  const next = reduceEvent(s, e);
+  let next = reduceEvent(s, e);
+  if (SELECTION_EDITS.has(e.type)) next = withSelectionStep(s, next);
   return e.type === "setContourField" ? withoutCompareUser(next) : next;
+}
+
+/** ADR 0138 D6: the events that edit a selection, each one step of its undo. */
+const SELECTION_EDITS: ReadonlySet<Event["type"]> = new Set(["select", "selectAdd", "selectDecls", "clearSelection", "selectNodes"]);
+
+/** How many selection edits undo keeps. Steps share the store's immutable arrays, so a step costs a few references. */
+export const SELECTION_UNDO_LIMIT = 100;
+
+const sameList = <T>(a: readonly T[], b: readonly T[]) => a === b || (a.length === b.length && a.every((x, i) => x === b[i]));
+
+/** `next` with the members `prev` held pushed onto the selection's undo, when the edit changed them; redo is cleared. */
+function withSelectionStep(prev: State, next: State): State {
+  const a = prev.selection, b = next.selection;
+  const elements = !sameList(a.decls, b.decls), nodes = !sameList(a.nodes, b.nodes);
+  if (!elements && !nodes) return next;
+  const step = { kind: elements ? ("element" as const) : ("node" as const), decls: a.decls, picks: a.picks, nodes: a.nodes };
+  return { ...next, selectionUndo: { past: [...prev.selectionUndo.past, step].slice(-SELECTION_UNDO_LIMIT), future: [] } };
+}
+
+/** Undo (`from` past, `to` future) or redo (the reverse): the members put back, the current ones kept for the other way. */
+function stepSelection(s: State, from: "past" | "future"): State {
+  const to = from === "past" ? "future" : "past";
+  const list = s.selectionUndo[from], step = list.at(-1);
+  if (!step) return s;
+  const sel = s.selection;
+  const back = { kind: step.kind, decls: sel.decls, picks: sel.picks, nodes: sel.nodes };
+  return syncLineDiagramDerived({
+    ...s,
+    selection: { ...sel, active: step.kind, decls: step.decls, picks: step.picks, nodes: step.nodes },
+    selectionUndo: { ...s.selectionUndo, [from]: list.slice(0, -1), [to]: [...s.selectionUndo[to], back] } as State["selectionUndo"],
+  });
 }
 
 /** The variants reducer's inputs for a Hide: `showCompareUser` with no pick reads none of them. */
@@ -381,6 +413,8 @@ function reduceEvent(s: State, e: Event): State {
         loads: reread ? s.loads : { ...s.loads, selectedPatterns: null },
         stage: keep ? s.stage : null,
         selection: { ...s.selection, decls: [], picks: [], nodes: [] },
+        // A step could name a declaration the new read no longer has.
+        selectionUndo: { past: [], future: [] },
         hover: null,
         visibility: { ...s.visibility, hidden: [], opacity, extrudeFrames, showOffsets },
         // A chosen size belongs to the model it was chosen for; the user's own stays.
@@ -560,6 +594,10 @@ function reduceEvent(s: State, e: Event): State {
       const same = nodes.length === s.selection.nodes.length && nodes.every((t, i) => t === s.selection.nodes[i]);
       return same ? s : { ...s, selection: { ...s.selection, nodes } };
     }
+    case "undoSelection":
+      return stepSelection(s, "past");
+    case "redoSelection":
+      return stepSelection(s, "future");
     case "setWorkspaceKind": {
       // The sets panel's toggle is the active kind (ADR 0138 D2): one value, read by the click and by a new set.
       if (!(SET_KINDS as readonly string[]).includes(e.kind)) throw new RangeError(`setWorkspaceKind: ${JSON.stringify(e.kind)} is not nodes or elements`);

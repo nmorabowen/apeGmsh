@@ -49,6 +49,17 @@ export const KEY_BINDINGS: readonly { readonly key: string; readonly action: Key
   { key: "2", action: "kindNode" },
 ];
 
+/**
+ * ADR 0138 D6: Ctrl+Z (Cmd+Z) undoes a selection edit; Ctrl+Y, Ctrl+Shift+Z
+ * and Cmd+Shift+Z redo one. Null for any other key or with Alt held.
+ */
+export function selectionUndoKey(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }): "undo" | "redo" | null {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  const k = e.key.toLowerCase();
+  if (k === "z") return e.shiftKey ? "redo" : "undo";
+  return k === "y" && !e.shiftKey ? "redo" : null;
+}
+
 /** A press that moves farther than this (px) is a drag, not a click. */
 export const CLICK_SLOP_PX = 4;
 

@@ -9,7 +9,7 @@ import { selectedElementsOf } from "../state/selectors.ts";
 import { el, listen } from "../ui/dom.ts";
 
 /** What the bar shows, as plain values (tested in Node; the DOM below draws them). */
-export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"; label: string; count: number; active: boolean }[]; hint: string; canClear: boolean } | null {
+export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"; label: string; count: number; active: boolean }[]; hint: string; canClear: boolean; canUndo: boolean } | null {
   if (!s.mesh) return null;
   const elements = selectedElementsOf(s).length, nodes = s.selection.nodes.length;
   const active = s.selection.active;
@@ -20,6 +20,7 @@ export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"
     ],
     hint: "Drag: left to right inside, right to left touching · Shift adds · Ctrl removes",
     canClear: (active === "node" ? nodes : elements) > 0,
+    canUndo: s.selectionUndo.past.length > 0,
   };
 }
 
@@ -30,7 +31,7 @@ export function mountSelectionBar(store: Store): () => void {
   document.body.append(bar);
   let unlisten: (() => void)[] = [];
   const render = (s: State, prev: State | null) => {
-    if (prev && s.selection === prev.selection && s.mesh === prev.mesh && s.decls === prev.decls) return;
+    if (prev && s.selection === prev.selection && s.selectionUndo === prev.selectionUndo && s.mesh === prev.mesh && s.decls === prev.decls) return;
     for (const u of unlisten) u();
     unlisten = [];
     const lines = selectionBarLines(s);
@@ -47,6 +48,12 @@ export function mountSelectionBar(store: Store): () => void {
       parts.push(b);
     }
     parts.push(el("span", "selection-hint", lines.hint));
+    const undo = el("button", "window-toggle", "Undo");
+    undo.type = "button";
+    undo.title = "Undo the last selection change (Ctrl+Z); Ctrl+Y redoes it";
+    undo.disabled = !lines.canUndo;
+    unlisten.push(listen(undo, "click", () => store.dispatch({ type: "undoSelection" })));
+    parts.push(undo);
     const clear = el("button", "window-toggle", "Clear");
     clear.type = "button";
     clear.title = "Clear the active kind's selection (Esc)";
