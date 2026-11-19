@@ -24,6 +24,9 @@ export type ModelEvent =
   | { type: "setWorkspaceKind"; kind: SetKind }
   /** ADR 0138 D2: node tags into the node kind's selection; `toggle` removes a tag already there, `remove` takes tags out */
   | { type: "selectNodes"; tags: readonly number[]; mode: "replace" | "add" | "toggle" | "remove" }
+  /** ADR 0138 D6: put back the members the last selection edit replaced (Ctrl+Z), or redo the edit undone last (Ctrl+Y) */
+  | { type: "undoSelection" }
+  | { type: "redoSelection" }
   | { type: "hover"; at: Pick | DeclPath | null }
   | { type: "setHidden"; decls: readonly DeclPath[]; hidden: boolean }
   | { type: "isolate"; decls: readonly DeclPath[] }

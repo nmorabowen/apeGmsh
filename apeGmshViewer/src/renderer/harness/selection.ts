@@ -8,6 +8,8 @@
 // - `<out>.selection-box.png`: a box drawn left to right over the middle of the
 //   canvas, mid-drag, with the count of elements fully inside it.
 // - `<out>.selection-boxed.png`: the same box released: those elements selected.
+// - `<out>.selection-undone.png`: that selection cleared, then brought back
+//   by undo (ADR 0138 D6).
 // - `<out>.selection-nodes-box.png`: Nodes active, a box drawn right to left,
 //   mid-drag, with the node markers on.
 //
@@ -44,6 +46,12 @@ export async function captureSelection(ctx: HarnessContext, settle: (ms?: number
   await shot("selection-box");
   viewport.boxEnd(a.x, a.y, b.x, b.y, "replace");
   await shot("selection-boxed");
+  // ADR 0138 D6: a click on empty space clears the box's selection, and Ctrl+Z brings it back.
+  const boxed = store.get().selection.decls;
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "undoSelection" });
+  if (store.get().selection.decls !== boxed) throw new Error("capture selection-undone: undo did not bring back the boxed selection");
+  await shot("selection-undone");
   store.dispatch({ type: "setWorkspaceKind", kind: "nodes" });
   store.dispatch({ type: "setNodes", on: true });
   await settle();

@@ -493,6 +493,8 @@ export class Viewport {
       boxEnd: (ax, ay, bx, by, mode) => this.boxEnd(ax, ay, bx, by, mode),
       boxCancel: () => this.boxCancel(),
       setKind: (kind) => this.store.dispatch({ type: "setWorkspaceKind", kind: kind === "node" ? "nodes" : "elements" }),
+      undoSelection: () => this.store.dispatch({ type: "undoSelection" }),
+      redoSelection: () => this.store.dispatch({ type: "redoSelection" }),
       fit: () => {
         const s = this.store.get();
         // On the geometry phase (or with no mesh), F fits the geometry; else the frame effect

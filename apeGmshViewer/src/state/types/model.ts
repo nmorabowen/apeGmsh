@@ -325,6 +325,17 @@ export interface SelectionState {
   nodes: number[];
 }
 
+/**
+ * ADR 0138 D6: one selection edit, as the members it replaced (both kinds) and
+ * the kind it changed. Undo puts the members back and makes that kind active.
+ */
+export interface SelectionStep {
+  kind: TargetKind;
+  decls: DeclPath[];
+  picks: Pick[];
+  nodes: number[];
+}
+
 /** What the user clicked: the declaration, the hit point, and the cell's node tags as the viewport read them from the connectivity blob. */
 export interface Pick {
   decl: DeclPath;

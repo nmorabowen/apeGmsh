@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as THREE from "three";
-import { bindingFor, buttonOf, isSelectAdd, keyAction, POINTER_BINDINGS, WHEEL_ACTION, type Button } from "../src/renderer/bindings.ts";
+import { bindingFor, buttonOf, isSelectAdd, keyAction, POINTER_BINDINGS, selectionUndoKey, WHEEL_ACTION, type Button } from "../src/renderer/bindings.ts";
 import {
   clampZoom, headingOf, Navigator, nearestHit, orbitAbout, orientationOf, panBy, pivotFor, snapAbout,
   syncOrthoFrustum, zoomToward, ZOOM_MAX, ZOOM_MIN, type Heading, type ListenTarget, type NavHost, type ViewCamera,
@@ -387,6 +387,36 @@ test("ADR 0138 D6: a click replaces, Shift adds, Ctrl and Meta remove; Escape cl
   nav.dispose();
 });
 
+test("ADR 0138 D6: Ctrl+Z undoes a selection edit, Ctrl+Y and Ctrl+Shift+Z redo one; a text field keeps its own Ctrl+Z", () => {
+  const element = new FakeTarget(), keys = new FakeTarget();
+  const log: string[] = [];
+  const nav = new Navigator({
+    camera: camera(new THREE.Vector3(0, -10, 0), { yaw: 0, tilt: Math.PI / 2 }),
+    element,
+    keys,
+    bounds: () => ({ center: new THREE.Vector3(), radius: 1 }),
+    hitAt: () => null,
+    rayAt: () => new THREE.Ray(),
+    select: () => {},
+    fit: () => {},
+    changed: () => {},
+    clearSelection: () => log.push("clear"),
+    undoSelection: () => log.push("undo"),
+    redoSelection: () => log.push("redo"),
+  });
+  const key = (k: string, mods: object = {}, target: object | null = null) =>
+    keys.fire("keydown", { key: k, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, repeat: false, target, preventDefault: () => {}, ...mods });
+  key("z", { ctrlKey: true });
+  key("Z", { ctrlKey: true, shiftKey: true });
+  key("y", { ctrlKey: true });
+  key("z", { metaKey: true });
+  key("z", { ctrlKey: true, altKey: true });
+  key("z");
+  key("z", { ctrlKey: true }, { tagName: "INPUT", isContentEditable: false });
+  assert.deepEqual(log, ["undo", "redo", "redo", "undo"], "Alt+Ctrl+Z, a bare Z and Ctrl+Z in a field do nothing here");
+  nav.dispose();
+});
+
 test("ADR 0138 D7: a left drag past the click slop is a box (no click), Esc drops it, and a short drag stays a click", () => {
   const element = new FakeTarget(), keys = new FakeTarget();
   const log: string[] = [];
@@ -425,4 +455,11 @@ test("ADR 0138 D7: a left drag past the click slop is a box (no click), Esc drop
   element.fire("pointerup", at(3, 102, 101));
   assert.deepEqual(log, ["select 102,101 replace"], "within the slop: a click");
   nav.dispose();
+});
+
+test("selectionUndoKey: Ctrl or Cmd with Z undoes, with Shift+Z or Y redoes; Alt or no modifier is no undo key", () => {
+  const k = (key: string, m: Partial<{ ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }> = {}) =>
+    selectionUndoKey({ key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...m });
+  assert.deepEqual([k("z", { ctrlKey: true }), k("Z", { metaKey: true, shiftKey: true }), k("y", { ctrlKey: true })], ["undo", "redo", "redo"]);
+  assert.deepEqual([k("z"), k("z", { ctrlKey: true, altKey: true }), k("y", { ctrlKey: true, shiftKey: true })], [null, null, null]);
 });

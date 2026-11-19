@@ -13,7 +13,7 @@
 
 import * as THREE from "three";
 import type { CameraPose, NamedView } from "../state/types.ts";
-import { bindingFor, buttonOf, CLICK_SLOP_PX, keyAction, selectModeOf, type DragAction, type SelectMode } from "./bindings.ts";
+import { bindingFor, buttonOf, CLICK_SLOP_PX, keyAction, selectionUndoKey, selectModeOf, type DragAction, type SelectMode } from "./bindings.ts";
 
 export const Z_UP: Readonly<THREE.Vector3> = new THREE.Vector3(0, 0, 1);
 export const DEFAULT_FOV_DEG = 35;
@@ -266,6 +266,9 @@ export interface NavHost {
   boxCancel?(): void;
   /** ADR 0138 D2: the keys that choose the active kind */
   setKind?(kind: "element" | "node"): void;
+  /** ADR 0138 D6: Ctrl+Z and Ctrl+Y (or Ctrl+Shift+Z) on the selection's own undo */
+  undoSelection?(): void;
+  redoSelection?(): void;
   /** Frame the whole model, keeping the heading. */
   fit(): void;
   clearSelection?(): void;
@@ -456,9 +459,17 @@ export class Navigator {
   }
 
   private onKey(e: KeyboardEvent): void {
-    if (e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
     const t = e.target as HTMLElement | null;
+    // A field keeps its own keys, Ctrl+Z among them.
     if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+    const undo = selectionUndoKey(e);
+    if (undo) {
+      e.preventDefault?.();
+      if (undo === "undo") this.host.undoSelection?.();
+      else this.host.redoSelection?.();
+      return;
+    }
+    if (e.ctrlKey || e.altKey || e.metaKey || e.repeat) return;
     const action = keyAction(e.key);
     if (action === "clearSelection" && this.drag?.boxing) {
       // Esc during a box drops it; the selection stays as it was.

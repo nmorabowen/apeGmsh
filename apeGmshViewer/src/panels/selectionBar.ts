@@ -9,7 +9,7 @@ import { selectedElementsOf } from "../state/selectors.ts";
 import { el, listen } from "../ui/dom.ts";
 
 /** What the bar shows, as plain values (tested in Node; the DOM below draws them). */
-export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"; label: string; count: number; active: boolean }[]; hint: string; canClear: boolean } | null {
+export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"; label: string; count: number; active: boolean }[]; hint: string; hintDetail: string; canClear: boolean; canUndo: boolean } | null {
   if (!s.mesh) return null;
   const elements = selectedElementsOf(s).length, nodes = s.selection.nodes.length;
   const active = s.selection.active;
@@ -18,8 +18,11 @@ export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"
       { kind: "element", label: "Elements", count: elements, active: active === "element" },
       { kind: "node", label: "Nodes", count: nodes, active: active === "node" },
     ],
-    hint: "Drag: left to right inside, right to left touching · Shift adds · Ctrl removes",
+    // Short, so the bar fits beside the right rail; the drag rule is in the tooltip, and the box's own count says "inside" or "touching".
+    hint: "Shift adds · Ctrl removes",
+    hintDetail: "Click or drag a box. A box drawn left to right takes what is fully inside it; right to left, what it touches. Shift adds, Ctrl removes, Ctrl+Z undoes.",
     canClear: (active === "node" ? nodes : elements) > 0,
+    canUndo: s.selectionUndo.past.length > 0,
   };
 }
 
@@ -30,7 +33,7 @@ export function mountSelectionBar(store: Store): () => void {
   document.body.append(bar);
   let unlisten: (() => void)[] = [];
   const render = (s: State, prev: State | null) => {
-    if (prev && s.selection === prev.selection && s.mesh === prev.mesh && s.decls === prev.decls) return;
+    if (prev && s.selection === prev.selection && s.selectionUndo === prev.selectionUndo && s.mesh === prev.mesh && s.decls === prev.decls) return;
     for (const u of unlisten) u();
     unlisten = [];
     const lines = selectionBarLines(s);
@@ -46,7 +49,15 @@ export function mountSelectionBar(store: Store): () => void {
       unlisten.push(listen(b, "click", () => store.dispatch({ type: "setWorkspaceKind", kind: k.kind === "node" ? "nodes" : "elements" })));
       parts.push(b);
     }
-    parts.push(el("span", "selection-hint", lines.hint));
+    const hint = el("span", "selection-hint", lines.hint);
+    hint.title = lines.hintDetail;
+    parts.push(hint);
+    const undo = el("button", "window-toggle", "Undo");
+    undo.type = "button";
+    undo.title = "Undo the last selection change (Ctrl+Z); Ctrl+Y redoes it";
+    undo.disabled = !lines.canUndo;
+    unlisten.push(listen(undo, "click", () => store.dispatch({ type: "undoSelection" })));
+    parts.push(undo);
     const clear = el("button", "window-toggle", "Clear");
     clear.type = "button";
     clear.title = "Clear the active kind's selection (Esc)";

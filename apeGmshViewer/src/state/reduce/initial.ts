@@ -51,6 +51,7 @@ export const initialState: State = {
   mesh: null,
   phase: { axis: [], at: null },
   selection: { active: "element", decls: [], picks: [], nodes: [] },
+  selectionUndo: { past: [], future: [] },
   hover: null,
   visibility: { hidden: [], edges: true, opacity: 1, colourBy: "group", extrudeFrames: false, showOffsets: false },
   nodes: { on: false, size: null, auto: true },
