@@ -5,6 +5,7 @@
 
 import type { ElementRef } from "../chain/resolve.ts";
 import { buildMesh, colourGroups, type MeshBuffers } from "../mesh/build.ts";
+import { opsOnlyNodes } from "../mesh/membrane.ts";
 import type { Group, ModelFile, OpsFamily, OpsObject, Param, SequenceZone } from "../model/types.ts";
 import { sourceOfRow, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
@@ -156,7 +157,7 @@ export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: str
       const facts: ElementFacts = {
         femId: null,
         cell: null,
-        inlineNodes: meta.inlineConnectivity?.[row] ?? NONE,
+        inlineNodes: opsOnlyNodes(meta, row),
         groups: NONE,
         metas: [{ type: meta.type, tag: meta.ids[row]!, h5: meta.path, row, args: meta.args[row] ?? NONE }],
       };
