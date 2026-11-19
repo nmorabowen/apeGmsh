@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { selectionBarLines } from "../src/panels/selectionBar.ts";
 import { boxOf, elementsThrough, pointsThrough } from "../src/renderer/picking.ts";
 import { initialState, reduce } from "../src/state/reduce.ts";
-import type { MeshInfo } from "../src/state/types.ts";
+import type { MeshInfo, State } from "../src/state/types.ts";
 
 // Element 0: a triangle inside the box (10..50). Element 1: a triangle straddling its right side.
 // Element 2: a segment wholly to the left. Element 3: a segment crossing the box with both ends outside.
@@ -35,7 +35,7 @@ test("through, nodes: the points inside the box; a cut-away one is left out", ()
 });
 
 test("the selection bar's Through toggle: off by default, and a store value", () => {
-  let s = { ...initialState, mesh: { elements: [] } as unknown as MeshInfo };
+  let s: State = { ...initialState, mesh: { elements: [] } as unknown as MeshInfo };
   assert.equal(selectionBarLines(s)!.through, false);
   s = reduce(s, { type: "setSelectThrough", on: true });
   assert.equal(selectionBarLines(s)!.through, true);

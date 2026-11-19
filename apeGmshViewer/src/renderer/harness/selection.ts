@@ -10,6 +10,8 @@
 // - `<out>.selection-boxed.png`: the same box released: those elements selected.
 // - `<out>.selection-undone.png`: that selection cleared, then brought back
 //   by undo (ADR 0138 D6).
+// - `<out>.selection-through-box.png`, `<out>.selection-through-boxed.png`: the
+//   same box through the model (ADR 0138 D7), which takes what is hidden too.
 // - `<out>.selection-sets.png`, `<out>.selection-set-selected.png`: the bar's
 //   list of saved sets, and a set selected from it (ADR 0138 D12).
 // - `<out>.selection-nodes-box.png`: Nodes active, a box drawn right to left,
@@ -55,6 +57,15 @@ export async function captureSelection(ctx: HarnessContext, settle: (ms?: number
   store.dispatch({ type: "undoSelection" });
   if (store.get().selection.decls !== boxed) throw new Error("capture selection-undone: undo did not bring back the boxed selection");
   await shot("selection-undone");
+  // ADR 0138 D7: the same box through the model takes what is hidden too (on the slab, beams under it); undo puts the visible box back.
+  store.dispatch({ type: "setSelectThrough", on: true });
+  viewport.boxAt(a.x, a.y, b.x, b.y, "replace");
+  await shot("selection-through-box");
+  viewport.boxEnd(a.x, a.y, b.x, b.y, "replace");
+  await shot("selection-through-boxed");
+  if (selectedElementsOf(store.get()).length < boxed.length) throw new Error("capture selection-through-boxed: the box through the model took fewer elements than the visible box");
+  store.dispatch({ type: "setSelectThrough", on: false });
+  store.dispatch({ type: "undoSelection" });
   store.dispatch({ type: "setWorkspaceKind", kind: "nodes" });
   store.dispatch({ type: "setNodes", on: true });
   await settle();
