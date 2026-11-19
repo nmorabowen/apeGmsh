@@ -117,6 +117,13 @@ function onlyCameraChanged(s: State, prev: State | null): boolean {
   return true;
 }
 
+/** ADR 0138 D7: what a box or lasso would take, as its label says while it is dragged. */
+export function regionLabel(count: number, kind: "element" | "node", mode: SelectMode, crossing: boolean, through: boolean): string {
+  const noun = kind === "node" ? (count === 1 ? "node" : "nodes") : count === 1 ? "element" : "elements";
+  const sign = mode === "add" ? "+ " : mode === "remove" ? "− " : "";
+  return `${sign}${count.toLocaleString()} ${noun}${kind === "element" ? (crossing ? " touching" : " inside") : ""}${through ? " · through" : ""}`;
+}
+
 export class Viewport {
   readonly renderer: THREE.WebGLRenderer;
   readonly perspCamera: THREE.PerspectiveCamera;
@@ -445,6 +452,10 @@ export class Viewport {
   /** ADR 0138 D5: the element ID image clicks and the hover mark read, kept while the view and what is drawn hold */
   private clickPicker: ClickPicker | null = null;
   private boxEl: HTMLDivElement | null = null;
+  /** ADR 0138 D7: in Lasso mode, the drag's path (canvas CSS pixels, x y pairs) and its outline over the canvas */
+  private lassoPath: number[] = [];
+  private lassoEl: SVGSVGElement | null = null;
+  private lassoLabel: HTMLSpanElement | null = null;
   /** ADR 0138 D6: the hovered target's mark, its key, its name by the cursor, and the pointer waiting for the next frame */
   private readonly hoverGroup = new THREE.Group();
   private hoverKey: string | null = null;
@@ -644,9 +655,19 @@ export class Viewport {
       this.clearHoverTarget();
       this.boxPicker = new BoxPicker(this.renderer, this.camera, s.selection.active, src, rect.width, rect.height, s.selection.through);
     }
+    if (s.selection.lasso) {
+      const px = bx - rect.left, py = by - rect.top;
+      if (this.lassoPath.length === 0) this.lassoPath.push(ax - rect.left, ay - rect.top);
+      const n = this.lassoPath.length;
+      if (Math.hypot(px - this.lassoPath[n - 2]!, py - this.lassoPath[n - 1]!) >= 2) this.lassoPath.push(px, py);
+      const path = Float32Array.from(this.lassoPath);
+      const { found, crossing } = this.boxPicker.queryLasso(path);
+      this.showLasso(rect, path, regionLabel(found.length, s.selection.active, mode, crossing, s.selection.through), crossing);
+      return found;
+    }
     const box = boxOf(ax - rect.left, ay - rect.top, bx - rect.left, by - rect.top);
     const found = this.boxPicker.query(box);
-    this.showBox(rect, box, found.length, s.selection.active, mode, s.selection.through);
+    this.showBox(rect, box, regionLabel(found.length, s.selection.active, mode, box.crossing, s.selection.through));
     return found;
   }
 
@@ -666,15 +687,47 @@ export class Viewport {
     else this.store.dispatch({ type: "selectDecls", decls, add: mode === "add" });
   }
 
-  /** The box dropped: its overlay and its ID image go. */
+  /** The box or lasso dropped: its overlay, its path and its ID image go. */
   boxCancel(): void {
     this.boxPicker?.dispose();
     this.boxPicker = null;
     this.boxEl?.remove();
     this.boxEl = null;
+    this.lassoPath = [];
+    this.lassoEl?.remove();
+    this.lassoEl = null;
+    this.lassoLabel?.remove();
+    this.lassoLabel = null;
   }
 
-  private showBox(rect: DOMRect, box: PickBox, count: number, kind: "element" | "node", mode: SelectMode, through: boolean): void {
+  /** ADR 0138 D7: the lasso drawn so far, closed back to the press, with the count it would take by the press. */
+  private showLasso(rect: DOMRect, path: Float32Array, label: string, crossing: boolean): void {
+    if (!this.lassoEl) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("class", "lasso-select");
+      svg.append(document.createElementNS("http://www.w3.org/2000/svg", "polygon"));
+      document.body.append(svg);
+      this.lassoEl = svg;
+      this.lassoLabel = document.createElement("span");
+      this.lassoLabel.className = "lasso-count";
+      document.body.append(this.lassoLabel);
+    }
+    const svg = this.lassoEl;
+    svg.dataset["crossing"] = String(crossing);
+    svg.style.left = `${rect.left}px`;
+    svg.style.top = `${rect.top}px`;
+    svg.setAttribute("width", String(rect.width));
+    svg.setAttribute("height", String(rect.height));
+    const points: string[] = [];
+    for (let i = 0; i < path.length; i += 2) points.push(`${path[i]},${path[i + 1]}`);
+    svg.firstElementChild!.setAttribute("points", points.join(" "));
+    const tag = this.lassoLabel!;
+    tag.textContent = label;
+    tag.style.left = `${rect.left + path[0]!}px`;
+    tag.style.top = `${rect.top + path[1]! - 22}px`;
+  }
+
+  private showBox(rect: DOMRect, box: PickBox, label: string): void {
     if (!this.boxEl) {
       this.boxEl = document.createElement("div");
       this.boxEl.className = "box-select";
@@ -687,9 +740,7 @@ export class Viewport {
     el.style.top = `${rect.top + box.y0}px`;
     el.style.width = `${box.x1 - box.x0}px`;
     el.style.height = `${box.y1 - box.y0}px`;
-    const noun = kind === "node" ? (count === 1 ? "node" : "nodes") : count === 1 ? "element" : "elements";
-    const sign = mode === "add" ? "+ " : mode === "remove" ? "− " : "";
-    (el.firstChild as HTMLElement).textContent = `${sign}${count.toLocaleString()} ${noun}${kind === "element" ? (box.crossing ? " touching" : " inside") : ""}${through ? " · through" : ""}`;
+    (el.firstChild as HTMLElement).textContent = label;
   }
 
   /** ADR 0138 D6: the target under a client point is marked and named, at most once a frame. */
