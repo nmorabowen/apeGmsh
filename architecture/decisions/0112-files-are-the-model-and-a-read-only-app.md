@@ -341,3 +341,11 @@ D4: besides reading the artifacts and the schema documents, the app may run the
 Ladruno fork's `OpenSees.exe` on one declared material, under that ADR's rules for
 untrusted model values. The wall against apeGmsh and Python stands. The decision
 text above is unchanged.
+
+## Pointer (2026-11-18): ADR 0137
+
+[ADR 0137](0137-apegmshviewer-large-models-and-tool-hosting.md) (Accepted 2026-11-18) amends three decisions.
+D5: HDF5 may be read in an Electron utility process of the app's own, as well as in-process. D6: the one store stays in the
+model window, and tool windows receive a small one-way context, send events and request data. D7: one model window, plus
+tool placements in separate-renderer tool windows, a dock and anchored cards. ADR 0137 governs tool hosting and the supported
+model size. The decision text above is unchanged.
