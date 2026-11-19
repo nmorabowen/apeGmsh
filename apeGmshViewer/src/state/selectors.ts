@@ -2169,16 +2169,21 @@ function differenceContour(s: State): ContourView {
 
 /** How the results file's element rows join the model's elements, for the hinge reads. */
 export function hingeJoinOf(s: State): LadrunoElementJoin {
-  return joinLadrunoElements(s.decls, resultsPairing(s), s.results?.elementIndexSpace ?? null);
+  // Asked at every step and store event while the card is on, and it walks every declaration: kept until its inputs change.
+  const m = hingeJoinMemo.get(s.decls);
+  if (m && m.results === s.results && m.model === s.artifacts.model && m.lineage === s.lineage && m.definitions === s.definitions) return m.join;
+  const join = joinLadrunoElements(s.decls, resultsPairing(s), s.results?.elementIndexSpace ?? null);
+  hingeJoinMemo.set(s.decls, { results: s.results, model: s.artifacts.model, lineage: s.lineage, definitions: s.definitions, join });
+  return join;
 }
+const hingeJoinMemo = new WeakMap<object, { results: unknown; model: unknown; lineage: unknown; definitions: unknown; join: LadrunoElementJoin }>();
 
 /** The element the card plots: the last hinged element picked, the menu's, else the first hinged one. */
 export function hingeFocusOf(s: State): DeclPath | null {
-  const { sites } = hingeSitesOf(s.decls);
-  const hinged = new Set(sites.map((h) => h.decl));
-  for (let i = s.selection.decls.length - 1; i >= 0; i--) if (hinged.has(s.selection.decls[i]!)) return s.selection.decls[i]!;
-  for (let i = s.selection.picks.length - 1; i >= 0; i--) if (hinged.has(s.selection.picks[i]!.decl)) return s.selection.picks[i]!.decl;
-  if (s.hinges.element !== null && hinged.has(s.hinges.element)) return s.hinges.element;
+  const { sites, byDecl } = hingeSitesOf(s.decls);
+  for (let i = s.selection.decls.length - 1; i >= 0; i--) if (byDecl.has(s.selection.decls[i]!)) return s.selection.decls[i]!;
+  for (let i = s.selection.picks.length - 1; i >= 0; i--) if (byDecl.has(s.selection.picks[i]!.decl)) return s.selection.picks[i]!.decl;
+  if (s.hinges.element !== null && byDecl.has(s.hinges.element)) return s.hinges.element;
   return sites[0]?.decl ?? null;
 }
 
@@ -2224,12 +2229,10 @@ export interface HingeView {
 
 /** Everything the Hinges card shows. */
 export function hingeViewOf(s: State): HingeView {
-  const { sites, refused } = hingeSitesOf(s.decls);
-  const seen = new Map<DeclPath, string>();
-  for (const h of sites) if (!seen.has(h.decl)) seen.set(h.decl, `${h.type} ${h.tag}`);
-  const elements = [...seen].map(([decl, label]) => ({ decl, label }));
+  const { sites, byDecl, refused } = hingeSitesOf(s.decls);
+  const elements = [...byDecl].map(([decl, list]) => ({ decl, label: `${list[0]!.type} ${list[0]!.tag}` }));
   const focus = hingeFocusOf(s);
-  const here = sites.filter((h) => h.decl === focus);
+  const here = (focus !== null ? byDecl.get(focus) : undefined) ?? [];
   const ends = (["i", "j"] as const).filter((e) => here.some((h) => h.end === e));
   const end = ends.includes(s.hinges.end) ? s.hinges.end : (ends[0] ?? null);
   const site = here.find((h) => h.end === end) ?? null;

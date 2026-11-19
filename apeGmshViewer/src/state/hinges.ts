@@ -52,6 +52,8 @@ export interface HingeSite {
 
 export interface HingeSites {
   readonly sites: readonly HingeSite[];
+  /** the same hinges by element */
+  readonly byDecl: ReadonlyMap<DeclPath, readonly HingeSite[]>;
   /** elements whose hinge arguments could not be read, by name */
   readonly refused: readonly string[];
 }
@@ -222,7 +224,13 @@ export function hingeSitesOf(decls: Readonly<Record<DeclPath, Decl>>): HingeSite
       }
     }
   }
-  const out: HingeSites = { sites, refused };
+  const byDecl = new Map<DeclPath, HingeSite[]>();
+  for (const h of sites) {
+    const list = byDecl.get(h.decl);
+    if (list) list.push(h);
+    else byDecl.set(h.decl, [h]);
+  }
+  const out: HingeSites = { sites, byDecl, refused };
   sitesMemo.set(decls, out);
   return out;
 }

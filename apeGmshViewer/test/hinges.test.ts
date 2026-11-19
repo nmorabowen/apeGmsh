@@ -246,6 +246,24 @@ test("playback may skip steps: markers and the plot show the step on screen, wha
   h.store.dispatch({ type: "setHinges", colorBy: "rotation", element: null });
 });
 
+test("with the switch off, stepping reads no hinge data at all", async () => {
+  h.store.dispatch({ type: "setHinges", on: false });
+  const readStep = h.host.readStep.bind(h.host), readHistory = h.host.readHingeHistory.bind(h.host);
+  const asked: boolean[] = [];
+  let histories = 0;
+  h.host.readStep = (r) => (asked.push(r.hinges === true), readStep(r));
+  h.host.readHingeHistory = (r) => (histories++, readHistory(r));
+  try {
+    for (const k of [2, 8, 5]) await atStep(k);
+    assert.ok(asked.length >= 3, "the steps were read");
+    assert.ok(asked.every((x) => !x), "no step asked for hingeSummary");
+    assert.equal(histories, 0, "no history was read");
+  } finally {
+    h.host.readStep = readStep;
+    h.host.readHingeHistory = readHistory;
+  }
+});
+
 test("a step change redraws only the plot: the card and its menus are not rebuilt", () => {
   const s = reduce(h.store.get(), { type: "setPhase", at: { kind: "results", stage: 0, step: 4 } });
   const t = reduce(s, { type: "setPhase", at: { kind: "results", stage: 0, step: 9 } });

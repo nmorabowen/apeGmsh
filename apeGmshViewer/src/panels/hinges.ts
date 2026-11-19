@@ -151,7 +151,8 @@ export function mountHinges(store: Store): () => void {
     if (card === lastCard) {
       if (step === lastStep) return;
       lastStep = step;
-      const chart = hingeViewOf(s).chart;
+      // With the switch off nothing on the card follows the step.
+      const chart = s.hinges.on ? hingeViewOf(s).chart : null;
       if (chart) panel.querySelector(".hinges-charts")?.replaceWith(charts(chart));
       return;
     }
