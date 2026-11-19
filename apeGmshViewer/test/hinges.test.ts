@@ -326,6 +326,14 @@ test("setHinges refuses bad values, and an unchanged value changes nothing", () 
   assert.equal(reduce(s, { type: "setHinges", axis: s.hinges.axis }), s);
 });
 
+test("the card says which range the colours run to", () => {
+  const s = reduce(h.store.get(), { type: "setPhase", at: { kind: "results", stage: 0, step: 1 } });
+  const scale = (v: boolean) => hingeViewOf({ ...s, results: { ...s.results!, stages: [{ ...s.results!.stages[0]!, hingeStageRange: v }] } }).scale;
+  assert.equal(s.results!.stages[0]!.hingeStageRange, true, "the fixture is small enough to scan");
+  assert.match(scale(true)!, /of the stage$/);
+  assert.match(scale(false)!, /step on screen/);
+});
+
 test("a stage without hingeSummary says so by name, and the markers still come from the model", async () => {
   const other = reduce(h.store.get(), { type: "setHinges", on: true });
   const stage = other.results!.stages[0]!;

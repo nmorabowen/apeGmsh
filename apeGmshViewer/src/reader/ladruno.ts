@@ -1234,6 +1234,12 @@ export class LadrunoFile {
     return this.hingeBuckets(stageId, warningsOut).reduce((n, b) => n + b.ids.length, 0);
   }
 
+  /** Whether the stage is small enough for its colour range to be scanned (`LadrunoHingeStep.range`). */
+  hingeRangeScanned(stageId: string): boolean {
+    const s = this.stage(stageId);
+    return this.hingeBuckets(stageId).reduce((n, b) => n + s.nSteps * b.ids.length * b.dataDs.shape![2]!, 0) <= HINGE_RANGE_MAX_VALUES;
+  }
+
   /** `hingeSummary` at `step` of `stageId`, bucket by bucket in file order. */
   readHingeStep(stageId: string, step: number): LadrunoHingeStep {
     const s = this.stage(stageId);
@@ -1276,7 +1282,7 @@ export class LadrunoFile {
     const s = this.stage(stageId);
     const buckets = this.hingeBuckets(stageId);
     let range: { rotation: number; moment: number } | null = null;
-    if (buckets.reduce((n, b) => n + s.nSteps * b.ids.length * b.dataDs.shape![2]!, 0) <= HINGE_RANGE_MAX_VALUES) {
+    if (this.hingeRangeScanned(stageId)) {
       range = { rotation: 0, moment: 0 };
       for (const b of buckets) {
         const w = b.dataDs.shape![2]!;

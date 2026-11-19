@@ -2255,7 +2255,7 @@ export function hingeViewOf(s: State): HingeView {
     const stage = s.results.stages[at.stage];
     if ((stage?.hinges ?? 0) === 0) notes.push("This stage does not record hingeSummary, so the hinges have no output here.");
     else {
-      scale = s.hinges.colorBy === "capacity" ? "colour: 0 to 1 x capacity" : `colour: 0 to the ${s.hinges.colorBy === "rotation" ? "largest rotation" : "largest moment"} of the stage`;
+      scale = s.hinges.colorBy === "capacity" ? "colour: 0 to 1 x capacity" : `colour: 0 to the ${s.hinges.colorBy === "rotation" ? "largest rotation" : "largest moment"} of the ${stage!.hingeStageRange ? "stage" : "step on screen (this stage is too large to scan)"}`;
       const wanted = hingeHistoryWanted(s);
       if (wanted && "refused" in wanted) notes.push(`Hinge output is not joined to the model: ${wanted.refused}.`);
       const h = s.hinges.history;

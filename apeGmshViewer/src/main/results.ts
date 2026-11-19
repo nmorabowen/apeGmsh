@@ -100,6 +100,8 @@ export interface ResultsStageMeta {
   springs?: number;
   /** elements this stage records `hingeSummary` for (.ladruno, one file; reader/ladruno.ts `hingeCount`) */
   hinges?: number;
+  /** whether marker colours run to the stage's largest value; false: to the step's, on a stage too large to scan */
+  hingeStageRange?: boolean;
   /** a `.ladruno` mode stage's eigen scalars (reader/ladruno.ts `LadrunoMode`); absent on every other stage */
   mode?: ModeFacts;
 }
@@ -503,6 +505,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
         lineStations: rf.availableLineStations(s.id, warningsOut),
         springs: rf instanceof LadrunoFile ? rf.springCount(s.id, warningsOut) : 0,
         hinges: hingeCountOf(rf, s.id, warningsOut),
+        hingeStageRange: rf instanceof LadrunoFile && rf.hingeRangeScanned(s.id),
         ...(modes.has(s.id) ? { mode: modes.get(s.id)! } : {}),
       })),
     };
