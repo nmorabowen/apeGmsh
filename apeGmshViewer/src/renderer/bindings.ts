@@ -3,21 +3,22 @@
 // (Plasticity, Rhino): left selects and never orbits, right orbits.
 //
 //   input                      action
-//   left click                 select the element under the cursor
-//   shift/ctrl + left click    toggle the element under the cursor in the selection
-//   left drag                  nothing (never orbits)
+//   left click                 select what is under the cursor (the active kind, ADR 0138 D2)
+//   shift + left click         add it; ctrl + left click: remove it (D6)
+//   left drag                  box select: left to right, fully inside; right to left, touching (D7)
 //   right drag                 orbit (turntable, Z stays vertical, about the point under the cursor)
 //   shift + right drag         pan
 //   middle drag                pan
 //   wheel                      zoom toward the point under the cursor
 //   F                          frame the selection, else fit the whole model
 //   E                          toggle mesh outline edges
-//   Escape                     clear the selection
+//   Escape                     cancel a box in progress, else clear the active kind
+//   1, 2                       make elements, nodes the active kind
 
 export type Button = "left" | "middle" | "right";
 export type ClickAction = "select";
-export type DragAction = "orbit" | "pan";
-export type KeyAction = "fit" | "clearSelection" | "toggleEdges";
+export type DragAction = "orbit" | "pan" | "box";
+export type KeyAction = "fit" | "clearSelection" | "toggleEdges" | "kindElement" | "kindNode";
 
 export interface PointerBinding {
   readonly button: Button;
@@ -30,8 +31,8 @@ export interface PointerBinding {
 
 /** Every (button, shift) pair, exactly once. */
 export const POINTER_BINDINGS: readonly PointerBinding[] = [
-  { button: "left", shift: false, click: "select", drag: null },
-  { button: "left", shift: true, click: "select", drag: null },
+  { button: "left", shift: false, click: "select", drag: "box" },
+  { button: "left", shift: true, click: "select", drag: "box" },
   { button: "middle", shift: false, click: null, drag: "pan" },
   { button: "middle", shift: true, click: null, drag: "pan" },
   { button: "right", shift: false, click: null, drag: "orbit" },
@@ -44,12 +45,14 @@ export const KEY_BINDINGS: readonly { readonly key: string; readonly action: Key
   { key: "f", action: "fit" },
   { key: "escape", action: "clearSelection" },
   { key: "e", action: "toggleEdges" },
+  { key: "1", action: "kindElement" },
+  { key: "2", action: "kindNode" },
 ];
 
 /** A press that moves farther than this (px) is a drag, not a click. */
 export const CLICK_SLOP_PX = 4;
 
-export { isSelectAdd } from "../ui/dom.ts";
+export { isSelectAdd, selectModeOf, type SelectMode } from "../ui/dom.ts";
 
 /**
  * The bound button for a DOM `MouseEvent.button`, or null for a button the

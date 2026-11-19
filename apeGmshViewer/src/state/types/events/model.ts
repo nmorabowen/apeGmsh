@@ -16,13 +16,14 @@ export type ModelEvent =
   | { type: "zoneRefused"; artifact: ArtifactKind; zone: string; version: string; accepted: string; newer: boolean; reason: string }
   | { type: "select"; pick: Pick }
   | { type: "selectAdd"; pick: Pick }
-  | { type: "selectDecls"; decls: readonly DeclPath[]; add?: boolean }
+  /** `add` keeps what is selected; `remove` takes the declarations' elements out (ADR 0138 D6) */
+  | { type: "selectDecls"; decls: readonly DeclPath[]; add?: boolean; remove?: boolean }
   /** clears one kind's selection: `kind`, else the active kind (ADR 0138 D6) */
   | { type: "clearSelection"; kind?: TargetKind }
   /** the sets panel's Nodes / Elements toggle: it makes that kind the active selection (ADR 0138 D2), which a new set takes */
   | { type: "setWorkspaceKind"; kind: SetKind }
-  /** ADR 0138 D2: node tags into the node kind's selection; `toggle` removes a tag already there */
-  | { type: "selectNodes"; tags: readonly number[]; mode: "replace" | "add" | "toggle" }
+  /** ADR 0138 D2: node tags into the node kind's selection; `toggle` removes a tag already there, `remove` takes tags out */
+  | { type: "selectNodes"; tags: readonly number[]; mode: "replace" | "add" | "toggle" | "remove" }
   | { type: "hover"; at: Pick | DeclPath | null }
   | { type: "setHidden"; decls: readonly DeclPath[]; hidden: boolean }
   | { type: "isolate"; decls: readonly DeclPath[] }

@@ -127,17 +127,17 @@ test("fit distance: the sphere touches the narrower half-angle of the view, with
 });
 
 const proto = Viewport.prototype as unknown as {
-  selectAt(this: unknown, x: number, y: number, add?: boolean): void;
+  selectAt(this: unknown, x: number, y: number, mode?: "replace" | "add" | "remove"): void;
   applyVisibility(this: unknown, s: State, rebuild?: boolean): void;
   pointAt(this: unknown, x: number, y: number): THREE.Vector3 | null;
   aim(this: unknown, x: number, y: number): void;
   wireInput(this: unknown): { nav: { dispose(): void } };
 };
 
-test("selectAt: plain click selects or clears on a miss; modified click (add=true) dispatches selectAdd on a hit and preserves selection on a miss", () => {
+test("ADR 0138 D6 selectAt: a click replaces (a miss clears), Shift adds (a miss keeps), Ctrl removes, even through a group", () => {
   const decls = Object.assign(Object.create(null), {
-    "mesh/element/1": { path: "mesh/element/1" },
-    "mesh/element/2": { path: "mesh/element/2" },
+    "mesh/element/1": { path: "mesh/element/1", kind: "element", element: { groups: [] } },
+    "mesh/element/2": { path: "mesh/element/2", kind: "element", element: { groups: [] } },
   });
   let state: State = { ...initialState, decls };
   const events: Event[] = [];
@@ -152,27 +152,23 @@ test("selectAt: plain click selects or clears on a miss; modified click (add=tru
       },
     },
   };
-  // Plain click on element 1 -> select.
   nextPick = { decl: "mesh/element/1", at: [0, 0, 0], nodes: [1, 2] };
-  proto.selectAt.call(receiver, 10, 10, false);
+  proto.selectAt.call(receiver, 10, 10, "replace");
   assert.deepEqual(state.selection.decls, ["mesh/element/1"]);
-  // Modified click on element 2 -> selectAdd appends.
   nextPick = { decl: "mesh/element/2", at: [1, 0, 0], nodes: [2, 3] };
-  proto.selectAt.call(receiver, 20, 20, true);
-  assert.deepEqual(state.selection.decls, ["mesh/element/1", "mesh/element/2"]);
-  // Modified click on a miss -> does NOT clear selection!
+  proto.selectAt.call(receiver, 20, 20, "add");
+  proto.selectAt.call(receiver, 20, 20, "add");
+  assert.deepEqual(state.selection.decls, ["mesh/element/1", "mesh/element/2"], "Shift adds, and a second Shift+click keeps it");
   nextPick = null;
   const countBeforeMiss = events.length;
-  proto.selectAt.call(receiver, 50, 50, true);
-  assert.equal(events.length, countBeforeMiss, "modifier click on a miss dispatches nothing");
-  assert.deepEqual(state.selection.decls, ["mesh/element/1", "mesh/element/2"]);
-  // Modified click on element 1 again -> selectAdd toggles element 1 off, keeping element 2.
+  proto.selectAt.call(receiver, 50, 50, "add");
+  proto.selectAt.call(receiver, 50, 50, "remove");
+  assert.equal(events.length, countBeforeMiss, "a modified click on a miss dispatches nothing");
   nextPick = { decl: "mesh/element/1", at: [0, 0, 0], nodes: [1, 2] };
-  proto.selectAt.call(receiver, 10, 10, true);
-  assert.deepEqual(state.selection.decls, ["mesh/element/2"]);
-  // Plain click on a miss -> clearSelection.
+  proto.selectAt.call(receiver, 10, 10, "remove");
+  assert.deepEqual(state.selection.decls, ["mesh/element/2"], "Ctrl removes");
   nextPick = null;
-  proto.selectAt.call(receiver, 50, 50, false);
+  proto.selectAt.call(receiver, 50, 50, "replace");
   assert.deepEqual(state.selection.decls, []);
 });
 

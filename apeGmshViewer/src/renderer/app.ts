@@ -26,6 +26,7 @@ import { mountPlanes } from "../panels/planes.ts";
 import { mountSources } from "../panels/sources.ts";
 import { mountSpotlight } from "../panels/spotlight.ts";
 import { mountWindows } from "../panels/windows/frame.ts";
+import { mountSelectionBar } from "../panels/selectionBar.ts";
 import { BlobStore } from "../state/blobs.ts";
 import { userEventOf, userPathOf, userReadable } from "../state/reduce.ts";
 import { derivedPlaneOf } from "../state/selectors.ts";
@@ -110,6 +111,7 @@ const panels = [
   mountPhase(store, { newCombination: () => combine?.open() }),
   mountSources(store),
   mountWindows(store),
+  mountSelectionBar(store),
   mountSpotlight(store),
 ];
 // V4e1: the section planes panel; its slider box and the view direction come from the viewport.
