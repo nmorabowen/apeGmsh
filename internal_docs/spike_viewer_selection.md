@@ -64,10 +64,26 @@ Building the ID textures took 1.5 to 1.8 ms and 0.13 MB.
 With six section planes, `tims_c3b` gave 11 clicks the same, 28 where both missed, and 1 where only the ID image found an
 element. That click was within the image's 2-pixel search radius of a cut edge.
 
-**The slab disagreement is not explained.** The ray cast tries lines before faces, along the whole ray (`hitElement`), so
-it can return a line behind or inside the face in front. The ID image returns what is drawn nearest. That would explain the
-result, but a fault in the harness's line geometry has not been ruled out. A diagnostic launch that records both hit
-distances is queued behind the load gate.
+**The slab disagreement is explained: the ray cast was wrong** (diagnostic launch, 2026-11-19). One launch on the slab
+model, behind the same load gate (15% CPU, 3.05 GB available), recorded both hit distances for the first 12 differences
+at each pose. The draw state was plain (no offsets, no extruded frames, opacity 1, undeformed), so the ID image drew what
+the screen drew. The same element on 17 of 120 clicks again. In all 36 recorded differences the ray cast returned a beam;
+in 34 the ID image returned the element drawn at the exact pixel, in 2 one found by its 2-pixel search. Two causes:
+
+1. **A line within about 5 px of the cursor wins over the face under it.** Beams are drawn 3 px wide and the ray cast's
+   line threshold is 7 px, so a line counts within (3 + 7) / 2 = 5 px, and `hitElement` tries lines before faces without
+   comparing depths. 15 of the 36 were clicks on a slab triangle taken by a nearby beam, and 6 more by another beam
+   within 5 px. In 6 of the 36 the beam was behind the face (`lineHitDist` > `faceHitDist`): hidden, but picked.
+2. **Among the segments within that tolerance, the one nearest the eye wins**, not the one nearest the cursor: three
+   sorts the hits by distance along the ray. On a beam split into segments shorter than about 10 px on screen, the
+   neighbouring segment on the near side won: 13 of the 36 were a beam against the beam beside it. On a straight beam
+   sloping toward the eye, alone, the ray cast returned the clicked segment on 100 of 100 clicks with 22 px segments,
+   31 of 200 with 11 px, and 0 of 400 with 5.6 px.
+
+`tims_c3b` draws no lines, which is why it agreed on every click. Not recorded: which element each click sampled (the
+isolated reproduction stands in for it), and the 67 differences after the first 12 per pose. Evidence: the spike branch
+at `504eaa05c`, `results/slabdiag-0.json` and `diag-ray.mjs`. Clicks moved to the ID image in SEL-2's first PR (ADR 0138,
+amendment note of 2026-11-19).
 
 ### Region updates
 
@@ -111,7 +127,6 @@ because it looks up each existing pick for each declaration.
 
 - **`yoo_building_SLE_T2`** (128,923 cells) was not measured. The machine never had the 9 GB free memory gate set for it
   during the session, and this model hung the app under memory pressure before (ADR 0137).
-- **The slab click disagreement** (above).
 - Device pixel ratio above 1, a discrete GPU, and other machines.
 - The deformed shape. The ID image uses the drawn positions, so it should follow, but no launch tested it.
 - Real Gauss point layouts, hinge markers and fibers.

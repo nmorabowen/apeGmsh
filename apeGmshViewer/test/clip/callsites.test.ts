@@ -6,7 +6,9 @@
 // - `renderNow` puts the planes on every material before it renders, so an
 //   object made after the plane is cut on its first frame;
 // - `pickAt` passes the clip check to `hitElement`, so a click on cut-away
-//   geometry is a miss, and the same click with the cuts off is a hit.
+//   geometry is a miss, and the same click with the cuts off is a hit. The
+//   element comes from the click's ID image (ADR 0138 D5), which needs WebGL:
+//   the receiver's `idAt` stands in for it and names the face.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -83,6 +85,7 @@ test("pickAt: a click on cut-away geometry is a miss; the same click with the cu
     aim: (Viewport.prototype as unknown as { aim: unknown }).aim,
     pickOf: (Viewport.prototype as unknown as { pickOf: unknown }).pickOf,
     hitAt: (Viewport.prototype as unknown as { hitAt: unknown }).hitAt,
+    idAt: (x: number, y: number) => ({ element: 0, x, y }),
   };
   // Client point over (0.5, 0.5, 2).
   const p = new THREE.Vector3(0.5, 0.5, 2).project(camera);
