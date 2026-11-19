@@ -4163,6 +4163,16 @@ It needs a fork release that carries <code>mpm</code> (<code>ladruno-v20261114</
 <td></td>
 </tr>
 <tr>
+<td><code>ops.mpm.gridvel(name, box, v, start=, translate=, profile=)</code></td>
+<td><code>mpm gridvel &lt;name&gt; box &lt;lo..&gt; &lt;hi..&gt; v &lt;v..&gt; [start ..] [translate ..] [profile &lt;t0&gt; &lt;Tr&gt; &lt;t1&gt;]</code></td>
+<td>prescribes the grid velocity on the nodes inside <code>box = (lo, hi)</code>, a component of <code>v</code> may be <code>"free"</code>; needs <code>ladruno-v20261118b</code> or later, which applies it in mode F (earlier releases ignore it); <code>translate</code> needs <code>start</code> or <code>profile</code>; no <code>track</code></td>
+</tr>
+<tr>
+<td><code>ops.mpm.gridvelAffine(name, box, L, ref=)</code></td>
+<td><code>mpm gridvel &lt;name&gt; box &lt;lo..&gt; &lt;hi..&gt; affine &lt;L&gt; [ref ..]</code></td>
+<td>prescribes <code>L (x - ref)</code>, <code>L</code> given by rows; same release; no <code>setAffine</code></td>
+</tr>
+<tr>
 <td><code>ops.mpm.gravity(*g)</code></td>
 <td><code>mpm gravity &lt;g..&gt;</code></td>
 <td></td>
