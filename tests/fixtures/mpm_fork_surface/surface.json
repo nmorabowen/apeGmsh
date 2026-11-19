@@ -1,6 +1,6 @@
 {
-  "fork_tag": "ladruno-v20261118b",
-  "fork_sha": "cfe47825407f2918081eb8083d5865206ddbfd69",
+  "fork_tag": "ladruno-v20261119",
+  "fork_sha": "f9864cfec04c92a4a602d202ffe3237e01004858",
   "source": "SRC/domain/pattern/ladrunoMPM/OPS_LadrunoMPM.cpp",
   "function": "int OPS_LadrunoMPM(void)",
   "refreshed_by": "python scripts/refresh_mpm_fork_surface.py",
