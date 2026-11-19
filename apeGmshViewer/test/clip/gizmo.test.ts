@@ -607,6 +607,8 @@ test("G-PICK: a click through the quad picks the model under it; no scene raycas
     blobs, faces, lines: null, clip,
     drawn: { lineMap: new Int32Array(0), triMap: Int32Array.from([0, 1]), edgeMask: null },
     pickAt: proto.pickAt, pickOf: proto.pickOf, hitAt: proto.hitAt,
+    // The click's ID image (ADR 0138 D5) needs WebGL; this stands in for it and names the face.
+    idAt: (x: number, y: number) => ({ element: 0, x, y }),
   });
   const g = r.geom();
   const target = add(g.centre, g.u, 0.5);

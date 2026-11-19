@@ -227,6 +227,14 @@ export interface Hit {
  * kept it: a cut-away line hit leaves the faces to answer, and a cut-away
  * face hit is a miss. Hits behind a cut-away one are never walked to (no
  * pick-through the hole, ADR 0083 open question 3).
+ *
+ * ADR 0138 D5: with `only`, the element is already chosen (by the click's ID
+ * image, renderer/picking.ts `ClickPicker`), and this returns where the ray
+ * meets that element: its nearest kept hit, on lines, faces or frame faces.
+ * The ray cast alone is not used to choose: it tries lines before faces along
+ * the whole ray and takes the line hit nearest the eye within its pixel
+ * tolerance, so it picked beams hidden behind a slab and the neighbour of a
+ * short segment (internal_docs/spike_viewer_selection.md, "Clicks").
  */
 export function hitElement(
   raycaster: THREE.Raycaster,
@@ -241,7 +249,9 @@ export function hitElement(
   frameFaces: THREE.Object3D | null = null,
   frameTriMap: Int32Array | null = null,
   frameTriElement: Int32Array | null = null,
+  only: number | null = null,
 ): { element: number; point: THREE.Vector3; prim: Hit["prim"] } | null {
+  if (only !== null) return hitOn(only, raycaster, lines, faces, drawn, lineElement, triElement, clipped, frameFaces, frameTriMap, frameTriElement);
   if (lines && lines.visible) {
     const hits = raycaster.intersectObject(lines, false).filter((h) => h.faceIndex !== undefined && h.faceIndex !== null);
     if (hits.length && !clipped(hits[0]!.point)) {
@@ -271,6 +281,32 @@ export function hitElement(
     }
   }
   if (bestFaceHit) return { element: bestFaceHit.element, point: bestFaceHit.point, prim: bestFaceHit.prim };
+  return null;
+}
+
+/** `hitElement` with the element chosen: the nearest kept hit on one of its lines, else on one of its faces or frame faces. */
+function hitOn(
+  only: number,
+  raycaster: THREE.Raycaster,
+  lines: THREE.Object3D | null,
+  faces: THREE.Object3D | null,
+  drawn: { lineMap: Int32Array; triMap: Int32Array },
+  lineElement: Int32Array,
+  triElement: Int32Array,
+  clipped: (p: THREE.Vector3) => boolean,
+  frameFaces: THREE.Object3D | null,
+  frameTriMap: Int32Array | null,
+  frameTriElement: Int32Array | null,
+): Hit | null {
+  const first = (o: THREE.Object3D | null, map: Int32Array | null, element: Int32Array | null) =>
+    o && o.visible && map && element
+      ? raycaster.intersectObject(o, false).find((h) => h.faceIndex !== undefined && h.faceIndex !== null && element[map[h.faceIndex]!] === only && !clipped(h.point))
+      : undefined;
+  const l = first(lines, drawn.lineMap, lineElement);
+  if (l) return { element: only, point: l.point, prim: { kind: "line", index: drawn.lineMap[l.faceIndex!]! } };
+  const t = first(faces, drawn.triMap, triElement), f = first(frameFaces, frameTriMap, frameTriElement);
+  if (t && (!f || t.distance <= f.distance)) return { element: only, point: t.point, prim: { kind: "tri", index: drawn.triMap[t.faceIndex!]! } };
+  if (f) return { element: only, point: f.point, prim: { kind: "frame", index: frameTriMap![f.faceIndex!]! } };
   return null;
 }
 

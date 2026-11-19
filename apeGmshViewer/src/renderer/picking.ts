@@ -11,7 +11,15 @@
 // For elements, a box drawn left to right takes the elements fully inside it:
 // those it shows that have no drawn vertex outside it (the vertices are
 // projected once, at the press). Right to left takes every element it shows.
-// The pure parts (`boxOf`, the region scan) are tested in
+//
+// A click (and the hover mark, which names what a click would take) reads the
+// same kind of image (`ClickPicker`), drawn again only when the view or what
+// is drawn changes. It takes the element drawn at the pixel, but a line drawn
+// within CLICK_LINE_PX wins: the image draws lines 1 px wide where the screen
+// draws them 3 px, and a beam must stay as easy to hit as the ray cast made
+// it. Only what is drawn is in the image, so a hidden beam never wins, and the
+// nearest pixel wins, so a short segment is never beaten by its neighbour.
+// The pure parts (`boxOf`, the region scan, `clickId`) are tested in
 // test/picking.test.ts; the GPU part is proven by the capture stills.
 
 import * as THREE from "three";
@@ -142,6 +150,159 @@ export interface PickSource {
   planes: THREE.Plane[];
 }
 
+/** What `kind` can select, drawn as IDs: faces and frame faces (depth only for nodes), then lines or node discs. */
+function pickScene(kind: PickKind, src: PickSource, pixelRatio: number, owned: { dispose(): void }[]): THREE.Scene {
+  const scene = new THREE.Scene();
+  const add = (o: THREE.Object3D, ...own: { dispose(): void }[]) => {
+    o.frustumCulled = false;
+    scene.add(o);
+    owned.push(...own);
+  };
+  const { faces, frameFaces, lines, nodes, planes } = src;
+  const facesOf = (f: NonNullable<PickSource["faces"]>) => {
+    const tex = idTexture(Int32Array.from(f.element, (e) => e + 1));
+    const m = primMaterial(tex, 3, true, planes);
+    m.colorWrite = kind !== "node";
+    const g = new THREE.BufferGeometry().setAttribute("position", f.positions);
+    add(new THREE.Mesh(g, m), tex, m, g);
+  };
+  if (faces) facesOf(faces);
+  if (frameFaces) facesOf(frameFaces);
+  if (kind === "element" && lines && lines.element.length) {
+    const tex = idTexture(Int32Array.from(lines.element, (e) => e + 1));
+    const m = primMaterial(tex, 2, false, planes);
+    const g = new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(lines.positions, 3));
+    add(new THREE.LineSegments(g, m), tex, m, g);
+  }
+  if (kind === "node" && nodes && nodes.tags.length) {
+    const m = pointMaterial(11 * pixelRatio, planes);
+    const g = new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(nodes.positions, 3));
+    add(new THREE.Points(g, m), m, g);
+  }
+  return scene;
+}
+
+/** Draw `scene` as IDs into `target` (cleared to 0, nothing); the renderer's target and clear colour are left as they were. */
+function drawIds(renderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget, scene: THREE.Scene, camera: THREE.Camera): void {
+  camera.updateMatrixWorld();
+  const colour = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha(), was = renderer.getRenderTarget();
+  renderer.setRenderTarget(target);
+  renderer.setClearColor(0, 0);
+  renderer.clear();
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(was);
+  renderer.setClearColor(colour, alpha);
+}
+
+/** How far from the cursor, in CSS pixels, a drawn line still takes a click from the face under it (ADR 0138 D5). */
+export const CLICK_LINE_PX = 4;
+
+/**
+ * The element a click takes from a window of an ID image (`ids` row 0 at the
+ * bottom, `w` x `h`), at window pixel (`cx`, `cy`): the line nearest the
+ * centre within `r` pixels, else the element at the centre. An ID is the
+ * element index + 1. Returns the element index, or -1 for nothing.
+ */
+export function clickId(ids: Uint32Array, w: number, h: number, cx: number, cy: number, r: number, isLine: (element: number) => boolean): number {
+  let best = -1, bestD = r * r + 1;
+  for (let y = Math.max(0, cy - r); y <= Math.min(h - 1, cy + r); y++) {
+    for (let x = Math.max(0, cx - r); x <= Math.min(w - 1, cx + r); x++) {
+      const id = ids[y * w + x]! & ID_MASK, d = (x - cx) ** 2 + (y - cy) ** 2;
+      if (id !== 0 && d < bestD && isLine(id - 1)) [best, bestD] = [id - 1, d];
+    }
+  }
+  if (best >= 0) return best;
+  return cx >= 0 && cx < w && cy >= 0 && cy < h ? (ids[cy * w + cx]! & ID_MASK) - 1 : -1;
+}
+
+/**
+ * The element ID image a click and the hover mark read (ADR 0138 D5). It is
+ * drawn again only when what is drawn (`sceneKey`, compared item by item) or
+ * the view (camera, drawing size, section planes) changes; each pick reads a
+ * window of (2 r + 1)^2 pixels around the pointer.
+ */
+export class ClickPicker {
+  private readonly renderer: THREE.WebGLRenderer;
+  private target: THREE.WebGLRenderTarget | null = null;
+  private scene: THREE.Scene | null = null;
+  private planes: THREE.Plane[] = [];
+  private readonly owned: { dispose(): void }[] = [];
+  private isLine = new Uint8Array(0);
+  private sceneKey: readonly unknown[] = [];
+  private viewKey = "";
+  private window = new Uint8Array(0);
+
+  constructor(renderer: THREE.WebGLRenderer) {
+    this.renderer = renderer;
+  }
+
+  /**
+   * The element a click at a canvas point (CSS pixels from the top left)
+   * takes, with that point moved to the centre of its device pixel (where
+   * the image was sampled); null on nothing. `source` is called only when
+   * `sceneKey` changed.
+   */
+  elementAt(
+    camera: THREE.Camera,
+    sceneKey: readonly unknown[],
+    source: () => PickSource | null,
+    x: number,
+    y: number,
+    cssWidth: number,
+  ): { element: number; x: number; y: number } | null {
+    if (sceneKey.length !== this.sceneKey.length || sceneKey.some((k, i) => k !== this.sceneKey[i])) {
+      this.dropScene();
+      const src = source();
+      if (!src) return null;
+      this.scene = pickScene("element", src, this.renderer.getPixelRatio(), this.owned);
+      this.planes = src.planes;
+      this.isLine = new Uint8Array(src.elements);
+      if (src.lines) for (const e of src.lines.element) this.isLine[e] = 1;
+      this.sceneKey = sceneKey;
+    }
+    const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    if (!this.target || this.target.width !== size.x || this.target.height !== size.y) {
+      this.target?.dispose();
+      this.target = new THREE.WebGLRenderTarget(size.x, size.y, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true, stencilBuffer: false });
+      this.viewKey = "";
+    }
+    camera.updateMatrixWorld();
+    const view = [
+      size.x,
+      size.y,
+      ...camera.matrixWorld.elements,
+      ...(camera as THREE.PerspectiveCamera).projectionMatrix.elements,
+      ...this.planes.flatMap((p) => [p.normal.x, p.normal.y, p.normal.z, p.constant]),
+    ].join(",");
+    if (view !== this.viewKey) {
+      drawIds(this.renderer, this.target, this.scene!, camera);
+      this.viewKey = view;
+    }
+    const dpr = size.x / cssWidth, px = Math.floor(x * dpr), py = size.y - 1 - Math.floor(y * dpr);
+    if (px < 0 || py < 0 || px >= size.x || py >= size.y) return null;
+    const r = Math.round(CLICK_LINE_PX * dpr), x0 = Math.max(0, px - r), y0 = Math.max(0, py - r);
+    const w = Math.min(size.x, px + r + 1) - x0, h = Math.min(size.y, py + r + 1) - y0;
+    if (this.window.length < 4 * w * h) this.window = new Uint8Array(4 * (2 * r + 1) ** 2);
+    const bytes = this.window.subarray(0, 4 * w * h);
+    this.renderer.readRenderTargetPixels(this.target, x0, y0, w, h, bytes);
+    const element = clickId(new Uint32Array(bytes.buffer, bytes.byteOffset, w * h), w, h, px - x0, py - y0, r, (e) => this.isLine[e] === 1);
+    return element < 0 ? null : { element, x: (px + 0.5) / dpr, y: (size.y - 1 - py + 0.5) / dpr };
+  }
+
+  private dropScene(): void {
+    for (const d of this.owned.splice(0)) d.dispose();
+    this.scene = null;
+    this.sceneKey = [];
+    this.viewKey = "";
+  }
+
+  dispose(): void {
+    this.dropScene();
+    this.target?.dispose();
+    this.target = null;
+  }
+}
+
 /** One press's ID image and projected vertices; dropped at the release. */
 export class BoxPicker {
   private readonly target: THREE.WebGLRenderTarget;
@@ -155,14 +316,12 @@ export class BoxPicker {
   /** canvas-pixel position of every drawn vertex (x, y) and its element, for "fully inside" */
   private readonly verts: { xy: Float32Array; element: Int32Array } | null;
 
-  private readonly renderer: THREE.WebGLRenderer;
   private readonly kind: PickKind;
   private readonly src: PickSource;
   private readonly cssWidth: number;
   private readonly cssHeight: number;
 
   constructor(renderer: THREE.WebGLRenderer, camera: THREE.Camera, kind: PickKind, src: PickSource, cssWidth: number, cssHeight: number) {
-    this.renderer = renderer;
     this.kind = kind;
     this.src = src;
     this.cssWidth = cssWidth;
@@ -173,16 +332,8 @@ export class BoxPicker {
     this.ids = new Uint32Array(this.bytes.buffer);
     const count = kind === "element" ? src.elements : (src.nodes?.tags.length ?? 0);
     this.seen = new Uint32Array(count + 1);
-    const scene = this.scene();
-    camera.updateMatrixWorld();
-    const r = renderer, colour = r.getClearColor(new THREE.Color()), alpha = r.getClearAlpha(), was = r.getRenderTarget();
-    r.setRenderTarget(this.target);
-    r.setClearColor(0, 0);
-    r.clear();
-    r.render(scene, camera);
-    r.readRenderTargetPixels(this.target, 0, 0, size.x, size.y, this.bytes);
-    r.setRenderTarget(was);
-    r.setClearColor(colour, alpha);
+    drawIds(renderer, this.target, pickScene(kind, src, renderer.getPixelRatio(), this.disposables), camera);
+    renderer.readRenderTargetPixels(this.target, 0, 0, size.x, size.y, this.bytes);
     if (kind === "element") {
       this.outside = new Uint32Array(src.elements);
       this.verts = this.project(camera);
@@ -190,39 +341,6 @@ export class BoxPicker {
       this.outside = null;
       this.verts = null;
     }
-  }
-
-  private add(scene: THREE.Scene, o: THREE.Object3D, ...owned: { dispose(): void }[]): void {
-    o.frustumCulled = false;
-    scene.add(o);
-    this.disposables.push(...owned);
-  }
-
-  private scene(): THREE.Scene {
-    const scene = new THREE.Scene();
-    const { faces, frameFaces, lines, nodes, planes } = this.src;
-    const facesOf = (f: NonNullable<PickSource["faces"]>, depthOnly: boolean) => {
-      const tex = idTexture(Int32Array.from(f.element, (e) => e + 1));
-      const m = primMaterial(tex, 3, true, planes);
-      m.colorWrite = !depthOnly;
-      const g = new THREE.BufferGeometry().setAttribute("position", f.positions);
-      this.add(scene, new THREE.Mesh(g, m), tex, m, g);
-    };
-    const depthOnly = this.kind === "node";
-    if (faces) facesOf(faces, depthOnly);
-    if (frameFaces) facesOf(frameFaces, depthOnly);
-    if (this.kind === "element" && lines && lines.element.length) {
-      const tex = idTexture(Int32Array.from(lines.element, (e) => e + 1));
-      const m = primMaterial(tex, 2, false, planes);
-      const g = new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(lines.positions, 3));
-      this.add(scene, new THREE.LineSegments(g, m), tex, m, g);
-    }
-    if (this.kind === "node" && nodes && nodes.tags.length) {
-      const m = pointMaterial(11 * this.renderer.getPixelRatio(), planes);
-      const g = new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(nodes.positions, 3));
-      this.add(scene, new THREE.Points(g, m), m, g);
-    }
-    return scene;
   }
 
   /** Every drawn vertex in canvas pixels, with its element; a vertex behind the eye is placed far outside. */

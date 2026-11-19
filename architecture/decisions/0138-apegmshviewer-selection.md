@@ -157,3 +157,20 @@ Each slice with a screen change carries the maintainer's approval stills (ADR 01
 - **Ray casting only.** It has no answer for a box that must respect what is visible, and it tests every triangle per click.
 - **A bounding-volume tree or a worker for picking.** Not needed at the sizes measured: every region update fit in one frame
   on the page thread.
+
+## Amendment note — 2026-11-19 — D5: clicks read the ID image
+
+**Status:** Accepted (2026-11-19; the maintainer chose to move clicks after the diagnostic). Lands with SEL-2's first PR.
+
+D5 kept the ray cast for clicks until each difference with the ID image was explained. A diagnostic launch on the slab
+model explained them (`internal_docs/spike_viewer_selection.md`, "Clicks"): the ray cast was wrong, not the image. It
+tests lines before faces along the whole ray, so a beam within its pixel tolerance won over the face drawn under the
+cursor, even a beam hidden behind that face; and among segments within the tolerance it took the one nearest the eye,
+so on a beam split into segments shorter than about 10 px it took the neighbour of the clicked one.
+
+Clicks, and the hover mark that names what a click would take, now read the element ID image, kept until the view or
+what is drawn changes. They take the element drawn at the pixel, except that a line drawn within 4 CSS pixels wins: the
+image draws lines 1 px wide where the screen draws them 3 px, and a beam must stay as easy to hit as before. Only what
+is drawn is in the image, so a hidden beam never wins. The ray cast now only finds where the click meets the element
+the image chose (the hit point, and the primitive a node click starts from). This settles the "Not established" items on
+the slab disagreement and on the pick radius for lines; the radius for points is still open.

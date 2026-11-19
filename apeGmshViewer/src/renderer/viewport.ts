@@ -54,7 +54,7 @@ import {
   type ProjectionMode,
   type ViewCamera,
 } from "./navigation.ts";
-import { BoxPicker, boxOf, type Box as PickBox, type PickSource } from "./picking.ts";
+import { BoxPicker, boxOf, ClickPicker, type Box as PickBox, type PickSource } from "./picking.ts";
 import type { SelectMode } from "./bindings.ts";
 import { fitDistance, focusOf, type Focus, type Hit, elementOutlines, HALO_COLOUR, highlightObjects, hitElement, nearestNodeOf, nodeVertexPositions, SELECTION_COLOUR, selectedPrims, SelectionHalo } from "./selection.ts";
 import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
@@ -442,6 +442,8 @@ export class Viewport {
   private hoverCleanup: (() => void) | null = null;
   /** ADR 0138 D7: the press's ID image while a box is dragged, and the box drawn over the canvas */
   private boxPicker: BoxPicker | null = null;
+  /** ADR 0138 D5: the element ID image clicks and the hover mark read, kept while the view and what is drawn hold */
+  private clickPicker: ClickPicker | null = null;
   private boxEl: HTMLDivElement | null = null;
   /** ADR 0138 D6: the hovered target's mark, its key, its name by the cursor, and the pointer waiting for the next frame */
   private readonly hoverGroup = new THREE.Group();
@@ -589,8 +591,13 @@ export class Viewport {
     else if (mode === "remove" && on) this.store.dispatch({ type: "selectDecls", decls: [pick.decl], remove: true });
   }
 
-  /** What the box picker draws: the drawn faces, frame faces, lines and nodes, at their drawn positions. */
-  private pickSource(s: State): PickSource | null {
+  /**
+   * What the pickers draw: the drawn faces, frame faces, lines and (with
+   * `nodes`) nodes, at their drawn positions. Where two lines coincide the one
+   * drawn last shows, so the OpenSees-only elements go last: they would be
+   * unreachable behind a cell drawn on the same nodes (as `hitElement` chose).
+   */
+  private pickSource(s: State, withNodes = s.selection.active === "node"): PickSource | null {
     const info = s.mesh, drawn = this.drawn;
     if (!info || !drawn) return null;
     const triElement = this.blobs.i32(info.triElement), lineElement = this.blobs.i32(info.lineElement);
@@ -607,11 +614,14 @@ export class Viewport {
     const pos = drawnPositions(this.full, info, this.blobs);
     const lineMap = this.drawnLineMap ?? drawn.lineMap;
     const linePos = s.visibility.showOffsets && pos.clearLine ? pos.clearLine : pos.line;
-    const lines = this.lines && this.lines.visible && lineMap.length
-      ? { positions: gatherInto(linePos, lineMap, 6), element: Int32Array.from(lineMap, (l) => lineElement[l]!) }
-      : null;
+    let lines: PickSource["lines"] = null;
+    if (this.lines && this.lines.visible && lineMap.length) {
+      const opsOnly = (l: number) => info.elements[lineElement[l]!]!.startsWith("opensees/element/");
+      const order = Int32Array.from([...lineMap.filter((l) => !opsOnly(l)), ...lineMap.filter(opsOnly)]);
+      lines = { positions: gatherInto(linePos, order, 6), element: Int32Array.from(order, (l) => lineElement[l]!) };
+    }
     let nodes: PickSource["nodes"] = null;
-    if (s.selection.active === "node") {
+    if (withNodes) {
       const vn = { line: this.blobs.get(info.vertexNodes.line) as Float64Array, tri: this.blobs.get(info.vertexNodes.tri) as Float64Array };
       const nv = uniqueNodeVertices(vn.line, vn.tri, drawn.lineMap, drawn.triMap);
       const tags = new Float64Array(nv.line.length + nv.tri.length);
@@ -785,6 +795,8 @@ export class Viewport {
     this.hoverCleanup = null;
     this.boxCancel();
     this.clearHoverTarget();
+    this.clickPicker?.dispose();
+    this.clickPicker = null;
     this.nav.dispose();
     this.gizmoInput.dispose();
     this.gizmos.dispose();
@@ -1866,15 +1878,34 @@ export class Viewport {
     return this.pickOf(decl, [hit.point.x, hit.point.y, hit.point.z]);
   }
 
-  /** The drawn primitive under a client-space point (renderer/selection.ts `hitElement`), or null. */
+  /**
+   * The element a click at a client point takes (ADR 0138 D5): read from the
+   * element ID image of what is drawn, a line within CLICK_LINE_PX winning
+   * over the face under the cursor; with the point moved to the centre of the
+   * device pixel the image sampled. Null on nothing.
+   */
+  private idAt(clientX: number, clientY: number): { element: number; x: number; y: number } | null {
+    const s = this.store.get(), info = s.mesh;
+    if (!info || !this.drawn) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.clickPicker ??= new ClickPicker(this.renderer);
+    // What the image holds is rebuilt when any of these is replaced; deformation replaces `full`.
+    const key = [info, this.drawn, this.full, this.drawnLineMap, s.visibility.showOffsets, this.faces, this.faces?.visible, this.frameFaces, this.frameFaces?.visible, this.lines, this.lines?.visible];
+    const at = this.clickPicker.elementAt(this.camera, key, () => this.pickSource(s, false), clientX - rect.left, clientY - rect.top, rect.width);
+    return at && { element: at.element, x: at.x + rect.left, y: at.y + rect.top };
+  }
+
+  /** The drawn primitive under a client-space point: the element from the ID image (`idAt`), where the ray meets it (`hitElement`); or null. */
   private hitAt(clientX: number, clientY: number): Hit | null {
     const info = this.store.get().mesh;
     const drawn = this.drawn;
     if (!info || !drawn) return null;
+    const at = this.idAt(clientX, clientY);
+    if (!at) return null;
     const lineElement = this.blobs.i32(info.lineElement), triElement = this.blobs.i32(info.triElement);
     const drawnForPick = { lineMap: this.drawnLineMap ?? drawn.lineMap, triMap: drawn.triMap };
     const frameTriElement = info.frameExtrusion ? this.blobs.i32(info.frameExtrusion.triElement) : null;
-    this.aim(clientX, clientY);
+    this.aim(at.x, at.y);
     // The objects hold the drawn positions (deformed when the deformed shape shows, V4d).
     // V4e1: a hit the section planes cut away is a miss (C-PICK).
     return hitElement(
@@ -1890,6 +1921,7 @@ export class Viewport {
       this.frameFaces,
       this.frameTriMap,
       frameTriElement,
+      at.element,
     );
   }
 
