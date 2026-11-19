@@ -73,7 +73,8 @@ def _aff(**kw: Any) -> mpm_mod.GridvelAffine:
     (lambda: _gv(box=((0.0, 0.6), (1.0, 0.5))), r"lo > hi on axis y"),
     (lambda: _gv(box=((0.0, 0.0, 2.0), (1.0, 1.0, 1.0)), v=(0, 0, 0)),
      r"lo > hi on axis z"),
-    (lambda: _gv(box=(0.0, 1.0)), r"Gridvel\.box must be a pair"),
+    (lambda: _gv(box=(0.0, 1.0)), r"Gridvel\.box lo must be a sequence"),
+    (lambda: _gv(box=((0.0, 0.0),)), r"Gridvel\.box must be a pair"),
     (lambda: _gv(box=((0.0, float("nan")), (1.0, 1.0))), r"must be finite"),
     # v: wrong count, all free, a bad token
     (lambda: _gv(v=(0.1,)), r"Gridvel\.v needs 2 components"),
@@ -89,9 +90,30 @@ def _aff(**kw: Any) -> mpm_mod.GridvelAffine:
     # translate: an axis the box lacks, two axes, a free component
     (lambda: _gv(translate="z"), r"translate must be one of \('x', 'y'\)"),
     (lambda: _gv(translate="xy"), r"translate must be one of"),
-    (lambda: _gv(v=("free", 0.0), translate="x"), r"the box would never move"),
-    # the name is written bare into the deck line
+    (lambda: _gv(v=("free", 0.0), translate="x", start=0.0),
+     r"the box would never move"),
+    # Review of #3067, F1: without start or profile the fork's start is
+    # -1e300, so the translated box leaves the grid at once (a silent no-op).
+    (lambda: _gv(translate="x"), r"translate='x' needs start= or profile="),
+    (lambda: _gv(translate="y"), r"prescribes nothing, silently"),
+    # the name is written bare into the deck line (F3: as a bare Tcl word)
     (lambda: _gv(name="two words"), r"Gridvel\.name .*one word"),
+    (lambda: _gv(name="g$x"), r"Gridvel\.name 'g\$x' carries \['\$'\]"),
+    (lambda: _gv(name="g[x]"), r"carries \['\[', '\]'\]"),
+    (lambda: _gv(name="a;b"), r"carries \[';'\]"),
+    (lambda: _gv(name='a"b'), r"carries \['\"'\]"),
+    (lambda: _gv(name="a\\b"), r"carries \['\\\\'\]"),
+    (lambda: _gv(name="a{b"), r"brace"),
+    (lambda: _gv(name="a\tb"), r"one word"),
+    # F4: a numeric string is not a number, nor a string a sequence
+    (lambda: _gv(start="0"), r"Gridvel\.start must be a number, got '0'"),
+    (lambda: _gv(v=("1.0", 0.0)), r"numbers or 'free', got '1.0'"),
+    (lambda: _gv(box=("00", (1.0, 1.0))), r"Gridvel\.box lo .*not a string"),
+    (lambda: _gv(box=((0.0, 0.0), ("1", "1"))), r"Gridvel\.box hi must be a number"),
+    (lambda: _gv(box="ab"), r"Gridvel\.box .*not a string"),
+    (lambda: _gv(v="11"), r"Gridvel\.v .*not a string"),
+    (lambda: _gv(profile="012"), r"Gridvel\.profile .*not a string"),
+    (lambda: _gv(profile=("0", "0.1", "1")), r"Gridvel\.profile must be a number"),
 ])
 def test_gridvel_arguments_refuse_by_name(make: Callable[[], Any], match: str) -> None:
     with pytest.raises(mpm_mod.MPMError, match=match):
@@ -102,11 +124,19 @@ def test_gridvel_arguments_refuse_by_name(make: Callable[[], Any], match: str) -
     (lambda: _aff(L=((1.0, 0.0),)), r"GridvelAffine\.L must be 2x2"),
     (lambda: _aff(L=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))), r"GridvelAffine\.L must be 2x2"),
     (lambda: _aff(L=((1.0, 0.0), (0.0, 1.0), (0.0, 0.0))), r"GridvelAffine\.L must be 2x2"),
-    (lambda: _aff(L=(1.0, 0.0, 0.0, 1.0)), r"GridvelAffine\.L must be 2 rows"),
+    (lambda: _aff(L=(1.0, 0.0, 0.0, 1.0)), r"GridvelAffine\.L row must be a sequence"),
     (lambda: _aff(ref=(0.0,)), r"GridvelAffine\.ref needs 2 coordinates"),
     (lambda: _aff(ref=(0.0, 0.0, 0.0)), r"GridvelAffine\.ref needs 2 coordinates"),
     (lambda: _aff(box=((1.0, 0.0), (0.0, 1.0))), r"lo > hi on axis x"),
     (lambda: _aff(name="a{b}"), r"brace"),
+    (lambda: _aff(name="s$1"), r"GridvelAffine\.name 's\$1' carries \['\$'\]"),
+    # F4: string rows, coordinates and entries are refused, never iterated
+    (lambda: _aff(L=("12", "34")), r"GridvelAffine\.L row .*not a string: got '12'"),
+    (lambda: _aff(L="1234"), r"GridvelAffine\.L .*not a string"),
+    (lambda: _aff(L=(("1", 0.0), (0.0, 1.0))), r"GridvelAffine\.L must be a number"),
+    (lambda: _aff(ref="00"), r"GridvelAffine\.ref .*not a string: got '00'"),
+    (lambda: _aff(ref=("0", "0")), r"GridvelAffine\.ref must be a number"),
+    (lambda: _aff(ref=0.0), r"GridvelAffine\.ref must be a sequence"),
 ])
 def test_gridvel_affine_arguments_refuse_by_name(
     make: Callable[[], Any], match: str,

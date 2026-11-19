@@ -324,7 +324,7 @@ It needs a fork release that carries `mpm` (`ladruno-v20261114`, build
 | `ops.mpm.body(pg, material=, density=, ppc=, name=)` | none: the body is seeded into the particle set | lattice seeding of the physical group's `tri3` / `quad4` / `tet4` / `hex8` elements; every body shares one `ppc` |
 | `ops.mpm.fix(face, components)` | `mpm fix <face> <components>` | |
 | `ops.mpm.wall(face, mu)` | `mpm wall <face> <mu>` | |
-| `ops.mpm.gridvel(name, box, v, start=, translate=, profile=)` | `mpm gridvel <name> box <lo..> <hi..> v <v..> [start ..] [translate ..] [profile <t0> <Tr> <t1>]` | prescribes the grid velocity on the nodes inside `box = (lo, hi)`, a component of `v` may be `"free"`; needs `ladruno-v20261118b` or later, which applies it in mode F (earlier releases ignore it); no `track` |
+| `ops.mpm.gridvel(name, box, v, start=, translate=, profile=)` | `mpm gridvel <name> box <lo..> <hi..> v <v..> [start ..] [translate ..] [profile <t0> <Tr> <t1>]` | prescribes the grid velocity on the nodes inside `box = (lo, hi)`, a component of `v` may be `"free"`; needs `ladruno-v20261118b` or later, which applies it in mode F (earlier releases ignore it); `translate` needs `start` or `profile`; no `track` |
 | `ops.mpm.gridvelAffine(name, box, L, ref=)` | `mpm gridvel <name> box <lo..> <hi..> affine <L> [ref ..]` | prescribes `L (x - ref)`, `L` given by rows; same release; no `setAffine` |
 | `ops.mpm.gravity(*g)` | `mpm gravity <g..>` | |
 | `ops.mpm.timeSeries(series)` | `mpm timeSeries <tsTag>` | |

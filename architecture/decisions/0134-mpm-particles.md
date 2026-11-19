@@ -1,6 +1,6 @@
 # ADR 0134 — MPM in apeGmsh: the particle set beside the deck, particle results in `.ladruno`, a three.js points layer
 
-**Status:** Accepted, with Amendments 1 and 2 (2026-11-15). Accepted 2026-11-13 (drafted by the fork's MPM program (WP-232a), ratified by the
+**Status:** Accepted, with Amendments 1–3 (2026-11-15, 2026-11-19). Accepted 2026-11-13 (drafted by the fork's MPM program (WP-232a), ratified by the
 owner on #2976, "Yes, ratify"). Merging the PR that flips this Status (`human-gate`) is the
 acceptance. The pointers in ADRs 0112, 0023 and 0113 land with it (ADR 0121 D5).
 
@@ -483,8 +483,15 @@ timeSeries binding. `L` is given by rows and written row-major.
 - `profile` together with `start`; a profile with `Tr < 0` or `t1 < t0 + 2 Tr`;
 - a `translate` axis outside the box's dimension, or on a `"free"` component (the box would never
   move: the fork moves it by that component, which a free component leaves at 0);
+- `translate` without `start` or `profile`. The fork moves the box by `v (t − start)`, and its
+  default start is `-1e300`, so the box leaves the grid at the first step and the gridvel silently
+  prescribes nothing (`OPS_LadrunoMPM.cpp` default, `GridVel::displacementFactor`). A gridvel
+  without `translate` needs neither;
 - an `L` that is not ndm × ndm, or a `ref` of the wrong length;
-- a name that is not one word.
+- a string where a number or a sequence of numbers belongs (`"12"` is not the row `(1, 2)`);
+- a name that is not one bare Tcl word: whitespace, or one of `$ [ ] ; " \ { }`. The name is the
+  first user string a Tcl deck writes as a live word, so `g$x` would reach the fork as another name
+  than the py deck passes.
 
 At the call, and again when the block is emitted (`mpm_block`): a second gridvel of one name.
 `Gridvel` and `GridvelAffine` share the fork's names. At emit, a box of another dimension than the

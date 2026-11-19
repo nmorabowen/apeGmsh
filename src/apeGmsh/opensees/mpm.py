@@ -108,7 +108,9 @@ class MPMError(ValueError):
 
 
 def _finite(name: str, value: float) -> float:
-    if isinstance(value, bool):
+    # ``float("12")`` is 12.0: a string is refused here, not converted, so a
+    # numeric string never passes for a number.
+    if isinstance(value, (bool, str, bytes)):
         raise MPMError(f"{name} must be a number, got {value!r}")
     try:
         out = float(value)
@@ -312,19 +314,44 @@ class Wall(MPM):
 #: The token that leaves a :class:`Gridvel` component unprescribed.
 FREE = "free"
 _AXES = "xyz"
+#: Characters a bare Tcl word cannot carry literally (``$`` substitutes a
+#: variable, ``[ ]`` a command, ``;`` ends the command, ``"`` and ``{ }``
+#: quote, ``\`` escapes).
+_TCL_META = frozenset('$[];"\\{}')
+
+
+def _tcl_word(name: str, value: str) -> str:
+    """A token the Tcl deck writes bare and live: one word, no Tcl
+    metacharacter, so the Tcl and py decks pass the fork the same string."""
+    _word(name, value)
+    bad = sorted({ch for ch in value if ch in _TCL_META})
+    if bad:
+        raise MPMError(f"{name} {value!r} carries {bad}, which a bare Tcl word "
+                       f"substitutes or splits: the Tcl deck would pass the "
+                       f"fork another name than the py deck")
+    return value
+
+
+def _seq(name: str, value: object) -> tuple[Any, ...]:
+    """``value`` as a tuple; a string is refused, never iterated as
+    characters (``"00"`` is not the point ``(0, 0)``)."""
+    if isinstance(value, (str, bytes)):
+        raise MPMError(f"{name} must be a sequence of numbers, not a string: "
+                       f"got {value!r}")
+    try:
+        return tuple(cast(Any, value))
+    except TypeError:
+        raise MPMError(f"{name} must be a sequence, got {value!r}") from None
 
 
 def _box(cls: str, box: object) -> tuple[tuple[float, ...], tuple[float, ...]]:
     """``(lo, hi)``: two corners of one length, 2 or 3, ``lo <= hi`` per axis."""
-    try:
-        lo_in, hi_in = cast(Any, box)
-        lo = tuple(_finite(f"{cls}.box lo", v) for v in lo_in)
-        hi = tuple(_finite(f"{cls}.box hi", v) for v in hi_in)
-    except (TypeError, ValueError) as exc:
-        if isinstance(exc, MPMError):
-            raise
+    pair = _seq(f"{cls}.box", box)
+    if len(pair) != 2:
         raise MPMError(f"{cls}.box must be a pair (lo, hi) of corner "
-                       f"coordinates, got {box!r}") from None
+                       f"coordinates, got {box!r}")
+    lo = tuple(_finite(f"{cls}.box lo", v) for v in _seq(f"{cls}.box lo", pair[0]))
+    hi = tuple(_finite(f"{cls}.box hi", v) for v in _seq(f"{cls}.box hi", pair[1]))
     if len(lo) not in (2, 3) or len(hi) != len(lo):
         raise MPMError(f"{cls}.box corners need 2 or 3 coordinates each, one "
                        f"per grid axis, and the same count: got lo={lo}, "
@@ -351,7 +378,9 @@ class Gridvel(MPM):
     * ``translate="x"|"y"|"z"``: both box bounds move along that axis by
       ``v[axis] * Phi(t)`` (``Phi`` the integral of the velocity factor), so
       the box rides with the material it drives. That component of ``v``
-      cannot be ``"free"``.
+      cannot be ``"free"``, and ``translate`` needs ``start`` or ``profile``:
+      without either, the fork's start is -1e300, the box is moved off the
+      grid at once and the gridvel silently prescribes nothing.
     * ``profile=(t0, Tr, t1)``: the velocity is ``v * phi(t)``, a trapezoid
       rising from 0 at ``t0`` over ``Tr``, 1 until ``t1 - Tr``, 0 at
       ``t1``; it needs ``Tr >= 0`` and ``t1 >= t0 + 2 Tr``, and it replaces
@@ -366,10 +395,13 @@ class Gridvel(MPM):
     ``constraints`` handler a non-zero value needs, ``condForce``) do not
     apply to an apeGmsh deck.
 
-    Refused here, by name: a name that is not one word, a box whose corners
-    disagree in length or have ``lo > hi``, a ``v`` of the wrong length or
-    all ``"free"``, ``profile`` with ``start``, a bad trapezoid, a
-    ``translate`` axis outside the box's dimension or on a free component.
+    Refused here, by name: a name that is not one bare Tcl word (whitespace
+    or one of ``$ [ ] ; " \\ { }``), a box whose corners disagree in length
+    or have ``lo > hi``, a ``v`` of the wrong length or all ``"free"``,
+    ``profile`` with ``start``, a bad trapezoid, a ``translate`` axis outside
+    the box's dimension or on a free component, ``translate`` without
+    ``start`` or ``profile``, and a string where a number or a sequence of
+    numbers belongs.
     At emit, :func:`mpm_block` refuses a box of another dimension than the
     grid's and a second gridvel of one name. The fork refuses at
     ``mpm analyze``, and apeGmsh does not pre-check: a gridvel and a ``fix``
@@ -385,14 +417,10 @@ class Gridvel(MPM):
     profile: tuple[float, float, float] | None = None
 
     def __post_init__(self) -> None:
-        _word("Gridvel.name", self.name)
+        _tcl_word("Gridvel.name", self.name)
         lo, hi = _box("Gridvel", self.box)
         ndm = len(lo)
-        try:
-            v_in = tuple(self.v)
-        except TypeError:
-            raise MPMError(f"Gridvel.v must be a sequence of {ndm} components, "
-                           f"got {self.v!r}") from None
+        v_in = _seq("Gridvel.v", self.v)
         if len(v_in) != ndm:
             raise MPMError(f"Gridvel.v needs {ndm} components (one per axis of "
                            f"box), got {len(v_in)}: {v_in!r}")
@@ -416,6 +444,13 @@ class Gridvel(MPM):
                 raise MPMError(f"Gridvel.translate must be one of "
                                f"{tuple(_AXES[:ndm])} for a {ndm}-D box, got "
                                f"{self.translate!r}")
+            if self.start is None and self.profile is None:
+                raise MPMError(
+                    f"Gridvel.translate={self.translate!r} needs start= or "
+                    f"profile=: the fork moves the box by v * (t - start), "
+                    f"and without either its start is -1e300, so the box "
+                    f"leaves the grid at once and the gridvel prescribes "
+                    f"nothing, silently")
             if v[_AXES.index(self.translate)] == FREE:
                 raise MPMError(f"Gridvel.translate={self.translate!r} moves the "
                                f"box by v[{self.translate}], which is "
@@ -424,13 +459,11 @@ class Gridvel(MPM):
             if self.start is not None:
                 raise MPMError("Gridvel: profile= replaces start= (a profiled "
                                "condition is present from t = 0); give one")
-            try:
-                t0, tr, t1 = (_finite("Gridvel.profile", p) for p in self.profile)
-            except (TypeError, ValueError) as exc:
-                if isinstance(exc, MPMError):
-                    raise
+            prof = _seq("Gridvel.profile", self.profile)
+            if len(prof) != 3:
                 raise MPMError(f"Gridvel.profile must be (t0, Tr, t1), got "
-                               f"{self.profile!r}") from None
+                               f"{self.profile!r}")
+            t0, tr, t1 = (_finite("Gridvel.profile", p) for p in prof)
             if tr < 0.0 or t1 < t0 + 2.0 * tr:
                 raise MPMError(f"Gridvel.profile (t0, Tr, t1) = {(t0, tr, t1)} "
                                f"needs Tr >= 0 and t1 >= t0 + 2 Tr")
@@ -476,8 +509,9 @@ class GridvelAffine(MPM):
     one ``L``.
 
     **Mode F only**, as :class:`Gridvel`. Refused here, by name: a name that
-    is not one word, a bad box (as :class:`Gridvel`), an ``L`` that is not
-    ndm x ndm for the box's ndm, a ``ref`` of the wrong length. At emit,
+    is not one bare Tcl word (as :class:`Gridvel`), a bad box, an ``L`` that
+    is not ndm x ndm for the box's ndm, a ``ref`` of the wrong length, and a
+    string where a number or a sequence of numbers belongs. At emit,
     :func:`mpm_block` refuses a box of another dimension than the grid's
     and a second gridvel of one name (a :class:`Gridvel` and a
     :class:`GridvelAffine` share the fork's gridvel names).
@@ -489,28 +523,21 @@ class GridvelAffine(MPM):
     ref: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
-        _word("GridvelAffine.name", self.name)
+        _tcl_word("GridvelAffine.name", self.name)
         lo, hi = _box("GridvelAffine", self.box)
         ndm = len(lo)
-        try:
-            rows = tuple(tuple(_finite("GridvelAffine.L", x) for x in row)
-                         for row in self.L)
-        except (TypeError, ValueError) as exc:
-            if isinstance(exc, MPMError):
-                raise
-            raise MPMError(f"GridvelAffine.L must be {ndm} rows of {ndm} "
-                           f"numbers, got {self.L!r}") from None
+        rows = tuple(
+            tuple(_finite("GridvelAffine.L", x)
+                  for x in _seq("GridvelAffine.L row", row))
+            for row in _seq("GridvelAffine.L", self.L))
         if len(rows) != ndm or any(len(r) != ndm for r in rows):
             raise MPMError(f"GridvelAffine.L must be {ndm}x{ndm} for a "
                            f"{ndm}-D box (given as its rows), got "
                            f"{[len(r) for r in rows]} row lengths over "
                            f"{len(rows)} rows")
         if self.ref is not None:
-            try:
-                ref = tuple(_finite("GridvelAffine.ref", x) for x in self.ref)
-            except TypeError:
-                raise MPMError(f"GridvelAffine.ref must be {ndm} coordinates, "
-                               f"got {self.ref!r}") from None
+            ref = tuple(_finite("GridvelAffine.ref", x)
+                        for x in _seq("GridvelAffine.ref", self.ref))
             if len(ref) != ndm:
                 raise MPMError(f"GridvelAffine.ref needs {ndm} coordinates (one "
                                f"per axis of box), got {ref}")

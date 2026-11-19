@@ -22,7 +22,13 @@ apeGmsh refuses each malformed case by name before the deck is written:
 - `profile` together with `start`, or a trapezoid with `Tr < 0` or
   `t1 < t0 + 2 Tr`;
 - a `translate` axis the box lacks, or one whose component is free;
+- `translate` without `start` or `profile`: the fork's default start is
+  `-1e300`, so the translated box would leave the grid at the first step
+  and prescribe nothing, with no error;
 - an `L` that is not ndm by ndm, or a `ref` of the wrong length;
+- a string where a number or a sequence of numbers belongs;
+- a name that is not one bare Tcl word (whitespace, or one of
+  `$ [ ] ; " \ { }`), which the Tcl deck would substitute or split;
 - a second gridvel of one name;
 - a box of another dimension than the grid's.
 
