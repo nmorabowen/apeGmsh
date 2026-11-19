@@ -8,7 +8,7 @@ import type { ClipState } from "./clip.ts";
 import type { ContourState } from "./contour.ts";
 import type { DeformState } from "./deform.ts";
 import type { LineDiagramState } from "./lineDiagram.ts";
-import type { ArtifactInfo, ArtifactKind, BlockInfo, Decl, DeclPath, GeometryInfo, Lineage, MeshInfo, PhaseKey, Pick, ProvenanceEntry, SpatialNdm, StageElements, UnitSystemId } from "./model.ts";
+import type { ArtifactInfo, ArtifactKind, BlockInfo, Decl, DeclPath, GeometryInfo, Lineage, MeshInfo, PhaseKey, Pick, ProvenanceEntry, SelectionState, SpatialNdm, StageElements, UnitSystemId } from "./model.ts";
 import type { MaterialTestState } from "./materialTest.ts";
 import type { OffersState } from "./offers.ts";
 import type { CracksState, HingesState, LoadsState, PrincipalState, ReactionsState, SpringsState, SupportsState, VectorsState } from "./overlays.ts";
@@ -106,7 +106,7 @@ export interface State {
   blocks: BlockInfo[];
   mesh: MeshInfo | null;
   phase: { axis: PhaseKey[]; at: PhaseKey | null };
-  selection: { decls: DeclPath[]; picks: Pick[] };
+  selection: SelectionState;
   hover: Pick | DeclPath | null;
   visibility: Visibility;
   /** The node markers, apart from `visibility`: what watches that (the hidden set, the banner) need not wake for a size. */

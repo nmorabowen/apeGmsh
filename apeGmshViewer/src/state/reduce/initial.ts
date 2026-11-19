@@ -50,7 +50,7 @@ export const initialState: State = {
   blocks: [],
   mesh: null,
   phase: { axis: [], at: null },
-  selection: { decls: [], picks: [] },
+  selection: { active: "element", decls: [], picks: [], nodes: [] },
   hover: null,
   visibility: { hidden: [], edges: true, opacity: 1, colourBy: "group", extrudeFrames: false, showOffsets: false },
   nodes: { on: false, size: null, auto: true },

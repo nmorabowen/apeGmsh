@@ -3,10 +3,10 @@
 // A set's members are OpenSees tags (`id_space` `opensees`). An element set
 // takes every `/opensees/element_meta` tag the selected elements carry (a
 // cell can carry more than one; a cell that carries none is no OpenSees
-// element and is left out, said by a note). A node set takes, for each click
-// on the model, the node of the clicked element nearest the point clicked: a
-// node's tag is its FEM id (the bridge emits every node under it). Main takes
-// each member's coordinates from the model file, never from here.
+// element and is left out, said by a note). A node set takes the node kind's
+// selection (ADR 0138 D2): a node's tag is its FEM id (the bridge emits every
+// node under it). Main takes each member's coordinates from the model file,
+// never from here.
 //
 // Pure: the node table comes in from the BlobStore (the effects pass it).
 
@@ -52,56 +52,42 @@ export function elementMembersOf(s: State): Members {
   return { ok: true, ids: uniq(ids), notes };
 }
 
-/** For each click, the node of the clicked element nearest the point clicked, in click order. */
+/**
+ * The node kind's tags, in pick order (ADR 0138 D2). A click picks the node
+ * where it is drawn, the deformed shape included, so nothing here reads where
+ * a click landed. With the node table, a tag the model lacks is left out and
+ * said by a note.
+ */
 export function nodeMembersOf(s: State, nodes: NodeTable | null): Members {
-  const picks = s.selection.picks.filter((p) => p.at !== null && p.nodes !== null && p.nodes.length > 0);
-  if (picks.length === 0) return { ok: false, reason: "click the model near each node first (Shift+click adds): each click takes the nearest node of the element clicked" };
-  if (nodes === null) return { ok: false, reason: "the model was read without its node table, so no node can be placed" };
-  // A click lands where the cell is drawn; with the deformed shape that is not where the node table puts the nodes.
-  if (s.deform.on || s.workspace.deformedPicks) {
-    return {
-      ok: false,
-      reason: s.deform.on
-        ? "the deformed shape shows: a click lands on the displaced cell, not where its nodes are, so Nodes picks nothing; turn the deformed shape off and click again"
-        : "a click was made on the deformed shape: turn it off and click the nodes again",
-    };
-  }
-  const index = new Map<number, number>();
-  for (let i = 0; i < nodes.ids.length; i++) if (!index.has(nodes.ids[i]!)) index.set(nodes.ids[i]!, i);
-  const ids: number[] = [];
-  for (const p of picks) {
-    let best: number | null = null;
-    let bestD = Infinity;
-    for (const n of p.nodes!) {
-      const i = index.get(n);
-      if (i === undefined) continue;
-      const d = Math.hypot(nodes.xyz[3 * i]! - p.at![0], nodes.xyz[3 * i + 1]! - p.at![1], nodes.xyz[3 * i + 2]! - p.at![2]);
-      if (d < bestD) [best, bestD] = [n, d];
+  if (s.selection.nodes.length === 0) return { ok: false, reason: "pick nodes first: choose Nodes, then click near a node (Shift+click adds)" };
+  let ids = uniq(s.selection.nodes);
+  const notes: string[] = [];
+  if (nodes !== null) {
+    const known = new Set<number>();
+    for (let i = 0; i < nodes.ids.length; i++) known.add(nodes.ids[i]!);
+    const missing = ids.filter((t) => !known.has(t));
+    if (missing.length) {
+      ids = ids.filter((t) => known.has(t));
+      notes.push(`${missing.length} selected node${missing.length === 1 ? " is" : "s are"} not in the model's node table and left out`);
     }
-    if (best !== null) ids.push(best);
   }
-  const skipped = s.selection.picks.length - picks.length;
-  const notes = skipped ? [`${skipped} selected item${skipped === 1 ? " was" : "s were"} not clicked on the model and ${skipped === 1 ? "names" : "name"} no node`] : [];
-  if (ids.length === 0) return { ok: false, reason: "no clicked element has a node the model places" };
-  return { ok: true, ids: uniq(ids), notes };
+  if (ids.length === 0) return { ok: false, reason: "no selected node is in the model's node table" };
+  return { ok: true, ids, notes };
+}
+
+/** The set kind a new set takes: the active selection kind (ADR 0138 D2, D12). */
+export function setKindOf(s: State): SetKind {
+  return s.selection.active === "node" ? "nodes" : "elements";
 }
 
 export function membersOf(s: State, kind: SetKind, nodes: NodeTable | null): Members {
   return kind === "elements" ? elementMembersOf(s) : nodeMembersOf(s, nodes);
 }
 
-/** What the sets panel says the selection gives: the effects' preview of the members (tags), else a count of the clicks, or why nothing. */
+/** What the sets panel says the selection gives: the effects' preview of the members (tags), else the members now, or why nothing. */
 export function pickSummaryOf(s: State): { count: number; reason: string | null; ids: readonly number[] | null } {
-  const p = s.workspace.preview;
-  if (p !== null && p.kind === s.workspace.kind) return "ids" in p ? { count: p.ids.length, reason: null, ids: p.ids } : { count: 0, reason: p.reason, ids: null };
-  if (s.workspace.kind === "elements") {
-    const m = elementMembersOf(s);
-    return m.ok ? { count: m.ids.length, reason: null, ids: m.ids } : { count: 0, reason: m.reason, ids: null };
-  }
-  if (s.deform.on || s.workspace.deformedPicks) {
-    const m = nodeMembersOf(s, { ids: [], xyz: [] });
-    if (!m.ok && /deformed/.test(m.reason)) return { count: 0, reason: m.reason, ids: null };
-  }
-  const n = s.selection.picks.filter((p) => p.at !== null && p.nodes !== null && p.nodes.length > 0).length;
-  return n ? { count: n, reason: null, ids: null } : { count: 0, reason: "click the model near each node (Shift+click adds)", ids: null };
+  const p = s.workspace.preview, kind = setKindOf(s);
+  if (p !== null && p.kind === kind) return "ids" in p ? { count: p.ids.length, reason: null, ids: p.ids } : { count: 0, reason: p.reason, ids: null };
+  const m = membersOf(s, kind, null);
+  return m.ok ? { count: m.ids.length, reason: null, ids: m.ids } : { count: 0, reason: m.reason, ids: null };
 }

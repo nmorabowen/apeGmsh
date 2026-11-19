@@ -1,10 +1,11 @@
-// VU9a (#2803; the D7 still question on #2890): in Nodes mode a click selects
-// the clicked cell (the viewport highlights the whole cell), and a save takes
-// the node of that cell nearest the click. This drives the real Effects on a
-// real model (the gmsh plate of test/fixtures/vu9a): three picks, two
+// VU9a (#2803), ADR 0138 D2: with Nodes active a click selects a node (the
+// viewport's renderer/selection.ts `nearestNodeOf`), and a save takes the node
+// kind's selection. This drives the real Effects on a real model (the gmsh
+// plate of test/fixtures/vu9a): the nodes near three clicked cells, two
 // triangles and one boundary line cell as in the capture still, and checks
 // (1) the preview the Sets panel lists, and (2) the edit sent to main's
-// `workspace:save`, are the same node tags: nodes, never element ids.
+// `workspace:save`, are the same node tags: nodes, never element ids. The
+// clicked cells are the element kind's, which Elements previews instead.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -18,7 +19,7 @@ import type { Pick, WorkspaceEdit } from "../../src/state/types.ts";
 
 const PLATE = fileURLToPath(new URL("../fixtures/vu9a/plate/remeshed.h5", import.meta.url));
 
-test("Nodes: a save takes, per clicked cell, its node nearest the click; the panel's preview lists exactly those node tags", async () => {
+test("Nodes: a save takes the selected nodes; the panel's preview lists exactly those node tags", async () => {
   const model = await openModel(PLATE);
   const blobs = new BlobStore();
   const sent: WorkspaceEdit[] = [];
@@ -57,13 +58,18 @@ test("Nodes: a save takes, per clicked cell, its node nearest the click; the pan
       const p = at(target).map((v, k) => v + 0.2 * (mid[k]! - v)) as [number, number, number];
       const pick: Pick = { decl, at: p, nodes };
       store.dispatch({ type: "selectAdd", pick });
+      // The node the viewport picks for this click, into the node kind.
+      store.dispatch({ type: "setWorkspaceKind", kind: "nodes" });
+      store.dispatch({ type: "selectNodes", tags: [target], mode: "add" });
+      store.dispatch({ type: "setWorkspaceKind", kind: "elements" });
       if (!want.includes(target)) want.push(target);
     }
+    store.dispatch({ type: "setWorkspaceKind", kind: "nodes" });
     await new Promise((r) => setTimeout(r, 0));
     const preview = store.get().workspace.preview;
     assert.ok(preview && "ids" in preview, JSON.stringify(preview));
     assert.equal(preview.kind, "nodes");
-    assert.deepEqual([...preview.ids], want, "the preview lists node tags, the node of each clicked cell nearest the click");
+    assert.deepEqual([...preview.ids], want, "the preview lists the selected node tags, in pick order");
     const femIds = new Set([...tris, line].map((d) => s.decls[d]!.element!.femId));
     assert.ok(!preview.ids.every((t) => femIds.has(t)), "not the clicked cells' element ids");
     store.dispatch({ type: "workspaceSave", edit: { op: "create", name: "picked nodes" } });

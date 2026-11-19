@@ -38,6 +38,7 @@ const proto = Viewport.prototype as unknown as {
   selectAt: unknown;
   pickAt: unknown;
   pickOf: unknown;
+  hitAt: unknown;
 };
 
 const W = 800;
@@ -598,7 +599,7 @@ test("G-PICK: a click through the quad picks the model under it; no scene raycas
   Object.assign(r.receiver, {
     blobs, faces, lines: null, clip,
     drawn: { lineMap: new Int32Array(0), triMap: Int32Array.from([0, 1]), edgeMask: null },
-    pickAt: proto.pickAt, pickOf: proto.pickOf,
+    pickAt: proto.pickAt, pickOf: proto.pickOf, hitAt: proto.hitAt,
   });
   const g = r.geom();
   const target = add(g.centre, g.u, 0.5);

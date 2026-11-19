@@ -114,40 +114,33 @@ test("an element set takes the OpenSees tags of the selected cells; a cell with 
   assert.match(m.notes[0]!, /1 selected cell is no OpenSees element/);
 });
 
-test("a node set takes, per click, the node of the clicked element nearest the point clicked", () => {
+test("ADR 0138 D2: a node set takes the node kind's selection, in pick order; a tag the node table lacks is left out", () => {
   const nodes = { ids: [1, 2, 3, 4], xyz: [0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0] };
-  const s = run(
-    [
-      { type: "selectAdd", pick: { decl: "mesh/element/1", at: [0.9, 0.1, 0], nodes: [1, 2, 3] } },
-      { type: "selectAdd", pick: { decl: "mesh/element/2", at: [0.1, 0.8, 0], nodes: [2, 3, 4] } },
-    ],
-    withCells(),
-  );
-  const m = membersOf(s, "nodes", nodes);
-  assert.ok(m.ok);
-  assert.deepEqual(m.ids, [2, 3]);
-  assert.deepEqual(membersOf(initialState, "nodes", nodes).ok, false);
-  assert.equal(membersOf(s, "nodes", null).ok, false, "no node table: refused, never guessed");
+  const s = run([{ type: "selectNodes", tags: [3, 2], mode: "replace" }, { type: "selectNodes", tags: [9], mode: "add" }], withCells());
+  assert.deepEqual(membersOf(s, "nodes", nodes), { ok: true, ids: [3, 2], notes: ["1 selected node is not in the model's node table and left out"] });
+  assert.deepEqual(membersOf(s, "nodes", null), { ok: true, ids: [3, 2, 9], notes: [] }, "without the table, the tags as picked");
+  assert.equal(membersOf(initialState, "nodes", nodes).ok, false, "nothing picked: refused with a reason");
+  // The deformed shape no longer matters: a click picks the node where it is drawn (renderer/selection.ts nearestNodeOf).
+  const deformed = { ...s, deform: { ...s.deform, on: true } };
+  assert.deepEqual(membersOf(deformed, "nodes", null), membersOf(s, "nodes", null));
+  // Clicked elements give no nodes: the kinds are separate selections.
+  const clicked = run([{ type: "select", pick: { decl: "mesh/element/1", at: [0, 0, 0], nodes: [1, 2, 3] } }], withCells());
+  assert.equal(membersOf(clicked, "nodes", nodes).ok, false);
 });
 
-test("a deformed frame: a click lands on the displaced cell, so Nodes refuses it with a reason, and again after the shape is turned off, until the nodes are clicked again", () => {
-  // The review's reproducer: a unit quad [1, 2, 3, 4] drawn shifted +100 in y, clicked on node 1's drawn corner.
-  const nodes = { ids: [1, 2, 3, 4], xyz: [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0] };
-  const onCorner = (s: State) => reduce(s, { type: "select", pick: { decl: "mesh/element/1", at: [0, 100, 0], nodes: [1, 2, 3, 4] } });
-  const deformed = onCorner({ ...withCells(), deform: { ...withCells().deform, on: true } });
-  const m = membersOf(deformed, "nodes", nodes);
-  assert.equal(m.ok, false, `the drawn corner of node 1 must not be read as ${JSON.stringify(m)}`);
-  assert.match((m as { reason: string }).reason, /deformed shape shows: a click lands on the displaced cell/);
-  // Turned off, the click made on the deformed shape is still refused.
-  const off = reduce(deformed, { type: "setDeform", on: false });
-  assert.equal(off.workspace.deformedPicks, true);
-  assert.match((membersOf(off, "nodes", nodes) as { reason: string }).reason, /a click was made on the deformed shape/);
-  // Clicked again on the undeformed frame: node 1, as on any undeformed view.
-  const again = reduce(off, { type: "select", pick: { decl: "mesh/element/1", at: [0.05, 0.02, 0], nodes: [1, 2, 3, 4] } });
-  assert.equal(again.workspace.deformedPicks, false);
-  assert.deepEqual(membersOf(again, "nodes", nodes), { ok: true, ids: [1], notes: [] });
-  // Elements are tags, not positions: the deformed shape does not touch them.
-  assert.ok(membersOf(deformed, "elements", nodes).ok);
+test("ADR 0138 D2: the sets toggle is the active kind, and each kind keeps its selection", () => {
+  let s = run([{ type: "select", pick: { decl: "mesh/element/1", at: null, nodes: null } }], withCells());
+  assert.equal(s.selection.active, "element");
+  s = reduce(s, { type: "setWorkspaceKind", kind: "nodes" });
+  assert.equal(s.selection.active, "node");
+  s = reduce(s, { type: "selectNodes", tags: [4], mode: "replace" });
+  s = reduce(s, { type: "clearSelection" });
+  assert.deepEqual(s.selection.nodes, [], "Esc clears the active kind");
+  assert.deepEqual(s.selection.decls, ["mesh/element/1"], "and keeps the other");
+  s = reduce(s, { type: "selectNodes", tags: [4, 5], mode: "replace" });
+  s = reduce(s, { type: "selectNodes", tags: [4, 6], mode: "toggle" });
+  assert.deepEqual(s.selection.nodes, [5, 6], "toggle takes out what is there and adds the rest");
+  assert.throws(() => reduce(s, { type: "selectNodes", tags: [-1], mode: "add" }), RangeError);
 });
 
 test("a set switch: the last set's read leaves at once, nothing is editable until the new read lands, and a late answer about the last file is never shown", () => {

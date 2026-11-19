@@ -46,7 +46,8 @@ import {
 } from "./selectors.ts";
 import { initialSearch, initialSpotlight } from "./spotlight.ts";
 import { THEME_MODES } from "../theme/tokens.ts";
-import type { ArtifactInfo, ArtifactKind, ContourState, DeclPath, Event, MeshInfo, PhaseKey, State, UnitSystemId } from "./types.ts";
+import { SET_KINDS, TARGET_KINDS } from "./types.ts";
+import type { ArtifactInfo, ArtifactKind, ContourState, DeclPath, Event, MeshInfo, PhaseKey, Pick, State, UnitSystemId } from "./types.ts";
 import { UNIT_SYSTEM_IDS } from "./units.ts";
 
 export { canonicalPose, initialCamera, ROLL_TOLERANCE } from "./reduce/camera.ts";
@@ -89,7 +90,27 @@ function syncContourUnits(c: ContourState, declaredUnits: UnitSystemId | null, k
   return { ...c, declaredUnits: null };
 }
 
-const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
+/** The element kind emptied; the active kind and the node kind stay (ADR 0138 D2). */
+const noElements = (sel: State["selection"]): State["selection"] => ({ ...sel, decls: [], picks: [] });
+
+/** A node tag as a selection holds it: a non-negative integer (a FEM id). */
+function nodeTag(t: unknown, where: string): number {
+  if (typeof t !== "number" || !Number.isInteger(t) || t < 0) throw new RangeError(`${where}: ${JSON.stringify(t)} is not a node tag`);
+  return t;
+}
+
+/**
+ * The node kind's tags after one edit, in pick order (ADR 0138 D2, D9). One
+ * pass over each list, through a set, so an edit costs what its lists hold.
+ */
+export function editNodes(now: readonly number[], tags: readonly number[], mode: "replace" | "add" | "toggle"): number[] {
+  for (const t of tags) nodeTag(t, "selectNodes");
+  if (mode === "replace") return [...new Set(tags)];
+  const have = new Set(now);
+  if (mode === "add") return [...now, ...[...new Set(tags)].filter((t) => !have.has(t))];
+  const flip = new Set(tags);
+  return [...now.filter((t) => !flip.has(t)), ...[...flip].filter((t) => !have.has(t))];
+}
 
 function opened(path: string): ArtifactInfo {
   return {
@@ -234,7 +255,7 @@ function withLineDiagramPick(s: State, preserveNotice = false): State {
 
 export function reduce(s: State, e: Event): State {
   const next = reduceEvent(s, e);
-  return withPickFrame(s, e, e.type === "setContourField" ? withoutCompareUser(next) : next);
+  return e.type === "setContourField" ? withoutCompareUser(next) : next;
 }
 
 /** The variants reducer's inputs for a Hide: `showCompareUser` with no pick reads none of them. */
@@ -257,18 +278,6 @@ const HIDE_INPUTS = {
 function withoutCompareUser(s: State): State {
   if (s.variants.shown === null) return s;
   return { ...s, variants: reduceVariants(s.variants, { type: "showCompareUser", pick: null }, HIDE_INPUTS) };
-}
-
-/**
- * VU9a (#2890 delta review): whether the selection holds a click made while
- * the deformed shape showed (`WorkspaceState.deformedPicks`). A click's point is
- * where the cell was drawn; Nodes compares it with undeformed node positions,
- * so such a selection is refused for a node set until it is clicked again.
- */
-function withPickFrame(s: State, e: Event, next: State): State {
-  if (next.selection === s.selection || !["select", "selectAdd", "selectDecls", "clearSelection"].includes(e.type)) return next;
-  const deformed = next.selection.picks.length === 0 ? false : e.type === "select" ? s.deform.on : s.workspace.deformedPicks || (e.type === "selectAdd" && s.deform.on);
-  return deformed === next.workspace.deformedPicks ? next : { ...next, workspace: { ...next.workspace, deformedPicks: deformed } };
 }
 
 function reduceEvent(s: State, e: Event): State {
@@ -337,7 +346,7 @@ function reduceEvent(s: State, e: Event): State {
         contour: syncContourUnits(s.contour, declaredUnits, reread || s.results !== null),
         loads: reread ? s.loads : { ...s.loads, selectedPatterns: null },
         stage: keep ? s.stage : null,
-        selection: NO_SELECTION,
+        selection: { ...s.selection, decls: [], picks: [], nodes: [] },
         hover: null,
         visibility: { ...s.visibility, hidden: [], opacity, extrudeFrames, showOffsets },
         // A chosen size belongs to the model it was chosen for; the user's own stays.
@@ -476,19 +485,41 @@ function reduceEvent(s: State, e: Event): State {
     }
     case "select":
       if (!(e.pick.decl in s.decls)) throw new Error(`select: ${e.pick.decl} is not a declaration of the loaded model`);
-      return syncLineDiagramDerived({ ...s, selection: { decls: [e.pick.decl], picks: [e.pick] } });
+      return syncLineDiagramDerived({ ...s, selection: { ...s.selection, decls: [e.pick.decl], picks: [e.pick] } });
     case "selectAdd": {
       if (!(e.pick.decl in s.decls)) throw new Error(`selectAdd: ${e.pick.decl} is not a declaration of the loaded model`);
-      if (s.selection.decls.includes(e.pick.decl)) {
-        const decls = s.selection.decls.filter((d) => d !== e.pick.decl);
-        const picks = s.selection.picks.filter((p) => p.decl !== e.pick.decl);
-        return syncLineDiagramDerived(
-          decls.length === 0 ? { ...s, selection: NO_SELECTION } : { ...s, selection: { decls, picks } },
-        );
+      const sel = s.selection;
+      if (sel.decls.includes(e.pick.decl)) {
+        const decls = sel.decls.filter((d) => d !== e.pick.decl);
+        const picks = sel.picks.filter((p) => p.decl !== e.pick.decl);
+        return syncLineDiagramDerived({ ...s, selection: { ...sel, decls, picks } });
+      }
+      // An element selected through a group, label or material it belongs to: Shift+click takes it out, and
+      // each such declaration is replaced by its other elements (ADR 0138 Context: the group stayed selected).
+      const covering = e.pick.decl in s.decls && s.decls[e.pick.decl]!.kind === "element"
+        ? sel.decls.filter((d) => s.decls[d]?.kind !== "element" && elementsOfDecl(s, d).includes(e.pick.decl))
+        : [];
+      if (covering.length) {
+        const drop = new Set(covering), have = new Set(sel.decls);
+        const decls: DeclPath[] = [], picks: Pick[] = [];
+        sel.decls.forEach((d, i) => {
+          if (!drop.has(d)) {
+            decls.push(d);
+            picks.push(sel.picks[i]!);
+            return;
+          }
+          for (const m of elementsOfDecl(s, d)) {
+            if (m === e.pick.decl || have.has(m)) continue;
+            have.add(m);
+            decls.push(m);
+            picks.push({ decl: m, at: null, nodes: null });
+          }
+        });
+        return syncLineDiagramDerived({ ...s, selection: { ...sel, decls, picks } });
       }
       return syncLineDiagramDerived({
         ...s,
-        selection: { decls: [...s.selection.decls, e.pick.decl], picks: [...s.selection.picks, e.pick] },
+        selection: { ...sel, decls: [...sel.decls, e.pick.decl], picks: [...sel.picks, e.pick] },
       });
     }
     case "selectDecls": {
@@ -496,11 +527,29 @@ function reduceEvent(s: State, e: Event): State {
         if (!(d in s.decls)) throw new Error(`selectDecls: ${d} is not a declaration of the loaded model`);
       }
       const next = uniq(e.add ? [...s.selection.decls, ...e.decls] : e.decls);
-      const picks = next.map((decl) => s.selection.picks.find((p) => p.decl === decl) ?? { decl, at: null, nodes: null });
-      return syncLineDiagramDerived({ ...s, selection: { decls: next, picks } });
+      // One map of the picks already held: a lookup per declaration made adding to a large selection quadratic.
+      const held = new Map(s.selection.picks.map((p) => [p.decl, p] as const));
+      const picks = next.map((decl) => held.get(decl) ?? { decl, at: null, nodes: null });
+      return syncLineDiagramDerived({ ...s, selection: { ...s.selection, decls: next, picks } });
     }
-    case "clearSelection":
-      return s.selection.decls.length === 0 ? s : syncLineDiagramDerived({ ...s, selection: NO_SELECTION });
+    case "clearSelection": {
+      const kind = e.kind ?? s.selection.active;
+      if (!(TARGET_KINDS as readonly string[]).includes(kind)) throw new RangeError(`clearSelection: ${JSON.stringify(kind)} is not a target kind`);
+      if (kind === "node") return s.selection.nodes.length === 0 ? s : { ...s, selection: { ...s.selection, nodes: [] } };
+      return s.selection.decls.length === 0 ? s : syncLineDiagramDerived({ ...s, selection: noElements(s.selection) });
+    }
+    case "selectNodes": {
+      if (!["replace", "add", "toggle"].includes(e.mode)) throw new RangeError(`selectNodes: ${JSON.stringify(e.mode)} is not replace, add or toggle`);
+      const nodes = editNodes(s.selection.nodes, e.tags, e.mode);
+      const same = nodes.length === s.selection.nodes.length && nodes.every((t, i) => t === s.selection.nodes[i]);
+      return same ? s : { ...s, selection: { ...s.selection, nodes } };
+    }
+    case "setWorkspaceKind": {
+      // The sets panel's toggle is the active kind (ADR 0138 D2): one value, read by the click and by a new set.
+      if (!(SET_KINDS as readonly string[]).includes(e.kind)) throw new RangeError(`setWorkspaceKind: ${JSON.stringify(e.kind)} is not nodes or elements`);
+      const active = e.kind === "nodes" ? "node" : "element";
+      return s.selection.active === active ? s : { ...s, selection: { ...s.selection, active } };
+    }
     case "hover":
       return syncLineDiagramDerived({ ...s, hover: e.at });
     case "setHidden": {
@@ -944,7 +993,6 @@ function reduceEvent(s: State, e: Event): State {
     }
     case "workspaceReading":
     case "workspaceRead":
-    case "setWorkspaceKind":
     case "workspaceSave":
     case "workspaceSaved":
     case "workspacePreview":

@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
-import { applyGhostVisibility, translucentSurfaces, basePositions, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, type FullPositions } from "../../src/renderer/deform.ts";
+import { applyGhostVisibility, translucentSurfaces, basePositions, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, type FullPositions } from "../../src/renderer/deform.ts";
 import { selectionBounds, type Prims } from "../../src/renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "../../src/renderer/visible.ts";
 import { missingMarkers } from "../../src/state/deform.ts";
@@ -97,22 +97,6 @@ function primsOf(h: H, s: State, e: number): Prims {
   h.blobs.i32(s.mesh!.triElement).forEach((x, i) => x === e && tris.push(i));
   return { lines, tris };
 }
-
-test("selection outline: drawn on the deformed positions while the deformed shape shows, on the mesh otherwise", async () => {
-  const h = await opened(DEFORM_2D, DEFORM_2D_RESULTS);
-  const { s, full } = await deformed(h, 0, 2, 30);
-  const e = h.blobs.i32(s.mesh!.triElement)[0]!;
-  const p = primsOf(h, s, e);
-  assert.ok(p.tris.length > 0);
-  const lines = (pos: Float32Array) => new THREE.LineSegments(new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(pos, 3)));
-  const fillOf = (objs: THREE.Object3D[]) => (objs.find((o) => o instanceof THREE.Mesh) as THREE.Mesh).geometry.getAttribute("position").array as Float32Array;
-  const want = (src: Float32Array) => Float32Array.from(p.tris.flatMap((t) => Array.from(src.subarray(9 * t, 9 * t + 9))));
-  assert.deepEqual(fillOf(selectionOutline(full, s.mesh!, h.blobs, [p], lines)), want(full.tri), "the fill sits on the deformed triangles");
-  const base = basePositions(s.mesh!, h.blobs);
-  assert.notDeepEqual(want(full.tri), want(base.tri), "the test can tell the two shapes apart");
-  assert.deepEqual(fillOf(selectionOutline(null, s.mesh!, h.blobs, [p], lines)), want(base.tri), "undeformed: the mesh blobs");
-  h.effects.dispose();
-});
 
 test("F framing: the selection where it is drawn, and with nothing selected the deformed model's bounds (the mesh's own when off)", async () => {
   const h = await opened(DEFORM_2D, DEFORM_2D_RESULTS);

@@ -57,7 +57,7 @@ const defLoaded: State = reduce(initialState, { type: "fileLoaded", artifact: "m
 
 test("SPOTLIGHT_EVENT_LEDGER classifies every EventType with a non-empty command/description or reason", () => {
   const entries = Object.entries(SPOTLIGHT_EVENT_LEDGER) as [EventType, (typeof SPOTLIGHT_EVENT_LEDGER)[EventType]][];
-  assert.equal(entries.length, 135, "all 135 store events (the Hinges card setHinges, VU9a added the seven workspace events, VU19 the four compare-door events, M2-S4 the ten particle events, the Cracks card setCracks) are classified in SPOTLIGHT_EVENT_LEDGER");
+  assert.equal(entries.length, 136, "all 136 store events (ADR 0138 added selectNodes, the Hinges card setHinges, VU9a added the seven workspace events, VU19 the four compare-door events, M2-S4 the ten particle events, the Cracks card setCracks) are classified in SPOTLIGHT_EVENT_LEDGER");
   const exposedCommands = new Set<string>();
   for (const [eventType, entry] of entries) {
     if (entry.kind === "expose") {

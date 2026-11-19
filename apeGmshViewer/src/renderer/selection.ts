@@ -9,8 +9,8 @@
 // HALO_PX CSS pixels of it (HALO_PX times the device pixel ratio in device
 // pixels), so it reads the same for a beam, a shell or a solid at any zoom
 // and on any display. The mask exists only while something is selected. The
-// pure parts (highlight objects, pulse envelope, selection bounds, fit
-// distance) are tested in test/selection.test.ts.
+// pure parts (the selected primitives, highlight objects, pulse envelope,
+// selection bounds, fit distance) are tested in test/selection.test.ts.
 
 import * as THREE from "three";
 import type { BlobStore } from "../state/blobs.ts";
@@ -41,66 +41,172 @@ export interface Prims {
   tris: readonly number[];
 }
 
-/** The outline of an element's triangles: the edges that belong to one of them only (6 floats per edge). */
-export function outlineOf(tp: Float32Array, tris: readonly number[]): Float32Array {
-  const coords = new Map<string, [number, number, number, number, number, number]>();
-  const seen = new Map<string, number>();
-  for (const t of tris) {
+/**
+ * ADR 0138 D8: what of a selection is drawn, as indices over the drawn
+ * geometry. `selected[e]` is 1 for a selected element (`e` indexes
+ * `MeshInfo.elements`). `triIndex` holds 3 vertex indices per selected drawn
+ * triangle, into the faces' own position buffer (drawn order), so a highlight
+ * over that buffer moves with the deformed shape. `segments` are the original
+ * indices of the selected drawn segments. A hidden element is not drawn, so it
+ * is not highlighted (ADR 0138 D4).
+ */
+export function selectedPrims(
+  drawn: { lineMap: Int32Array; triMap: Int32Array },
+  lineElement: Int32Array,
+  triElement: Int32Array,
+  selected: Uint8Array,
+): { triIndex: Uint32Array; segments: Int32Array } {
+  let nTri = 0;
+  for (let d = 0; d < drawn.triMap.length; d++) if (selected[triElement[drawn.triMap[d]!]!]) nTri++;
+  const triIndex = new Uint32Array(3 * nTri);
+  for (let d = 0, k = 0; d < drawn.triMap.length; d++) {
+    if (!selected[triElement[drawn.triMap[d]!]!]) continue;
+    triIndex[k++] = 3 * d;
+    triIndex[k++] = 3 * d + 1;
+    triIndex[k++] = 3 * d + 2;
+  }
+  const segments: number[] = [];
+  for (const seg of drawn.lineMap) if (selected[lineElement[seg]!]) segments.push(seg);
+  return { triIndex, segments: Int32Array.from(segments) };
+}
+
+/**
+ * Each selected element's outline (the look of #1308): the edges of its drawn
+ * triangles that only one of them has, 6 floats per edge, from the drawn
+ * positions `triPos` (9 floats per drawn triangle, drawn order). Edges are
+ * keyed by their node-tag pair within one element at a time, so the cost is
+ * one small map per element, not one map of coordinate strings for the whole
+ * selection (ADR 0138 D8).
+ */
+export function elementOutlines(
+  triMap: Int32Array,
+  triElement: Int32Array,
+  selected: Uint8Array,
+  triNodes: Float64Array,
+  triPos: Float32Array,
+): Float32Array {
+  const out: number[] = [];
+  const edges = new Map<number | string, { n: number; d: number; k: number }>();
+  const flush = () => {
+    for (const e of edges.values()) {
+      if (e.n !== 1) continue;
+      const a = 9 * e.d + 3 * e.k, b = 9 * e.d + 3 * ((e.k + 1) % 3);
+      out.push(triPos[a]!, triPos[a + 1]!, triPos[a + 2]!, triPos[b]!, triPos[b + 1]!, triPos[b + 2]!);
+    }
+    edges.clear();
+  };
+  let current = -1;
+  for (let d = 0; d < triMap.length; d++) {
+    const t = triMap[d]!, el = triElement[t]!;
+    if (!selected[el]) continue;
+    if (el !== current) {
+      flush();
+      current = el;
+    }
     for (let k = 0; k < 3; k++) {
-      const a = 9 * t + 3 * k, b = 9 * t + 3 * ((k + 1) % 3);
-      const pa = [tp[a]!, tp[a + 1]!, tp[a + 2]!], pb = [tp[b]!, tp[b + 1]!, tp[b + 2]!];
-      const ka = pa.join(","), kb = pb.join(",");
-      const key = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
-      seen.set(key, (seen.get(key) ?? 0) + 1);
-      coords.set(key, [...pa, ...pb] as [number, number, number, number, number, number]);
+      const p = triNodes[3 * t + k]!, q = triNodes[3 * t + ((k + 1) % 3)]!;
+      const lo = Math.min(p, q), hi = Math.max(p, q);
+      const key = Number.isInteger(lo) && lo >= 0 && hi < 2 ** 26 ? lo * 2 ** 26 + hi : `${lo}|${hi}`;
+      const e = edges.get(key);
+      if (e) e.n++;
+      else edges.set(key, { n: 1, d, k });
     }
   }
-  const out: number[] = [];
-  for (const [key, n] of seen) if (n === 1) out.push(...coords.get(key)!);
+  flush();
   return new Float32Array(out);
 }
 
 /**
- * The objects that draw a selection over the model: its segments as thick
- * lines, its triangles' outline as thick lines, and its triangles filled, all
- * without depth test, and every one on HALO_LAYER as well as the default
- * layer (the halo pass renders that layer alone). `makeLines` builds a thick
- * line object for the viewport's resolution.
+ * The drawn position of each selected node: the first drawn vertex carrying
+ * its tag (2 tags per segment and 3 per triangle in `vertexNodes`), 3 floats
+ * per node found, in the order found. A node that no drawn primitive carries
+ * (hidden, or interior) is not drawn.
+ */
+export function nodeVertexPositions(
+  tags: readonly number[],
+  vertexNodes: { line: Float64Array; tri: Float64Array },
+  drawn: { lineMap: Int32Array; triMap: Int32Array },
+  pos: { line: Float32Array; tri: Float32Array },
+): Float32Array {
+  const want = new Set(tags);
+  const out: number[] = [];
+  const take = (id: number, src: Float32Array, o: number) => {
+    if (!want.delete(id)) return;
+    out.push(src[o]!, src[o + 1]!, src[o + 2]!);
+  };
+  for (const seg of drawn.lineMap) for (let k = 0; k < 2 && want.size; k++) take(vertexNodes.line[2 * seg + k]!, pos.line, 6 * seg + 3 * k);
+  for (const t of drawn.triMap) for (let k = 0; k < 3 && want.size; k++) take(vertexNodes.tri[3 * t + k]!, pos.tri, 9 * t + 3 * k);
+  return new Float32Array(out);
+}
+
+/**
+ * The node a click picks (ADR 0138 D2): of the hit primitive's vertices, the
+ * one nearest the hit point, where it is drawn (so the deformed shape counts).
+ * `prim` is the hit's original segment or triangle; a frame face's hit is its
+ * segment. Null when the vertices carry no node tag.
+ */
+export function nearestNodeOf(
+  prim: { kind: "line" | "tri"; index: number },
+  point: readonly [number, number, number],
+  vertexNodes: { line: Float64Array; tri: Float64Array },
+  pos: { line: Float32Array; tri: Float32Array },
+): number | null {
+  const n = prim.kind === "line" ? 2 : 3, tags = prim.kind === "line" ? vertexNodes.line : vertexNodes.tri, src = prim.kind === "line" ? pos.line : pos.tri;
+  let best: number | null = null, bestD = Infinity;
+  for (let k = 0; k < n; k++) {
+    const id = tags[n * prim.index + k];
+    if (id === undefined || !Number.isFinite(id)) continue;
+    const o = 3 * n * prim.index + 3 * k;
+    const d = Math.hypot(src[o]! - point[0], src[o + 1]! - point[1], src[o + 2]! - point[2]);
+    if (d < bestD) [best, bestD] = [id, d];
+  }
+  return best;
+}
+
+/**
+ * The objects that draw a selection over the model (ADR 0138 D8): the selected
+ * triangles filled, as an index over the faces' own position attribute; the
+ * selected segments as thick lines and each selected element's outline as
+ * thinner ones; the selected nodes as points. All without
+ * depth test, and every one on HALO_LAYER as well as the default layer, so the
+ * halo pass rings the whole selection.
  */
 export function highlightObjects(
-  lp: Float32Array,
-  tp: Float32Array,
-  prims: readonly Prims[],
+  facePositions: THREE.BufferAttribute | null,
+  triIndex: Uint32Array,
+  segmentPositions: Float32Array,
+  outlinePositions: Float32Array,
+  nodePositions: Float32Array,
   makeLines: (positions: Float32Array, widthPx: number) => THREE.Object3D,
+  makePoints: (positions: Float32Array) => THREE.Object3D,
 ): THREE.Object3D[] {
-  const seg: number[] = [], tri: number[] = [], outline: number[] = [];
-  for (const p of prims) {
-    for (const i of p.lines) for (let k = 0; k < 6; k++) seg.push(lp[6 * i + k]!);
-    for (const i of p.tris) for (let k = 0; k < 9; k++) tri.push(tp[9 * i + k]!);
-    outline.push(...outlineOf(tp, p.tris));
-  }
   const out: THREE.Object3D[] = [];
-  const thick = (pos: Float32Array, width: number) => {
-    const o = makeLines(pos, width);
-    o.renderOrder = 10;
+  const noDepth = (o: THREE.Object3D, order: number) => {
+    o.renderOrder = order;
     const m = (o as THREE.Mesh).material as THREE.Material | undefined;
     if (m) m.depthTest = false;
-    return o;
+    out.push(o);
   };
-  if (seg.length) out.push(thick(new Float32Array(seg), 9));
-  if (outline.length) out.push(thick(new Float32Array(outline), 6));
-  if (tri.length) {
+  if (segmentPositions.length) noDepth(makeLines(segmentPositions, 9), 10);
+  if (outlinePositions.length) noDepth(makeLines(outlinePositions, 6), 10);
+  if (facePositions && triIndex.length) {
     const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(tri), 3));
-    const m = new THREE.MeshBasicMaterial({
-      color: SELECTION_COLOUR, side: THREE.DoubleSide, transparent: true, opacity: 0.6, depthTest: false,
-    });
-    const fill = new THREE.Mesh(g, m);
-    fill.renderOrder = 9;
-    out.push(fill);
+    g.setAttribute("position", facePositions);
+    g.setIndex(new THREE.BufferAttribute(triIndex, 1));
+    const fill = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: SELECTION_COLOUR, side: THREE.DoubleSide, transparent: true, opacity: 0.6 }));
+    fill.frustumCulled = false;
+    noDepth(fill, 9);
   }
+  if (nodePositions.length) noDepth(makePoints(nodePositions), 11);
   for (const o of out) o.layers.enable(HALO_LAYER);
   return out;
+}
+
+/** What a hit names: the element, the point, and the primitive (original segment, triangle, or frame-face triangle index). */
+export interface Hit {
+  element: number;
+  point: THREE.Vector3;
+  prim: { kind: "line" | "tri" | "frame"; index: number };
 }
 
 /**
@@ -130,7 +236,7 @@ export function hitElement(
   frameFaces: THREE.Object3D | null = null,
   frameTriMap: Int32Array | null = null,
   frameTriElement: Int32Array | null = null,
-): { element: number; point: THREE.Vector3 } | null {
+): { element: number; point: THREE.Vector3; prim: Hit["prim"] } | null {
   if (lines && lines.visible) {
     const hits = raycaster.intersectObject(lines, false).filter((h) => h.faceIndex !== undefined && h.faceIndex !== null);
     if (hits.length && !clipped(hits[0]!.point)) {
@@ -138,25 +244,28 @@ export function hitElement(
       const coincident = hits.filter((h) => h.distance <= near);
       const ops = coincident.find((h) => elements[lineElement[drawn.lineMap[h.faceIndex!]!]!]!.startsWith("opensees/element/"));
       const h = ops ?? coincident[0]!;
-      return { element: lineElement[drawn.lineMap[h.faceIndex!]!]!, point: h.point };
+      const seg = drawn.lineMap[h.faceIndex!]!;
+      return { element: lineElement[seg]!, point: h.point, prim: { kind: "line", index: seg } };
     }
   }
-  let bestFaceHit: { element: number; point: THREE.Vector3; distance: number } | null = null;
+  let bestFaceHit: { element: number; point: THREE.Vector3; distance: number; prim: Hit["prim"] } | null = null;
   if (faces && faces.visible) {
     const hit = raycaster.intersectObject(faces, false)[0];
     if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null && !clipped(hit.point)) {
-      bestFaceHit = { element: triElement[drawn.triMap[hit.faceIndex]!]!, point: hit.point, distance: hit.distance };
+      const t = drawn.triMap[hit.faceIndex]!;
+      bestFaceHit = { element: triElement[t]!, point: hit.point, distance: hit.distance, prim: { kind: "tri", index: t } };
     }
   }
   if (frameFaces && frameFaces.visible && frameTriMap && frameTriElement) {
     const hit = raycaster.intersectObject(frameFaces, false)[0];
     if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null && !clipped(hit.point)) {
       if (!bestFaceHit || hit.distance < bestFaceHit.distance) {
-        bestFaceHit = { element: frameTriElement[frameTriMap[hit.faceIndex]!]!, point: hit.point, distance: hit.distance };
+        const f = frameTriMap[hit.faceIndex]!;
+        bestFaceHit = { element: frameTriElement[f]!, point: hit.point, distance: hit.distance, prim: { kind: "frame", index: f } };
       }
     }
   }
-  if (bestFaceHit) return { element: bestFaceHit.element, point: bestFaceHit.point };
+  if (bestFaceHit) return { element: bestFaceHit.element, point: bestFaceHit.point, prim: bestFaceHit.prim };
   return null;
 }
 
