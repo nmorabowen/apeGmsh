@@ -130,8 +130,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="compare with the committed snapshot; write nothing")
     args = ap.parse_args(argv)
     pin = read_pin()
-    new = snapshot(pin, fetch_source(pin, args.fork))
-    body = json.dumps(new, indent=2) + "\n"
+    text = fetch_source(pin, args.fork)
+    count = len(extract_subcommands(text))
+    body = json.dumps(snapshot(pin, text), indent=2) + "\n"
     if args.check:
         old = SNAPSHOT.read_text(encoding="utf-8") if SNAPSHOT.exists() else ""
         if old != body:
@@ -139,12 +140,12 @@ def main(argv: list[str] | None = None) -> int:
                   f"{pin['tag']} ({pin['sha'][:9]}): re-run without --check",
                   file=sys.stderr)
             return 1
-        print(f"up to date: {len(new['subcommands'])} subcommands at {pin['tag']}")  # type: ignore[arg-type]
+        print(f"up to date: {count} subcommands at {pin['tag']}")
         return 0
     SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
     SNAPSHOT.write_text(body, encoding="utf-8", newline="\n")
-    print(f"wrote {SNAPSHOT.relative_to(REPO)}: {len(new['subcommands'])} "  # type: ignore[arg-type]
-          f"subcommands at {pin['tag']} ({pin['sha'][:9]})")
+    print(f"wrote {SNAPSHOT.relative_to(REPO)}: {count} subcommands at "
+          f"{pin['tag']} ({pin['sha'][:9]})")
     return 0
 
 
