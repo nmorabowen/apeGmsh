@@ -26,6 +26,8 @@ export type ModelEvent =
   | { type: "selectNodes"; tags: readonly number[]; mode: "replace" | "add" | "toggle" | "remove" }
   /** ADR 0138 D6: put back the members the last selection edit replaced (Ctrl+Z), or redo the edit undone last (Ctrl+Y) */
   | { type: "undoSelection" }
+  /** ADR 0138 D12: a saved set (by its row) into the selection of its kind, made active: replace, add or remove */
+  | { type: "selectSet"; row: number; mode: "replace" | "add" | "remove" }
   | { type: "redoSelection" }
   | { type: "hover"; at: Pick | DeclPath | null }
   | { type: "setHidden"; decls: readonly DeclPath[]; hidden: boolean }

@@ -11,7 +11,7 @@
 // Pure: the node table comes in from the BlobStore (the effects pass it).
 
 import { selectedElementsOf } from "./search.ts";
-import type { SetKind, State, WorkspaceSaveIn } from "./types.ts";
+import type { DeclPath, SetKind, State, WorkspaceSaveIn, WorkspaceSetIn } from "./types.ts";
 
 /** A save another program blocked: the typed refusal of HG9 rule 2 (main/workspace.ts answers it; the panel shows it). */
 export function heldRefusal(file: string): Extract<WorkspaceSaveIn, { ok: false }> {
@@ -73,6 +73,42 @@ export function nodeMembersOf(s: State, nodes: NodeTable | null): Members {
   }
   if (ids.length === 0) return { ok: false, reason: "no selected node is in the model's node table" };
   return { ok: true, ids, notes };
+}
+
+/** The element declaration carrying each OpenSees element tag, built once per read of the declarations. */
+const byTag = new WeakMap<State["decls"], Map<number, DeclPath>>();
+
+function elementOfTag(s: State): Map<number, DeclPath> {
+  let m = byTag.get(s.decls);
+  if (!m) {
+    m = new Map();
+    for (const d of Object.values(s.decls)) for (const meta of d.element?.metas ?? []) if (!m.has(meta.tag)) m.set(meta.tag, d.path);
+    byTag.set(s.decls, m);
+  }
+  return m;
+}
+
+/**
+ * ADR 0138 D12: what a saved set selects. Its members are OpenSees tags: an
+ * element set's go to the declarations that carry them, a node set's are the
+ * node tags. A member the set's verdict says no longer matches the model, and
+ * an element tag no declaration carries, are left out; `taken` of `total`
+ * says how many came in.
+ */
+export function setTargets(s: State, set: WorkspaceSetIn): { kind: "element" | "node"; decls: DeclPath[]; nodes: number[]; taken: number; total: number } {
+  const matched = set.verdict ? set.ids.filter((_, i) => set.verdict!.members[i] !== false) : [...set.ids];
+  if (set.kind === "nodes") return { kind: "node", decls: [], nodes: matched, taken: matched.length, total: set.ids.length };
+  const of = elementOfTag(s), decls: DeclPath[] = [];
+  for (const tag of matched) {
+    const d = of.get(tag);
+    if (d !== undefined) decls.push(d);
+  }
+  return { kind: "element", decls: [...new Set(decls)], nodes: [], taken: decls.length, total: set.ids.length };
+}
+
+/** The workspace's sets as read, or none. */
+export function savedSets(s: State): readonly WorkspaceSetIn[] {
+  return s.workspace.read?.status === "ready" ? s.workspace.read.sets : [];
 }
 
 /** The set kind a new set takes: the active selection kind (ADR 0138 D2, D12). */

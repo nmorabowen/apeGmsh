@@ -388,6 +388,15 @@ code { font-family: var(--mono); }
   body:not([data-rail-collapsed="true"]) #selection-bar { left: auto; right: 498px; transform: none; }
 }
 .selection-hint { margin: 0 6px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+/* ADR 0138 D12: the saved sets of the active kind, over the bar. */
+.selection-sets {
+  position: absolute; bottom: calc(100% + 6px); right: 0; min-width: 100%; max-height: 40vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 9px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.selection-set { display: flex; align-items: center; gap: 4px; }
+.selection-set-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 12px var(--font); color: var(--text); }
+.selection-set-detail, .selection-sets-empty { margin: 0 6px; font-size: 11px; color: var(--muted); white-space: nowrap; }
 #selection-bar button:disabled { cursor: default; opacity: 0.5; }
 /* ADR 0138 D7: the box being dragged (dashed: right to left, touching) and its count. */
 .box-select {

@@ -28,6 +28,7 @@ import { reduceUser } from "./reduce/user.ts";
 import { reduceVariants } from "./reduce/variants.ts";
 import { reduceWindows } from "./reduce/windows.ts";
 import { reduceWorkspace, workspaceForAnotherModel } from "./reduce/workspace.ts";
+import { savedSets, setTargets } from "./workspace.ts";
 import { elementsOfDecl, selectedElementsOf } from "./search.ts";
 import {
   combinationFieldsOf,
@@ -294,7 +295,7 @@ export function reduce(s: State, e: Event): State {
 }
 
 /** ADR 0138 D6: the events that edit a selection, each one step of its undo. */
-const SELECTION_EDITS: ReadonlySet<Event["type"]> = new Set(["select", "selectAdd", "selectDecls", "clearSelection", "selectNodes"]);
+const SELECTION_EDITS: ReadonlySet<Event["type"]> = new Set(["select", "selectAdd", "selectDecls", "clearSelection", "selectNodes", "selectSet"]);
 
 /** How many selection edits undo keeps. Steps share the store's immutable arrays, so a step costs a few references. */
 export const SELECTION_UNDO_LIMIT = 100;
@@ -593,6 +594,16 @@ function reduceEvent(s: State, e: Event): State {
       const nodes = editNodes(s.selection.nodes, e.tags, e.mode);
       const same = nodes.length === s.selection.nodes.length && nodes.every((t, i) => t === s.selection.nodes[i]);
       return same ? s : { ...s, selection: { ...s.selection, nodes } };
+    }
+    case "selectSet": {
+      if (!["replace", "add", "remove"].includes(e.mode)) throw new RangeError(`selectSet: ${JSON.stringify(e.mode)} is not replace, add or remove`);
+      const set = savedSets(s).find((x) => x.row === e.row);
+      if (!set) throw new Error(`selectSet: the workspace read holds no set at row ${e.row}`);
+      const t = setTargets(s, set);
+      const active = { ...s, selection: { ...s.selection, active: t.kind } };
+      if (t.kind === "node") return reduceEvent(active, { type: "selectNodes", tags: t.nodes, mode: e.mode });
+      if (e.mode === "replace" && t.decls.length === 0) return reduceEvent(active, { type: "clearSelection", kind: "element" });
+      return reduceEvent(active, { type: "selectDecls", decls: t.decls, add: e.mode === "add", remove: e.mode === "remove" });
     }
     case "undoSelection":
       return stepSelection(s, "past");
