@@ -6,7 +6,8 @@ with it (ADR 0121 D5).
 **Owner:** nmora
 
 **Builds on** [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md). **Keeps** the ceiling the owner set on #2362
-(2^24 nodes or elements per stage, about 15M triangles, refused by name in #2373). **Amends** ADR 0112 D5, D6 and D7 (D14
+(2^24 nodes and 2^24 elements per stage, about 15M triangles; #2373 specifies its named refusal, which is not built yet).
+**Amends** ADR 0112 D5, D6 and D7 (D14
 here). **Settles** the hosting question that ADR 0135 D5 (#3040) leaves open. **Supersedes** nothing.
 
 **Evidence:** [`internal_docs/spike_viewer_tool_host.md`](../../internal_docs/spike_viewer_tool_host.md) for tool hosting;
@@ -70,14 +71,21 @@ took about 110 ms and added 29 to 37 MB of private memory.
 
 **D1. The stated support is what was tested.** About 130,000 cells, with up to 8 light live tool tiles, on a 24 GB machine
 with memory available. The 2^24 ceiling stays as the absolute limit. It is not a promise that a model that size will open:
-memory is expected to stop one first. The statement changes only with new measurements (#3056).
+memory is expected to stop one first. It comes from V8's cap of 2^24 entries in a `Map` or `Set`, and #2373 will implement
+its refusal at open; until then a model past it fails with an unnamed `RangeError`. The statement changes only with new
+measurements (#3056).
 
 **D2. Loading moves off the main process's UI thread.** Opening model and results files and scanning histories move to a
 utility process (#3058), so that a slow load leaves the windows responsive. This is justified by the blocking itself. It is
-not claimed to cure the observed hang. It has not been prototyped.
+not claimed to cure the observed hang. It has not been prototyped. The file work behind `model:open`, `geometry:open`,
+`results:open`, `results:scan` and `results:scanCancel` moves. #3058 decides `particles:index`, `compare:model` and the
+`.user.h5` reads. Windows, dialogs, drag-and-drop and open requests, the path allow-list, file watching, go-to-source, app
+config and IPC routing stay in main.
 
-**D3. Step reads stay in main for now.** A read costs about 10 ms. They are reconsidered with the numbers from #3058, or when
-a read regularly passes about 50 ms or measurably blocks the app.
+**D3. Step reads stay in main until #3058 measures the hop.** A read costs about 10 ms. This is not a permanent placement:
+`ResultsHost` holds the open file and index that `results:readStep` uses, so moving `results:open` needs either a second open
+in main or step reads through the utility process. #3058 decides which from its numbers. They are also reconsidered when a
+read regularly passes about 50 ms or measurably blocks the app.
 
 **D4. Memory limits arrive in two stages.**
 
@@ -90,7 +98,9 @@ a read regularly passes about 50 ms or measurably blocks the app.
 first separate-renderer tool (#3059), and not before.
 
 **D6. No step prefetch and no step worker yet.** Playback follows a clock and skips steps when it falls behind, and the
-newest request wins. Either is reconsidered when reads, and not drawing, are shown to limit playback on a real model.
+newest request wins. Prefetch is reconsidered when reads, and not drawing, are shown to limit playback or scrubbing on a real
+model. A step worker is reconsidered when a read regularly passes about 50 ms or measurably blocks the app. These triggers,
+and the 50 ms, are judgement and not measured thresholds.
 
 **D7. Step changes update existing GPU buffers.** They do not rebuild the scene.
 
