@@ -31,6 +31,7 @@ import os
 import re
 import secrets
 import socket
+import sys
 import time
 from pathlib import Path
 from typing import Optional, Sequence
@@ -141,6 +142,9 @@ def write_user_file(
     zone whole, and ``None`` leaves it untouched; so does ``entities`` (an
     :class:`~apeGmsh.results.user.Entities`). A ``target="entities"`` result
     must name rows of the ``/entities`` the file holds after this write.
+    On Windows, a file another program still holds open after the retries
+    refuses the write (:class:`~apeGmsh.results.user.UserWriteRefused`,
+    ``held-open``); the old file stays whole and the partial is removed.
     """
     target = Path(path)
     if not target.name.endswith(SUFFIX) or target.name == SUFFIX:
@@ -192,7 +196,12 @@ def write_user_file(
                 modes, spectra, entities)
         _fsync(partial)
         _refuse_if_moved(target, previous)
-        _replace(partial, target)
+        try:
+            _replace(partial, target)
+        except PermissionError as exc:
+            if not _held_open(target, exc):
+                raise
+            raise UserWriteRefused(f"held-open: {_held_detail(target, exc)}") from exc
     except BaseException:
         with contextlib.suppress(OSError):  # the first failure is the one to report
             partial.unlink(missing_ok=True)
@@ -607,3 +616,27 @@ def _replace(partial: Path, target: Path) -> None:
             if attempt == _REPLACE_TRIES - 1:
                 raise
             time.sleep(_REPLACE_WAIT_S)
+
+
+#: ``ERROR_ACCESS_DENIED`` and ``ERROR_SHARING_VIOLATION``: what Windows answers a
+#: replace onto a file another process holds open (h5py, h5wasm or a plain handle).
+_HELD_WINERRORS = frozenset({5, 32})
+
+
+def _held_open(target: Path, exc: PermissionError) -> bool:
+    """Whether a replace that still failed after ``_replace``'s retries met a holder.
+
+    Only Windows blocks a replace onto an open file; a POSIX ``PermissionError``
+    is a real permission problem. A read-only target also answers ``WinError 5``
+    and is not a holder, so it keeps its own error.
+    """
+    if sys.platform != "win32":
+        return False
+    return (exc.winerror in _HELD_WINERRORS and target.is_file()
+            and os.access(target, os.W_OK))
+
+
+def _held_detail(target: Path, exc: PermissionError) -> str:
+    """What a ``held-open`` refusal says: the file, the OS error, and that nothing changed."""
+    return (f"another program holds {target} open, so it cannot be replaced "
+            f"({exc.strerror}); nothing was replaced. Close it there and write again.")

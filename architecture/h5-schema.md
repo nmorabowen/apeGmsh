@@ -2963,7 +2963,11 @@ other writer's data. A writer verifies its partial, bit-comparing the `DATA` it
 wrote, and compares `/meta@revision` immediately before the replace: if it moved, the
 write refuses, so the second of two writers refuses rather than overwriting. A small
 window remains between that comparison and the replace. A writer deletes only its
-own partial on failure. It sweeps a leftover only if the leftover names this host and
+own partial on failure. On Windows, a replace that another program holding the file
+open (the app, h5py, a plain handle) still blocks after the writer's retries refuses
+the write, `held-open` (Python: `UserWriteRefused`, its message starting
+`held-open:`); the old file stays whole and the partial is deleted. A read-only file
+is not held and keeps its own error. It sweeps a leftover only if the leftover names this host and
 its PID is not alive, because a set may live in a synced folder, where another
 machine's live writer has a PID this host cannot see. `<host>` is the machine name in
 lower case, with each run of characters other than `a-z0-9` replaced by `_`; a writer
@@ -3181,7 +3185,11 @@ reads. VU9a probes it before building on it.
    `<stem>.workspace.h5.unreadable-<YYYYMMDDTHHMMSSZ>` (adding `-<n>` if that name
    exists; never overwriting a file), and say so: the app with a banner naming the
    aside file, Python with a warning. Then rename the partial onto the target.
-   Otherwise replace the target with the partial in one rename.
+   Otherwise replace the target with the partial in one rename. On Windows, a file
+   another program holds open (the app, h5py, a plain handle) blocks both: a rename
+   aside, or a replace still blocked after the writer's retries, refuses the write,
+   `held-open`. Nothing is renamed or replaced, and the partial is deleted. A
+   read-only file is not held and keeps its own error.
 7. Sweep leftover partials by the `.user.h5` rule. A failed sweep does not fail the
    write.
 
@@ -3204,14 +3212,19 @@ as tags, for example for `results.nodes.get(ids=...)`.
 is not an integer >= 1; such a file is unreadable, so a writer renames it aside;
 erratum, #2806). **Row refusals:**
 `empty-name`, `duplicate`, `bad-members`, `bad-param`, `no-tag-map`,
-`unknown-grammar`, `bad-json`, `bad-plot`, `bad-shot`.
+`unknown-grammar`, `bad-json`, `bad-plot`, `bad-shot`. **Write refusals** (Python,
+`WorkspaceWriteRefused`, see Writing) include `newer`, `unpaired`, `bad-row`,
+`partial-mismatch`, `revision-moved` and `held-open`.
 
 ## `<study>.variants.json`: the variants manifest (ADR 0132)
 
 Decided in ADR 0132 (D8, D9; Accepted 2026-11-03), completing ADR 0130 A7. It lists the sets of one
 study that differ in stiffness or another parameter. `<study>` is any name that is
 also a file name. The app reads it and never writes it; Python, a pipeline or a
-human writes it, Python through a partial and a replace. The JSON Schema is
+human writes it, Python through a partial and a replace. On Windows, a replace that
+another program holding the manifest open still blocks after the retries refuses
+the write (`VariantsWriteRefused`, `held-open`); the old manifest stays whole and the
+partial is deleted. The JSON Schema is
 [`schemas/variants.schema.json`](schemas/variants.schema.json), with examples in
 `schemas/examples/`.
 

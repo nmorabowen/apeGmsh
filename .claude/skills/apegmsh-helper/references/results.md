@@ -436,7 +436,10 @@ UserFile("run.user.h5").results().entries                   # what the file hold
   back, and replaces the file only if nobody else changed it meanwhile
   (the second writer gets `UserWriteRefused`). `combinations=` adds a
   generation and keeps the earlier ones as the backup; `results=` adds or
-  replaces entries by name; `None` leaves a zone untouched.
+  replaces entries by name; `None` leaves a zone untouched. On Windows, a
+  `.user.h5` another program holds open (the app, h5py, a viewer) refuses
+  the write too: `UserWriteRefused`, its message starting `held-open:`.
+  Close it there and write again; the old file stays whole.
 - **Staleness.** `staleness("run.user.h5", model_h5=..., results_file=...)`
   reports each zone. `/modes`, `/spectra` and `/entities` go stale when
   the model hashes change; a `/results` entry follows its `basis`
@@ -501,7 +504,8 @@ write_workspace("frame.workspace.h5", remove={"views": ["roof iso"]})
   program holds open (the app, h5py, a viewer) refuses the write too,
   with reason `held-open`: close it there and write again. The old file
   stays whole. An unreadable old file is renamed aside with a
-  `WorkspaceRenamedAside` warning, never overwritten.
+  `WorkspaceRenamedAside` warning, never overwritten; if it is held open,
+  that refuses as `held-open` too, before anything is renamed.
 - **Verdicts.** Each member's coordinates are stored with the set (a
   node's position, an element's centroid). When the model is re-meshed
   or re-declared, `verdicts()` looks for each member where it was:
@@ -529,7 +533,9 @@ m.refused                                       # rows that refuse alone, with r
 it (`..` and absolute paths refuse). It names a `<stem>.h5`, never a
 sibling such as `.ladruno` or `.user.h5`. A row may name a file that a
 later run will write: the write accepts it, and each read refuses that
-row with reason `missing` until the file is there. A combination
+row with reason `missing` until the file is there. On Windows, a manifest
+another program holds open refuses the write (`VariantsWriteRefused`,
+reason `held-open`); the old manifest stays whole. A combination
 never crosses variants (a term holds no path).
 (`tests/results/user/test_workspace_file.py`, `test_variants_manifest.py`)
 
