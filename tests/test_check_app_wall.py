@@ -87,6 +87,25 @@ def test_w3_flags_subprocess_js(repo, src):
 
 
 @pytest.mark.parametrize("src", [
+    "import { spawn } from 'node:child_process';\n",
+    "import cp from 'child_process';\n",
+    "const cp = require('node:child_process');\n",
+    "import { utilityProcess } from 'electron';\n",
+    "const { utilityProcess } = electron;\n",
+    "electron.utilityProcess;\n",
+])
+def test_w6_flags_a_process_module_outside_the_two(repo, src):
+    _put(repo, "apeGmshViewer/src/main/other.ts", src)
+    assert _rules(repo) == ["W6"]
+
+
+@pytest.mark.parametrize("rel", ["src/main/source.ts", "src/main/materialTest.ts", "scripts/launch.ts"])
+def test_w6_allows_the_two_modules_and_the_build_scripts(repo, rel):
+    _put(repo, f"apeGmshViewer/{rel}", "import { spawn } from 'node:child_process';\n")
+    assert _rules(repo) == []
+
+
+@pytest.mark.parametrize("src", [
     "subprocess.run(['python', 'x'])\n",
     "os.system('python x.py')\n",
 ])

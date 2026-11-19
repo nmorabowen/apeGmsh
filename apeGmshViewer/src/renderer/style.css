@@ -132,6 +132,11 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 .chip.cracks-ramp { flex: 1; min-width: 60px; }
 .legend-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
 .legend-note { color: var(--muted); font-size: 13px; max-width: 260px; margin: 4px 0 2px; }
+/* A step being read: shown only if the read is slow, and in space nothing else needs, so a quick step changes no pixel. */
+@keyframes step-pending-in { to { opacity: 1; } }
+.step-pending { margin-left: auto; font-weight: 500; letter-spacing: 0; text-transform: none; opacity: 0; animation: step-pending-in 120ms linear 400ms forwards; }
+.step-pending-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); visibility: hidden; }
+.step-pending-dot.on { visibility: visible; }
 .legend-mode { display: flex; gap: 4px; margin: 0 0 8px; }
 .legend-mode button {
   flex: 1; padding: 2px 8px; border-radius: 5px; cursor: pointer;
@@ -338,6 +343,7 @@ code { font-family: var(--mono); }
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center;
   column-gap: 6px; padding: 3px 0; border-top: 1px solid var(--line);
 }
+.sources-more { width: 100%; margin-top: 6px; }
 /* A key wraps only at the <wbr> after each `/`, never inside a segment. */
 .source-key { font: 11px var(--mono); color: var(--text); overflow-wrap: normal; word-break: keep-all; }
 .source-zone, .source-row.synthesised .source-key { color: var(--muted); }

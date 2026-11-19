@@ -485,6 +485,12 @@ test("global Units control in #header renders Native (when undeclared) & Units d
 
     unHeader = mountHeader(h.store);
     unLegend = mountLegend(h.store);
+    // The deformed shape's state rebuilds its own card, never the group rows (with deformed on, it changes on every step).
+    const groupRow = legendEl.all((e) => e.className.startsWith("legend-row"))[0];
+    assert.ok(groupRow, "the legend lists a group");
+    h.store.dispatch({ type: "setDeform", on: true });
+    assert.equal(legendEl.all((e) => e.className.startsWith("legend-row"))[0], groupRow);
+    h.store.dispatch({ type: "setDeform", on: false });
 
     // 1. Undeclared file: #header shows both .header-units-source ("Native") and .header-units-target ("Units")
     assert.equal(headerEl.hidden, false);

@@ -253,3 +253,14 @@ test("a model re-read replaces the listing; a failed read clears it", () => {
   const plain = reduce(s, { type: "fileLoaded", artifact: "model", load: loadModel(bridgeModel, new BlobStore(), null) });
   assert.deepEqual(sourcesOf(plain), []);
 });
+
+// #2837: a search per record is quadratic, about 12 s on a 130k-cell building.
+test("loading and listing the sources search no list per record, and answer the same", () => {
+  const refuse = (name: string) => ({ value: () => assert.fail(`${name} was called`) });
+  const path = Object.defineProperty([...bridgeZone.records.path], "indexOf", refuse("records.path.indexOf"));
+  const s = loaded(bridgeModel, { ...bridgeZone, records: { ...bridgeZone.records, path } });
+  Object.defineProperty(s.provenance, "find", refuse("provenance.find"));
+  assert.ok(s.provenance.length > 0);
+  assert.deepEqual(sourcesOf(s), sourcesOf(loaded(bridgeModel, bridgeZone)));
+  assert.deepEqual(s.decls, loaded(bridgeModel, bridgeZone).decls);
+});

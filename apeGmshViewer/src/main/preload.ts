@@ -221,4 +221,7 @@ contextBridge.exposeInMainWorld("viewer", {
   particleHarness: () => ipcRenderer.invoke("particles:harness"),
   particleHarnessStill: () => ipcRenderer.invoke("particles:harnessStill"),
   particleHarnessDone: (result: unknown) => ipcRenderer.invoke("particles:harnessDone", result),
+  // ADR 0135: one material tester run. The job names no executable and no file; main validates all of it.
+  materialTestRun: (job: unknown, seq: number) => ipcRenderer.invoke("materialTest:run", job, seq),
+  materialTestCancel: () => ipcRenderer.invoke("materialTest:cancel"),
 });

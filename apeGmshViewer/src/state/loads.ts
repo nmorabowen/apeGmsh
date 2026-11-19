@@ -1041,6 +1041,24 @@ interface ResolvedPatternData {
   readonly undrawn: ReadonlyMap<string, number>;
 }
 
+/** A pattern as parsed from the model: all but its series factor, which `factorAt` gives for a time. */
+interface ParsedPattern extends ResolvedPatternData {
+  readonly factorAt: (time: number | null) => number;
+}
+
+/**
+ * Every part of the state `loadsSummaryOf` reads. The memos below compare these
+ * and nothing else, so a selector that starts reading another part must name it
+ * here (test/loadsMemo.test.ts reads the summary through a recording proxy).
+ */
+export const LOADS_SUMMARY_INPUTS = ["blocks", "contour", "decls", "definitions", "loads", "ndm", "neutralLoads", "phase", "results", "sequence", "stage"] as const satisfies readonly (keyof State)[];
+
+/** Parsing the load tables is the summary's cost, and nothing it reads changes with the step. */
+let parsedMemo: { key: readonly unknown[]; patterns: readonly ParsedPattern[] } | null = null;
+let summaryMemo: { key: readonly unknown[]; summary: Omit<LoadsSummary, "time"> } | null = null;
+
+const sameKey = (a: readonly unknown[], b: readonly unknown[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
+
 function collectResolvedPatterns(s: State): {
   readonly patterns: readonly ResolvedPatternData[];
   readonly activeStageIndex: number | null;
@@ -1050,13 +1068,25 @@ function collectResolvedPatterns(s: State): {
 } {
   const units = loadsUnitsOf(s);
   const { index: activeStageIndex, label: activeStageLabel, time } = resolveActiveStage(s);
+  const key = [s.definitions, s.neutralLoads, s.decls, s.blocks, s.ndm, s.loads, activeStageIndex];
+  if (!parsedMemo || !sameKey(parsedMemo.key, key)) parsedMemo = { key, patterns: parsePatterns(s, activeStageIndex) };
+  const patterns = parsedMemo.patterns.map((p): ResolvedPatternData => {
+    const seriesFactor = p.factorAt(time);
+    return seriesFactor === p.entry.seriesFactor ? p : { ...p, entry: { ...p.entry, seriesFactor } };
+  });
+  return { patterns, activeStageIndex, activeStageLabel, time, units };
+}
+
+/** The load patterns and neutral cases of the model, as the stage shown activates them. */
+function parsePatterns(s: State, activeStageIndex: number | null): readonly ParsedPattern[] {
   // No stage picked shows the global patterns, before any stage's remove_sp.
   const removedSpStage = removedSpStageMapUpTo(s, activeStageIndex ?? -1);
   const is2D = s.ndm.ndm === 2;
   const defs = s.definitions;
   const selected = s.loads.selectedPatterns ? new Set(s.loads.selectedPatterns) : null;
 
-  const out: ResolvedPatternData[] = [];
+  const scaleBySeries = s.loads.scaleBySeries;
+  const out: ParsedPattern[] = [];
 
   const addOpsPattern = (pat: DefObject, stageLabel: string, stageIndex: number) => {
     const d = defs ? declOfTag(defs, "pattern", pat.tag) : null;
@@ -1096,7 +1126,7 @@ function collectResolvedPatterns(s: State): {
 
     const isSupportReaction = role === "support_reaction" || (nodalForcesCount === 0 && nodalMomentsCount === 0 && elemCount === 0 && spCount === 0 && spHoldsCount > 0);
     const seriesInfo = defs ? findPatternSeries(defs, pat) : { ts: null, label: null };
-    const seriesFactor = s.loads.scaleBySeries ? evaluatePatternSeriesFactor(defs, pat, time) : 1;
+    const factorAt = (t: number | null): number => (scaleBySeries ? evaluatePatternSeriesFactor(defs, pat, t) : 1);
 
     let active: boolean;
     if (selected !== null) {
@@ -1121,7 +1151,7 @@ function collectResolvedPatterns(s: State): {
         tag: pat.tag,
         role,
         synth,
-        seriesFactor,
+        seriesFactor: 1,
         seriesLabel: seriesInfo.label,
         active,
         counts: {
@@ -1138,6 +1168,7 @@ function collectResolvedPatterns(s: State): {
       sps,
       excitationDirection,
       undrawn,
+      factorAt,
     });
   };
 
@@ -1206,11 +1237,12 @@ function collectResolvedPatterns(s: State): {
         sps,
         excitationDirection: null,
         undrawn,
+        factorAt: () => 1,
       });
     }
   }
 
-  return { patterns: out, activeStageIndex, activeStageLabel, time, units };
+  return out;
 }
 
 /**
@@ -1219,7 +1251,16 @@ function collectResolvedPatterns(s: State): {
  * and unit labels.
  */
 export function loadsSummaryOf(s: State): LoadsSummary {
-  const { patterns, activeStageIndex, activeStageLabel, time, units } = collectResolvedPatterns(s);
+  const resolved = collectResolvedPatterns(s);
+  const { contour: c } = s;
+  // A step that leaves every series factor alone leaves the summary alone, but for its time.
+  const key = [parsedMemo!.patterns, resolved.activeStageLabel, c.declaredUnits, c.sourceUnits, c.targetUnits, ...resolved.patterns.map((p) => p.entry.seriesFactor)];
+  if (!summaryMemo || !sameKey(summaryMemo.key, key)) summaryMemo = { key, summary: summarize(s, resolved) };
+  return { ...summaryMemo.summary, time: resolved.time };
+}
+
+function summarize(s: State, resolved: ReturnType<typeof collectResolvedPatterns>): Omit<LoadsSummary, "time"> {
+  const { patterns, activeStageIndex, activeStageLabel, units } = resolved;
   const entries = patterns.map((p) => p.entry);
   const activeResolved = patterns.filter((p) => p.entry.active);
   const activePatterns = activeResolved.map((p) => p.entry);
@@ -1414,7 +1455,6 @@ export function loadsSummaryOf(s: State): LoadsSummary {
     activePatterns,
     activeStageIndex,
     activeStageLabel,
-    time,
     units,
     counts: {
       nodalForces,

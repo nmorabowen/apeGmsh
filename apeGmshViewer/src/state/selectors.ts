@@ -14,6 +14,7 @@ import { solidShapeOf } from "./slice.ts";
 import { activationNotice, activationOf, type Activation } from "./activation.ts";
 import { pairingNotice, pairResults, particleNotices, type ResultsPairing } from "./results.ts";
 // ADR 0134 D5 (owner D7 on #2992): the particles' colour scale, which panels/particleScale.ts draws.
+export { PLAY_SPEEDS, playMove, type PlayClock, type PlaySpeed } from "./playback.ts";
 export { particleScaleOf, type ParticleScale } from "./results.ts";
 import {
   climOf,
@@ -1168,6 +1169,15 @@ function jumpOf(src: DeclSource): { ok: true; source: DeclSource; label: string 
   return { ok: true, source: src, label: `${baseName(src.file)}:${src.line}` };
 }
 
+/** The listing's entries by key, built once per listing: `sourcesOf` asks for every record, so a search each is quadratic (#2837). */
+const provenanceIndex = new WeakMap<State["provenance"], ReadonlyMap<DeclPath, State["provenance"][number]>>();
+
+function provenanceEntryOf(entries: State["provenance"], key: DeclPath): State["provenance"][number] | undefined {
+  let index = provenanceIndex.get(entries);
+  if (!index) provenanceIndex.set(entries, index = new Map(entries.map((p) => [p.key, p])));
+  return index.get(key);
+}
+
 /**
  * Where go-to-source would jump for `decl`, or why it cannot. An unnamed
  * object's path (`#k`) is never joined: the app numbers unnamed objects in
@@ -1179,7 +1189,7 @@ export function sourceFor(s: State, decl: DeclPath): { ok: true; source: DeclSou
   if (!d) {
     // A /provenance record with no declaration in the app (a series, a
     // pattern, a synthesised object): the listing's go-to-source.
-    const r = s.provenance.find((p) => p.key === decl);
+    const r = provenanceEntryOf(s.provenance, decl);
     if (!r) return { ok: false, reason: `${decl} is not a declaration of the loaded model` };
     if (!r.source) return { ok: false, reason: `${decl} has no source frame in /provenance` };
     return jumpOf(r.source);

@@ -105,6 +105,88 @@ function exactInodes(fs: H5FS | null): void {
   exact.add(fs);
 }
 
+// -- A listing or lookup that says when a group index does not read ---------------------
+//
+// h5wasm's `Group.keys()` calls `Module.get_names`, whose C++ drops H5Literate2's status: when
+// a group's B-tree is damaged, the iteration stops and the names found so far come back as the
+// whole group, so a stage silently loses its results. `Group.get` calls `Module.get_type`, whose
+// C++ ignores both of its statuses: the same damage makes an existing dataset, and a name that
+// does not exist, come back as type 0, a group. The only trace is HDF5's error stack, which its
+// default handler writes to stderr, through `FS.write` on host fd 2.
+//
+// `checkedGroups` watches that write around each call. Any diagnostic during a listing is a
+// failure. A lookup needs the stack's content, because HDF5 also reports an error on a sound
+// file: a path below a dataset, through a dangling soft link or through an external link. Those
+// never reach the metadata cache, and a damaged index always fails loading into it. An object
+// header that does not load (`H5O_protect`) is not the index: the link was found, `get` answers
+// as before, and the object's own reads refuse it (the `.ladruno` torn-stage rule relies on this).
+//
+// h5wasm's throwing error handler is not used: its throw unwinds the C++ past H5Gclose, the
+// leaked group keeps the file open after `close()`, and a later open of that path shares the
+// stale file. These checks throw only after the binding has returned.
+
+/** h5wasm's group bindings: `Group.keys()` calls `get_names`, `Group.get` calls `get_type`. */
+interface H5GroupBinding {
+  get_names(file_id: bigint, path: string, recursive: boolean): string[];
+  get_type(file_id: bigint, path: string): number;
+}
+
+/** The `FS.write` HDF5's diagnostics pass through. */
+type H5FsWrite = (stream: { nfd?: unknown }, buffer: Uint8Array, offset: number, length: number, ...rest: unknown[]) => number;
+
+const watched = new WeakSet<object>();
+
+/** Whether an HDF5 error stack says a group's index could not be loaded. */
+function indexDidNotLoad(stack: string): boolean {
+  return stack.includes("major: Object cache") && !stack.includes("in H5O_protect()");
+}
+
+/**
+ * Make a listing HDF5 reported an error on, and a lookup through an index that does not read,
+ * throw, for every reader at once. Idempotent per module; a stand-in h5 with no `Module` (the
+ * open tests) has no groups. The error is a plain `Error`, what h5wasm raises for an unreadable
+ * object, so the readers' rules for a stage that does not read (`isH5Error`) apply to it.
+ */
+function checkedGroups(h5: { readonly FS: H5FS | null; readonly Module?: H5GroupBinding | null }): void {
+  const mod = h5.Module;
+  if (mod === undefined || mod === null || watched.has(mod)) return;
+  const fs = h5.FS as unknown as { write?: H5FsWrite };
+  if (typeof mod.get_names !== "function" || typeof mod.get_type !== "function" || typeof fs.write !== "function") {
+    throw new Error("h5wasm has no Module.get_names/get_type/FS.write, so a damaged group index cannot be detected; refusing to open HDF5 files (check the pinned h5wasm version)");
+  }
+  const write = fs.write.bind(fs);
+  const latin1 = new TextDecoder("latin1");
+  let diagnosed = false;
+  let stack: string | null = null;
+  fs.write = (stream, buffer, offset, length, ...rest) => {
+    if (stream.nfd === 2) {
+      diagnosed = true;
+      if (stack !== null) stack += latin1.decode(buffer.subarray(offset, offset + length));
+    }
+    return write(stream, buffer, offset, length, ...rest);
+  };
+  const names = mod.get_names;
+  mod.get_names = (file_id, path, recursive) => {
+    diagnosed = false;
+    const out = names(file_id, path, recursive);
+    if (diagnosed) throw new Error(`${path}: HDF5 could not list this group (its group index does not read)`);
+    return out;
+  };
+  const type = mod.get_type;
+  mod.get_type = (file_id, path) => {
+    stack = "";
+    try {
+      const out = type(file_id, path);
+      if (!indexDidNotLoad(stack)) return out;
+    } finally {
+      stack = null;
+    }
+    // The damaged index may be any group on the path, so the path does not lead the message.
+    throw new Error(`HDF5 could not look up ${path} (the index of a group on this path does not read)`);
+  };
+  watched.add(mod);
+}
+
 /**
  * VU9b (HG9 rule 2 on #2693): every file `openH5` opened and has not closed,
  * by its path as the caller named it. A writer that replaces a file closes
@@ -144,6 +226,7 @@ export function openH5<F>(h5: H5Openable<F>, path: string): F {
 function openTracked<F>(h5: H5RuleOpenable<F>, path: string, mode: "r" | "Sr", after?: () => void): F {
   prepare(h5);
   const f = new h5.File(path, mode);
+  checkedGroups(h5 as unknown as Parameters<typeof checkedGroups>[0]);
   const handle = f as unknown as { close?: () => unknown; file_id?: bigint | number };
   // A failed open (negative id) holds nothing; a handle is tracked until its own close.
   if (typeof handle.close === "function" && !(Number(handle.file_id) < 0)) {

@@ -6,6 +6,7 @@ import type { ClipEvent } from "./events/clip.ts";
 import type { ContourEvent } from "./events/contour.ts";
 import type { DeformEvent } from "./events/deform.ts";
 import type { LineDiagramEvent } from "./events/lineDiagram.ts";
+import type { MaterialTestEvent } from "./events/materialTest.ts";
 import type { ModelEvent } from "./events/model.ts";
 import type { OffersEvent } from "./events/offers.ts";
 import type { OverlaysEvent } from "./events/overlays.ts";
@@ -37,6 +38,7 @@ export type Event =
   | OverlaysEvent
   | WindowsEvent
   | OffersEvent
-  | CameraEvent;
+  | CameraEvent
+  | MaterialTestEvent;
 
 export type EventType = Event["type"];

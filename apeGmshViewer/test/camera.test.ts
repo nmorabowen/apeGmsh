@@ -16,6 +16,7 @@ import {
   type HeadingView, type ListenTarget, type ViewCamera,
 } from "../src/renderer/navigation.ts";
 import { headingForZone, zoneById } from "../src/renderer/viewcube.ts";
+import { Viewport } from "../src/renderer/viewport.ts";
 import { BlobStore } from "../src/state/blobs.ts";
 import { loadModel } from "../src/state/load.ts";
 import { canonicalPose, initialState, reduce } from "../src/state/reduce.ts";
@@ -380,4 +381,32 @@ test("headingOfPose off the vertical is headingOf of the view direction", () => 
     const a = headingOfPose(f, new THREE.Vector3(...pose.up)), b = headingOf(f);
     near([a.yaw, a.tilt], [b.yaw, b.tilt], 1e-15, "heading");
   }
+});
+
+/** The heading `Viewport.frame` opens on for these drawn positions, through the real fit. */
+function openingHeading(tri: number[], lines: number[], radius = 5): { yaw: number; tilt: number } {
+  let heading: { yaw: number; tilt: number } | null = null;
+  const proto = Viewport.prototype as unknown as { frame: (this: unknown, info: unknown) => void; fit: unknown };
+  const camera = new THREE.PerspectiveCamera();
+  const self = {
+    fit: proto.fit,
+    blobs: { f32: (a: Float32Array) => a },
+    nav: { setHeading: (h: { yaw: number; tilt: number }) => (heading = h), orthoDistance: 0, target: new THREE.Vector3(), updated: () => {} },
+    perspCamera: camera,
+    camera,
+    host: { clientWidth: 800, clientHeight: 600 },
+    panelWidth: () => 0,
+    requestRender: () => {},
+  };
+  proto.frame.call(self, { center: [0, 0, 0], radius, triPositions: Float32Array.from(tri), linePositions: Float32Array.from(lines) });
+  return heading!;
+}
+
+test("a slab on columns opens isometric: lines out of the slab's plane count (#2667)", () => {
+  const slab = [0, 0, 3, 6, 0, 3, 6, 6, 3];
+  const iso = headingOf(ISO_FORWARD.clone());
+  assert.deepEqual(openingHeading(slab, [0, 0, 0, 0, 0, 3]), iso);
+  assert.deepEqual(openingHeading(slab, [0, 0, 3, 6, 0, 3]), { yaw: 0, tilt: 0 }, "edge beams in the slab's plane keep the plan view");
+  assert.deepEqual(openingHeading(slab, []), { yaw: 0, tilt: 0 }, "a flat shell opens in plan");
+  assert.deepEqual(openingHeading([], [0, 0, 0, 1, 0, 0]), { yaw: 0, tilt: 0 }, "a flat frame opens in plan");
 });

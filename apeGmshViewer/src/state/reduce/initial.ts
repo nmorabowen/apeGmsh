@@ -7,6 +7,7 @@ import { initialLineDiagramState } from "../lineDiagram.ts";
 import { initialSearch, initialSpotlight } from "../spotlight.ts";
 import type { ContourState, DeformState, LineDiagramState, SpatialNdm, State } from "../types.ts";
 import { initialCamera } from "./camera.ts";
+import { initialMaterialTest } from "./materialTest.ts";
 import { initialOffers } from "./offers.ts";
 import { initialCracks, initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./overlays.ts";
 import { initialVariants } from "./variants.ts";
@@ -62,6 +63,7 @@ export const initialState: State = {
   provenanceOrigin: false,
   source: { seq: 0, request: null, last: null },
   view: { frameSeq: 0 },
+  materialTest: initialMaterialTest,
   definitions: null,
   neutralLoads: null,
   sequence: { status: "absent" },
