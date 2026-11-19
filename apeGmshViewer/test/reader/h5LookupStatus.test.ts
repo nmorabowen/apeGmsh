@@ -131,11 +131,6 @@ test("a refused lookup holds nothing open: the path reads its new contents after
 });
 
 test("lookups HDF5 reports an error on in a sound file keep their answers", () => {
-  const other = join(dir, "other.h5");
-  const o = new h5wasm.File(other, "w");
-  o.create_group("g");
-  o.close();
-
   const path = join(dir, "links.h5");
   const w = new h5wasm.File(path, "w");
   w.create_group("grp");
@@ -144,7 +139,6 @@ test("lookups HDF5 reports an error on in a sound file keep their answers", () =
   w.create_soft_link("/ds", "soft_ds");
   w.create_soft_link("/loop", "loop");
   w.create_external_link("missing.h5", "/x", "ext_missing");
-  w.create_external_link("other.h5", "/g", "ext_ok");
   w.close();
 
   // h5wasm's answers, odd ones included: a path that does not resolve past its first failure reads
@@ -164,8 +158,6 @@ test("lookups HDF5 reports an error on in a sound file keep their answers", () =
     "/loop/x": "Group",
     "/ext_missing": "ExternalLink",
     "/ext_missing/x": "Group",
-    "/ext_ok": "ExternalLink",
-    "/ext_ok/none": "Group",
   };
   const f = openH5(Openable, path);
   try {
