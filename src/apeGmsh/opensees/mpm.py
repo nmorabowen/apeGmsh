@@ -16,6 +16,11 @@ member                    fork line
                           set (``mpm particles -file``), see below
 :class:`Fix`              ``mpm fix <face> <components>``
 :class:`Wall`             ``mpm wall <face> <mu>``
+:class:`Gridvel`          ``mpm gridvel <name> box <lo..> <hi..> v <v|free..>
+                          [start <t0>] [translate <axis>]
+                          [profile <t0> <Tr> <t1>]``
+:class:`GridvelAffine`    ``mpm gridvel <name> box <lo..> <hi..> affine <L>
+                          [ref <x..>]``
 :class:`Gravity`          ``mpm gravity <g..>``
 :class:`TimeSeries`       ``mpm timeSeries <tsTag>``
 :class:`Damping`          ``mpm damping local <alpha>``
@@ -50,7 +55,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from ._internal.tag_resolution import resolve_tag
 from ._internal.types import MPM, NDMaterial, Primitive
@@ -74,6 +79,8 @@ __all__ = [
     "Flip",
     "Gravity",
     "Grid",
+    "Gridvel",
+    "GridvelAffine",
     "MassCutoff",
     "Output",
     "Safety",
@@ -293,6 +300,236 @@ class Wall(MPM):
 
     def args(self) -> tuple[int | float | str, ...]:
         return ("wall", self.face, self.mu)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.command("mpm", *self.args())
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+#: The token that leaves a :class:`Gridvel` component unprescribed.
+FREE = "free"
+_AXES = "xyz"
+
+
+def _box(cls: str, box: object) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """``(lo, hi)``: two corners of one length, 2 or 3, ``lo <= hi`` per axis."""
+    try:
+        lo_in, hi_in = cast(Any, box)
+        lo = tuple(_finite(f"{cls}.box lo", v) for v in lo_in)
+        hi = tuple(_finite(f"{cls}.box hi", v) for v in hi_in)
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, MPMError):
+            raise
+        raise MPMError(f"{cls}.box must be a pair (lo, hi) of corner "
+                       f"coordinates, got {box!r}") from None
+    if len(lo) not in (2, 3) or len(hi) != len(lo):
+        raise MPMError(f"{cls}.box corners need 2 or 3 coordinates each, one "
+                       f"per grid axis, and the same count: got lo={lo}, "
+                       f"hi={hi}")
+    bad = [_AXES[d] for d in range(len(lo)) if lo[d] > hi[d]]
+    if bad:
+        raise MPMError(f"{cls}.box has lo > hi on axis {', '.join(bad)}: "
+                       f"lo={lo}, hi={hi}")
+    return lo, hi
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Gridvel(MPM):
+    """``mpm gridvel <name> box <lo..> <hi..> v <num|free ..> [start <t0>]
+    [translate <axis>] [profile <t0> <Tr> <t1>]``: a prescribed grid velocity.
+
+    Every live grid node inside the closed box ``box = (lo, hi)`` has the
+    velocity components of ``v`` prescribed, one per grid axis; a component
+    given as ``"free"`` is left to the engine, but not all of them. Values
+    are in the model's units and ``start``/``profile`` times are domain
+    time; there is no timeSeries binding (fork WP-232k, D17).
+
+    * ``start=t0``: the condition acts from domain time ``t0`` on.
+    * ``translate="x"|"y"|"z"``: both box bounds move along that axis by
+      ``v[axis] * Phi(t)`` (``Phi`` the integral of the velocity factor), so
+      the box rides with the material it drives. That component of ``v``
+      cannot be ``"free"``.
+    * ``profile=(t0, Tr, t1)``: the velocity is ``v * phi(t)``, a trapezoid
+      rising from 0 at ``t0`` over ``Tr``, 1 until ``t1 - Tr``, 0 at
+      ``t1``; it needs ``Tr >= 0`` and ``t1 >= t0 + 2 Tr``, and it replaces
+      ``start`` (the condition is present from ``t = 0``).
+
+    The fork's ``track`` option is not offered: its semantics may change
+    with fork #1112 (ADR 0134 Amendment 3). Neither is ``setAffine``.
+
+    **Mode F only.** apeGmsh emits the fork's explicit engine (mode F),
+    which applies every form in both projections since
+    ``ladruno-v20261118b`` (fork #1109, D18). Mode A's rules (the
+    ``constraints`` handler a non-zero value needs, ``condForce``) do not
+    apply to an apeGmsh deck.
+
+    Refused here, by name: a name that is not one word, a box whose corners
+    disagree in length or have ``lo > hi``, a ``v`` of the wrong length or
+    all ``"free"``, ``profile`` with ``start``, a bad trapezoid, a
+    ``translate`` axis outside the box's dimension or on a free component.
+    At emit, :func:`mpm_block` refuses a box of another dimension than the
+    grid's and a second gridvel of one name. The fork refuses at
+    ``mpm analyze``, and apeGmsh does not pre-check: a gridvel and a ``fix``
+    face, or two gridvels, prescribing different values on one node
+    component.
+    """
+
+    name: str
+    box: tuple[tuple[float, ...], tuple[float, ...]]
+    v: tuple[float | str, ...]
+    start: float | None = None
+    translate: str | None = None
+    profile: tuple[float, float, float] | None = None
+
+    def __post_init__(self) -> None:
+        _word("Gridvel.name", self.name)
+        lo, hi = _box("Gridvel", self.box)
+        ndm = len(lo)
+        try:
+            v_in = tuple(self.v)
+        except TypeError:
+            raise MPMError(f"Gridvel.v must be a sequence of {ndm} components, "
+                           f"got {self.v!r}") from None
+        if len(v_in) != ndm:
+            raise MPMError(f"Gridvel.v needs {ndm} components (one per axis of "
+                           f"box), got {len(v_in)}: {v_in!r}")
+        v: list[float | str] = []
+        for c in v_in:
+            if isinstance(c, str):
+                if c != FREE:
+                    raise MPMError(f"Gridvel.v components are numbers or "
+                                   f"{FREE!r}, got {c!r}")
+                v.append(FREE)
+            else:
+                v.append(_finite("Gridvel.v", c))
+        if all(c == FREE for c in v):
+            raise MPMError(f"Gridvel.v is {FREE!r} on every component, so the "
+                           f"gridvel prescribes nothing: give at least one "
+                           f"value")
+        if self.start is not None:
+            object.__setattr__(self, "start", _finite("Gridvel.start", self.start))
+        if self.translate is not None:
+            if self.translate not in tuple(_AXES[:ndm]):
+                raise MPMError(f"Gridvel.translate must be one of "
+                               f"{tuple(_AXES[:ndm])} for a {ndm}-D box, got "
+                               f"{self.translate!r}")
+            if v[_AXES.index(self.translate)] == FREE:
+                raise MPMError(f"Gridvel.translate={self.translate!r} moves the "
+                               f"box by v[{self.translate}], which is "
+                               f"{FREE!r}: the box would never move")
+        if self.profile is not None:
+            if self.start is not None:
+                raise MPMError("Gridvel: profile= replaces start= (a profiled "
+                               "condition is present from t = 0); give one")
+            try:
+                t0, tr, t1 = (_finite("Gridvel.profile", p) for p in self.profile)
+            except (TypeError, ValueError) as exc:
+                if isinstance(exc, MPMError):
+                    raise
+                raise MPMError(f"Gridvel.profile must be (t0, Tr, t1), got "
+                               f"{self.profile!r}") from None
+            if tr < 0.0 or t1 < t0 + 2.0 * tr:
+                raise MPMError(f"Gridvel.profile (t0, Tr, t1) = {(t0, tr, t1)} "
+                               f"needs Tr >= 0 and t1 >= t0 + 2 Tr")
+            object.__setattr__(self, "profile", (t0, tr, t1))
+        object.__setattr__(self, "box", (lo, hi))
+        object.__setattr__(self, "v", tuple(v))
+
+    @property
+    def ndm(self) -> int:
+        return len(self.box[0])
+
+    def args(self) -> tuple[int | float | str, ...]:
+        lo, hi = self.box
+        out: list[int | float | str] = [
+            "gridvel", self.name, "box", *lo, *hi, "v", *self.v]
+        if self.start is not None:
+            out += ["start", self.start]
+        if self.translate is not None:
+            out += ["translate", self.translate]
+        if self.profile is not None:
+            out += ["profile", *self.profile]
+        return tuple(out)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.command("mpm", *self.args())
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class GridvelAffine(MPM):
+    """``mpm gridvel <name> box <lo..> <hi..> affine <L> [ref <x..>]``: an
+    affine grid velocity, ``v = L (x - ref)`` on every component.
+
+    Every live grid node inside the closed box ``box = (lo, hi)`` has its
+    velocity prescribed from its coordinates ``x``. ``L`` is the ndm x ndm
+    velocity gradient, given as its rows and written row-major; ``ref``
+    (default the origin) is the point of zero velocity. Units are the
+    model's (fork WP-232k, S1). The fork's ``setAffine`` (``L`` changed
+    between ``mpm analyze`` calls) is not offered: an apeGmsh deck declares
+    one ``L``.
+
+    **Mode F only**, as :class:`Gridvel`. Refused here, by name: a name that
+    is not one word, a bad box (as :class:`Gridvel`), an ``L`` that is not
+    ndm x ndm for the box's ndm, a ``ref`` of the wrong length. At emit,
+    :func:`mpm_block` refuses a box of another dimension than the grid's
+    and a second gridvel of one name (a :class:`Gridvel` and a
+    :class:`GridvelAffine` share the fork's gridvel names).
+    """
+
+    name: str
+    box: tuple[tuple[float, ...], tuple[float, ...]]
+    L: tuple[tuple[float, ...], ...]
+    ref: tuple[float, ...] | None = None
+
+    def __post_init__(self) -> None:
+        _word("GridvelAffine.name", self.name)
+        lo, hi = _box("GridvelAffine", self.box)
+        ndm = len(lo)
+        try:
+            rows = tuple(tuple(_finite("GridvelAffine.L", x) for x in row)
+                         for row in self.L)
+        except (TypeError, ValueError) as exc:
+            if isinstance(exc, MPMError):
+                raise
+            raise MPMError(f"GridvelAffine.L must be {ndm} rows of {ndm} "
+                           f"numbers, got {self.L!r}") from None
+        if len(rows) != ndm or any(len(r) != ndm for r in rows):
+            raise MPMError(f"GridvelAffine.L must be {ndm}x{ndm} for a "
+                           f"{ndm}-D box (given as its rows), got "
+                           f"{[len(r) for r in rows]} row lengths over "
+                           f"{len(rows)} rows")
+        if self.ref is not None:
+            try:
+                ref = tuple(_finite("GridvelAffine.ref", x) for x in self.ref)
+            except TypeError:
+                raise MPMError(f"GridvelAffine.ref must be {ndm} coordinates, "
+                               f"got {self.ref!r}") from None
+            if len(ref) != ndm:
+                raise MPMError(f"GridvelAffine.ref needs {ndm} coordinates (one "
+                               f"per axis of box), got {ref}")
+            object.__setattr__(self, "ref", ref)
+        object.__setattr__(self, "box", (lo, hi))
+        object.__setattr__(self, "L", rows)
+
+    @property
+    def ndm(self) -> int:
+        return len(self.box[0])
+
+    def args(self) -> tuple[int | float | str, ...]:
+        lo, hi = self.box
+        out: list[int | float | str] = [
+            "gridvel", self.name, "box", *lo, *hi, "affine",
+            *(x for row in self.L for x in row)]
+        if self.ref is not None:
+            out += ["ref", *self.ref]
+        return tuple(out)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
@@ -577,8 +814,8 @@ class Analyze(MPM):
 
 #: The family's contract list (``tests/families.py``).
 ALL_MPM: tuple[type[MPM], ...] = (
-    Grid, Body, Fix, Wall, Gravity, TimeSeries, Damping, Flip, MassCutoff,
-    Safety, Units, Output, Analyze,
+    Grid, Body, Fix, Wall, Gridvel, GridvelAffine, Gravity, TimeSeries,
+    Damping, Flip, MassCutoff, Safety, Units, Output, Analyze,
 )
 
 
@@ -594,7 +831,15 @@ def mpm_block(members: Sequence[MPM], *, ndm: int) -> tuple[MPM, ...]:
     declaration order. Refused, by name: no grid or two grids, no body, a
     grid whose dimension is not the model's ``ndm``, bodies that disagree on
     ``ppc`` (one particle set has one lattice), a repeated body name, a
-    z face or a gravity of the wrong length for the grid, two ``Units``.
+    z face or a gravity of the wrong length for the grid, two ``Units``,
+    a gridvel box of another dimension than the grid's, and two gridvels
+    (:class:`Gridvel` or :class:`GridvelAffine`) of one name.
+
+    The fork also refuses, on a B-spline grid, a gridvel box that reaches
+    the ghost layer behind a ``fix`` face (fork WP-232i B10). No apeGmsh
+    deck reaches it: :class:`Grid` admits only the ``gimp`` and ``linear``
+    bases (:data:`BASES`), and ``tests/opensees/mpm/test_mpm_gridvel.py``
+    fails when that changes, so the refusal is added here with the basis.
     """
     grids = [m for m in members if isinstance(m, Grid)]
     bodies = [m for m in members if isinstance(m, Body)]
@@ -638,6 +883,14 @@ def mpm_block(members: Sequence[MPM], *, ndm: int) -> tuple[MPM, ...]:
         if isinstance(m, Gravity) and len(m.g) != grid.ndm:
             raise MPMError(f"mpm gravity {m.g}: a {grid.ndm}-D grid takes "
                            f"{grid.ndm} components")
+        if isinstance(m, (Gridvel, GridvelAffine)) and m.ndm != grid.ndm:
+            raise MPMError(f"mpm gridvel {m.name!r}: its box {m.box} is "
+                           f"{m.ndm}-D and the grid is {grid.ndm}-D")
+    gv_names = [m.name for m in rest if isinstance(m, (Gridvel, GridvelAffine))]
+    gv_dup = sorted({n for n in gv_names if gv_names.count(n) > 1})
+    if gv_dup:
+        raise MPMError(f"mpm gridvel names must be unique (the fork refuses a "
+                       f"second gridvel of one name); repeated: {gv_dup}")
     return (grid, *bodies, *rest)
 
 
@@ -779,6 +1032,41 @@ class _MPMNS:
     def wall(self, face: str, mu: float) -> Wall:
         """``mpm wall``: a stationary Coulomb wall on ``face``."""
         prim = Wall(face=face, mu=mu)
+        self._add(prim)
+        return prim
+
+    def _refuse_gridvel_name(self, name: str) -> None:
+        for p in self._bridge._primitives:
+            if isinstance(p, (Gridvel, GridvelAffine)) and p.name == name:
+                raise MPMError(f"apeSees.mpm: a gridvel named {name!r} is "
+                               "already declared (the fork refuses a second "
+                               "gridvel of one name)")
+
+    def gridvel(
+        self, name: str, box: Sequence[Sequence[float]],
+        v: Sequence[float | str], *, start: float | None = None,
+        translate: str | None = None,
+        profile: Sequence[float] | None = None,
+    ) -> Gridvel:
+        """``mpm gridvel ... v``: prescribe ``v`` (a number or ``"free"`` per
+        component) on the grid nodes in ``box = (lo, hi)``; mode F only."""
+        # The member normalises (and refuses) each argument by name.
+        prim = Gridvel(name=name, box=cast(Any, box), v=cast(Any, v),
+                       start=start, translate=translate,
+                       profile=cast(Any, profile))
+        self._refuse_gridvel_name(prim.name)
+        self._add(prim)
+        return prim
+
+    def gridvelAffine(
+        self, name: str, box: Sequence[Sequence[float]],
+        L: Sequence[Sequence[float]], *, ref: Sequence[float] | None = None,
+    ) -> GridvelAffine:
+        """``mpm gridvel ... affine``: prescribe ``v = L (x - ref)`` on the
+        grid nodes in ``box = (lo, hi)``; ``L`` by rows; mode F only."""
+        prim = GridvelAffine(name=name, box=cast(Any, box), L=cast(Any, L),
+                             ref=cast(Any, ref))
+        self._refuse_gridvel_name(prim.name)
         self._add(prim)
         return prim
 
