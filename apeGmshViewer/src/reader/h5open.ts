@@ -63,6 +63,56 @@ function exactInodes(fs: H5FS | null): void {
   exact.add(fs);
 }
 
+// -- A listing that says when HDF5 could not finish it ---------------------------------
+//
+// h5wasm's `Group.keys()` calls `Module.get_names`, whose C++ drops H5Literate2's status: when
+// a group's B-tree is damaged, the iteration stops and the names found so far come back as the
+// whole group, so a stage silently loses its results. The only trace is HDF5's error stack,
+// which its default handler writes to stderr, through `FS.write` on host fd 2.
+//
+// `checkedListings` watches that write around each listing. h5wasm's throwing error handler is
+// not used: its throw unwinds `get_names` past H5Gclose, the leaked group keeps the file open
+// after `close()`, and a later open of that path shares the stale file.
+
+/** h5wasm's listing binding: `Group.keys()` calls it. */
+interface H5ListBinding {
+  get_names(file_id: bigint, path: string, recursive: boolean): string[];
+}
+
+/** The `FS.write` HDF5's diagnostics pass through. */
+type H5FsWrite = (stream: { nfd?: unknown }, ...rest: unknown[]) => number;
+
+const listed = new WeakSet<object>();
+
+/**
+ * Make a listing HDF5 reported an error on throw, for every reader at once. Idempotent per
+ * module; a stand-in h5 with no `Module` (the open tests) lists nothing. The error is a plain
+ * `Error`, what h5wasm raises for an unreadable object, so the readers' rules for a stage that
+ * does not read (`isH5Error`) apply to it.
+ */
+function checkedListings(h5: { readonly FS: H5FS | null; readonly Module?: H5ListBinding | null }): void {
+  const mod = h5.Module;
+  if (mod === undefined || mod === null || listed.has(mod)) return;
+  const fs = h5.FS as unknown as { write?: H5FsWrite };
+  if (typeof mod.get_names !== "function" || typeof fs.write !== "function") {
+    throw new Error("h5wasm has no Module.get_names/FS.write, so a damaged group index cannot be detected; refusing to open HDF5 files (check the pinned h5wasm version)");
+  }
+  const write = fs.write.bind(fs);
+  let diagnosed = false;
+  fs.write = (stream, ...rest) => {
+    if (stream.nfd === 2) diagnosed = true;
+    return write(stream, ...rest);
+  };
+  const names = mod.get_names;
+  mod.get_names = (file_id, path, recursive) => {
+    diagnosed = false;
+    const out = names(file_id, path, recursive);
+    if (diagnosed) throw new Error(`${path}: HDF5 could not list this group (its group index does not read)`);
+    return out;
+  };
+  listed.add(mod);
+}
+
 /**
  * VU9b (HG9 rule 2 on #2693): every file `openH5` opened and has not closed,
  * by its path as the caller named it. A writer that replaces a file closes
@@ -102,6 +152,7 @@ export function openH5<F>(h5: H5Openable<F>, path: string): F {
 function openTracked<F>(h5: H5RuleOpenable<F>, path: string, mode: "r" | "Sr", after?: () => void): F {
   exactInodes(h5.FS);
   const f = new h5.File(path, mode);
+  checkedListings(h5 as unknown as Parameters<typeof checkedListings>[0]);
   const handle = f as unknown as { close?: () => unknown; file_id?: bigint | number };
   // A failed open (negative id) holds nothing; a handle is tracked until its own close.
   if (typeof handle.close === "function" && !(Number(handle.file_id) < 0)) {

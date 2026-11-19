@@ -1617,7 +1617,15 @@ export class LadrunoFile {
 
   /** INFO/PROVENANCE, attribute by attribute (schema §7b.1). */
   private readProvenance(info: LGroup): LadrunoProvenance {
-    if (!info.keys().includes("PROVENANCE")) {
+    let infoNames: string[];
+    try {
+      infoNames = info.keys();
+    } catch (err) {
+      // Provenance is informative and the results may be whole, so this does not refuse the file.
+      if (!isH5Error(err)) throw err;
+      return { state: "absent", reason: `whether the file has INFO/PROVENANCE is unknown: ${err.message}` };
+    }
+    if (!infoNames.includes("PROVENANCE")) {
       return { state: "absent", reason: "the file has no INFO/PROVENANCE group (the recorder creates it empty; this file was not written by a recorder that does)" };
     }
     const g = this.group(info, "PROVENANCE");
