@@ -342,6 +342,7 @@ function reduceEvent(s: State, e: Event): State {
         visibility: { ...s.visibility, hidden: [], opacity, extrudeFrames, showOffsets },
         // A chosen size belongs to the model it was chosen for; the user's own stays.
         nodes: { ...s.nodes, on: reread ? s.nodes.on : false, size: s.nodes.auto ? null : s.nodes.size },
+        hinges: { ...s.hinges, on: reread ? s.hinges.on : false, size: s.hinges.auto ? null : s.hinges.size, element: reread ? s.hinges.element : null, history: null, notice: null },
         gaussPoints: { ...s.gaussPoints, on: reread ? s.gaussPoints.on : false, size: s.gaussPoints.auto ? null : s.gaussPoints.size, measured: null },
         inspector: { pinned: [] },
         spotlight: reread ? s.spotlight : { ...initialSpotlight, seq: s.spotlight.seq },

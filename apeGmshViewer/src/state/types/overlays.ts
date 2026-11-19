@@ -126,8 +126,10 @@ export interface HingesState {
   readonly on: boolean;
   /** What colours a marker on a results step. */
   readonly colorBy: "rotation" | "moment" | "capacity";
-  /** Marker size multiplier (default 1, > 0). */
-  readonly size: number;
+  /** Marker size in pixels; null until the effects choose one (state/hinges.ts `smartHingeSize`) */
+  readonly size: number | null;
+  /** true while the size is the chosen one, false once the user sets it */
+  readonly auto: boolean;
   /** The element the card's menu chose; a viewport pick of a hinged element wins over it. */
   readonly element: DeclPath | null;
   readonly end: HingeEnd;

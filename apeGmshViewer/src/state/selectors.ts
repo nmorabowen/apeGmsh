@@ -181,7 +181,7 @@ export {
   type LoadsUnitLabels,
 } from "./loads.ts";
 export { springCountOf } from "./springs.ts";
-export { HINGE_COLUMN_NAMES, hingeSitesOf } from "./hinges.ts";
+export { HINGE_COLUMN_NAMES, hingeSitesOf, smartHingeSize } from "./hinges.ts";
 // VU9a (ADR 0132): what the sets panel reads of the workspace slice.
 export { pickSummaryOf } from "./workspace.ts";
 export { cannotSave as workspaceCannotSave } from "./reduce/workspace.ts";

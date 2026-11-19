@@ -302,6 +302,8 @@ export interface Hinges3D {
 /** A marker with no step to colour it: visible, and unlike any colour of the ramp. */
 export const HINGE_NEUTRAL: readonly [number, number, number] = [0.93, 0.93, 0.9];
 export const HINGE_NO_DATA: readonly [number, number, number] = [0.55, 0.55, 0.58];
+/** Where the marker ramp starts: viridis below this is too dark to see on the dark background. */
+const HINGE_RAMP_FROM = 0.25;
 
 function nodesOf(s: State, blobs: BlobStore, d: Decl): readonly number[] {
   const e = d.element;
@@ -363,10 +365,63 @@ export function buildHinges3D(s: State, blobs: BlobStore, step: HingeStepData | 
   const colors = new Float32Array(placed.length * 3);
   placed.forEach(({ p, v }, i) => {
     positions.set(p, i * 3);
-    const rgb = !step ? HINGE_NEUTRAL : v === null ? HINGE_NO_DATA : sampleCmap("viridis", top! > 0 ? Math.min(1, v / top!) : 0);
+    const rgb = !step ? HINGE_NEUTRAL : v === null ? HINGE_NO_DATA : sampleCmap("viridis", HINGE_RAMP_FROM + (1 - HINGE_RAMP_FROM) * (top! > 0 ? Math.min(1, v / top!) : 0));
     colors.set(rgb, i * 3);
   });
   return { positions, colors, count: placed.length, unplaced, noValue, top };
+}
+
+/** Below 3 px a marker reads as noise; above 14 px it hides the frame it sits on. */
+export const HINGE_SMART_MIN = 3;
+export const HINGE_SMART_MAX = 14;
+/** A marker this share of the typical on-screen distance between neighbouring hinges stays a separate dot. */
+const HINGE_SPACING_SHARE = 0.3;
+/** Hinges measured for the typical spacing; enough for a stable median at any model size. */
+const HINGE_SIZE_SAMPLE = 20000;
+
+/**
+ * The marker size in pixels for a model framed in the viewport: a share of the
+ * median distance from a hinge to its nearest neighbour, as it appears at that
+ * frame, within readable bounds. `positions` is 3 floats per hinge. Like the node
+ * markers' rule it assumes the fit view, so a model always gets the same size.
+ */
+export function smartHingeSize(positions: Float32Array, radius: number, viewportPx: number): number {
+  const stride = Math.max(1, Math.floor(positions.length / 3 / HINGE_SIZE_SAMPLE));
+  const n = Math.floor(positions.length / 3 / stride);
+  if (n < 2 || !(radius > 0) || !(viewportPx > 0)) return HINGE_SMART_MAX;
+  const at = (i: number, c: number) => positions[i * stride * 3 + c]!;
+  // A uniform grid over the model: about one hinge per cell, and each hinge looks in the 27 cells around its own.
+  const cell = (2 * radius) / Math.max(1, Math.cbrt(n));
+  const keyOf = (x: number, y: number, z: number) => `${x},${y},${z}`;
+  const cellOf = (v: number) => Math.floor(v / cell);
+  const grid = new Map<string, number[]>();
+  for (let i = 0; i < n; i++) {
+    const k = keyOf(cellOf(at(i, 0)), cellOf(at(i, 1)), cellOf(at(i, 2)));
+    const list = grid.get(k);
+    if (list) list.push(i);
+    else grid.set(k, [i]);
+  }
+  const coincident = 1e-9 * radius;
+  const nearest: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const [cx, cy, cz] = [cellOf(at(i, 0)), cellOf(at(i, 1)), cellOf(at(i, 2))];
+    let best = Infinity;
+    for (let x = cx - 1; x <= cx + 1; x++) {
+      for (let y = cy - 1; y <= cy + 1; y++) {
+        for (let z = cz - 1; z <= cz + 1; z++) {
+          for (const j of grid.get(keyOf(x, y, z)) ?? []) {
+            const d = Math.hypot(at(i, 0) - at(j, 0), at(i, 1) - at(j, 1), at(i, 2) - at(j, 2));
+            if (j !== i && d > coincident && d < best) best = d;
+          }
+        }
+      }
+    }
+    if (best < Infinity) nearest.push(best);
+  }
+  if (!nearest.length) return HINGE_SMART_MAX;
+  nearest.sort((a, b) => a - b);
+  const spacingPx = (nearest[nearest.length >> 1]! / (2 * radius)) * viewportPx;
+  return Math.max(HINGE_SMART_MIN, Math.min(HINGE_SMART_MAX, Math.round(spacingPx * HINGE_SPACING_SHARE)));
 }
 
 export interface HingeCurve {

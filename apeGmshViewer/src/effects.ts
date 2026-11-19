@@ -26,6 +26,7 @@ import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type E
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
 import type { StationPoints } from "./state/gaussPoints.ts";
+import { buildHinges3D, smartHingeSize } from "./state/hinges.ts";
 import { smartNodeSize } from "./state/nodes.ts";
 import { componentOf, particleRange, type ParticleFrame } from "./renderer/particles.ts";
 import { materialTestJobOf } from "./state/materialTest.ts";
@@ -560,6 +561,15 @@ export class Effects {
     });
   }
 
+  private syncHingeSize(s: State): void {
+    if (!s.hinges.on || s.hinges.size !== null || !s.mesh) return;
+    const viewportPx = typeof window === "undefined" ? 900 : Math.min(window.innerWidth, window.innerHeight);
+    const size = smartHingeSize(buildHinges3D(s, this.blobs, null, null).positions, s.mesh.radius, viewportPx);
+    queueMicrotask(() => {
+      if (this.store.get().hinges.size === null) this.store.dispatch({ type: "setHinges", size, auto: true });
+    });
+  }
+
   private syncNodeSize(s: State): void {
     const { on, size: chosen } = s.nodes;
     if (!on || chosen !== null || !s.mesh) return;
@@ -628,6 +638,7 @@ export class Effects {
       this.store.subscribe((s) => this.syncLineDiagram(s)),
       // The node markers' size, chosen when they turn on and the size is automatic.
       this.store.subscribe((s) => this.syncNodeSize(s)),
+      this.store.subscribe((s) => this.syncHingeSize(s)),
       this.store.subscribe((s) => this.syncGaussSize(s)),
       // ADR 0134 D5: the particle index the set calls for, then the frame the state names.
       this.store.subscribe((s) => this.syncParticles(s)),

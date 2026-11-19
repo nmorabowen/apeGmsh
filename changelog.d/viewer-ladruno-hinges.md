@@ -8,7 +8,8 @@ hinges and their positions come from `model.h5`.
 On a results step the markers colour by rotation, moment or moment/capacity from
 the `.ladruno` `hingeSummary` token, so record that token to see output. Picking
 a hinged element plots its moment-rotation curve with the current step marked.
-Uniaxial and coupled biaxial hinges are covered, in 2-D and 3-D. Shear hinges are not drawn yet. A capacity is read from
+Markers start at a size chosen from the spacing between hinges, and the card's
+slider overrides it until **auto** is pressed. Uniaxial and coupled biaxial hinges are covered, in 2-D and 3-D. Shear hinges are not drawn yet. A capacity is read from
 `LadrunoCohesiveHinge`, `LadrunoCohesiveHingeBiaxial` and `Steel01`; for any other
 material the card names what is missing.
 

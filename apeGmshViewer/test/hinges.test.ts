@@ -16,7 +16,7 @@ import { hingeCardKeys, renderHinges } from "../src/panels/hinges.ts";
 import { HINGE_COLUMNS, hingeColumnsOf, openLadruno } from "../src/reader/ladruno.ts";
 import type { ResultsH5 } from "../src/reader/results.ts";
 import { HingesLayer } from "../src/renderer/hinges.ts";
-import { buildHinges3D, HINGE_COLUMN_NAMES, HINGE_NEUTRAL, HINGE_NO_DATA, hingeCapacityOf, hingeEndsOf, hingeSitesOf } from "../src/state/hinges.ts";
+import { buildHinges3D, HINGE_COLUMN_NAMES, HINGE_NEUTRAL, HINGE_NO_DATA, HINGE_SMART_MAX, HINGE_SMART_MIN, hingeCapacityOf, hingeEndsOf, hingeSitesOf, smartHingeSize } from "../src/state/hinges.ts";
 import { hingeJoinOf, hingeViewOf } from "../src/state/selectors.ts";
 import { spotlightViewOf } from "../src/state/spotlight.ts";
 import { reduce } from "../src/state/store.ts";
@@ -305,6 +305,14 @@ test("the card: controls dispatch, Spotlight offers the switch, and a model with
     const s = reduce(h.store.get(), { type: "setHinges", on: false });
     const box = renderHinges(s, (e) => events.push(e)) as unknown as El;
     const one = (root: El, cls: string) => root.all((e) => e.className.split(" ")[0] === cls)[0]!;
+    const onBox = renderHinges(reduce(s, { type: "setHinges", on: true, size: 7, auto: true }), (e) => events.push(e)) as unknown as El;
+    assert.equal(one(onBox, "hinges-size").value, "7", "the slider shows the size");
+    assert.ok(one(onBox, "hinges-auto").className.includes(" on"), "auto is lit while the size is the chosen one");
+    const slider = one(onBox, "hinges-size");
+    slider.value = "9";
+    for (const fn of slider.listeners) fn();
+    for (const fn of one(onBox, "hinges-auto").listeners) fn();
+    assert.deepEqual(events.splice(0), [{ type: "setHinges", size: 9 }, { type: "setHinges", size: null }]);
     for (const fn of one(box, "hinges-toggle").listeners) fn();
     const menu = one(box, "hinges-color");
     menu.value = "moment";
@@ -318,9 +326,53 @@ test("the card: controls dispatch, Spotlight offers the switch, and a model with
   }
 });
 
+test("the automatic marker size follows the spacing between hinges, within readable bounds", () => {
+  const grid = (n: number, spacing: number) => {
+    const p = new Float32Array(n * n * 3);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) p.set([i * spacing, j * spacing, 0], (i * n + j) * 3);
+    return p;
+  };
+  const radius = (n: number, spacing: number) => (n * spacing) / Math.SQRT2;
+  assert.equal(smartHingeSize(grid(3, 1), radius(3, 1), 900), HINGE_SMART_MAX, "a few hinges stay easy to see");
+  const mid = smartHingeSize(grid(30, 1), radius(30, 1), 900);
+  assert.ok(mid > HINGE_SMART_MIN && mid < HINGE_SMART_MAX, `a dense grid sits between the bounds: ${mid}`);
+  assert.ok(mid <= 0.3 * (1 / (2 * radius(30, 1))) * 900 + 0.5, "it stays a share of the on-screen spacing, so neighbours do not touch");
+  assert.equal(smartHingeSize(grid(141, 1), radius(141, 1), 200), HINGE_SMART_MIN, "never below the readable minimum");
+  assert.equal(smartHingeSize(new Float32Array(3), 1, 900), HINGE_SMART_MAX, "one hinge has no neighbour");
+  assert.equal(smartHingeSize(new Float32Array(6), 1, 900), HINGE_SMART_MAX, "coincident hinges have no spacing");
+});
+
+test("an automatic size is chosen for the model, a user's stays until auto, and a size change does not rebuild the card", async () => {
+  h.store.dispatch({ type: "setHinges", on: false, size: null });
+  h.store.dispatch({ type: "setHinges", on: true });
+  await until(() => h.store.get().hinges.size !== null, "the automatic size");
+  const chosen = h.store.get().hinges;
+  assert.equal(chosen.auto, true);
+  assert.equal(chosen.size, HINGE_SMART_MAX, "the small model keeps large markers");
+  const card = hingeCardKeys(h.store.get()).card;
+  h.store.dispatch({ type: "setHinges", size: 5 });
+  assert.deepEqual([h.store.get().hinges.size, h.store.get().hinges.auto], [5, false]);
+  assert.equal(hingeCardKeys(h.store.get()).card, card, "the slider is not replaced under the pointer");
+  h.store.dispatch({ type: "setHinges", on: false });
+  h.store.dispatch({ type: "setHinges", on: true });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(h.store.get().hinges.size, 5, "switching off and on keeps the user's size");
+  const layer = new HingesLayer();
+  layer.sync(h.store.get(), h.blobs);
+  assert.equal(layer.drawn.size, 5);
+  h.store.dispatch({ type: "setHinges", size: 999 });
+  assert.equal(h.store.get().hinges.size, 24, "clamped to the slider's range");
+  assert.equal(layer.sync(h.store.get(), h.blobs), true, "the new size reaches the markers");
+  assert.equal(layer.drawn.size, 24);
+  layer.dispose();
+  h.store.dispatch({ type: "setHinges", size: null });
+  assert.equal(h.store.get().hinges.auto, true);
+  await until(() => h.store.get().hinges.size === chosen.size, "auto chooses again");
+});
+
 test("setHinges refuses bad values, and an unchanged value changes nothing", () => {
   const s = h.store.get();
-  for (const bad of [{ on: "yes" }, { size: 0 }, { size: Number.NaN }, { colorBy: "x" }, { end: "k" }, { axis: "x" }, { notice: 1 }]) {
+  for (const bad of [{ on: "yes" }, { size: 0 }, { size: Number.NaN }, { auto: "yes" }, { colorBy: "x" }, { end: "k" }, { axis: "x" }, { notice: 1 }]) {
     assert.throws(() => reduce(s, { type: "setHinges", ...(bad as object) } as never), RangeError, JSON.stringify(bad));
   }
   assert.equal(reduce(s, { type: "setHinges", axis: s.hinges.axis }), s);

@@ -323,6 +323,7 @@ export class Viewport {
     this.vectors.setTheme(mode);
     this.principal.setTheme(mode);
     this.springs.setTheme(mode);
+    this.hinges.setTheme(mode);
     this.supports.setTheme(mode);
     this.entities.setTheme(mode);
     if (this.particleFrame) this.particles.show({ ...this.particleFrame, fit: false }, this.particleLook());
