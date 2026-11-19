@@ -123,3 +123,20 @@ test("#2944 delta review: in an app-chrome still the scales paint over the open 
   assert.equal(z("#banner[data-open]"), stillBanner);
   assert.equal(cssValue("#scale-stack", "z-index"), null, "the stack has no z-index outside a still");
 });
+
+test("#1762: below 1560 px the Windows menu sits left of the right rail, and the left rail ends above it", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const rail = css.match(/#rail \{\n\s*position: fixed; top: \d+px; right: (\d+)px; bottom: \d+px; width: (\d+)px;/);
+  assert.ok(rail, "the #rail rule moved");
+  const railLeftEdge = Number(rail[1]) + Number(rail[2]);
+  const media = css.match(/@media \(min-width: (\d+)px\) and \(max-width: (\d+)px\) \{\n\s*body:not\(\[data-rail-collapsed="true"\]\) #windows-menu \{ left: auto; right: (\d+)px; transform: none; \}/);
+  assert.ok(media, "the Windows menu has no rule keeping it off the rail");
+  const [min, max, right] = [Number(media[1]), Number(media[2]), Number(media[3])];
+  assert.ok(right >= railLeftEdge, `right ${right} clears the rail's ${railLeftEdge} px`);
+  const MENU = 550, LEFT_RAIL = 308;
+  assert.ok(max / 2 + MENU / 2 <= max - railLeftEdge, "at the top of the range the centred menu already clears the rail");
+  assert.ok(min - right - MENU >= 0, "at the bottom of the range the menu stays on screen");
+  const leftRail = css.match(/@media \(max-width: (\d+)px\) \{\n\s*#left-rail \{ bottom: 72px; \}/);
+  assert.ok(leftRail);
+  assert.ok(Number(leftRail[1]) >= right + MENU + LEFT_RAIL + 16, "the left rail ends above the menu wherever they share a column");
+});

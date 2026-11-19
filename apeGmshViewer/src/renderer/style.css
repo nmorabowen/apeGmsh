@@ -94,9 +94,10 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
      (--banner-top, --banner-h); never above 168 px, as before. */
   top: max(168px, calc(var(--banner-top, 58px) + var(--banner-h, 0px) + 8px));
 }
-/* VU3b (#2737): where the centred Windows strip reaches the rail's column
-   (the strip is about 550 px wide), the rail ends above it. */
-@media (max-width: 1200px) {
+/* VU3b (#2737): where the Windows strip reaches the left rail's column (the
+   strip is about 550 px wide; #1762 keeps it left of the right rail below
+   1560 px, which brings it here at 1372 px), the rail ends above it. */
+@media (max-width: 1372px) {
   #left-rail { bottom: 72px; }
 }
 #left-rail > * { pointer-events: auto; }
@@ -355,6 +356,11 @@ code { font-family: var(--mono); }
   background: var(--panel); border: 1px solid var(--line);
 }
 #windows-menu[hidden], #windows[hidden] { display: none; }
+/* #1762: centred, the strip runs under the right rail (470 px + its 20 px margin) below
+   about 1560 px, so there it sits against the rail's left edge instead. */
+@media (min-width: 1060px) and (max-width: 1560px) {
+  body:not([data-rail-collapsed="true"]) #windows-menu { left: auto; right: 498px; transform: none; }
+}
 .window-menu-label {
   margin: 0 4px; font-size: 11px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
