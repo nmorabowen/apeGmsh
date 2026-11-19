@@ -378,9 +378,9 @@ is visible and can only shrink, stand.
 
 ## Amendment note — 2026-11-13 — D1 amended, item 3: the #2530 carve-out is lifted
 
-**Status:** Proposed. This is a human-gate change: the maintainer
-ratifies it and merges the PR. **Program slice:** #2530 (chain issue
-#1201).
+**Status:** Accepted (ratified by the maintainer on 2026-11-13, PR #2955
+comment 6862698770; landed as `762f4790c`). **Program slice:** #2530
+(chain issue #1201).
 
 Item 3 of the 2026-10-23 amendment kept one partitioned case refused by
 name until #2530: a stage that holds equation rows and a `fix` row that
