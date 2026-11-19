@@ -1268,3 +1268,12 @@ runs (the percentages are its busy share), so compare orders of magnitude.
 
 These runs predate the last #3042 commit, which stops a deformed-shape change
 from rebuilding the legend (163 ms of the building's 224 ms toggle).
+
+### Frame times read before this note
+
+Until this change the profiler took frame intervals from the
+`requestAnimationFrame` timestamp, which stays on the vsync grid while the page
+thread is late, so fps and p95 frame times above can read better than the truth.
+Scenario times, steps drawn, flicker counts and CPU profiles do not use it. The
+probe now uses the time the callback ran. `src/renderer/harness/measure.ts`
+(`npm run measure`) still uses the timestamp for its orbit.
