@@ -18,6 +18,7 @@ import { applyPlan, cornerVertexValues, planFor, vertexCorners, type NodeTopolog
 import type { UserColumnRead } from "../reader/userFile.ts";
 import { combinationRequestOf, combinationTableOf, compareUserRequestOf, differencePlanOf, userResultRequestOf, type ContourView } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
+import type { HingeStepData } from "../state/hinges.ts";
 import type { SpringStepData } from "../state/springs.ts";
 import type { CombinationRead, CompareIn, CompareModelAnswer, CompareSlotIn, CompareUserAnswer, DifferenceRead, MeshInfo, State, UserResultRead } from "../state/types.ts";
 
@@ -33,6 +34,8 @@ export interface StepValues {
   tensor?: Record<string, Record<string, Float64Array>>;
   /** The zero-length springs' force, fetched while the Springs card is on; null when its read failed */
   springs?: SpringStepData | null;
+  /** The beams' `hingeSummary`, fetched while the Hinges card is on; null when its read failed */
+  hinges?: HingeStepData | null;
 }
 
 export { toLinear };

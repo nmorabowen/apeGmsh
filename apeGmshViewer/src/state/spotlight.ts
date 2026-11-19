@@ -13,6 +13,7 @@
 
 import { gaussUnavailable } from "./gaussNotes.ts";
 import { reactionComponentsOf } from "./loads.ts";
+import { hingeSitesOf } from "./hinges.ts";
 import { springCountOf } from "./springs.ts";
 import { tensorFields } from "./tensor.ts";
 import { crackFieldOf } from "./cracks.ts";
@@ -195,6 +196,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setCracks: { kind: "expose", command: "toggle-cracks", description: "Toggle or configure the smeared-crack discs at the Gauss points" },
   setReactions: { kind: "expose", command: "toggle-reactions", description: "Toggle or configure the reaction-force arrows of the results step" },
   setSprings: { kind: "expose", command: "toggle-springs", description: "Toggle or configure the zero-length spring force arrows of the results step" },
+  setHinges: { kind: "expose", command: "toggle-hinges", description: "Toggle or configure the beam hinge markers and the hinge moment-rotation plot" },
   setVectors: { kind: "expose", command: "toggle-vectors", description: "Toggle or configure the nodal vector arrows of the results step" },
   setLoads: { kind: "expose", command: "toggle-loads", description: "Toggle or configure 3-D structural load and prescribed-SP glyphs" },
   toggleExtrudeFrames: { kind: "expose", command: "toggle-extrude-frames", description: "Toggle 3-D frame cross-section extrusion on or off" },
@@ -775,6 +777,21 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
         [{ type: "setSprings", on: !s.springs.on }],
       ),
       keywords: "springs spring zerolength zero-length interface forces arrows toggle results",
+    });
+  }
+
+  if (s.mesh && hingeSitesOf(s.decls).sites.length > 0) {
+    out.push({
+      item: commandItem(
+        "cmd:toggle-hinges",
+        "loads",
+        s.hinges.on ? "Turn Off Hinge Markers" : "Turn On Hinge Markers",
+        `Beam hinge markers are currently ${s.hinges.on ? "ON" : "OFF"}`,
+        [{ type: "setHinges", on: !s.hinges.on }],
+        s.hinges.on,
+        [{ type: "setHinges", on: !s.hinges.on }],
+      ),
+      keywords: "hinges hinge plastic moment rotation cohesive imk markers toggle",
     });
   }
 

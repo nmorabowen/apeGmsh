@@ -29,6 +29,7 @@ import { LineDiagramLayer } from "./lineDiagram.ts";
 import { EntitiesLayer } from "./entities.ts";
 import { CracksLayer } from "./cracks.ts";
 import { LoadsLayer, PrincipalLayer, ReactionsLayer, SupportsLayer, VectorsLayer } from "./loads.ts";
+import { HingesLayer } from "./hinges.ts";
 import { SpringsLayer } from "./springs.ts";
 import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
 import { particleBounds, ParticleLayer, type ParticleFrame, type ParticleLook } from "./particles.ts";
@@ -184,6 +185,8 @@ export class Viewport {
   readonly cracks = new CracksLayer();
   /** The Springs card: one force arrow per zero-length spring of the results step. */
   readonly springs = new SpringsLayer();
+  /** The Hinges card: one marker per moment hinge of the Ladruno beams. */
+  readonly hinges = new HingesLayer();
   /** The Display card's BC toggle: restraint glyphs at the supports. */
   readonly supports = new SupportsLayer();
   /** VU8: the `/entities` of the set's `.user.h5` (renderer/entities.ts). */
@@ -245,7 +248,7 @@ export class Viewport {
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
     this.lineDiagram = new LineDiagramLayer(this.camera);
-    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.vectors.root, this.principal.root, this.cracks.root, this.springs.root, this.supports.root, this.entities.root);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.vectors.root, this.principal.root, this.cracks.root, this.springs.root, this.hinges.root, this.supports.root, this.entities.root);
     // ADR 0134 D5: after the node layer's group (`content`), as the card asks.
     this.scene.add(this.particles.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
@@ -320,6 +323,7 @@ export class Viewport {
     this.vectors.setTheme(mode);
     this.principal.setTheme(mode);
     this.springs.setTheme(mode);
+    this.hinges.setTheme(mode);
     this.supports.setTheme(mode);
     this.entities.setTheme(mode);
     if (this.particleFrame) this.particles.show({ ...this.particleFrame, fit: false }, this.particleLook());
@@ -568,6 +572,7 @@ export class Viewport {
     this.principal.dispose();
     this.cracks.dispose();
     this.springs.dispose();
+    this.hinges.dispose();
     this.supports.dispose();
     this.entities.dispose();
     this.particles.dispose();
@@ -602,6 +607,7 @@ export class Viewport {
         this.principal.setClippingPlanes(this.clip.planes);
         this.cracks.setClippingPlanes(this.clip.planes);
         this.springs.setClippingPlanes(this.clip.planes);
+        this.hinges.setClippingPlanes(this.clip.planes);
         this.supports.setClippingPlanes(this.clip.planes);
         this.requestRender();
       }
@@ -815,7 +821,8 @@ export class Viewport {
     const principal = this.principal.sync(s, this.blobs, this.full, this.stepSource());
     const cracks = this.cracks.sync(s, this.blobs, this.full, this.stepSource());
     const springs = this.springs.sync(s, this.blobs, this.full, this.stepSource());
-    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || vectors || principal || cracks || springs) {
+    const hinges = this.hinges.sync(s, this.blobs, this.full, this.stepSource());
+    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || vectors || principal || cracks || springs || hinges) {
       this.requestRender();
     }
   }

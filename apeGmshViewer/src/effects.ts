@@ -12,7 +12,7 @@ import { evaluateDraft } from "./combination/author.ts";
 import { CombinationRefused, evaluate, type CombinationTable, type Source } from "./combination/evaluate.ts";
 import type { ModelFile } from "./model/types.ts";
 import type { GeometryZone } from "./reader/geometry.ts";
-import type { LadrunoLineStationStep, LadrunoSpringStep } from "./reader/ladruno.ts";
+import type { LadrunoHingeHistory, LadrunoHingeStep, LadrunoLineStationStep, LadrunoSpringStep } from "./reader/ladruno.ts";
 import type { ProvenanceZone } from "./reader/provenance.ts";
 import { GEOMETRY_TARGET, NEUTRAL_TARGET, OPENSEES_TARGET, PROVENANCE_TARGET, ZONE_FLOOR } from "./reader/read.ts";
 import type { UserColumnRead } from "./reader/userFile.ts";
@@ -26,11 +26,12 @@ import { applyPlan, cellLookup, extrapolationVerdict, planFor, planRange, type E
 import { missingDrawnNodes, spatialNdm, vertexDisplacements, type VertexDisplacement } from "./state/deform.ts";
 import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLineDigest } from "./state/lineDiagram.ts";
 import type { StationPoints } from "./state/gaussPoints.ts";
+import { buildHinges3D, smartHingeSize } from "./state/hinges.ts";
 import { smartNodeSize } from "./state/nodes.ts";
 import { componentOf, particleRange, type ParticleFrame } from "./renderer/particles.ts";
 import { materialTestJobOf } from "./state/materialTest.ts";
 import type { MaterialTestJob, MaterialTestRun } from "./state/types.ts";
-import { contourView, crackFieldOf, deformView, draftJudgedOf, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
+import { contourView, crackFieldOf, deformView, draftJudgedOf, elementJoinKey, hingeHistoryWanted, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
@@ -130,7 +131,7 @@ export interface Bridge {
   /** V4c1: the progress of the running scans; returns the unsubscribe. */
   onScanProgress?(cb: (p: { scanId: number; done: number; total: number }) => void): (() => void) | void;
   /** V4b: one step of the open results file; the reply echoes `seq`. V4c2a: `element` reads one Gauss component too (`gauss`, by group); `tensor` several (by component, then group). */
-  readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: LineStationComponent; tensor?: string[]; springs?: boolean }): Promise<
+  readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: LineStationComponent; tensor?: string[]; springs?: boolean; hinges?: boolean }): Promise<
     | {
         ok: true;
         seq: number;
@@ -143,9 +144,13 @@ export interface Bridge {
         lineDiagramError?: string;
         springs?: LadrunoSpringStep | null;
         springsError?: string;
+        hinges?: LadrunoHingeStep | null;
+        hingesError?: string;
       }
     | { ok: false; seq: number; error: string; changed?: true }
   >;
+  /** One element's `hingeSummary` over a stage; the reply echoes `seq`. */
+  readHingeHistory?(req: { path: string; stage: string; element: number; seq: number }): Promise<({ ok: true; seq: number; stage: string } & LadrunoHingeHistory) | { ok: false; seq: number; error: string; changed?: true }>;
   /** V2f: read a /geometry sibling (null: the file has no such zone). */
   openGeometry?(path: string): Promise<{ ok: true; geometry: GeometryZone | null; sizeBytes: number; readMs: number } | { ok: false; error: string }>;
   pathForFile(f: File): string;
@@ -437,6 +442,9 @@ export interface StepData {
   springs?: LadrunoSpringStep | null;
   /** Why the springs' read failed */
   springsError?: string | null;
+  /** The beams' `hingeSummary`, fetched while the Hinges card is on (absent: not asked; null: the read failed) */
+  hinges?: LadrunoHingeStep | null;
+  hingesError?: string | null;
 }
 
 /**
@@ -553,6 +561,15 @@ export class Effects {
     });
   }
 
+  private syncHingeSize(s: State): void {
+    if (!s.hinges.on || s.hinges.size !== null || !s.mesh) return;
+    const viewportPx = typeof window === "undefined" ? 900 : Math.min(window.innerWidth, window.innerHeight);
+    const size = smartHingeSize(buildHinges3D(s, this.blobs, null, null).positions, s.mesh.radius, viewportPx);
+    queueMicrotask(() => {
+      if (this.store.get().hinges.size === null) this.store.dispatch({ type: "setHinges", size, auto: true });
+    });
+  }
+
   private syncNodeSize(s: State): void {
     const { on, size: chosen } = s.nodes;
     if (!on || chosen !== null || !s.mesh) return;
@@ -610,6 +627,7 @@ export class Effects {
         void this.openResults(r.path);
       }),
       this.store.subscribe((s) => this.syncStep(s)),
+      this.store.subscribe((s) => this.syncHingeHistory(s)),
       // V4c1: the contour's step range and history scan follow what is shown.
       this.store.subscribe((s) => this.syncContour(s)),
       // V4c2a: the picked element field's rows joined to the mesh.
@@ -620,6 +638,7 @@ export class Effects {
       this.store.subscribe((s) => this.syncLineDiagram(s)),
       // The node markers' size, chosen when they turn on and the size is automatic.
       this.store.subscribe((s) => this.syncNodeSize(s)),
+      this.store.subscribe((s) => this.syncHingeSize(s)),
       this.store.subscribe((s) => this.syncGaussSize(s)),
       // ADR 0134 D5: the particle index the set calls for, then the frame the state names.
       this.store.subscribe((s) => this.syncParticles(s)),
@@ -682,6 +701,9 @@ export class Effects {
   private stepSeq = 0;
   /** What the latest fetch asked for: `<path>|<stage id>|<step>`. */
   private stepKey: string | null = null;
+  private hingeKey: string | null = null;
+  private hingeResults: State["results"] = null;
+  private hingeSeq = 0;
   private step: StepData | null = null;
 
   /** The current step's data, or null; never a step other than the one the store shows. */
@@ -1305,14 +1327,16 @@ export class Effects {
     // VA6d: a derived scalar's step also names the model's plane map, so a model re-read that changes it is fetched again.
     const plane = derived !== null ? `|plane:${planeDigestOf(s.decls)}` : "";
     const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}${plane}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
-    const key = `${base}|${springs ? "springs" : ""}`;
-    // The card turned off keeps the step fetched with its springs: they are only not drawn, and nothing is re-read.
-    if (key === this.stepKey || (!springs && this.stepKey === `${base}|springs`)) return;
+    const hinges = s.hinges.on && (st.hinges ?? 0) > 0;
+    const key = `${base}|${springs ? "springs" : ""}|${hinges ? "hinges" : ""}`;
+    // A card turned off keeps the step fetched with its data: it is only not drawn, and nothing is re-read.
+    const held = this.stepKey?.startsWith(`${base}|`) ? this.stepKey.slice(base.length + 1).split("|") : null;
+    if (key === this.stepKey || (held?.length === 2 && (!springs || held[0] === "springs") && (!hinges || held[1] === "hinges"))) return;
     this.stepKey = key;
     const seq = ++this.stepSeq;
     this.step = null;
     // Not from inside this listener: the other listeners have not seen `s` yet.
-    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor, springs, derived));
+    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor, springs, derived, hinges));
   }
 
   private async fetchStep(
@@ -1326,6 +1350,7 @@ export class Effects {
     tensor: string[] | null = null,
     springs = false,
     derived: DerivedRead | null = null,
+    hinges = false,
   ): Promise<void> {
     if (seq !== this.stepSeq) return;
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "loading", error: null } });
@@ -1344,6 +1369,7 @@ export class Effects {
         ...(lineDiagram !== null ? { lineDiagram } : {}),
         ...(tensor !== null ? { tensor } : {}),
         ...(springs ? { springs } : {}),
+        ...(hinges ? { hinges } : {}),
       })
       .catch((err: unknown) => ({ ok: false as const, seq, error: err instanceof Error ? err.message : String(err) }));
     // Latest wins: a slow reply for an older request never paints over a newer step.
@@ -1374,6 +1400,7 @@ export class Effects {
       lineDiagram: res.lineDiagram ?? null,
       lineDiagramError: res.lineDiagramError ?? null,
       ...(springs ? { springs: res.springs ?? null, springsError: res.springsError ?? null } : {}),
+      ...(hinges ? { hinges: res.hinges ?? null, hingesError: res.hingesError ?? null } : {}),
     };
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "ready", error: null } });
     // A failed springs read says why on the card; the next good one clears it.
@@ -1381,6 +1408,34 @@ export class Effects {
       const notice = res.springs ? null : (res.springsError ?? "the step's spring forces were not read");
       if (this.store.get().springs.notice !== notice) this.store.dispatch({ type: "setSprings", notice });
     }
+    if (hinges) {
+      const notice = res.hinges ? null : `The step's hingeSummary was not read: ${res.hingesError ?? "no reason given"}`;
+      if (this.store.get().hinges.notice !== notice) this.store.dispatch({ type: "setHinges", notice });
+    }
+  }
+
+  /** Keep the Hinges card's history on the element and stage it plots. */
+  private syncHingeHistory(s: State): void {
+    const wanted = hingeHistoryWanted(s);
+    const target = wanted && !("refused" in wanted) ? wanted : null;
+    const key = target ? `${target.path}|${target.stageId}|${target.element}` : null;
+    // Another results object is another read of the file: its history is read again.
+    if (key === this.hingeKey && s.results === this.hingeResults) return;
+    this.hingeKey = key;
+    this.hingeResults = s.results;
+    const seq = ++this.hingeSeq;
+    if (s.hinges.history !== null) queueMicrotask(() => this.store.dispatch({ type: "setHinges", history: null }));
+    if (target && typeof this.bridge.readHingeHistory === "function") queueMicrotask(() => void this.fetchHingeHistory(target, seq));
+  }
+
+  private async fetchHingeHistory(t: { path: string; stage: number; stageId: string; element: number }, seq: number): Promise<void> {
+    const res = await this.bridge.readHingeHistory!({ path: t.path, stage: t.stageId, element: t.element, seq }).catch((err: unknown) => ({ ok: false as const, seq, error: err instanceof Error ? err.message : String(err) }));
+    if (seq !== this.hingeSeq) return;
+    if (!res.ok) {
+      this.store.dispatch({ type: "setHinges", history: null, notice: `The hinge history was not read: ${res.error}` });
+      return;
+    }
+    this.store.dispatch({ type: "setHinges", history: { stage: t.stage, element: t.element, time: Array.from(res.time), values: Array.from(res.values) } });
   }
 
   /** A loaded model with a loaded geometry sibling: their rewrites reload as one set. */

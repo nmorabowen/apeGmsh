@@ -434,6 +434,15 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   `LOCAL_AXES` for them. The script checks the closed forms (node j's `force` is
   the load times the load factor) and stamps the file; the model is written by
   hand. `test/springs.test.ts` reads it for the Springs card.
+- `ladruno_hinges3d.*` and `ladruno_hinges2d.*` are real fork runs through the bridge,
+  written by `tests/fixtures/ladruno/make_viewer_hinge_fixtures.py` (outside the app,
+  ADR 0112 D4): `<stem>.h5` is the model, `<stem>.ladruno` the stamped recorder file
+  (`hingeSummary`, `localForce`, `displacement`), and `<stem>.oracle.json` the live
+  `eleResponse(tag, "hingeSummary")` of every hinged element at every step, keyed by
+  OpenSees tag. The 3-D model has an IMK beam (Steel01, end zones, one weak-axis
+  hinge), a force beam (cohesive, both ends, `-hingeLoc`), a displacement beam
+  (coupled biaxial) and an unhinged elastic beam, all meeting at a pushed tip. The
+  2-D model has one-ended hinges. `test/hinges.test.ts` reads them for the Hinges card.
 
 The test, `test/results/ladruno.test.ts`, edits scratch copies through h5wasm
 for every refusal: another `GENERATOR`, `FORMAT_VERSION = 2`, a part-file name,

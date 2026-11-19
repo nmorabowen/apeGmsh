@@ -132,7 +132,8 @@ contextBridge.exposeInMainWorld("viewer", {
   openGeometry: (path: string) => ipcRenderer.invoke("geometry:open", path),
   // V4b (#1728): a results file's metadata, then one step at a time (./results.ts).
   openResults: (path: string) => ipcRenderer.invoke("results:open", path),
-  readResultsStep: (req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: string; tensor?: string[]; springs?: boolean }) => ipcRenderer.invoke("results:readStep", req),
+  readResultsStep: (req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: string; tensor?: string[]; springs?: boolean; hinges?: boolean }) => ipcRenderer.invoke("results:readStep", req),
+  readHingeHistory: (req: { path: string; stage: string; element: number; seq: number }) => ipcRenderer.invoke("results:hingeHistory", req),
   // V4c1 (#1756): the history-range scan of a contour field, its cancel, and its progress.
   // V4c2b: an element scan may carry a node-located topology's extrapolation plan (main checks it).
   scanResults: (req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element" | "line"; plan?: unknown }) => ipcRenderer.invoke("results:scan", req),

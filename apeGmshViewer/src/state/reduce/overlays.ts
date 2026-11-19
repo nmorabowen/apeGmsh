@@ -4,16 +4,18 @@
 
 import type { OverlaysEvent } from "../types/events/overlays.ts";
 import { CMAP_NAMES } from "../contour.ts";
-import type { CracksState, LoadsState, PrincipalState, ReactionsState, SpringsState, State, SupportsState, VectorsState } from "../types.ts";
+import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "../nodes.ts";
+import type { CracksState, HingesState, LoadsState, PrincipalState, ReactionsState, SpringsState, State, SupportsState, VectorsState } from "../types.ts";
 
 /** The seven overlay settings, each its own field of the state. */
-export type Overlays = Pick<State, "supports" | "principal" | "cracks" | "reactions" | "springs" | "vectors" | "loads">;
+export type Overlays = Pick<State, "supports" | "principal" | "cracks" | "reactions" | "springs" | "hinges" | "vectors" | "loads">;
 
 export const initialSupports: SupportsState = { on: false, scale: 1 };
 
 export const initialPrincipal: PrincipalState = { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true };
 export const initialCracks: CracksState = { on: false, minOpening: 0, cmap: "turbo", scale: 1 };
 export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
+export const initialHinges: HingesState = { on: false, colorBy: "rotation", size: null, auto: true, element: null, end: "i", axis: "z", history: null, notice: null };
 export const initialSprings: SpringsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", notice: null };
 export const initialVectors: VectorsState = { on: false, field: null, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant" };
 
@@ -142,6 +144,35 @@ export function reduceOverlays(o: Overlays, e: OverlaysEvent): Overlays {
         notice: e.notice !== undefined ? e.notice : cur.notice,
       };
       return (Object.keys(next) as (keyof SpringsState)[]).every((k) => next[k] === cur[k]) ? o : { ...o, springs: next };
+    }
+    case "setHinges": {
+      if (e.on !== undefined && typeof e.on !== "boolean") throw new RangeError(`setHinges: on ${JSON.stringify(e.on)}`);
+      if (e.colorBy !== undefined && !["rotation", "moment", "capacity"].includes(e.colorBy)) throw new RangeError(`setHinges: colorBy ${JSON.stringify(e.colorBy)}`);
+      if (e.size !== undefined && e.size !== null && (typeof e.size !== "number" || !Number.isFinite(e.size) || e.size <= 0)) throw new RangeError(`setHinges: the size must be null or a finite number above 0; got ${JSON.stringify(e.size)}`);
+      if (e.auto !== undefined && typeof e.auto !== "boolean") throw new RangeError(`setHinges: auto ${JSON.stringify(e.auto)}`);
+      if (e.end !== undefined && e.end !== "i" && e.end !== "j") throw new RangeError(`setHinges: end ${JSON.stringify(e.end)}`);
+      if (e.axis !== undefined && e.axis !== "z" && e.axis !== "y") throw new RangeError(`setHinges: axis ${JSON.stringify(e.axis)}`);
+      if (e.notice !== undefined && e.notice !== null && typeof e.notice !== "string") throw new RangeError(`setHinges: notice ${JSON.stringify(e.notice)}`);
+      const cur = o.hinges;
+      const on = e.on ?? cur.on;
+      // As the node markers: null chooses again, a number is the user's unless the effects say `auto`, and switching
+      // on chooses again unless the user has set a size.
+      let size = cur.size, auto = cur.auto;
+      if (e.size === null) [size, auto] = [null, true];
+      else if (e.size !== undefined) [size, auto] = [Math.max(NODE_SIZE_MIN, Math.min(NODE_SIZE_MAX, e.size)), e.auto === true];
+      else if (on && !cur.on && cur.auto) size = null;
+      const next: HingesState = {
+        on,
+        colorBy: e.colorBy ?? cur.colorBy,
+        size,
+        auto,
+        element: e.element !== undefined ? e.element : cur.element,
+        end: e.end ?? cur.end,
+        axis: e.axis ?? cur.axis,
+        history: e.history !== undefined ? e.history : cur.history,
+        notice: e.notice !== undefined ? e.notice : cur.notice,
+      };
+      return (Object.keys(next) as (keyof HingesState)[]).every((k) => next[k] === cur[k]) ? o : { ...o, hinges: next };
     }
     case "setVectors": {
       for (const k of ["on", "thin"] as const) {

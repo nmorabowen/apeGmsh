@@ -319,6 +319,51 @@ export interface LadrunoSpringStep {
   time: number;
 }
 
+/** The `.ladruno` token of the Ladruno beams' hinge rotations and moments. */
+export const HINGE_TOKEN = "hingeSummary";
+/** The columns every hinge read returns, in this order; a 2-D file fills the first four. */
+export const HINGE_COLUMNS = ["thetaZ_i", "Mz_i", "thetaZ_j", "Mz_j", "thetaY_i", "My_i", "thetaY_j", "My_j"] as const;
+const HINGE_2D_NAMES: Readonly<Record<string, string>> = { theta_i: "thetaZ_i", M_i: "Mz_i", theta_j: "thetaZ_j", M_j: "Mz_j" };
+/** A stage holding more `hingeSummary` values than this is not scanned for its colour range. */
+const HINGE_RANGE_MAX_VALUES = 4_000_000;
+
+/** Each `HINGE_COLUMNS` entry's column in a bucket with `names` (-1: not recorded), or null when a name is not a hinge column. */
+export function hingeColumnsOf(names: readonly string[]): Int32Array | null {
+  const out = new Int32Array(HINGE_COLUMNS.length).fill(-1);
+  for (let c = 0; c < names.length; c++) {
+    const at = (HINGE_COLUMNS as readonly string[]).indexOf(HINGE_2D_NAMES[names[c]!] ?? names[c]!);
+    if (at < 0 || out[at] !== -1) return null;
+    out[at] = c;
+  }
+  return out[0] === -1 || out[1] === -1 || out[2] === -1 || out[3] === -1 ? null : out;
+}
+
+/** One step of a stage's `hingeSummary`, every element that records it. */
+export interface LadrunoHingeStep {
+  /** (n,) element ids, as the file writes them */
+  elementIds: Float64Array;
+  /** (n * 8,) in `HINGE_COLUMNS` order; NaN for a column the file does not record */
+  values: Float64Array;
+  /** the largest |rotation| and |moment| over the stage, or null for a stage too large to scan */
+  range: { rotation: number; moment: number } | null;
+  time: number;
+}
+
+/** One element's `hingeSummary` over its stage. */
+export interface LadrunoHingeHistory {
+  element: number;
+  time: Float64Array;
+  /** (nSteps * 8,) step-major, in `HINGE_COLUMNS` order */
+  values: Float64Array;
+}
+
+/** A `hingeSummary` bucket: its DATA, element ids, and where each `HINGE_COLUMNS` entry sits. */
+interface HingeBucket {
+  dataDs: LDataset;
+  ids: Float64Array;
+  cols: Int32Array;
+}
+
 /** A `force` bucket's springs: its DATA, the bucket rows that are springs, and node j's translation columns (-1: none). */
 interface SpringBucket {
   dataDs: LDataset;
@@ -427,6 +472,8 @@ export class LadrunoFile {
   private readonly gauss: LadrunoGauss;
   /** Each stage's spring buckets, found once (`springBuckets`). */
   private readonly springs = new Map<string, SpringBucket[]>();
+  private readonly hinges = new Map<string, HingeBucket[]>();
+  private readonly hingeRanges = new Map<string, { rotation: number; moment: number } | null>();
   /**
    * The particle stages (ADR 0134 D3; reader/ladrunoParticles.ts), indexed at open
    * and read by output on request; null below FORMAT_MINOR_VERSION 2, where a
@@ -1176,6 +1223,118 @@ export class LadrunoFile {
         continue;
       }
       found.push({ dataDs: parsed.dataDs, rows, cols: cols.map((c) => (c < 0 ? -1 : block.colStart + c)) as [number, number, number], ids: parsed.ids, nodes });
+    }
+    return found;
+  }
+
+  // -- beam hinges ----------------------------------------------------------
+
+  /** How many elements record `hingeSummary` in `stageId`; 0 on a mode stage. */
+  hingeCount(stageId: string, warningsOut?: string[]): number {
+    return this.hingeBuckets(stageId, warningsOut).reduce((n, b) => n + b.ids.length, 0);
+  }
+
+  /** Whether the stage is small enough for its colour range to be scanned (`LadrunoHingeStep.range`). */
+  hingeRangeScanned(stageId: string): boolean {
+    const s = this.stage(stageId);
+    return this.hingeBuckets(stageId).reduce((n, b) => n + s.nSteps * b.ids.length * b.dataDs.shape![2]!, 0) <= HINGE_RANGE_MAX_VALUES;
+  }
+
+  /** `hingeSummary` at `step` of `stageId`, bucket by bucket in file order. */
+  readHingeStep(stageId: string, step: number): LadrunoHingeStep {
+    const s = this.stage(stageId);
+    checkStep(s, step);
+    const buckets = this.hingeBuckets(stageId);
+    const n = buckets.reduce((k, b) => k + b.ids.length, 0);
+    const width = HINGE_COLUMNS.length;
+    const out: LadrunoHingeStep = { elementIds: new Float64Array(n), values: new Float64Array(n * width), range: this.hingeRange(stageId), time: s.time[step]! };
+    let k = 0;
+    for (const b of buckets) {
+      const w = b.dataDs.shape![2]!;
+      const raw = toFloat64(b.dataDs.slice([[step, step + 1], [], []]), b.dataDs.path);
+      for (let r = 0; r < b.ids.length; r++, k++) {
+        out.elementIds[k] = b.ids[r]!;
+        for (let c = 0; c < width; c++) out.values[k * width + c] = b.cols[c]! >= 0 ? raw[r * w + b.cols[c]!]! : Number.NaN;
+      }
+    }
+    return out;
+  }
+
+  /** One element's `hingeSummary` over the whole of `stageId`; an element that records none is refused by name. */
+  readHingeHistory(stageId: string, element: number): LadrunoHingeHistory {
+    const s = this.stage(stageId);
+    const width = HINGE_COLUMNS.length;
+    for (const b of this.hingeBuckets(stageId)) {
+      const r = b.ids.indexOf(element);
+      if (r < 0) continue;
+      const raw = toFloat64(b.dataDs.slice([[0, s.nSteps], [r, r + 1], []]), b.dataDs.path);
+      const w = b.dataDs.shape![2]!;
+      const values = new Float64Array(s.nSteps * width);
+      for (let k = 0; k < s.nSteps; k++) for (let c = 0; c < width; c++) values[k * width + c] = b.cols[c]! >= 0 ? raw[k * w + b.cols[c]!]! : Number.NaN;
+      return { element, time: Float64Array.from(s.time), values };
+    }
+    throw new LadrunoError("argument", `element ${element} records no ${HINGE_TOKEN} in stage ${stageId}`);
+  }
+
+  /** The stage's largest |rotation| and |moment|, so a marker's colour means the same at every step. */
+  private hingeRange(stageId: string): { rotation: number; moment: number } | null {
+    if (this.hingeRanges.has(stageId)) return this.hingeRanges.get(stageId)!;
+    const s = this.stage(stageId);
+    const buckets = this.hingeBuckets(stageId);
+    let range: { rotation: number; moment: number } | null = null;
+    if (this.hingeRangeScanned(stageId)) {
+      range = { rotation: 0, moment: 0 };
+      for (const b of buckets) {
+        const w = b.dataDs.shape![2]!;
+        const raw = toFloat64(b.dataDs.slice([[0, s.nSteps], [], []]), b.dataDs.path);
+        for (let c = 0; c < HINGE_COLUMNS.length; c++) {
+          const col = b.cols[c]!;
+          if (col < 0) continue;
+          const key = c % 2 === 0 ? "rotation" : "moment";
+          for (let at = col; at < raw.length; at += w) {
+            const v = Math.abs(raw[at]!);
+            if (v > range[key]) range[key] = v;
+          }
+        }
+      }
+    }
+    this.hingeRanges.set(stageId, range);
+    return range;
+  }
+
+  /** The stage's readable `hingeSummary` buckets. One the rule cannot read warns once, at open, and is left out. */
+  private hingeBuckets(stageId: string, warningsOut?: string[]): HingeBucket[] {
+    const memo = this.hinges.get(stageId);
+    if (memo) return memo;
+    const found: HingeBucket[] = [];
+    this.hinges.set(stageId, found);
+    const s = this.stage(stageId);
+    if (s.kind === "mode") return found;
+    const grp = this.optionalSubgroup(this.group(this.f, s.name), ["RESULTS", "ON_ELEMENTS", HINGE_TOKEN]);
+    if (!grp) return found;
+    for (const key of grp.keys()) {
+      const leftOut = (why: string) => warningsOut?.push(`${HINGE_TOKEN} bucket ${JSON.stringify(key)} is left out: ${why}`);
+      const bucket = this.optionalGroup(grp, key);
+      if (!bucket) {
+        leftOut("it is not a group");
+        continue;
+      }
+      const parsed = this.parseBucketBlocks(bucket);
+      if ("reason" in parsed) {
+        leftOut(parsed.reason);
+        continue;
+      }
+      const block = parsed.blocks.length === 1 && parsed.blocks[0]!.level === 0 && parsed.blocks[0]!.multiplicity === 1 ? parsed.blocks[0]! : null;
+      const cols = block ? hingeColumnsOf(block.compNames) : null;
+      if (!block || !cols) {
+        leftOut(`its columns (${block ? block.compNames.join(",") : "not one element-level block"}) are not the hinge columns`);
+        continue;
+      }
+      if (parsed.dataDs.shape![0]! < s.nSteps) {
+        leftOut(`it holds ${parsed.dataDs.shape![0]} steps and the stage ${s.nSteps}`);
+        continue;
+      }
+      found.push({ dataDs: parsed.dataDs, ids: parsed.ids, cols: cols.map((c) => (c < 0 ? -1 : block.colStart + c)) });
     }
     return found;
   }

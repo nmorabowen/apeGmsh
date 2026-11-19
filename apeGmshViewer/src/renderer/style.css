@@ -103,12 +103,12 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 #left-rail > * { pointer-events: auto; }
 #left-rail > [hidden] { display: none; }
 
-#line-diagram, #loads, #reactions, #vectors, #principal, #cracks, #springs {
+#line-diagram, #loads, #reactions, #vectors, #principal, #cracks, #springs, #hinges {
   flex: 0 1 auto; min-height: 0; overflow: auto;
   padding: 10px 12px; border-radius: 10px;
   background: var(--panel); border: 1px solid var(--line);
 }
-#line-diagram[hidden], #loads[hidden], #reactions[hidden], #vectors[hidden], #principal[hidden], #cracks[hidden], #springs[hidden] { display: none; }
+#line-diagram[hidden], #loads[hidden], #reactions[hidden], #vectors[hidden], #principal[hidden], #cracks[hidden], #springs[hidden], #hinges[hidden] { display: none; }
 .loads-patterns { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
 .loads-pattern-title { overflow-wrap: anywhere; }
 
@@ -119,7 +119,7 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 }
 .legend-refusals > summary { cursor: pointer; }
 .line-diagram-span-badge { max-height: 4.2em; overflow-y: auto; }
-#legend h3, #line-diagram h3, #loads h3, #reactions h3, #vectors h3, #principal h3, #cracks h3, #springs h3, #inspector h3 {
+#legend h3, #line-diagram h3, #loads h3, #reactions h3, #vectors h3, #principal h3, #cracks h3, #springs h3, #hinges h3, #inspector h3 {
   margin: 0 0 6px; font-size: 12px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
 }
@@ -248,7 +248,7 @@ code { font-family: var(--mono); }
 .sibling { color: var(--muted); }
 .legend-row.clickable { cursor: pointer; }
 .legend-row.hidden-group { opacity: 0.4; text-decoration: line-through; }
-#legend h3, #line-diagram h3, #loads h3, #reactions h3, #vectors h3, #principal h3, #cracks h3, #springs h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
+#legend h3, #line-diagram h3, #loads h3, #reactions h3, #vectors h3, #principal h3, #cracks h3, #springs h3, #hinges h3, #inspector h3 { display: flex; align-items: center; gap: 8px; }
 .legend-all, .pin {
   margin-left: auto; padding: 0 6px; border-radius: 4px; cursor: pointer;
   font: 600 11px var(--font); letter-spacing: 0; text-transform: none;
@@ -503,13 +503,13 @@ code { font-family: var(--mono); }
 .vc-theme { flex: 0 0 auto; }
 
 /* Universal collapsible panels (ui/collapse.ts): every <aside> in #rail, #legend, #line-diagram, and #loads */
-#rail > aside > h3:first-child, #legend > h3:first-child, #line-diagram > h3:first-child, #loads > h3:first-child, #reactions > h3:first-child, #vectors > h3:first-child, #principal > h3:first-child, #cracks > h3:first-child, #springs > h3:first-child {
+#rail > aside > h3:first-child, #legend > h3:first-child, #line-diagram > h3:first-child, #loads > h3:first-child, #reactions > h3:first-child, #vectors > h3:first-child, #principal > h3:first-child, #cracks > h3:first-child, #springs > h3:first-child, #hinges > h3:first-child {
   cursor: pointer; user-select: none;
 }
-#rail > aside > h3:first-child::before, #legend > h3:first-child::before, #line-diagram > h3:first-child::before, #loads > h3:first-child::before, #reactions > h3:first-child::before, #vectors > h3:first-child::before, #principal > h3:first-child::before, #cracks > h3:first-child::before, #springs > h3:first-child::before {
+#rail > aside > h3:first-child::before, #legend > h3:first-child::before, #line-diagram > h3:first-child::before, #loads > h3:first-child::before, #reactions > h3:first-child::before, #vectors > h3:first-child::before, #principal > h3:first-child::before, #cracks > h3:first-child::before, #springs > h3:first-child::before, #hinges > h3:first-child::before {
   content: "\25be"; font-size: 11px; color: var(--muted);
 }
-#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before, #loads > h3:first-child:hover::before, #reactions > h3:first-child:hover::before, #vectors > h3:first-child:hover::before, #principal > h3:first-child:hover::before, #cracks > h3:first-child:hover::before, #springs > h3:first-child:hover::before {
+#rail > aside > h3:first-child:hover::before, #legend > h3:first-child:hover::before, #line-diagram > h3:first-child:hover::before, #loads > h3:first-child:hover::before, #reactions > h3:first-child:hover::before, #vectors > h3:first-child:hover::before, #principal > h3:first-child:hover::before, #cracks > h3:first-child:hover::before, #springs > h3:first-child:hover::before, #hinges > h3:first-child:hover::before {
   color: var(--accent);
 }
 body:not([data-still-chrome="app"]) #rail > aside[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #legend[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #line-diagram[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #loads[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #reactions[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #vectors[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #principal[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #cracks[data-collapsed="true"] > h3:first-child::before, body:not([data-still-chrome="app"]) #springs[data-collapsed="true"] > h3:first-child::before {
@@ -782,3 +782,16 @@ body[data-rail-collapsed="true"] #windows { right: 24px; }
    model still omits every element of the page but the viewport. */
 [data-still-omit] { display: none !important; }
 body[data-still-chrome="model"] > :not(#viewport) { display: none !important; }
+
+/* The Hinges card's plots. */
+.hinges-count, .hinges-site, .hinges-scale, .hinges-now-line { color: var(--muted); font-size: 11px; margin: 4px 0; }
+.hinges-note { color: var(--muted); font-size: 11px; margin: 4px 0; font-style: italic; }
+.hinges-pick { display: flex; gap: 4px; margin: 4px 0; }
+.hinges-pick select { flex: 0 0 auto; }
+.hinges-pick .hinges-element { flex: 1 1 0; min-width: 0; }
+.hinges-plot { display: block; width: 100%; height: auto; margin-top: 4px; }
+.hinges-axis { stroke: var(--line); stroke-width: 1; }
+.hinges-capacity { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.hinges-curve { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
+.hinges-now { fill: var(--accent); stroke: var(--panel, #000); stroke-width: 1; }
+.hinges-label { fill: var(--muted); font-size: 10px; font-family: var(--font); }
