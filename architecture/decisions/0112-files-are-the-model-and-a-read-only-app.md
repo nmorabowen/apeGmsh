@@ -333,3 +333,11 @@ which `src/apeGmsh/_artifact_policy.py` does not govern, and it pairs with
 its model by stem only. Like `.user.h5` and `.workspace.h5`, it is a file of
 the set, not a zone of `model.h5`. ADR 0134 D1 governs the file. The decision
 text above is unchanged.
+
+## Pointer (2026-11-18): ADR 0137
+
+[ADR 0137](0137-apegmshviewer-large-models-and-tool-hosting.md) (Proposed 2026-11-18) amends three decisions when accepted.
+D5: HDF5 may be read in an Electron utility process of the app's own, as well as in-process. D6: the one store stays in the
+model window, and tool windows receive a small one-way context, send events and request data. D7: one model window, plus
+tool placements in separate-renderer tool windows, a dock and anchored cards. ADR 0137 governs tool hosting and the supported
+model size. The decision text above is unchanged.
