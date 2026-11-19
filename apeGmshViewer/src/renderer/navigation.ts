@@ -13,7 +13,7 @@
 
 import * as THREE from "three";
 import type { CameraPose, NamedView } from "../state/types.ts";
-import { bindingFor, buttonOf, CLICK_SLOP_PX, isSelectAdd, keyAction, type DragAction } from "./bindings.ts";
+import { bindingFor, buttonOf, CLICK_SLOP_PX, keyAction, selectModeOf, type DragAction, type SelectMode } from "./bindings.ts";
 
 export const Z_UP: Readonly<THREE.Vector3> = new THREE.Vector3(0, 0, 1);
 export const DEFAULT_FOV_DEG = 35;
@@ -259,7 +259,13 @@ export interface NavHost {
   hitAt(clientX: number, clientY: number): THREE.Vector3 | null;
   /** The world ray through a client-space point. */
   rayAt(clientX: number, clientY: number): THREE.Ray;
-  select(clientX: number, clientY: number, add?: boolean): void;
+  select(clientX: number, clientY: number, mode?: SelectMode): void;
+  /** ADR 0138 D7: a box drag from the press to the pointer now (client pixels); `boxEnd` applies it, `boxCancel` drops it. */
+  box?(ax: number, ay: number, bx: number, by: number, mode: SelectMode): void;
+  boxEnd?(ax: number, ay: number, bx: number, by: number, mode: SelectMode): void;
+  boxCancel?(): void;
+  /** ADR 0138 D2: the keys that choose the active kind */
+  setKind?(kind: "element" | "node"): void;
   /** Frame the whole model, keeping the heading. */
   fit(): void;
   clearSelection?(): void;
@@ -274,7 +280,9 @@ interface Drag {
   id: number;
   action: DragAction | null;
   click: boolean;
-  add: boolean;
+  mode: SelectMode;
+  /** a box drag that passed the click slop */
+  boxing: boolean;
   x0: number;
   y0: number;
   x: number;
@@ -358,6 +366,7 @@ export class Navigator {
   }
 
   private endDrag(): void {
+    if (this.drag?.boxing) this.host.boxCancel?.();
     this.drag = null;
   }
 
@@ -366,12 +375,13 @@ export class Navigator {
     const b = this.host.bounds();
     if (!button || !b || this.drag) return;
     const binding = bindingFor(button, e.shiftKey);
-    const anchor = pivotFor(binding.drag ? this.host.hitAt(e.clientX, e.clientY) : null, b.center);
+    const anchor = pivotFor(binding.drag === "orbit" || binding.drag === "pan" ? this.host.hitAt(e.clientX, e.clientY) : null, b.center);
     this.drag = {
       id: e.pointerId,
       action: binding.drag,
       click: binding.click === "select",
-      add: isSelectAdd(e),
+      mode: selectModeOf(e),
+      boxing: false,
       x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
       pivot: anchor,
       depth: Math.max(depthOf(this.host.camera, anchor), 1e-3 * b.radius),
@@ -388,6 +398,13 @@ export class Navigator {
     if (dx === 0 && dy === 0) return;
     d.x = e.clientX;
     d.y = e.clientY;
+    if (d.action === "box") {
+      // ADR 0138 D7: past the click slop the press is a box; the host draws it and counts what it takes.
+      if (!d.boxing && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) <= CLICK_SLOP_PX) return;
+      d.boxing = true;
+      this.host.box?.(d.x0, d.y0, e.clientX, e.clientY, d.mode);
+      return;
+    }
     const h = this.host.element.clientHeight || 1;
     if (d.action === "orbit") {
       // A drag across the canvas height turns a full circle (OrbitControls' rate).
@@ -405,8 +422,12 @@ export class Navigator {
     if (!d || e.pointerId !== d.id) return;
     this.drag = null;
     if (this.host.element.hasPointerCapture(e.pointerId)) this.host.element.releasePointerCapture(e.pointerId);
+    if (d.boxing) {
+      this.host.boxEnd?.(d.x0, d.y0, e.clientX, e.clientY, d.mode);
+      return;
+    }
     if (d.click && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) <= CLICK_SLOP_PX) {
-      this.host.select(e.clientX, e.clientY, d.add || isSelectAdd(e));
+      this.host.select(e.clientX, e.clientY, d.mode);
     }
   }
 
@@ -439,8 +460,16 @@ export class Navigator {
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
     const action = keyAction(e.key);
+    if (action === "clearSelection" && this.drag?.boxing) {
+      // Esc during a box drops it; the selection stays as it was.
+      this.host.boxCancel?.();
+      this.drag = null;
+      return;
+    }
     if (action === "fit" && this.host.bounds()) this.host.fit();
     else if (action === "clearSelection") this.host.clearSelection?.();
+    else if (action === "kindElement") this.host.setKind?.("element");
+    else if (action === "kindNode") this.host.setKind?.("node");
     else if (action === "toggleEdges") this.host.toggleEdges?.();
   }
 }

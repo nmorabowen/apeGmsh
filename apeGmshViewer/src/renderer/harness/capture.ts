@@ -7,6 +7,7 @@ import { captureContours, captureDeform, captureElements, captureExtrudeResults,
 import { captureCaps, captureClip, captureGizmo } from "./sections.ts";
 import { captureCracks } from "./cracks.ts";
 import { captureHinges } from "./hinges.ts";
+import { captureSelection } from "./selection.ts";
 import { captureWorkspace } from "./workspace.ts";
 import { captureCombine } from "./combine.ts";
 
@@ -84,6 +85,7 @@ export async function runCapture(ctx: HarnessContext, cfg: HarnessConfig, file: 
   viewport.renderNow();
   await bridge.captureStill("groups");
   await captureCamera(ctx, settle, file);
+  await captureSelection(ctx, settle);
   store.dispatch({ type: "setColourBy", by: "role" });
   await settle();
   viewport.renderNow();

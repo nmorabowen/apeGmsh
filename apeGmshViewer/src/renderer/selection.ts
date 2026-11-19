@@ -167,7 +167,8 @@ export function nearestNodeOf(
  * The objects that draw a selection over the model (ADR 0138 D8): the selected
  * triangles filled, as an index over the faces' own position attribute; the
  * selected segments as thick lines and each selected element's outline as
- * thinner ones; the selected nodes as points. All without
+ * thinner ones; the selected nodes as points. With `quiet` (another kind is
+ * active, ADR 0138 D2) the element kind is drawn faint and left off the halo. All without
  * depth test, and every one on HALO_LAYER as well as the default layer, so the
  * halo pass rings the whole selection.
  */
@@ -179,26 +180,30 @@ export function highlightObjects(
   nodePositions: Float32Array,
   makeLines: (positions: Float32Array, widthPx: number) => THREE.Object3D,
   makePoints: (positions: Float32Array) => THREE.Object3D,
+  quiet = false,
 ): THREE.Object3D[] {
   const out: THREE.Object3D[] = [];
+  /** objects of the element kind; with `quiet` they stay faint and off the halo, so another kind's markers read over them */
+  const elementParts: THREE.Object3D[] = [];
   const noDepth = (o: THREE.Object3D, order: number) => {
     o.renderOrder = order;
     const m = (o as THREE.Mesh).material as THREE.Material | undefined;
     if (m) m.depthTest = false;
     out.push(o);
+    return o;
   };
-  if (segmentPositions.length) noDepth(makeLines(segmentPositions, 9), 10);
-  if (outlinePositions.length) noDepth(makeLines(outlinePositions, 6), 10);
+  if (segmentPositions.length) elementParts.push(noDepth(makeLines(segmentPositions, quiet ? 4 : 9), 10));
+  if (outlinePositions.length && !quiet) elementParts.push(noDepth(makeLines(outlinePositions, 6), 10));
   if (facePositions && triIndex.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", facePositions);
     g.setIndex(new THREE.BufferAttribute(triIndex, 1));
-    const fill = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: SELECTION_COLOUR, side: THREE.DoubleSide, transparent: true, opacity: 0.6 }));
+    const fill = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: SELECTION_COLOUR, side: THREE.DoubleSide, transparent: true, opacity: quiet ? 0.2 : 0.6 }));
     fill.frustumCulled = false;
-    noDepth(fill, 9);
+    elementParts.push(noDepth(fill, 9));
   }
   if (nodePositions.length) noDepth(makePoints(nodePositions), 11);
-  for (const o of out) o.layers.enable(HALO_LAYER);
+  for (const o of out) if (!(quiet && elementParts.includes(o))) o.layers.enable(HALO_LAYER);
   return out;
 }
 

@@ -54,7 +54,9 @@ import {
   type ProjectionMode,
   type ViewCamera,
 } from "./navigation.ts";
-import { fitDistance, focusOf, type Focus, type Hit, elementOutlines, highlightObjects, hitElement, nearestNodeOf, nodeVertexPositions, SELECTION_COLOUR, selectedPrims, SelectionHalo } from "./selection.ts";
+import { BoxPicker, boxOf, type Box as PickBox, type PickSource } from "./picking.ts";
+import type { SelectMode } from "./bindings.ts";
+import { fitDistance, focusOf, type Focus, type Hit, elementOutlines, HALO_COLOUR, highlightObjects, hitElement, nearestNodeOf, nodeVertexPositions, SELECTION_COLOUR, selectedPrims, SelectionHalo } from "./selection.ts";
 import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** The right rail's width plus its margins (style.css #rail: the inspector above the sources). */
@@ -252,7 +254,7 @@ export class Viewport {
     // ADR 0134 D5: after the node layer's group (`content`), as the card asks.
     this.scene.add(this.particles.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
-    this.scene.add(this.ghost, this.markers, this.gaussGroup);
+    this.scene.add(this.ghost, this.markers, this.gaussGroup, this.hoverGroup);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
     this.scene.add(this.gizmos.root);
     // V4e3: the caps, likewise skipped by the clip stamping (each is trimmed by the other planes itself).
@@ -438,6 +440,14 @@ export class Viewport {
    * anywhere else (`selectAt`).
    */
   private hoverCleanup: (() => void) | null = null;
+  /** ADR 0138 D7: the press's ID image while a box is dragged, and the box drawn over the canvas */
+  private boxPicker: BoxPicker | null = null;
+  private boxEl: HTMLDivElement | null = null;
+  /** ADR 0138 D6: the hovered target's mark, its key, its name by the cursor, and the pointer waiting for the next frame */
+  private readonly hoverGroup = new THREE.Group();
+  private hoverKey: string | null = null;
+  private hoverTag: HTMLDivElement | null = null;
+  private hoverPending: { x: number; y: number } | null = null;
 
   private wireInput(): { gizmo: GizmoInteractor; nav: Navigator } {
     const element = this.renderer.domElement;
@@ -459,7 +469,7 @@ export class Viewport {
         const top = typeof document === "undefined" ? element : document.elementFromPoint(x, y);
         return top !== null && top !== element;
       },
-      select: (x, y, add) => this.selectAt(x, y, add),
+      select: (x, y, mode) => this.selectAt(x, y, mode),
     });
     const nav = new Navigator({
       get camera(): ViewCamera {
@@ -476,7 +486,11 @@ export class Viewport {
         this.aim(x, y);
         return this.raycaster.ray.clone();
       },
-      select: (x, y, add) => this.selectAt(x, y, add),
+      select: (x, y, mode) => this.selectAt(x, y, mode),
+      box: (ax, ay, bx, by, mode) => void this.boxAt(ax, ay, bx, by, mode),
+      boxEnd: (ax, ay, bx, by, mode) => this.boxEnd(ax, ay, bx, by, mode),
+      boxCancel: () => this.boxCancel(),
+      setKind: (kind) => this.store.dispatch({ type: "setWorkspaceKind", kind: kind === "node" ? "nodes" : "elements" }),
       fit: () => {
         const s = this.store.get();
         // On the geometry phase (or with no mesh), F fits the geometry; else the frame effect
@@ -501,16 +515,22 @@ export class Viewport {
       },
     });
     const onPointerMove = (ev: PointerEvent) => {
-      if (ev.buttons !== 0 || this.gizmoInput?.dragging || this.sliding) return;
+      if (ev.buttons !== 0 || this.gizmoInput?.dragging || this.sliding) {
+        this.clearHoverTarget();
+        return;
+      }
       const top = typeof document === "undefined" ? element : document.elementFromPoint(ev.clientX, ev.clientY);
       if (top !== null && top !== element) {
         if (this.store.get().hover !== null) this.store.dispatch({ type: "hover", at: null });
+        this.clearHoverTarget();
         return;
       }
       this.hoverAt(ev.clientX, ev.clientY);
+      this.scheduleHoverTarget(ev.clientX, ev.clientY);
     };
     const onPointerLeave = () => {
       if (this.store.get().hover !== null) this.store.dispatch({ type: "hover", at: null });
+      this.clearHoverTarget();
     };
     element.addEventListener("pointermove", onPointerMove);
     element.addEventListener("pointerleave", onPointerLeave);
@@ -545,20 +565,216 @@ export class Viewport {
     this.store.dispatch({ type: "hover", at: pick });
   }
 
-  /** A click at a client point: select (or toggle in the selection when `add` is true) what it picks in the active kind; on a plain miss, clear that kind. */
-  private selectAt(x: number, y: number, add = false): void {
-    if (this.store.get().selection.active === "node") {
+  /**
+   * A click at a client point (ADR 0138 D6), on the active kind: replace selects
+   * what it picks, add adds it, remove takes it out. A plain click on empty
+   * space clears that kind.
+   */
+  private selectAt(x: number, y: number, mode: SelectMode = "replace"): void {
+    const s = this.store.get();
+    if (s.selection.active === "node") {
       const tag = this.nodeAt(x, y);
-      if (tag !== null) this.store.dispatch({ type: "selectNodes", tags: [tag], mode: add ? "toggle" : "replace" });
-      else if (!add) this.store.dispatch({ type: "clearSelection", kind: "node" });
+      if (tag !== null) this.store.dispatch({ type: "selectNodes", tags: [tag], mode });
+      else if (mode === "replace") this.store.dispatch({ type: "clearSelection", kind: "node" });
       return;
     }
     const pick = this.pickAt(x, y);
-    if (add) {
-      if (pick) this.store.dispatch({ type: "selectAdd", pick });
+    if (!pick) {
+      if (mode === "replace") this.store.dispatch({ type: "clearSelection", kind: "element" });
       return;
     }
-    this.store.dispatch(pick ? { type: "select", pick } : { type: "clearSelection" });
+    if (mode === "replace") return this.store.dispatch({ type: "select", pick });
+    const on = selectedElementsOf(s).includes(pick.decl);
+    if (mode === "add" && !on) this.store.dispatch({ type: "selectAdd", pick });
+    else if (mode === "remove" && on) this.store.dispatch({ type: "selectDecls", decls: [pick.decl], remove: true });
+  }
+
+  /** What the box picker draws: the drawn faces, frame faces, lines and nodes, at their drawn positions. */
+  private pickSource(s: State): PickSource | null {
+    const info = s.mesh, drawn = this.drawn;
+    if (!info || !drawn) return null;
+    const triElement = this.blobs.i32(info.triElement), lineElement = this.blobs.i32(info.lineElement);
+    const faces = this.faces && this.faces.visible
+      ? { positions: this.faces.geometry.getAttribute("position") as THREE.BufferAttribute, element: Int32Array.from(drawn.triMap, (t) => triElement[t]!) }
+      : null;
+    const fe = info.frameExtrusion;
+    const frameFaces = this.frameFaces && this.frameFaces.visible && this.frameTriMap && fe
+      ? (() => {
+          const fEl = this.blobs.i32(fe.triElement);
+          return { positions: this.frameFaces!.geometry.getAttribute("position") as THREE.BufferAttribute, element: Int32Array.from(this.frameTriMap!, (t) => fEl[t]!) };
+        })()
+      : null;
+    const pos = drawnPositions(this.full, info, this.blobs);
+    const lineMap = this.drawnLineMap ?? drawn.lineMap;
+    const linePos = s.visibility.showOffsets && pos.clearLine ? pos.clearLine : pos.line;
+    const lines = this.lines && this.lines.visible && lineMap.length
+      ? { positions: gatherInto(linePos, lineMap, 6), element: Int32Array.from(lineMap, (l) => lineElement[l]!) }
+      : null;
+    let nodes: PickSource["nodes"] = null;
+    if (s.selection.active === "node") {
+      const vn = { line: this.blobs.get(info.vertexNodes.line) as Float64Array, tri: this.blobs.get(info.vertexNodes.tri) as Float64Array };
+      const nv = uniqueNodeVertices(vn.line, vn.tri, drawn.lineMap, drawn.triMap);
+      const tags = new Float64Array(nv.line.length + nv.tri.length);
+      nv.line.forEach((o, i) => (tags[i] = vn.line[o / 3]!));
+      nv.tri.forEach((o, i) => (tags[nv.line.length + i] = vn.tri[o / 3]!));
+      nodes = { positions: nodePositions(nv, pos.line, pos.tri), tags };
+    }
+    return { faces, frameFaces, lines, nodes, elements: info.elements.length, planes: this.clip.planes };
+  }
+
+  /** ADR 0138 D7: the box from the press to the pointer, drawn over the canvas with the count it would take. */
+  boxAt(ax: number, ay: number, bx: number, by: number, mode: SelectMode): number[] | null {
+    const s = this.store.get();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (!this.boxPicker) {
+      const src = this.pickSource(s);
+      if (!src) return null;
+      this.clearHoverTarget();
+      this.boxPicker = new BoxPicker(this.renderer, this.camera, s.selection.active, src, rect.width, rect.height);
+    }
+    const box = boxOf(ax - rect.left, ay - rect.top, bx - rect.left, by - rect.top);
+    const found = this.boxPicker.query(box);
+    this.showBox(rect, box, found.length, s.selection.active, mode);
+    return found;
+  }
+
+  /** ADR 0138 D7: the box released: the active kind takes what it holds (replace, add or remove). */
+  boxEnd(ax: number, ay: number, bx: number, by: number, mode: SelectMode): void {
+    const found = this.boxAt(ax, ay, bx, by, mode);
+    const s = this.store.get();
+    this.boxCancel();
+    if (found === null || !s.mesh) return;
+    if (s.selection.active === "node") {
+      this.store.dispatch({ type: "selectNodes", tags: found, mode });
+      return;
+    }
+    const decls = found.map((e) => s.mesh!.elements[e]!);
+    if (mode === "replace" && decls.length === 0) this.store.dispatch({ type: "clearSelection", kind: "element" });
+    else if (mode === "remove") this.store.dispatch({ type: "selectDecls", decls, remove: true });
+    else this.store.dispatch({ type: "selectDecls", decls, add: mode === "add" });
+  }
+
+  /** The box dropped: its overlay and its ID image go. */
+  boxCancel(): void {
+    this.boxPicker?.dispose();
+    this.boxPicker = null;
+    this.boxEl?.remove();
+    this.boxEl = null;
+  }
+
+  private showBox(rect: DOMRect, box: PickBox, count: number, kind: "element" | "node", mode: SelectMode): void {
+    if (!this.boxEl) {
+      this.boxEl = document.createElement("div");
+      this.boxEl.className = "box-select";
+      this.boxEl.append(document.createElement("span"));
+      document.body.append(this.boxEl);
+    }
+    const el = this.boxEl;
+    el.dataset["crossing"] = String(box.crossing);
+    el.style.left = `${rect.left + box.x0}px`;
+    el.style.top = `${rect.top + box.y0}px`;
+    el.style.width = `${box.x1 - box.x0}px`;
+    el.style.height = `${box.y1 - box.y0}px`;
+    const noun = kind === "node" ? (count === 1 ? "node" : "nodes") : count === 1 ? "element" : "elements";
+    const sign = mode === "add" ? "+ " : mode === "remove" ? "− " : "";
+    (el.firstChild as HTMLElement).textContent = `${sign}${count.toLocaleString()} ${noun}${kind === "element" ? (box.crossing ? " touching" : " inside") : ""}`;
+  }
+
+  /** ADR 0138 D6: the target under a client point is marked and named, at most once a frame. */
+  private scheduleHoverTarget(x: number, y: number): void {
+    const first = this.hoverPending === null;
+    this.hoverPending = { x, y };
+    if (!first) return;
+    requestAnimationFrame(() => {
+      const p = this.hoverPending;
+      this.hoverPending = null;
+      if (p) this.hoverTarget(p.x, p.y);
+    });
+  }
+
+  private hoverTarget(x: number, y: number): void {
+    const s = this.store.get();
+    const info = s.mesh;
+    if (!info || !this.drawn || this.boxPicker) return this.clearHoverTarget();
+    let key: string | null = null, label = "";
+    let mark: () => THREE.Object3D[] = () => [];
+    const pos = drawnPositions(this.full, info, this.blobs);
+    if (s.selection.active === "node") {
+      const tag = this.nodeAt(x, y);
+      if (tag !== null) {
+        key = `n${tag}`;
+        label = `node ${tag}`;
+        mark = () => {
+          const vn = { line: this.blobs.get(info.vertexNodes.line) as Float64Array, tri: this.blobs.get(info.vertexNodes.tri) as Float64Array };
+          const p = nodeVertexPositions([tag], vn, this.drawn!, pos);
+          const t = themeTokens(this.activeTheme);
+          return p.length ? [makeNodePoints(p, Math.max(14, 2 * (s.nodes.size ?? NODE_SIZE_FALLBACK) + 2), toHexNumber(t.bg0), HALO_COLOUR)] : [];
+        };
+      }
+    } else {
+      const hit = this.hitAt(x, y);
+      if (hit) {
+        const decl = info.elements[hit.element]!;
+        const d = s.decls[decl];
+        key = `e${hit.element}`;
+        label = d ? `${d.name}${d.type ? ` · ${d.type}` : ""}` : decl;
+        mark = () => {
+          const prims = this.indexOf(info).prims.get(hit.element);
+          if (!prims) return [];
+          const out: THREE.Object3D[] = [];
+          const linePos = s.visibility.showOffsets && pos.clearLine ? pos.clearLine : pos.line;
+          if (prims.lines.length) {
+            const segs = new Float32Array(6 * prims.lines.length);
+            prims.lines.forEach((l, k) => segs.set(linePos.subarray(6 * l, 6 * l + 6), 6 * k));
+            out.push(this.makeLines(segs, null, 5, HALO_COLOUR));
+          }
+          if (prims.tris.length) {
+            const tri = new Float32Array(9 * prims.tris.length);
+            prims.tris.forEach((t, k) => tri.set(pos.tri.subarray(9 * t, 9 * t + 9), 9 * k));
+            const g = new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(tri, 3));
+            out.push(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: HALO_COLOUR, transparent: true, opacity: 0.22, side: THREE.DoubleSide })));
+          }
+          return out;
+        };
+      }
+    }
+    this.showHoverTag(x, y, label);
+    if (key === this.hoverKey) return;
+    this.hoverKey = key;
+    this.clear(this.hoverGroup);
+    for (const o of mark()) {
+      o.renderOrder = 12;
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if (m) m.depthTest = false;
+      this.hoverGroup.add(o);
+    }
+    this.requestRender();
+  }
+
+  private showHoverTag(x: number, y: number, label: string): void {
+    if (!label) {
+      this.hoverTag?.remove();
+      this.hoverTag = null;
+      return;
+    }
+    if (!this.hoverTag) {
+      this.hoverTag = document.createElement("div");
+      this.hoverTag.className = "hover-tag";
+      document.body.append(this.hoverTag);
+    }
+    this.hoverTag.textContent = label;
+    this.hoverTag.style.left = `${x + 14}px`;
+    this.hoverTag.style.top = `${y + 14}px`;
+  }
+
+  /** No target under the pointer: the mark and its name go. */
+  private clearHoverTarget(): void {
+    this.hoverPending = null;
+    this.showHoverTag(0, 0, "");
+    if (this.hoverKey === null) return;
+    this.hoverKey = null;
+    this.clear(this.hoverGroup);
+    this.requestRender();
   }
 
   /** Release the listeners, the observer, the subscription and the GPU objects. */
@@ -567,6 +783,8 @@ export class Viewport {
     this.observer.disconnect();
     this.hoverCleanup?.();
     this.hoverCleanup = null;
+    this.boxCancel();
+    this.clearHoverTarget();
     this.nav.dispose();
     this.gizmoInput.dispose();
     this.gizmos.dispose();
@@ -1236,6 +1454,7 @@ export class Viewport {
   }
 
   private setMesh(info: MeshInfo | null): void {
+    this.clearHoverTarget();
     this.clear(this.content);
     this.clear(this.highlight);
     this.lineMaterials = [];
@@ -1631,6 +1850,7 @@ export class Viewport {
       nodePos,
       (p, width) => this.makeLines(p, null, width, SELECTION_COLOUR),
       (p) => makeNodePoints(p, size, SELECTION_COLOUR, rim),
+      s.selection.active !== "element",
     );
     for (const o of objects) this.highlight.add(o);
     if (pulse) this.halo.pulse();

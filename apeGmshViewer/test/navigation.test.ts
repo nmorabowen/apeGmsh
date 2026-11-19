@@ -57,10 +57,10 @@ test("the bindings table has every (button, shift) pair exactly once", () => {
   assert.equal(POINTER_BINDINGS.length, 6);
 });
 
-test("CAD convention: left selects and never orbits, right orbits, middle and shift+right pan", () => {
+test("CAD convention: left selects and drags a box, never orbits; right orbits; middle and shift+right pan", () => {
   for (const shift of [false, true]) {
     assert.equal(bindingFor("left", shift).click, "select");
-    assert.equal(bindingFor("left", shift).drag, null, "a left-drag never orbits or pans");
+    assert.equal(bindingFor("left", shift).drag, "box", "a left-drag draws a selection box (ADR 0138 D7), never orbits or pans");
     assert.equal(bindingFor("middle", shift).drag, "pan");
     assert.equal(bindingFor("right", shift).click, null, "right-click does not select");
     assert.equal(bindingFor("middle", shift).click, null);
@@ -338,9 +338,10 @@ test("orthographic: matches perspective scale at the target depth, pans pixel-fo
   close(afterZoom[1], beforeZoom[1], 1e-6, "ortho zoom y px");
 });
 
-test("modifier clicks pass add=true for Shift, Ctrl and Meta; Escape clears selection and E toggles edges", () => {
+test("ADR 0138 D6: a click replaces, Shift adds, Ctrl and Meta remove; Escape clears, E toggles edges, 1 and 2 choose the kind", () => {
   const element = new FakeTarget(), keys = new FakeTarget();
-  const clicks: [number, number, boolean][] = [];
+  const clicks: [number, number, string][] = [];
+  const kinds: string[] = [];
   let cleared = 0, toggledEdges = 0, fitted = 0;
   const nav = new Navigator({
     camera: camera(new THREE.Vector3(0, -10, 0), { yaw: 0, tilt: Math.PI / 2 }),
@@ -349,9 +350,10 @@ test("modifier clicks pass add=true for Shift, Ctrl and Meta; Escape clears sele
     bounds: () => ({ center: new THREE.Vector3(), radius: 1 }),
     hitAt: () => null,
     rayAt: () => new THREE.Ray(),
-    select: (x, y, add = false) => clicks.push([x, y, add]),
+    select: (x, y, mode = "replace") => clicks.push([x, y, mode]),
     fit: () => fitted++,
     clearSelection: () => cleared++,
+    setKind: (k) => kinds.push(k),
     toggleEdges: () => toggledEdges++,
     changed: () => {},
   });
@@ -364,10 +366,10 @@ test("modifier clicks pass add=true for Shift, Ctrl and Meta; Escape clears sele
   element.fire("pointerdown", { ...press(4, 0, 70, 80), metaKey: true });
   element.fire("pointerup", { ...press(4, 0, 70, 80), metaKey: true });
   assert.deepEqual(clicks, [
-    [10, 20, false],
-    [30, 40, true],
-    [50, 60, true],
-    [70, 80, true],
+    [10, 20, "replace"],
+    [30, 40, "add"],
+    [50, 60, "remove"],
+    [70, 80, "remove"],
   ]);
   keys.fire("keydown", { key: "Escape", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
   keys.fire("keydown", { key: "e", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
@@ -379,5 +381,48 @@ test("modifier clicks pass add=true for Shift, Ctrl and Meta; Escape clears sele
   assert.equal(cleared, 1);
   assert.equal(toggledEdges, 2);
   assert.equal(fitted, 1);
+  keys.fire("keydown", { key: "2", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  keys.fire("keydown", { key: "1", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  assert.deepEqual(kinds, ["node", "element"]);
+  nav.dispose();
+});
+
+test("ADR 0138 D7: a left drag past the click slop is a box (no click), Esc drops it, and a short drag stays a click", () => {
+  const element = new FakeTarget(), keys = new FakeTarget();
+  const log: string[] = [];
+  const nav = new Navigator({
+    camera: camera(new THREE.Vector3(0, -10, 0), { yaw: 0, tilt: Math.PI / 2 }),
+    element,
+    keys,
+    bounds: () => ({ center: new THREE.Vector3(), radius: 1 }),
+    hitAt: () => {
+      log.push("hitAt");
+      return null;
+    },
+    rayAt: () => new THREE.Ray(),
+    select: (x, y, mode) => log.push(`select ${x},${y} ${mode}`),
+    box: (ax, ay, bx, by, mode) => log.push(`box ${ax},${ay} ${bx},${by} ${mode}`),
+    boxEnd: (ax, ay, bx, by, mode) => log.push(`end ${ax},${ay} ${bx},${by} ${mode}`),
+    boxCancel: () => log.push("cancel"),
+    fit: () => {},
+    changed: () => {},
+  });
+  const at = (id: number, x: number, y: number, extra: object = {}) => ({ ...press(id, 0, x, y), ...extra });
+  element.fire("pointerdown", at(1, 100, 100));
+  element.fire("pointermove", at(1, 102, 101));
+  element.fire("pointermove", at(1, 160, 140));
+  element.fire("pointerup", at(1, 160, 140));
+  assert.deepEqual(log, ["box 100,100 160,140 replace", "end 100,100 160,140 replace"], "no pivot ray, no click: a box");
+  log.length = 0;
+  element.fire("pointerdown", at(2, 100, 100, { shiftKey: true }));
+  element.fire("pointermove", at(2, 40, 60, { shiftKey: true }));
+  keys.fire("keydown", { key: "Escape", ctrlKey: false, altKey: false, metaKey: false, repeat: false, target: null });
+  element.fire("pointerup", at(2, 40, 60, { shiftKey: true }));
+  assert.deepEqual(log, ["box 100,100 40,60 add", "cancel"], "Esc drops the box; the release then does nothing");
+  log.length = 0;
+  element.fire("pointerdown", at(3, 100, 100));
+  element.fire("pointermove", at(3, 102, 101));
+  element.fire("pointerup", at(3, 102, 101));
+  assert.deepEqual(log, ["select 102,101 replace"], "within the slop: a click");
   nav.dispose();
 });

@@ -377,6 +377,33 @@ code { font-family: var(--mono); }
   background: var(--hover); border: 1px solid var(--line);
 }
 .window-toggle.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+/* ADR 0138: the selection bar, just above the Windows menu, and following it under the rail. */
+#selection-bar {
+  position: fixed; bottom: 58px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 9px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+#selection-bar[hidden] { display: none; }
+@media (min-width: 1060px) and (max-width: 1560px) {
+  body:not([data-rail-collapsed="true"]) #selection-bar { left: auto; right: 498px; transform: none; }
+}
+.selection-hint { margin: 0 6px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+#selection-bar button:disabled { cursor: default; opacity: 0.5; }
+/* ADR 0138 D7: the box being dragged (dashed: right to left, touching) and its count. */
+.box-select {
+  position: fixed; z-index: 30; pointer-events: none;
+  border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.box-select[data-crossing="true"] { border-style: dashed; background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.box-select span {
+  position: absolute; left: -1px; top: -22px; padding: 1px 6px; border-radius: 4px; white-space: nowrap;
+  font: 600 12px var(--font); color: var(--accent-ink); background: var(--accent);
+}
+/* ADR 0138 D6: the name of the target under the cursor. */
+.hover-tag {
+  position: fixed; z-index: 30; pointer-events: none; padding: 2px 7px; border-radius: 5px; white-space: nowrap;
+  font: 600 12px var(--font); color: var(--text); background: var(--panel); border: 1px solid var(--line);
+}
 #windows {
   /* VU3b (#2737): below a wrapped scrubber bar, as #left-rail is; 100 px under a one-line bar. */
   position: fixed; top: max(100px, calc(58px + var(--phase-bar-h, 0px) + 6px)); bottom: 64px; right: 498px; width: 440px;

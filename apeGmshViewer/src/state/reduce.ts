@@ -103,13 +103,47 @@ function nodeTag(t: unknown, where: string): number {
  * The node kind's tags after one edit, in pick order (ADR 0138 D2, D9). One
  * pass over each list, through a set, so an edit costs what its lists hold.
  */
-export function editNodes(now: readonly number[], tags: readonly number[], mode: "replace" | "add" | "toggle"): number[] {
+export function editNodes(now: readonly number[], tags: readonly number[], mode: "replace" | "add" | "toggle" | "remove"): number[] {
   for (const t of tags) nodeTag(t, "selectNodes");
   if (mode === "replace") return [...new Set(tags)];
+  if (mode === "remove") {
+    const drop = new Set(tags);
+    return now.filter((t) => !drop.has(t));
+  }
   const have = new Set(now);
   if (mode === "add") return [...now, ...[...new Set(tags)].filter((t) => !have.has(t))];
   const flip = new Set(tags);
   return [...now.filter((t) => !flip.has(t)), ...[...flip].filter((t) => !have.has(t))];
+}
+
+/**
+ * The element kind without the elements of `decls` (ADR 0138 D6). A selected
+ * group, label or material that holds one of them gives way to its other
+ * elements, so taking one element out of a selected group works. One pass over
+ * the selection and the groups it names.
+ */
+function withoutElements(s: State, decls: readonly DeclPath[]): State["selection"] {
+  const out = new Set<DeclPath>();
+  for (const d of decls) for (const m of elementsOfDecl(s, d)) out.add(m);
+  const sel = s.selection;
+  const have = new Set(sel.decls);
+  const next: DeclPath[] = [], picks: Pick[] = [];
+  sel.decls.forEach((d, i) => {
+    if (out.has(d)) return;
+    const members = s.decls[d]?.kind === "element" ? null : elementsOfDecl(s, d);
+    if (members === null || !members.some((m) => out.has(m))) {
+      next.push(d);
+      picks.push(sel.picks[i]!);
+      return;
+    }
+    for (const m of members) {
+      if (out.has(m) || have.has(m)) continue;
+      have.add(m);
+      next.push(m);
+      picks.push({ decl: m, at: null, nodes: null });
+    }
+  });
+  return { ...sel, decls: next, picks };
 }
 
 function opened(path: string): ArtifactInfo {
@@ -496,27 +530,7 @@ function reduceEvent(s: State, e: Event): State {
       }
       // An element selected through a group, label or material it belongs to: Shift+click takes it out, and
       // each such declaration is replaced by its other elements (ADR 0138 Context: the group stayed selected).
-      const covering = e.pick.decl in s.decls && s.decls[e.pick.decl]!.kind === "element"
-        ? sel.decls.filter((d) => s.decls[d]?.kind !== "element" && elementsOfDecl(s, d).includes(e.pick.decl))
-        : [];
-      if (covering.length) {
-        const drop = new Set(covering), have = new Set(sel.decls);
-        const decls: DeclPath[] = [], picks: Pick[] = [];
-        sel.decls.forEach((d, i) => {
-          if (!drop.has(d)) {
-            decls.push(d);
-            picks.push(sel.picks[i]!);
-            return;
-          }
-          for (const m of elementsOfDecl(s, d)) {
-            if (m === e.pick.decl || have.has(m)) continue;
-            have.add(m);
-            decls.push(m);
-            picks.push({ decl: m, at: null, nodes: null });
-          }
-        });
-        return syncLineDiagramDerived({ ...s, selection: { ...sel, decls, picks } });
-      }
+      if (selectedElementsOf(s).includes(e.pick.decl)) return syncLineDiagramDerived({ ...s, selection: withoutElements(s, [e.pick.decl]) });
       return syncLineDiagramDerived({
         ...s,
         selection: { ...sel, decls: [...sel.decls, e.pick.decl], picks: [...sel.picks, e.pick] },
@@ -526,6 +540,8 @@ function reduceEvent(s: State, e: Event): State {
       for (const d of e.decls) {
         if (!(d in s.decls)) throw new Error(`selectDecls: ${d} is not a declaration of the loaded model`);
       }
+      // ADR 0138 D6: Ctrl takes the declarations' elements out, wherever they were selected from.
+      if (e.remove) return syncLineDiagramDerived({ ...s, selection: withoutElements(s, e.decls) });
       const next = uniq(e.add ? [...s.selection.decls, ...e.decls] : e.decls);
       // One map of the picks already held: a lookup per declaration made adding to a large selection quadratic.
       const held = new Map(s.selection.picks.map((p) => [p.decl, p] as const));
@@ -539,7 +555,7 @@ function reduceEvent(s: State, e: Event): State {
       return s.selection.decls.length === 0 ? s : syncLineDiagramDerived({ ...s, selection: noElements(s.selection) });
     }
     case "selectNodes": {
-      if (!["replace", "add", "toggle"].includes(e.mode)) throw new RangeError(`selectNodes: ${JSON.stringify(e.mode)} is not replace, add or toggle`);
+      if (!["replace", "add", "toggle", "remove"].includes(e.mode)) throw new RangeError(`selectNodes: ${JSON.stringify(e.mode)} is not replace, add, toggle or remove`);
       const nodes = editNodes(s.selection.nodes, e.tags, e.mode);
       const same = nodes.length === s.selection.nodes.length && nodes.every((t, i) => t === s.selection.nodes[i]);
       return same ? s : { ...s, selection: { ...s.selection, nodes } };

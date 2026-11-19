@@ -46,7 +46,18 @@ test("adding to a selection of every element is linear: 60,000 elements in well 
   assert.ok(ms < 1000, `took ${ms.toFixed(0)} ms`);
 });
 
-test("node tags edit in pick order: replace, add, toggle; a bad tag is refused", () => {
+test("Ctrl on a box or click: the elements come out, a selected group gives way to its other elements", () => {
+  let s = reduce(grouped(5), { type: "selectDecls", decls: ["group/G"] });
+  s = reduce(s, { type: "selectDecls", decls: ["mesh/element/1", "mesh/element/3"], remove: true });
+  assert.deepEqual(selectedElementsOf(s), ["mesh/element/0", "mesh/element/2", "mesh/element/4"]);
+  s = reduce(s, { type: "selectDecls", decls: ["mesh/element/0"], remove: true });
+  assert.deepEqual(s.selection.decls, ["mesh/element/2", "mesh/element/4"]);
+  s = reduce(s, { type: "selectDecls", decls: ["group/G"], remove: true });
+  assert.deepEqual(s.selection.decls, [], "removing the group takes every element out");
+});
+
+test("node tags edit in pick order: replace, add, toggle, remove; a bad tag is refused", () => {
+  assert.deepEqual(editNodes([1, 2, 3], [2, 9], "remove"), [1, 3]);
   assert.deepEqual(editNodes([1, 2], [3, 3, 4], "replace"), [3, 4]);
   assert.deepEqual(editNodes([1, 2], [2, 5], "add"), [1, 2, 5]);
   assert.deepEqual(editNodes([1, 2], [2, 5], "toggle"), [1, 5]);

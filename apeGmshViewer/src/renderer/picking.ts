@@ -1,0 +1,289 @@
+// Box selection from an ID image (ADR 0138 D5, D7).
+//
+// At a press, the viewport draws what the active kind can select into an
+// off-screen target, one 24-bit ID per pixel (0 is nothing), and reads it back
+// once. The image uses the drawn positions, section planes and hidden set, so
+// a box takes what the user sees. Every update of the drag then reads that
+// copy in memory; nothing is drawn per frame. Elements are the faces, frame
+// faces and lines; nodes are discs over the faces, which are drawn as depth
+// only so a node behind a face is not visible.
+//
+// For elements, a box drawn left to right takes the elements fully inside it:
+// those it shows that have no drawn vertex outside it (the vertices are
+// projected once, at the press). Right to left takes every element it shows.
+// The pure parts (`boxOf`, the region scan) are tested in
+// test/picking.test.ts; the GPU part is proven by the capture stills.
+
+import * as THREE from "three";
+
+export type PickKind = "element" | "node";
+
+/** An ID is the low 24 bits of a pixel (RGB); the alpha byte is not part of it. 2^24 is ADR 0137 D1's limit. */
+const ID_MASK = 2 ** 24 - 1;
+
+/** The rectangle a drag covers, in canvas pixels from the top left, and whether it was drawn right to left (crossing). */
+export interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  crossing: boolean;
+}
+
+/** The box between a press and the pointer now, in canvas pixels; a drag toward the left is a crossing box. */
+export function boxOf(ax: number, ay: number, bx: number, by: number): Box {
+  return { x0: Math.min(ax, bx), y0: Math.min(ay, by), x1: Math.max(ax, bx), y1: Math.max(ay, by), crossing: bx < ax };
+}
+
+/**
+ * The IDs inside a box of an ID image (`ids` row 0 at the bottom, as WebGL
+ * reads it; `w` x `h`), each once, by a stamp array that clears in O(1).
+ */
+export function idsInBox(ids: Uint32Array, w: number, h: number, box: Box, dpr: number, seen: Uint32Array, stamp: number, into: number[]): void {
+  const x0 = Math.max(0, Math.floor(box.x0 * dpr)), x1 = Math.min(w - 1, Math.ceil(box.x1 * dpr));
+  const top = Math.max(0, Math.floor(box.y0 * dpr)), bottom = Math.min(h - 1, Math.ceil(box.y1 * dpr));
+  for (let row = h - 1 - bottom; row <= h - 1 - top; row++) {
+    for (let i = row * w + x0, end = row * w + x1; i <= end; i++) {
+      const id = ids[i]! & ID_MASK;
+      if (id === 0 || seen[id] === stamp) continue;
+      seen[id] = stamp;
+      into.push(id - 1);
+    }
+  }
+}
+
+const CLIP_V = "#include <clipping_planes_pars_vertex>\n";
+const CLIP_F = "#include <clipping_planes_pars_fragment>\n";
+
+/** A material that writes each primitive's ID (texture texel `gl_VertexID / perPrim`). */
+function primMaterial(ids: THREE.DataTexture, perPrim: number, behind: boolean, planes: THREE.Plane[]): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { ids: { value: ids }, perPrim: { value: perPrim } },
+    vertexShader: `${CLIP_V}uniform highp sampler2D ids; uniform int perPrim; flat varying vec4 vId;
+      void main() {
+        int d = gl_VertexID / perPrim;
+        vId = texelFetch(ids, ivec2(d % 4096, d / 4096), 0);
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        #include <clipping_planes_vertex>
+      }`,
+    fragmentShader: `${CLIP_F}flat varying vec4 vId;
+      void main() {
+        #include <clipping_planes_fragment>
+        gl_FragColor = vId;
+      }`,
+    side: THREE.DoubleSide,
+    blending: THREE.NoBlending,
+    clipping: true,
+    clippingPlanes: planes,
+    // Faces sit a little behind, so a line drawn on a face wins there, as a click does.
+    polygonOffset: behind,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+  });
+}
+
+/** Discs of `sizePx` whose ID is their vertex index + 1, pulled a little toward the eye so a node on a face wins. */
+function pointMaterial(sizePx: number, planes: THREE.Plane[]): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { size: { value: sizePx } },
+    vertexShader: `${CLIP_V}uniform float size; flat varying vec4 vId;
+      void main() {
+        int i = gl_VertexID + 1;
+        vId = vec4(float(i & 255), float((i >> 8) & 255), float((i >> 16) & 255), 255.0) / 255.0;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        gl_Position.z -= 2e-4 * gl_Position.w;
+        gl_PointSize = size;
+        #include <clipping_planes_vertex>
+      }`,
+    fragmentShader: `${CLIP_F}flat varying vec4 vId;
+      void main() {
+        #include <clipping_planes_fragment>
+        if (length(gl_PointCoord - 0.5) > 0.5) discard;
+        gl_FragColor = vId;
+      }`,
+    blending: THREE.NoBlending,
+    clipping: true,
+    clippingPlanes: planes,
+  });
+}
+
+/** IDs as an RGBA8 texture 4096 wide, one texel per primitive. */
+function idTexture(ids: ArrayLike<number>): THREE.DataTexture {
+  const h = Math.max(1, Math.ceil(ids.length / 4096));
+  const px = new Uint8Array(4096 * h * 4);
+  for (let i = 0; i < ids.length; i++) {
+    const v = ids[i]!, o = 4 * i;
+    px[o] = v & 255;
+    px[o + 1] = (v >> 8) & 255;
+    px[o + 2] = (v >> 16) & 255;
+    px[o + 3] = 255;
+  }
+  const t = new THREE.DataTexture(px, 4096, h, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.minFilter = t.magFilter = THREE.NearestFilter;
+  t.generateMipmaps = false;
+  t.needsUpdate = true;
+  return t;
+}
+
+/** What the viewport draws now, as the picker needs it. Positions are drawn order (deformed while the deformed shape shows). */
+export interface PickSource {
+  /** the faces' own position buffer and the element index of each drawn triangle */
+  faces: { positions: THREE.BufferAttribute; element: Int32Array } | null;
+  /** extruded frame faces, as `faces` */
+  frameFaces: { positions: THREE.BufferAttribute; element: Int32Array } | null;
+  /** the drawn segments: 6 floats each, and their element index */
+  lines: { positions: Float32Array; element: Int32Array } | null;
+  /** the drawn nodes: 3 floats each, and their tags */
+  nodes: { positions: Float32Array; tags: Float64Array } | null;
+  /** the number of elements (`MeshInfo.elements.length`) */
+  elements: number;
+  planes: THREE.Plane[];
+}
+
+/** One press's ID image and projected vertices; dropped at the release. */
+export class BoxPicker {
+  private readonly target: THREE.WebGLRenderTarget;
+  private readonly bytes: Uint8Array;
+  private readonly ids: Uint32Array;
+  private readonly seen: Uint32Array;
+  private stamp = 0;
+  private readonly disposables: { dispose(): void }[] = [];
+  /** per element: the stamp of the last box that found one of its drawn vertices outside */
+  private readonly outside: Uint32Array | null;
+  /** canvas-pixel position of every drawn vertex (x, y) and its element, for "fully inside" */
+  private readonly verts: { xy: Float32Array; element: Int32Array } | null;
+
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly kind: PickKind;
+  private readonly src: PickSource;
+  private readonly cssWidth: number;
+  private readonly cssHeight: number;
+
+  constructor(renderer: THREE.WebGLRenderer, camera: THREE.Camera, kind: PickKind, src: PickSource, cssWidth: number, cssHeight: number) {
+    this.renderer = renderer;
+    this.kind = kind;
+    this.src = src;
+    this.cssWidth = cssWidth;
+    this.cssHeight = cssHeight;
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+    this.target = new THREE.WebGLRenderTarget(size.x, size.y, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true, stencilBuffer: false });
+    this.bytes = new Uint8Array(size.x * size.y * 4);
+    this.ids = new Uint32Array(this.bytes.buffer);
+    const count = kind === "element" ? src.elements : (src.nodes?.tags.length ?? 0);
+    this.seen = new Uint32Array(count + 1);
+    const scene = this.scene();
+    camera.updateMatrixWorld();
+    const r = renderer, colour = r.getClearColor(new THREE.Color()), alpha = r.getClearAlpha(), was = r.getRenderTarget();
+    r.setRenderTarget(this.target);
+    r.setClearColor(0, 0);
+    r.clear();
+    r.render(scene, camera);
+    r.readRenderTargetPixels(this.target, 0, 0, size.x, size.y, this.bytes);
+    r.setRenderTarget(was);
+    r.setClearColor(colour, alpha);
+    if (kind === "element") {
+      this.outside = new Uint32Array(src.elements);
+      this.verts = this.project(camera);
+    } else {
+      this.outside = null;
+      this.verts = null;
+    }
+  }
+
+  private add(scene: THREE.Scene, o: THREE.Object3D, ...owned: { dispose(): void }[]): void {
+    o.frustumCulled = false;
+    scene.add(o);
+    this.disposables.push(...owned);
+  }
+
+  private scene(): THREE.Scene {
+    const scene = new THREE.Scene();
+    const { faces, frameFaces, lines, nodes, planes } = this.src;
+    const facesOf = (f: NonNullable<PickSource["faces"]>, depthOnly: boolean) => {
+      const tex = idTexture(Int32Array.from(f.element, (e) => e + 1));
+      const m = primMaterial(tex, 3, true, planes);
+      m.colorWrite = !depthOnly;
+      const g = new THREE.BufferGeometry().setAttribute("position", f.positions);
+      this.add(scene, new THREE.Mesh(g, m), tex, m, g);
+    };
+    const depthOnly = this.kind === "node";
+    if (faces) facesOf(faces, depthOnly);
+    if (frameFaces) facesOf(frameFaces, depthOnly);
+    if (this.kind === "element" && lines && lines.element.length) {
+      const tex = idTexture(Int32Array.from(lines.element, (e) => e + 1));
+      const m = primMaterial(tex, 2, false, planes);
+      const g = new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(lines.positions, 3));
+      this.add(scene, new THREE.LineSegments(g, m), tex, m, g);
+    }
+    if (this.kind === "node" && nodes && nodes.tags.length) {
+      const m = pointMaterial(11 * this.renderer.getPixelRatio(), planes);
+      const g = new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(nodes.positions, 3));
+      this.add(scene, new THREE.Points(g, m), m, g);
+    }
+    return scene;
+  }
+
+  /** Every drawn vertex in canvas pixels, with its element; a vertex behind the eye is placed far outside. */
+  private project(camera: THREE.Camera): { xy: Float32Array; element: Int32Array } {
+    const parts: { pos: ArrayLike<number>; element: Int32Array; per: number }[] = [];
+    if (this.src.faces) parts.push({ pos: this.src.faces.positions.array, element: this.src.faces.element, per: 3 });
+    if (this.src.frameFaces) parts.push({ pos: this.src.frameFaces.positions.array, element: this.src.frameFaces.element, per: 3 });
+    if (this.src.lines) parts.push({ pos: this.src.lines.positions, element: this.src.lines.element, per: 2 });
+    const n = parts.reduce((a, p) => a + p.pos.length / 3, 0);
+    const xy = new Float32Array(2 * n), element = new Int32Array(n);
+    const m = new THREE.Matrix4().multiplyMatrices((camera as THREE.PerspectiveCamera).projectionMatrix, camera.matrixWorldInverse).elements;
+    const kept = (x: number, y: number, z: number) => this.src.planes.every((p) => p.normal.x * x + p.normal.y * y + p.normal.z * z + p.constant >= 0);
+    let o = 0;
+    for (const p of parts) {
+      for (let i = 0, nv = p.pos.length / 3; i < nv; i++, o++) {
+        const x = p.pos[3 * i]!, y = p.pos[3 * i + 1]!, z = p.pos[3 * i + 2]!;
+        element[o] = p.element[Math.floor(i / p.per)]!;
+        const w = m[3]! * x + m[7]! * y + m[11]! * z + m[15]!;
+        // A vertex a section plane cuts away is not drawn, so it never counts as outside.
+        if (!kept(x, y, z)) {
+          xy[2 * o] = NaN;
+          continue;
+        }
+        if (w <= 0) {
+          xy[2 * o] = -1e9;
+          xy[2 * o + 1] = -1e9;
+          continue;
+        }
+        xy[2 * o] = (((m[0]! * x + m[4]! * y + m[8]! * z + m[12]!) / w) * 0.5 + 0.5) * this.cssWidth;
+        xy[2 * o + 1] = (0.5 - ((m[1]! * x + m[5]! * y + m[9]! * z + m[13]!) / w) * 0.5) * this.cssHeight;
+      }
+    }
+    return { xy, element };
+  }
+
+  /**
+   * What a box takes: element indices, or node tags. Elements fully inside
+   * for a box drawn left to right, every one it shows for a crossing box.
+   */
+  query(box: Box): number[] {
+    this.stamp++;
+    const found: number[] = [];
+    const size = this.target;
+    idsInBox(this.ids, size.width, size.height, box, size.width / this.cssWidth, this.seen, this.stamp, found);
+    if (this.kind === "node") {
+      const tags = this.src.nodes!.tags;
+      return found.map((i) => tags[i]!);
+    }
+    if (box.crossing || !this.verts || !this.outside) return found;
+    const { xy, element } = this.verts, out = this.outside, stamp = this.stamp;
+    for (let v = 0; v < element.length; v++) {
+      const x = xy[2 * v]!;
+      if (Number.isNaN(x)) continue;
+      const y = xy[2 * v + 1]!;
+      if (x < box.x0 || x > box.x1 || y < box.y0 || y > box.y1) out[element[v]!] = stamp;
+    }
+    return found.filter((e) => out[e] !== stamp);
+  }
+
+  dispose(): void {
+    this.target.dispose();
+    for (const d of this.disposables.splice(0)) d.dispose();
+  }
+}

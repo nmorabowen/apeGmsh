@@ -170,6 +170,13 @@ function rig(s0: State, camPos: readonly number[], box: Box = BOX, chrome: ((x: 
     },
     pointAt: () => null,
     requestRender: () => {},
+    // ADR 0138 D6: the hover mark (renderer/viewport.ts); this rig has no mesh, so there is nothing to mark.
+    scheduleHoverTarget: () => {},
+    clearHoverTarget: () => {},
+    // ADR 0138 D7: a left drag off every gizmo is a selection box now.
+    boxAt: () => null,
+    boxEnd: () => {},
+    boxCancel: () => {},
     // The box syncGizmos reads (the viewport's is the reference mesh's, renderer/clip.ts sliderBox).
     sliderBox: () => box,
   };
