@@ -445,13 +445,6 @@ def assess(
     return payload
 
 
-#: Old-ontology knobs that mean nothing to a snapshot. Refused rather
-#: than ignored: a caller who passes step= to a snapshot pinned at its
-#: own instant has a different picture in mind than the one they would
-#: get, and silently drawing the other one is the lie.
-_SESSION_CONFLICTS = ("view", "component", "step", "deform", "pack")
-
-
 def _render_session(
     *,
     session: str | Path,
