@@ -88,6 +88,17 @@ def extract_subcommands(text: str) -> list[str]:
     against the parser's own usage line."""
     body = _function_body(text)
     dispatch = set(re.findall(r'\bsub == "([A-Za-z_]\w*)"', body))
+    # Any other spelling of a comparison with `sub` (`sub=="x"`, `"x" == sub`,
+    # `sub.compare("x")`) would be dropped by the strict pattern above, and
+    # silently so if the usage line omitted it too: refuse it instead.
+    loose = {next(g for g in m.groups() if g) for m in re.finditer(
+        r'\bsub\s*==\s*"(\w+)"|"(\w+)"\s*==\s*sub\b|\bsub\.compare\(\s*"(\w+)"\s*\)',
+        body)}
+    if loose != dispatch:
+        raise SurfaceError(
+            f"{SOURCE}: `{FUNCTION}` compares `sub` with {sorted(loose - dispatch)} "
+            f"in a spelling other than `sub == \"<name>\"`; extend the "
+            f"extractor before refreshing")
     usage = _usage(body)
     if not dispatch:
         raise SurfaceError(f"{SOURCE}: no `sub == \"...\"` dispatch in `{FUNCTION}`")

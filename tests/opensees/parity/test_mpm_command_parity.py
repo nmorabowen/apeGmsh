@@ -347,6 +347,16 @@ def test_refresh_refuses_a_dispatch_the_usage_line_does_not_name() -> None:
         r.extract_subcommands(_PARSER % 'if (sub == "affine") return 0;')
 
 
+@pytest.mark.parametrize("odd", ['sub=="affine"', '"affine" == sub',
+                                 'sub.compare("affine")'])
+def test_refresh_refuses_a_dispatch_spelled_another_way(odd: str) -> None:
+    """A comparison the strict pattern cannot read is refused, even when the
+    usage line omits the name too (review of #3065, finding 2)."""
+    r = _refresh_script()
+    with pytest.raises(r.SurfaceError, match=r"compares `sub` with \['affine'\]"):
+        r.extract_subcommands(_PARSER % f"if ({odd}) return 0;")
+
+
 def test_refresh_refuses_a_source_without_the_definition() -> None:
     r = _refresh_script()
     with pytest.raises(r.SurfaceError, match="found 0"):

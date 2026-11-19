@@ -43,10 +43,10 @@ _QUERY = ("a query that answers a value inside a running deck; apeGmsh "
 #: Fork ``mpm`` subcommands with no :mod:`apeGmsh.opensees.mpm` member, each
 #: with the reason. A new fork subcommand gets a member or a row here.
 NOT_OFFERED: dict[str, str] = {
-    "particles": ("offered, but never as a member or a row: each deck "
-                  "emitter writes the anchored `mpm particles -file` line "
-                  "itself, right after `mpm grid`, from the particle set it "
-                  "seeds beside the deck (ADR 0134 D1)"),
+    "particles": ("offered, but not as a member, and never as a commands "
+                  "row: each deck emitter writes the anchored `mpm particles "
+                  "-file` line itself, right after `mpm grid`, from the "
+                  "particle set it seeds beside the deck (ADR 0134 D1)"),
     "particle": f"one explicit particle: {_SET}",
     "velocity": f"a body's initial velocity: {_SET}",
     "stress": f"a body's initial stress: {_SET}",
