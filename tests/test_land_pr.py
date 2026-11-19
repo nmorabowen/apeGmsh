@@ -573,13 +573,74 @@ def test_human_gate_does_not_lift_the_accepted_refusal():
     "@@ -1,3 +1,3 @@\n # ADR 0121 — x\n \n-**Status:** Accepted (2026-10-11).\n+**Status:** Accepted (2026-10-11; errata below).\n",
     # a body edit that never touches the Status line (#1689's errata)
     "@@ -449,3 +449,5 @@ them\n   its scope\n+\n+## Errata (2026-10-11)\n",
-    # a Status line quoted below the 30-line header parse_adr reads
-    "@@ -40,2 +40,3 @@\n text\n+**Status:** Accepted is what the maintainer sets.\n text\n",
     # a new ADR born Proposed
     "@@ -0,0 +1,3 @@\n+# ADR 0199 — x\n+\n+**Status:** Proposed (2026-10-11).\n",
 ])
 def test_status_edits_that_do_not_accept_pass(patch):
     gh, git = _d4([_row("architecture/decisions/0121-charter-v2-b-with-amendments.md", patch=patch)])
+    assert _run(1218, gh, git) == 0
+
+
+# --- amendment notes: a body `**Status:** Accepted` below the header ---------------------------------
+#
+# #3078 added an amendment note to ADR 0138 with its own Status line, Accepted, at line 160:
+# below the 30-line header `parse_adr` reads, so check 7 let it through (the maintainer did
+# accept it in chat; #3031, "ADR 0114: mark the 2026-11-13 amendment note Accepted", was
+# treated as the maintainer's act). The patch is `pulls/3078/files`, trimmed after the note's
+# first paragraph line.
+ADR_0138 = "architecture/decisions/0138-apegmshviewer-selection.md"
+PATCH_3078 = (
+    "@@ -157,3 +157,9 @@ Each slice with a screen change carries the maintainer's approval stills (ADR 01\n"
+    " - **Ray casting only.** It has no answer for a box that must respect what is visible, and it tests every triangle per click.\n"
+    " - **A bounding-volume tree or a worker for picking.** Not needed at the sizes measured: every region update fit in one frame\n"
+    "   on the page thread.\n"
+    "+\n"
+    "+## Amendment note — 2026-11-19 — D5: clicks read the ID image\n"
+    "+\n"
+    "+**Status:** Accepted (2026-11-19; the maintainer chose to move clicks after the diagnostic). Lands with SEL-2's first PR.\n"
+    "+\n"
+    "+D5 kept the ray cast for clicks until each difference with the ID image was explained. A diagnostic launch on the slab\n"
+)
+PATCH_3078_PROPOSED = PATCH_3078.replace(
+    "**Status:** Accepted (2026-11-19; the maintainer chose to move clicks after the diagnostic).",
+    "**Status:** Proposed (2026-11-19); the maintainer accepts it.",
+)
+
+
+def test_amendment_note_added_accepted_is_refused_3078():
+    gh, git = _d4([_row(ADR_0138, patch=PATCH_3078)])
+    with pytest.raises(land_pr.LandError, match=r"check 7: .*0138-apegmshviewer-selection\.md sets Status Accepted"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("patch", [
+    # a body line formatted as a Status line is one, wherever it sits
+    "@@ -40,2 +40,3 @@\n text\n+**Status:** Accepted is what the maintainer sets.\n text\n",
+    # one amendment re-wrapped, and a second amendment added Accepted in the same diff
+    "@@ -300,2 +300,6 @@\n-**Status:** Accepted. The maintainer ruled (a)\n+**Status:** Accepted. The maintainer\n+ruled (a)\n"
+    " text\n+\n+## Amendment 2 (2026-11-19)\n+\n+**Status:** Accepted (2026-11-19).\n",
+    # an amendment's Status flipped from Proposed (the #3031 shape)
+    "@@ -381,1 +381,1 @@\n-**Status:** Proposed (2026-11-13).\n+**Status:** Accepted (ratified 2026-11-13).\n",
+])
+def test_body_status_set_accepted_is_refused(patch):
+    assert land_pr._sets_accepted(patch) is True
+
+
+@pytest.mark.parametrize("patch", [
+    # #3078's note as an agent should have written it: Proposed
+    PATCH_3078_PROPOSED,
+    # an Accepted amendment's Status line re-wrapped in place
+    "@@ -302,2 +302,2 @@\n-**Status:** Accepted. The maintainer ruled (a) on #2447 and approved this\n"
+    "+**Status:** Accepted. The maintainer ruled (a) on #2447\n-amendment.\n+and approved this amendment.\n",
+    # an Accepted amendment moved down the file, Status line and all
+    "@@ -100,4 +100,0 @@\n-## Amendment 1\n-\n-**Status:** Accepted (2026-10-21).\n-\n"
+    "@@ -200,0 +196,4 @@\n+## Amendment 1\n+\n+**Status:** Accepted (2026-10-21).\n+\n",
+    # an Accepted amendment demoted to Superseded
+    "@@ -267,1 +267,1 @@\n-**Status:** Accepted (2026-10-21).\n+**Status:** Superseded by Amendment 2.\n",
+])
+def test_body_status_edits_that_do_not_accept_pass(patch):
+    gh, git = _d4([_row(ADR_0138, patch=patch)])
     assert _run(1218, gh, git) == 0
 
 
