@@ -4,8 +4,9 @@
 // picker, the step slider, the time readout, play/pause and step -1/+1. A
 // click dispatches `setPhase` or `setResultStep`; the viewport draws the
 // phase the state names, and the effects fetch the step (latest wins). The
-// panel only dispatches: it keeps no results data, and play is a timer that
-// dispatches the next step. (style.css is not this panel's file, so the
+// panel only dispatches: it keeps no results data, and play follows a clock
+// (state/playback.ts). A step change updates the scrubber in place, so the
+// slider under the pointer survives a drag. (style.css is not this panel's file, so the
 // scrubber's layout is inline, with the theme's variables only.)
 //
 // ADR 0130 D1 (VU3b): the results are listed by state family. Stages and
@@ -23,7 +24,7 @@
 // VU9b: a `+` beside the families opens the authoring panel (panels/combine.ts)
 // while the set's `.user.h5` is read and its `/combinations` is not refused.
 
-import { combinationShownOf, combineEntryOf, inactiveElements, SCRUBBER_TOP_PX, scrubberRow, timelineOf, type Timeline } from "../state/selectors.ts";
+import { combinationShownOf, combineEntryOf, inactiveElements, PLAY_SPEEDS, playMove, SCRUBBER_TOP_PX, scrubberRow, timelineOf, type PlayClock, type PlaySpeed, type Timeline } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import type { PhaseKey, StaleMark } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
@@ -201,22 +202,22 @@ export function barClearPx(viewportWidth: number, railCollapsed: boolean): numbe
  */
 export const BAR_HEIGHT_VAR = "--phase-bar-h";
 
-/** The scrubber's least width on a line: the picker, the three step buttons, the slider at its least and a little readout. It takes a line of its own below that. */
-export const SCRUBBER_MIN_PX = 340;
+/** The scrubber's least width on a line: the picker, the three step buttons, the speed, the slider at its least and a little readout. It takes a line of its own below that. */
+export const SCRUBBER_MIN_PX = 396;
 
 /** The readout's widest extent; longer text ends in an ellipsis, with the full text as its tooltip. */
 export const READOUT_MAX_PX = 240;
 
-/** Milliseconds between steps while playing (10 steps/s; the D5 trigger is 30 steps/s, so playback never outruns it). */
-export const PLAY_MS = 100;
+/** A step read shorter than this says nothing: most are, and a mark for each would blink. */
+const PENDING_MS = 400;
 
 const fmtTime = (t: number): string => (Number.isInteger(t) ? String(t) : Math.abs(t) >= 1e-3 && Math.abs(t) < 1e4 ? t.toPrecision(4).replace(/\.?0+$/, "") : t.toExponential(3));
 
-/** The scrubber's readout: `step 3/5 · t = 0.6`, the elements the stage does not have, and a fetch that is not done. */
+/** The scrubber's readout: `step 3/5 · t = 0.6`, the elements the stage does not have, and a fetch that failed (one under way is the mark beside it, which moves nothing). */
 export function readoutOf(t: Timeline, inactive: number | null): string {
   const time = t.kind === "mode" ? "mode shape" : `t = ${fmtTime(t.time)}`;
   const act = inactive === null ? "" : ` · ${inactive} inactive`;
-  const fetch = t.fetch === "ready" ? "" : ` · step ${t.fetch}`;
+  const fetch = t.fetch === "ready" || t.fetch === "loading" ? "" : ` · step ${t.fetch}`;
   return `step ${t.step + 1}/${t.steps} · ${time}${act}${fetch}`;
 }
 
@@ -224,6 +225,22 @@ export function readoutOf(t: Timeline, inactive: number | null): string {
 function rigid(e: HTMLElement): void {
   e.style.flex = "0 0 auto";
   e.style.whiteSpace = "nowrap";
+}
+
+/** The parts of the scrubber a step change touches. */
+interface Scrubber {
+  back: HTMLButtonElement;
+  fwd: HTMLButtonElement;
+  play: HTMLButtonElement;
+  slider: HTMLInputElement;
+  readout: HTMLElement;
+  pending: HTMLElement;
+}
+
+/** Only the step or its fetch changed: the same stage of the same files, so the bar keeps every element. */
+function sameScrubber(s: State, prev: State): boolean {
+  const a = s.phase.at, b = prev.phase.at;
+  return a?.kind === "results" && b?.kind === "results" && a.stage === b.stage && s.phase.axis.length === prev.phase.axis.length && s.results === prev.results && s.user === prev.user && s.mesh === prev.mesh;
 }
 
 /**
@@ -234,10 +251,79 @@ function rigid(e: HTMLElement): void {
 export function mountPhase(store: Store, opts: { newCombination?: () => void } = {}): () => void {
   const bar = byId("phase");
   let unlisten: (() => void)[] = [];
-  let timer: ReturnType<typeof setInterval> | null = null;
+  /** The scrubber on screen, kept so a step change updates it instead of replacing it. */
+  let live: Scrubber | null = null;
+  let clock: PlayClock | null = null;
+  let frame: number | null = null;
+  let speed: PlaySpeed = 1;
+  /** The pointer holds the slider: the store does not move the thumb under it. */
+  let dragging = false;
+  /** The slider's newest value, not dispatched yet: at most one step per frame. */
+  let dragStep: number | null = null;
+  let dragFrame: number | null = null;
+  let pendingStep: number | null = null;
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+  const nextFrame = (fn: () => void): number => (typeof requestAnimationFrame === "function" ? requestAnimationFrame(fn) : (setTimeout(fn, 16) as unknown as number));
+  const cancelFrame = (id: number) => {
+    if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id);
+    else clearTimeout(id);
+  };
+  const syncPlay = () => {
+    if (!live) return;
+    live.play.textContent = clock !== null ? "❚❚" : "▶";
+    live.play.title = clock !== null ? "pause" : "play";
+  };
   const stop = () => {
-    if (timer !== null) clearInterval(timer);
-    timer = null;
+    if (frame !== null) cancelFrame(frame);
+    frame = null;
+    clock = null;
+    syncPlay();
+  };
+  const settled = (t: Timeline) => t.fetch !== "loading";
+  const tick = () => {
+    frame = null;
+    const t = timelineOf(store.get());
+    if (!t || clock === null) return stop();
+    const move = playMove(clock, performance.now(), t.step, t.steps, settled(t));
+    if (move.kind === "end") return stop();
+    if (move.kind === "go") store.dispatch({ type: "setResultStep", step: move.step });
+    if (clock !== null) frame = nextFrame(tick);
+  };
+  const flushDrag = () => {
+    if (dragFrame !== null) cancelFrame(dragFrame);
+    dragFrame = null;
+    if (dragStep === null) return;
+    const step = dragStep;
+    dragStep = null;
+    store.dispatch({ type: "setResultStep", step });
+  };
+  /** What a step or a fetch changes on the scrubber: nothing is rebuilt, and nothing changes size. */
+  const syncScrubber = (t: Timeline, s: State) => {
+    if (!live) return;
+    live.back.disabled = t.step === 0;
+    live.fwd.disabled = t.step === t.steps - 1;
+    if (!dragging && dragStep === null) live.slider.value = String(t.step);
+    const inactive = inactiveElements(s);
+    const text = readoutOf(t, inactive ? inactive.inactive : null);
+    if (live.readout.textContent !== text) {
+      live.readout.textContent = text;
+      live.readout.title = text;
+    }
+    syncPending(t);
+    syncPlay();
+  };
+  /** The mark beside the readout: only for a read of one step that takes long, timed per step so quick steps in a row never show it. */
+  const syncPending = (t: Timeline) => {
+    const waiting = t.fetch === "loading" ? t.step : null;
+    if (waiting === pendingStep) return;
+    pendingStep = waiting;
+    clearPending();
+    if (waiting !== null) pendingTimer = setTimeout(() => live?.pending.classList.add("on"), PENDING_MS);
+  };
+  const clearPending = () => {
+    if (pendingTimer !== null) clearTimeout(pendingTimer);
+    pendingTimer = null;
+    live?.pending.classList.remove("on");
   };
   const step = (delta: number): boolean => {
     const t = timelineOf(store.get());
@@ -249,9 +335,13 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
   };
   const render = (s: State, prev: State | null) => {
     if (prev && s.phase === prev.phase && s.resultStep === prev.resultStep && s.results === prev.results && s.user === prev.user && s.mesh === prev.mesh) return;
+    const t = timelineOf(s);
+    if (prev && t && live && sameScrubber(s, prev)) return syncScrubber(t, s);
     for (const u of unlisten) u();
     unlisten = [];
-    const t = timelineOf(s);
+    clearPending();
+    pendingStep = null;
+    live = null;
     if (!t) stop();
     const families = familiesOf(s);
     const badge = userBadgeOf(s);
@@ -385,9 +475,19 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
     const back = el("button", "phase step-back", "◀");
     back.title = "step -1";
     back.disabled = t.step === 0;
-    const play = el("button", "phase play", timer !== null ? "❚❚" : "▶");
-    play.title = timer !== null ? "pause" : "play";
+    const play = el("button", "phase play", clock !== null ? "❚❚" : "▶");
+    play.title = clock !== null ? "pause" : "play";
     play.disabled = t.steps < 2;
+    const pace = el("select", "play-speed");
+    pace.title = "playback speed";
+    pace.disabled = t.steps < 2;
+    pace.style.cssText = "font: 600 12px var(--font); color: var(--text); background: var(--bg-1); border: 1px solid var(--line); border-radius: 5px;";
+    for (const v of PLAY_SPEEDS) {
+      const o = el("option", undefined, `×${v}`);
+      o.value = String(v);
+      o.selected = v === speed;
+      pace.append(o);
+    }
     const fwd = el("button", "phase step-forward", "▶ |");
     fwd.title = "step +1";
     fwd.disabled = t.step === t.steps - 1;
@@ -402,7 +502,11 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
     const readout = el("span", "results-readout", readoutOf(t, inactive ? inactive.inactive : null));
     // Bounded: a long fetch error ends in an ellipsis; the full text is the tooltip.
     readout.title = readout.textContent ?? "";
-    readout.style.cssText = `display: inline-block; flex: 0 1 auto; min-width: 0; max-width: ${READOUT_MAX_PX}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);`;
+    // Wide enough for the stage's longest step and a long time, so the digits changing do not move the bar.
+    const roomCh = `step ${t.steps}/${t.steps} · t = `.length + 10;
+    readout.style.cssText = `display: inline-block; flex: 0 1 auto; width: ${roomCh}ch; min-width: 0; max-width: ${READOUT_MAX_PX}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 600 12px var(--mono);`;
+    const pending = el("span", "step-pending-dot");
+    pending.title = "reading this step";
     unlisten.push(
       listen(back, "click", () => {
         stop();
@@ -412,30 +516,41 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
         stop();
         step(1);
       }),
+      listen(slider, "pointerdown", () => {
+        dragging = true;
+      }),
       listen(slider, "input", () => {
         stop();
-        store.dispatch({ type: "setResultStep", step: Number(slider.value) });
+        // The view follows the thumb; a frame sends only the newest position, and the newest read wins.
+        dragStep = Number(slider.value);
+        dragFrame ??= nextFrame(() => {
+          dragFrame = null;
+          flushDrag();
+        });
+      }),
+      // The release: the step under the pointer, now.
+      listen(slider, "change", flushDrag),
+      listen(pace, "change", () => {
+        speed = Number(pace.value) as PlaySpeed;
+        const now = timelineOf(store.get());
+        if (clock !== null && now) clock = { startStep: now.step, startMs: performance.now(), speed };
       }),
       listen(play, "click", () => {
-        if (timer !== null) {
-          stop();
-          render(store.get(), null);
-          return;
-        }
+        if (clock !== null) return stop();
         // From the last step, play starts over.
         const now = timelineOf(store.get());
-        if (now && now.step === now.steps - 1) store.dispatch({ type: "setResultStep", step: 0 });
-        timer = setInterval(() => {
-          if (!step(1)) {
-            stop();
-            render(store.get(), null);
-          }
-        }, PLAY_MS);
-        render(store.get(), null);
+        if (!now) return;
+        const from = now.step === now.steps - 1 ? 0 : now.step;
+        if (from !== now.step) store.dispatch({ type: "setResultStep", step: from });
+        clock = { startStep: from, startMs: performance.now(), speed };
+        syncPlay();
+        frame = nextFrame(tick);
       }),
     );
-    for (const b of [pick, back, play, fwd]) rigid(b);
-    box.append(pick, back, play, fwd, slider, readout);
+    for (const b of [pick, back, play, fwd, pace, pending]) rigid(b);
+    box.append(pick, back, play, fwd, pace, slider, readout, pending);
+    live = { back, fwd, play, slider, readout, pending };
+    syncPending(t);
     return [box];
   };
   render(store.get(), null);
@@ -446,6 +561,18 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
   if (typeof window !== "undefined") {
     window.addEventListener("resize", recap);
     offWindow.push(() => window.removeEventListener("resize", recap));
+    // The release can land anywhere on the page.
+    const released = () => {
+      if (!dragging) return;
+      dragging = false;
+      flushDrag();
+      const t = timelineOf(store.get());
+      if (t) syncScrubber(t, store.get());
+    };
+    for (const type of ["pointerup", "pointercancel"] as const) {
+      window.addEventListener(type, released);
+      offWindow.push(() => window.removeEventListener(type, released));
+    }
     if (typeof MutationObserver !== "undefined") {
       const rail = new MutationObserver(recap);
       rail.observe(document.body, { attributes: true, attributeFilter: ["data-rail-collapsed"] });
@@ -461,6 +588,8 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
   }
   return () => {
     stop();
+    clearPending();
+    if (dragFrame !== null) cancelFrame(dragFrame);
     unsubscribe();
     for (const u of unlisten) u();
     for (const u of offWindow) u();

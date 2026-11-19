@@ -14,6 +14,7 @@ import { solidShapeOf } from "./slice.ts";
 import { activationNotice, activationOf, type Activation } from "./activation.ts";
 import { pairingNotice, pairResults, particleNotices, type ResultsPairing } from "./results.ts";
 // ADR 0134 D5 (owner D7 on #2992): the particles' colour scale, which panels/particleScale.ts draws.
+export { PLAY_SPEEDS, playMove, type PlayClock, type PlaySpeed } from "./playback.ts";
 export { particleScaleOf, type ParticleScale } from "./results.ts";
 import {
   climOf,
