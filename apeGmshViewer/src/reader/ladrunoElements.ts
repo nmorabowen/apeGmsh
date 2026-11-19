@@ -18,11 +18,13 @@
 //   nodal `<RESULT>/<label>` by accident of spelling;
 // - positions are the file's: natural coordinates are QUADRATURE/GP_PARAM of the
 //   bucket's MODEL/ELEMENTS group, row g for GAUSS_ID g, never a TS table of rules.
-//   They are offered (for the Gauss-to-node extrapolation) only on PARAM_DOMAIN
-//   "[-1,1]", the domain state/extrapolation.ts's shape functions read; another
-//   domain ("[0,1]", or "bary" as BezierTri6 and BezierTet10 write) warns and
-//   offers none, never a re-mapped guess (a gauss_node contour then draws such a
-//   group's element means, state/extrapolation.ts meanFallbackGroups). A
+//   They are offered (for the Gauss-to-node extrapolation) on PARAM_DOMAIN
+//   "[-1,1]", the domain state/extrapolation.ts's shape functions read, and on a
+//   "bary" rule whose frame is known (`baryToGmsh`, Python `gp_param_to_gmsh`);
+//   another domain ("[0,1]"), a "bary" rule of an unknown TOPOLOGY / FAMILY, or a
+//   "bary" row outside the simplex warns and offers none, never a re-mapped guess
+//   (a gauss_node contour then draws such a group's element means,
+//   state/extrapolation.ts meanFallbackGroups). A
 //   group with no QUADRATURE/GP_PARAM at all (the fork's recorder writes none for a
 //   class it has no rule for) is read the same way: G from GAUSS_ID, a warning, and
 //   no natural coordinates, so its values draw per element but are never placed;
@@ -51,6 +53,46 @@ const H5T_INTEGER = 0;
 const H5T_FLOAT = 1;
 /** The PARAM_DOMAIN whose GP_PARAM rows are the natural coordinates state/extrapolation.ts reads. */
 const EXTRAPOLATION_DOMAIN = "[-1,1]";
+/** The simplex PARAM_DOMAIN: free barycentric coordinates, converted by `baryToGmsh`. */
+const BARY_DOMAIN = "bary";
+/** Free barycentric columns per simplex TOPOLOGY (schema v1 §3 vocabulary; Python `_SIMPLEX_NDIR`). */
+const BARY_NDIR: Readonly<Record<string, number>> = { tri: 2, tet: 3 };
+/** How far a "bary" weight may fall outside [0, 1] (rounding in the writer's rule table) before the row is refused. */
+const BARY_TOL = 1e-9;
+
+/**
+ * A `"bary"` GP_PARAM's rows in gmsh reference coordinates (`(u, v[, w])` on the
+ * unit simplex, node 0 carrying `1 - Σ`, gmsh corner order), or why its frame
+ * cannot be told. Python `gp_param_to_gmsh` / `_node0_first`, restated (ADR 0112
+ * D4: read as context, never imported). The frame is the element's:
+ * - Lagrange tri/tet and BezierTet10 are node-0-first: column k is node k's
+ *   weight, the last node's is implicit (fork `Ladruno_ElementResults.h`
+ *   `computeGlobalGP`: Tri31 `N0 = ξ, N1 = η`, tet `N0 = r, …, N3 = 1 - Σ`;
+ *   `BezierTet10.cpp` `N0 = L1²`), so gmsh is columns 1.. of the full row;
+ * - BezierTri6, the one bernstein triangle, writes `(ξ1, ξ2)` as the weights of
+ *   nodes 1 and 2 (`BezierTri6.cpp` `N0 = ξ3²`): gmsh already.
+ * The element's nodes are taken in gmsh corner order: the bridge emits these
+ * classes with identity node order (`_element_capabilities.py` `node_reorder`).
+ * Any other TOPOLOGY or FAMILY, or a row width that is not the topology's, has
+ * no known frame: a guess would silently rotate the points. A row that is not
+ * a point of the simplex (a non-finite weight, a weight below 0, or weights
+ * summing above 1, each beyond `BARY_TOL`) is refused by name too: no frame
+ * places it inside the element. Python `gp_param_to_gmsh` converts such a row
+ * without a check; the viewer refuses it rather than draw a point off the element.
+ */
+export function baryToGmsh(rows: readonly (readonly number[])[], topology: unknown, family: unknown): number[][] | string {
+  const ndir = typeof topology === "string" ? BARY_NDIR[topology] : undefined;
+  if (ndir === undefined) return `TOPOLOGY ${JSON.stringify(topology ?? null)} is not a simplex with a known barycentric frame (known: ${Object.keys(BARY_NDIR).map((t) => JSON.stringify(t)).join(", ")})`;
+  if (family !== "lagrange" && family !== "bernstein") return `no known barycentric frame for TOPOLOGY ${JSON.stringify(topology)}, FAMILY ${JSON.stringify(family ?? null)}`;
+  if (rows.some((r) => r.length !== ndir)) return `its GP_PARAM rows are not the ${ndir} free barycentric coordinates of a ${topology}`;
+  const off = rows.findIndex((r) => {
+    const sum = r.reduce((a, x) => a + x, 0);
+    return !r.every(Number.isFinite) || r.some((x) => x < -BARY_TOL) || sum > 1 + BARY_TOL;
+  });
+  if (off >= 0) return `its GP_PARAM row ${off} = [${rows[off]!.join(", ")}] is not a point of the ${topology} (each weight, and 1 - Σ, must be >= 0)`;
+  if (topology === "tri" && family === "bernstein") return rows.map((r) => [...r]);
+  return rows.map((r) => [...r.slice(1), 1 - r.reduce((a, x) => a + x, 0)]);
+}
 
 interface ENode {
   path: string;
@@ -307,9 +349,15 @@ export class LadrunoGauss {
         `${bg.path}: ${model.path} has no QUADRATURE/GP_PARAM (${ruleNote}), so its ${G} Gauss points are read per element ` +
           `but not placed, drawn as Gauss points, or extrapolated to nodes; the recorder that wrote the file has no quadrature rule for class ${classTag}`,
       );
-    } else if (domain === EXTRAPOLATION_DOMAIN && ndir !== null) {
+    } else if ((domain === EXTRAPOLATION_DOMAIN || domain === BARY_DOMAIN) && ndir !== null) {
       const flat = gp.value instanceof Float64Array ? gp.value : Float64Array.from(gp.value as ArrayLike<number>);
-      naturalCoords = Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * ndir, (r + 1) * ndir)));
+      const rows = Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * ndir, (r + 1) * ndir)));
+      if (domain === EXTRAPOLATION_DOMAIN) naturalCoords = rows;
+      else {
+        const m = baryToGmsh(rows, oneValue(model.attrs["TOPOLOGY"]?.value), oneValue(model.attrs["FAMILY"]?.value));
+        if (typeof m === "string") warnings.push(`${bg.path}: ${model.path}@PARAM_DOMAIN is "${BARY_DOMAIN}", but ${m}; its Gauss points are read, but not extrapolated to nodes`);
+        else naturalCoords = m;
+      }
     } else {
       warnings.push(`${bg.path}: ${model.path}@PARAM_DOMAIN is ${JSON.stringify(domain ?? null)}, not "${EXTRAPOLATION_DOMAIN}"; its Gauss points are read, but not extrapolated to nodes`);
     }
