@@ -16,9 +16,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { after, mock, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { H5BusyError, H5ReadError, lookup3, openH5ByRule, readRows, repairCopy, superblockFlags, superblockIo, type H5ReadModule, type H5RowsDataset, type H5RuleOpenable } from "../../src/reader/h5open.ts";
@@ -635,7 +635,12 @@ const REPLAY_FIELDS = [["POSITION", 2], ["VELOCITY", 2], ["STRESS", 3], ["VOLUME
 const RULE_H5 = h5wasm as unknown as H5RuleOpenable<h5wasm.File>;
 
 const sha = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
-const repairDirs = () => readdirSync(tmpdir()).filter((x) => x.startsWith("apegmsh-ladruno-repair-")).length;
+// The repair makes its folder under os.tmpdir(), which every process on the machine shares, so a count
+// there also sees any other test run's repairs. This file's repairs get a temp root of their own.
+const repairRoot = mkdtempSync(join(tmp, "os-tmpdir-"));
+const tmpdirMock = mock.method(os, "tmpdir", () => repairRoot);
+after(() => tmpdirMock.mock.restore());
+const repairDirs = () => readdirSync(repairRoot).filter((x) => x.startsWith("apegmsh-ladruno-repair-")).length;
 
 /** A copy of `src` with superblock flags `flags` and a fresh lookup3 (the repair's own arithmetic, checked against HDF5's below). */
 function flaggedCopy(src: string, flags: number, name: string): string {
