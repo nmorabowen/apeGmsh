@@ -108,9 +108,13 @@ export const pages: object[] = [];
 /** An IPC event as the page's frame `f` sends it, from `sender` (by default the window's page). */
 export const pageEvent = (f: StubFrame, sender: object | undefined = pages[0]) => ({ sender, processId: f.processId, frameId: f.routingId });
 
+/** The options each window was made with, in order (ADR 0137 H0: the model window's `webPreferences`). */
+export const windowOptions: unknown[] = [];
+
 /** The window main.ts makes once `ready()` is called: it records, and opens nothing. */
 class StubWindow {
-  constructor() {
+  constructor(options?: unknown) {
+    windowOptions.push(options);
     const webContents = strict("webContents", {
       get mainFrame() {
         return strict("mainFrame", { ...frame });

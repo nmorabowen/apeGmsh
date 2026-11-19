@@ -75,6 +75,7 @@ import { OpenSession, Study } from "./session.ts";
 import { confinedToStudy, isManifestPath, readVariants, resolveRow, type VariantsFs } from "../reader/variants.ts";
 import { goToSource, provenanceSources, type SourceScope } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
+import { guardContents } from "./windowPolicy.ts";
 import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
 import { nodeDeps, registerWorkspace } from "./workspace.ts";
 import { combinationToken, nodeCombinationDeps, registerCombinations, sweepOnOpen, type CombinationH5 } from "./combinations.ts";
@@ -184,6 +185,11 @@ function watchPage(w: BrowserWindow): void {
     );
   }, TICK_MS);
 }
+
+// ADR 0137 D13 (H0): every webContents the app creates denies new windows and
+// stays on the page it loaded (./windowPolicy.ts). Registered before any window,
+// so every later one inherits it.
+app.on("web-contents-created", (_e, contents) => guardContents(contents));
 
 if (headless) {
   // A listener of its own also stops Electron's default handler, which is the modal.
