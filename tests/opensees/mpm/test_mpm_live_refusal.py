@@ -59,6 +59,21 @@ def test_live_refuses_mpm_wall_naming_the_fork() -> None:
         ops.run()
 
 
+def test_live_refuses_mpm_gridvel_naming_the_fork() -> None:
+    ops = _with(lambda ops: ops.mpm.gridvel(
+        "push", ((0.4, -0.1), (1.6, 0.5)), (0.1, 0.0)))
+    with pytest.raises(RuntimeError, match="Gridvel.*the Ladruno fork's mpm engine"):
+        ops.run()
+
+
+def test_live_refuses_mpm_gridvel_affine_naming_the_fork() -> None:
+    ops = _with(lambda ops: ops.mpm.gridvelAffine(
+        "shear", ((0.4, -0.1), (1.6, 0.5)), ((0.0, 0.5), (0.0, 0.0))))
+    with pytest.raises(RuntimeError,
+                       match="GridvelAffine.*the Ladruno fork's mpm engine"):
+        ops.run()
+
+
 def test_live_refuses_mpm_gravity_naming_the_fork() -> None:
     ops = _with(lambda ops: ops.mpm.gravity(0.0, -9.81))
     with pytest.raises(RuntimeError, match="Gravity.*the Ladruno fork's mpm engine"):

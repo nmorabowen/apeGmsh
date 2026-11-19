@@ -66,12 +66,9 @@ NOT_OFFERED: dict[str, str] = {
     "emptyNodes": f"the empty-support policy: {_MODE_A}",
     "tagBase": f"the particle element tag bases: {_MODE_A}",
     "rayleigh": f"Rayleigh damping on the particle elements: {_MODE_A}",
-    "gridvel": ("prescribed grid velocity (box / affine / translate / "
-                "profile, setAffine; fork WP-232f, WP-232k): not adopted, a "
-                "follow-up with no ADR decision yet"),
-    "stage": ("the soil-model stage walk (fork WP-232k); a staged emit of a "
-              "model with mpm declarations is refused (ADR 0134 Amendment 1), "
-              "so there is no stage to walk"),
+    "stage": ("the soil-model stage walk (fork WP-232k): offered after "
+              "WP-232l, whose pore-pressure semantics (fork #1116) may change "
+              "it (ADR 0134 Amendment 3, #3064)"),
     "antiLocking": ("the cell-centre F-bar (fork WP-232j): not adopted, a "
                     "follow-up with no ADR decision yet"),
     "reset": ("rewinds particles and materials to before the first accepted "

@@ -1,4 +1,5 @@
-"""Chain M link M3: every ``mpm`` member on all five emitters (ADR 0134 D8).
+"""Chain M link M3: every ``mpm`` member on all five emitters (ADR 0134 D8;
+``Gridvel`` / ``GridvelAffine`` by Amendment 3, at fork cfe478254).
 
 Each member of :mod:`apeGmsh.opensees.mpm` reaches every emitter through
 ``command("mpm", ...)`` (ADR 0114 D2), so it states one fork command line
@@ -41,9 +42,9 @@ from tests.opensees.parity import mpm_fork_surface as surface
 
 #: The ``mpm`` family's contract list (``tests/families.py``).
 ALL_MPM = [
-    mpm.Grid, mpm.Body, mpm.Fix, mpm.Wall, mpm.Gravity, mpm.TimeSeries,
-    mpm.Damping, mpm.Flip, mpm.MassCutoff, mpm.Safety, mpm.Units,
-    mpm.Output, mpm.Analyze,
+    mpm.Grid, mpm.Body, mpm.Fix, mpm.Wall, mpm.Gridvel, mpm.GridvelAffine,
+    mpm.Gravity, mpm.TimeSeries, mpm.Damping, mpm.Flip, mpm.MassCutoff,
+    mpm.Safety, mpm.Units, mpm.Output, mpm.Analyze,
 ]
 assert ALL_MPM == list(mpm.ALL_MPM)
 
@@ -74,6 +75,32 @@ CASES: list[tuple[Any, int, str, tuple[Any, ...]]] = [
     (mpm.Fix(face="zmax", components="xyz"), 3, "mpm fix zmax xyz",
      ("fix", "zmax", "xyz")),
     (mpm.Wall(face="ymin", mu=0.3), 3, "mpm wall ymin 0.3", ("wall", "ymin", 0.3)),
+    # ``cmdGridVel`` at cfe478254 (slice #3064, ADR 0134 Amendment 3).
+    (mpm.Gridvel(name="push", box=((0.0, 0.0), (1.0, 0.5)), v=(0.1, 0.0)), 3,
+     "mpm gridvel push box 0.0 0.0 1.0 0.5 v 0.1 0.0",
+     ("gridvel", "push", "box", 0.0, 0.0, 1.0, 0.5, "v", 0.1, 0.0)),
+    (mpm.Gridvel(name="lift", box=((0.0, 0.0, 0.0), (1.0, 1.0, 0.2)),
+                 v=("free", "free", 0.05), start=0.5), 3,
+     "mpm gridvel lift box 0.0 0.0 0.0 1.0 1.0 0.2 v free free 0.05 start 0.5",
+     ("gridvel", "lift", "box", 0.0, 0.0, 0.0, 1.0, 1.0, 0.2, "v", "free",
+      "free", 0.05, "start", 0.5)),
+    (mpm.Gridvel(name="pile", box=((0.4, 0.0), (0.6, 2.0)), v=(0.0, -0.2),
+                 translate="y", profile=(0.0, 0.1, 1.0)), 3,
+     "mpm gridvel pile box 0.4 0.0 0.6 2.0 v 0.0 -0.2 translate y "
+     "profile 0.0 0.1 1.0",
+     ("gridvel", "pile", "box", 0.4, 0.0, 0.6, 2.0, "v", 0.0, -0.2,
+      "translate", "y", "profile", 0.0, 0.1, 1.0)),
+    (mpm.GridvelAffine(name="shear", box=((0.0, 0.0), (2.0, 1.0)),
+                       L=((0.0, 0.5), (0.0, 0.0))), 3,
+     "mpm gridvel shear box 0.0 0.0 2.0 1.0 affine 0.0 0.5 0.0 0.0",
+     ("gridvel", "shear", "box", 0.0, 0.0, 2.0, 1.0, "affine", 0.0, 0.5,
+      0.0, 0.0)),
+    (mpm.GridvelAffine(name="squeeze", box=((0.0, 0.0), (2.0, 1.0)),
+                       L=((-0.1, 0.0), (0.0, 0.1)), ref=(1.0, 0.0)), 3,
+     "mpm gridvel squeeze box 0.0 0.0 2.0 1.0 affine -0.1 0.0 0.0 0.1 "
+     "ref 1.0 0.0",
+     ("gridvel", "squeeze", "box", 0.0, 0.0, 2.0, 1.0, "affine", -0.1, 0.0,
+      0.0, 0.1, "ref", 1.0, 0.0)),
     (mpm.Gravity(g=(5.0, -8.66)), 3, "mpm gravity 5.0 -8.66", ("gravity", 5.0, -8.66)),
     (mpm.TimeSeries(series=SERIES), 3, "mpm timeSeries 9", ("timeSeries", 9)),
     (mpm.Damping(alpha=0.05), 3, "mpm damping local 0.05",
@@ -243,11 +270,16 @@ def test_fork_surface_every_fork_subcommand_is_a_member_or_a_row() -> None:
     assert surface.surface_problems(FORK_SUBS, MEMBER_SUBS, surface.NOT_OFFERED) == []
 
 
-def test_fork_surface_members_are_the_thirteen_and_rows_the_rest() -> None:
-    """The partition at ladruno-v20261118b, spelled out so a review sees it."""
+def test_fork_surface_members_and_rows_partition_the_fork() -> None:
+    """The partition at ladruno-v20261118b, spelled out so a review sees it.
+    ``gridvel`` is a member since #3064 (``Gridvel`` and ``GridvelAffine``
+    both emit it); ``stage`` stays a row until WP-232l."""
     assert MEMBER_SUBS == {
         "analyze", "body", "damping", "fix", "flip", "gravity", "grid",
-        "massCutoff", "output", "safety", "timeSeries", "units", "wall"}
+        "gridvel", "massCutoff", "output", "safety", "timeSeries", "units",
+        "wall"}
+    assert "gridvel" not in surface.NOT_OFFERED
+    assert "after WP-232l" in surface.NOT_OFFERED["stage"]
     assert set(surface.NOT_OFFERED) == set(FORK_SUBS) - MEMBER_SUBS
 
 
@@ -267,10 +299,19 @@ def test_fork_surface_a_dropped_row_fails_by_name(dropped: str) -> None:
 
 
 def test_fork_surface_a_row_the_fork_lost_fails_as_stale() -> None:
-    fork = [s for s in FORK_SUBS if s != "gridvel"]
+    fork = [s for s in FORK_SUBS if s != "antiLocking"]
     got = surface.surface_problems(fork, MEMBER_SUBS, surface.NOT_OFFERED)
-    assert got == ["NOT_OFFERED row 'gridvel' is stale: the fork's parser at "
-                   "the snapshot has no such subcommand"]
+    assert got == ["NOT_OFFERED row 'antiLocking' is stale: the fork's parser "
+                   "at the snapshot has no such subcommand"]
+
+
+def test_fork_surface_gridvel_without_its_members_fails_by_name() -> None:
+    """Slice #3064's mutation, offline: with neither gridvel member emitting
+    (``Gridvel`` and ``GridvelAffine`` dropped), the fork's ``gridvel`` is
+    neither a member nor a row."""
+    members = {s for s in MEMBER_SUBS if s != "gridvel"}
+    got = surface.surface_problems(FORK_SUBS, members, surface.NOT_OFFERED)
+    assert len(got) == 1 and "'gridvel' is neither" in got[0]
 
 
 def test_fork_surface_a_member_the_fork_lost_fails_by_name() -> None:
