@@ -25,6 +25,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
+import { planesShapeOf } from "../../src/panels/planes.ts";
 import { CAP_FILL, CAP_STEP, capKeys, CapLayer, capShade, releaseAware, solidTable } from "../../src/renderer/caps.ts";
 import { sliderBox, SectionClip } from "../../src/renderer/clip.ts";
 import { colormapTexture, shownAt } from "../../src/renderer/colormapTexture.ts";
@@ -35,7 +36,7 @@ import type { BlobStore } from "../../src/state/blobs.ts";
 import { cutsOf, gizmoPlanes, type Cut } from "../../src/state/clip.ts";
 import { NO_DATA_RGB, rampT, sampleCmap } from "../../src/state/contour.ts";
 import { initialState, reduce } from "../../src/state/reduce.ts";
-import { contourView, cutFaceNote, deformView, NO_SOLID_CELLS, type ContourView } from "../../src/state/selectors.ts";
+import { ALL_SOLIDS_HIDDEN, contourView, cutFaceNote, deformView, NO_NODE_TABLE, NO_SOLID_CELLS, type ContourView } from "../../src/state/selectors.ts";
 import { SOLID_SHAPES, sliceSolids, type Solids } from "../../src/state/slice.ts";
 import type { Store } from "../../src/state/store.ts";
 import type { GaussMode, State } from "../../src/state/types.ts";
@@ -580,6 +581,24 @@ test("a shell model gets no cap and says so; never a fake fill", async () => {
   assert.equal(cutFaceNote(h.store.get()), NO_SOLID_CELLS, "the panel says it");
   const solid = await opened();
   assert.equal(cutFaceNote(solid.store.get()), null);
+});
+
+test("the panel says why no cap is drawn when every solid cell is hidden, and when the node table is missing (#1924)", async () => {
+  const h = await opened();
+  plane(h, [0, 0, 1], 0);
+  const groups = Object.values(h.store.get().decls).filter((d) => d.kind === "physical_group").map((d) => d.path);
+  assert.ok(groups.length > 0);
+  h.store.dispatch({ type: "setHidden", decls: groups, hidden: true });
+  const caps = capsNow(h);
+  assert.equal(caps.count, 0);
+  assert.equal(caps.note, ALL_SOLIDS_HIDDEN);
+  assert.equal(cutFaceNote(h.store.get()), ALL_SOLIDS_HIDDEN, "the panel says what the caps found");
+  const hiddenShape = planesShapeOf(h.store.get(), null, new Set());
+  h.store.dispatch({ type: "showAll" });
+  assert.notEqual(planesShapeOf(h.store.get(), null, new Set()), hiddenShape, "hiding the cells rebuilds the panel, so the note appears");
+  assert.equal(cutFaceNote(h.store.get()), null);
+  const s = h.store.get();
+  assert.equal(cutFaceNote({ ...s, mesh: { ...s.mesh!, nodes: undefined } }), NO_NODE_TABLE);
 });
 
 test("the node table rides with the model read, and the blob GC keeps it", async () => {
