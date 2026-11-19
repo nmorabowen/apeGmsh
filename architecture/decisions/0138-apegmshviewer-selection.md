@@ -1,6 +1,7 @@
 # ADR 0138 — apeGmshViewer selection: one selection per target kind, picked from an ID image
 
-**Status:** Proposed (2026-11-19). The owner accepts it by merging the PR that carries it.
+**Status:** Accepted (2026-11-19; approved by the owner). Merging the PR that carries this Status is the acceptance.
+Proposed in #3068; SEL-1 built on it (#3069, #3070).
 
 **Owner:** nmora
 
