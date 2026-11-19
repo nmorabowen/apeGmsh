@@ -19,13 +19,22 @@ import type { BlobStore } from "../state/blobs.ts";
 import type { DisplacementData } from "../effects.ts";
 import type { LadrunoLineStationStep } from "../reader/ladruno.ts";
 import { contourView, geometryPairing, gizmoPlanes, legendEntryColour, selectedElementsOf } from "../state/selectors.ts";
-import { contourColours, contourShownKey, elementColours, noDataColours, toLinear, type StepValues } from "./contour.ts";
+import { colormapTexture, NO_DATA_U, rampUv } from "./colormapTexture.ts";
+import { combinationColours, contourColours, contourShownKey, differenceColours, elementColours, noDataShades, toLinear, userResultColours, type CombinationColumnOf, type ContourShades, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
-import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, selectionOutline, writePositions, type FullPositions } from "./deform.ts";
+import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
-import { LoadsLayer } from "./loads.ts";
+import { EntitiesLayer } from "./entities.ts";
+import { CracksLayer } from "./cracks.ts";
+import { LoadsLayer, PrincipalLayer, ReactionsLayer, SupportsLayer, VectorsLayer } from "./loads.ts";
+import { HingesLayer } from "./hinges.ts";
+import { SpringsLayer } from "./springs.ts";
+import { makeNodePoints, nodePositions, setNodeSize, uniqueNodeVertices, type NodeVertices } from "./nodes.ts";
+import { particleBounds, ParticleLayer, type ParticleFrame, type ParticleLook } from "./particles.ts";
+import { deformedPositions } from "../state/deform.ts";
+import { dropUnplaced, gaussBasePositions, gaussDisplacements, gaussLayoutOf, type GaussLayout, type StationPoints } from "../state/gaussPoints.ts";
 import type { State, Store } from "../state/store.ts";
 import { roleColouring } from "../state/roles.ts";
 import type { Box } from "../state/clip.ts";
@@ -45,11 +54,38 @@ import {
   type ProjectionMode,
   type ViewCamera,
 } from "./navigation.ts";
-import { fitDistance, focusOf, type Focus, hitElement, SELECTION_COLOUR, SelectionHalo } from "./selection.ts";
+import { fitDistance, focusOf, type Focus, type Hit, elementOutlines, highlightObjects, hitElement, nearestNodeOf, nodeVertexPositions, SELECTION_COLOUR, selectedPrims, SelectionHalo } from "./selection.ts";
 import { edgeMask, elementMaskOf, sameDrawn, visibleMaps, type Drawn } from "./visible.ts";
 
 /** The right rail's width plus its margins (style.css #rail: the inspector above the sources). */
 const INSPECTOR_PX = 470 + 28;
+
+/** The markers' size for the instant before the effects choose one. */
+const NODE_SIZE_FALLBACK = 5;
+/** ADR 0134 D5: the particles are framed in a sphere this much larger than their own, so an open banner leaves them in view. */
+const PARTICLE_FIT_MARGIN = 1.3;
+
+/**
+ * The sphere the camera fits for a particle frame: the cloud's own bounds (owner D7 on
+ * #2992: centred on the cloud, whether the grid's box is drawn or not), PARTICLE_FIT_MARGIN
+ * larger so an open banner leaves the particles in view; null with no particle.
+ */
+export function particleFitSphere(f: { positions: ParticleFrame["positions"]; ndm: ParticleFrame["ndm"] }): { center: [number, number, number]; radius: number } | null {
+  const b = particleBounds(f.positions, f.ndm);
+  return b ? { center: b.center, radius: b.radius * PARTICLE_FIT_MARGIN } : null;
+}
+
+/**
+ * The width kept clear for the right rail, the model framed left of it: none while the
+ * rail is collapsed or the window is narrow. ADR 0134 D5 (owner D7 on #2992): none for
+ * particles drawn alone (no mesh, no geometry) either. The rail's panels (inspector,
+ * section planes, sources) and its chrome (app.ts `mountCollapsibleChrome`) are a
+ * model's, so it shows nothing then, and the cloud is framed in the middle of the window.
+ */
+export function railKeptPx(width: number, railCollapsed: boolean, particlesAlone: boolean): number {
+  if (railCollapsed || particlesAlone) return 0;
+  return width > 1000 ? INSPECTOR_PX : 0;
+}
 
 export { SELECTION_COLOUR } from "./selection.ts";
 /**
@@ -113,6 +149,13 @@ export class Viewport {
   private offsetLineMap: Int32Array | null = null;
   private offsetJoints: THREE.Points | null = null;
   private offsetJointMap: Int32Array | null = null;
+  private nodePoints: THREE.Points | null = null;
+  private nodeVertices: NodeVertices | null = null;
+  /** Outside `content`, so a rebuild of the mesh keeps the placed layout. */
+  private readonly gaussGroup = new THREE.Group();
+  private gaussPoints: THREE.Points | null = null;
+  private gauss: { deps: unknown[]; layout: GaussLayout | null; base: Float32Array | null; posKey: string } | null = null;
+  private stationsSource: () => (StationPoints & { key: string }) | null = () => null;
   private lineMaterials: LineMaterial[] = [];
   private index: MeshIndex | null = null;
   private drawn: Drawn | null = null;
@@ -125,6 +168,8 @@ export class Viewport {
   continuous = false;
   /** V4c1: the step data the effects fetched (effects.currentStep); the contour colours from it. */
   private stepSource: () => StepValues | null = () => null;
+  /** VU7b-2: the User Combination column on hand (renderer/contour.ts `CombinationFeed.held`); app.ts wires it. */
+  private combinationSource: () => CombinationColumnOf | null = () => null;
   /** V4c1: what the contour colours show now: the step, range and colormap key, or `no-data`; null when not colouring by contour. */
   contourApplied: string | null = null;
   /** V4d: the displacement the effects computed for the step shown (effects.currentDisplacement). */
@@ -133,6 +178,23 @@ export class Viewport {
   private lineDiagramSource: () => { key: string; step: LadrunoLineStationStep } | null = () => null;
   readonly lineDiagram: LineDiagramLayer;
   readonly loads = new LoadsLayer();
+  readonly reactions = new ReactionsLayer();
+  readonly vectors = new VectorsLayer();
+  readonly principal = new PrincipalLayer();
+  /** The Cracks card: a disc in each crack plane at the Gauss points (renderer/cracks.ts). */
+  readonly cracks = new CracksLayer();
+  /** The Springs card: one force arrow per zero-length spring of the results step. */
+  readonly springs = new SpringsLayer();
+  /** The Hinges card: one marker per moment hinge of the Ladruno beams. */
+  readonly hinges = new HingesLayer();
+  /** The Display card's BC toggle: restraint glyphs at the supports. */
+  readonly supports = new SupportsLayer();
+  /** VU8: the `/entities` of the set's `.user.h5` (renderer/entities.ts). */
+  readonly entities = new EntitiesLayer();
+  /** ADR 0134 D5: the MPM particles (renderer/particles.ts), filled per output by the effects (`showParticles`). */
+  readonly particles = new ParticleLayer();
+  /** the last particle frame shown, so a theme change can recolour it; null with none */
+  private particleFrame: ParticleFrame | null = null;
   /** V4d: every primitive's positions as drawn now (undeformed, or deformed at the step and scale its key names). */
   private full: FullPositions | null = null;
   /** V4d: the reference ghost (the undeformed mesh, faint) and the markers of drawn nodes with no displacement. */
@@ -186,9 +248,11 @@ export class Viewport {
     this.keyLight.position.set(0.5, 0.8, 1);
     this.perspCamera.add(this.keyLight);
     this.lineDiagram = new LineDiagramLayer(this.camera);
-    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root);
+    this.scene.add(this.content, this.highlight, this.geometryLayer, this.lineDiagram.root, this.loads.root, this.reactions.root, this.vectors.root, this.principal.root, this.cracks.root, this.springs.root, this.hinges.root, this.supports.root, this.entities.root);
+    // ADR 0134 D5: after the node layer's group (`content`), as the card asks.
+    this.scene.add(this.particles.root);
     // V4d: the ghost and the missing-displacement markers (shown with the mesh, never on the geometry phase).
-    this.scene.add(this.ghost, this.markers);
+    this.scene.add(this.ghost, this.markers, this.gaussGroup);
     // V4e2: the gizmos (renderer/gizmo.ts): skipped by the clip stamping, never a raycast target.
     this.scene.add(this.gizmos.root);
     // V4e3: the caps, likewise skipped by the clip stamping (each is trimmed by the other planes itself).
@@ -255,6 +319,14 @@ export class Viewport {
     this.halo.setTheme(mode);
     this.lineDiagram.setTheme(mode);
     this.loads.setTheme(mode);
+    this.reactions.setTheme(mode);
+    this.vectors.setTheme(mode);
+    this.principal.setTheme(mode);
+    this.springs.setTheme(mode);
+    this.hinges.setTheme(mode);
+    this.supports.setTheme(mode);
+    this.entities.setTheme(mode);
+    if (this.particleFrame) this.particles.show({ ...this.particleFrame, fit: false }, this.particleLook());
     const s = this.store.get();
     if (this.geometryInfo) {
       this.setGeometry(this.geometryInfo);
@@ -263,10 +335,11 @@ export class Viewport {
     }
     if (s.mesh) {
       this.rebuild(s, s.mesh);
-      if (s.selection.decls.length) this.setHighlight(s, false);
+      if (s.selection.decls.length || s.selection.nodes.length) this.setHighlight(s, false);
       this.syncLineDiagram(s);
       this.syncLoads(s);
     }
+    this.syncEntities(s);
     this.notifyView();
     this.requestRender();
   }
@@ -276,6 +349,7 @@ export class Viewport {
     const s = this.store.get();
     if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, null);
     else if (s.mesh) this.frame(s.mesh, null, null);
+    else this.fitParticles(null);
   }
 
   /**
@@ -288,6 +362,7 @@ export class Viewport {
     const s = this.store.get();
     if (this.geometryInfo && (s.phase.at?.kind === "geometry" || !s.mesh)) this.frameGeometry(this.geometryInfo, heading);
     else if (s.mesh) this.frame(s.mesh, heading, frameFocus(this.full, s.mesh, this.blobs, this.drawn, null, null));
+    else this.fitParticles(heading);
   }
 
   /**
@@ -470,8 +545,14 @@ export class Viewport {
     this.store.dispatch({ type: "hover", at: pick });
   }
 
-  /** A click at a client point: select (or toggle in the selection when `add` is true) what it picks; on a plain miss, clear the selection. */
+  /** A click at a client point: select (or toggle in the selection when `add` is true) what it picks in the active kind; on a plain miss, clear that kind. */
   private selectAt(x: number, y: number, add = false): void {
+    if (this.store.get().selection.active === "node") {
+      const tag = this.nodeAt(x, y);
+      if (tag !== null) this.store.dispatch({ type: "selectNodes", tags: [tag], mode: add ? "toggle" : "replace" });
+      else if (!add) this.store.dispatch({ type: "clearSelection", kind: "node" });
+      return;
+    }
     const pick = this.pickAt(x, y);
     if (add) {
       if (pick) this.store.dispatch({ type: "selectAdd", pick });
@@ -492,6 +573,15 @@ export class Viewport {
     this.caps.dispose();
     this.lineDiagram.dispose();
     this.loads.dispose();
+    this.reactions.dispose();
+    this.vectors.dispose();
+    this.principal.dispose();
+    this.cracks.dispose();
+    this.springs.dispose();
+    this.hinges.dispose();
+    this.supports.dispose();
+    this.entities.dispose();
+    this.particles.dispose();
     this.halo.dispose();
     this.clear(this.content);
     this.clear(this.highlight);
@@ -518,6 +608,13 @@ export class Viewport {
       if (this.clip.sync(s.clip)) {
         this.lineDiagram.setClippingPlanes(this.clip.planes);
         this.loads.setClippingPlanes(this.clip.planes);
+        this.reactions.setClippingPlanes(this.clip.planes);
+        this.vectors.setClippingPlanes(this.clip.planes);
+        this.principal.setClippingPlanes(this.clip.planes);
+        this.cracks.setClippingPlanes(this.clip.planes);
+        this.springs.setClippingPlanes(this.clip.planes);
+        this.hinges.setClippingPlanes(this.clip.planes);
+        this.supports.setClippingPlanes(this.clip.planes);
         this.requestRender();
       }
     }
@@ -525,11 +622,15 @@ export class Viewport {
     this.settleCaps(s);
     this.onGeometry(s, prev);
     if (!prev || s.mesh !== prev.mesh) {
+      // ADR 0134 D5: a mesh beside particles drawn alone (or its close) changes the rail's width (`panelWidth`).
+      if (this.particleFrame) this.syncCameraFrustum();
       this.setMesh(s.mesh);
       this.applyVisibility(s);
       this.setHighlight(s);
+      this.syncGauss(s);
       this.syncLineDiagram(s);
       this.syncLoads(s);
+      this.syncEntities(s);
       return;
     }
     if (
@@ -542,11 +643,155 @@ export class Viewport {
     } else if (s.visibility !== prev.visibility || s.phase !== prev.phase || s.lineDiagram.on !== prev.lineDiagram.on) {
       this.applyVisibility(s);
     }
+    this.syncNodes(s);
     if (s.selection !== prev.selection) this.setHighlight(s);
     if (s.visibility.colourBy === "contour") this.recolour(s);
     this.redeform(s);
+    this.syncGauss(s);
     this.syncLineDiagram(s);
     this.syncLoads(s);
+    this.syncEntities(s);
+  }
+
+  /** The node markers: built on first use, then only shown, hidden and resized. */
+  private syncNodes(s: State): void {
+    if (!s.mesh) return;
+    const { on: nodes, size: nodeSize } = s.nodes;
+    if (nodes && !this.nodePoints) {
+      // Only the markers: what is drawn has not changed, so the scene is not rebuilt.
+      if (!this.drawn) return;
+      this.buildNodePoints(s, s.mesh, this.drawn, this.full ?? basePositions(s.mesh, this.blobs));
+      this.requestRender();
+      return;
+    }
+    if (!this.nodePoints) return;
+    const size = nodeSize ?? NODE_SIZE_FALLBACK;
+    const m = this.nodePoints.material as THREE.PointsMaterial;
+    if (this.nodePoints.visible === nodes && m.size === size) return;
+    this.nodePoints.visible = nodes;
+    setNodeSize(this.nodePoints, size);
+    this.requestRender();
+  }
+
+  /** Where the beam stations for the Gauss markers come from (app.ts wires the effects). */
+  setStationsSource(source: () => (StationPoints & { key: string }) | null): void {
+    this.stationsSource = source;
+  }
+
+  /**
+   * The Gauss point and beam station markers: the layout is placed once per
+   * stage, hidden set and model; the positions follow the deformed shape by
+   * the layout's own weights over the step's nodal displacements.
+   */
+  private syncGauss(s: State): void {
+    const at = s.phase.at;
+    const want = s.gaussPoints.on && at?.kind === "results" && s.mesh !== null;
+    if (!want) {
+      if (this.gaussPoints?.visible) {
+        this.gaussPoints.visible = false;
+        this.requestRender();
+      }
+      return;
+    }
+    const info = s.mesh!;
+    const stations = this.stationsSource();
+    const deps = [s.results, at.stage, s.visibility.hidden, s.mesh, s.decls, s.stageElements, s.sequence, stations?.key ?? null, this.activeTheme];
+    let changed = false;
+    if (!this.gauss || this.gauss.deps.length !== deps.length || this.gauss.deps.some((d, i) => d !== deps[i])) {
+      if (this.gaussPoints) {
+        this.gaussGroup.remove(this.gaussPoints);
+        this.gaussPoints.geometry.dispose();
+        (this.gaussPoints.material as THREE.Material).dispose();
+        this.gaussPoints = null;
+      }
+      let layout = info.nodes ? gaussLayoutOf(s, this.blobs, stations) : null;
+      let base = layout && info.nodes ? gaussBasePositions(layout, this.blobs.get(info.nodes.ids) as Float64Array, this.blobs.get(info.nodes.xyz) as Float64Array) : null;
+      if (layout && base) ({ layout, base } = dropUnplaced(layout, base));
+      this.gauss = { deps, layout, base, posKey: "" };
+      if (layout && base && layout.count) {
+        const t = themeTokens(this.activeTheme);
+        this.gaussPoints = makeNodePoints(base.slice(), s.gaussPoints.size ?? NODE_SIZE_FALLBACK, toHexNumber(t.accent), toHexNumber(t.bg0));
+        this.gaussGroup.add(this.gaussPoints);
+      }
+      changed = true;
+      // The Display row states what was placed and why the rest was not.
+      const stage = s.results?.stages[at.stage]?.id ?? "";
+      if (layout) {
+        const measured = { stage, count: layout.count, refused: layout.refused, notes: layout.notes };
+        queueMicrotask(() => this.store.dispatch({ type: "gaussMeasured", ...measured }));
+      }
+    }
+    const g = this.gauss;
+    if (this.gaussPoints && g.layout && g.base) {
+      const full = this.full;
+      const disp = full && full.key !== "base" && full.disp?.nodal ? full.disp : null;
+      const posKey = disp ? `${full!.key}` : "base";
+      if (posKey !== g.posKey) {
+        g.posKey = posKey;
+        const a = this.gaussPoints.geometry.getAttribute("position") as THREE.BufferAttribute;
+        const out = a.array as Float32Array;
+        if (disp) deformedPositions(g.base, gaussDisplacements(g.layout, disp.nodal!.column, disp.nodal!.rows), s.deform.scale, out);
+        else out.set(g.base);
+        a.needsUpdate = true;
+        this.gaussPoints.geometry.computeBoundingSphere();
+        changed = true;
+      }
+      const size = s.gaussPoints.size ?? NODE_SIZE_FALLBACK;
+      if (!this.gaussPoints.visible || (this.gaussPoints.material as THREE.PointsMaterial).size !== size) {
+        this.gaussPoints.visible = true;
+        setNodeSize(this.gaussPoints, size);
+        changed = true;
+      }
+    }
+    if (changed) this.requestRender();
+  }
+
+  /** The markers of the drawn nodes, at the drawn (deformed while it shows) positions. */
+  private buildNodePoints(s: State, info: MeshInfo, drawn: { lineMap: Int32Array; triMap: Int32Array }, full: { line: Float32Array; tri: Float32Array }): void {
+    this.nodeVertices = uniqueNodeVertices(
+      this.blobs.get(info.vertexNodes.line) as Float64Array,
+      this.blobs.get(info.vertexNodes.tri) as Float64Array,
+      drawn.lineMap,
+      drawn.triMap,
+    );
+    const t = themeTokens(this.activeTheme);
+    this.nodePoints = makeNodePoints(nodePositions(this.nodeVertices, full.line, full.tri), s.nodes.size ?? NODE_SIZE_FALLBACK, toHexNumber(t.text), toHexNumber(t.bg0));
+    this.content.add(this.nodePoints);
+  }
+
+  /** ADR 0134 D5: the particle layer's colours from the theme (the node markers' plain colour and rim). */
+  private particleLook(): ParticleLook {
+    const t = themeTokens(this.activeTheme);
+    return { plain: toHexNumber(t.accent), rim: toHexNumber(t.bg0), grid: toHexNumber(t.muted) };
+  }
+
+  /**
+   * ADR 0134 D5: the effects' particle frame (effects.ts, through `FrameTarget`), or
+   * null to draw none. The first frame of a set with no mesh and no geometry frames
+   * the camera on the particles.
+   */
+  showParticles(frame: ParticleFrame | null): void {
+    this.particleFrame = frame;
+    this.particles.show(frame, this.particleLook());
+    // Particles alone keep no width for the right rail (`panelWidth`): drawn or cleared, the frustum follows.
+    this.syncCameraFrustum();
+    if (frame?.fit) this.fitParticles(null);
+    this.requestRender();
+  }
+
+  /**
+   * Fit the camera to the particles drawn (the scene has nothing else to frame: `home`,
+   * `fit`, a set's first frame); false when none is drawn. `fit` reads plan or
+   * isometric from the z extent of `pos`: a 2-D stage lies at z = 0.
+   */
+  private fitParticles(heading: Heading | null): boolean {
+    const f = this.particleFrame;
+    if (!f) return false;
+    const b = particleFitSphere(f);
+    if (!b) return false;
+    const z = f.ndm === 2 ? [0, 0] : [b.center[2] - b.radius, b.center[2] + b.radius];
+    this.fit(b.center, b.radius, [new Float32Array([0, 0, z[0]!, 0, 0, z[1]!])], heading);
+    return true;
   }
 
   /** Where the 3-D line diagram's step data comes from (app.ts wires the effects). */
@@ -570,8 +815,20 @@ export class Viewport {
     }
   }
 
+  private syncEntities(s: State = this.store.get()): void {
+    if (this.entities.sync(s, this.blobs)) this.requestRender();
+  }
+
   private syncLoads(s: State = this.store.get()): void {
-    if (this.loads.sync(s, this.blobs, this.full)) {
+    // The Reactions, Vectors, Principal, Cracks and Springs cards' glyphs follow the same inputs, plus the step's data.
+    const loads = this.loads.sync(s, this.blobs, this.full);
+    const supports = this.supports.sync(s, this.blobs, this.full);
+    const vectors = this.vectors.sync(s, this.blobs, this.full, this.stepSource());
+    const principal = this.principal.sync(s, this.blobs, this.full, this.stepSource());
+    const cracks = this.cracks.sync(s, this.blobs, this.full, this.stepSource());
+    const springs = this.springs.sync(s, this.blobs, this.full, this.stepSource());
+    const hinges = this.hinges.sync(s, this.blobs, this.full, this.stepSource());
+    if (this.reactions.sync(s, this.blobs, this.full, this.stepSource()) || loads || supports || vectors || principal || cracks || springs || hinges) {
       this.requestRender();
     }
   }
@@ -595,7 +852,7 @@ export class Viewport {
    * change, after a gizmo release (`releaseAware`) and a slider release.
    */
   private settleCaps(s: State = this.store.get()): void {
-    if (this.caps.sync(s, this.blobs, this.stepSource(), this.gizmoInput.dragging || this.sliding)) this.requestRender();
+    if (this.caps.sync(s, this.blobs, this.stepSource(), this.gizmoInput.dragging || this.sliding, this.combinationSource())) this.requestRender();
   }
 
   /** V4e3: a panel offset slider is held (true) or released (app.ts wires the planes panel). */
@@ -668,12 +925,18 @@ export class Viewport {
         a.needsUpdate = true;
         this.offsetJoints.geometry.computeBoundingSphere();
       }
+      if (this.nodePoints && this.nodeVertices) {
+        const a = this.nodePoints.geometry.getAttribute("position") as THREE.BufferAttribute;
+        nodePositions(this.nodeVertices, next.line, next.tri, a.array as Float32Array);
+        a.needsUpdate = true;
+        this.nodePoints.geometry.computeBoundingSphere();
+      }
       this.setMarkers(info);
       if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
       if (this.frameEdges) this.frameEdges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
       if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, next, s.visibility.opacity);
       // The selection outline follows the moved vertices (no pulse: the selection did not change).
-      if (selectedElementsOf(s).length) this.setHighlight(s, false);
+      if (selectedElementsOf(s).length || s.selection.nodes.length) this.setHighlight(s, false);
       changed = true;
     }
     const ghost = this.ghostWanted(s) && s.phase.at?.kind !== "geometry";
@@ -697,25 +960,38 @@ export class Viewport {
     this.settleCaps();
   }
 
+  /** VU7b-2: where a User Combination's contour values come from (app.ts wires the feed). */
+  setCombinationSource(source: () => CombinationColumnOf | null): void {
+    this.combinationSource = source;
+    this.recolour(this.store.get());
+    this.settleCaps();
+  }
+
   /**
    * The contour colours of the drawn primitives: the step on screen once its
    * data and range are here, no data everywhere when nothing can be coloured
    * (the legend says why), else null (the step is still loading).
    */
-  private contourFor(s: State, info: MeshInfo, drawn: Drawn): { line: Float32Array; tri: Float32Array; key: string } | null {
+  private contourFor(s: State, info: MeshInfo, drawn: Drawn): ContourShades | null {
     const v = contourView(s);
     if (v.state === "off") throw new Error("viewport: contour colours while not colouring by contour");
     // V4c2a: a refused element field (an unverified file, disagreeing groups, rows that do not join) and a topology
     // not built yet are drawn as no data, never coloured "with a warning".
     if (v.state === "unavailable" || v.state === "refused" || v.state === "not-yet") {
-      return { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: `no-data:${v.reason}` };
+      return noDataShades(drawn.lineMap, drawn.triMap, `no-data:${v.reason}`);
     }
     if (v.state === "element") return elementColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
+    if (v.state === "combination") return combinationColours(v, info, this.blobs, this.combinationSource(), drawn.lineMap, drawn.triMap);
+    if (v.state === "difference") return differenceColours(v, info, this.blobs, drawn.lineMap, drawn.triMap);
+    if (v.state === "user") return userResultColours(v, info, this.blobs, drawn.lineMap, drawn.triMap);
     return contourColours(s, v, info, this.blobs, this.stepSource(), drawn.lineMap, drawn.triMap);
   }
 
-  /** Map per-segment start/end contour colours (`lineColours` on `drawnLineMap`) onto extruded prism triangles (`frameTriMap`). */
-  private frameTriContourColours(info: MeshInfo, drawnLineMap: Int32Array, lineColours: Float32Array, frameTriMap: Int32Array): Float32Array {
+  /**
+   * Map per-segment start/end contour ramp coordinates (`lineU` on `drawnLineMap`, 2 per segment) onto the
+   * extruded prism triangles (`frameTriMap`, 3 per triangle): the fill samples the colormap per fragment (VF-a).
+   */
+  private frameTriContourU(info: MeshInfo, drawnLineMap: Int32Array, lineU: Float32Array, frameTriMap: Int32Array): Float32Array {
     const fe = info.frameExtrusion!;
     const nSegs = info.linePositions.shape[0]!;
     const segToDrawn = new Int32Array(nSegs).fill(-1);
@@ -725,21 +1001,15 @@ export class Viewport {
     const lineNodes = this.blobs.get(info.vertexNodes.line) as Float64Array;
     const triSegs = this.blobs.i32(fe.triSegments);
     const triNodes = this.blobs.get(fe.triNodes) as Float64Array;
-    const out = new Float32Array(frameTriMap.length * 9);
+    // A triangle of a segment that is not drawn stays no data (frameTriMap holds only drawn segments' triangles).
+    const out = new Float32Array(frameTriMap.length * 3).fill(NO_DATA_U);
     for (let dTri = 0; dTri < frameTriMap.length; dTri++) {
       const t = frameTriMap[dTri]!;
       const seg = triSegs[t]!;
       const d = segToDrawn[seg]!;
       if (d < 0) continue;
       const nodeI = lineNodes[2 * seg]!;
-      for (let v = 0; v < 3; v++) {
-        const isI = triNodes[3 * t + v] === nodeI;
-        const srcOff = 6 * d + (isI ? 0 : 3);
-        const dstOff = 9 * dTri + 3 * v;
-        out[dstOff] = lineColours[srcOff]!;
-        out[dstOff + 1] = lineColours[srcOff + 1]!;
-        out[dstOff + 2] = lineColours[srcOff + 2]!;
-      }
+      for (let v = 0; v < 3; v++) out[3 * dTri + v] = lineU[2 * d + (triNodes[3 * t + v] === nodeI ? 0 : 1)]!;
     }
     return out;
   }
@@ -768,16 +1038,9 @@ export class Viewport {
     if (contourShownKey(v) === this.contourApplied) return;
     const c = this.contourFor(s, info, this.drawn);
     if (!c || c.key === this.contourApplied) return;
-    if (this.faces) {
-      const a = this.faces.geometry.getAttribute("color") as THREE.BufferAttribute;
-      (a.array as Float32Array).set(c.tri);
-      a.needsUpdate = true;
-    }
-    if (this.frameFaces && this.frameTriMap) {
-      const a = this.frameFaces.geometry.getAttribute("color") as THREE.BufferAttribute;
-      (a.array as Float32Array).set(this.frameTriContourColours(info, this.drawn.lineMap, c.line, this.frameTriMap));
-      a.needsUpdate = true;
-    }
+    // VF-a: the surfaces take the ramp coordinates and sample the colormap per fragment.
+    if (this.faces) this.setRamp(this.faces, c.triU, c);
+    if (this.frameFaces && this.frameTriMap) this.setRamp(this.frameFaces, this.frameTriContourU(info, this.drawn.lineMap, c.lineU, this.frameTriMap), c);
     if (this.lines) {
       // LineSegmentsGeometry keeps the colours as one interleaved buffer, 6 floats per segment (start rgb, end rgb).
       const attr = this.lines.geometry.getAttribute("instanceColorStart") as THREE.InterleavedBufferAttribute;
@@ -786,6 +1049,15 @@ export class Viewport {
     }
     this.contourApplied = c.key;
     this.requestRender();
+  }
+
+  /** A contour surface's ramp coordinates, in place, and its material's colormap (VF-a). */
+  private setRamp(mesh: THREE.Mesh, u: Float32Array, c: ContourShades): void {
+    const a = mesh.geometry.getAttribute("uv") as THREE.BufferAttribute | undefined;
+    if (!a || a.count !== u.length) throw new Error(`viewport: a contour surface has ${a?.count ?? "no"} ramp coordinates for ${u.length} vertices`);
+    (a.array as Float32Array).set(rampUv(u));
+    a.needsUpdate = true;
+    (mesh.material as THREE.MeshStandardMaterial).map = colormapTexture(c.cmap);
   }
 
   /**
@@ -816,6 +1088,8 @@ export class Viewport {
     this.clear(this.geometryLayer);
     this.geometryLayer.visible = false;
     this.geometryInfo = g;
+    // ADR 0134 D5: a geometry beside particles drawn alone (or its close) changes the rail's width (`panelWidth`).
+    if (this.particleFrame) this.syncCameraFrustum();
     if (!g) return;
     const t = themeTokens(this.activeTheme);
     const curves = this.blobs.f32(g.curvePositions);
@@ -853,9 +1127,8 @@ export class Viewport {
 
   /** Width kept clear for the right rail (inspector, sources): the model is framed left of it. */
   private panelWidth(): number {
-    if (this.railCollapsed) return 0;
-    const w = this.host.clientWidth || 1;
-    return w > 1000 ? INSPECTOR_PX : 0;
+    const alone = this.particleFrame !== null && !this.store.get().mesh && !this.geometryInfo;
+    return railKeptPx(this.host.clientWidth || 1, this.railCollapsed, alone);
   }
 
   private syncCameraFrustum(): void {
@@ -979,6 +1252,8 @@ export class Viewport {
     this.offsetLineMap = null;
     this.offsetJoints = null;
     this.offsetJointMap = null;
+    this.nodePoints = null;
+    this.nodeVertices = null;
     this.drawn = null;
     this.index = null;
     this.full = null;
@@ -1011,13 +1286,18 @@ export class Viewport {
     this.offsetLineMap = null;
     this.offsetJoints = null;
     this.offsetJointMap = null;
+    this.nodePoints = null;
+    this.nodeVertices = null;
     const drawn = this.visible(s, info);
     this.drawn = drawn;
     const t = themeTokens(this.activeTheme);
-    // V4c1: a contour colours per vertex from the step on screen; until its
-    // data is here, every drawn primitive is no data (never a group colour).
+    // V4c1: a contour colours from the step on screen; until its data is
+    // here, every drawn primitive is no data (never a group colour). VF-a: the
+    // surfaces sample the colormap per fragment from per-vertex ramp
+    // coordinates (a `uv` attribute and the colormap texture as `map`); the
+    // group and role colours stay vertex colours.
     const contour = s.visibility.colourBy === "contour";
-    const cc = contour ? (this.contourFor(s, info, drawn) ?? { line: noDataColours(drawn.lineMap, 2), tri: noDataColours(drawn.triMap, 3), key: "no-data:loading" }) : null;
+    const cc = contour ? (this.contourFor(s, info, drawn) ?? noDataShades(drawn.lineMap, drawn.triMap, "no-data:loading")) : null;
     this.contourApplied = cc?.key ?? null;
     const source = contour ? { legend: [], line: new Int32Array(0), tri: new Int32Array(0), edge: toHexNumber(t.edge) } : this.colourSource(s, info);
     // V4d: the positions drawn are the deformed ones when the deformed shape
@@ -1030,10 +1310,12 @@ export class Viewport {
     if (tri.length) {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
-      g.setAttribute("color", new THREE.BufferAttribute(cc ? cc.tri : this.colours(source.legend, source.tri, drawn.triMap, 3), 3));
+      if (cc) g.setAttribute("uv", new THREE.BufferAttribute(rampUv(cc.triU), 2));
+      else g.setAttribute("color", new THREE.BufferAttribute(this.colours(source.legend, source.tri, drawn.triMap, 3), 3));
       g.computeVertexNormals();
       const m = new THREE.MeshStandardMaterial({
-        vertexColors: true,
+        vertexColors: !cc,
+        map: cc ? colormapTexture(cc.cmap) : null,
         side: THREE.DoubleSide,
         flatShading: true,
         roughness: 0.75,
@@ -1080,20 +1362,19 @@ export class Viewport {
       if (fTri.length) {
         const fg = new THREE.BufferGeometry();
         fg.setAttribute("position", new THREE.BufferAttribute(fTri, 3));
-        let fCol: Float32Array;
         if (cc) {
-          fCol = this.frameTriContourColours(info, drawn.lineMap, cc.line, frameTriMap);
+          fg.setAttribute("uv", new THREE.BufferAttribute(rampUv(this.frameTriContourU(info, drawn.lineMap, cc.lineU, frameTriMap)), 2));
         } else if (s.visibility.colourBy === "role") {
           const r = roleColouring(s)!;
           const roleTri = Int32Array.from(this.blobs.i32(fe.triElement), (e) => r.byElement[e]!);
-          fCol = this.colours(r.legend, roleTri, frameTriMap, 3);
+          fg.setAttribute("color", new THREE.BufferAttribute(this.colours(r.legend, roleTri, frameTriMap, 3), 3));
         } else {
-          fCol = this.colours(source.legend, this.blobs.i32(fe.triGroup), frameTriMap, 3);
+          fg.setAttribute("color", new THREE.BufferAttribute(this.colours(source.legend, this.blobs.i32(fe.triGroup), frameTriMap, 3), 3));
         }
-        fg.setAttribute("color", new THREE.BufferAttribute(fCol, 3));
         fg.computeVertexNormals();
         const fm = new THREE.MeshStandardMaterial({
-          vertexColors: true,
+          vertexColors: !cc,
+          map: cc ? colormapTexture(cc.cmap) : null,
           side: THREE.DoubleSide,
           flatShading: true,
           roughness: 0.72,
@@ -1169,6 +1450,9 @@ export class Viewport {
       }
     }
 
+    // Built only while wanted: off, the markers cost nothing.
+    if (s.nodes.on) this.buildNodePoints(s, info, drawn, full);
+
     // V4d: the ghost of what is drawn, and the markers of its nodes with no displacement.
     this.clear(this.ghost);
     for (const o of ghostObjects(info, this.blobs, drawn, this.edgeMap, this.activeTheme, this.frameTriMap, this.frameEdgeMap, this.drawnLineMap, s.visibility.showOffsets)) this.ghost.add(o);
@@ -1239,23 +1523,25 @@ export class Viewport {
    */
   frame(info: MeshInfo, heading: Heading | null = null, focus: Focus | null = null): void {
     const tri = this.blobs.f32(info.triPositions);
-    this.fit((focus ?? info).center, (focus ?? info).radius, tri.length ? tri : this.blobs.f32(info.linePositions), heading);
+    this.fit((focus ?? info).center, (focus ?? info).radius, [tri, this.blobs.f32(info.linePositions)], heading);
   }
 
   /** Fit the camera to the geometry sibling, the same way (V2f). */
   frameGeometry(g: GeometryInfo, heading: Heading | null = null): void {
     const tri = this.blobs.f32(g.surfacePositions);
-    this.fit(g.center, g.radius, tri.length ? tri : this.blobs.f32(g.curvePositions), heading);
+    this.fit(g.center, g.radius, [tri.length ? tri : this.blobs.f32(g.curvePositions)], heading);
   }
 
   /** Fit a bounding sphere; with no heading, plan view when `pos` is planar, else isometric. */
-  private fit(center: readonly [number, number, number], r: number, pos: Float32Array, heading: Heading | null): void {
+  private fit(center: readonly [number, number, number], r: number, pos: readonly Float32Array[], heading: Heading | null): void {
     const c = new THREE.Vector3(...center);
     if (!heading) {
       let z0 = Infinity, z1 = -Infinity;
-      for (let i = 2; i < pos.length; i += 3) {
-        z0 = Math.min(z0, pos[i]!);
-        z1 = Math.max(z1, pos[i]!);
+      for (const p of pos) {
+        for (let i = 2; i < p.length; i += 3) {
+          z0 = Math.min(z0, p[i]!);
+          z1 = Math.max(z1, p[i]!);
+        }
       }
       const planar = z1 - z0 <= 1e-6 * r;
       // Plan: looking down -Z with +Y up the screen. Isometric: from (1, -1.3, 0.9).
@@ -1312,25 +1598,56 @@ export class Viewport {
     this.lineMaterials = this.lineMaterials.filter((m) => this.lines?.material === m || this.offsetLines?.material === m);
     const info = s.mesh;
     const selected = selectedElementsOf(s);
-    this.applyDim(selected.length > 0);
-    if (!info || selected.length === 0) {
+    const nodes = s.selection.nodes;
+    this.applyDim(selected.length > 0 || nodes.length > 0);
+    if (!info || !this.drawn || (selected.length === 0 && nodes.length === 0)) {
       this.halo.release();
       return this.requestRender();
     }
+    // ADR 0138 D8: an index over what is drawn. The fill shares the faces' position buffer, so it follows the deformed shape.
     const idx = this.indexOf(info);
-    const prims = selected.flatMap((path) => {
+    const mask = new Uint8Array(info.elements.length);
+    for (const path of selected) {
       const e = idx.byPath.get(path);
-      const p = e === undefined ? undefined : idx.prims.get(e);
-      return p ? [p] : [];
-    });
-    // V4d: the outline follows the drawn (possibly deformed) positions.
-    for (const o of selectionOutline(this.full, info, this.blobs, prims, (pos, width) => this.makeLines(pos, null, width, SELECTION_COLOUR), s.visibility.showOffsets)) this.highlight.add(o);
+      if (e !== undefined) mask[e] = 1;
+    }
+    const prims = selectedPrims(this.drawn, this.blobs.i32(info.lineElement), this.blobs.i32(info.triElement), mask);
+    const pos = drawnPositions(this.full, info, this.blobs);
+    const linePos = s.visibility.showOffsets && pos.clearLine ? pos.clearLine : pos.line;
+    const segs = new Float32Array(6 * prims.segments.length);
+    prims.segments.forEach((seg, k) => segs.set(linePos.subarray(6 * seg, 6 * seg + 6), 6 * k));
+    const vertexNodes = { line: this.blobs.get(info.vertexNodes.line) as Float64Array, tri: this.blobs.get(info.vertexNodes.tri) as Float64Array };
+    const faces = this.faces ? (this.faces.geometry.getAttribute("position") as THREE.BufferAttribute) : null;
+    const nodePos = nodes.length ? nodeVertexPositions(nodes, vertexNodes, this.drawn, pos) : new Float32Array(0);
+    const outline = this.faces ? elementOutlines(this.drawn.triMap, this.blobs.i32(info.triElement), mask, vertexNodes.tri, faces!.array as Float32Array) : new Float32Array(0);
+    const rim = toHexNumber(themeTokens(this.activeTheme).bg0);
+    // Twice a marker, so a selected node reads at a glance among the markers.
+    const size = Math.max(14, 2 * (s.nodes.size ?? NODE_SIZE_FALLBACK) + 2);
+    const objects = highlightObjects(
+      faces,
+      prims.triIndex,
+      segs,
+      outline,
+      nodePos,
+      (p, width) => this.makeLines(p, null, width, SELECTION_COLOUR),
+      (p) => makeNodePoints(p, size, SELECTION_COLOUR, rim),
+    );
+    for (const o of objects) this.highlight.add(o);
     if (pulse) this.halo.pulse();
     this.requestRender();
   }
 
   /** The element under a client-space point, or null. Lines win over faces. */
   pickAt(clientX: number, clientY: number): Pick | null {
+    const hit = this.hitAt(clientX, clientY);
+    if (!hit) return null;
+    const decl = this.store.get().mesh!.elements[hit.element];
+    if (decl === undefined) throw new Error(`viewport: element index ${hit.element} is not in the mesh`);
+    return this.pickOf(decl, [hit.point.x, hit.point.y, hit.point.z]);
+  }
+
+  /** The drawn primitive under a client-space point (renderer/selection.ts `hitElement`), or null. */
+  private hitAt(clientX: number, clientY: number): Hit | null {
     const info = this.store.get().mesh;
     const drawn = this.drawn;
     if (!info || !drawn) return null;
@@ -1340,7 +1657,7 @@ export class Viewport {
     this.aim(clientX, clientY);
     // The objects hold the drawn positions (deformed when the deformed shape shows, V4d).
     // V4e1: a hit the section planes cut away is a miss (C-PICK).
-    const hit = hitElement(
+    return hitElement(
       this.raycaster,
       this.lines,
       this.faces,
@@ -1354,10 +1671,23 @@ export class Viewport {
       this.frameTriMap,
       frameTriElement,
     );
-    if (!hit) return null;
-    const decl = info.elements[hit.element];
-    if (decl === undefined) throw new Error(`viewport: element index ${hit.element} is not in the mesh`);
-    return this.pickOf(decl, [hit.point.x, hit.point.y, hit.point.z]);
+  }
+
+  /**
+   * The node a click at a client-space point picks (ADR 0138 D2): the vertex
+   * of the hit primitive nearest the hit, where it is drawn. A frame face
+   * answers through its segment. Null on a miss.
+   */
+  nodeAt(clientX: number, clientY: number): number | null {
+    const info = this.store.get().mesh;
+    const hit = this.hitAt(clientX, clientY);
+    if (!info || !hit) return null;
+    const prim =
+      hit.prim.kind === "frame"
+        ? { kind: "line" as const, index: this.blobs.i32(info.frameExtrusion!.triSegments)[hit.prim.index]! }
+        : { kind: hit.prim.kind, index: hit.prim.index };
+    const vertexNodes = { line: this.blobs.get(info.vertexNodes.line) as Float64Array, tri: this.blobs.get(info.vertexNodes.tri) as Float64Array };
+    return nearestNodeOf(prim, [hit.point.x, hit.point.y, hit.point.z], vertexNodes, drawnPositions(this.full, info, this.blobs));
   }
 
   /**

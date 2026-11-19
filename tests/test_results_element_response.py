@@ -745,6 +745,8 @@ def test_catalog_coverage_v1() -> None:
         ("BezierTri6", IntRule.Custom, "stress_plane_strain"),
         ("SSPquad", IntRule.Quad_GL_1, "stress"),
         ("SSPquad", IntRule.Quad_GL_1, "strain"),
+        ("SSPquadUP", IntRule.Quad_GL_1, "stress"),
+        ("SSPquadUP", IntRule.Quad_GL_1, "strain"),
         ("EightNodeQuad", IntRule.Quad_GL_3, "stress"),
         ("EightNodeQuad", IntRule.Quad_GL_3, "strain"),
         # Shells (8-component stress resultants per surface GP)

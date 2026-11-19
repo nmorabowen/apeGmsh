@@ -27,6 +27,7 @@ import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/la
 import { uniqueElementIds, type IdList } from "../../src/reader/ladrunoChecks.ts";
 import { baryToGmsh, gatherGauss } from "../../src/reader/ladrunoElements.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
+import { gaussFields } from "../../src/state/contour.ts";
 import { applyPlan, buildPlan, extrapolationVerdict, shapeOf, type CellOf } from "../../src/state/extrapolation.ts";
 
 await h5wasm.ready;
@@ -278,7 +279,7 @@ test("a PARAM_DOMAIN other than [-1,1] still reads the Gauss values, offers no n
     // The at-nodes refusal names the domain cause, never "not floating point" alone.
     const g = s.gauss[0]!;
     const v = extrapolationVerdict([{ id: g.id, nElements: 6, nGauss: 4, eids: new Float64Array([1, 2, 3, 4, 5, 6]), naturalCoords: g.naturalCoords }], (id) => ({ code: 3, nodes: CONN[id]! }));
-    assert.match(v.matrix!, /stress\/31-FourNodeQuad\[201:0:0\] has no natural coordinates .*PARAM_DOMAIN is neither "\[-1,1\]" nor a "bary" rule of a known frame/);
+    assert.match(v.matrix!, /stress\/31-FourNodeQuad\[201:0:0\] has no natural coordinates .*PARAM_DOMAIN is not "\[-1,1\]"/);
     assert.match(r.index.warnings[0]!, /stress\/31-FourNodeQuad\[201:0:0\]: .*PARAM_DOMAIN is "bary", but TOPOLOGY "quad" is not a simplex with a known barycentric frame .*; its Gauss points are read, but not extrapolated to nodes/);
   });
   const p01 = edited(QUAD, (f) => setAttr(f.get(`${STAGE}/MODEL/ELEMENTS/${MODEL_KEY}`) as unknown as Attrs, "PARAM_DOMAIN", "[0,1]"));
@@ -435,6 +436,90 @@ test("a bary group whose frame cannot be told reads its values, offers no natura
       assert.equal(w.length, 1);
       assert.match(w[0]!, why);
       assert.match(w[0]!, /PARAM_DOMAIN is "bary", but .*; its Gauss points are read, but not extrapolated to nodes/);
+    });
+  }
+});
+
+test("baryToGmsh refuses, by name, a row that is not a point of the simplex; rounding in the writer's rule table still reads", () => {
+  for (const [topology, family] of [["tri", "lagrange"], ["tri", "bernstein"], ["tet", "lagrange"], ["tet", "bernstein"]] as const) {
+    const ndir = topology === "tri" ? 2 : 3;
+    const inside = Array<number>(ndir).fill(0.2);
+    // Weights summing above 1 (the implicit node's weight 1 - Σ is negative), a negative weight, a non-finite one.
+    const over = Array<number>(ndir).fill(0.6);
+    const negative = [...inside.slice(1), -0.05];
+    const nan = [...inside.slice(1), Number.NaN];
+    for (const bad of [over, negative, nan]) {
+      const got = baryToGmsh([inside, bad], topology, family);
+      assert.equal(typeof got, "string", `${topology}/${family} [${bad.join(", ")}] must be refused`);
+      assert.match(String(got), new RegExp(`GP_PARAM row 1 = \\[.*\\] is not a point of the ${topology}`));
+    }
+    // A vertex written with rounding (Σ = 1 + 1e-15, a weight of -1e-16) is the vertex: read, not refused.
+    const rounded = Array<number>(ndir).fill(0);
+    rounded[0] = 1 + 1e-15;
+    assert.equal(typeof baryToGmsh([rounded], topology, family), "object", `${topology}/${family}: rounding refused`);
+    assert.equal(typeof baryToGmsh([[...inside.slice(1), -1e-16]], topology, family), "object", `${topology}/${family}: -1e-16 refused`);
+  }
+});
+
+test("a bary group with a GP_PARAM row outside the simplex reads its values, offers no natural coordinates, and names the row", () => {
+  // BezierTri6's GP3_xi rule with its last row pushed off the element (1/6 + 0.9 > 1): no frame places it inside.
+  withFile(withSimplexGroup("33000-BezierTri6", "tri", "bernstein", [[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 0.9]], 2), (r) => {
+    const g = r.index.stages[0]!.gauss.find((x) => x.id === "simplex/33000-BezierTri6[0:0]")!;
+    assert.equal(g.components.length, 1, "the values are still read");
+    assert.equal(g.naturalCoords, null, "no point is placed off the element");
+    const w = r.index.warnings.filter((x) => x.includes("33000-BezierTri6"));
+    assert.equal(w.length, 1);
+    assert.match(w[0]!, /PARAM_DOMAIN is "bary", but its GP_PARAM row 2 = \[0\.16666666666666666, 0\.9\] is not a point of the tri/);
+  });
+});
+
+/**
+ * Python and the viewer read the same committed fork files (tests/fixtures/simplex_gp/, the fork's own recorder
+ * output, which tests/results/test_gauss_simplex_coords.py reads with Python). The golden rows are Python's
+ * `gp_param_to_gmsh` of each "bary" group, printed by:
+ *   python -c "import h5py; from apeGmsh.results.readers._ladruno_element_io import gp_param_to_gmsh, _basis_attr; ..."
+ * over MODEL_STAGE[1]/MODEL/ELEMENTS/<group>, with that group's PARAM_DOMAIN, TOPOLOGY and FAMILY (#3071).
+ */
+const SIMPLEX_GP = (name: string) => fileURLToPath(new URL(`../../../tests/fixtures/simplex_gp/${name}`, import.meta.url));
+const PY_A = 0.5854101966249685;
+const PY_B = 0.1381966011250105;
+const PYTHON_GMSH: Record<string, Record<string, number[][]>> = {
+  "tri.ladruno": {
+    // Tri31: lagrange, node-0-first.
+    "33-Tri31": [[0.3333333333333333, 0.33333333333333337]],
+    // BezierTri6: bernstein triangle, gmsh already (node 0 carries 1 - Σ).
+    "33000-BezierTri6": [[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 2 / 3]],
+  },
+  "tet.ladruno": {
+    "179-FourNodeTetrahedron": [[0.25, 0.25, 0.25]],
+    "256-TenNodeTetrahedron": [[PY_B, PY_B, 0.13819660112501042], [PY_A, PY_B, 0.13819660112501042], [PY_B, PY_A, 0.13819660112501042], [PY_B, PY_B, PY_A]],
+    // BezierTet10: bernstein tet, node-0-first like Lagrange (its rule table is written to 15 digits).
+    "33001-BezierTet10": [
+      [0.138196601125011, 0.138196601125011, 0.1381966011250101],
+      [0.585410196624968, 0.138196601125011, 0.1381966011250101],
+      [0.138196601125011, 0.585410196624968, 0.13819660112500998],
+      [0.138196601125011, 0.138196601125011, 0.585410196624967],
+    ],
+  },
+};
+
+test("Python and the viewer agree: each bary group of tests/fixtures/simplex_gp/{tri,tet}.ladruno has Python gp_param_to_gmsh's gmsh rows", () => {
+  for (const [file, golden] of Object.entries(PYTHON_GMSH)) {
+    withFile(SIMPLEX_GP(file), (r) => {
+      const seen = new Set<string>();
+      for (const g of r.index.stages[0]!.gauss) {
+        const cls = Object.keys(golden).find((c) => g.id.includes(`/${c}[`));
+        if (!cls) continue;
+        seen.add(cls);
+        const want = golden[cls]!;
+        assert.ok(g.naturalCoords, `${file} ${g.id}: no natural coordinates; warnings: ${r.index.warnings.join(" | ")}`);
+        assert.equal(g.naturalCoords.length, want.length, `${file} ${g.id}`);
+        g.naturalCoords.forEach((row, k) =>
+          assert.ok(row.length === want[k]!.length && row.every((x, i) => Math.abs(x - want[k]![i]!) <= 1e-15), `${file} ${g.id} point ${k}: [${row.join(", ")}] vs Python [${want[k]!.join(", ")}]`),
+        );
+      }
+      assert.deepEqual([...seen].sort(), Object.keys(golden).sort(), `${file}: every bary class is read as a Gauss group`);
+      assert.deepEqual(r.index.warnings.filter((w) => /PARAM_DOMAIN is "bary"/.test(w)), [], `${file}: no bary group is refused`);
     });
   }
 });
@@ -689,4 +774,95 @@ test("main: an unverified .ladruno never serves element values", async () => {
   const s = h.readStep({ path: p, stage: "stage_0", step: 0, seq: 1, element: "stress/sigma11" });
   assert.ok(!s.ok && /element results of .* are refused: .*"ops_tag"/.test(s.error));
   h.close();
+});
+
+// -- a class the recorder has no quadrature rule for (YOO T2_solid, fork 6050d78e) ----------
+
+const HEX_MODEL = "33002-LadrunoBrick[0:0]";
+const HEX_KEY = "33002-LadrunoBrick[0:0:0]";
+const HEX = `stresses/${HEX_KEY}`;
+const HEX_LABELS = ["sigma11", "sigma22", "sigma33", "sigma12", "sigma23", "sigma13"];
+/** DATA[t, e, i * 6 + c] for the bucket's GAUSS_ID row i (Gauss point gaussId[i]): distinct for every (t, element, point, component). */
+const hexValue = (t: number, e: number, g: number, c: number) => 1000 * (t + 1) + 100 * e + 10 * g + c;
+
+/**
+ * A copy with a LadrunoBrick element group as the fork writes it when its recorder has no rule for the class
+ * (INTEGRATION_RULE 0, TOPOLOGY "custom", no QUADRATURE), and a `stresses` bucket of elements 7 and 8 with 8 Gauss
+ * points of 6 components; `gp` adds a QUADRATURE/GP_PARAM of that dtype.
+ */
+function withHexBucket(gaussId = [0, 1, 2, 3, 4, 5, 6, 7], gp: "none" | "int" = "none"): string {
+  return edited(QUAD, (f) => {
+    const m = (f.get(`${STAGE}/MODEL/ELEMENTS`) as h5wasm.Group).create_group(HEX_MODEL);
+    m.create_attribute("FAMILY", "lagrange");
+    m.create_attribute("GEOMETRY", 0);
+    m.create_attribute("INTEGRATION_RULE", 0);
+    m.create_attribute("NUM_CTRL", 8);
+    m.create_attribute("PARAM_DOMAIN", "[-1,1]");
+    m.create_attribute("TOPOLOGY", "custom");
+    m.create_dataset({ name: "CONNECTIVITY", data: new Int32Array(18), shape: [2, 9] });
+    if (gp === "int") m.create_group("QUADRATURE").create_dataset({ name: "GP_PARAM", data: new Int32Array(24), shape: [8, 3] });
+    const ids = [7, 8];
+    const G = gaussId.length;
+    const data = new Float64Array(2 * ids.length * G * 6);
+    for (let t = 0; t < 2; t++) for (let e = 0; e < ids.length; e++) for (let i = 0; i < G; i++) for (let c = 0; c < 6; c++) {
+      data[((t * ids.length + e) * G + i) * 6 + c] = hexValue(t, e, gaussId[i]!, c);
+    }
+    const g = (f.get(ELEMS) as h5wasm.Group).create_group("stresses").create_group(HEX_KEY);
+    g.create_dataset({ name: "ID", data: new Int32Array(ids), shape: [ids.length, 1] });
+    g.create_dataset({ name: "TIME", data: SRC.time });
+    g.create_dataset({ name: "STEP", data: new Int32Array([0, 1]) });
+    g.create_dataset({ name: "DATA", data, shape: [2, ids.length, G * 6] });
+    g.create_attribute("NUM_COLUMNS", G * 6);
+    const cm = g.create_group("COLUMN_MAP");
+    const col = (v: number[]) => ({ data: new Int32Array(v), shape: [v.length, 1] });
+    cm.create_attribute("COMP_NAMES", Array(G).fill(HEX_LABELS.join(",")).join("\n"));
+    cm.create_dataset({ name: "LEVELS", ...col(Array(G).fill(4)) });
+    cm.create_dataset({ name: "GAUSS_ID", ...col(gaussId) });
+    cm.create_dataset({ name: "NUM_COMP", ...col(Array(G).fill(6)) });
+    cm.create_dataset({ name: "MULTIPLICITY", ...col(Array(G).fill(1)) });
+    cm.create_dataset({ name: "FIBER_ID", ...col(Array(G).fill(-1)) });
+  });
+}
+
+test("no QUADRATURE/GP_PARAM (LadrunoBrick, rule 0): the Gauss values read in GAUSS_ID order, no position is offered, and the open warns why", () => {
+  // GAUSS_ID out of order: the column of Gauss point g is the row that names g, never the row index.
+  const gaussId = [3, 0, 7, 1, 5, 2, 6, 4];
+  withFile(withHexBucket(gaussId), (r) => {
+    const s = r.index.stages[0]!;
+    const g = s.gauss.find((x) => x.id === HEX);
+    assert.ok(g, `no gauss group ${HEX}; groups: ${s.gauss.map((x) => x.id).join(", ")}`);
+    assert.deepEqual(g.refused, []);
+    assert.deepEqual(g.components, HEX_LABELS.map((l) => `stresses/${l}`));
+    assert.equal(g.nGauss, 8);
+    assert.equal(g.nElements, 2);
+    assert.equal(g.classTag, 33002);
+    assert.equal(g.naturalCoords, null, "a position no file gives is never offered");
+    const w = r.index.warnings.filter((x) => x.includes(HEX_KEY));
+    assert.equal(w.length, 1, r.index.warnings.join("\n"));
+    assert.match(w[0]!, /33002-LadrunoBrick\[0:0\] has no QUADRATURE\/GP_PARAM \(INTEGRATION_RULE 0\), so its 8 Gauss points are read per element but not placed/);
+    for (const [c, label] of HEX_LABELS.entries()) {
+      for (const t of [0, 1]) {
+        const v = r.readGaussStep("stage_0", HEX, `stresses/${label}`, t);
+        assert.deepEqual(Array.from(v), [0, 1].flatMap((e) => Array.from({ length: 8 }, (_, gp) => hexValue(t, e, gp, c))), `${label} step ${t}`);
+      }
+    }
+    // The element field is drawable (flat per element), not refused; at-nodes is refused for this group, by reason.
+    const field = gaussFields(s.gauss.map((x) => ({ ...x, elementIds: undefined }))).find((f) => f.name === "stresses");
+    assert.ok(field);
+    assert.equal(field.refused, null);
+    const v = extrapolationVerdict([{ id: HEX, nElements: 2, nGauss: 8, eids: new Float64Array([7, 8]), naturalCoords: g.naturalCoords }], () => ({ code: 5, nodes: [1, 2, 3, 4, 5, 6, 7, 8] }));
+    assert.match(v.matrix!, /stresses\/33002-LadrunoBrick\[0:0:0\] has no natural coordinates .*no QUADRATURE\/GP_PARAM/);
+    // The quad buckets beside it are untouched.
+    assert.deepEqual(s.gauss.find((x) => x.id === STRESS)!.refused, []);
+  });
+});
+
+test("no QUADRATURE/GP_PARAM still checks GAUSS_ID: a repeated Gauss point refuses the bucket by name", () => {
+  const reasons = refusalOf(withHexBucket([0, 1, 2, 3, 4, 5, 6, 6]), HEX);
+  assert.ok(reasons.length === 6 && reasons.every((x) => /GAUSS_ID = \[0, 1, 2, 3, 4, 5, 6, 6\] is not each GP_PARAM row 0\.\.7 once/.test(x)), reasons.join("\n"));
+});
+
+test("a QUADRATURE/GP_PARAM that is there but not floating point still refuses the bucket", () => {
+  const reasons = refusalOf(withHexBucket(undefined, "int"), HEX);
+  assert.ok(reasons.length === 6 && reasons.every((x) => /QUADRATURE\/GP_PARAM is not a floating-point .* so its Gauss points cannot be placed/.test(x)), reasons.join("\n"));
 });

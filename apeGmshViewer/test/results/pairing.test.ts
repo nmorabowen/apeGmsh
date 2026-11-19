@@ -326,12 +326,21 @@ test("V4L-b1: an unstamped .ladruno beside a model is not drawn; the banner says
   assert.match(ladrunoNotice(s), /^Results not drawn: INFO\/PROVENANCE has no @model_hash; INFO\/PROVENANCE has no @fem_hash: the file is not stamped for pairing \(schema §7b\.1\)\. Stamp it with stamp_provenance\(path, model_h5\)/);
 });
 
-test("V4L-b1: a stamp written in part (model_hash deleted) is unpairable, never paired by fem_hash alone", async () => {
-  const half = editedCopy(L_STAMPED, "ladruno_frame3d.ladruno", (f) => (f.get("INFO/PROVENANCE") as h5wasm.Group).delete_attribute("model_hash"));
-  const s = await pairedState(L_MODEL, half);
-  assert.deepEqual(s.results!.lineage, null);
-  assert.equal(resultsPairing(s).state, "unpairable");
-  assert.match(ladrunoNotice(s), /INFO\/PROVENANCE has no @model_hash: the file is not stamped for pairing .*stamp_provenance/);
+// ADR 0133 D2 (W1b #2768) reverses the V4L-b1 rule that a stamp with fem_hash and no
+// model_hash is a half-written one: it is the stamp against a bare FEMData archive, and
+// pairs by fem_hash. stamp_provenance writes model_hash before fem_hash, so a two-hash
+// stamp cut short is model_hash alone, and that still pairs with nothing.
+test("ADR 0133: a fem_hash-only stamp pairs by fem_hash; a stamp with model_hash and no fem_hash is unpairable", async () => {
+  const femOnly = editedCopy(L_STAMPED, "ladruno_frame3d.ladruno", (f) => (f.get("INFO/PROVENANCE") as h5wasm.Group).delete_attribute("model_hash"));
+  const s = await pairedState(L_MODEL, femOnly);
+  assert.deepEqual(s.results!.lineage, { modelHash: null, femHash: "fedcba9876543210fedcba9876543210", resultsHash: null });
+  assert.deepEqual(resultsPairing(s), { state: "paired", by: "fem_hash" });
+  assert.equal(ladrunoNotice(s), "");
+  const half = editedCopy(L_STAMPED, "ladruno_frame3d.ladruno", (f) => (f.get("INFO/PROVENANCE") as h5wasm.Group).delete_attribute("fem_hash"));
+  const h = await pairedState(L_MODEL, half);
+  assert.deepEqual(h.results!.lineage, null);
+  assert.equal(resultsPairing(h).state, "unpairable");
+  assert.match(ladrunoNotice(h), /INFO\/PROVENANCE has no @fem_hash: the file is not stamped for pairing .*stamp_provenance/);
 });
 
 test("V4L-b1: a .ladruno stamped from another model is a mismatch, not drawn", async () => {

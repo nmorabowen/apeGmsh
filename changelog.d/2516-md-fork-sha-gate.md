@@ -30,6 +30,7 @@ its deck carries the same check. A staged model
 runs only as a deck (`ops.analyze`, `ops.run` and `OpenSeesModel.build("live")`
 refuse stages), so the deck is the only place that sees the build. The deck's
 check replaces the stage-close refusal: it lifts the refusal at `FORK_PIN` and
-keeps it, by name, everywhere else. When the fork registers a capability
-marker for the fix (#2518), `stage_emit.MD_STATIC_RESET_GUARD` becomes a
-command probe in one place.
+keeps it, by name, everywhere else. Since #2518,
+`stage_emit.MD_STATIC_RESET_GUARD` tests for the `mdStageFlagPreserved`
+string in the build's `ladrunoSchema` capabilities, not for whether a command
+exists, and it lifts the refusal on any fork that reports it.

@@ -160,7 +160,7 @@ def test_failed_setup_after_validation_releases_the_file(
         raise RuntimeError("setup failed (test)")
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(_ladruno._mnodal, "RotationMask", refuse)
+        mp.setattr(_ladruno, "RotationMask", refuse)
         with pytest.raises(RuntimeError, match=r"setup failed \(test\)") as info:
             LadrunoReader(path)
 

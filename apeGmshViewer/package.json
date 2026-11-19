@@ -17,7 +17,8 @@
     "start": "node scripts/build.mjs && node scripts/launch.mjs view",
     "measure": "node scripts/build.mjs && node scripts/launch.mjs measure",
     "capture": "node scripts/build.mjs && node scripts/launch.mjs capture",
-    "dist": "node scripts/build.mjs && electron-builder --win --publish never"
+    "dist": "node scripts/build.mjs && electron-builder --win --publish never",
+    "profile": "node scripts/build.mjs && node scripts/profile.ts"
   },
   "dependencies": {
     "h5wasm": "0.10.3",

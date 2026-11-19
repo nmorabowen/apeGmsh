@@ -2,23 +2,32 @@
 // from. A panel imports this module and store.ts, nothing else of the app.
 
 import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
+import { judgeDraft } from "../combination/author.ts";
+import { CombinationRefused, CombinationTable, isSigned } from "../combination/evaluate.ts";
+import { REASONS, type Refusal as RuleRefusal } from "../reader/userRules.ts";
 import type { OpsFamily, Param } from "../model/types.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
 import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
 import { roleColouring } from "./roles.ts";
+import { solidShapeOf } from "./slice.ts";
 import { activationNotice, activationOf, type Activation } from "./activation.ts";
-import { pairingNotice, pairResults, type ResultsPairing } from "./results.ts";
+import { pairingNotice, pairResults, particleNotices, type ResultsPairing } from "./results.ts";
+// ADR 0134 D5 (owner D7 on #2992): the particles' colour scale, which panels/particleScale.ts draws.
+export { PLAY_SPEEDS, playMove, type PlayClock, type PlaySpeed } from "./playback.ts";
+export { particleScaleOf, type ParticleScale } from "./results.ts";
 import {
   climOf,
   componentName,
   componentOf,
   contourKeysOf,
   elementComponentOf,
+  elementContourFields,
   gaussFields,
   elementTopology,
   fieldsOf,
   isNodeTopology,
+  nodalFields,
   topologyLabel,
   type Clim,
   type ElementComponent,
@@ -27,9 +36,13 @@ import {
   type FieldComponent,
   type NodalField,
 } from "./contour.ts";
-import { usesMatrix } from "./extrapolation.ts";
-import type { BlobRef, ContourCmap } from "./types.ts";
+import { meanFallbackGroups, usesMatrix } from "./extrapolation.ts";
+import { planeStatementOf, planeWarning, tensorFields, type PlaneStatement, type TensorField } from "./tensor.ts";
+import { crackFieldOf as stageCrackField, type CrackField } from "./cracks.ts";
+export type { CrackField } from "./cracks.ts";
+import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
+import { hingeCapacityOf, hingeCurveOf, hingeMaterialDecl, hingeSitesOf, type HingeCurve, type HingeSite } from "./hinges.ts";
 import {
   beamLocalAxes,
   buildBeamChains,
@@ -80,6 +93,10 @@ import {
 export type { Clim, ElementComponent, ElementField, FieldComponent, NodalField } from "./contour.ts";
 export { GHOST_OPACITY, scaleLabel } from "./deform.ts";
 export { CMAP_NAMES, CMAPS, fmtValue, MAGNITUDE, NO_DATA_RGB, rampCss, RANGE_MODES, sampleCmap } from "./contour.ts";
+// VF2-d (#2956): the one range rule the legend's scale and the command palette both offer.
+export { rangeKindOf, rangeOptionsOf, type RangeKind, type RangeOption } from "./contour.ts";
+export { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
+export { gaussNotesOf, gaussUnavailable } from "./gaussNotes.ts";
 export { legendEntryColour } from "./palette.ts";
 export { classifyFieldDimension, resolveFieldUnits, UNIT_DISPLAY_OPTIONS, UNIT_SYSTEM_IDS, UNIT_SYSTEMS } from "./units.ts";
 export {
@@ -153,6 +170,8 @@ export {
   loadsColourPalette,
   loadsSummaryOf,
   loadsUnitsOf,
+  reactionComponentsOf,
+  reactionMomentComponentsOf,
   type BuildLoads3DOptions,
   type LoadPatternCounts,
   type LoadPatternEntry,
@@ -161,9 +180,17 @@ export {
   type LoadsSummary,
   type LoadsUnitLabels,
 } from "./loads.ts";
+export { springCountOf } from "./springs.ts";
+export { HINGE_COLUMN_NAMES, hingeSitesOf, smartHingeSize } from "./hinges.ts";
+// VU9a (ADR 0132): what the sets panel reads of the workspace slice.
+export { pickSummaryOf, setKindOf } from "./workspace.ts";
+export { cannotSave as workspaceCannotSave } from "./reduce/workspace.ts";
+export { vectorComponentOf, vectorFieldOf, vectorFieldsOf, type VectorField } from "./vectors.ts";
 import type {
   AnalysisDef,
   ArtifactInfo,
+  CombinationDraft,
+  CombineState,
   Decl,
   DeclPath,
   DeclRecord,
@@ -269,11 +296,20 @@ import {
   initialSearch,
   initialSpotlight,
   SPOTLIGHT_EVENT_LEDGER,
-  spotlightViewOf,
+  spotlightViewOf as spotlightViewWith,
   type EventLedgerEntry,
   type SpotlightItem,
   type SpotlightView,
 } from "./spotlight.ts";
+
+/**
+ * What Spotlight (`Ctrl+K`) renders for `s` (state/spotlight.ts), handed the
+ * range a pick of "fixed" starts from (`fixedRangeFrom`): the palette cannot
+ * read the contour view itself, which this module holds (VF2-d, #2956).
+ */
+export function spotlightViewOf(s: State): SpotlightView {
+  return spotlightViewWith(s, fixedRangeFrom);
+}
 
 export {
   clauseLabel,
@@ -288,7 +324,6 @@ export {
   searchResultsOf,
   selectedElementsOf,
   SPOTLIGHT_EVENT_LEDGER,
-  spotlightViewOf,
   type EventLedgerEntry,
   type ModelIndex,
   type SearchSummary,
@@ -496,6 +531,13 @@ export function stageIdentity(seq: SequenceZone, index: number): string | null {
 }
 
 /** Notices that are not warnings: the stale-geometry notice, and (V4b) why results or their stage activation are not drawn. */
+/** VU9a (ADR 0132 D6, OQ5): the banner line naming the file an unreadable workspace was renamed aside to. */
+export function workspaceAsideNotice(aside: string): string {
+  const name = aside.split(/[\\/]/).pop() ?? aside;
+  const file = name.replace(/\.unreadable-[0-9TZ-]+$/, "");
+  return `${file} was not a readable workspace: it was moved aside to ${name}, unchanged, before the save wrote a new ${file}. Nothing was overwritten.`;
+}
+
 export function noticesOf(s: State): string[] {
   const out: string[] = [];
   const n = geometryPairing(s).notice;
@@ -517,12 +559,69 @@ export function noticesOf(s: State): string[] {
   // V4c2a: element components refused one by one on the stage shown, and why a picked element field is not drawn.
   for (const g of st?.gauss ?? []) for (const r of g.refused) out.push(`Element component ${r.component} of group ${g.id} not read: ${r.reason}.`);
   const ev = contourView(s);
-  if (ev.state === "refused") out.push(`Element contour refused: ${ev.reason}.`);
+  if (ev.state === "refused") out.push(ev.code === "combination" || ev.code === "difference" || ev.code === "user" ? `Contour not drawn: ${ev.reason}.` : `Element contour refused: ${ev.reason}.`);
+  // VF (#2940): a gauss_node pick drawn cell_averaged says so.
+  if (ev.state === "element" && ev.fallback) out.push(fallbackNotice(ev));
+  // VU10: a newer manifest's banner (ADR 0132 D2), and the nodes a difference cannot give a value.
+  if (s.variants.study?.newer) out.push(s.variants.study.newer);
+  // VU9a (ADR 0132 D2, D6): a newer workspace is shown read-only, and an unreadable one moved aside is named, once per rename.
+  const ws = s.workspace;
+  if (ws.read?.status === "ready" && ws.read.readOnly) out.push(ws.read.readOnly);
+  if (ws.aside !== null) out.push(workspaceAsideNotice(ws.aside));
+  if (ev.state === "difference" && ev.missing > 0) {
+    out.push(`Difference: ${ev.missing.toLocaleString()} of ${ev.nodes.toLocaleString()} nodes have no value in one of the two variants; they are drawn as no data.`);
+  }
   if (s.contour.notice) out.push(s.contour.notice);
   // V4d: drawn nodes the deformed shape leaves undeformed, or why it is not drawn.
   const d = deformNotice(s);
   if (d) out.push(d);
+  // ADR 0134 D5: the particles drawn, how they are coloured, and what of them is not drawn.
+  out.push(...particleNotices(s));
   return out;
+}
+
+/** VF (#2940): the banner's line for the groups of a `gauss_node` contour drawn `cell_averaged` (their element means). */
+export function fallbackNotice(v: Extract<ContourView, { state: "element" }>): string {
+  const f = v.fallback;
+  if (!f) throw new Error(`fallbackNotice: element field ${v.field} is drawn as asked (${v.topology})`);
+  const extrapolated = v.groups.filter((g) => g.nGauss > 1 && !f.groups.includes(g.id)).map((g) => g.id);
+  const rest = extrapolated.length ? ` Group(s) ${extrapolated.join(", ")} are extrapolated to the nodes (gauss_node) as asked.` : "";
+  return (
+    `Element contour ${v.field}: group(s) ${f.groups.join(", ")} cannot be extrapolated to the nodes (gauss_node), so each of their elements ` +
+    `gives its mean to its corners (cell_averaged), averaged at the nodes.${rest} Why: ${f.reason}.`
+  );
+}
+
+/** VA6d / VF2: a derived contour's stored components, its out-of-plane statement by element, and the line it warns with (null: none). */
+export interface DerivedPlane {
+  from: string[];
+  /** shared and frozen: tensor.ts `planeStatementOf` computes it once per model, set and family, not per step */
+  plane: Readonly<PlaneStatement>;
+  warning: string | null;
+}
+
+/**
+ * VF2 (#2924 item 6): what the derived contour on screen (`von_mises_*`) says
+ * about its out-of-plane normal, built once for the manifest's
+ * `contour.derived` and the banner's warning line (tensor.ts `planeWarning`
+ * words it). Null when the contour is not a drawn derived element contour.
+ * The groups' element ids are blobs, so the caller hands the store's lookup
+ * (a panel never holds the BlobStore: renderer/app.ts closes over it). A
+ * drawn element view has its element ids on hand (its join read them), so one
+ * missing here throws rather than counting fewer elements.
+ */
+export function derivedPlaneOf(s: State, blobs: { get(ref: BlobRef): unknown }): DerivedPlane | null {
+  const v = contourView(s);
+  if (v.state !== "element" || !v.component.derived) return null;
+  const t = v.component.derived.tensor;
+  const groups = t.groups.map((group) => {
+    const g = v.groups.find((x) => x.id === group.id);
+    const eids = g ? blobs.get(g.eids) : undefined;
+    if (!(eids instanceof Float64Array)) throw new Error(`derivedPlaneOf: the element ids of group ${group.id} are not on hand`);
+    return { group, eids };
+  });
+  const plane = planeStatementOf(t.family, groups, s.decls);
+  return { from: [...t.components], plane, warning: planeWarning(t.family, plane) };
 }
 
 // -- V4c1: the nodal contour ----------------------------------------------------
@@ -554,7 +653,7 @@ export type ContourView =
    * components, or rows that do not join the mesh. Drawn as no data, never
    * "with a warning"; the banner says why.
    */
-  | { state: "refused"; code: ElementRefusal; reason: string }
+  | { state: "refused"; code: ElementRefusal | "combination" | "difference" | "user"; reason: string }
   /**
    * V4c2a: an element topology whose drawing was not built yet. V4c2b draws
    * every topology, so no view is in this state any more; the variant stays
@@ -569,6 +668,14 @@ export type ContourView =
       topology: ElementTopology;
       /** what the legend states for the topology (the averaging, in words) */
       topologyLabel: string;
+      /**
+       * VF (#2940): `topology` is `gauss_node`, and `groups` have no natural
+       * coordinates, so each of their elements gives its mean to its corners
+       * (`cell_averaged`) while every other group is extrapolated; `reason` is
+       * the verdict that refused them. Null when every group is drawn as asked.
+       * The banner and the manifest state it.
+       */
+      fallback: { asked: "gauss_node"; drawn: "cell_averaged"; groups: string[]; reason: string } | null;
       nGauss: number[];
       groups: ElementGroupDraw[];
       stageName: string;
@@ -594,11 +701,103 @@ export type ContourView =
       stepMeasured: boolean;
       /** how many times the results were read (each read can carry other data at the same path, so the colour key names it) */
       reads: number;
+    }
+  /**
+   * VU7b-2 (ADR 0130 D4): a User Combination's value for one nodal quantity,
+   * one state with no step. The colours come from the read under `key`
+   * (renderer/contour.ts `combinationColours`).
+   */
+  | {
+      state: "combination";
+      /** the combination */
+      name: string;
+      field: string;
+      component: FieldComponent;
+      /** `combinationRequestOf(s).key`: the read whose values are drawn */
+      key: string;
+      clim: Clim;
+      cmap: ContourCmap;
+      /** whether it may draw as a deformed shape (an unsigned one is a contour only) */
+      signed: boolean;
+    }
+  /**
+   * VU16 (ADR 0130 D7): one component of a state-free `ON_NODES` user result of
+   * the set's `.user.h5`, by node id; it has no state, so it is shown at any
+   * phase. The colours come from the read under `key` and `read`
+   * (renderer/contour.ts `userResultColours`); a node it gives no finite value
+   * is no data. Never a deformed shape.
+   */
+  | {
+      state: "user";
+      /** the user result (`field` too: the legend names it as a field); a compare one's is `compareUserName`'s display string */
+      name: string;
+      field: string;
+      /**
+       * VF2-d (#2956): a compare variant's user result (VU19) names its variant and
+       * its entry here, apart, since the display string `name` can equal a window
+       * entry of that literal name; null for the window set's own user result
+       */
+      compare: { variant: string; entry: string } | null;
+      component: FieldComponent;
+      /** `userResultRequestOf(s).key`, and the feed's read under it */
+      key: string;
+      read: number;
+      basis: UserResult["basis"];
+      clim: Clim;
+      cmap: ContourCmap;
+      /** the node ids the column lists, and how many hold a finite value */
+      nodes: number;
+      finite: number;
+    }
+  /**
+   * VU10 (ADR 0132 D9.5): the window variant minus the compare variant for one
+   * nodal component, by node id, at the stage and step shown. The colours come
+   * from the read under `key` (renderer/contour.ts `differenceColours`); a node
+   * either side lacks is no data. Never a deformed shape.
+   */
+  | {
+      state: "difference";
+      /** the window variant's label (or the model's file name when the window set is no row) and the compare variant's */
+      window: string;
+      compare: string;
+      field: string;
+      component: FieldComponent;
+      stageName: string;
+      /** `differencePlanOf(s).key`: the read whose values are drawn */
+      key: string;
+      clim: Clim;
+      cmap: ContourCmap;
+      /** the window's nodes, and how many of them have no value on one side */
+      nodes: number;
+      missing: number;
     };
 
 /** A results file's element-id verdict; a results info without one is unverified (fail closed). */
 export function elementVerdictOf(info: ResultsInfo): { verified: true } | { verified: false; reason: string } {
   return info.elementIndex ?? { verified: false, reason: "this results info carries no element-index verdict" };
+}
+
+/** The stress and strain fields of a verified file's results stage on screen; a field with no group that makes a tensor is kept, for its refusals. */
+export function principalFieldsOf(s: State): TensorField[] {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results || !s.mesh || !elementVerdictOf(s.results).verified) return [];
+  const st = s.results.stages[at.stage];
+  return st ? tensorFields(st.gauss) : [];
+}
+
+/** The field the Principal card draws: the one picked, else the first stress that can draw, then the first field that can; null when the stage has none. */
+export function principalFieldOf(s: State): TensorField | null {
+  const fields = principalFieldsOf(s);
+  const drawable = fields.filter((f) => f.groups.length > 0);
+  return fields.find((f) => f.name === s.principal.field) ?? drawable.find((f) => f.family === "stress") ?? drawable[0] ?? fields[0] ?? null;
+}
+
+/** The Cracks card's field: the crack pattern of a verified file's results stage on screen; null when the stage records none. */
+export function crackFieldOf(s: State): CrackField | null {
+  const at = s.phase.at;
+  if (at?.kind !== "results" || !s.results || !s.mesh || !elementVerdictOf(s.results).verified) return null;
+  const st = s.results.stages[at.stage];
+  return st ? stageCrackField(st.gauss) : null;
 }
 
 /**
@@ -645,7 +844,12 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
   if (!j || j.key !== joinKey) return { state: "unavailable", reason: "the element rows are being joined to the mesh" };
   if (!j.ok) return { state: "refused", code: j.code, reason: `element field ${c.field}: ${j.reason}` };
   // V4c2b: a node-located topology the field's types or natural coordinates cannot carry reads "unsupported", never a guess.
-  if (isNodeTopology(topology)) {
+  // VF (#2940, the owner's rulings on #2924 item 2): the groups of a gauss_node field refused only because they have no
+  // natural coordinates (a BezierTet10's barycentric points) draw their element means (cell_averaged), per group; every
+  // other group is still extrapolated, and the banner and the manifest name the groups that were not.
+  const meanGroups = topology === "gauss_node" ? meanFallbackGroups(groups, j.extrapolation) : null;
+  const fallback = meanGroups ? { asked: "gauss_node" as const, drawn: "cell_averaged" as const, groups: meanGroups, reason: j.extrapolation.matrix! } : null;
+  if (isNodeTopology(topology) && !fallback) {
     const why = j.extrapolation.corners ?? (usesMatrix(topology) ? j.extrapolation.matrix : null);
     if (why !== null) return { state: "refused", code: "unsupported", reason: `element field ${c.field}: ${topology} is unsupported: ${why}` };
   }
@@ -656,7 +860,8 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
     field: c.field,
     component: hit.component,
     topology,
-    topologyLabel: topologyLabel(topology, hit.field.nGauss),
+    topologyLabel: topologyLabel(topology, hit.field.nGauss) + (fallback ? `; group(s) ${fallback.groups.join(", ")}: each element's mean (cell_averaged), no natural coordinates` : ""),
+    fallback,
     nGauss: hit.field.nGauss,
     groups,
     stageName: label,
@@ -672,6 +877,12 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
 /** What the contour colours, or why it cannot (V4c1; V4c2a adds element fields). */
 export function contourView(s: State): ContourView {
   if (s.visibility.colourBy !== "contour") return { state: "off" };
+  if (s.variants.difference) return differenceContour(s);
+  // VU19: a compare user result has no state either, so it is shown whatever phase is on screen.
+  if (s.variants.shown !== null) return compareUserContour(s, s.variants.shown);
+  if (s.phase.at?.kind === "combination") return combinationContour(s, s.phase.at.name);
+  // VU16: a user result has no state, so it is shown whatever phase is on screen, with or without results.
+  if (s.contour.source === "user") return userResultContour(s);
   const p = resultsPairing(s);
   if (!s.results || p.state !== "paired") return { state: "unavailable", reason: "no results file pairs with this model, so there is no field to colour by" };
   const at = s.phase.at;
@@ -705,8 +916,23 @@ export function contourView(s: State): ContourView {
 }
 
 /**
+ * The range a pick of "fixed" starts from, on the legend's scale and in the
+ * command palette alike (VF2-d, #2956): the stored fixed range, else the range
+ * the contour shows when it is a finite, non-empty one, else null (there is
+ * nothing to start from, and the pick changes nothing).
+ */
+export function fixedRangeFrom(s: State): { min: number; max: number } | null {
+  if (s.contour.fixed) return s.contour.fixed;
+  const c = contourView(s);
+  if (c.state !== "ready" && c.state !== "element" && c.state !== "combination" && c.state !== "difference" && c.state !== "user") return null;
+  const { min, max } = c.clim;
+  return min !== null && max !== null && min < max ? { min, max } : null;
+}
+
+/**
  * The field picker's rows: the nodal fields of the results stage shown, and
- * the refused components; V4c2a: its element fields (a refused one says why),
+ * the refused components; V4c2a: its element fields (a refused one says why;
+ * VA6d: with the derived scalars of each field's tensor, `elementContourFields`),
  * and whether the file's element rows are verified.
  */
 export function contourFieldsOf(s: State): {
@@ -716,8 +942,13 @@ export function contourFieldsOf(s: State): {
   elementsVerified: boolean;
 } | null {
   const at = s.phase.at;
+  // VU7b-2: a User Combination offers the nodal quantities of the cases it reaches, each component alone.
+  if (at?.kind === "combination") {
+    const f = combinationFieldsOf(s, at.name);
+    return f.ok ? { fields: f.fields, refused: [], elements: [], elementsVerified: false } : null;
+  }
   const st = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
-  return st ? { fields: fieldsOf(st), refused: st.refusedNodal, elements: gaussFields(st.gauss), elementsVerified: elementVerdictOf(s.results!).verified } : null;
+  return st ? { fields: fieldsOf(st), refused: st.refusedNodal, elements: elementContourFields(st.gauss), elementsVerified: elementVerdictOf(s.results!).verified } : null;
 }
 
 // -- V4d: the deformed shape ----------------------------------------------------
@@ -761,6 +992,17 @@ export type DeformView =
  * reason; `deformView` adds the user's toggle and the effects' count.
  */
 export function deformOf(s: State): { ok: true; draw: DeformDraw } | { ok: false; state: "unavailable" | "refused"; reason: string } {
+  // VU10: a difference of two variants is a contour only; it is never offered as a shape, nor is either variant's under it.
+  if (s.variants.difference) return { ok: false, state: "refused", reason: "the difference of two variants is shown as a contour only, never as a deformed shape" };
+  // VU19: so is a compare user result, and nothing of the window set's is offered as a shape under it.
+  if (s.visibility.colourBy === "contour" && s.variants.shown !== null) {
+    return { ok: false, state: "refused", reason: "a compare variant's user result is shown as a contour only, never as a deformed shape" };
+  }
+  if (s.phase.at?.kind === "combination") return combinationDeform(s, s.phase.at.name);
+  // VU16: a user result is a contour only; it is never offered as a shape, nor is a results step's under it.
+  if (s.visibility.colourBy === "contour" && s.contour.source === "user") {
+    return { ok: false, state: "refused", reason: "a user result is shown as a contour only, never as a deformed shape" };
+  }
   const p = resultsPairing(s);
   if (!s.results || p.state !== "paired") return { ok: false, state: "unavailable", reason: "no results file pairs with this model, so there is no displacement" };
   const at = s.phase.at;
@@ -876,14 +1118,18 @@ export function activationNow(s: State): { activation: Activation; stageName: st
   // stage names to these results would be a guess, so it is not made.
   const p = resultsPairing(s);
   const byFem = p.state === "paired" && p.by === "fem_hash";
-  const key = [s.sequence, s.stageElements, s.definitions, st.name, byFem];
+  // W4d #2843: matched by the program name; `stageName` is the label shown (a display name may differ).
+  const key = [s.sequence, s.stageElements, s.definitions, st.programName, st.name, byFem];
   if (activationMemo && activationMemo.key.every((k, i) => k === key[i])) return activationMemo.value;
-  const activation: Activation = byFem
-    ? {
-        state: "unbound",
-        reason: "the results pair with this model by fem_hash only (the mesh matches; they carry no model_hash), so they are not tied to this model's /sequence program",
-      }
-    : activationOf(s.sequence, s.stageElements, s.definitions, st.name);
+  // An unstaged model has no activation to bind, so its pairing does not matter (#1754).
+  const own = activationOf(s.sequence, s.stageElements, s.definitions, st.programName);
+  const activation: Activation =
+    byFem && own.state !== "unstaged"
+      ? {
+          state: "unbound",
+          reason: "the results pair with this model by fem_hash only (the mesh matches; they carry no model_hash), so they are not tied to this model's /sequence program",
+        }
+      : own;
   const value = { activation, stageName: st.name };
   activationMemo = { key, value };
   return value;
@@ -925,6 +1171,15 @@ function jumpOf(src: DeclSource): { ok: true; source: DeclSource; label: string 
   return { ok: true, source: src, label: `${baseName(src.file)}:${src.line}` };
 }
 
+/** The listing's entries by key, built once per listing: `sourcesOf` asks for every record, so a search each is quadratic (#2837). */
+const provenanceIndex = new WeakMap<State["provenance"], ReadonlyMap<DeclPath, State["provenance"][number]>>();
+
+function provenanceEntryOf(entries: State["provenance"], key: DeclPath): State["provenance"][number] | undefined {
+  let index = provenanceIndex.get(entries);
+  if (!index) provenanceIndex.set(entries, index = new Map(entries.map((p) => [p.key, p])));
+  return index.get(key);
+}
+
 /**
  * Where go-to-source would jump for `decl`, or why it cannot. An unnamed
  * object's path (`#k`) is never joined: the app numbers unnamed objects in
@@ -936,7 +1191,7 @@ export function sourceFor(s: State, decl: DeclPath): { ok: true; source: DeclSou
   if (!d) {
     // A /provenance record with no declaration in the app (a series, a
     // pattern, a synthesised object): the listing's go-to-source.
-    const r = s.provenance.find((p) => p.key === decl);
+    const r = provenanceEntryOf(s.provenance, decl);
     if (!r) return { ok: false, reason: `${decl} is not a declaration of the loaded model` };
     if (!r.source) return { ok: false, reason: `${decl} has no source frame in /provenance` };
     return jumpOf(r.source);
@@ -1238,7 +1493,777 @@ export type { Box, Vec3 } from "./clip.ts";
 /** V4e3: why a mesh gets no cut-face cap: it has no volumetric cell. */
 export const NO_SOLID_CELLS = "No cap: this mesh has no volumetric cells (shells, beams or 2-D), so a cut has no inside to fill.";
 
+export const NO_NODE_TABLE = "No cap: the model was read without its node table, so the cut face cannot be built.";
+export const ALL_SOLIDS_HIDDEN = "No cap: every volumetric cell is hidden.";
+
+/** The colour group of a cell: the smallest element-side physical group holding it, ties by name (mesh/build.ts `colourGroups`). */
+function colourGroupOf(d: Decl, decls: Readonly<Record<DeclPath, Decl>>): DeclPath | null {
+  let best: Decl | null = null;
+  for (const p of d.element?.groups ?? []) {
+    const g = decls[p];
+    if (!g?.group) continue;
+    if (!best || g.group.count < best.group!.count || (g.group.count === best.group!.count && g.name.localeCompare(best.name) < 0)) best = g;
+  }
+  return best?.path ?? null;
+}
+
+/** Whether a cell is off the drawing (its element or colour group hidden, or inactive at this stage); null when every cell is on it. */
+export function cellHiddenTest(s: State): ((d: Decl) => boolean) | null {
+  const hidden = new Set(s.visibility.hidden);
+  const a = activationNow(s)?.activation;
+  const inactive = a?.state === "filtered" ? a.inactiveTags : null;
+  if (!hidden.size && !inactive?.size) return null;
+  const hiddenElems = hidden.size ? hiddenElementsOf(s) : null;
+  return (d) => {
+    const g = hidden.size ? colourGroupOf(d, s.decls) : null;
+    return (hiddenElems !== null && hiddenElems.has(d.path)) || (g !== null && hidden.has(g)) || (inactive !== null && (d.element?.metas ?? []).some((m) => inactive.has(m.tag)));
+  };
+}
+
+let allSolidsHiddenMemo: { key: readonly unknown[]; value: boolean } | null = null;
+
+function allSolidsHidden(s: State): boolean {
+  const off = cellHiddenTest(s);
+  if (!off) return false;
+  const key = [s.decls, s.blocks, s.visibility.hidden, activationNow(s)?.activation ?? null];
+  if (allSolidsHiddenMemo?.key.every((k, i) => k === key[i])) return allSolidsHiddenMemo.value;
+  let solids = 0, shown = 0;
+  for (const d of Object.values(s.decls)) {
+    const cell = d.element?.cell;
+    if (!cell || solidShapeOf(s.blocks[cell.block]?.code ?? 0) === null) continue;
+    solids++;
+    if (!off(d)) {
+      shown++;
+      break;
+    }
+  }
+  const value = solids > 0 && shown === 0;
+  allSolidsHiddenMemo = { key, value };
+  return value;
+}
+
 /** V4e3: what the planes panel says under "Contour on cut face": why no cap can be drawn, or null when one can (or no mesh is loaded). */
 export function cutFaceNote(s: State): string | null {
-  return s.mesh && s.mesh.counts.solidCells === 0 ? NO_SOLID_CELLS : null;
+  if (!s.mesh) return null;
+  if (s.mesh.counts.solidCells === 0) return NO_SOLID_CELLS;
+  if (!s.mesh.nodes) return NO_NODE_TABLE;
+  return allSolidsHidden(s) ? ALL_SOLIDS_HIDDEN : null;
+}
+
+// -- VU7b-1: a User Combination over the /spectra cases (ADR 0130 D4, D5) --------
+
+/**
+ * The `/spectra` cases combination `name` reads, directly or through the
+ * combinations it names, in the order first met: the cases to fetch
+ * (`user:readCase`) before the evaluator runs, since its `Source` is
+ * synchronous. A name the table does not hold, or refused, throws the
+ * evaluator's `CombinationRefused` (`unresolved`, `refused`).
+ */
+export function spectrumCasesOf(table: CombinationTable, name: string): string[] {
+  const cases: string[] = [];
+  const seen = new Set<string>();
+  const stack = [name];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    for (const t of table.row(current, name).terms) {
+      if (t.kind === "combination") stack.push(t.source);
+      else if ((t.kind === "spectrum" || t.kind === "reference") && !cases.includes(t.source)) cases.push(t.source);
+    }
+  }
+  return cases;
+}
+
+// -- VU7b-2: the User Combination shown (ADR 0130 D1, D4, A3) ---------------------
+
+const quoted = (name: string): string => JSON.stringify(name);
+
+/** A refused row as the evaluator's table takes it; a reason or origin the reader never gives is a bug, and raises. */
+function ruleRefusal(r: UserRefusalIn): RuleRefusal {
+  if (!(REASONS as readonly string[]).includes(r.reason)) throw new RangeError(`combinationTableOf: refusal reason ${quoted(r.reason)} of ${quoted(r.name)} is not one of ${REASONS.join(", ")}`);
+  if (r.origin !== "user" && r.origin !== "model") throw new RangeError(`combinationTableOf: refusal origin ${quoted(r.origin)} of ${quoted(r.name)} is not user or model`);
+  return { name: r.name, reason: r.reason as RuleRefusal["reason"], detail: r.detail, origin: r.origin, row: r.row };
+}
+
+let tableMemo: { of: object; table: CombinationTable } | null = null;
+
+/** The user file's combination rows as VU4's evaluator takes them, or null when it holds none (or `/combinations` is refused). */
+export function combinationTableOf(s: State): CombinationTable | null {
+  const t = s.user?.status === "ready" ? s.user.info.table : null;
+  if (!t) return null;
+  if (tableMemo?.of !== t) tableMemo = { of: t, table: new CombinationTable({ rows: t.rows, modelRows: t.modelRows, refused: t.refused.map(ruleRefusal) }) };
+  return tableMemo.table;
+}
+
+/**
+ * What a combination can colour by: the `ON_NODES` columns of the `/spectra`
+ * cases it reaches (`DISPLACEMENT/Ux`, grouped as a `.ladruno` stage's are),
+ * each component alone. A combination is evaluated per component (D4), so no
+ * magnitude is offered: the CQC of a magnitude is not the magnitude of the
+ * CQCs. When there is nothing, the reason says why; a combination of stage or
+ * mode terms only is read from the results file, which this app does not
+ * combine.
+ */
+export function combinationFieldsOf(s: State, name: string, over: CombinationTable | null = null): { ok: true; fields: NodalField[]; cases: string[] } | { ok: false; reason: string } {
+  const u = s.user;
+  if (u?.status !== "ready") return { ok: false, reason: "the user file is not read" };
+  const file = baseName(u.path);
+  // VU9b: a draft is judged over the table it would make (`over`), not the file's.
+  const table = over ?? combinationTableOf(s);
+  if (!table) return { ok: false, reason: `${file} holds no /combinations row` };
+  let cases: string[];
+  try {
+    cases = spectrumCasesOf(table, name);
+  } catch (err) {
+    if (err instanceof CombinationRefused) return { ok: false, reason: err.message };
+    throw err;
+  }
+  if (!cases.length) {
+    return {
+      ok: false,
+      reason:
+        `User Combination ${quoted(name)} reaches no /spectra case: its stage and mode terms are read from the results file, ` +
+        "and this app combines /spectra cases only (Python's Results also combines stages and modes)",
+    };
+  }
+  const sp = u.info.spectra;
+  if (sp === null) return { ok: false, reason: `${file} holds no /spectra, so no case ${cases.map(quoted).join(", ")}` };
+  if (!sp.ok) return { ok: false, reason: `/spectra of ${file} is refused: ${sp.reason}` };
+  const names: string[] = [];
+  for (const c of cases) {
+    const found = sp.items.find((x) => x.name === c);
+    for (const q of found?.nodal ?? []) for (const comp of q.components) if (!names.includes(`${q.label}/${comp}`)) names.push(`${q.label}/${comp}`);
+  }
+  if (!names.length) return { ok: false, reason: `the /spectra cases ${quoted(name)} reaches (${cases.map(quoted).join(", ")}) hold no nodal result` };
+  const fields = nodalFields(names)
+    .map((f) => ({
+      name: f.name,
+      components: f.components.filter((c) => !c.magnitude),
+      magnitudeRefused: f.components.some((c) => c.magnitude)
+        ? "a combination is evaluated per component (ADR 0130 D4): the combination of a magnitude is not the magnitude of the combinations"
+        : null,
+    }))
+    .filter((f) => f.components.length > 0);
+  return { ok: true, fields, cases };
+}
+
+/**
+ * What the app reads for the combination shown, or null when nothing is to be
+ * read (not a combination, not colouring by contour, nothing picked that the
+ * combination offers). `quantity` is the picked column as the case spells it;
+ * a result's label never holds a `/` (reader/userSpectra.ts refuses one), so
+ * the component key splits at its first. `key` names the read: the user file,
+ * the combination, the column, and whether `/spectra` is stale (A6).
+ */
+export function combinationRequestOf(s: State): { key: string; path: string; name: string; quantity: { label: string; component: string }; staleness: StaleMark } | null {
+  const at = s.phase.at;
+  const u = s.user;
+  const c = s.contour;
+  if (at?.kind !== "combination" || s.visibility.colourBy !== "contour" || u?.status !== "ready" || c.source !== "nodal" || c.field === null || c.component === null) return null;
+  const f = combinationFieldsOf(s, at.name);
+  if (!f.ok || !f.fields.some((x) => x.name === c.field && x.components.some((y) => y.key === c.component))) return null;
+  const sp = u.info.spectra;
+  if (!sp?.ok) return null;
+  const slash = c.component.indexOf("/");
+  const quantity = { label: c.component.slice(0, slash), component: c.component.slice(slash + 1) };
+  return { key: JSON.stringify([u.path, at.name, c.component, sp.stale.stale]), path: u.path, name: at.name, quantity, staleness: sp.stale };
+}
+
+/**
+ * The User Combination shown, as the phase bar states it: its rule, whether it
+ * is stale (A6), and its sign from the descriptors (A3; null with why, when the
+ * table cannot say). Null off a combination.
+ */
+export function combinationShownOf(s: State): { name: string; rule: string; stale: boolean; signed: boolean | null; why: string | null } | null {
+  const at = s.phase.at;
+  if (at?.kind !== "combination" || s.user?.status !== "ready") return null;
+  const c = s.user.info.combinations;
+  const item = c?.ok ? c.items.find((x) => x.name === at.name) : undefined;
+  if (!item) return null;
+  const sign = combinationSign(s, at.name);
+  return { name: at.name, rule: item.rule, stale: item.stale, signed: sign.signed, why: combinationDeform(s, at.name).reason };
+}
+
+// -- VU9b: authoring a User Combination (ADR 0130 A3, A4; HG9 on #2693) ----------------------
+
+/** The key of a draft's check: the user file, the read's token and the draft. Null with no file read. */
+export function draftKeyOf(s: State, draft: CombinationDraft): string | null {
+  const u = s.user;
+  if (u?.status !== "ready") return null;
+  return JSON.stringify([u.path, u.token ?? null, draft]);
+}
+
+/** VU9b: what the authoring panel offers (reader/userRules.ts: the rules, the envelopes and the term kinds A3 names). */
+export { RULES as COMBINATION_RULES, ENVELOPES as COMBINATION_ENVELOPES, KINDS as TERM_KINDS } from "../reader/userRules.ts";
+
+/** VU9b: an empty draft, a linear combination of one stage term at the last step. */
+export const EMPTY_DRAFT: CombinationDraft = { name: "", rule: "linear", envelope: "", fraction: null, damping: null, terms: [{ kind: "stage", source: "", step: -1, mode: 0, factor: 1 }] };
+
+/**
+ * VU9b: the sources a term of each kind can name in this set, for the panel's
+ * suggestions: the results stages (their stamped names, else `stage_<i>`), the
+ * mode hosts, the `/spectra` cases and the combinations in force. A source the
+ * set does not have can still be typed; the readers and the evaluator judge it.
+ */
+export function draftSourcesOf(s: State): Record<string, string[]> {
+  const stages = (s.results?.stages ?? []).map((st, i) => ({ name: st.programName || `stage_${i}`, mode: st.kind === "mode" }));
+  const u = s.user?.status === "ready" ? s.user.info : null;
+  const cases = u?.spectra?.ok ? u.spectra.items.map((c) => c.name) : [];
+  const combos = u?.table ? [...u.table.rows, ...u.table.modelRows].map((r) => r.name) : [];
+  return { stage: stages.filter((x) => !x.mode).map((x) => x.name), mode: stages.filter((x) => x.mode).map((x) => x.name), spectrum: cases, reference: cases, combination: combos };
+}
+
+/** VU9b: the panel's entry in the phase bar, or null when there is no user file to add to (the app never creates one). */
+export function combineEntryOf(s: State): { title: string } | null {
+  const u = s.user;
+  if (u?.status !== "ready") return null;
+  const c = u.info.combinations;
+  if (c !== null && !c.ok) return null;
+  return { title: `Write a User Combination and save it into ${baseName(u.path)} (ADR 0130 A4: a copy of the file, then a replace)` };
+}
+
+/**
+ * The draft judged by the readers' rules beside the file's rows (combination/
+ * author.ts `judgeDraft`), and what VU4's evaluator reads for it: the `/spectra`
+ * cases it reaches and the first nodal quantity they hold (null when none).
+ * Null with no draft to judge. The rows on screen are the ones that stand; main
+ * judges again against every stored row before it writes.
+ */
+export function draftJudgedOf(
+  s: State,
+  draft: CombinationDraft,
+): { ok: true; key: string; path: string; table: CombinationTable; name: string; cases: string[]; quantity: { label: string; component: string } | null; staleness: StaleMark } | { ok: false; key: string; reason: string; detail: string } | null {
+  const key = draftKeyOf(s, draft);
+  const u = s.user;
+  if (key === null || u?.status !== "ready") return null;
+  const t = u.info.table;
+  const c = u.info.combinations;
+  if (c !== null && !c.ok) return { ok: false, key, reason: "refused", detail: `/combinations of ${baseName(u.path)} is refused (${c.reason}), so nothing is added to it` };
+  const j = judgeDraft(t?.rows ?? [], t?.modelRows ?? [], draft);
+  if (!j.ok) return { ok: false, key, reason: j.reason, detail: j.detail };
+  let cases: string[];
+  try {
+    cases = spectrumCasesOf(j.table, j.name);
+  } catch (err) {
+    if (err instanceof CombinationRefused) return { ok: false, key, reason: err.reason, detail: err.detail };
+    throw err;
+  }
+  const f = cases.length ? combinationFieldsOf(s, j.name, j.table) : null;
+  const comp = f?.ok ? f.fields[0]?.components[0]?.key ?? null : null;
+  const slash = comp === null ? -1 : comp.indexOf("/");
+  const quantity = comp === null || slash < 0 ? null : { label: comp.slice(0, slash), component: comp.slice(slash + 1) };
+  const sp = u.info.spectra;
+  const staleness = sp === null ? { stale: false, reason: "" } : sp.stale;
+  return { ok: true, key, path: u.path, table: j.table, name: j.name, cases, quantity, staleness };
+}
+
+/** Why the panel may not ask main for `op` now, or null. The save token is the read's: a save is never made on another. */
+export function combineCannotSave(s: State, c: CombineState, op: "add" | "revert"): string | null {
+  const u = s.user;
+  if (u?.status !== "ready") return u === null ? "the set has no .user.h5 (write one with Python first)" : "the user file is not read";
+  if ((u.token ?? null) === null) return "this window does not save: only the human's window writes the user file";
+  if (c.saving !== null) return "a save is running";
+  if (op === "add") {
+    const key = draftKeyOf(s, c.draft);
+    if (c.check === null || c.check.key !== key || c.check.status === "checking") return "the draft is being checked";
+    if (c.check.status === "refused") return `the draft is refused (${c.check.reason}): ${c.check.detail}`;
+    return null;
+  }
+  // A7.3, one revert: it undoes the save made last in this window, while the file is as that save left it.
+  const last = c.last;
+  if (last === null || last.file !== u.path) return "Revert undoes a save made in this window, and none was made on this file";
+  if (last.op === "revert") return "the last save was reverted already: the app gives one revert";
+  if (last.target === null) return "the last save created /combinations: there is no generation before it";
+  const g = u.info.generations ?? null;
+  if (u.token !== last.token || g?.current !== last.generation) return "the file changed since the last save made here, so that save is not undone";
+  return null;
+}
+
+/** Whether combination `name` is signed, from the descriptors (A3), or null with why the table cannot say. */
+function combinationSign(s: State, name: string): { signed: boolean } | { signed: null; why: string } {
+  const table = combinationTableOf(s);
+  if (!table) return { signed: null, why: `User Combination ${quoted(name)} is not in the user file` };
+  try {
+    return { signed: isSigned(table, name) };
+  } catch (err) {
+    if (err instanceof CombinationRefused) return { signed: null, why: err.message };
+    throw err;
+  }
+}
+
+/** A combination's colour range: the user's when fixed, else its own values (one state: there is no history to scan). */
+function combinationClim(c: ContourState, range: { min: number; max: number } | null): Clim {
+  if (c.range === "fixed") return climOf(c, null, null, "");
+  return { min: range?.min ?? null, max: range?.max ?? null, mode: c.range, label: "range: this combination (one state, no history)" };
+}
+
+/** `contourView` on a User Combination. */
+function combinationContour(s: State, name: string): ContourView {
+  if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
+  const f = combinationFieldsOf(s, name);
+  if (!f.ok) return { state: "unavailable", reason: f.reason };
+  const c = s.contour;
+  if (c.source !== "nodal" || c.field === null || c.component === null) return { state: "unavailable", reason: "pick a field" };
+  const hit = f.fields.find((x) => x.name === c.field)?.components.find((x) => x.key === c.component);
+  if (!hit) return { state: "unavailable", reason: `User Combination ${quoted(name)} has no ${c.field} ${componentName(c.component)}` };
+  const want = combinationRequestOf(s)!;
+  const r = s.combination;
+  if (!r || r.key !== want.key || r.status === "loading") return { state: "unavailable", reason: `User Combination ${quoted(name)} is being evaluated` };
+  if (r.status === "refused") return { state: "refused", code: "combination", reason: `User Combination ${quoted(name)} is refused (${r.reason}): ${r.detail}` };
+  if (r.status === "failed") return { state: "refused", code: "combination", reason: `User Combination ${quoted(name)} could not be evaluated: ${r.error}` };
+  return { state: "combination", name, field: c.field, component: hit, key: r.key, clim: combinationClim(c, r.range), cmap: c.cmap, signed: r.signed };
+}
+
+/**
+ * `deformOf` on a User Combination. An unsigned one (a modal rule, an
+ * envelope, or a `linear` over one) is refused with the reason: it has lost
+ * the signs a shape needs (ADR 0130 D4, A3). A signed one is not drawn yet,
+ * because the deformed shape reads a results step's displacement.
+ */
+function combinationDeform(s: State, name: string): { ok: false; state: "unavailable" | "refused"; reason: string } {
+  const sign = combinationSign(s, name);
+  if (sign.signed === null) return { ok: false, state: "unavailable", reason: sign.why };
+  if (!sign.signed) {
+    const rule = combinationTableOf(s)!.row(name, name).rule;
+    return { ok: false, state: "refused", reason: `User Combination ${quoted(name)} (${rule}) is unsigned, so it is shown as a contour only, never as a deformed shape (ADR 0130 D4, A3)` };
+  }
+  return { ok: false, state: "unavailable", reason: `User Combination ${quoted(name)} is signed; this app draws the deformed shape of a results step only` };
+}
+
+// -- VU16: a state-free user result as a contour (ADR 0130 D7) ---------------------
+
+/**
+ * Whether user result `name` of the set's `.user.h5` can be drawn as a
+ * contour: its entry, or why not. Only a state-free `ON_NODES` entry the file
+ * lists (a refused one never) can; staleness (A6) is judged by the caller, so a
+ * stale entry is picked and refused with its reason, never silently dropped.
+ */
+export function userResultPickOf(s: State, name: string): { ok: true; entry: UserResult } | { ok: false; reason: string } {
+  const u = s.user;
+  if (u === null) return { ok: false, reason: "the set has no .user.h5" };
+  if (u.status === "reading") return { ok: false, reason: `${baseName(u.path)} is being read` };
+  if (u.status === "failed") return { ok: false, reason: `the user file is refused: ${u.error}` };
+  const file = baseName(u.path);
+  const r = u.info.results;
+  if (r === null) return { ok: false, reason: `${file} holds no /results entry, so it has no user result ${quoted(name)}` };
+  if (!r.ok) return { ok: false, reason: `/results of ${file} is refused: ${r.reason}` };
+  const entry = r.items.find((x) => x.name === name);
+  if (!entry) {
+    const why = r.refused.find((x) => x.name === name);
+    return { ok: false, reason: why ? `user result ${quoted(name)} is refused: ${why.reason} (${why.detail})` : `${file} lists no user result ${quoted(name)}` };
+  }
+  if (entry.target !== "nodes") return { ok: false, reason: `user result ${quoted(name)} is on ${entry.target}; this app draws a user result on nodes only` };
+  if (entry.perState) return { ok: false, reason: `user result ${quoted(name)} is per state; this app draws a state-free one only` };
+  return { ok: true, entry };
+}
+
+/**
+ * What the app reads for the user result picked, or null when nothing is to
+ * be read: not colouring by a user result, a difference or a User Combination
+ * shown instead, a pick the file cannot give, or a stale entry (A6: refused,
+ * never read). `key` names the read: the user file, the entry, the component.
+ */
+export function userResultRequestOf(s: State): { key: string; path: string; name: string; component: string } | null {
+  const c = s.contour;
+  if (s.visibility.colourBy !== "contour" || c.source !== "user" || c.field === null || c.component === null) return null;
+  // VU19: a compare user result drawn is read by its own door; the window's file is not read under it.
+  if (s.variants.difference || s.variants.shown !== null || s.phase.at?.kind === "combination") return null;
+  const p = userResultPickOf(s, c.field);
+  if (!p.ok || p.entry.stale.stale || !p.entry.components.includes(c.component)) return null;
+  const path = s.user!.path;
+  return { key: JSON.stringify([path, c.field, c.component]), path, name: c.field, component: c.component };
+}
+
+/** `contourView` on a user result: what its read gave, or why it draws nothing. */
+function userResultContour(s: State): ContourView {
+  if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
+  const c = s.contour;
+  if (c.field === null || c.component === null) return { state: "unavailable", reason: "pick a field" };
+  const label = `user result ${quoted(c.field)}`;
+  if (s.user?.status === "reading") return { state: "unavailable", reason: `${label}: ${baseName(s.user.path)} is being read` };
+  const p = userResultPickOf(s, c.field);
+  if (!p.ok) return { state: "refused", code: "user", reason: p.reason };
+  if (p.entry.stale.stale) return { state: "refused", code: "user", reason: `${label} is stale (A6): ${p.entry.stale.reason || "no reason given"}` };
+  if (!p.entry.components.includes(c.component)) {
+    return { state: "refused", code: "user", reason: `${label} has no component ${quoted(c.component)}; its components are ${p.entry.components.join(", ")}` };
+  }
+  const want = userResultRequestOf(s)!;
+  const r = s.userResult;
+  if (!r || r.key !== want.key || r.status === "loading") return { state: "unavailable", reason: `${label} is being read` };
+  if (r.status === "refused") return { state: "refused", code: "user", reason: `${label} is refused: ${r.detail}` };
+  if (r.status === "failed") return { state: "refused", code: "user", reason: `${label} could not be read: ${r.error}` };
+  // One state: the user's range when fixed, else the column's own (there is no history to scan).
+  const clim: Clim =
+    c.range === "fixed" ? climOf(c, null, null, "") : { min: r.range?.min ?? null, max: r.range?.max ?? null, mode: c.range, label: "range: this user result (one state, no history)" };
+  return {
+    state: "user",
+    name: c.field,
+    field: c.field,
+    compare: null,
+    component: { key: c.component, label: c.component, datasets: [c.component], magnitude: false },
+    key: r.key,
+    read: r.read,
+    basis: p.entry.basis,
+    clim,
+    cmap: c.cmap,
+    nodes: r.nodes,
+    finite: r.finite,
+  };
+}
+
+// -- VU10: the difference of two variants (ADR 0132 D9.5) -------------------------
+
+/** What the difference shown reads, or why there is none to read (a refusal); null when no difference is asked for. */
+export type DifferencePlan =
+  | {
+      ok: true;
+      /** names the read: both results files and reads, the compare row, the stage, the step and the dataset */
+      key: string;
+      window: string;
+      compare: string;
+      /** the compare row (the runner asks main for its step by row; never by path) */
+      row: { index: number; label: string };
+      stageId: string;
+      stageName: string;
+      step: number;
+      field: string;
+      component: FieldComponent;
+      /** the one dataset subtracted (a component, never a magnitude) */
+      dataset: string;
+      /** the window stage's `_ids` blob */
+      nodeIds: BlobRef;
+    }
+  | { ok: false; reason: string };
+
+/** Two times are one step's when they agree to 1e-12 of their size. */
+const sameTime = (a: number, b: number): boolean => Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(a), Math.abs(b));
+
+/**
+ * VU10: the difference the state asks for. It is the window variant minus the
+ * compare variant, at the stage and step shown, of one nodal component, joined
+ * by node id. It is refused, with the reason, on a User Combination (a
+ * combination across variants is refused: ADR 0130 A7, ADR 0132 D8), when the
+ * two results do not state one mesh (`fem_hash`), when the compare set has no
+ * such stage, step time or dataset, and for an element field or a magnitude.
+ */
+export function differencePlanOf(s: State): DifferencePlan | null {
+  const v = s.variants;
+  if (!v.difference || s.visibility.colourBy !== "contour") return null;
+  const c = v.compare;
+  if (c?.status !== "open") return { ok: false, reason: "no compare set is open" };
+  const at = s.phase.at;
+  if (at?.kind === "combination") {
+    return { ok: false, reason: `a User Combination is of the window variant's own states, so a combination across variants is refused: ${quoted(at.name)} is not subtracted from ${quoted(c.label)}` };
+  }
+  // VU16: so is a user result, of the window variant's own .user.h5.
+  if (s.contour.source === "user") return { ok: false, reason: "a user result is of the window variant's own file, so it is not subtracted across variants" };
+  if (!s.results || resultsPairing(s).state !== "paired") return { ok: false, reason: "no results file pairs with this model, so there is nothing to subtract from" };
+  if (at?.kind !== "results") return { ok: false, reason: "a difference is of a results step: choose results in the phase bar" };
+  const st = s.results.stages[at.stage];
+  if (!st) return { ok: false, reason: `results stage ${at.stage} is not in the file` };
+  const mine = s.results.lineage?.femHash ?? null;
+  if (mine === null || c.femHash === null || mine !== c.femHash) {
+    return { ok: false, reason: `the two variants' results do not state one mesh (fem_hash ${mine ?? "not stamped"} and ${c.femHash ?? "not stamped"}), so their nodes are not subtracted` };
+  }
+  const label = st.name || st.id;
+  const other = c.stages.find((x) => x.id === st.id);
+  if (!other) return { ok: false, reason: `the compare variant ${quoted(c.label)} has no stage ${quoted(st.id)}` };
+  // W4d #2843: the two stages are one program stage by their program names; a display name is a label only.
+  if (other.programName !== st.programName) {
+    return { ok: false, reason: `stage ${quoted(st.id)} is program stage ${quoted(st.programName)} here and ${quoted(other.programName)} in ${quoted(c.label)}` };
+  }
+  const k = at.step;
+  const t = st.time[k];
+  const u = other.time[k];
+  if (t === undefined || u === undefined) return { ok: false, reason: `the compare variant ${quoted(c.label)} has no step ${k} of stage ${quoted(label)}` };
+  if (!sameTime(t, u)) return { ok: false, reason: `step ${k} of stage ${quoted(label)} is at time ${t} here and ${u} in ${quoted(c.label)}` };
+  const pick = s.contour;
+  if (pick.source !== "nodal") return { ok: false, reason: "a difference is of a nodal component; an element field is not subtracted" };
+  if (pick.field === null || pick.component === null) return { ok: false, reason: "pick a field" };
+  const hit = componentOf(st, pick.field, pick.component);
+  if (!hit) return { ok: false, reason: `stage ${label} has no ${pick.field} ${componentName(pick.component)}` };
+  if (hit.component.magnitude || hit.component.datasets.length !== 1) return { ok: false, reason: "a difference is of one component; a magnitude is not subtracted" };
+  const dataset = hit.component.datasets[0]!;
+  if (!other.nodal.includes(dataset)) return { ok: false, reason: `the compare variant ${quoted(c.label)} records no ${dataset} in stage ${quoted(label)}` };
+  if (!st.nodeIds) return { ok: false, reason: `the node ids of stage ${label} are not loaded` };
+  const study = v.study;
+  const windowRow = study?.rows.find((r) => r.index === study.active);
+  const window = windowRow?.label ?? baseName(s.artifacts.model?.path ?? s.results.path);
+  return {
+    ok: true,
+    key: JSON.stringify([s.results.path, pick.reads, c.results, c.index, st.id, k, dataset]),
+    window,
+    compare: c.label,
+    row: { index: c.index, label: c.label },
+    stageId: st.id,
+    stageName: label,
+    step: k,
+    field: pick.field,
+    component: hit.component,
+    dataset,
+    nodeIds: st.nodeIds,
+  };
+}
+
+/**
+ * VU10: the study's row labelled `label`, as a spec's `compare` names it
+ * (spec/compile.ts `VariantOf`), and whether it is the compare set already;
+ * refused when no study is open, no passing row has the label, or it is the
+ * window set (INV-6).
+ */
+export function variantRowOf(s: State, label: string): { ok: true; row: { index: number; label: string }; open: boolean } | { ok: false; reason: string } {
+  const study = s.variants.study;
+  if (!study) return { ok: false, reason: `no variants manifest is open, so there is no variant ${quoted(label)}` };
+  const row = study.rows.find((r) => r.label === label);
+  if (!row) {
+    const refused = study.refused.find((r) => r.label === label);
+    return { ok: false, reason: refused ? `variant ${quoted(label)} is refused (${refused.code}: ${refused.reason})` : `the manifest has no variant ${quoted(label)}; its variants are ${study.rows.map((r) => quoted(r.label)).join(", ") || "none"}` };
+  }
+  if (study.active === row.index) return { ok: false, reason: `variant ${quoted(label)} is the window set; a compare set is another variant` };
+  const c = s.variants.compare;
+  return { ok: true, row: { index: row.index, label: row.label }, open: c !== null && c.status !== "failed" && c.index === row.index && c.label === row.label };
+}
+
+// -- VU19: the compare set's user results (ADR 0132 D9.5) ----------------------------
+
+/**
+ * The compare set's user result `name`, as the compare set's own `.user.h5`
+ * lists it with A6's verdict against the compare set's own model and results
+ * (main's `compare:userRead`), or why there is none. Only a state-free
+ * `ON_NODES` entry can be drawn; staleness is judged by the caller, so a stale
+ * entry is picked and refused with its reason, never silently dropped.
+ */
+export function compareUserPickOf(s: State, name: string): { ok: true; entry: UserResult; label: string } | { ok: false; reason: string } {
+  const c = s.variants.compare;
+  if (c?.status !== "open") return { ok: false, reason: "no compare set is open" };
+  const u = s.variants.compareUser;
+  const of = `the compare variant ${quoted(c.label)}`;
+  if (u === null || u.status === "reading") return { ok: false, reason: `the user file of ${of} is being read` };
+  if (u.status === "none") return { ok: false, reason: `${of} has no .user.h5 (${baseName(u.path)})` };
+  if (u.status === "failed") return { ok: false, reason: `the user file of ${of} is refused: ${u.error}` };
+  const file = baseName(u.path);
+  const r = u.info.results;
+  if (r === null) return { ok: false, reason: `${file} of ${of} holds no /results entry, so it has no user result ${quoted(name)}` };
+  if (!r.ok) return { ok: false, reason: `/results of ${file} of ${of} is refused: ${r.reason}` };
+  const entry = r.items.find((x) => x.name === name);
+  if (!entry) {
+    const why = r.refused.find((x) => x.name === name);
+    // VF2-d (#2956): a spec names the entry, so an unknown one lists the entries the file offers.
+    const offers = r.items.map((x) => quoted(x.name)).join(", ") || "none";
+    return { ok: false, reason: why ? `user result ${quoted(name)} of ${of} is refused: ${why.reason} (${why.detail})` : `${file} of ${of} lists no user result ${quoted(name)}; its user results are ${offers}` };
+  }
+  if (entry.target !== "nodes") return { ok: false, reason: `user result ${quoted(name)} of ${of} is on ${entry.target}; this app draws a user result on nodes only` };
+  if (entry.perState) return { ok: false, reason: `user result ${quoted(name)} of ${of} is per state; this app draws a state-free one only` };
+  return { ok: true, entry, label: c.label };
+}
+
+/**
+ * Whether the compare set's values can be placed on the window's mesh: only
+ * when the compare set's model (main's `compare:model`) and the window's model
+ * state one mesh by `fem_hash`, so a node id names one node on both. Two meshes
+ * that do not pair are refused with the reason, never interpolated.
+ */
+export function compareMeshOf(s: State): { ok: true } | { ok: false; reading: boolean; reason: string } {
+  const c = s.variants.compare;
+  if (c?.status !== "open") return { ok: false, reading: false, reason: "no compare set is open" };
+  const m = s.variants.compareModel;
+  if (m === null || m.status === "reading") return { ok: false, reading: true, reason: `the model of the compare variant ${quoted(c.label)} is being read` };
+  if (m.status === "failed") return { ok: false, reading: false, reason: `the model of the compare variant ${quoted(c.label)} is refused: ${m.reason}` };
+  const mine = s.lineage?.femHash ?? null;
+  if (mine === null) return { ok: false, reading: false, reason: `the window's model stamps no fem_hash, so the nodes of ${quoted(c.label)} cannot be placed on it` };
+  if (mine !== m.femHash) {
+    return { ok: false, reading: false, reason: `the two variants' models are not one mesh (fem_hash ${mine} here, ${m.femHash} in ${quoted(c.label)}), so its values are not placed on this mesh; nodes are never interpolated` };
+  }
+  return { ok: true };
+}
+
+/**
+ * What the app reads for the compare user result shown, or null when nothing
+ * is to be read: not colouring by a contour, nothing picked, the difference on,
+ * the two meshes not one, a pick the file cannot give, or a stale entry (A6 by
+ * its own verdict: refused, never read). `key` names the read: the compare row,
+ * its user file, the entry and the component.
+ */
+export function compareUserRequestOf(s: State): { key: string; name: string; component: string } | null {
+  const v = s.variants;
+  const pick = v.shown;
+  if (s.visibility.colourBy !== "contour" || pick === null || v.difference) return null;
+  if (!compareMeshOf(s).ok) return null;
+  const p = compareUserPickOf(s, pick.name);
+  if (!p.ok || p.entry.stale.stale || !p.entry.components.includes(pick.component)) return null;
+  const c = v.compare as Extract<NonNullable<typeof v.compare>, { status: "open" }>;
+  const u = v.compareUser as Extract<NonNullable<typeof v.compareUser>, { status: "ready" }>;
+  return { key: JSON.stringify(["compare", c.index, c.label, u.path, pick.name, pick.component]), name: pick.name, component: pick.component };
+}
+
+/**
+ * The display string of compare variant `variant`'s user result `entry`, as
+ * the legend, the banner, a still's scale and the manifest's `user.name` show
+ * it. It can equal a window entry of that literal name, so it is never read
+ * back as a name: the manifest states `user.compare` apart (VF2-d, #2956).
+ */
+export function compareUserName(variant: string, entry: string): string {
+  return `${variant}: ${entry}`;
+}
+
+/** `contourView` on a compare user result: what its read gave, or why it draws nothing. */
+function compareUserContour(s: State, pick: { name: string; component: string }): ContourView {
+  if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
+  const cmp = s.variants.compare;
+  if (cmp?.status === "opening") return { state: "unavailable", reason: `the compare variant ${quoted(cmp.label)} is being opened` };
+  const label = `user result ${quoted(pick.name)} of the compare variant ${quoted(cmp?.label ?? "")}`;
+  const mesh = compareMeshOf(s);
+  if (!mesh.ok) return mesh.reading ? { state: "unavailable", reason: mesh.reason } : { state: "refused", code: "user", reason: `${label} is not drawn: ${mesh.reason}` };
+  if (s.variants.compareUser?.status === "reading") return { state: "unavailable", reason: `the user file of the compare variant ${quoted(cmp!.label)} is being read` };
+  const p = compareUserPickOf(s, pick.name);
+  if (!p.ok) return { state: "refused", code: "user", reason: p.reason };
+  if (p.entry.stale.stale) return { state: "refused", code: "user", reason: `${label} is stale (A6, against its own model and results): ${p.entry.stale.reason || "no reason given"}` };
+  if (!p.entry.components.includes(pick.component)) {
+    return { state: "refused", code: "user", reason: `${label} has no component ${quoted(pick.component)}; its components are ${p.entry.components.join(", ")}` };
+  }
+  const want = compareUserRequestOf(s)!;
+  const r = s.variants.shownRead;
+  if (!r || r.key !== want.key || r.status === "loading") return { state: "unavailable", reason: `${label} is being read` };
+  if (r.status === "refused") return { state: "refused", code: "user", reason: `${label} is refused: ${r.detail}` };
+  if (r.status === "failed") return { state: "refused", code: "user", reason: `${label} could not be read: ${r.error}` };
+  const c = s.contour;
+  const clim: Clim =
+    c.range === "fixed" ? climOf(c, null, null, "") : { min: r.range?.min ?? null, max: r.range?.max ?? null, mode: c.range, label: "range: this user result (one state, no history)" };
+  // The legend and the manifest name the compare variant with the entry: it is not the window set's file.
+  // VF2-d (#2956): the variant and the entry also stand apart, since the display string can equal a window entry's name.
+  const shownName = compareUserName(p.label, pick.name);
+  return {
+    state: "user",
+    name: shownName,
+    field: shownName,
+    compare: { variant: p.label, entry: pick.name },
+    component: { key: pick.component, label: pick.component, datasets: [pick.component], magnitude: false },
+    key: r.key,
+    read: r.read,
+    basis: p.entry.basis,
+    clim,
+    cmap: c.cmap,
+    nodes: r.nodes,
+    finite: r.finite,
+  };
+}
+
+/** `contourView` with the difference on: what its read gave, or why it draws nothing. */
+function differenceContour(s: State): ContourView {
+  if (!s.mesh) return { state: "unavailable", reason: "no mesh is loaded" };
+  const cmp = s.variants.compare;
+  if (cmp?.status === "opening") return { state: "unavailable", reason: `the compare variant ${quoted(cmp.label)} is being opened` };
+  const p = differencePlanOf(s)!;
+  if (!p.ok) return { state: "refused", code: "difference", reason: `the difference is refused: ${p.reason}` };
+  const r = s.variants.read;
+  if (!r || r.key !== p.key || r.status === "loading") return { state: "unavailable", reason: `the difference ${p.window} − ${p.compare} is being read` };
+  if (r.status === "refused") return { state: "refused", code: "difference", reason: `the difference is refused: ${r.reason}` };
+  const c = s.contour;
+  const clim: Clim =
+    c.range === "fixed" ? climOf(c, null, null, "") : { min: r.range?.min ?? null, max: r.range?.max ?? null, mode: c.range, label: "range: this difference (the step shown)" };
+  return { state: "difference", window: p.window, compare: p.compare, field: p.field, component: p.component, stageName: p.stageName, key: p.key, clim, cmap: c.cmap, nodes: r.nodes, missing: r.missing };
+}
+
+// -- the Hinges card ---------------------------------------------------------
+
+/** How the results file's element rows join the model's elements, for the hinge reads. */
+export function hingeJoinOf(s: State): LadrunoElementJoin {
+  // Asked at every step and store event while the card is on, and it walks every declaration: kept until its inputs change.
+  const m = hingeJoinMemo.get(s.decls);
+  if (m && m.results === s.results && m.model === s.artifacts.model && m.lineage === s.lineage && m.definitions === s.definitions) return m.join;
+  const join = joinLadrunoElements(s.decls, resultsPairing(s), s.results?.elementIndexSpace ?? null);
+  hingeJoinMemo.set(s.decls, { results: s.results, model: s.artifacts.model, lineage: s.lineage, definitions: s.definitions, join });
+  return join;
+}
+const hingeJoinMemo = new WeakMap<object, { results: unknown; model: unknown; lineage: unknown; definitions: unknown; join: LadrunoElementJoin }>();
+
+/** The element the card plots: the last hinged element picked, the menu's, else the first hinged one. */
+export function hingeFocusOf(s: State): DeclPath | null {
+  const { sites, byDecl } = hingeSitesOf(s.decls);
+  for (let i = s.selection.decls.length - 1; i >= 0; i--) if (byDecl.has(s.selection.decls[i]!)) return s.selection.decls[i]!;
+  for (let i = s.selection.picks.length - 1; i >= 0; i--) if (byDecl.has(s.selection.picks[i]!.decl)) return s.selection.picks[i]!.decl;
+  if (s.hinges.element !== null && byDecl.has(s.hinges.element)) return s.hinges.element;
+  return sites[0]?.decl ?? null;
+}
+
+/** What the effects must read for the card's plot, or null; or why nothing can be read. */
+export function hingeHistoryWanted(s: State): { path: string; stage: number; stageId: string; element: number } | { refused: string } | null {
+  const at = s.phase.at;
+  if (!s.hinges.on || at?.kind !== "results" || !s.results) return null;
+  const stage = s.results.stages[at.stage];
+  const focus = hingeFocusOf(s);
+  if (!stage || !focus || (stage.hinges ?? 0) === 0) return null;
+  const join = hingeJoinOf(s);
+  if (!join.ok) return { refused: join.reason };
+  const element = join.byDeclPath.get(focus);
+  if (element === undefined) return { refused: `${focus} has no element id in the results file's id space` };
+  return { path: s.results.path, stage: at.stage, stageId: stage.id, element };
+}
+
+export interface HingeChart {
+  readonly curve: HingeCurve;
+  /** the step on screen, an index into the curve */
+  readonly step: number;
+  /** the moment capacity `model.h5` names for this hinge and axis, or null */
+  readonly capacity: number | null;
+}
+
+export interface HingeView {
+  readonly count: number;
+  readonly refused: readonly string[];
+  readonly elements: readonly { readonly decl: DeclPath; readonly label: string }[];
+  readonly focus: DeclPath | null;
+  readonly ends: readonly ("i" | "j")[];
+  readonly end: "i" | "j" | null;
+  readonly axes: readonly ("z" | "y")[];
+  readonly axis: "z" | "y" | null;
+  readonly site: HingeSite | null;
+  readonly siteText: string | null;
+  /** how the marker colours are scaled, in words; null off a results step */
+  readonly scale: string | null;
+  readonly chart: HingeChart | null;
+  /** what is missing, by name */
+  readonly notes: readonly string[];
+}
+
+/** Everything the Hinges card shows. */
+export function hingeViewOf(s: State): HingeView {
+  const { sites, byDecl, refused } = hingeSitesOf(s.decls);
+  const elements = [...byDecl].map(([decl, list]) => ({ decl, label: `${list[0]!.type} ${list[0]!.tag}` }));
+  const focus = hingeFocusOf(s);
+  const here = (focus !== null ? byDecl.get(focus) : undefined) ?? [];
+  const ends = (["i", "j"] as const).filter((e) => here.some((h) => h.end === e));
+  const end = ends.includes(s.hinges.end) ? s.hinges.end : (ends[0] ?? null);
+  const site = here.find((h) => h.end === end) ?? null;
+  const axes = site ? (["z", "y"] as const).filter((a) => (a === "z" ? site.z : site.y) !== null) : [];
+  const axis = axes.includes(s.hinges.axis) ? s.hinges.axis : (axes[0] ?? null);
+  const notes: string[] = [];
+  const capacity = site && axis ? hingeCapacityOf(s.decls, site, axis) : null;
+  let siteText: string | null = null;
+  if (site) {
+    const where = site.xi !== null ? `at xi = ${Number(site.xi.toPrecision(4))}` : site.offset > 0 ? `${Number(site.offset.toPrecision(4))} from node ${site.end}` : `at node ${site.end}`;
+    const mat = axis === "y" ? site.y : site.z;
+    const d = mat ? hingeMaterialDecl(s.decls, mat) : undefined;
+    siteText = `${site.biaxial ? "coupled biaxial hinge" : "hinge"} ${where}${d ? `, ${d.type} ${mat!.tag}` : ""}${capacity && "value" in capacity ? `, capacity ${Number(capacity.value.toPrecision(4))}` : ""}`;
+  }
+  if (capacity && "missing" in capacity) notes.push(`Capacity: ${capacity.missing}.`);
+  const at = s.phase.at;
+  let chart: HingeChart | null = null;
+  let scale: string | null = null;
+  if (at?.kind === "results" && s.results) {
+    const stage = s.results.stages[at.stage];
+    if ((stage?.hinges ?? 0) === 0) notes.push("This stage does not record hingeSummary, so the hinges have no output here.");
+    else {
+      scale = s.hinges.colorBy === "capacity" ? "colour: 0 to 1 x capacity" : `colour: 0 to the ${s.hinges.colorBy === "rotation" ? "largest rotation" : "largest moment"} of the ${stage!.hingeStageRange ? "stage" : "step on screen (this stage is too large to scan)"}`;
+      const wanted = hingeHistoryWanted(s);
+      if (wanted && "refused" in wanted) notes.push(`Hinge output is not joined to the model: ${wanted.refused}.`);
+      const h = s.hinges.history;
+      if (wanted && !("refused" in wanted) && h && h.stage === wanted.stage && h.element === wanted.element && end && axis) {
+        chart = { curve: hingeCurveOf(h, end, axis), step: Math.min(at.step, h.time.length - 1), capacity: capacity && "value" in capacity ? capacity.value : null };
+      }
+    }
+    if (s.hinges.notice) notes.push(s.hinges.notice);
+  }
+  return { count: sites.length, refused, elements, focus, ends, end, axes, axis, site, siteText, scale, chart, notes };
 }

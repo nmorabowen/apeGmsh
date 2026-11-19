@@ -6,10 +6,15 @@
 // Pure: no three.js and no DOM, so the tests run it in Node. Cells are
 // recognised by their gmsh element-type `code` (gmsh's own numbering,
 // stored on every /elements block); only corner nodes are drawn. Solids
-// draw their boundary faces only. An unknown code is a loud warning.
+// draw their boundary faces only. A file-coded block (code = -class_tag)
+// of a catalogued class is drawn as the shape its dim and npe resolve to
+// (./fileCoded.ts). An unknown code, or a file-coded block that is not
+// drawn, is a loud warning.
 
 import type { ElementRef } from "../chain/resolve.ts";
 import type { ModelFile } from "../model/types.ts";
+import { isFileCoded, resolveFileCoded } from "./fileCoded.ts";
+import { MEMBRANE_TYPE, meshedPanelNodeSets, membraneLoops, triangulateLoops } from "./membrane.ts";
 
 type Shape = "point" | "line" | "tri" | "quad" | "tet" | "hex" | "prism" | "pyramid";
 
@@ -121,20 +126,33 @@ export function buildMesh(model: ModelFile): MeshBuffers {
     lr.push(ref);
   };
   const polygons: number[][] = [];
+  const pushTri = (a: number, b: number, c: number, ref: ElementRef) => {
+    push3(tp, a); push3(tp, b); push3(tp, c);
+    tn.push(model.nodeIds[a]!, model.nodeIds[b]!, model.nodeIds[c]!);
+    tr.push(ref);
+  };
   const pushFace = (ids: number[], ref: ElementRef) => {
     polygons.push(ids);
-    for (let k = 1; k + 1 < ids.length; k++) {
-      push3(tp, ids[0]!); push3(tp, ids[k]!); push3(tp, ids[k + 1]!);
-      tn.push(model.nodeIds[ids[0]!]!, model.nodeIds[ids[k]!]!, model.nodeIds[ids[k + 1]!]!);
-      tr.push(ref);
-    }
+    for (let k = 1; k + 1 < ids.length; k++) pushTri(ids[0]!, ids[k]!, ids[k + 1]!, ref);
   };
 
   // Solid boundary faces: a face seen once is on the boundary.
   const solidFaces = new Map<string, { ids: number[]; ref: ElementRef; n: number }>();
 
   model.blocks.forEach((b, blockIndex) => {
-    const shape = GMSH_SHAPE[b.code];
+    // A file-coded block (code = -class_tag, a model rebuilt from a .ladruno
+    // or MPCO file) is drawn as the gmsh shape its class's known dim and its
+    // npe resolve to; any other is refused (./fileCoded.ts).
+    let code = b.code;
+    if (isFileCoded(b.code)) {
+      const r = resolveFileCoded({ className: b.gmshName ?? null, code: b.code, dim: b.dim, npe: b.npe });
+      if ("refused" in r) {
+        warnings.push(`/elements/${b.alias}: ${r.refused}; not drawn (${b.ids.length} cells)`);
+        return;
+      }
+      code = r.code;
+    }
+    const shape = GMSH_SHAPE[code];
     if (shape === undefined) {
       warnings.push(`/elements/${b.alias}: gmsh type code ${b.code} is not drawn (${b.ids.length} cells)`);
       return;
@@ -179,16 +197,43 @@ export function buildMesh(model: ModelFile): MeshBuffers {
   });
   for (const f of solidFaces.values()) if (f.n === 1) pushFace(f.ids, f.ref);
 
-  // OpenSees-only elements (no neutral-zone cell): drawn from inline connectivity.
+  // OpenSees-only elements (no neutral-zone cell): drawn from inline
+  // connectivity, a membrane as its polygon. A row with neither is named, so
+  // it never vanishes silently (#2667).
+  const meshedPanels = meshedPanelNodeSets(model);
   model.opensees?.elementMeta.forEach((meta, metaIndex) => {
-    if (!meta.inlineConnectivity) return;
-    meta.inlineConnectivity.forEach((conn, row) => {
-      if (meta.femEids[row]! >= 0 || conn.length < 2) return;
-      const idx = conn.map(at);
-      if (idx.some((i) => i < 0)) return;
+    let undrawn = 0;
+    meta.femEids.forEach((fe, row) => {
+      if (fe >= 0) return;
+      const ref: ElementRef = { kind: "ops", metaIndex, row };
+      const conn = meta.inlineConnectivity?.[row] ?? [];
+      if (conn.length >= 2) {
+        const idx = conn.map(at);
+        if (idx.some((i) => i < 0)) return;
+        counts.opsOnly++;
+        for (let k = 0; k + 1 < idx.length; k++) pushSeg(idx[k]!, idx[k + 1]!, ref);
+        return;
+      }
+      const loops = meta.type === MEMBRANE_TYPE ? membraneLoops(meta.args[row] ?? []) : null;
+      if (!loops) {
+        undrawn++;
+        return;
+      }
+      // A pg= panel: its own mesh cells are the drawing.
+      if (meshedPanels.some((nodes) => loops.outer.every((n) => nodes.has(n)))) return;
+      const outer = loops.outer.map(at);
+      const holes = loops.holes.map((h) => h.map(at));
+      if (outer.some((i) => i < 0) || holes.some((h) => h.some((i) => i < 0))) return;
+      const tris = triangulateLoops(xyz, outer, holes);
+      if (!tris.length) {
+        undrawn++;
+        return;
+      }
       counts.opsOnly++;
-      for (let k = 0; k + 1 < idx.length; k++) pushSeg(idx[k]!, idx[k + 1]!, { kind: "ops", metaIndex, row });
+      polygons.push(outer, ...holes);
+      for (const t of tris) pushTri(t[0], t[1], t[2], ref);
     });
+    if (undrawn) warnings.push(`${meta.path}: ${undrawn} bridge-minted element${undrawn === 1 ? " has" : "s have"} no connectivity to draw; not drawn`);
   });
 
   if (missingNodes.size) {

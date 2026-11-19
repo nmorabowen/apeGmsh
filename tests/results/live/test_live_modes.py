@@ -3,18 +3,26 @@
 The fake answers the openseespy queries the capture makes (``getNDM``,
 ``getNodeTags``, ``getNDF``, ``nodeCoord``, ``getEleTags``, ``eleType``,
 ``eleNodes``, ``eigen``, ``nodeEigenvector``) from tables the test writes,
-so the expected file is known entry by entry:
+so the expected file is known entry by entry. The file is a ``.ladruno``
+(ADR 0131 D10, W1b #2768), read back through ``Results.from_ladruno``:
 
 * every written shape is the raw ``nodeEigenvector`` of its node and mode
-  (no scaling), and every eigenvalue is the solve's, bit for bit;
-* a rotation slot holds the rotation only where a beam touches the node;
-  a 3-D solid node writes 0.0 there, and a node under an unknown class
-  writes 0.0 with one ``RotationSlotUnresolvedWarning``;
+  (no scaling), and every eigenvalue is the solve's, bit for bit, with
+  ``f = √λ/2π`` and ``T = 2π/√λ`` (the native route's values);
+* a rotation slot holds the rotation only where a beam touches the node,
+  and a 3-D solid node has none; an ``ASDEmbeddedNodeElement`` neither
+  gives nor takes one away, a rotation-only beam class
+  (``_ROTATION_TOKEN_FOR_LIVE_CLASS``) gives one, and a rotation slot an
+  unknown class (or no rotational class) leaves unsettled refuses by
+  node, slot and class, writing nothing (#2407, ruling R6 = (A));
+* the stamp: a FEMData (or its ``fem.to_h5`` archive) gives ``fem_hash``
+  alone, byte-equal to the archive's (ADR 0133 D1); a refused stamp
+  leaves no file and no staging directory;
 * each refusal (wrong coordinates, a missing node, a non-positive or
   non-finite eigenvalue, a failed solve, a short solve, a vector whose
   length is not the node's ndf,
-  ``n_modes`` < 1, the archive as the output path) names its cause and
-  writes nothing.
+  ``n_modes`` < 1, the archive as the output path, an ``.h5`` path) names
+  its cause and writes nothing.
 
 The stock-openseespy oracle is ``tests/opensees/live/test_live_modes_live.py``.
 """
@@ -25,16 +33,16 @@ import warnings
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 import pytest
 
 from apeGmsh.mesh._element_types import ElementGroup, make_type_info
 from apeGmsh.mesh._group_set import LabelSet, PhysicalGroupSet
 from apeGmsh.mesh.FEMData import ElementComposite, FEMData, MeshInfo, NodeComposite
-from apeGmsh.opensees.analysis.eigen import RotationSlotUnresolvedWarning
-from apeGmsh.opensees.opensees_model import OpenSeesModel
 from apeGmsh.results import Results
 from apeGmsh.results.live import capture_live_modes
+from apeGmsh.results.writers import ProvenanceStampRefused
 
 _AXES = ("x", "y", "z")
 
@@ -77,6 +85,10 @@ class FakeOps:
         self.vectors = {(n, k): rng.standard_normal(ndf[n]) * 10.0 ** (k - 3)
                         for n in coords for k in range(1, len(eigenvalues) + 1)}
         self.solved: "list[int]" = []
+        #: ``{node: [dof, ...]}`` the ``fix`` commands hold (1-based).
+        self.fixed: "dict[int, list[int]]" = {}
+        #: The handler keeps an equation at a fixed DOF (Penalty, Lagrange).
+        self.fixed_keep_equations = False
         #: The arguments of each ``eigen`` call.
         self.calls: "list[tuple[Any, ...]]" = []
 
@@ -100,6 +112,16 @@ class FakeOps:
 
     def eleNodes(self, tag: int) -> list[int]:
         return list(self.elements[tag][1])
+
+    def getFixedDOFs(self, n: int) -> list[int]:
+        return list(self.fixed.get(n, []))
+
+    def nodeDOFs(self, n: int) -> list[int]:
+        """-1 at a fixed DOF (no equation) unless the handler keeps one;
+        some equation number elsewhere."""
+        fixed = set(self.fixed.get(n, []))
+        return [-1 if d + 1 in fixed and not self.fixed_keep_equations
+                else 100 * n + d for d in range(self.ndf[n])]
 
     def eigen(self, *args: Any) -> list[float]:
         self.calls.append(args)
@@ -143,16 +165,16 @@ def _solid_and_frame(beam_class: str = "ElasticBeam3d") -> "tuple[FEMData, FakeO
     return fem, ops
 
 
-def _model(fem: FEMData, tmp: Path) -> OpenSeesModel:
+def _model(fem: FEMData, tmp: Path) -> Path:
     archive = tmp / "read_model.h5"
     if not archive.exists():
         fem.to_h5(str(archive))
-    return OpenSeesModel.from_h5(archive)
+    return archive
 
 
 def _read(p: Path, fem: FEMData) -> "dict[int, dict[str, dict[int, float]]]":
     out: dict[int, dict[str, dict[int, float]]] = {}
-    with Results.from_native(p, model=_model(fem, p.parent)) as res:
+    with Results.from_ladruno(p, model_h5=_model(fem, p.parent)) as res:
         for m in res.modes:
             comps: dict[str, dict[int, float]] = {}
             for c in m.nodes.available_components():
@@ -172,7 +194,7 @@ def test_2d_frame_writes_the_raw_vectors(tmp_path: Path) -> None:
     fem, ops = _frame_2d()
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        p = capture_live_modes(fem, 3, tmp_path / "modes.h5", ops=ops)
+        p = capture_live_modes(fem, 3, tmp_path / "modes.ladruno", ops=ops)
     assert ops.solved == [3]
     got = _read(p, fem)
     assert sorted(got) == [1, 2, 3]
@@ -180,14 +202,15 @@ def test_2d_frame_writes_the_raw_vectors(tmp_path: Path) -> None:
         assert set(comps) == {"displacement_x", "displacement_y", "rotation_z"}
         for d, c in enumerate(("displacement_x", "displacement_y", "rotation_z")):
             assert comps[c] == {n: float(ops.vectors[(n, k)][d]) for n in (1, 2, 3)}
-    with Results.from_native(p, model=_model(fem, tmp_path)) as res:
+    with Results.from_ladruno(p, model_h5=_model(fem, tmp_path)) as res:
         modes = sorted(res.modes, key=lambda m: m.mode_index)
+        assert len(modes) == 3
         for m, lam in zip(modes, ops.eigenvalues):
             assert m.eigenvalue == lam
             assert m.frequency_hz == math.sqrt(lam) / (2.0 * math.pi)
             assert m.period_s == 2.0 * math.pi / math.sqrt(lam)
-    # The one-call route for a bare FEMData opens the same modes.
-    with Results.from_fem(fem, p, kind="native", cache_root=tmp_path / "c") as res:
+    # The FEMData itself binds the same modes, with no archive.
+    with Results.from_ladruno(p, fem=fem) as res:
         assert [m.eigenvalue for m in sorted(res.modes, key=lambda m: m.mode_index)] \
             == ops.eigenvalues
 
@@ -198,7 +221,7 @@ def test_solid_and_frame_rotations_only_on_beam_nodes(tmp_path: Path) -> None:
     fem.to_h5(str(archive))
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        p = capture_live_modes(str(archive), 4, tmp_path / "modes.h5", ops=ops)
+        p = capture_live_modes(str(archive), 4, tmp_path / "modes.ladruno", ops=ops)
     got = _read(p, fem)
     for k, comps in got.items():
         assert set(comps) == {f"displacement_{a}" for a in _AXES} | {
@@ -211,14 +234,278 @@ def test_solid_and_frame_rotations_only_on_beam_nodes(tmp_path: Path) -> None:
                 assert comps[f"rotation_{a}"][n] == want
 
 
-def test_an_unknown_class_writes_zero_rotations_with_one_warning(tmp_path: Path) -> None:
+_ROT3 = r"\['rotation_x', 'rotation_y', 'rotation_z'\]"
+
+
+def _refuses(fem: FEMData, ops: FakeOps, out: Path, match: str) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match=match):
+            capture_live_modes(fem, 2, out, ops=ops)
+    assert not out.exists()
+
+
+def test_an_unknown_class_refuses_by_node_slot_and_class(tmp_path: Path) -> None:
+    """#2407, ruling R6 = (A): the beam nodes of an unknown class would be
+    written as 0.0 rotations (with a warning, before); the capture now
+    refuses, naming the first node, its rotation slots and the class."""
     fem, ops = _solid_and_frame(beam_class="SomeUnknownBeam")
-    with pytest.warns(RotationSlotUnresolvedWarning, match=r"capture_live_modes") as rec:
-        p = capture_live_modes(fem, 2, tmp_path / "modes.h5", ops=ops)
-    assert len(rec) == 1
-    got = _read(p, fem)
-    # No node holds a rotation, so no rotation component is written.
-    assert set(got[1]) == {f"displacement_{a}" for a in _AXES}
+    _refuses(fem, ops, tmp_path / "modes.ladruno",
+             rf"capture_live_modes: node 9's rotation slots {_ROT3} cannot be "
+             r"settled: a SomeUnknownBeam touches it.*\(3 node\(s\): "
+             r"\[9, 10, 11\]\)\. Nothing was written")
+
+
+def test_an_unknown_class_beside_a_beam_still_refuses(tmp_path: Path) -> None:
+    """A node a known beam and an unknown class both touch: the unknown
+    class wins, so node 11 refuses by its name."""
+    fem, ops = _solid_and_frame()
+    ops.elements[4] = ("SomeUnknownLink", [11])
+    _refuses(fem, ops, tmp_path / "modes.ladruno",
+             rf"node 11's rotation slots {_ROT3} cannot be settled: a "
+             r"SomeUnknownLink touches it.*\(1 node\(s\): \[11\]\)")
+
+
+def test_an_unknown_class_on_translation_only_nodes_does_not_refuse(
+    tmp_path: Path,
+) -> None:
+    """An unknown class over ndf-3 nodes (no rotation slot) settles nothing
+    and refuses nothing: the beam nodes still read their rotations."""
+    fem, ops = _solid_and_frame()
+    ops.elements[1] = ("SomeUnknownSolid", list(range(1, 9)))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
+    for k, comps in _read(p, fem).items():
+        for n in (9, 10, 11):
+            for d, a in enumerate(_AXES):
+                assert comps[f"rotation_{a}"][n] == float(ops.vectors[(n, k)][3 + d])
+
+
+def test_an_embedded_node_element_is_neutral(tmp_path: Path) -> None:
+    """#2407: an ``ASDEmbeddedNodeElement`` tying beam node 9 into the
+    brick (``-rot``) neither blocks nor gives a rotation: node 9 reads the
+    live rotations, as nodes 10 and 11 do. Before, the class was unknown,
+    and node 9 was written as 0.0."""
+    fem, ops = _solid_and_frame()
+    ops.elements[4] = ("ASDEmbeddedNodeElement", [9, 1, 2, 4, 5])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
+    for k, comps in _read(p, fem).items():
+        for n in (9, 10, 11):
+            for d, a in enumerate(_AXES):
+                assert comps[f"rotation_{a}"][n] == float(ops.vectors[(n, k)][3 + d])
+                assert comps[f"rotation_{a}"][n] != 0.0
+
+
+def test_a_node_only_an_embedded_node_element_touches_refuses(tmp_path: Path) -> None:
+    """Neutral is not rotational: an ndf-6 node that only an
+    ``ASDEmbeddedNodeElement`` touches has no element that makes its slots
+    rotations, so it refuses (no class to name)."""
+    fem, ops = _solid_and_frame()
+    ops.elements[3] = ("Truss", [10, 11])      # node 11: no rotational class
+    ops.elements[4] = ("ASDEmbeddedNodeElement", [11, 1, 2, 4, 5])
+    _refuses(fem, ops, tmp_path / "modes.ladruno",
+             rf"node 11's rotation slots {_ROT3} cannot be settled: no "
+             r"beam-column or shell \(or zero-length\) element touches it")
+
+
+def _truss_tail() -> "tuple[FEMData, FakeOps]":
+    """The solid-and-frame model with beam 3 swapped for a truss: node 11
+    (ndf 6) is touched by no rotational class."""
+    fem, ops = _solid_and_frame()
+    ops.elements[3] = ("Truss", [10, 11])
+    return fem, ops
+
+
+def test_a_fixed_rotation_slot_is_written_as_zero(tmp_path: Path) -> None:
+    """Review F1: node 11's rotation DOFs are all fixed, so their modal
+    value is 0 whatever the slot means, and the capture writes 0.0 there
+    instead of refusing."""
+    fem, ops = _truss_tail()
+    ops.fixed[11] = [1, 2, 3, 4, 5, 6]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
+    for k, comps in _read(p, fem).items():
+        for a in _AXES:
+            assert comps[f"rotation_{a}"][11] == 0.0
+        for n in (9, 10):
+            for d, a in enumerate(_AXES):
+                assert comps[f"rotation_{a}"][n] == float(ops.vectors[(n, k)][3 + d])
+
+
+@pytest.mark.parametrize("fixed, keep", [
+    ([], False), ([1, 2, 3], False), ([1, 2, 3, 4, 5], False),
+    ([1, 2, 3, 4, 5, 6], True),
+], ids=["none", "translations", "two-rotations", "fixed-with-equations"])
+def test_a_rotation_slot_not_all_fixed_still_refuses(
+    fixed: "list[int]", keep: bool, tmp_path: Path,
+) -> None:
+    """Delta review F1: a fixed DOF the handler keeps an equation for
+    (Penalty, Lagrange: ``nodeDOFs`` is no -1) moves in the modes, so it
+    refuses like an unfixed one."""
+    fem, ops = _truss_tail()
+    ops.fixed[11] = fixed
+    ops.fixed_keep_equations = keep
+    _refuses(fem, ops, tmp_path / "modes.ladruno",
+             rf"node 11's rotation slots {_ROT3} cannot be settled")
+
+
+@pytest.mark.parametrize("beam_class", ["MixedBeamColumn3d", "ElasticForceBeamColumn3d"])
+def test_a_rotation_only_beam_class_reads_its_rotations(
+    beam_class: str, tmp_path: Path,
+) -> None:
+    """#2414: a stock beam class the pairing does not type
+    (``_ROTATION_TOKEN_FOR_LIVE_CLASS``) still makes its nodes' slots
+    rotations, so they read the live vectors."""
+    fem, ops = _solid_and_frame(beam_class=beam_class)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
+    for k, comps in _read(p, fem).items():
+        for n in (9, 10, 11):
+            for d, a in enumerate(_AXES):
+                assert comps[f"rotation_{a}"][n] == float(ops.vectors[(n, k)][3 + d])
+
+
+def test_the_rotation_tables_type_rotational_families_only() -> None:
+    """Each rotation-only class takes a rotational family's token, apart
+    from the pairing table (so the pairing still refuses it), and the
+    neutral classes are in neither."""
+    from apeGmsh.opensees import _recorder_translate as rt
+    from apeGmsh.opensees._readback import _CLASS_FOR_TOKEN, _ROTATIONAL_FAMILIES
+
+    rot = rt._ROTATION_TOKEN_FOR_LIVE_CLASS
+    assert rot and not set(rot) & set(rt._TOKEN_FOR_LIVE_CLASS)
+    for name, token in rot.items():
+        assert issubclass(_CLASS_FOR_TOKEN[token], _ROTATIONAL_FAMILIES), name
+    assert not rt._ROTATION_NEUTRAL_LIVE_CLASSES & (
+        set(rot) | set(rt._TOKEN_FOR_LIVE_CLASS))
+
+
+# ---------------------------------------------------------------------------
+# The stamp (ADR 0133): fem_hash alone for a FEMData, both for a bridge
+# ---------------------------------------------------------------------------
+
+
+def _stamp(p: Path) -> "dict[str, str]":
+    with h5py.File(p, "r") as f:
+        return {k: str(v) for k, v in f["INFO/PROVENANCE"].attrs.items()}
+
+
+def _lineage(archive: Path) -> "dict[str, str]":
+    with h5py.File(archive, "r") as f:
+        return {k: str(v) for k, v in f["meta/lineage"].attrs.items()
+                if k in ("model_hash", "fem_hash")}
+
+
+@pytest.mark.parametrize("form", ["femdata", "archive"])
+def test_a_femdata_capture_is_stamped_by_fem_hash_alone(tmp_path: Path, form: str) -> None:
+    """The #2342 route: no bridge, so no model_hash; the stamp carries the
+    archive's fem_hash byte for byte, the one ``fem.to_h5`` writes, so the
+    file pairs with the user's own archive of the mesh."""
+    fem, ops = _frame_2d()
+    archive = tmp_path / "model.h5"
+    fem.to_h5(str(archive))
+    want = _lineage(archive)
+    assert set(want) == {"fem_hash"}, "precondition: a FEMData archive has no model_hash"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        p = capture_live_modes(fem if form == "femdata" else archive, 3,
+                               tmp_path / "modes.ladruno", ops=ops)
+    stamp = _stamp(p)
+    assert "model_hash" not in stamp
+    assert stamp["fem_hash"] == want["fem_hash"]
+    assert stamp["writer"].startswith("apeGmsh live_modes->ladruno ")
+    assert stamp["unsupported"] == '["elements"]'
+
+
+def _truss_bridge(path: Path) -> Path:
+    """A bridge-written archive (``ops.h5``) of two bars on nodes 1-2-3."""
+    from apeGmsh.opensees import apeSees
+
+    node_ids = np.array([1, 2, 3], dtype=np.int64)
+    coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    info = make_type_info(code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=2)
+    group = ElementGroup(element_type=info, ids=np.array([2, 3], dtype=np.int64),
+                         connectivity=np.array([[1, 2], [2, 3]], dtype=np.int64))
+    pg = PhysicalGroupSet({(1, 1): {"name": "Bars", "node_ids": node_ids,
+                                    "node_coords": coords, "element_ids": group.ids}})
+    fem = FEMData(
+        nodes=NodeComposite(node_ids=node_ids, node_coords=coords, physical=pg,
+                            labels=LabelSet({})),
+        elements=ElementComposite(groups={1: group}, physical=pg, labels=LabelSet({})),
+        info=MeshInfo(n_nodes=3, n_elems=2, bandwidth=2, types=[info]),
+    )
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=2)
+    ops.element.Truss(pg="Bars", A=1.0,
+                      material=ops.uniaxialMaterial.ElasticMaterial(E=1000.0))
+    ops.h5(str(path))
+    return path
+
+
+def test_a_bridge_archive_capture_carries_both_hashes(tmp_path: Path) -> None:
+    archive = _truss_bridge(tmp_path / "bridge.h5")
+    want = _lineage(archive)
+    assert set(want) == {"model_hash", "fem_hash"}
+    ops = FakeOps(2, {1: [0.0, 0.0], 2: [1.0, 0.0], 3: [2.0, 0.0]},
+                  {1: 2, 2: 2, 3: 2},
+                  {2: ("Truss", [1, 2]), 3: ("Truss", [2, 3])}, [4.0, 9.0])
+    p = capture_live_modes(archive, 2, tmp_path / "modes.ladruno", ops=ops)
+    stamp = _stamp(p)
+    assert {k: stamp[k] for k in want} == want
+    with Results.from_ladruno(p, model_h5=archive) as res:
+        assert [m.eigenvalue for m in sorted(res.modes, key=lambda m: m.mode_index)] \
+            == [4.0, 9.0]
+
+
+class _ForkOps(FakeOps):
+    """The fake, answering the fork's one signal (``ladrunoBuild``)."""
+
+    def ladrunoBuild(self) -> str:  # noqa: N802 -- the OpenSees command name
+        return "0123456789abcdef0123456789abcdef01234567"
+
+
+@pytest.mark.parametrize("fork, backend", [(False, "unknown"), (True, "ladruno")])
+def test_the_backend_stamp_names_only_a_proven_engine(
+    tmp_path: Path, fork: bool, backend: str,
+) -> None:
+    """ADR 0131 D6 carry-forward (W2 review): a Python-written file never
+    claims the fork's engine by default. Stock openseespy stamps
+    ``"unknown"`` (§7b.1 keeps ``"stock"`` for a converted file); only a
+    module that answers ``ladrunoBuild`` stamps the fork's engine."""
+    fem, stock = _frame_2d()
+    ops = stock
+    if fork:
+        ops = _ForkOps(stock.ndm, stock.coords, stock.ndf, stock.elements,
+                       stock.eigenvalues)
+    p = capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)
+    stamp = _stamp(p)
+    assert stamp["opensees_backend"] == backend
+    assert stamp["opensees_build_sha"] == "unknown"
+
+
+def test_a_refused_stamp_leaves_no_file_behind(tmp_path: Path) -> None:
+    """An archive the stamp refuses (no /meta/lineage): nothing new at the
+    path, no staging directory, and a file already there is untouched."""
+    fem, ops = _frame_2d()
+    archive = tmp_path / "model.h5"
+    fem.to_h5(str(archive))
+    with h5py.File(archive, "r+") as f:
+        del f["meta/lineage"]
+    out = tmp_path / "modes.ladruno"
+    with pytest.raises(ProvenanceStampRefused, match=r"no /meta/lineage"):
+        capture_live_modes(archive, 2, out, ops=ops)
+    assert sorted(q.name for q in tmp_path.iterdir()) == ["model.h5"]
+
+    out.write_bytes(b"an earlier file")
+    with pytest.raises(ProvenanceStampRefused):
+        capture_live_modes(archive, 2, out, ops=ops)
+    assert out.read_bytes() == b"an earlier file"
+    assert sorted(q.name for q in tmp_path.iterdir()) == ["model.h5", "modes.ladruno"]
 
 
 # ---------------------------------------------------------------------------
@@ -226,10 +513,19 @@ def test_an_unknown_class_writes_zero_rotations_with_one_warning(tmp_path: Path)
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("name", ["modes.h5", "MODES.H5"])
+def test_an_h5_path_refuses_before_the_solve(tmp_path: Path, name: str) -> None:
+    fem, ops = _frame_2d()
+    out = tmp_path / name
+    with pytest.raises(ValueError, match=r"capture_live_modes: path .* has an \.h5 suffix"):
+        capture_live_modes(fem, 2, out, ops=ops)
+    assert ops.solved == [] and not out.exists()
+
+
 def test_wrong_coordinates_refuse_by_node(tmp_path: Path) -> None:
     fem, ops = _frame_2d()
     ops.coords[2] = [1.5, 1.0]
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"capture_live_modes: .*node 2: live"):
         capture_live_modes(fem, 2, out, ops=ops)
     assert ops.solved == [] and not out.exists()
@@ -238,7 +534,7 @@ def test_wrong_coordinates_refuse_by_node(tmp_path: Path) -> None:
 def test_a_missing_node_refuses_by_id(tmp_path: Path) -> None:
     fem, ops = _frame_2d()
     del ops.coords[3]
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"capture_live_modes: nodes \[3\] are not in the live domain"):
         capture_live_modes(fem, 2, out, ops=ops)
     assert ops.solved == [] and not out.exists()
@@ -248,7 +544,7 @@ def test_a_missing_node_refuses_by_id(tmp_path: Path) -> None:
 def test_a_non_positive_eigenvalue_refuses_by_mode(tmp_path: Path, lam: float) -> None:
     fem, ops = _frame_2d()
     ops.eigenvalues = [4.0, lam, 300.0]
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"capture_live_modes: mode 2 has a non-positive or non-finite eigenvalue"):
         capture_live_modes(fem, 3, out, ops=ops)
     assert not out.exists()
@@ -265,7 +561,7 @@ def test_a_failed_solve_refuses_with_the_cause(tmp_path: Path) -> None:
         raise _SolverError("See stderr output")
 
     ops.eigen = fail  # type: ignore[method-assign,assignment]
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"ops.eigen\(2\) failed .*wipeAnalysis") as err:
         capture_live_modes(fem, 2, out, ops=ops)
     assert isinstance(err.value.__cause__, _SolverError)
@@ -282,13 +578,13 @@ def test_a_failed_solve_refuses_with_the_cause(tmp_path: Path) -> None:
 @pytest.mark.parametrize("solver", ["-genBandArpack", "-fullGenLapack"])
 def test_the_solver_flag_is_forwarded(tmp_path: Path, solver: str) -> None:
     fem, ops = _frame_2d()
-    capture_live_modes(fem, 3, tmp_path / "modes.h5", ops=ops, solver=solver)
+    capture_live_modes(fem, 3, tmp_path / "modes.ladruno", ops=ops, solver=solver)
     assert ops.calls == [(solver, 3)]
 
 
 def test_no_solver_calls_the_default(tmp_path: Path) -> None:
     fem, ops = _frame_2d()
-    capture_live_modes(fem, 3, tmp_path / "modes.h5", ops=ops)
+    capture_live_modes(fem, 3, tmp_path / "modes.ladruno", ops=ops)
     assert ops.calls == [(3,)]
 
 
@@ -297,7 +593,7 @@ def test_an_unknown_solver_flag_refuses_by_name(tmp_path: Path, solver: str) -> 
     """openseespy ignores an unknown flag and solves with its default, so
     the capture must refuse it rather than pass it on."""
     fem, ops = _frame_2d()
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=rf"solver={solver!r} is not an eigen solver flag"):
         capture_live_modes(fem, 2, out, ops=ops, solver=solver)
     assert ops.calls == [] and not out.exists()
@@ -316,7 +612,7 @@ def test_the_docstring_guards_the_capture_s_own_solve() -> None:
 
 def test_a_short_solve_refuses(tmp_path: Path) -> None:
     fem, ops = _frame_2d()
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"ops.eigen\(5\) returned 3 eigenvalue"):
         capture_live_modes(fem, 5, out, ops=ops)
     assert not out.exists()
@@ -325,7 +621,7 @@ def test_a_short_solve_refuses(tmp_path: Path) -> None:
 def test_a_vector_longer_than_the_live_ndf_refuses(tmp_path: Path) -> None:
     fem, ops = _frame_2d()
     ops.vectors[(2, 1)] = np.zeros(6)
-    out = tmp_path / "modes.h5"
+    out = tmp_path / "modes.ladruno"
     with pytest.raises(ValueError, match=r"node 2's eigenvector has 6 entries but its live ndf is 3"):
         capture_live_modes(fem, 2, out, ops=ops)
     assert not out.exists()
@@ -335,7 +631,7 @@ def test_a_vector_longer_than_the_live_ndf_refuses(tmp_path: Path) -> None:
 def test_n_modes_must_be_a_positive_integer(tmp_path: Path, n: Any) -> None:
     fem, ops = _frame_2d()
     with pytest.raises(ValueError, match=r"n_modes must be a positive integer"):
-        capture_live_modes(fem, n, tmp_path / "modes.h5", ops=ops)
+        capture_live_modes(fem, n, tmp_path / "modes.ladruno", ops=ops)
     assert ops.solved == []
 
 
@@ -352,11 +648,11 @@ def test_the_archive_is_not_the_output(tmp_path: Path) -> None:
 def test_a_missing_archive_refuses(tmp_path: Path) -> None:
     _, ops = _frame_2d()
     with pytest.raises(FileNotFoundError, match=r"no model archive"):
-        capture_live_modes(tmp_path / "absent.h5", 2, tmp_path / "modes.h5", ops=ops)
+        capture_live_modes(tmp_path / "absent.h5", 2, tmp_path / "modes.ladruno", ops=ops)
 
 
 def test_a_domain_with_no_model_refuses(tmp_path: Path) -> None:
     fem, ops = _frame_2d()
     ops.ndm = 0
     with pytest.raises(ValueError, match=r"declares no ndm"):
-        capture_live_modes(fem, 2, tmp_path / "modes.h5", ops=ops)
+        capture_live_modes(fem, 2, tmp_path / "modes.ladruno", ops=ops)

@@ -4,6 +4,11 @@ GL-less CI stays green: the required path is
 ``APEGMSH_SKIP_VIEWER=1`` (returns ``None``, writes nothing, no event
 loop). A live still is attempted only when the env is unset; no GL
 then also returns ``None`` and is not a failure.
+
+VA6b: on Windows ``fem.render`` draws through apeGmshViewer (an
+``apegmsh-view/1`` spec over a temporary ``model.h5``, parity plan G7).
+These tests pin the VTK path, which Linux keeps (G2), except the
+``fem_app`` ones, which take the Windows path with a fake app.
 """
 from __future__ import annotations
 
@@ -22,6 +27,12 @@ _RENDER_PY = (
     Path(__file__).resolve().parents[2]
     / "src" / "apeGmsh" / "viewers" / "render.py"
 )
+
+
+@pytest.fixture(autouse=True)
+def _vtk_backend_unless_asked(request, monkeypatch):
+    if "fem_app" not in request.fixturenames:
+        monkeypatch.setattr(render_mod, "_stills_backend", lambda: "vtk")
 
 
 @pytest.fixture
@@ -125,11 +136,6 @@ class _FemStub:
         self.nodes = _NodesStub(coords)
 
 
-class _ResultsStub:
-    def __init__(self, coords: np.ndarray) -> None:
-        self.fem = _FemStub(coords)
-
-
 @pytest.mark.parametrize(
     "coords,expected",
     [(_PLANAR_COORDS, "xy"), (_3D_COORDS, "iso")],
@@ -152,60 +158,6 @@ def test_render_fem_planar_default(
     monkeypatch.setattr(render_mod, "_require_camera", spy)
     fem = _FemStub(coords)
     assert render_mod.render_fem(fem, tmp_path / "x.png") is None
-    assert seen["camera"] == expected
-
-
-@pytest.mark.parametrize(
-    "coords,expected",
-    [(_PLANAR_COORDS, "xy"), (_3D_COORDS, "iso")],
-)
-def test_render_results_planar_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    coords: np.ndarray, expected: str,
-) -> None:
-    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
-    seen: dict[str, str] = {}
-    real_require = render_mod._require_camera
-
-    def spy(token: str) -> str:
-        seen["camera"] = token
-        return real_require(token)
-
-    monkeypatch.setattr(render_mod, "_require_camera", spy)
-    results = _ResultsStub(coords)
-    assert render_mod.render_results(results, tmp_path / "x.png") is None
-    assert seen["camera"] == expected
-
-
-def test_render_results_explicit_camera_iso_wins_on_planar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
-    results = _ResultsStub(_PLANAR_COORDS)
-    assert render_mod.render_results(
-        results, tmp_path / "x.png", camera="iso",
-    ) is None  # no exception — an explicit "iso" is honored on a planar model
-
-
-@pytest.mark.parametrize(
-    "coords,expected",
-    [(_PLANAR_COORDS, "xy"), (_3D_COORDS, "iso")],
-)
-def test_render_pack_planar_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    coords: np.ndarray, expected: str,
-) -> None:
-    monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
-    seen: dict[str, str] = {}
-    real_require = render_mod._require_camera
-
-    def spy(token: str) -> str:
-        seen["camera"] = token
-        return real_require(token)
-
-    monkeypatch.setattr(render_mod, "_require_camera", spy)
-    results = _ResultsStub(coords)
-    assert render_mod.render_pack(results, tmp_path / "pack") == ()
     assert seen["camera"] == expected
 
 
@@ -285,7 +237,6 @@ def test_module_helpers_match_public_tokens() -> None:
     assert render_mod._require_deform(2.0) == ("displacement", 2.0)
     assert render_mod._require_deform(("velocity", 0.5)) == ("velocity", 0.5)
     assert render_mod._require_deform(None) is None
-    assert render_mod._HISTORY_LABEL == "[matplotlib]"
 
 
 def test_read_nodal_vector_field_matches_scatter(demo_results: Results) -> None:
@@ -390,61 +341,6 @@ def test_no_fem_render_pack(demo_results: Results) -> None:
     assert not hasattr(demo_results.fem, "render_pack")
 
 
-def test_pack_omits_reactions_on_demo(demo_results: Results) -> None:
-    assert render_mod._has_static_reactions(demo_results) is False
-
-
-def test_has_static_reactions_true_when_recorded() -> None:
-    class _Stage:
-        kind = "static"
-        id = "g"
-
-    class _Inspect:
-        def components(self, stage=None):
-            return {"nodes": ["displacement_x", "reaction_force_x"]}
-
-    class _Fake:
-        stages = [_Stage()]
-        inspect = _Inspect()
-
-    assert render_mod._has_static_reactions(_Fake()) is True
-
-
-def test_has_static_reactions_false_on_transient() -> None:
-    class _Stage:
-        kind = "transient"
-        id = "g"
-
-    class _Inspect:
-        def components(self, stage=None):
-            return {"nodes": ["reaction_force_x"]}
-
-    class _Fake:
-        stages = [_Stage()]
-        inspect = _Inspect()
-
-    assert render_mod._has_static_reactions(_Fake()) is False
-
-
-def test_pack_primary_is_s1_heuristic(demo_results: Results) -> None:
-    # demo records displacement_z (zeros) so the S1 order picks uz.
-    assert render_mod._pack_primary_component(demo_results) == "displacement_z"
-
-
-def test_history_is_labeled_matplotlib(
-    demo_results: Results, tmp_path: Path,
-) -> None:
-    out = tmp_path / "history.png"
-    written = render_mod._try_history(
-        demo_results, out, "displacement_x",
-    )
-    if written is None:
-        pytest.skip("matplotlib missing or series too short")
-    assert written == out
-    assert out.exists()
-    assert out.stat().st_size > 0
-
-
 def test_render_pack_without_skip_is_tuple(
     demo_results: Results, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -460,40 +356,78 @@ def test_render_pack_without_skip_is_tuple(
             "reactions.png", "history.png",
         }
     assert "reactions.png" not in {p.name for p in result}
-    history = dest / "history.png"
-    if history in result:
-        assert render_mod._HISTORY_LABEL == "[matplotlib]"
 
 
-def test_unbound_render_raises_even_when_skip_viewer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+# =====================================================================
+# VA6b: fem.render on Windows (G7, R1)
+# =====================================================================
+
+
+@pytest.fixture
+def fem_app(monkeypatch):
+    """The Windows path with a fake app that reads back the model file
+    it is handed while it still exists, and writes one stand-in PNG."""
+    import json
+
+    import h5py
+
+    import apeGmsh.agent_view as agent_view
+
+    seen: dict = {"specs": [], "node_counts": []}
+
+    def _fake(spec, out, **kwargs):
+        seen["specs"].append(json.loads(json.dumps(spec)))
+        with h5py.File(spec["files"]["model"], "r") as f:
+            seen["node_counts"].append(int(f["nodes"]["ids"].shape[0]))
+        out = Path(out)
+        out.mkdir(parents=True)
+        shots = []
+        for shot in spec["shots"]:
+            (out / f"{shot['name']}.png").write_bytes(b"png")
+            shots.append({"name": shot["name"], "status": "ok", "png": f"{shot['name']}.png"})
+        return {"shots": shots}
+
+    monkeypatch.setattr(render_mod, "_stills_backend", lambda: "app")
+    monkeypatch.setattr(agent_view, "render_stills", _fake)
+    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
+    return seen
+
+
+def test_fem_render_app_goes_through_a_temporary_model_h5(
+    demo_results: Results, tmp_path: Path, fem_app: dict,
+) -> None:
+    """G7: the in-memory FEMData is written to a model.h5 the app reads
+    (its node count is the FEMData's), then the file is gone."""
+    fem = demo_results.fem
+    out = tmp_path / "figs" / "mesh.png"
+    written = fem.render(out, camera="yz", window_size=(320, 240))
+    assert written == out and out.is_file()
+    (spec,) = fem_app["specs"]
+    assert spec["spec"] == "apegmsh-view/1"
+    assert set(spec["files"]) == {"model"}
+    assert spec["size"] == [320, 240]
+    assert spec["shots"] == [{"name": "mesh", "camera": "+x"}]
+    assert fem_app["node_counts"] == [len(fem.nodes.ids)]
+    assert not Path(spec["files"]["model"]).exists()
+
+
+def test_fem_render_app_planar_default_is_top(
+    demo_results: Results, tmp_path: Path, fem_app: dict,
+) -> None:
+    """R3: camera=None is xy for a planar model, which the app calls top."""
+    from apeGmsh.results._geometry import is_planar
+
+    fem = demo_results.fem
+    fem.render(tmp_path / "m.png")
+    expected = "top" if is_planar(fem.nodes.coords) else "iso"
+    assert fem_app["specs"][-1]["shots"][0]["camera"] == expected
+
+
+def test_fem_render_app_skip_env_never_runs_the_app(
+    demo_results: Results, tmp_path: Path, fem_app: dict,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("APEGMSH_SKIP_VIEWER", "1")
-
-    class _Unbound:
-        fem = None
-
-    with pytest.raises(RuntimeError, match="bound FEMData"):
-        render_mod.render_results(_Unbound(), tmp_path / "x.png", view="mesh")
-    with pytest.raises(RuntimeError, match="bound FEMData"):
-        render_mod.render_pack(_Unbound(), tmp_path / "pack")
-
-
-def test_pack_primary_bug_propagates(
-    demo_results: Results, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("APEGMSH_SKIP_VIEWER", raising=False)
-
-    def _fake_render(results: object, path: Path, **kwargs: object) -> Path:
-        out = Path(path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(b"png")
-        return out
-
-    def _boom(*args: object, **kwargs: object) -> None:
-        raise TypeError("not a missing component")
-
-    monkeypatch.setattr(render_mod, "render_results", _fake_render)
-    monkeypatch.setattr(render_mod, "_pack_primary_component", _boom)
-    with pytest.raises(TypeError, match="not a missing component"):
-        render_mod.render_pack(demo_results, tmp_path / "pack")
+    assert demo_results.fem.render(tmp_path / "m.png") is None
+    assert fem_app["specs"] == []
+    assert "[skip viewer]" in capsys.readouterr().out

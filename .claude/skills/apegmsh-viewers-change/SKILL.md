@@ -4,8 +4,10 @@ description: >
   Checklist for CHANGING apeGmsh's viewer code: src/apeGmsh/viewers/ (results
   session/panes/slots, mesh/model viewers, web/trame viewer,
   backends/, diagrams/, scene/, session/, overlays/, ui/), tests/viewers/ and
-  viewer_bench/. Use before touching dispatcher/pumps/reconciler, a diagram kind,
-  a dock/pane/window, key bindings, a VTK/pyvista call, or a viewer test. Every
+  viewer_bench/, and the Electron app's main process (apeGmshViewer/src/main/,
+  apeGmshViewer/test/main/). Use before touching dispatcher/pumps/reconciler, a
+  diagram kind, a dock/pane/window, key bindings, a VTK/pyvista call, a viewer
+  test, or an apeGmshViewer IPC door. Every
   item points to the ADR, test docstring or archive entry that explains it.
   Not for USING the viewers from a model script (that is apegmsh-helper).
 ---
@@ -13,7 +15,7 @@ description: >
 # Changing viewer code: checklist
 
 Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/` or
-`viewer_bench/`.
+`viewer_bench/`, and the apeGmshViewer section before changing `apeGmshViewer/src/main/`.
 - Each item names a file and a phrase to grep for. Read that entry when the item applies.
 - **[guard]** items are enforced by an AST test in `tests/viewers/`, run by CI's `suite` lane.
 - Out of scope: using the viewers (`apegmsh-helper`), and proving a change looks right
@@ -99,6 +101,100 @@ Read this before changing anything under `src/apeGmsh/viewers/`, `tests/viewers/
       "mutation-proven".
 - [ ] Viewer test traps (`caplog`, `importorskip`, `timeout=`, GL exhaustion, offscreen at
       import) are in `internal_docs/viewer_lessons.md`.
+
+## apeGmshViewer doors (the Electron app, `apeGmshViewer/src/main/`)
+
+The page is not trusted to name a path (owner ruling "option A", #2753). Read the
+`main.ts` comments at `ungestured`, `windowSet`, `confined` and `fromCurrentPage` first.
+
+- [ ] **A new IPC door that reads or opens a file is confined.** Compare the asked path with
+      what main chose, by `samePath` (case-folded where the file system folds), and refuse
+      before any read, so the set stays as it is. The doors today come in two kinds:
+      - **read the path main holds**, never the asked string: `setFile` (the `results:*` and
+        `geometry:open` doors; the window set's file, from `windowSet()`), `confined`
+        (`user:read`, `user:readCase`; the set's `.user.h5`, and the model and results its
+        staleness is judged against) and `setSources` (`source:goto`; the model's
+        `/provenance` as main reads it now);
+      - **approve the page's string, then read that string**: `model:open` and
+        `viewer:requestOpen` through `ungestured` (the latest drop or a path main sent the
+        page), `viewer:offerOpen` through `offerRows` (an offered set's files).
+
+      Prefer the first kind for a new door. A path the model names is tested with
+      `isRemotePath` before any `fs` call (`test/main/remoteRows.test.ts` wraps `node:fs` to
+      prove it).
+- [ ] **Gesture records live in main.** `dropped` is the latest path the preload's `gestured()`
+      reported over the synchronous `viewer:dropped` (a File the page made has no path and
+      reports nothing); the next drop replaces it, and an open does not spend it. `offerRows`
+      mirrors the page's offer list (`PAGE_OFFERS` equals `state/reduce.ts` `MAX_OFFERS`, held
+      by `setDoors.test.ts`), and a page load keeps only the rows of batches still waiting
+      (`pageLoading`). Record a new gesture in main; never take it from the page.
+- [ ] **Check the sender of a page message that arms main state.** Today `viewer:offersReady`
+      is the one door that does: it counts only when `fromCurrentPage(e)`, that is, `e.sender`
+      is the window's `webContents` and `e.processId` and `e.frameId` are the main frame
+      `did-navigate` committed (`pageFrame`). A late message from a page being replaced
+      re-arms nothing (VU15, #2776). `viewer:dropped` and `viewer:subscribe` take no such
+      check; a new door that arms state uses `fromCurrentPage`.
+- [ ] **A reload is a `did-start-navigation` too.** `did-start-loading` fires only when the page
+      goes from idle to loading, so a reload while it still loads starts none. Per-page state
+      in main is cleared in `pageLoading`, which runs on `did-start-loading` and on a
+      `did-start-navigation` with `isMainFrame && !isSameDocument`. New per-page state is
+      cleared there.
+- [ ] **Error paths log with `shown()`, never `JSON.stringify` of a renderer value.** An IPC
+      value can be a BigInt or a cycle; `JSON.stringify` throws, and the door rejects instead
+      of answering `ok: false` with the reason. `shown` (bounded `util.inspect`, never throws)
+      is in `main.ts` and `source.ts`. A file door resolves with the reason; it never rejects
+      (VU11, #2750).
+- [ ] **Test a door with the harness in `apeGmshViewer/test/main/`.** `electronStub.ts` stands in
+      for `electron`. It is a strict proxy, so a new top-level Electron use fails by name until
+      the stub has it; `ready()` makes a recording window, and `commitFrame`, `pageEvent` and
+      `pageEvents` deliver its page events. A driver (`setDoorsDriver.ts`, `userDoorsDriver.ts`)
+      loads `main.ts` in a child Node process, with `registerHooks` resolving `electron` to the
+      stub, because main reads its mode from argv and watches its set; it prints one JSON line
+      the test parses. `preload.test.ts` loads the preload against the same stub. Every path a
+      refusal test refuses is a readable file, so the door would read it without the check
+      (`setDoors.test.ts` header). Run `npm test` in `apeGmshViewer/`.
+- [ ] **A door onto a second set reads it as a slot of its own.** There are six compare doors.
+      VU10's (`variants:compare`, `compare:readStep`, `compare:close`) take a manifest row by
+      index and label (`Study.row`, which resolves and confines it again at open time), never
+      touch `windowSet`, `dropped` or `followModel`, read through their own `ResultsHost`, and
+      are emptied in `pageLoading`. VU19's (`compare:model`, `compare:userRead`,
+      `compare:userReadResult`) take no row and no path: `exactKeys` refuses any key but
+      `name` and `component` (the last door's only), each reads the set in `study.compare`
+      (confined again by `study.confine`), its answer names the slot it read (`slotOf`), and
+      every one refuses with no compare slot. The compare `.user.h5` is judged against the
+      compare set's own model and results, and nothing is written (INV-6). The tests are the
+      pattern: `test/main/variantDoors.test.ts` (VU10, main's side),
+      `test/main/compareDoors.test.ts` (VU19, main's side, against Python's golden) and
+      `test/variants/doors.test.ts` (the spec, compiler, `Study` and preload around them).
+- [ ] **The one write door is `workspace:save`** (VU9a, #2803; `main/workspace.ts`). It takes
+      one edit with closed keys (`parseEdit`: a `path`, or any key the op does not name, is
+      `bad-request` before any read) and writes only `windowSet()`'s `<stem>.workspace.h5`;
+      `cannotWrite` refuses every mode but view. The owner's HG9 rules are code there: read
+      the target whole and close it (a Node or h5wasm handle on the target blocks the replace
+      on Windows, `EPERM`), map a blocked replace to `heldRefusal` (never a retry), and never
+      move a held readable file aside (an unreadable one, a truncated HDF5 file included, is
+      renamed aside as Python's writer does). Every edit carries `expect`, the `token` of the
+      read it was made on (the bytes' sha256, or `absent`); main refuses `stale` when the
+      window set's file is not those bytes, so a set switch or another writer never takes an
+      edit made on the old read (#2890 review). A new write follows `saveWorkspace`'s order (partial created
+      `"x"` through `reader/h5open.ts` `createH5`, verify, fsync, revision check, replace) and
+      its tests: `test/main/workspaceSave.test.ts` kills a child mid-save
+      (`workspaceKillDriver.ts`) and injects `EPERM` through `WorkspaceDisk`, because a real
+      hold blocks only on Windows and CI's `app-tests` runs on Linux.
+- [ ] **The second write door is `combinations:save`** (VU9b, #2693; `main/combinations.ts`):
+      ADR 0130 A4 into the window set's `.user.h5`, which can be gigabytes. It copies the file
+      to its own partial and appends there (`reader/h5open.ts` `appendH5` opens only a
+      `.partial` for writing: `a` on the live file corrupts it when killed, the probe on
+      #2693). Before the replace it closes the app's own `openH5` handles on the file
+      (`closeHandlesOn`; one blocks the rename on Windows as `held`), and it checks free
+      space before the copy. The save token is the path and `/meta@revision`, never a
+      whole-file digest. `test/main/combinationsSave.test.ts` holds one test per HG9 rule, the
+      kill at each step (`combinationsDriver.ts`) and a zone digest of every root group.
+- [ ] **h5wasm 0.10.3 write traps.** A dtype's width comes from its letter, not its digits:
+      `"<f8"` writes **f4** (use `"<d"`), `"<i4"` is i4 by luck of `i`. An empty array needs
+      an explicit dtype (it guesses integer). `"x"` on an existing name returns a negative
+      `file_id` instead of throwing (`createH5` throws). Prove a new layout with h5py reading
+      it back (`apeGmshViewer/test/fixtures/vu9a/README.md` has the round trip).
 
 ## Before the PR
 

@@ -157,7 +157,7 @@ def test_non_beam_global_force_is_silent(
 # ---------------------------------------------------------------------
 
 def _deny_list() -> frozenset[str]:
-    from apeGmsh.results.readers._mpco_local_force_io import (
+    from apeGmsh.results.readers._buckets import (
         LINE_STATION_NON_BEAM_CLASSES,
     )
     return LINE_STATION_NON_BEAM_CLASSES

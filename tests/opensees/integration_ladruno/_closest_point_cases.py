@@ -238,16 +238,28 @@ def warnings_recorded():
 
 
 def _cp_per_step(path: str) -> list[list[float]]:
-    """Distinct cp_iterations values per recorded step, straight from H5."""
+    """Distinct cp_iterations values per recorded step, straight from H5.
+
+    The bucket is the one LadrunoBrick bucket on header 0, whatever Gauss
+    rule the bracket names. The fork's MPCO recorder writes that rule
+    itself: ``0`` before WP-227 (nmorabowen/OpenSees#1068), ``401``
+    (Hexahedron_GaussLegendre_2) after it. The file is the authority on
+    its key, so the key is read from the file, not pinned here.
+    """
+    import re
+
     import h5py
     import numpy as np
 
-    key = (
-        "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/material.cp_iterations/"
-        "33002-LadrunoBrick[0:0:0]/DATA"
-    )
+    token = "MODEL_STAGE[1]/RESULTS/ON_ELEMENTS/material.cp_iterations"
+    pattern = re.compile(r"33002-LadrunoBrick\[\d+:0:0\]")
     with h5py.File(path, "r") as f:
-        d = np.asarray(f[key])
+        found = [k for k in f[token] if pattern.fullmatch(k)]
+        assert len(found) == 1, (
+            f"expected one LadrunoBrick header-0 bucket under {token}, "
+            f"got {sorted(f[token])}"
+        )
+        d = np.asarray(f[f"{token}/{found[0]}/DATA"])
     return [sorted(set(d[i, 0, :].tolist())) for i in range(d.shape[0])]
 
 

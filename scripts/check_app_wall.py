@@ -44,6 +44,12 @@ output are never read; comment-only lines are skipped):
                         `Reflect.construct`. Tests are not scanned (they write
                         fixtures with h5wasm directly).
 
+- W6 process-module:    ADR 0135 D1. Under `apeGmshViewer/src/`, only
+                        `src/main/source.ts` (the editor) and
+                        `src/main/materialTest.ts` (the fork's OpenSees) import
+                        `child_process`, and nothing uses Electron's
+                        `utilityProcess`, so a new kind of process needs a decision.
+
 Specifiers are read from the source with comments stripped by a scanner that
 knows strings and block comments (an `import\n * as x from '...'` spanning lines
 is one import; an import inside a comment is none).
@@ -98,6 +104,11 @@ H5_IMPORT = re.compile(r"""\b(import|export)\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^
 H5_DESTRUCTURE = re.compile(r"\b(?:const|let|var)\s*\{[^{}]*?(?<![\w$])File(?![\w$])[^{}]*\}\s*=")
 H5_FILE_STRING = re.compile(r"""(['"`])File\1""")
 H5_REFLECT = re.compile(r"\bReflect\s*\.\s*construct\b")
+# W6: the modules that may start a process, and what starting one needs.
+APP_SRC = f"{APP}/src/"
+PROCESS_MODULES = {f"{APP}/src/main/source.ts", f"{APP}/src/main/materialTest.ts"}
+# Taking `utilityProcess` from Electron: an import, a destructuring or a member read.
+UTILITY_PROCESS = re.compile(r"\b(?:import|const|let|var)\b[^;=]*\butilityProcess\b|\.\s*utilityProcess\b")
 # Words after which `X.File` is a type, not a value read.
 TYPE_WORDS = {"typeof", "keyof", "as", "satisfies", "implements", "is"}
 IDENT = re.compile(r"[\w$]")
@@ -386,6 +397,11 @@ def scan(root: Path) -> list[str]:
                     why = _panel_violation(rel, spec, target)
                     if why:
                         add(n, "W4", "panel-import", f"{why}: '{spec}'")
+                    if low.removeprefix("node:") == "child_process" and rel.startswith(APP_SRC) and rel not in PROCESS_MODULES:
+                        add(n, "W6", "process-module", f"'{spec}' is for the editor and solver modules only (ADR 0135 D1)")
+            if rel.startswith(APP_SRC):
+                for m in UTILITY_PROCESS.finditer(body):
+                    add(body.count("\n", 0, m.start()) + 1, "W6", "process-module", m.group(0))
             if rel.startswith(H5_SCOPE) and rel != H5_OPENER:
                 for n, why in _h5_findings(body, "\n".join(blanked)):
                     add(n, "W5", "h5-open", f"open HDF5 through reader/h5open.ts openH5 (lesson #2260): {why}")

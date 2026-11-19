@@ -110,24 +110,44 @@ with `ops.fix(pg=..., dofs=...)` or `ops.fix_from_model()`. Emit warns
 `results.lineage.warnings` (warn-not-raise per ADR 0021 INV-2) or opt into
 loud-fail via `results.lineage.assert_clean()`. See `results.md`.
 
-### ❌ `Results.from_native(path)` without `model=`
-`model=` is **required** (TypeError otherwise). Canonical Composed-file
-pattern: `Results.from_native(path, model=OpenSeesModel.from_h5(path, fem_root="/model"))`.
-Same for `Results.from_mpco(model_h5=)` and `Results.from_recorders(model=)`.
-See `results.md`.
+### ❌ New code on `from_native` / `to_native` / `from_mpco` → ✅ `.ladruno`
+apeGmsh is moving to one results format, `.ladruno` (ADR 0131): the
+native `results.h5` path and `from_mpco` are being retired, and
+apeGmshViewer is `.ladruno`-only by decision. ✅ `Results.from_ladruno(path,
+model_h5="model.h5")`; a stock `.mpco` goes through
+`convert_mpco("run.mpco", "run.ladruno", model_h5="model.h5")` first;
+modes through `EigenResult.results()`. The old readers still open files
+and still *require* their broker (`from_native(model=)`,
+`from_mpco(model_h5=)`, also `from_recorders(model=)`: `TypeError`
+otherwise). See `results.md` §1.
+
+### ❌ A combination term named `MODEL_STAGE[1]` → ✅ the `ops.stage` name
+A `Term("stage", source)` names a stage by its `ops.stage` name, else
+`stage_<i>`; the file's `MODEL_STAGE[k]` group name is refused as
+`unresolved`. Open the results with `model_h5=` so the names are bound.
+A summing rule over a user result needs `linear=True` on it (else
+`not-linear`), and never sums a von Mises or a stored design field.
+See `results.md` §4 "Combinations and the user file".
 
 ### ❌ OS-capturing the human's desktop to "look" → ✅ visors
 Agents do not screenshot monitors or the live Qt window (that is the
 human's desk: other apps, secrets, the wrong display). ✅ Write
-`.apegmsh/visors/*.png` with `results.render` / `fem.render` (ADR 0094
-offscreen stills) and labeled `results.plot.*`, then read those files.
-`viewer()` stays the human surface.
+`.apegmsh/visors/*.png` and read those files. On Windows take them with
+`render_stills` (`apeGmsh.agent_view`, apeGmshViewer `--render`, ADR
+0128; `assess.md`). The VTK stills (`results.render` / `fem.render`,
+ADR 0094) are for Linux, where the app has no batch stills yet.
+Labeled `results.plot.*` works anywhere. `viewer()` stays the human
+surface.
 
 ### ❌ `Results.viewer(model_h5=...)`
 `Results.viewer` takes no `model_h5=`: the viewer reads `results.model`
-directly. CLI:
-`python -m apeGmsh.viewers run.h5` auto-resolves native Composed files;
-`--model-h5 PATH` is required ONLY for `.mpco` files (sibling pointer).
+directly. The Qt CLI `python -m apeGmsh.viewers <file>` still opens the
+retiring native and `.mpco` files (`--model-h5 PATH` is required for an
+`.mpco`). apeGmshViewer, the desktop app, is `.ladruno`-only by decision
+(ADR 0131 D1): hand it a `.ladruno`. It still reads a `<stem>.results.h5`
+until slice V1d deletes that path (D2), so do not write new native
+files for it. A set pairs by stem (`<stem>.h5`, `<stem>.ladruno`,
+`<stem>.user.h5`): opening any one opens the set.
 
 ### ❌ `h5_reader.materials()` returning a dict
 The dict-style accessors were removed. Today's `model.materials()` returns
@@ -208,6 +228,33 @@ garbage: an equilibrium sum, a hand estimate, or sane eigen periods.
 ### `remove_duplicates` tolerance is unit-dependent
 mm models: `tolerance=1e-3`. Metre models: `tolerance=1e-6`. Picking the
 metre tolerance on a mm model silently fails to merge coincident nodes.
+
+### Every run writes `.h5` files beside the script; `save_to=None` is not "no save"
+ADR 0112 D1 makes the artifacts unconditional:
+
+- the session's `end()` (or `with` exit) writes `<model_name>.h5` and
+  `<model_name>.geometry.h5`; `save_to=None` only means "use the
+  conventional directory", and there is no user-facing opt-out;
+- the bridge writes its own full `<model_name>.h5` (neutral zone +
+  `/opensees` + `/provenance`) at the end of **every** live build /
+  `ops.analyze` / `ops.run()` / `ops.tcl` / `ops.py` deck emit, skipped only when the
+  declarations are unchanged since the last write to that path.
+
+The conventional directory is `$APEGMSH_ARTIFACT_DIR` when set and
+non-empty, else the folder of the `__main__` script, else the cwd.
+`save_to=` moves **only the session's** write: the bridge never reads it,
+so `apeGmsh(save_to="out/m.h5")` + `apeSees(fem).analyze(...)` still drops
+`<model_name>.h5` beside the script. To keep a source tree clean (a
+showcase repo, a test run), set the variable before running:
+`APEGMSH_ARTIFACT_DIR=out python model.py` (PowerShell:
+`$env:APEGMSH_ARTIFACT_DIR="out"`). Notebook / `-c` / stdin with no
+`model_name=`: nothing is written, one warning.
+`# src/apeGmsh/_core.py (default_artifact_dir), src/apeGmsh/opensees/_internal/artifact_write.py`
+
+### `in_box` takes two points, `in_box(lo, hi)`
+Both families take two 3-tuples, `.in_box((x0, y0, z0), (x1, y1, z1))`.
+Six bare numbers (`in_box(x0, y0, z0, x1, y1, z1)`) raise `TypeError`.
+`# src/apeGmsh/core/_selection.py (in_box)`
 
 ### `in_box` is half-open `[lo, hi)` (point family)
 Every point-family `.select().in_box(...)` (and the retained

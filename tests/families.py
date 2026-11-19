@@ -25,6 +25,7 @@ from apeGmsh.opensees._internal.types import (
     Integrator,
     LinearSystem,
     ModalBasis,
+    MPM,
     NDMaterial,
     Numberer,
     Pattern,
@@ -85,7 +86,7 @@ FAMILIES: tuple[Family, ...] = (
            (_ELEMENT + "shell",)),
     Family("solid element", Element,
            _CONTRACT + "test_element_solid_contract:ALL_SOLID_ELEMENTS",
-           (_ELEMENT + "solid",)),
+           (_ELEMENT + "solid", _ELEMENT + "solid_up")),
     Family("constraint handler", ConstraintHandler,
            _CONTRACT + "test_analysis_contract:ALL_CONSTRAINT_HANDLERS"),
     Family("numberer", Numberer,
@@ -102,6 +103,8 @@ FAMILIES: tuple[Family, ...] = (
            _CONTRACT + "test_analysis_contract:ALL_ANALYSES"),
     Family("modal basis", ModalBasis,
            "tests.opensees.parity.test_chain_m_command_parity:ALL_MODAL_BASIS"),
+    Family("mpm", MPM,
+           "tests.opensees.parity.test_mpm_command_parity:ALL_MPM"),
 )
 
 

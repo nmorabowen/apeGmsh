@@ -57,6 +57,14 @@ interface MetaHit {
   row: number;
 }
 
+/** The inspector row of a mesh cell with no OpenSees element. */
+export const MESH_ONLY_FIELD: Field = {
+  label: "OpenSees element",
+  value: "none (mesh only, not emitted)",
+  source: "/opensees/element_meta/*/fem_eids",
+  interpreted: false,
+};
+
 const femIndexCache = new WeakMap<ModelFile, Map<number, MetaHit[]>>();
 const groupIndexCache = new WeakMap<ModelFile, Map<number, string[]>>();
 
@@ -297,11 +305,9 @@ export function resolveChain(model: ModelFile, ref: ElementRef): Chain {
       },
     );
     hits = femIndex(model).get(femId) ?? [];
-    if (!model.opensees) {
-      r.problems.push("the file has no /opensees zone: there is no definition chain");
-    } else if (hits.length === 0) {
-      r.problems.push(`FEM element ${femId} has no row in /opensees/element_meta/*/fem_eids`);
-    }
+    if (!model.opensees) r.problems.push("the file has no /opensees zone: there is no definition chain");
+    // A mesh cell the bridge was not asked to emit is legitimate (#2672): a fact, not a problem.
+    if (hits.length === 0) fields.push(MESH_ONLY_FIELD);
   } else {
     const meta = model.opensees?.elementMeta[ref.metaIndex];
     if (!meta) throw new RangeError(`no element_meta ${ref.metaIndex}`);
@@ -334,7 +340,7 @@ export function resolveChain(model: ModelFile, ref: ElementRef): Chain {
     role: "element",
     name: title,
     nameSource: path,
-    type: hits[0]?.meta.type ?? "(no OpenSees type)",
+    type: hits[0]?.meta.type ?? (model.opensees ? "(mesh only)" : "(no OpenSees type)"),
     path,
     via: null,
     fields,

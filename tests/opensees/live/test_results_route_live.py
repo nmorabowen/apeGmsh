@@ -10,7 +10,11 @@ as an openseespy deck in a subprocess of this interpreter:
   ``ndf=3``, which the results capture table would send to DOF 6);
 - the same deflection through ``recorder.declare(nodes=...)``;
 - the same deflection through ``recorder.MPCO``, where the backend
-  writes MPCO (stock pip openseespy has no MPCO recorder: a named skip).
+  writes MPCO (stock pip openseespy has no MPCO recorder: a named skip):
+  the deck's run record makes the stage kind a fact, so the ``.mpco``
+  converts and the read is the ``.ladruno`` (ADR 0131 D11); a staged
+  deck converts with no record, each stage declaring its kind;
+- the same deflection through ``recorder.Ladruno``, on the fork.
 
 The refusals need no solver: ``tests/opensees/unit/test_results_route.py``.
 """
@@ -26,6 +30,7 @@ import pytest
 from apeGmsh.opensees.apesees import apeSees
 
 from tests.opensees.live.test_readback_live import (
+    A_BEAM,
     E,
     I_BEAM,
     L_BEAM,
@@ -117,6 +122,98 @@ def test_mpco_tip_deflection_matches_the_closed_form(
                       nodal_responses=("displacement",))
     deck = run_dir / "deck.py"
     run_deck(ops, deck)
-    uy = ops.results(str(deck)).nodes.get(
-        label="tip", component="displacement_y").item()
+    # Unstaged, but emitted with analyze_steps: the deck's run record
+    # makes the stage kind a fact, so the .mpco converts (ADR 0131 D11).
+    assert (run_dir / "r.mpco.run.json").is_file()
+    r = ops.results(str(deck))
+    try:
+        assert type(r._reader).__name__ == "LadrunoReader"
+        uy = r.nodes.get(label="tip", component="displacement_y").item()
+        # A second read while the first is open reuses the conversion
+        # (#2796 review, finding 1: it raised PermissionError on Windows).
+        r2 = ops.results(str(deck))
+        try:
+            uy2 = r2.nodes.get(label="tip", component="displacement_y").item()
+        finally:
+            r2.close()
+    finally:
+        r.close()
+    assert uy == pytest.approx(UY, rel=1e-9)
+    assert uy2 == uy
+    assert (run_dir / "r.ladruno").is_file()
+    # A run record replaced after the read is never reused past the
+    # record's checks (#2796 review 2, finding 2): the read converts
+    # afresh and refuses on check 1.
+    from apeGmsh.opensees._internal.build.errors import BridgeError
+
+    (run_dir / "r.mpco.run.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(BridgeError, match=r"check 1 \(the record\)"):
+        ops.results(str(deck))
+
+
+def staged_cantilever(fem: Any) -> apeSees:
+    """The cantilever with its static analysis in one ``ops.stage``."""
+    ops = apeSees(fem, default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    t = ops.geomTransf.Linear()
+    ops.element.elasticBeamColumn(pg="Beam", transf=t, A=A_BEAM, E=E,
+                                  Iz=I_BEAM)
+    ops.fix(label="base", dofs=(1, 1, 1))
+    ts = ops.timeSeries.Linear()
+    with ops.stage(name="load") as s:
+        with s.pattern(series=ts) as p:
+            p.load(node=ops.nodes.one(label="tip"),
+                   forces=(0.0, -P_TIP, 0.0))
+        s.analysis(
+            constraints=ops.constraints.Plain(), numberer=ops.numberer.RCM(),
+            system=ops.system.BandGeneral(),
+            test=ops.test.NormDispIncr(tol=1e-10, max_iter=10),
+            algorithm=ops.algorithm.Linear(),
+            integrator=ops.integrator.LoadControl(dlam=1.0),
+            analysis=ops.analysis.Static(),
+        )
+        s.run(n_increments=1)
+    return ops
+
+
+def test_a_staged_mpco_deck_converts_without_a_run_record(
+    cantilever: Any, run_dir: Path, tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """A staged deck (no ``analyze_steps``, so no run record): each stage
+    declares its kind, so the ``.mpco`` converts and reads back."""
+    if not _subprocess_has_mpco(tmp_path_factory.mktemp("mpco_probe")):
+        pytest.skip(
+            "the openseespy build the deck runs on has no MPCO recorder "
+            "(stock pip openseespy ships none)")
+    ops = staged_cantilever(cantilever)
+    ops.recorder.MPCO(file=str(run_dir / "r.mpco"),
+                      nodal_responses=("displacement",))
+    deck = run_dir / "deck.py"
+    ops.py(str(deck), run=True, python=sys.executable)
+    assert not (run_dir / "r.mpco.run.json").exists()
+    r = ops.results(str(deck))
+    try:
+        assert type(r._reader).__name__ == "LadrunoReader"
+        uy = r.nodes.get(label="tip", component="displacement_y").values
+    finally:
+        r.close()
+    assert float(uy.ravel()[-1]) == pytest.approx(UY, rel=1e-9)
+
+
+@pytest.mark.ladruno_fork
+def test_ladruno_tip_deflection_matches_the_closed_form(
+    cantilever: Any, run_dir: Path,
+) -> None:
+    """``recorder.Ladruno`` on the fork: the deck's own ``.ladruno`` is
+    read with ``Results.from_ladruno`` (refused before ADR 0131 D11)."""
+    ops = cantilever_bridge(cantilever)
+    ops.recorder.Ladruno(file=str(run_dir / "r.ladruno"),
+                         nodal_responses=("displacement",))
+    deck = run_dir / "deck.py"
+    run_deck(ops, deck)
+    r = ops.results(str(deck))
+    try:
+        uy = r.nodes.get(label="tip", component="displacement_y").item()
+    finally:
+        r.close()
     assert uy == pytest.approx(UY, rel=1e-9)

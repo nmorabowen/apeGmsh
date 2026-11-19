@@ -113,6 +113,8 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 
 import numpy as np
 
+from ._ladruno_writer import MPCOConversionRefused, _write_column_map
+
 if TYPE_CHECKING:
     import h5py
 
@@ -125,17 +127,6 @@ _SPRINGS = "springs"
 _QUADRATURE = "quadrature:"
 
 
-class MPCOConversionRefused(RuntimeError):
-    """:func:`convert_mpco` refused before any target file existed.
-
-    Raised for an existing target (unless ``overwrite=True``), a missing
-    or unreadable ``model_h5``, MPCO stages or kinds that do not match the
-    program's, a partition set that is incomplete or inconsistent, and a
-    source that is unreadable or holds something this converter does not
-    know how to carry. The source is never modified.
-    """
-
-
 class StageKindRefused(MPCOConversionRefused):
     """The refusal is about stage kinds alone: the file's stages cannot be
     paired with the program's, or a kind is not a fact (an unstaged
@@ -144,8 +135,9 @@ class StageKindRefused(MPCOConversionRefused):
     Every other refusal (the archive is another model's, a partition set
     is incomplete, a target or staging directory is in the way, the source
     holds what the converter cannot carry) is a plain
-    :class:`MPCOConversionRefused`. ``read_deck_mpco`` reads the ``.mpco``
-    on this one only and re-raises the rest.
+    :class:`MPCOConversionRefused`. No caller reads the ``.mpco`` in its
+    place (ADR 0131 D5): ``read_deck_mpco`` and ``emit_default`` raise it
+    again as one, naming the remedies, and re-raise the rest as they are.
     """
 
 
@@ -809,7 +801,7 @@ def _scan_stage(stage: "h5py.Group", where: str, unsupported: set[str]) -> None:
 
 def _holds_only_modes(stage: "h5py.Group") -> bool:
     """True when the stage's only data are modal groups (an eigen stage)."""
-    from ._mpco_translation import is_modal_result_name
+    from ._buckets import is_modal_result_name
 
     if "RESULTS" not in stage:
         return False
@@ -831,7 +823,7 @@ def _holds_only_modes(stage: "h5py.Group") -> bool:
 
 def _stage_step_counts(stage: "h5py.Group") -> "set[int]":
     """The step counts of a stage's non-modal results (empty: none)."""
-    from ._mpco_translation import is_modal_result_name
+    from ._buckets import is_modal_result_name
 
     if "RESULTS" not in stage:
         return set()
@@ -1117,82 +1109,6 @@ def _write_token(
         src.file.copy(bucket["ID"], out, "ID")
         _restack(bucket["DATA"] if "DATA" in bucket else None, out,
                  n_cols=n_cols, precisions=precisions, where=bwhere)
-
-
-# ---------------------------------------------------------------------------
-# META -> COLUMN_MAP
-# ---------------------------------------------------------------------------
-
-
-def _meta_column(meta: "h5py.Group", name: str, where: str) -> np.ndarray:
-    if name not in meta:
-        raise MPCOConversionRefused(f"{where}/META has no {name}.")
-    return np.asarray(meta[name][...], dtype=np.int64).ravel()
-
-
-def _split_block(block: str, n_comp: int, where: str) -> "tuple[list[int], list[str]]":
-    """``"0.1.4.s11,s22"`` -> ``([0, 1, 4], ["s11", "s22"])``.
-
-    The path is the leading run of integer fields; a component name may
-    itself contain a dot or be a number, so the split is the one whose
-    name count equals the block's ``NUM_COMPONENTS``, taking the longest
-    integer path.
-    """
-    fields = block.split(".")
-    for n_path in range(len(fields) - 1, 0, -1):
-        head = fields[:n_path]
-        if not all(f.lstrip("-").isdigit() for f in head):
-            continue
-        names = ".".join(fields[n_path:]).split(",")
-        if len(names) == n_comp:
-            return [int(f) for f in head], names
-    raise MPCOConversionRefused(
-        f"{where}: META COMPONENTS block {block!r} does not split into a "
-        f"level path and {n_comp} component names.")
-
-
-def _write_column_map(
-    meta: "h5py.Group", bucket: "h5py.Group", n_cols: int, *, where: str,
-) -> None:
-    mult = _meta_column(meta, "MULTIPLICITY", where)
-    gauss = _meta_column(meta, "GAUSS_IDS", where)
-    ncomp = _meta_column(meta, "NUM_COMPONENTS", where)
-    if "COMPONENTS" not in meta:
-        raise MPCOConversionRefused(f"{where}/META has no COMPONENTS.")
-    raw = np.asarray(meta["COMPONENTS"][...]).ravel()
-    if raw.size != 1:
-        raise MPCOConversionRefused(
-            f"{where}/META/COMPONENTS holds {raw.size} strings, expected 1.")
-    text = raw[0].decode("utf-8") if isinstance(raw[0], bytes) else str(raw[0])
-    blocks = text.split(";")
-    k = ncomp.size
-    if not (mult.size == gauss.size == k == len(blocks)) or k == 0:
-        raise MPCOConversionRefused(
-            f"{where}/META: {mult.size} MULTIPLICITY, {gauss.size} "
-            f"GAUSS_IDS, {k} NUM_COMPONENTS and {len(blocks)} COMPONENTS "
-            "blocks; they must agree.")
-    if int(np.sum(mult * ncomp)) != n_cols:
-        raise MPCOConversionRefused(
-            f"{where}: sum(MULTIPLICITY * NUM_COMPONENTS) = "
-            f"{int(np.sum(mult * ncomp))} != NUM_COLUMNS {n_cols}.")
-    levels = np.zeros(k, dtype=np.int32)
-    lines = []
-    for i, block in enumerate(blocks):
-        path, names = _split_block(block, int(ncomp[i]), where)
-        levels[i] = path[-1]
-        lines.append(",".join(names))
-    cmap = bucket.create_group("COLUMN_MAP", track_order=True)
-
-    def col(values: np.ndarray) -> np.ndarray:
-        return np.asarray(values, dtype=np.int32).reshape(k, 1)
-
-    cmap.create_dataset("LEVELS", data=col(levels))
-    cmap.create_dataset("GAUSS_ID", data=col(gauss))
-    cmap.create_dataset("SECTION_TAG", data=col(np.full(k, -1)))
-    cmap.create_dataset("FIBER_ID", data=col(np.full(k, -1)))
-    cmap.create_dataset("NUM_COMP", data=col(ncomp))
-    cmap.create_dataset("MULTIPLICITY", data=col(mult))
-    cmap.attrs["COMP_NAMES"] = _s("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------

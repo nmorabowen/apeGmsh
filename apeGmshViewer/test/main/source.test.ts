@@ -3,11 +3,12 @@
 // proved end to end by a fake editor that records the argv it received.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { editorLaunch, goToSource, parseTemplate, which, type SourceEnv } from "../../src/main/source.ts";
+import { FOLD_CASE } from "../../src/main/pairing.ts";
+import { editorLaunch, goToSource, parseTemplate, provenanceSources, which, type SourceEnv, type SourceScope } from "../../src/main/source.ts";
 
 const win = process.platform === "win32";
 const root = mkdtempSync(join(tmpdir(), "agv-source-"));
@@ -97,13 +98,97 @@ test("no code on PATH: the OS text editor, never the default opener", () => {
   assert.throws(() => editorLaunch(script, 7, envOf({ path: "", platform: "linux" })), /no editor found/);
 });
 
+// VU14 (#2771): xdg-open picks a program by file type and runs a .desktop file,
+// so on Linux it is handed only a regular file with a source extension. The
+// .desktop row is a regular file the set's /provenance names: without the check
+// go-to-source would launch xdg-open on it (the fake one on PATH here).
+test("Linux, no code on PATH: xdg-open gets a regular .py file, never a .desktop file or another type", async () => {
+  const x = binDir("os-linux", "xdg-open");
+  const linux = envOf({ path: x, platform: "linux" });
+  assert.deepEqual(editorLaunch(script, 7, linux), { command: join(x, "xdg-open"), args: [script], verbatim: false });
+  const dir = join(root, "xdg");
+  mkdirSync(dir);
+  const desktop = join(dir, "build.desktop");
+  writeFileSync(desktop, "[Desktop Entry]\nType=Application\nExec=sh -c 'touch pwned'\n");
+  const shell = join(dir, "build.sh");
+  writeFileSync(shell, "touch pwned\n");
+  const refusal = (f: string) => new RegExp(`^xdg-open picks a program by file type and can run a \\.desktop file, so it opens only a regular \\.py/.* file; refused ${f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\. Set APEGMSH_EDITOR to open it$`);
+  for (const f of [desktop, shell, scriptDir]) assert.throws(() => editorLaunch(f, 1, linux), { message: refusal(f) });
+  const r = await goToSource(desktop, 1, { files: [desktop] }, linux);
+  assert.equal(r.ok, false, "go-to-source refuses the .desktop row the set names");
+  assert.match((r as { reason: string }).reason, refusal(desktop));
+  // macOS's `open -t` opens text whatever the type: unchanged.
+  assert.deepEqual(editorLaunch(desktop, 1, envOf({ path: binDir("os-mac2", "open"), platform: "darwin" })).args, ["-t", desktop]);
+});
+
+// A link named .py that points at a .desktop file: the link itself is not a regular file.
+// Windows without developer mode cannot make one, so there the case shows as skipped (it runs on the Linux CI).
+const linkDir = join(root, "xdg-link");
+mkdirSync(linkDir);
+const linkTarget = join(linkDir, "build.desktop");
+writeFileSync(linkTarget, "[Desktop Entry]\nType=Application\nExec=sh -c 'touch pwned'\n");
+const link = join(linkDir, "link.py");
+let noLink: string | false = false;
+try {
+  symlinkSync(linkTarget, link);
+} catch (err) {
+  noLink = `cannot make a symlink here: ${(err as Error).message}`;
+}
+test("Linux, no code on PATH: xdg-open is not handed a .py link to a .desktop file", { skip: noLink }, () => {
+  const linux = envOf({ path: binDir("os-linux-link", "xdg-open"), platform: "linux" });
+  assert.throws(() => editorLaunch(link, 1, linux), { message: /can run a \.desktop file.*; refused .*link\.py\. Set APEGMSH_EDITOR to open it$/ });
+});
+
+/** The scope main hands the door for a set whose /provenance names `files`. */
+const scopeOf = (...files: string[]): SourceScope => ({ files });
+
 test("goToSource refuses a missing file, a relative path and a bad line", async () => {
   const env = envOf({});
-  assert.deepEqual(await goToSource(join(root, "gone.py"), 3, env), { ok: false, reason: `missing: ${join(root, "gone.py")}` });
-  assert.match(((await goToSource("frame.py", 3, env)) as { reason: string }).reason, /absolute file path/);
-  assert.match(((await goToSource(script, 0, env)) as { reason: string }).reason, /line number >= 1/);
-  assert.match(((await goToSource(script, 2.5, env)) as { reason: string }).reason, /line number >= 1/);
-  assert.match(((await goToSource(scriptDir, 1, env)) as { reason: string }).reason, /missing/);
+  const scope = scopeOf(join(root, "gone.py"), script, scriptDir);
+  assert.deepEqual(await goToSource(join(root, "gone.py"), 3, scope, env), { ok: false, reason: `missing: ${join(root, "gone.py")}` });
+  assert.match(((await goToSource("frame.py", 3, scope, env)) as { reason: string }).reason, /absolute file path/);
+  assert.match(((await goToSource(script, 0, scope, env)) as { reason: string }).reason, /line number >= 1/);
+  assert.match(((await goToSource(script, 2.5, scope, env)) as { reason: string }).reason, /line number >= 1/);
+  assert.match(((await goToSource(scriptDir, 1, scope, env)) as { reason: string }).reason, /missing/);
+});
+
+// VU13 (#2760), option A: the page names no file to open. A readable script the
+// set's /provenance does not name is refused before any editor is chosen: the
+// env below names a working editor (a recorder), so without the check it would launch.
+test("goToSource opens only a file the set's /provenance names; a readable stranger is refused", async () => {
+  const rec = recorder("scope");
+  const stranger = join(scriptDir, "stranger.py");
+  writeFileSync(stranger, "print('not in the set')\n");
+  const env = envOf({ editor: `"${process.execPath}" "${join(rec.dir, "rec.mjs")}" {line} {file}` });
+  assert.deepEqual(await goToSource(stranger, 3, scopeOf(script), env), {
+    ok: false,
+    reason: `goToSource opens only a source file the open set's /provenance names; refused ${stranger}`,
+  });
+  assert.deepEqual(await goToSource(script, 3, { reason: "no set is open" }, env), {
+    ok: false,
+    reason: `goToSource opens only a source file the open set's /provenance names, and no set is open; refused ${script}`,
+  });
+  assert.equal(existsSync(join(rec.dir, "argv.json")), false, "a refused request launched no editor");
+  // The path the scope holds is the one opened (case-folded where the file system folds).
+  const asked = FOLD_CASE ? script.toUpperCase() : script;
+  assert.deepEqual(await goToSource(asked, 5, scopeOf(script), env), { ok: true });
+  assert.deepEqual(await rec.argv(), ["5", script]);
+});
+
+test("goToSource's refusals are total: a BigInt or a circular request resolves with the reason", async () => {
+  const circular: Record<string, unknown> = { file: 7 };
+  circular.self = circular;
+  const env = envOf({});
+  const scope = scopeOf(script);
+  assert.deepEqual(await goToSource(5n, 3, scope, env), { ok: false, reason: "goToSource needs an absolute file path; got 5n" });
+  assert.match(((await goToSource(circular, 3, scope, env)) as { reason: string }).reason, /^goToSource needs an absolute file path; got .*\[Circular \*1\]/);
+  assert.deepEqual(await goToSource(script, 5n, scope, env), { ok: false, reason: "goToSource needs a line number >= 1; got 5n" });
+  assert.match(((await goToSource(script, circular, scope, env)) as { reason: string }).reason, /^goToSource needs a line number >= 1; got .*\[Circular \*1\]/);
+});
+
+test("provenanceSources: a relative row joins @base_dir, an absolute row (outside the set's folder) is kept, a pseudo-file names none", () => {
+  const zone = { baseDir: "C:/runs/frame/", files: { path: ["build.py", "/opt/helpers/frames.py", "<string>", "D:/lib/x.py"], sha256: [], kind: [] } };
+  assert.deepEqual(provenanceSources(zone), ["C:/runs/frame/build.py", "/opt/helpers/frames.py", "D:/lib/x.py"]);
 });
 
 /** A fake editor named `name` that writes the argv it received to argv.json. */
@@ -135,7 +220,7 @@ function recorder(name: string): { dir: string; argv: () => Promise<string[]> } 
 
 test("live: `code` on PATH receives -g and file:line intact (spaces, &)", async () => {
   const rec = recorder("code");
-  const res = await goToSource(script, 42, envOf({ path: rec.dir, pathext: ".cmd", comspec: process.env["ComSpec"] }));
+  const res = await goToSource(script, 42, scopeOf(script), envOf({ path: rec.dir, pathext: ".cmd", comspec: process.env["ComSpec"] }));
   assert.deepEqual(res, { ok: true });
   assert.deepEqual(await rec.argv(), ["-g", `${script}:42`]);
 });
@@ -143,6 +228,6 @@ test("live: `code` on PATH receives -g and file:line intact (spaces, &)", async 
 test("live: an APEGMSH_EDITOR template receives its filled arguments", async () => {
   const rec = recorder("tmpl");
   const editor = `"${process.execPath}" "${join(rec.dir, "rec.mjs")}" --at {line} {file}`;
-  assert.deepEqual(await goToSource(script, 9, envOf({ editor })), { ok: true });
+  assert.deepEqual(await goToSource(script, 9, scopeOf(script), envOf({ editor })), { ok: true });
   assert.deepEqual(await rec.argv(), ["--at", "9", script]);
 });

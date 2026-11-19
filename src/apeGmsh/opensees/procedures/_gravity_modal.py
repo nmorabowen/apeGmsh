@@ -314,7 +314,7 @@ class _GravityModalMixin(_ProcedureHost):
         )
         from ..analysis.modal import ModalPropertiesResult
         from .._readback import DroppedSession, open_session
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
         from .._internal.tag_plan import emit_mode
         import numpy as np
 
@@ -324,6 +324,7 @@ class _GravityModalMixin(_ProcedureHost):
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         self._read_state = DroppedSession(
             f"{context}(...) started on this bridge and did not complete"
         )
@@ -395,7 +396,7 @@ class _GravityModalMixin(_ProcedureHost):
             gravity = snapshot_state(ops)
 
         live_plan = bm._tag_plan(emit_mode(
-            bm, split=False,
+            bm,
             supports_partitions=live_emitter.caps.supports_partitions))
         self._read_state = open_session(
             live_emitter, ndm=bm.ndm,

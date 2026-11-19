@@ -1,0 +1,8 @@
+{
+ "aside": [
+  "frame.workspace.h5"
+ ],
+ "bytes": 7696,
+ "read": "not-hdf5",
+ "write_renamed_aside": true
+}

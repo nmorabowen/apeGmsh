@@ -252,17 +252,32 @@ def test_footfall_results_carry_the_live_backend(
     from apeGmsh.opensees.analysis.footfall_result import FootfallResult
     from tests.conftest import _MockFem
 
-    monkeypatch.setattr(live, "get_backend_info", _fork_info)
+    from apeGmsh.results.user import UserFile
+
     res = object.__new__(FootfallResult)
     for name, value in {
         "nodes": (1,), "a_p": np.array([1.0]), "ratio": np.array([0.5]),
         "f_dom": np.array([4.0]),
     }.items():
         object.__setattr__(res, name, value)
-    out = res.to_results(_MockFem([1, 2]), tmp_path / "ff.h5")
-    with h5py.File(out, "r") as f:
-        assert f.attrs["opensees_backend"] == "fork"
-        assert f.attrs["opensees_build"] == _SHA
+    fem = _MockFem([1, 2])
+    model = tmp_path / "ff.h5"
+    with h5py.File(model, "w") as f:
+        f.create_group("meta/lineage").attrs["fem_hash"] = fem.snapshot_id
+
+    # ADR 0131 D6: the .user.h5 has no backend attrs; /meta@writer names it.
+    monkeypatch.setattr(live, "get_backend_info", _fork_info)
+    out = res.to_results(fem, tmp_path / "ff.user.h5", model_h5=model)
+    writer = UserFile(out).writer
+    assert writer is not None
+    assert writer.startswith("apeGmsh footfall_walking ")
+    assert writer.endswith(f"; opensees fork {_SHA}")
+
+    monkeypatch.setattr(live, "get_backend_info", lambda: BackendInfo(
+        kind="stock", build=None, version=None, source="x"))
+    out = res.to_results(fem, tmp_path / "ff.user.h5", model_h5=model)
+    writer = UserFile(out).writer
+    assert writer is not None and writer.endswith("; opensees stock")
 
 
 def test_parallel_modal_to_native_does_not_stamp_the_in_process_build(

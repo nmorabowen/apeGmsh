@@ -280,7 +280,9 @@ def _interp(kind: str, enforce: str = "penalty") -> InterpolationRecord:
     [
         (_interp("tie"), True),            # embeddedNode: no deck record
         (_interp("embedded"), True),
-        (_interp("tie", "equation"), True),  # equationConstraint: ledger
+        # equationConstraint: replayed only from its archived rows, and
+        # this call passes none (no global row, no stage row)
+        (_interp("tie", "equation"), True),
         (_interp("tie", "penalty_al"), False),  # LadrunoEmbeddedNode element
         (_interp("distributing"), False),  # LadrunoDistributingCoupling
         (_interp("distributing", "equation"), True),

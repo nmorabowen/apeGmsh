@@ -404,7 +404,7 @@ def test_concat_gauss_slabs_refuses_mixed_dims() -> None:
     # stitch refuses by name, naming a part of each width (#2221).
     from apeGmsh.results._slabs import GaussSlab
     from apeGmsh.results.readers._mpco import MPCOGaussDimensionMixed
-    from apeGmsh.results.readers._mpco_multi import _concat_gauss_slabs
+    from apeGmsh.results.readers._buckets import _concat_gauss_slabs
 
     time = np.array([0.0, 1.0])
     solid = GaussSlab(

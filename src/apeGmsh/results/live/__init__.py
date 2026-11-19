@@ -13,7 +13,9 @@ Three strategies, all consume a :class:`ResolvedRecorderSpec`:
   :func:`read_deck_mpco` is its deck-side twin for a ``.mpco``.
 
 :func:`capture_live_modes` writes the modes of a plain openseespy deck
-(``ops.eigen`` on the live domain) as native ``mode_<k>`` stages.
+(``ops.eigen`` on the live domain) to a stamped ``.ladruno``, read back
+via :meth:`Results.from_ladruno` (ADR 0131 D10; a FEMData archive pairs by
+``fem_hash``, ADR 0133).
 
 Both spawn no subprocess: the output files land on disk while the
 notebook keeps running.

@@ -408,3 +408,136 @@ def test_partitioned_emit_skips_the_interior_nodes() -> None:
     emitted = {int(args[0]) for name, args, _kw in rec.calls if name == "node"}
     assert any(name == "partition_open" for name, _a, _k in rec.calls)
     assert emitted and not set(INTERIOR) & emitted
+
+
+# ---------------------------------------------------------------------------
+# #2535: a membrane's eleLoad goes on the one rank that declares it.
+# ---------------------------------------------------------------------------
+
+# PanelA's nodes (x <= 4) on rank 0, PanelB's (x >= 4) on rank 1: the x = 4
+# edge is on both, so each panel shares exactly one rank, and the two
+# membranes are declared on different ranks.
+_LOAD_PATHS = ("ele", "ele_tag", "pressure", "pressure_pg", "pg")
+
+
+def _partitioned_membranes(path: str, tags: "dict[str, int] | None" = None) -> apeSees:
+    fem = _fem()
+    left = sorted(_nid(ix, iy) for ix in range(3) for iy in range(3))
+    right = sorted(_nid(ix, iy) for ix in range(2, 5) for iy in range(3))
+    fem.set_partitions([(0, left, [1, 2, 3, 4]), (1, right, [5, 6, 7, 8])])
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    mems = {pg: ops.element.LadrunoMembrane(pg=pg, stiff=(30e6, 0.2, 0.2))
+            for pg in ("PanelA", "PanelB")}
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        for pg, m in mems.items():
+            if path == "ele":
+                p.surface_load(ele=m)
+            elif path == "ele_tag":
+                assert tags is not None
+                p.surface_load(ele=tags[pg])
+            elif path == "pressure":
+                p.surface_load(ele=m, pressure=-5.0)
+            elif path == "pressure_pg":
+                p.surface_load(pg=pg, pressure=-5.0)
+            else:
+                p.surface_load(pg=pg)
+    return ops
+
+
+def _membrane_tags() -> dict[str, int]:
+    """Each panel's membrane tag, read off a deck (the ``ele_tag`` path
+    names the membrane by its OpenSees tag)."""
+    rec = RecordingEmitter()
+    _partitioned_membranes("ele").build().emit(rec)
+    by_rank = _rank_lines(rec)
+    return {pg: by_rank[rank]["element"][0] for rank, pg in ((0, "PanelA"), (1, "PanelB"))}
+
+
+def _rank_lines(rec: RecordingEmitter) -> "dict[int | None, dict[str, list[int]]]":
+    """Per rank (``None`` = outside any partition block), the membrane tags
+    declared and the element tags an ``eleLoad -ele`` names."""
+    out: "dict[int | None, dict[str, list[int]]]" = {}
+    rank: "int | None" = None
+    for name, args, _kw in rec.calls:
+        if name == "partition_open":
+            rank = int(args[0])
+        elif name == "partition_close":
+            rank = None
+        elif name == "element" and args[0] == "LadrunoMembrane":
+            out.setdefault(rank, {"element": [], "eleLoad": []})["element"].append(int(args[1]))
+        elif name == "eleLoad":
+            i = args.index("-type")
+            out.setdefault(rank, {"element": [], "eleLoad": []})["eleLoad"].extend(
+                int(t) for t in args[1:i])
+    return out
+
+
+@pytest.mark.parametrize("path", _LOAD_PATHS)
+def test_partitioned_membrane_eleload_only_on_its_rank(path: str) -> None:
+    tags = _membrane_tags() if path == "ele_tag" else None
+    rec = RecordingEmitter()
+    _partitioned_membranes(path, tags).build().emit(rec)
+    by_rank = _rank_lines(rec)
+    # Fixture guard: one membrane per rank, none outside a partition block.
+    assert sorted(by_rank) == [0, 1]
+    assert [len(by_rank[r]["element"]) for r in (0, 1)] == [1, 1]
+    for r in (0, 1):
+        assert by_rank[r]["eleLoad"] == by_rank[r]["element"], (
+            f"rank {r}: eleLoad names {by_rank[r]['eleLoad']}, "
+            f"declares {by_rank[r]['element']}")
+
+
+@pytest.mark.parametrize("path", _LOAD_PATHS)
+def test_per_rank_membrane_eleload_only_on_its_rank(path: str, tmp_path: Any) -> None:
+    tags = _membrane_tags() if path == "ele_tag" else None
+    _partitioned_membranes(path, tags).tcl(str(tmp_path / "main.tcl"), per_rank=True)
+    declared: dict[int, set[int]] = {}
+    loaded: dict[int, set[int]] = {}
+    frags = sorted((tmp_path / "ranks").glob("rank*.tcl"))
+    assert frags, "no per-rank fragments written"
+    for frag in frags:
+        r = int(re.match(r"rank(\d+)", frag.name).group(1))  # type: ignore[union-attr]
+        text = frag.read_text()
+        declared.setdefault(r, set()).update(
+            int(t) for t in re.findall(r"^element LadrunoMembrane (\d+)", text, re.M))
+        for line in re.findall(r"^\s*eleLoad -ele ([\d ]+) -type", text, re.M):
+            loaded.setdefault(r, set()).update(int(t) for t in line.split())
+    assert sorted(declared) == [0, 1] and all(len(v) == 1 for v in declared.values())
+    assert loaded == declared
+
+
+def test_partitioned_node_pair_eleload_only_on_its_rank() -> None:
+    """The same rule for the other macro row, a node-pair element: its
+    ``eleLoad`` follows ``node_pair_rank`` (ADR 0120 D1).  Only the
+    routing is under test, so the load type is immaterial."""
+    from apeGmsh.opensees.element.zero_length import ZeroLengthMatDir
+
+    fem = _fem()
+    left = sorted(_nid(ix, iy) for ix in range(3) for iy in range(3))
+    right = sorted(_nid(ix, iy) for ix in range(2, 5) for iy in range(3))
+    fem.set_partitions([(0, left, [1, 2, 3, 4]), (1, right, [5, 6, 7, 8])])
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    k = ops.uniaxialMaterial.ElasticMaterial(E=1e6)
+    spring = ops.element.ZeroLength(
+        nodes=(_nid(3, 0), _nid(4, 0)),
+        mat_dirs=(ZeroLengthMatDir(material=k, dof=1),))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.surface_load(ele=spring)
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+    rank: "int | None" = None
+    declared: dict[int | None, list[int]] = {}
+    loaded: dict[int | None, list[int]] = {}
+    for name, args, _kw in rec.calls:
+        if name == "partition_open":
+            rank = int(args[0])
+        elif name == "partition_close":
+            rank = None
+        elif name == "element" and args[0] == "zeroLength":
+            declared.setdefault(rank, []).append(int(args[1]))
+        elif name == "eleLoad":
+            loaded.setdefault(rank, []).append(int(args[1]))
+    assert list(declared) == [1]
+    assert loaded == declared

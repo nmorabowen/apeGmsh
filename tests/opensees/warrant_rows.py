@@ -58,6 +58,21 @@ class WarrantRow:
 _TET = "tests/opensees/live/test_tet10_volume_live.py::"
 _MEMBRANE = "tests/opensees/live/test_ladruno_membrane_live.py::"
 _FORCE_BEAM = "tests/opensees/live/test_ladruno_force_beam_column_live.py::"
+_MPM_STOCK = "tests/opensees/mpm/test_mpm_live_refusal.py::"
+_MPM_FORK = "tests/opensees/integration_ladruno/test_mpm_deck_fork.py::"
+_MPM_GRIDVEL = "tests/opensees/integration_ladruno/test_mpm_gridvel_live.py::"
+
+
+def _mpm_row(member: str, stock: str, fork: str,
+             fork_file: str = _MPM_FORK) -> "WarrantRow":
+    """An ``mpm`` member (ADR 0134 D7): deck-only, so the live route refuses
+    it on stock (and on the fork); the fork test runs an emitted deck."""
+    return WarrantRow(
+        member=f"mpm.{member}",
+        stock_state="refused",
+        stock_test=_MPM_STOCK + f"test_live_refuses_mpm_{stock}_naming_the_fork",
+        fork_test=fork_file + f"test_mpm_{fork}_on_fork",
+    )
 
 ROWS: tuple[WarrantRow, ...] = (
     # Refused exemplar. Stock TenNodeTetrahedron reads 1/6 of the true
@@ -93,6 +108,25 @@ ROWS: tuple[WarrantRow, ...] = (
         fork_test=_FORCE_BEAM + "test_ladruno_force_beam_column_cantilever_matches_closed_form_on_fork",
         roster="D11",
     ),
+    # The ``mpm`` family (ADR 0134 D7): one row per member.
+    _mpm_row("Grid", "grid", "grid_hosts_the_particle_set"),
+    _mpm_row("Body", "body", "body_seeds_the_lattice"),
+    _mpm_row("Fix", "fix", "fix_holds_the_xmin_face"),
+    _mpm_row("Wall", "wall", "wall_holds_the_ymin_face"),
+    # ADR 0134 Amendment 3 (#3064): fork cfe478254 applies gridvel in mode F.
+    _mpm_row("Gridvel", "gridvel", "gridvel_moves_the_body_at_v",
+             _MPM_GRIDVEL),
+    _mpm_row("GridvelAffine", "gridvel_affine",
+             "gridvel_affine_prescribes_l_times_x_minus_ref", _MPM_GRIDVEL),
+    _mpm_row("Gravity", "gravity", "gravity_accelerates_the_free_body"),
+    _mpm_row("TimeSeries", "time_series", "time_series_ramps_the_gravity"),
+    _mpm_row("Damping", "damping", "damping_runs_to_the_last_step"),
+    _mpm_row("Flip", "flip", "flip_runs_to_the_last_step"),
+    _mpm_row("MassCutoff", "mass_cutoff", "mass_cutoff_runs_to_the_last_step"),
+    _mpm_row("Safety", "safety", "safety_admits_a_step_the_default_refuses"),
+    _mpm_row("Units", "units", "units_reach_the_results"),
+    _mpm_row("Output", "output", "output_writes_a_valid_ladruno"),
+    _mpm_row("Analyze", "analyze", "analyze_takes_every_step"),
 )
 
 #: The fork members that predate the freeze (ADR 0121 D4, ruling 5): the

@@ -169,3 +169,28 @@ test("mountWindows: a select redraws the open window with the selected row marke
     unmount();
   }
 });
+
+// #2838: the host's scroll is read only to keep it across a redraw. With no card
+// the read does nothing but force a layout of the page.
+test("mountWindows: with no window open a redraw never reads the host's scroll", () => {
+  const store = new Store();
+  const unmount = mountWindows(store);
+  try {
+    const host = body.children.find((c) => c.id === "windows")!;
+    let reads = 0;
+    let top = 0;
+    Object.defineProperty(host, "scrollTop", { configurable: true, get: () => (reads++, top), set: (v: number) => { top = v; } });
+    store.dispatch({ type: "fileLoaded", artifact: "model", load });
+    assert.equal(reads, 0, "the load drew no card, so nothing is read");
+    assert.equal(host.hidden, true);
+    store.dispatch({ type: "openWindow", window: "materials" });
+    assert.equal(host.hidden, false);
+    assert.equal(host.children.length, 1);
+    assert.equal(reads, 1, "a card is drawn: the scroll is kept");
+    store.dispatch({ type: "closeWindow", window: "materials" });
+    assert.equal(host.children.length, 0, "closing the last window still removes its card");
+    assert.equal(host.hidden, true);
+  } finally {
+    unmount();
+  }
+});

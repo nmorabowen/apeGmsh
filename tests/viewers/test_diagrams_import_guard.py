@@ -1,13 +1,15 @@
 """ADR 0098 S6b — who may still import ``apeGmsh.viewers.diagrams``.
 
 S6 was **de-publication, not deletion**. The old Geometry / Composition /
-Diagram ontology is no longer a public surface, but two hatches keep
-importing it privately and are expected to:
+Diagram ontology is no longer a public surface, but one hatch keeps
+importing it privately and is expected to:
 
-* ``viewers/render.py`` — its closed view tokens;
 * ``viewers/web_viewer.py`` — ``show_web`` holds the live
   ``ResultsDirector``, which is what ADR 0098 Amendment 2 rests the six
   slotless kinds on (see ``test_diagram_hatch_survival.py``).
+
+The other, ``viewers/render.py``, stopped importing it when VA6 (#2655)
+deleted its director path (``render_results`` / ``render_pack``).
 
 The third, ``viewers/results_viewer.py`` (the retired window), was
 deleted at X3-d (#1734) with its three side panels and the private
@@ -43,8 +45,7 @@ PKG = "apeGmsh.viewers.diagrams"
 #: Modules allowed to import the retired ontology. Ratcheted BOTH ways.
 #: Grouped by why they are here, because "why" is the thing that rots.
 _ALLOWED: frozenset[str] = frozenset({
-    # -- the two hatches ---------------------------------------------
-    "apeGmsh.viewers.render",
+    # -- the hatch ---------------------------------------------------
     "apeGmsh.viewers.web_viewer",
     # -- the NEW session window (reuses per-kind emit code in place) --
     "apeGmsh.viewers.session._realize",
@@ -193,8 +194,8 @@ def test_every_allowlist_entry_still_imports() -> None:
     # Sits BETWEEN two allowlisted siblings — catches a package-keyed
     # rule. Real file, currently clean of diagrams.
     "apeGmsh.viewers.session._reconciler",
-    # Kills naive startswith: `render_pack` is already a real exported
-    # symbol of render.py, so this is a plausible future split.
+    # Kills naive startswith: `render_pack` is a real public verb
+    # (Results.render_pack), so this is a plausible future module name.
     "apeGmsh.viewers.render_pack",
     # Wildcard probes for `viewers.ui.*` / `viewers.core.*` rules.
     "apeGmsh.viewers.ui._details_panel",
@@ -209,7 +210,6 @@ def test_near_miss_modules_are_refused(module: str) -> None:
 @pytest.mark.parametrize("module", [
     "apeGmsh.viewers.session._realize",
     "apeGmsh.viewers.core._legend",
-    "apeGmsh.viewers.render",
 ])
 def test_allowlisted_modules_are_admitted(module: str) -> None:
     """The positive half. Without it the guard goes green by refusing

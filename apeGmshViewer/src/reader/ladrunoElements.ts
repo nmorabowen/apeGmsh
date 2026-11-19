@@ -21,8 +21,13 @@
 //   They are offered (for the Gauss-to-node extrapolation) on PARAM_DOMAIN
 //   "[-1,1]", the domain state/extrapolation.ts's shape functions read, and on a
 //   "bary" rule whose frame is known (`baryToGmsh`, Python `gp_param_to_gmsh`);
-//   another domain ("[0,1]"), or a "bary" rule of an unknown TOPOLOGY / FAMILY,
-//   warns and offers none, never a re-mapped guess;
+//   another domain ("[0,1]"), a "bary" rule of an unknown TOPOLOGY / FAMILY, or a
+//   "bary" row outside the simplex warns and offers none, never a re-mapped guess
+//   (a gauss_node contour then draws such a group's element means,
+//   state/extrapolation.ts meanFallbackGroups). A
+//   group with no QUADRATURE/GP_PARAM at all (the fork's recorder writes none for a
+//   class it has no rule for) is read the same way: G from GAUSS_ID, a warning, and
+//   no natural coordinates, so its values draw per element but are never placed;
 // - a Gauss bucket that disagrees with itself is refused by name, with the reason,
 //   in `GaussGroupInfo.refused`, and never read: a GAUSS_ID count that is not
 //   GP_PARAM's (or a GLOBAL_GP_COORDS width that is no multiple of it), NUM_COLUMNS
@@ -52,6 +57,8 @@ const EXTRAPOLATION_DOMAIN = "[-1,1]";
 const BARY_DOMAIN = "bary";
 /** Free barycentric columns per simplex TOPOLOGY (schema v1 §3 vocabulary; Python `_SIMPLEX_NDIR`). */
 const BARY_NDIR: Readonly<Record<string, number>> = { tri: 2, tet: 3 };
+/** How far a "bary" weight may fall outside [0, 1] (rounding in the writer's rule table) before the row is refused. */
+const BARY_TOL = 1e-9;
 
 /**
  * A `"bary"` GP_PARAM's rows in gmsh reference coordinates (`(u, v[, w])` on the
@@ -67,13 +74,22 @@ const BARY_NDIR: Readonly<Record<string, number>> = { tri: 2, tet: 3 };
  * The element's nodes are taken in gmsh corner order: the bridge emits these
  * classes with identity node order (`_element_capabilities.py` `node_reorder`).
  * Any other TOPOLOGY or FAMILY, or a row width that is not the topology's, has
- * no known frame: a guess would silently rotate the points.
+ * no known frame: a guess would silently rotate the points. A row that is not
+ * a point of the simplex (a non-finite weight, a weight below 0, or weights
+ * summing above 1, each beyond `BARY_TOL`) is refused by name too: no frame
+ * places it inside the element. Python `gp_param_to_gmsh` converts such a row
+ * without a check; the viewer refuses it rather than draw a point off the element.
  */
 export function baryToGmsh(rows: readonly (readonly number[])[], topology: unknown, family: unknown): number[][] | string {
   const ndir = typeof topology === "string" ? BARY_NDIR[topology] : undefined;
   if (ndir === undefined) return `TOPOLOGY ${JSON.stringify(topology ?? null)} is not a simplex with a known barycentric frame (known: ${Object.keys(BARY_NDIR).map((t) => JSON.stringify(t)).join(", ")})`;
   if (family !== "lagrange" && family !== "bernstein") return `no known barycentric frame for TOPOLOGY ${JSON.stringify(topology)}, FAMILY ${JSON.stringify(family ?? null)}`;
   if (rows.some((r) => r.length !== ndir)) return `its GP_PARAM rows are not the ${ndir} free barycentric coordinates of a ${topology}`;
+  const off = rows.findIndex((r) => {
+    const sum = r.reduce((a, x) => a + x, 0);
+    return !r.every(Number.isFinite) || r.some((x) => x < -BARY_TOL) || sum > 1 + BARY_TOL;
+  });
+  if (off >= 0) return `its GP_PARAM row ${off} = [${rows[off]!.join(", ")}] is not a point of the ${topology} (each weight, and 1 - Σ, must be >= 0)`;
   if (topology === "tri" && family === "bernstein") return rows.map((r) => [...r]);
   return rows.map((r) => [...r.slice(1), 1 - r.reduce((a, x) => a + x, 0)]);
 }
@@ -309,9 +325,12 @@ export class LadrunoGauss {
 
     // The Gauss points against the file's quadrature (seam "positions").
     if (!model) return refuse(`no MODEL/ELEMENTS group matches ${key}, so its Gauss points cannot be placed`, ids);
-    if (!gp || gp.metadata.type !== H5T_FLOAT || ndir === null) return refuse(`${model.path} has no floating-point QUADRATURE/GP_PARAM, so its Gauss points cannot be placed`, ids);
-    const G = gp.shape![0]!;
-    if (gids.length !== G) return refuse(`${cm.path}/GAUSS_ID lists ${gids.length} Gauss points and ${gp.path} ${G}: the counts disagree`, ids);
+    // No QUADRATURE/GP_PARAM at all (the fork writes none for a class its recorder has no rule for, as LadrunoBrick at
+    // 6050d78e: INTEGRATION_RULE 0, TOPOLOGY "custom"): the values are the file's and read, G is GAUSS_ID's, and no
+    // position is offered, never a TS rule table's guess. One that is there but unreadable still refuses the bucket.
+    if (gp && (gp.metadata.type !== H5T_FLOAT || ndir === null)) return refuse(`${gp.path} is not a floating-point (Gauss points, directions) dataset, so its Gauss points cannot be placed`, ids);
+    const G = gp ? gp.shape![0]! : gids.length;
+    if (gp && gids.length !== G) return refuse(`${cm.path}/GAUSS_ID lists ${gids.length} Gauss points and ${gp.path} ${G}: the counts disagree`, ids);
     if (new Set(gids).size !== G || gids.some((g) => g >= G)) return refuse(`${cm.path}/GAUSS_ID = [${gids.join(", ")}] is not each GP_PARAM row 0..${G - 1} once`, ids);
     const glob = this.datasetOf(model, "GLOBAL_GP_COORDS");
     if (glob && (glob.shape?.length !== 2 || glob.shape[1]! % G !== 0)) return refuse(`${glob.path} has shape (${(glob.shape ?? []).join(", ")}), not (elements, ${G} x dimension)`, ids);
@@ -324,16 +343,21 @@ export class LadrunoGauss {
     });
     const domain = oneValue(model.attrs["PARAM_DOMAIN"]?.value);
     let naturalCoords: number[][] | null = null;
-    const gpRows = () => {
+    if (!gp) {
+      const ruleNote = rule === null ? "no INTEGRATION_RULE" : `INTEGRATION_RULE ${rule}`;
+      warnings.push(
+        `${bg.path}: ${model.path} has no QUADRATURE/GP_PARAM (${ruleNote}), so its ${G} Gauss points are read per element ` +
+          `but not placed, drawn as Gauss points, or extrapolated to nodes; the recorder that wrote the file has no quadrature rule for class ${classTag}`,
+      );
+    } else if ((domain === EXTRAPOLATION_DOMAIN || domain === BARY_DOMAIN) && ndir !== null) {
       const flat = gp.value instanceof Float64Array ? gp.value : Float64Array.from(gp.value as ArrayLike<number>);
-      return Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * ndir, (r + 1) * ndir)));
-    };
-    if (domain === EXTRAPOLATION_DOMAIN) {
-      naturalCoords = gpRows();
-    } else if (domain === BARY_DOMAIN) {
-      const m = baryToGmsh(gpRows(), oneValue(model.attrs["TOPOLOGY"]?.value), oneValue(model.attrs["FAMILY"]?.value));
-      if (typeof m === "string") warnings.push(`${bg.path}: ${model.path}@PARAM_DOMAIN is "${BARY_DOMAIN}", but ${m}; its Gauss points are read, but not extrapolated to nodes`);
-      else naturalCoords = m;
+      const rows = Array.from({ length: G }, (_, r) => Array.from(flat.subarray(r * ndir, (r + 1) * ndir)));
+      if (domain === EXTRAPOLATION_DOMAIN) naturalCoords = rows;
+      else {
+        const m = baryToGmsh(rows, oneValue(model.attrs["TOPOLOGY"]?.value), oneValue(model.attrs["FAMILY"]?.value));
+        if (typeof m === "string") warnings.push(`${bg.path}: ${model.path}@PARAM_DOMAIN is "${BARY_DOMAIN}", but ${m}; its Gauss points are read, but not extrapolated to nodes`);
+        else naturalCoords = m;
+      }
     } else {
       warnings.push(`${bg.path}: ${model.path}@PARAM_DOMAIN is ${JSON.stringify(domain ?? null)}, not "${EXTRAPOLATION_DOMAIN}"; its Gauss points are read, but not extrapolated to nodes`);
     }

@@ -20,13 +20,13 @@ import h5py
 import numpy as np
 import pytest
 
-from apeGmsh.mesh import _femdata_mpco_io
+from apeGmsh.mesh import _femdata_dims
 from apeGmsh.mesh._femdata_ladruno_io import read_fem_from_ladruno
-from apeGmsh.mesh._femdata_mpco_io import (
+from apeGmsh.mesh._femdata_dims import (
     ElementDimContradictionWarning,
     ElementDimUnknownWarning,
-    read_fem_from_mpco,
 )
+from apeGmsh.mesh._femdata_mpco_io import read_fem_from_mpco
 from apeGmsh.opensees import _response_catalog as rc
 
 
@@ -34,7 +34,7 @@ from apeGmsh.opensees import _response_catalog as rc
 def _fresh_dim_warning_session(monkeypatch):
     """Each test starts a fresh warn-once session (#2312), and the
     process-wide registry is restored afterwards."""
-    monkeypatch.setattr(_femdata_mpco_io, "_DIM_WARNED", set())
+    monkeypatch.setattr(_femdata_dims, "_DIM_WARNED", set())
 
 
 def _oracle_dims() -> dict[str, int]:

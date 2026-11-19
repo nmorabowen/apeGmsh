@@ -5,8 +5,9 @@
 
 import type { ElementRef } from "../chain/resolve.ts";
 import { buildMesh, colourGroups, type MeshBuffers } from "../mesh/build.ts";
+import { opsOnlyNodes } from "../mesh/membrane.ts";
 import type { Group, ModelFile, OpsFamily, OpsObject, Param, SequenceZone } from "../model/types.ts";
-import { sourceOf, type ProvenanceZone } from "../reader/provenance.ts";
+import { sourceOfRow, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
 import { buildFrameExtrusion } from "./frameExtrusion.ts";
@@ -156,7 +157,7 @@ export function declarationsOf(model: ModelFile, blobs: BlobStore, warnings: str
       const facts: ElementFacts = {
         femId: null,
         cell: null,
-        inlineNodes: meta.inlineConnectivity?.[row] ?? NONE,
+        inlineNodes: opsOnlyNodes(meta, row),
         groups: NONE,
         metas: [{ type: meta.type, tag: meta.ids[row]!, h5: meta.path, row, args: meta.args[row] ?? NONE }],
       };
@@ -178,7 +179,7 @@ function elementDecl(path: DeclPath, h5: string, name: string, facts: ElementFac
   return {
     path,
     kind: "element",
-    type: first?.type ?? "(no OpenSees type)",
+    type: first?.type ?? (hasOpensees ? "(mesh only)" : "(no OpenSees type)"),
     name,
     nameSource: h5,
     h5,
@@ -341,11 +342,11 @@ export function meshInfoOf(
  */
 export function joinProvenance(decls: Record<DeclPath, Decl>, zone: ProvenanceZone): number {
   let joined = 0;
-  for (const path of zone.records.path) {
+  for (const [i, path] of zone.records.path.entries()) {
     if (path.includes("/#")) continue;
     const d = decls[path];
     if (!d) continue;
-    const source = declSourceOf(zone, path);
+    const source = declSourceOf(zone, i);
     if (!source) continue;
     decls[path] = { ...d, provenance: source };
     joined++;
@@ -353,9 +354,9 @@ export function joinProvenance(decls: Record<DeclPath, Decl>, zone: ProvenanceZo
   return joined;
 }
 
-/** Where go-to-source jumps for the record at `path`: its site, else its script line; null when it has neither. */
-function declSourceOf(zone: ProvenanceZone, path: string): DeclSource | null {
-  const r = sourceOf(zone, path);
+/** Where go-to-source jumps for `records` row `i`: its site, else its script line; null when it has neither. */
+function declSourceOf(zone: ProvenanceZone, i: number): DeclSource | null {
+  const r = sourceOfRow(zone, i);
   if (!r.ok) return null;
   const at = r.site ?? r.script!;
   return {
@@ -378,7 +379,7 @@ export function provenanceEntries(zone: ProvenanceZone): ProvenanceEntry[] {
     key,
     origin: zone.records.origin[i]!,
     seq: zone.records.seq[i]!,
-    source: declSourceOf(zone, key),
+    source: declSourceOf(zone, i),
   }));
   return rows.sort((a, b) => a.seq - b.seq);
 }

@@ -30,9 +30,7 @@ from apeGmsh.opensees._response_catalog import (
     synthesize_line_station_layout_for_elastic_beam,
 )
 from apeGmsh.results import Results
-from apeGmsh.results.readers._mpco_nodal_io import (
-    NodalForceBucketSkippedWarning,
-)
+from apeGmsh.results.readers._buckets import NodalForceBucketSkippedWarning
 from apeGmsh.results.spec._resolved import ResolvedRecorderRecord
 from apeGmsh.results.transcoders._recorder import RecorderTranscoder
 

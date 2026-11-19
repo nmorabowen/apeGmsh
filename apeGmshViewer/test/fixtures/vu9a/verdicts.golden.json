@@ -1,0 +1,667 @@
+{
+ "base3_moved": {
+  "base": {
+   "checked": true,
+   "matched": 2,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    false
+   ],
+   "total": 3,
+   "verdict": "partial"
+  },
+  "column line": {
+   "checked": true,
+   "matched": 4,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "total": 4,
+   "verdict": "moved"
+  },
+  "columns": {
+   "checked": true,
+   "matched": 2,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    false
+   ],
+   "total": 3,
+   "verdict": "partial"
+  },
+  "roof": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "springs": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false
+   ],
+   "total": 2,
+   "verdict": "lost"
+  }
+ },
+ "column_up": {
+  "base": {
+   "checked": true,
+   "matched": 1,
+   "max_distance": 0.0,
+   "members": [
+    false,
+    true,
+    false
+   ],
+   "total": 3,
+   "verdict": "partial"
+  },
+  "column line": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false,
+    false,
+    false
+   ],
+   "total": 4,
+   "verdict": "lost"
+  },
+  "columns": {
+   "checked": true,
+   "matched": 2,
+   "max_distance": 0.0,
+   "members": [
+    false,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "partial"
+  },
+  "roof": {
+   "checked": true,
+   "matched": 2,
+   "max_distance": 0.0,
+   "members": [
+    false,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "partial"
+  },
+  "springs": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false
+   ],
+   "total": 2,
+   "verdict": "lost"
+  }
+ },
+ "current": {
+  "base": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "column line": {
+   "checked": false,
+   "matched": 4,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "total": 4,
+   "verdict": "current"
+  },
+  "columns": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "roof": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "springs": {
+   "checked": false,
+   "matched": 2,
+   "max_distance": null,
+   "members": [
+    true,
+    true
+   ],
+   "total": 2,
+   "verdict": "current"
+  }
+ },
+ "no_fem_hash": {
+  "base": {
+   "checked": true,
+   "matched": 2,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    false
+   ],
+   "total": 3,
+   "verdict": "partial"
+  },
+  "column line": {
+   "checked": true,
+   "matched": 4,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "total": 4,
+   "verdict": "moved"
+  },
+  "columns": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "roof": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "springs": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false
+   ],
+   "total": 2,
+   "verdict": "lost"
+  }
+ },
+ "no_model_hash": {
+  "base": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "column line": {
+   "checked": false,
+   "matched": 4,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "total": 4,
+   "verdict": "current"
+  },
+  "columns": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "roof": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "springs": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false
+   ],
+   "total": 2,
+   "verdict": "lost"
+  }
+ },
+ "no_opensees": {
+  "base": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "column line": {
+   "checked": false,
+   "matched": 4,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "total": 4,
+   "verdict": "current"
+  },
+  "columns": {
+   "refused": "no-tag-map"
+  },
+  "roof": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "springs": {
+   "refused": "no-tag-map"
+  }
+ },
+ "node103_off": {
+  "base": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "column line": {
+   "checked": true,
+   "matched": 4,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "total": 4,
+   "verdict": "moved"
+  },
+  "columns": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "roof": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "springs": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false
+   ],
+   "total": 2,
+   "verdict": "lost"
+  }
+ },
+ "relabel": {
+  "base": {
+   "checked": true,
+   "matched": 2,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    false
+   ],
+   "total": 3,
+   "verdict": "partial"
+  },
+  "column line": {
+   "checked": true,
+   "matched": 4,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "total": 4,
+   "verdict": "moved"
+  },
+  "columns": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "roof": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "springs": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false
+   ],
+   "total": 2,
+   "verdict": "lost"
+  }
+ },
+ "springs_swap": {
+  "base": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "column line": {
+   "checked": false,
+   "matched": 4,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "total": 4,
+   "verdict": "current"
+  },
+  "columns": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "roof": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "springs": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false
+   ],
+   "total": 2,
+   "verdict": "lost"
+  }
+ },
+ "tags_shift": {
+  "base": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "column line": {
+   "checked": false,
+   "matched": 4,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "total": 4,
+   "verdict": "current"
+  },
+  "columns": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false,
+    false
+   ],
+   "total": 3,
+   "verdict": "lost"
+  },
+  "roof": {
+   "checked": false,
+   "matched": 3,
+   "max_distance": null,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "current"
+  },
+  "springs": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false
+   ],
+   "total": 2,
+   "verdict": "lost"
+  }
+ },
+ "tolerance": {
+  "base": {
+   "checked": true,
+   "matched": 2,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    false
+   ],
+   "total": 3,
+   "verdict": "partial"
+  },
+  "column line": {
+   "checked": true,
+   "matched": 4,
+   "max_distance": 7.500000000000001e-09,
+   "members": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "total": 4,
+   "verdict": "moved"
+  },
+  "columns": {
+   "checked": true,
+   "matched": 3,
+   "max_distance": 0.0,
+   "members": [
+    true,
+    true,
+    true
+   ],
+   "total": 3,
+   "verdict": "moved"
+  },
+  "roof": {
+   "checked": true,
+   "matched": 2,
+   "max_distance": 7.500000000000001e-09,
+   "members": [
+    true,
+    false,
+    true
+   ],
+   "total": 3,
+   "verdict": "partial"
+  },
+  "springs": {
+   "checked": true,
+   "matched": 0,
+   "max_distance": null,
+   "members": [
+    false,
+    false
+   ],
+   "total": 2,
+   "verdict": "lost"
+  }
+ }
+}

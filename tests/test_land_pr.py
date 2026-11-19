@@ -21,6 +21,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -68,7 +69,7 @@ RUN_ID = "38000000001"
 STARTED = "2026-10-13T10:00:00Z"
 
 
-JOB_IDS = {name: 9000 + i for i, name in enumerate((*land_pr.REQUIRED_CHECKS, "qt-window-tests", "build"))}
+JOB_IDS = {name: 9000 + i for i, name in enumerate((*land_pr.REQUIRED_CHECKS, "qt-window-tests", "build", "app-tests"))}
 
 
 def _job(name, run=RUN_ID):
@@ -141,9 +142,9 @@ def _row(path, status="modified", previous=None, patch="@@ -1 +1 @@\n-a\n+b"):
     return json.dumps([path, status, previous, changes, patch])
 
 
-def _run_row(run_id, sha, status="completed", conclusion="success"):
+def _run_row(run_id, sha, status="completed", conclusion="success", attempt=1):
     """One row of `gh api MAIN_RUNS --jq MAIN_RUNS_JQ`: main's Tests push runs, newest first."""
-    return {"id": run_id, "head_sha": sha, "status": status, "conclusion": conclusion}
+    return {"id": run_id, "head_sha": sha, "status": status, "conclusion": conclusion, "run_attempt": attempt}
 
 
 #: By default main's head is MAIN_TIP and its Tests run there is completed and green.
@@ -170,6 +171,19 @@ def _jobs_for(run):
 def _ancestry_call(tip, base):
     """Check 10's question: does the checks' base contain main's head (ahead or identical)?"""
     return f"api repos/{{owner}}/{{repo}}/compare/{tip}...{base} --jq .status"
+
+
+def _group_call(g, h):
+    """The group rule's read of G..H (#2919): `compare/G...H`, by SHA."""
+    return f"api repos/{{owner}}/{{repo}}/compare/{g}...{h} --jq {land_pr.GROUP_JQ}"
+
+
+def _group_listing(commits, files, *, status="ahead", ahead=None, behind=0):
+    """One `compare/G...H --jq GROUP_JQ` response: G..H's commits oldest first, and its files
+    as [filename, previous_filename] (a bare name is an unrenamed file)."""
+    pairs = [list(f) if isinstance(f, tuple) else [f, None] for f in files]
+    return json.dumps({"status": status, "ahead": len(commits) if ahead is None else ahead, "behind": behind,
+                       "commits": list(commits), "files": pairs})
 
 
 def _checkout(head, base=FRESH_BASE):
@@ -218,9 +232,23 @@ def _recording(number, pr, squash, files=FILES_1218, *, compare="behind", tip=""
         "rev-parse HEAD": (local or head) + "\n",
         "status --porcelain": porcelain,
         f"ls-remote origin refs/heads/{pr['headRefName']}": tip,
+        **_test_shows(rows, head),  # check 12 (#3023) reads each changed test; unmarked by default
         **{f"show {head}:{path}": text for path, text in (shows or {}).items()},
     })
     return gh, git
+
+
+def _test_shows(rows, head):
+    """An unmarked body for every `tests/**.py` name check 12 reads: at the head, or on
+    origin/main for a deleted file or the old name of a rename."""
+    shows = {}
+    for row in rows:
+        path, status, previous = json.loads(row)[:3]
+        for name in (path, previous):
+            if name and name.startswith("tests/") and name.endswith(".py"):
+                rev = head if name == path and status != "removed" else "origin/main"
+                shows[f"show {rev}:{name}"] = "def test_stock():\n    pass\n"
+    return shows
 
 
 def _run(number, gh, git, **kw):
@@ -921,6 +949,10 @@ PROGRAM_PR = {**PR_1218, "labels": [{"name": "program"}, {"name": "semantic"}], 
 def _scope(files=None, *, card=CARD_1812, comments=(), pr=PROGRAM_PR, rows=None):
     files = OWNED_1812 if files is None else files
     cards = {1801: {"body": card, "comments": [{"body": c} for c in comments]}}
+    # FOREIGN_1812 carries #1761's apeGmshViewer/ files, so check 6 needs app-tests green (#2864).
+    # The job reports on every PR, so these check-9 replays carry a green run of it.
+    if not any(run.get("name") == "app-tests" for run in pr["statusCheckRollup"]):
+        pr = {**pr, "statusCheckRollup": [*pr["statusCheckRollup"], *_rollup(names=("app-tests",))]}
     return _recording(1218, pr, SQUASH_1218, files, rows=rows, cards=cards)
 
 
@@ -944,10 +976,10 @@ def test_1812_stale_tree_is_refused_and_every_foreign_file_named():
                  "### Owned files\n- `tests/viewers/golden_stills/`\n- `tests/fixtures/schema_corpus/**`\n", (),
                  id="directory-and-glob"),
     pytest.param(["internal_docs/program/board_notes.md"], CARD_1812,
-                 ("**Card amendment (T):** also re-date a row in `internal_docs/program/board_notes.md`.",),
+                 ("**Card amendment (T):** also re-date a row in:\n- `internal_docs/program/board_notes.md`",),
                  id="bold-amendment"),
     pytest.param(["internal_docs/program/board_notes.md"], CARD_1812,
-                 ("Card amendment (orchestrator): Owned files add `internal_docs/program/board_notes.md`.",),
+                 ("Card amendment (orchestrator): Owned files add:\n- `internal_docs/program/board_notes.md`",),
                  id="plain-amendment-1807"),
     pytest.param(["changelog.d/any-slug.md"], CARD_1812, (), id="changelog-fragment"),
     pytest.param(["internal_docs/program/prototypes/legacy.py", "internal_docs/program/prototypes/README.md"],
@@ -1113,7 +1145,7 @@ def test_negated_owned_line_fails_closed(line):
 
 
 def test_negated_amendment_line_adds_no_path(capsys):
-    amendment = "**Card amendment (T):** also edit `src/a.py`.\nDo NOT touch `src/b.py`.\n"
+    amendment = "**Card amendment (T):** also edit:\n- `src/a.py`\nDo NOT touch `src/b.py`.\n"
     gh, git = _scope(["src/a.py"], comments=(amendment,))
     assert _run(1218, gh, git, dry_run=True) == 0
     assert "skipped a negated card-amendment line" in capsys.readouterr().out
@@ -1138,7 +1170,7 @@ def _refused_b(amendment):
 
 def test_negation_opening_a_multi_line_list_excludes_the_list_1872(capsys):
     """Revert-proof: with the lead-in's `excluding` state removed, `src/b.py` is owned."""
-    amendment = "**Card amendment:** add `src/a.py`.\nDo not touch:\n- `src/b.py`\n"
+    amendment = "**Card amendment:** add:\n- `src/a.py`\nDo not touch:\n- `src/b.py`\n"
     _refused_b(amendment)
     assert "skipped a negated card-amendment line on #1801: '- `src/b.py`'" in capsys.readouterr().out
     gh, git = _scope(["src/a.py"], comments=(amendment,))  # the positive line still adds its path
@@ -1146,14 +1178,14 @@ def test_negation_opening_a_multi_line_list_excludes_the_list_1872(capsys):
 
 
 @pytest.mark.parametrize("amendment", [
-    pytest.param("**Card amendment:** add `src/a.py`.\n- Do not touch `src/b0.py` or these\n  - `src/b.py`\n",
+    pytest.param("**Card amendment:** add:\n- `src/a.py`\n- Do not touch `src/b0.py` or these\n  - `src/b.py`\n",
                  id="sub-items"),
-    pytest.param("**Card amendment:** add `src/a.py`.\n- Do not touch:\n- `src/b.py`\n", id="bullet-ending-in-colon"),
+    pytest.param("**Card amendment:** add:\n- `src/a.py`\n- Do not touch:\n- `src/b.py`\n", id="bullet-ending-in-colon"),
     # review of #1883, F2 (a): an unmarked continuation line, at any indent, stays in the item
-    pytest.param("**Card amendment:** add `src/a.py`.\n- do not touch `src/b0.py`,\n`src/b.py`, `src/b3.py`\n",
+    pytest.param("**Card amendment:** add:\n- `src/a.py`\n- do not touch `src/b0.py`,\n`src/b.py`, `src/b3.py`\n",
                  id="unindented-continuation"),
     # F2 (b): a negated bullet naming no path is a lead-in for the sibling bullets after it
-    pytest.param("**Card amendment:**\n- add `src/a.py`\n- Do not touch the following\n- `src/b.py`\n",
+    pytest.param("**Card amendment:**\n- `src/a.py`\n- Do not touch the following\n- `src/b.py`\n",
                  id="pathless-bullet-lead-in"),
 ])
 def test_a_negated_bullet_excludes_the_list_it_opens_1872(amendment):
@@ -1167,27 +1199,27 @@ def test_a_colon_lead_in_spans_blank_lines_to_its_list_1872(gap):
     """Review of #1883, F1: a blank line between "Do not touch:" and its list (23 of 355
     program issues use that layout) must not end the exclusion. Revert-proof: with the
     lead-in ending at a blank line, `src/b.py` is owned."""
-    _refused_b(f"**Card amendment:** add `src/a.py`.\n\nDo not touch:{gap}\n- `src/b.py`\n")
+    _refused_b(f"**Card amendment:** add:\n- `src/a.py`\n\nDo not touch:{gap}\n- `src/b.py`\n")
 
 
 def test_a_negated_bullet_does_not_swallow_its_siblings_1872():
     """Amendments are often prose bullets naming a path (#1663, #1722): one negated bullet
     must not drop the paths its siblings add. Fails if a negated bullet excluded to the
     paragraph's end."""
-    amendment = "**Card amendment:**\n- add `src/a.py`\n- do not reformat `src/z.py`\n- add `src/c.py`\n"
+    amendment = "**Card amendment:**\n- `src/a.py`\n- do not reformat `src/z.py`\n- `src/c.py`\n"
     gh, git = _scope(["src/a.py", "src/c.py"], comments=(amendment,))
     assert _run(1218, gh, git, dry_run=True) == 0
 
 
 @pytest.mark.parametrize("tail", [
-    pytest.param("\nAlso add `src/c.py`.", id="blank-line"),
+    pytest.param("\nAlso add:\n- `src/c.py`", id="blank-line"),
     pytest.param("### Also\n- `src/c.py`", id="heading"),
-    pytest.param("**Also add:** `src/c.py`", id="bold-label"),
+    pytest.param("**Also add:**\n- `src/c.py`", id="bold-label"),
 ])
 def test_a_negated_list_ends_where_an_owned_section_does_1872(tail):
     """The list a negation opens ends at a blank line, a heading or a bold label, as in
     `_card_paths`; a positive line after it adds its path again (the card's stop condition)."""
-    amendment = "**Card amendment:** add `src/a.py`.\nDo not touch:\n- `src/b.py`\n" + tail
+    amendment = "**Card amendment:** add:\n- `src/a.py`\nDo not touch:\n- `src/b.py`\n" + tail
     gh, git = _scope(["src/a.py", "src/c.py"], comments=(amendment,))
     assert _run(1218, gh, git, dry_run=True) == 0
 
@@ -1211,7 +1243,7 @@ def test_a_negated_list_ends_where_an_owned_section_does_1872(tail):
 ])
 def test_negation_vocabulary_adds_no_path_1872(line):
     """Revert-proof, one form per case: drop the form from `_NEGATION` and `src/b.py` is owned."""
-    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+    _refused_b(f"**Card amendment (T):** also edit:\n- `src/a.py`\n{line}\n")
 
 
 @pytest.mark.parametrize("line", [
@@ -1228,7 +1260,7 @@ def test_a_negation_word_inside_a_backticked_path_is_not_a_negation_1872():
     not), so without masking path spans this Owned line refuses and the amendment adds nothing."""
     card = "### Owned files\n- `src/x/not_found.py`, `test_never_twice.py`\n"
     assert land_pr._card_paths(card) == ["src/x/not_found.py", "src/x/test_never_twice.py"]
-    gh, git = _scope(["tests/avoid-cannot.py"], comments=("**Card amendment:** add `tests/avoid-cannot.py`.",))
+    gh, git = _scope(["tests/avoid-cannot.py"], comments=("**Card amendment:** add:\n- `tests/avoid-cannot.py`",))
     assert _run(1218, gh, git, dry_run=True) == 0
 
 
@@ -1247,7 +1279,7 @@ def test_a_negation_word_inside_a_quoted_code_string_is_not_a_negation_1857():
 def test_a_backticked_negation_phrase_still_negates_g1(line):
     """Review of #1883, G1. Revert-proof: masking every span hides the negation and
     `src/b.py` is owned."""
-    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+    _refused_b(f"**Card amendment (T):** also edit:\n- `src/a.py`\n{line}\n")
 
 
 def test_a_backticked_negation_in_an_owned_line_refuses_g1():
@@ -1274,7 +1306,7 @@ def test_a_residual_backticked_negation_adds_no_path_1891(line):
     circumstances` in `_FILLER`, without dropping path words from a multi-word span, or
     without the editing-verb object rule, the span is masked and `src/b.py` is owned.
     `bare-can-not` already negated on main (through `not`); it pins that."""
-    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+    _refused_b(f"**Card amendment (T):** also edit:\n- `src/a.py`\n{line}\n")
 
 
 @pytest.mark.parametrize("line", [
@@ -1316,7 +1348,7 @@ def test_a_bom_and_crlf_body_is_read_1891(bom):
         return ("﻿" if bom == where else "") + text.replace("\n", "\r\n")
     pr = {**PROGRAM_PR, "body": mark("Slice: #1801\nClass: semantic\n", "pr")}
     card = mark("### Owned files\n- `src/a.py`\n", "card")
-    amendment = mark("**Card amendment (T):** add `src/c.py`.\n", "amendment")
+    amendment = mark("**Card amendment (T):** add:\n- `src/c.py`\n", "amendment")
     gh, git = _scope(["src/a.py", "src/c.py"], card=card, comments=(amendment,), pr=pr)
     assert _run(1218, gh, git, dry_run=True) == 0
 
@@ -1364,7 +1396,7 @@ def test_a_mid_line_invisible_mark_does_not_hide_an_owned_negation_1891(line):
 ])
 def test_a_mid_line_invisible_mark_does_not_hide_an_amendment_negation_1891(line):
     """Delta review of #1917, as above for a card amendment. Fails on 91c91fe9."""
-    _refused_b(f"**Card amendment (T):** also edit `src/a.py`.\n{line}\n")
+    _refused_b(f"**Card amendment (T):** also edit:\n- `src/a.py`\n{line}\n")
 
 
 def test_a_bom_prefixed_body_still_holds_a_freeze_1891():
@@ -1504,13 +1536,13 @@ def test_an_unreadable_tree_refuses_check_9_end_to_end_1939():
 
 
 def test_extensionless_names_do_not_weaken_a_negation_1939():
-    """An Owned line that negates still refuses. In an amendment, "- `FORK_PIN`: do not touch" keeps
+    """An Owned line that negates still refuses. In an amendment, "- Do not touch `FORK_PIN`" keeps
     excluding the list after it, as it did when `FORK_PIN` was no path. Revert-proof: reading that
     bullet with `real` turns it into a one-item exclusion and admits `src/b.py`."""
     real, _git = _tree_real()
     with pytest.raises(land_pr.LandError, match=r"check 9: an Owned line negates"):
         land_pr._card_paths("### Owned files\n- `FORK_PIN` (never touch `scripts/a.py`)\n", real)
-    amendment = "**Card amendment (T):** also edit `src/a.py`.\n\n- `FORK_PIN`: do not touch\n- `src/b.py`\n"
+    amendment = "**Card amendment (T):** also edit:\n- `src/a.py`\n\n- Do not touch `FORK_PIN`\n- `src/b.py`\n"
     assert land_pr._amendment_paths(amendment, 1939, real) == ["src/a.py"]
     assert land_pr._amendment_paths("**Card amendment (T):** add\n- `FORK_PIN`\n", 1939, real) == ["FORK_PIN"]
 
@@ -1573,6 +1605,18 @@ RUNS_RED_471 = [  # 16:36Z: 471432f3's run is the latest completed, and red
     _run_row(38429723003, SHA_1ACF, "in_progress", None), _run_row(38429075356, SHA_471, "completed", "failure"),
     _run_row(38428776331, SHA_3AF, "completed", "failure"), RUN_6F66,
 ]
+#: The required jobs as they stood at each landing, from the recorded jobs' completed_at
+#: (actions/runs/<id>/jobs, read 2026-11-12): run 38428776331 (3af31061) lock-tests failed at
+#: 16:15:05Z, emit-cost-gate and static-gates passed at 16:15:17Z and 16:15:44Z, live-stock at
+#: 16:18:23Z; run 38429075356 (471432f3) lock-tests failed at 16:17:14Z, static-gates and
+#: emit-cost-gate passed at 16:17:22Z and 16:17:51Z. Suite ran past both landings.
+_RUNNING = {"status": "in_progress", "conclusion": None}
+_FAILED = {"conclusion": "failure"}
+JOBS_AT_1858 = {38428776331: _job_rows(**{"lock-tests": _FAILED, "suite": _RUNNING, "live-stock": _RUNNING})}
+JOBS_AT_1866 = {
+    38428776331: _job_rows(**{"lock-tests": _FAILED, "suite": _RUNNING}),
+    38429075356: _job_rows(**{"lock-tests": _FAILED, "suite": _RUNNING, "live-stock": _RUNNING}),
+}
 #: actions/runs/38429075356/jobs (471432f3), recorded: lock-tests and suite failed.
 JOBS_471 = {"total": 8, "jobs": [
     {"name": name, "status": "completed", "conclusion": "failure" if name in ("lock-tests", "suite") else "success"}
@@ -1662,24 +1706,31 @@ def test_1858_landing_on_an_in_progress_main_is_refused():
     Revert-proof: without the ancestry branch (or `check_main_green`), it merges; check 11
     passes it (9 commits, 8 h behind)."""
     gh, git = _landing(1858, PR_1858, FILES_1858, CARD_1858, BASE_1858, main=RUNS_AT_1858, order=ORDER_AT_1858,
-                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"))
+                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"), jobs=JOBS_AT_1858)
     with pytest.raises(land_pr.LandError, match=(
         r"check 10: main unverified at 3af31061bd34: its Tests run is in progress and #1858's required checks "
         r"in run 38368430040 \(job 115199113581\) ran on base a46fe53964eb, which does not contain it "
         r"\(compare: behind\)\. Merge main and re-run, or wait"
-    )):
+    )) as refused:
         _run(1858, gh, git)
     assert not _merged(gh)
+    # The group rule (#2919) refuses it too: 3af31061's lock-tests had failed at 16:15:05Z.
+    assert ("Group rule (#2919): G = 6f66fd238325 (green), 1 commit(s) in G..H, so this landing would be 2 of 3; "
+            "refused: required job 'lock-tests' of the Tests run on 3af31061bd34 (38428776331) already reported "
+            "failure") in str(refused.value)
+    assert _group_call(MAIN_TIP, SHA_3AF) not in gh.calls
 
 
 def test_1866_landing_on_an_in_progress_main_is_refused():
     """Replay: #1866 landed (16:20:38Z) while 471432f3's and 3af31061's runs were in progress,
     on base 686840f6. Revert-proof: without the ancestry branch, it merges."""
     gh, git = _landing(1866, PR_1866, FILES_1866, CARD_1866, BASE_1866, main=RUNS_AT_1866, order=ORDER_AT_1866,
-                       ancestry="behind", behind=(8, "2026-10-13T16:15:56Z"))
-    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at 471432f39b90: .*686840f602ee"):
+                       ancestry="behind", behind=(8, "2026-10-13T16:15:56Z"), jobs=JOBS_AT_1866)
+    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at 471432f39b90: .*686840f602ee") as refused:
         _run(1866, gh, git)
     assert not _merged(gh)
+    assert ("3 of 3; refused: required job 'lock-tests' of the Tests run on 3af31061bd34 (38428776331) already "
+            "reported failure") in str(refused.value)
 
 
 @pytest.mark.parametrize("ancestry", ["identical", "ahead"])
@@ -1786,7 +1837,11 @@ def test_a_required_job_still_running_keeps_the_head_in_progress():
     gh, git = _recording(1218, PR_1218, SQUASH_1218, main=[_run_row(7, tip, "in_progress", None), RUN_6F66],
                          main_order=(tip, MAIN_TIP), jobs={7: jobs})
     gh.responses[_ancestry_call(tip, FRESH_BASE)] = "behind\n"
-    with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at eeeeeeeeeeee: its Tests run is in progress"):
+    gh.responses[_group_call(MAIN_TIP, tip)] = _group_listing([tip], ["src/apeGmsh/studio/_api_index.json"])
+    with pytest.raises(land_pr.LandError, match=(
+        r"check 10: main unverified at eeeeeeeeeeee: its Tests run is in progress.*"
+        r"refused: files overlap G\.\.H on src/apeGmsh/studio/_api_index\.json"
+    )):
         _run(1218, gh, git)
 
 
@@ -1852,6 +1907,180 @@ def test_a_failed_ancestry_read_refuses():
     gh = Flaky(gh.responses, _ancestry_call(SHA_3AF, SHA_3AF), 99)
     with pytest.raises(land_pr.LandError, match=r"check 10: main unverified at 3af31061bd34: compare with .*failed"):
         _run(1218, gh, git)
+
+
+# == The group rule (#2919): up to three file-disjoint landings per verified main run ======
+# The owner's ruling of 2026-11-12 on #2919. The replays reuse the 2026-10-13 sequence: G is
+# 6f66fd23 (green), then 3af31061 (#1698), 471432f3 (#1858) and 1acff395 (#1866) landed on it.
+# G..H below is what `compare/6f66fd23...<H>` returns today, recorded 2026-11-12. The accepted
+# cases are a counterfactual on those SHAs and files: every required job of G..H still running,
+# where in fact 3af31061's lock-tests had already failed (the #1858/#1866 replays above).
+#: compare/6f66fd23...3af31061 and compare/6f66fd23...471432f3, recorded.
+G_TO_3AF = _group_listing([SHA_3AF], FILES_1698)
+G_TO_471 = _group_listing([SHA_3AF, SHA_471], [
+    "AGENTS.md", "architecture/fork-divergence-roster.md", "changelog.d/f3f-sanisand-flip-pin.md",
+    "changelog.d/land-pr-owned-files.md", "internal_docs/program/slice_card.md", "scripts/land_pr.py",
+    "tests/opensees/integration_ladruno/test_ladruno_sanisand_live.py", "tests/test_land_pr.py",
+])
+ORDER_AT_4TH = (SHA_1ACF, SHA_471, SHA_3AF, MAIN_TIP)
+RUNS_AT_4TH = [_run_row(38429723003, SHA_1ACF, "in_progress", None), *RUNS_AT_1866]
+
+
+def _second():
+    """#1858 landing on 3af31061, a group of 2 on G (6f66fd23)."""
+    gh, git = _landing(1858, PR_1858, FILES_1858, CARD_1858, BASE_1858, main=RUNS_AT_1858, order=ORDER_AT_1858,
+                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"))
+    gh.responses[_group_call(MAIN_TIP, SHA_3AF)] = G_TO_3AF
+    return gh, git
+
+
+def test_group_of_one_is_a_landing_on_the_verified_head(capsys):
+    """Landing 1 on G: main's head is G and its run is green, so no G..H is read."""
+    gh, git = _landing(1858, PR_1858, FILES_1858, CARD_1858, BASE_1858, main=[RUN_6F66, RUN_53F1],
+                       order=(MAIN_TIP, SHA_53F), ancestry="behind", behind=(1, "2026-10-13T09:04:47Z"))
+    assert _run(1858, gh, git) == 0
+    assert f"check 10: main's Tests run on its head {MAIN_TIP[:12]} is green." in capsys.readouterr().out
+    assert not any("/compare/" + MAIN_TIP in call for call in gh.calls)
+
+
+def test_group_of_two_lands(capsys):
+    """#1858 on 3af31061, base a46fe539 (without it), files disjoint from #1698's. Revert-proof:
+    without the group rule, check 10 refuses it as in #1877."""
+    gh, git = _second()
+    assert _run(1858, gh, git) == 0
+    assert _merged(gh)
+    assert (
+        "check 10: main's Tests run on 3af31061bd34 is in progress and #1858's checks ran on a base without it; "
+        "admitted by the group rule (#2919): G = 6f66fd238325 (green), 1 commit(s) in G..H, so this landing "
+        "would be 2 of 3; files: disjoint from G..H's 3."
+    ) in capsys.readouterr().out
+
+
+def test_group_of_three_lands(capsys):
+    """#1866 on 471432f3: G..H is 3af31061 and 471432f3, and #1866's files are disjoint from both."""
+    gh, git = _landing(1866, PR_1866, FILES_1866, CARD_1866, BASE_1866, main=RUNS_AT_1866, order=ORDER_AT_1866,
+                       ancestry="behind", behind=(8, "2026-10-13T16:15:56Z"))
+    gh.responses[_group_call(MAIN_TIP, SHA_471)] = G_TO_471
+    assert _run(1866, gh, git) == 0
+    assert "2 commit(s) in G..H, so this landing would be 3 of 3; files: disjoint from G..H's 8." in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_fourth_landing_on_g_is_refused():
+    """1acff395 (#1866) is H, three commits sit in G..H: a src-only, disjoint PR is still refused,
+    and G..H is not read. Revert-proof: with GROUP_MAX unchecked, the unrecorded read fails."""
+    gh, git = _recording(1097, PR_1097, SQUASH_1097, FILES_1097, main=RUNS_AT_4TH, main_order=ORDER_AT_4TH)
+    gh.responses[_ancestry_call(SHA_1ACF, FRESH_BASE)] = "behind\n"
+    with pytest.raises(land_pr.LandError) as refused:
+        _run(1097, gh, git)
+    message = str(refused.value)
+    assert message.startswith("check 10: main unverified at 1acff395a9cf: its Tests run is in progress")
+    assert message.endswith(
+        "Group rule (#2919): G = 6f66fd238325 (green), 3 commit(s) in G..H, so this landing would be 4 of 3; "
+        "refused: the group on G is full; files: not read."
+    )
+    assert not any(call.startswith(f"api repos/{{owner}}/{{repo}}/compare/{MAIN_TIP}") for call in gh.calls)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("row, shared", [
+    pytest.param(_row("scripts/land_pr.py"), "scripts/land_pr.py", id="edits-a-g-h-file"),
+    pytest.param(_row("architecture/roster.md", "renamed", "architecture/fork-divergence-roster.md"),
+                 "architecture/fork-divergence-roster.md", id="renames-a-g-h-file"),
+])
+def test_a_pr_that_overlaps_g_h_is_refused(row, shared):
+    """At the third slot (G..H = 3af31061, 471432f3), a PR that edits or renames a file G..H
+    changed is refused, naming it. Revert-proof: without the disjointness test, both merge."""
+    pr = {**PR_1866, "labels": [], "body": ""}  # not a program PR, so check 9 reads no card
+    gh, git = _landing(1866, pr, FILES_1866, None, BASE_1866, main=RUNS_AT_1866, order=ORDER_AT_1866,
+                       ancestry="behind", behind=(8, "2026-10-13T16:15:56Z"))
+    gh.responses[_files_call(1866)] = "".join(r + "\n" for r in (row, _row("changelog.d/x.md")))
+    gh.responses[_group_call(MAIN_TIP, SHA_471)] = G_TO_471
+    with pytest.raises(land_pr.LandError, match=(
+        rf"would be 3 of 3; refused: files overlap G\.\.H on {re.escape(shared)}\.$"
+    )):
+        _run(1866, gh, git)
+    assert not _merged(gh)
+
+
+def test_a_red_g_refuses_before_the_group_rule():
+    """G is 471432f3, red; H (1acff395) is in progress and the PR's base lacks it. The group rule
+    is never consulted. Revert-proof: a group rule ahead of the red test would read G..H."""
+    gh, git = _recording(1097, PR_1097, SQUASH_1097, FILES_1097, main=RUNS_RED_471, main_order=ORDER_RED,
+                         jobs={38429075356: JOBS_471})
+    gh.responses[_ancestry_call(SHA_1ACF, FRESH_BASE)] = "behind\n"
+    with pytest.raises(land_pr.LandError, match=r"check 10: main is red: required job 'lock-tests'"):
+        _run(1097, gh, git)
+    assert not any(call.endswith(f"--jq {land_pr.GROUP_JQ}") for call in gh.calls)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("response, why", [
+    pytest.param(None, "CalledProcessError", id="read-fails"),
+    pytest.param('{"status": "ahead"}', "KeyError", id="garbled"),
+    pytest.param(_group_listing([SHA_3AF], FILES_1698, status="diverged", behind=1), "compare reads diverged",
+                 id="diverged"),
+    pytest.param(_group_listing([SHA_3AF], FILES_1698, ahead=2), "ahead 2", id="ahead-disagrees-with-order"),
+    pytest.param(_group_listing([SHA_471], FILES_1698), "commits ..471432f39b90..", id="other-commits"),
+    pytest.param(_group_listing([SHA_3AF], []), "lists 0 file", id="no-files"),
+    pytest.param(_group_listing([SHA_3AF], [f"f{i}.py" for i in range(300)]), "lists 300 file", id="capped"),
+])
+def test_an_unreadable_g_h_refuses(response, why):
+    """Fail closed: a G..H that cannot be read, or disagrees with main's commit order, refuses.
+    Revert-proof: without the try/except or the consistency test, these raise a non-LandError or merge."""
+    gh, git = _second()
+    if response is None:
+        gh = Flaky(gh.responses, _group_call(MAIN_TIP, SHA_3AF), 99)
+    else:
+        gh.responses[_group_call(MAIN_TIP, SHA_3AF)] = response
+    with pytest.raises(land_pr.LandError, match=(
+        rf"check 10: main unverified at 3af31061bd34: G\.\.H \(6f66fd238325\.\.\.3af31061bd34\) could not be "
+        rf"read \(.*{why}"
+    )):
+        _run(1858, gh, git)
+    assert not _merged(gh)
+
+
+class Moving(Replay):
+    """main's commit list moves to `later` after its first read: a landing raced the checks."""
+
+    def __init__(self, responses, later):
+        super().__init__(responses)
+        self.later = later
+
+    def __call__(self, args):
+        if " ".join(args) == MAIN_COMMITS_CALL and MAIN_COMMITS_CALL in self.calls:
+            self.calls.append(MAIN_COMMITS_CALL)
+            return json.dumps(list(self.later))
+        return super().__call__(args)
+
+
+def test_main_moving_after_a_group_admission_refuses_the_merge():
+    """471432f3 lands between check 10 (which judged G..H = 3af31061) and #1858's merge: the
+    picture is stale, so the merge is refused. Revert-proof: without `confirm_group_tip`, it merges."""
+    gh, git = _second()
+    gh = Moving(gh.responses, ORDER_AT_1866)
+    with pytest.raises(land_pr.LandError, match=(
+        r"check 10: main moved from 3af31061bd34 to 471432f39b90 after check 10 admitted #1858 by the group "
+        r"rule, so its picture of G\.\.H is stale"
+    )):
+        _run(1858, gh, git)
+    assert not _merged(gh)
+
+
+def test_the_head_is_re_read_only_for_a_group_admission():
+    """A group admission reads main's commits twice (check 10, then before the merge); a dry run and
+    a landing on a green head read them once."""
+    gh, git = _second()
+    assert _run(1858, gh, git, dry_run=True) == 0
+    assert gh.calls.count(MAIN_COMMITS_CALL) == 1
+    gh, git = _second()
+    assert _run(1858, gh, git) == 0
+    assert gh.calls.count(MAIN_COMMITS_CALL) == 2
+    gh, git = _recording(1218, PR_1218, SQUASH_1218)
+    assert _run(1218, gh, git) == 0
+    assert gh.calls.count(MAIN_COMMITS_CALL) == 1
 
 
 def test_only_tests_yml_push_runs_are_read():
@@ -2015,8 +2244,8 @@ def test_every_workflow_run_is_judged_the_stale_one_refuses():
 
 # --- #2145 (lesson #1985): --check-card prints the parsed Owned set and the skipped amendments ------
 CARD_CHECK = "### Owned files\n- `scripts/a.py`\n\n### Done when\nok\n"
-POSITIVE_AMENDMENT = {"body": "**Card amendment** also owns `scripts/b.py`."}
-NEGATED_AMENDMENT = {"body": "**Card amendment** Do not touch `scripts/c.py`."}
+POSITIVE_AMENDMENT = {"body": "**Card amendment** also owns:\n- `scripts/b.py`"}
+NEGATED_AMENDMENT = {"body": "**Card amendment** Do not touch:\n- `scripts/c.py`"}
 
 
 def _card_gh(body, comments):
@@ -2030,7 +2259,7 @@ def test_check_card_prints_owned_set_and_negated_amendment_with_its_word(monkeyp
     out = capsys.readouterr().out
     assert "  scripts/a.py" in out and "  scripts/b.py" in out
     assert "  scripts/c.py" not in out
-    assert "skipped (negation 'not'): **Card amendment** Do not touch `scripts/c.py`." in out
+    assert "skipped (negation 'not'): - `scripts/c.py`" in out
 
 
 def test_check_card_never_calls_pr_endpoints_or_merges(monkeypatch):
@@ -2060,7 +2289,7 @@ def test_check_card_combined_with_a_mode_flag_is_a_usage_error(extra, capsys):
 def test_check_card_survives_a_cp1252_stdout_with_a_sigma_2057(monkeypatch):
     import io
 
-    sigma = {"body": "**Card amendment** Do not touch `scripts/c.py`, sigma σ."}
+    sigma = {"body": "**Card amendment** Do not touch:\n- `scripts/c.py`, sigma σ."}
     monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [sigma]))
     monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
     raw = io.BytesIO()
@@ -2094,6 +2323,11 @@ def _fork_run(head, status="completed", conclusion="success"):
 def _pin_call(head):
     return ("run list --workflow live-fork.yml --event workflow_dispatch --commit "
             f"{head} --json {land_pr.LIVE_FORK_RUNS_JSON}")
+
+
+def _green_fork_run(gh, pr):
+    """Record a green live-fork dispatch on `pr`'s head, for a PR check 12 applies to."""
+    gh.responses[_pin_call(pr["headRefOid"])] = json.dumps([_fork_run(pr["headRefOid"])])
 
 
 def _pin_pr(files=FILES_2138, runs=(), pr=PR_1218):
@@ -2175,6 +2409,108 @@ def test_fork_pin_renamed_or_deleted_with_no_run_is_refused(row):
         _run(1218, gh, git)
 
 
+# --- #3023 (#2889 -> #2907): check 12 also covers fork-only tests and src -------------------------
+#: #2889's shape: a fork-marked test the stock lanes skip. It merged green and left live-fork red.
+MARKED = "import pytest\n\n\n@pytest.mark.ladruno_fork\ndef test_fork_only():\n    pass\n"
+MODULE_MARKED = "import pytest\n\npytestmark = [pytest.mark.live, pytest.mark.ladruno_fork]\n"
+#: tests/conftest.py names the marker without applying it.
+NAMES_ONLY = 'def pytest_runtest_setup(item):\n    if item.get_closest_marker("ladruno_fork") is None:\n        return\n'
+FORK_TEST = "tests/opensees/integration/test_md_stage_ladruno_at_pin.py"
+
+
+def _fork_pr(rows, shows=None, base_shows=None, runs=None, pr=PR_1218):
+    pr = {**pr, "headRefOid": HEAD_2138}
+    gh, git = _recording(1218, pr, SQUASH_1218, rows=rows, shows=shows)
+    git.responses.update({f"show origin/main:{p}": text for p, text in (base_shows or {}).items()})
+    if runs is not None:
+        gh.responses[_pin_call(HEAD_2138)] = json.dumps(list(runs))
+    return gh, git
+
+
+@pytest.mark.parametrize("rows, shows, base_shows", [
+    pytest.param([_row(FORK_TEST)], {FORK_TEST: MARKED}, None, id="marked-test-2889"),
+    pytest.param([_row("tests/a/test_m.py")], {"tests/a/test_m.py": MODULE_MARKED}, None, id="module-pytestmark"),
+    pytest.param([_row(FORK_TEST, "removed")], None, {FORK_TEST: MARKED}, id="deleted-marked"),
+    pytest.param([_row("tests/b/test_new.py", "renamed", FORK_TEST)], None, {FORK_TEST: MARKED}, id="renamed-away"),
+    pytest.param([_row(FORK_TEST, "renamed", "tests/b/test_old.py")], {FORK_TEST: MARKED}, None, id="renamed-to"),
+    pytest.param([_row("tests/opensees/integration_ladruno/conftest.py")], None, None, id="integration-ladruno"),
+    pytest.param([_row("tests/opensees/integration_ladruno/data/deck.tcl")], None, None, id="integration-ladruno-data"),
+    pytest.param([_row("tests/x/test_a.py", "renamed", "tests/opensees/integration_ladruno/test_a.py")], None, None,
+                 id="renamed-out-of-integration-ladruno"),
+    pytest.param([_row("src/apeGmsh/opensees/LadrunoBrick.py")], None, None, id="src-ladruno-any-case"),
+    pytest.param([_row("src/apeGmsh/results/readers/_ladruno.py", "removed")], None, None, id="src-ladruno-deleted"),
+])
+def test_a_fork_only_change_without_a_dispatch_run_is_refused_3023(rows, shows, base_shows):
+    """Revert-proof: with `_fork_only` returning [] (main's check 12), every case merges."""
+    gh, git = _fork_pr(rows, shows, base_shows, runs=[])
+    with pytest.raises(land_pr.LandError, match=(
+        r"check 12: #1218 changes fork-only files \(.+\) but no live-fork workflow_dispatch run .*"
+        r"#2889 -> #2907.*`gh workflow run live-fork\.yml --ref "
+    )):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+def test_the_refusal_names_the_triggering_files_3023():
+    rows = [_row("docs/a.md"), _row(FORK_TEST), _row("src/apeGmsh/x/ladruno_io.py"), _row("tests/a/test_s.py")]
+    gh, git = _fork_pr(rows, {FORK_TEST: MARKED}, runs=[])
+    with pytest.raises(land_pr.LandError) as exc:
+        _run(1218, gh, git)
+    assert f"fork-only files ({FORK_TEST}, src/apeGmsh/x/ladruno_io.py)" in str(exc.value)
+
+
+@pytest.mark.parametrize("run, message", [
+    (_fork_run(HEAD_2138, status="queued", conclusion=None), r"is queued, not completed.*workflow run live-fork"),
+    (_fork_run(HEAD_2138, conclusion="failure"), r"concluded failure .*fork-only files .*gh run rerun 41"),
+    (_fork_run("0" * 40), r"no live-fork workflow_dispatch run"),  # green on an older head only
+])
+def test_a_fork_only_change_refuses_unfinished_failed_or_older_head_runs_3023(run, message):
+    gh, git = _fork_pr([_row(FORK_TEST)], {FORK_TEST: MARKED}, runs=[run])
+    with pytest.raises(land_pr.LandError, match=rf"check 12: .*{message}"):
+        _run(1218, gh, git)
+
+
+def test_a_fork_only_change_with_a_green_dispatch_on_the_head_lands_3023(capsys):
+    gh, git = _fork_pr([_row(FORK_TEST)], {FORK_TEST: MARKED}, runs=[_fork_run(HEAD_2138)])
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert f"check 12: fork-only files ({FORK_TEST}) changed; live-fork dispatch run" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("labels", [["fixes-red-main"], ["scope-ok", "human-gate", "fixes-red-main"]])
+def test_no_label_overrides_the_fork_only_trigger_3023(labels):
+    pr = {**PR_1218, "labels": [{"name": n} for n in labels]}
+    gh, git = _fork_pr([_row("src/apeGmsh/opensees/ladruno/x.py")], runs=[], pr=pr)
+    with pytest.raises(land_pr.LandError, match="check 12: #1218 changes fork-only files"):
+        _run(1218, gh, git)
+
+
+@pytest.mark.parametrize("rows, shows", [
+    pytest.param([_row("docs/a.md"), _row("README.md")], None, id="docs-only"),
+    pytest.param([_row("tests/a/test_s.py"), _row("docs/a.md")], None, id="stock-test"),
+    pytest.param([_row("tests/conftest.py")], {"tests/conftest.py": NAMES_ONLY}, id="names-the-marker-only"),
+    pytest.param([_row("tests/fixtures/ladruno_deck.h5")], None, id="non-py-test-asset"),
+    pytest.param([_row("docs/ladruno.md"), _row("scripts/ladruno_tool.py")], None, id="ladruno-outside-src"),
+])
+def test_a_pr_with_no_fork_only_file_needs_no_dispatch_3023(rows, shows, capsys):
+    gh, git = _fork_pr(rows, shows)
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "does not change FORK_PIN; no live-fork dispatch is required." in capsys.readouterr().out
+    assert not any(call.startswith("run list") for call in gh.calls)
+
+
+def test_an_unreadable_test_file_refuses_3023():
+    """A read that fails refuses rather than letting the file count as unmarked."""
+    gh, git = _fork_pr([_row("tests/a/test_s.py")])
+
+    def git_fails_on_show(args):
+        if args[0] == "show":
+            raise land_pr.subprocess.CalledProcessError(128, ["git", *args])
+        return git(args)
+
+    with pytest.raises(land_pr.LandError, match=r"check 12: tests/a/test_s\.py could not be read .*refusing"):
+        _run(1218, gh, git_fails_on_show)
+
+
 # --- #2326: check 9 scopes a negation to its own line -------------------------------------
 
 AMENDMENT_2410 = (
@@ -2219,8 +2555,279 @@ def test_an_owned_path_with_a_space_is_read_2339():
 
 
 def test_check_card_exits_1_when_an_amendment_path_is_skipped_2412(monkeypatch, capsys):
-    skipped = {"body": "**Card amendment (T):** also edit `scripts/b.py`; never touch `scripts/c.py`.\n"}
+    skipped = {"body": "**Card amendment (T):** also edit:\n- `scripts/b.py`\nnever touch:\n- `scripts/c.py`\n"}
     monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [skipped]))
     monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
     assert land_pr.main(["--check-card", "2000"]) == 1
     assert "skipped (negation 'never')" in capsys.readouterr().out
+
+
+# VH0 (#2864): a PR that changes a path the `app-tests` lane checks (its filter's pathspec
+# list, land_pr.APP_PATHS) needs that lane green on its head. The filter skips the checks on
+# every other PR, so the lane stays out of REQUIRED_CHECKS there.
+APP_ROLLUP = _rollup(names=(*land_pr.REQUIRED_CHECKS, "app-tests"))
+VIEWER_ROWS = {
+    "modified": [_row("apeGmshViewer/src/renderer/contour.ts"), _row("src/apeGmsh/results/_x.py")],
+    "deleted": [_row("apeGmshViewer/fixtures/deform_2d.results.h5", status="removed", patch=None)],
+    "renamed-out": [_row("examples/demo_generate_vtu.py", status="renamed",
+                         previous="apeGmshViewer/demo_generate_vtu.py", patch=None)],
+    "renamed-in": [_row("apeGmshViewer/src/moved.ts", status="renamed", previous="src/moved.ts", patch=None)],
+    # The filter's other pathspecs (review of #2874): the workflow and the pairing oracle's
+    # test, fixture and stamp_provenance (#2129), which only this lane runs.
+    "workflow": [_row(".github/workflows/tests.yml")],
+    "oracle-test": [_row("tests/test_app_ladruno_pairing_oracle.py")],
+    "oracle-fixture": [_row("tests/fixtures/ladruno/truss2d.ladruno", patch=None)],
+    "provenance": [_row("src/apeGmsh/results/readers/_ladruno_provenance.py")],
+    "provenance-deleted": [_row("src/apeGmsh/results/readers/_ladruno_provenance.py", status="removed", patch=None)],
+    # The paths the viewer's tests read from outside apeGmshViewer/ (#2995); `*.ladruno` is a wildcard.
+    "schemas": [_row("architecture/schemas/examples/variants.valid.json")],
+    "fixtures-mpm": [_row("tests/fixtures/mpm/particle_set_v1.h5", patch=None)],
+    "fixtures-user-results": [_row("tests/fixtures/user_results/conformance.json")],
+    "ladruno-anywhere": [_row("deep/a/b/x.ladruno", patch=None)],
+    "ladruno-at-root": [_row("x.ladruno", patch=None)],
+    "fingerprint-test": [_row("tests/results/user/test_user_fingerprint.py")],
+    "example-script": [_row("examples/shoebuckle_arch.py")],
+}
+
+
+@pytest.mark.parametrize("kind", sorted(VIEWER_ROWS))
+def test_an_app_lane_pr_without_app_tests_is_refused_2864(kind):
+    """The replay of the gap: the five required checks green, `app-tests` absent. A rename
+    out of apeGmshViewer/ (the 67902f8e5 shape) and a deletion (209005c49) count too."""
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, rows=VIEWER_ROWS[kind])
+    with pytest.raises(land_pr.LandError, match=r"check 6: required check 'app-tests' has not reported.*lane checks.*#2864"):
+        _run(1218, gh, git, dry_run=True)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("kind", sorted(VIEWER_ROWS))
+@pytest.mark.parametrize("seen", [
+    {"conclusion": "FAILURE"},
+    {"conclusion": "SKIPPED"},
+    {"status": "IN_PROGRESS", "conclusion": None},
+], ids=["failure", "skipped", "pending"])
+def test_an_app_lane_pr_with_app_tests_not_green_is_refused_2864(seen, kind):
+    rollup = _rollup(names=(*land_pr.REQUIRED_CHECKS, "app-tests"), **{"app-tests": seen})
+    gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": rollup}, SQUASH_1218, rows=VIEWER_ROWS[kind])
+    with pytest.raises(land_pr.LandError, match=r"check 6: required check 'app-tests' is \w+ on"):
+        _run(1218, gh, git, dry_run=True)
+
+
+def test_a_failed_app_tests_run_before_a_green_rerun_refuses_2864():
+    history = [*_rollup(names=("app-tests",), **{"app-tests": {"conclusion": "FAILURE"}}), *APP_ROLLUP]
+    gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": history}, SQUASH_1218, rows=VIEWER_ROWS["modified"])
+    with pytest.raises(land_pr.LandError, match=r"check 6: required check 'app-tests' is FAILURE"):
+        _run(1218, gh, git, dry_run=True)
+
+
+@pytest.mark.parametrize("kind", sorted(VIEWER_ROWS))
+def test_an_app_lane_pr_with_app_tests_green_passes_2864(kind, capsys):
+    gh, git = _recording(1218, {**PR_1218, "statusCheckRollup": APP_ROLLUP}, SQUASH_1218, rows=VIEWER_ROWS[kind])
+    _green_fork_run(gh, PR_1218)  # the provenance rows are a src/ ladruno path: check 12 (#3023)
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "'app-tests' is required too" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("files", [
+    FILES_1218,
+    # Names that only start like a pathspec, or sit beside one, are not matched by it.
+    ["apeGmshViewerNotes.md", "docs/apeGmshViewer.md", "src/apeGmsh/viewers/apeGmshViewer/x.py",
+     ".github/workflows/tests.yml.bak", ".github/workflows/live-fork.yml",
+     "tests/fixtures/ladrunoish/other.py", "src/apeGmsh/results/readers/_ladruno.py",
+     "x.ladruno.bak", "deep/a/b/x.ladruno.bak", "architecture/schemas_notes.md"],
+])
+def test_a_pr_outside_the_app_lane_with_no_app_tests_run_passes_2864(files, capsys):
+    gh, git = _recording(1218, PR_1218, SQUASH_1218, files)
+    _green_fork_run(gh, PR_1218)  # `src/.../_ladruno.py` is fork-only to check 12 (#3023)
+    assert not any(run["name"] == "app-tests" for run in PR_1218["statusCheckRollup"])
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "app-tests" not in capsys.readouterr().out
+
+
+#: The app-tests filter step: `changed=$(git diff --name-only "$range" -- <pathspecs>)`.
+_FILTER_DIFF = re.compile(r'changed=\$\(git diff --name-only "\$range" --((?:[^)\\]|\\\n)*)\)')
+
+
+def _app_job(workflow: str) -> str:
+    block = re.search(rf"^  {re.escape(land_pr.APP_CHECK)}:\n((?:    .*\n|\s*\n)*)", workflow, re.MULTILINE)
+    assert block is not None, f"tests.yml has no {land_pr.APP_CHECK!r} job"
+    return block.group(1)
+
+
+def _filter_pathspecs(workflow: str) -> tuple[str, ...]:
+    """The pathspec list of the app-tests filter's `git diff`, in order (continuations joined)."""
+    found = _FILTER_DIFF.findall(_app_job(workflow))
+    assert len(found) == 1, f"expected one filter `git diff` in the {land_pr.APP_CHECK} job, found {len(found)}"
+    return tuple(shlex.split(found[0].replace("\\\n", " ")))
+
+
+def _workflow() -> str:
+    return (SCRIPT.parents[1] / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+
+
+def test_app_check_names_the_tests_yml_job_2864():
+    """The shared namespace: the rollup names a job by its key unless it sets `name:`, and a
+    job-level `if:` or `needs:` could skip it whole. Either would make check 6 wait on a name
+    that never reports green, so the job must be `app-tests:` with none of them."""
+    keys = re.findall(r"^    (\w[\w-]*):", _app_job(_workflow()), re.MULTILINE)
+    assert "runs-on" in keys and not {"name", "if", "needs"} & set(keys), keys
+
+
+def test_app_paths_equal_the_filter_pathspecs_2864():
+    """land_pr requires app-tests for exactly the paths the lane's filter runs its checks on
+    (review of #2874): a pathspec added to tests.yml without APP_PATHS fails here."""
+    assert _filter_pathspecs(_workflow()) == land_pr.APP_PATHS
+
+
+@pytest.mark.parametrize("name,hit", [
+    ("deep/a/b/x.ladruno", True), ("x.ladruno", True), ("tests/fixtures/new_dir/y.ladruno", True),
+    ("x.ladruno.bak", False), ("deep/a/b/x.ladruno.bak", False), ("x.ladrunoish", False),
+])
+def test_the_wildcard_pathspec_matches_like_git_2995(name, hit):
+    """`'*.ladruno'` (the viewer's contour golden scans every tracked .ladruno) is a git wildcard
+    pathspec: it matches in any directory and only a name that ends in `.ladruno`."""
+    assert land_pr._app_path(name) is hit
+
+
+def test_the_pathspec_parser_sees_a_grown_filter_2864():
+    """The equality above is not vacuous: one more pathspec in the filter is read, and differs."""
+    grown = _workflow().replace(
+        "src/apeGmsh/results/readers/_ladruno_provenance.py)",
+        "src/apeGmsh/results/readers/_ladruno_provenance.py \\\n            src/apeGmsh/extra.py)",
+    )
+    assert grown != _workflow()
+    assert _filter_pathspecs(grown) == (*land_pr.APP_PATHS, "src/apeGmsh/extra.py")
+
+
+# Review of #2920 (prog-reviewer-opus at bace06cb): the group rule must read the state of every
+# run in G..H, not only its jobs' reds. P1-P5 are the reviewer's probes; each merged at bace06cb.
+def _second_with(main, jobs):
+    """#1858 landing on 3af31061 (G = 6f66fd23), with 3af31061's run and jobs as given."""
+    gh, git = _landing(1858, PR_1858, FILES_1858, CARD_1858, BASE_1858, main=main, order=ORDER_AT_1858,
+                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"), jobs=jobs)
+    gh.responses[_group_call(MAIN_TIP, SHA_3AF)] = G_TO_3AF
+    return gh, git
+
+
+def _without(name):
+    rows = _job_rows()
+    return {"total": len(rows["jobs"]) - 1, "jobs": [job for job in rows["jobs"] if job["name"] != name]}
+
+
+@pytest.mark.parametrize("run, jobs, why", [
+    pytest.param(_run_row(38428776331, SHA_3AF, "completed", "startup_failure"), {"total": 0, "jobs": []},
+                 r"is completed \(startup_failure\) without all five required jobs green", id="P1-startup-failure"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "completed", "failure"), _without("suite"),
+                 r"is completed \(failure\) without all five", id="P2-failure-suite-missing"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "queued", None),
+                 _job_rows(**{"lock-tests": {"status": "queued", "conclusion": None}}),
+                 r"is queued with jobs already completed, which is a re-run", id="P3-rerun-of-failed-jobs"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "in_progress", None),
+                 _job_rows(**{"lock-tests": {"conclusion": "cancelled"}, "suite": {"status": "in_progress", "conclusion": None}}),
+                 r"required job 'lock-tests' of the Tests run on 3af31061bd34 \(38428776331\) already reported cancelled",
+                 id="P4-cancelled-required-job"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "completed", "success"), _without("live-stock"),
+                 r"is completed \(success\) without all five", id="P5-success-live-stock-missing"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "in_progress", None, attempt=2), None,
+                 r"is on attempt 2, and a re-run can hide an earlier attempt's failure", id="second-attempt"),
+    pytest.param(_run_row(38428776331, SHA_3AF, "in_progress", None, attempt=None), None,
+                 r"is on attempt None", id="attempt-unread"),
+    *[pytest.param(_run_row(38428776331, SHA_3AF, "in_progress", None),
+                   _job_rows(**{"lock-tests": {"conclusion": c}, "suite": {"status": "in_progress", "conclusion": None}}),
+                   rf"'lock-tests' .*already reported {c}, not success", id=f"job-{c}")
+      for c in ("skipped", "neutral", "timed_out", "action_required")],
+])
+def test_a_g_h_run_that_is_not_a_first_attempt_still_running_refuses(run, jobs, why):
+    """Only a first-attempt run, queued or in progress, with no required job finished other
+    than green, lets G..H count as pending. Revert-proof: at bace06cb each of these merges."""
+    gh, git = _second_with([run, RUN_6F66, RUN_53F1], {run["id"]: jobs} if jobs else None)
+    with pytest.raises(land_pr.LandError, match=rf"Group rule \(#2919\): .*2 of 3; refused: .*{why}") as refused:
+        _run(1858, gh, git)
+    state = "ended without all five required jobs green" if run["status"] == "completed" else "is in progress"
+    assert f"at 3af31061bd34: its Tests run {state} and #1858" in str(refused.value)
+    assert _group_call(MAIN_TIP, SHA_3AF) not in gh.calls
+    assert not _merged(gh)
+
+
+def test_a_queued_first_attempt_with_nothing_finished_lands():
+    """The converse of P3: H's run just queued, no job has started. Revert-proof: refusing every
+    queued run (or admitting only in_progress) refuses it."""
+    run = _run_row(38428776331, SHA_3AF, "queued", None)
+    gh, git = _second_with([run, RUN_6F66, RUN_53F1], {run["id"]: _job_rows("queued", None)})
+    assert _run(1858, gh, git) == 0
+
+
+def test_a_rename_in_g_h_counts_its_old_name():
+    """G..H renamed `old.py` to `new.py`; a PR that edits `old.py` overlaps it. Revert-proof:
+    comparing only G..H's new names admits it."""
+    pr = {**PR_1858, "labels": [], "body": ""}
+    gh, git = _landing(1858, pr, FILES_1858, None, BASE_1858, main=RUNS_AT_1858, order=ORDER_AT_1858,
+                       ancestry="behind", behind=(9, "2026-10-13T16:13:47Z"))
+    gh.responses[_files_call(1858)] = _row("src/apeGmsh/old.py") + "\n"
+    gh.responses[_group_call(MAIN_TIP, SHA_3AF)] = _group_listing([SHA_3AF], [("src/apeGmsh/new.py", "src/apeGmsh/old.py")])
+    with pytest.raises(land_pr.LandError, match=r"refused: files overlap G\.\.H on src/apeGmsh/old\.py\.$"):
+        _run(1858, gh, git)
+    assert not _merged(gh)
+
+
+# --- #3025: an amendment adds only the path that opens a list item -----------------------------
+def _amend(text, real=None):
+    ignored = []
+    added = land_pr._amendment_paths("**Card amendment (T):**" + text, 3025, real, None, ignored)
+    return added, ignored
+
+
+@pytest.mark.parametrize("text, added, ignored", [
+    pytest.param("\nReason: `a.py` stays read-only.\n- `b.py`\n", ["b.py"], [("a.py", "prose path")],
+                 id="prose-path-is-not-owned"),
+    pytest.param("\n- `b.py` (not a hub; do not split)\n", ["b.py"], [], id="negation-in-trailing-prose"),
+    pytest.param("\n- Do not touch `c.py`\n", [], [("c.py", "prose path")], id="negated-bullet"),
+    pytest.param("\n- `a.py` (owned). Do not touch these:\n  - `b.py`\n  - `c.py`\n", ["a.py"],
+                 [("b.py", 'dropped by negated lead-in "not"'), ("c.py", 'dropped by negated lead-in "not"')],
+                 id="path-opening-lead-in-with-colon"),
+    pytest.param("\n- `a.py` (never touch the helpers below)\n  - `b.py`\n- `c.py`\n", ["a.py", "c.py"],
+                 [("b.py", 'dropped by negated lead-in "never"')], id="negated-opening-drops-sub-items"),
+    pytest.param("\n- `a.py` (do not split): https://example.com/x\n  - `b.py`\n- `c.py`\n", ["a.py", "c.py"],
+                 [("b.py", 'dropped by negated lead-in "not"')], id="negated-opening-url-drops-sub-items"),
+    pytest.param("\n- `a.py`, but never the following:\n- `b.py`\n", ["a.py"],
+                 [("b.py", 'dropped by negated lead-in "never"')], id="path-opening-lead-in-never"),
+    pytest.param("\nDo not touch the following:\n- `d.py`\n- `e.py`\n", [],
+                 [("d.py", 'dropped by negated lead-in "not"'), ("e.py", 'dropped by negated lead-in "not"')],
+                 id="negated-lead-in-list"),
+    pytest.param("\n1. `f.py`\n* `g.py::sym`\n", ["f.py", "g.py"], [], id="numbered-and-star-and-symbol"),
+    pytest.param("\n- `h.py`\n  - `i.py` (never edit)\n", ["h.py", "i.py"], [], id="indented-sub-bullet"),
+    pytest.param("\n- `j.py`, see also `k.py`\n", ["j.py"], [("k.py", "prose path")], id="mid-bullet-path"),
+    pytest.param("\n- add `l.py`\n", [], [("l.py", "prose path")], id="lead-in-word-before-path"),
+])
+def test_amendment_adds_only_path_opening_bullets_3025(text, added, ignored):
+    assert _amend(text.replace("\n", chr(10)))[0] == added
+    assert _amend(text.replace("\n", chr(10)))[1] == ignored
+
+
+def test_a_comment_that_is_not_an_amendment_still_adds_nothing_3025():
+    gh, git = _scope(["src/a.py"], comments=("Maintainer ruling:\n- `src/a.py`".replace("\n", chr(10)),))
+    with pytest.raises(land_pr.LandError, match="outside slice card"):
+        _run(1218, gh, git, dry_run=True)
+
+
+def test_check_card_lists_paths_added_and_ignored_per_amendment_3025(monkeypatch, capsys):
+    amendment = {"body": "**Card amendment (T):** reads `scripts/a.py`.\n- `scripts/b.py` (not a hub)".replace("\n", chr(10))}
+    monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [amendment]))
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    assert land_pr.main(["--check-card", "2000"]) == 0
+    out = capsys.readouterr().out
+    assert "amendment 1 adds 1 path(s):" in out
+    assert "  added scripts/b.py" in out
+    assert "  ignored scripts/a.py (prose path)" in out
+
+
+def test_check_card_exits_0_when_every_skipped_line_is_prose_3025(monkeypatch, capsys):
+    prose = {"body": "**Card amendment (T):** also edit:\n- `scripts/b.py`\n\nDo not read `scripts/c.py` or `scripts/d.py`.\n\n- `scripts/e.py`\n".replace("\n", chr(10))}
+    monkeypatch.setattr(land_pr, "run_gh", _card_gh(CARD_CHECK, [prose]))
+    monkeypatch.setattr(land_pr, "run_git", Replay({LS_TREE: TREE}))
+    assert land_pr.main(["--check-card", "2000"]) == 0
+    out = capsys.readouterr().out
+    assert "  ignored scripts/c.py (prose path)" in out and "  ignored scripts/d.py (prose path)" in out
+    assert "  added scripts/e.py" in out
+    assert "may hold paths" not in out and "dropped by a negation" not in out
+

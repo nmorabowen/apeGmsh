@@ -321,9 +321,12 @@ built.
 and closes it when the block exits. Inside the `with`, `opspy.analyze(1)`
 runs one static load step; the solve happens here, in your Python process.
 On pip openseespy the route records classic recorder files in `run_out/`
-and says so with one `DefaultRouteWarning`. On a build with the MPCO
-recorder it writes `run.mpco`, and on the Ladruno fork `run.ladruno`.
-`run.route` tells you which one ran.
+and says so with one `DefaultRouteWarning`. On the Ladruno fork it writes
+`run.ladruno`. On a stock build with the MPCO recorder it writes `run.mpco`
+and converts it to `run.ladruno` only when the program declares its stages
+with `ops.stage(...)`; this tutorial's program declares none, so there the
+`with` line refuses by name and tells you to declare the stages or run the
+program as a deck. `run.route` tells you which one ran.
 
 !!! warning "Step with `opspy.analyze`, not `ops.analyze`"
     The bridge's own `ops.analyze(steps=1)` rebuilds the domain from

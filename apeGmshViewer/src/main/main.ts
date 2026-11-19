@@ -1,7 +1,11 @@
-// Electron main process. It reads files and nothing else (ADR 0112 D4):
-// no network, no writes except the measurement / capture outputs a script
-// asked for, and no child process except the user's editor for go-to-source
-// (D3, ./source.ts).
+// Electron main process. It reads files and writes one (ADR 0112 D4, as ADR
+// 0132 D6 narrowed it): no network, no writes except the open set's
+// `<stem>.workspace.h5` when the human saves in the window (./workspace.ts,
+// HG9 on #2803), the `/combinations` zone of the open set's `<stem>.user.h5`
+// by ADR 0130 A4's copy-then-replace when the human saves a combination
+// (./combinations.ts, HG9 on #2693), and the measurement / capture outputs a script asked for, and
+// no child process except the user's editor for go-to-source (D3, ./source.ts). The one socket is a local pipe, private to one agent call:
+// the running window's acknowledgement of `--present` or `--snapshot`.
 //
 // Modes (argv, set by scripts/launch.mjs):
 //   --mode=view     open a window on --file, or on the first positional
@@ -9,19 +13,38 @@
 //   --mode=measure  open, orbit, pick, write a JSON measurement to --out
 //   --mode=capture  open hidden, select a beam, write a PNG still to --out
 //                   (and, with a results sibling, one still per results stage)
-//   --mode=measure-results  time the results.h5 read path (V4a, #1707; the
-//                   block at the end of this file), write a JSON to --out and
+//   --mode=measure-results  time the results.h5 read path (V4a, #1707;
+//                   ./modes/measure.ts), write a JSON to --out and
 //                   print a MEASUREMENTS row. Started directly, after
 //                   `npm run build`: `electron . --mode=measure-results
 //                   --file=<x.results.h5> --out=<json>`, or with an `.mpco`
 //                   file and `--dataset=<path>` for the raw MPCO point.
 //   --mode=render   ADR 0128 D4: take every shot of the view spec `--spec`
 //                   in a hidden window; write `<name>.png` per shot and
-//                   `render.json` into the folder `--out`, then exit (0 every
+//                   `manifest.json` into the folder `--out`, then exit (0 every
 //                   shot drawn, 1 a shot refused or the run failed, 2 the
-//                   spec refused: no window opens and no PNG is written)
+//                   spec refused: no window opens and no PNG is written).
+//                   An app-chrome still is captured until two consecutive
+//                   captures match, at most `--capture-tries` (default 10)
 //   --mode=describe ADR 0128 D4: write `describe.json` into `--out`: what the
 //                   set of `--file` offers a spec (stages, steps, fields, groups)
+//   --mode=present  ADR 0128 D5: offer the view spec `--spec` to the running
+//                   window over the second-instance path, which lists it and
+//                   changes nothing else (INV-5). Exit 0 only when the window
+//                   acknowledged it, 1 no window answered (nothing opens), 2 the
+//                   spec refused
+//   --mode=snapshot ADR 0128 D6: ask the running window for its view; it writes
+//                   `view.json`, `view.png` and `manifest.json` into the folder
+//                   `--out`, the manifest last. Exit 0 written, 1 no window is
+//                   running or it could not read back, 2 `--out` refused
+// The ADR's spellings work too: `--render spec.json --out d`, `--describe f --out d`,
+// `--present spec.json`, `--snapshot --out d` (src/spec/snapshot.ts `agentArgsOf`);
+// a request for an agent mode that cannot be carried out exits 2, never view mode.
+// No mode but view hangs (VA2h, #2665): an uncaught error, a failure the page
+// reports, a crashed renderer or one that stops answering for `--hang-ms`
+// (default 60000) exits 1 with the reason on stderr; a render's manifest.json
+// then refuses the run (key `render`) and keeps no PNG without its entry, and a
+// capture writes the reason to `<out>.error.txt`.
 // Neither agent mode takes the single-instance lock, so both run beside the
 // human's window and never reach it (ADR 0128 INV-5). Both refuse an `--out`
 // that is not empty (exit 2, nothing written), and keep Chromium's profile
@@ -35,41 +58,143 @@
 // `app:config`.
 
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { cpus } from "node:os";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, unwatchFile, watchFile, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 import * as h5wasm from "h5wasm/node";
 import { openModel } from "../reader/node.ts";
-import { openH5, type H5Openable } from "../reader/h5open.ts";
-import { LadrunoFile, openLadruno } from "../reader/ladruno.ts";
-import { openResults, type ResultsFile, type ResultsH5 } from "../reader/results.ts";
-import { fileFromArgv, pairSet } from "./pairing.ts";
-import { ResultsHost, type ScanRequest, type StepRequest } from "./results.ts";
+import type { ResultsH5 } from "../reader/results.ts";
+import { readUserFile, readUserResultColumn, readUserSet, type UserColumnRead, type UserH5 } from "../reader/userFile.ts";
+import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } from "../reader/userSpectra.ts";
+import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
+import { compareStagesOf, readParticleSet, ResultsHost, type ParticleOutputRequest, type HingeHistoryRequest, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
-import { OpenSession } from "./session.ts";
-import { goToSource } from "./source.ts";
+import { MaterialTestRunner } from "./materialTest.ts";
+import { OpenSession, Study } from "./session.ts";
+import { confinedToStudy, isManifestPath, readVariants, resolveRow, type VariantsFs } from "../reader/variants.ts";
+import { goToSource, provenanceSources, type SourceScope } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
-import { outRefusal, prepareRender, PROFILE_DIR, type JobFs, type RenderJobFiles } from "../spec/job.ts";
+import { nodeDeps, registerWorkspace } from "./workspace.ts";
+import { combinationToken, nodeCombinationDeps, registerCombinations, sweepOnOpen, type CombinationH5 } from "./combinations.ts";
+import type { WorkspaceH5 } from "../reader/workspace.ts";
+import { agentMode, arg, argvSkip, badArgs, file, headless, mode, out, reachMode, t0 } from "./args.ts";
+import { measureResultsMode, PARTICLE_WINDOW, particleRun, registerMeasure, registerParticleHarness } from "./modes/measure.ts";
+import { heardFromAgent, listedOffers, offersPageLoading, pageCommitted, reachWindow, registerReach, type Reach } from "./modes/reach.ts";
+import { abandonRender, agentStartup, drawnSet, registerRender, whereStopped } from "./modes/render.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
+/** The preload script of every window, beside dist/main.mjs; a module under ./modes/ takes it from here (VH3, #2868). */
+const preload = join(here, "preload.cjs");
 
-function arg(name: string): string | undefined {
-  const pre = `--${name}=`;
-  return process.argv.find((a) => a.startsWith(pre))?.slice(pre.length);
+// The command line is read in ./args.ts (VH2, #2866); a refused one exits here, before anything starts.
+if (badArgs !== null) {
+  process.stderr.write(`apeGmshViewer: ${badArgs}\n`);
+  app.exit(2);
 }
 
-const MODES = ["view", "measure", "capture", "measure-results", "render", "describe"] as const;
-const mode = arg("mode") ?? "view";
-if (!(MODES as readonly string[]).includes(mode)) throw new Error(`unknown --mode=${mode}; expected ${MODES.join(", ")}`);
-/** ADR 0128 D4: the two agent modes; `out` is a folder for them, and they write nothing outside it (INV-1). */
-const agentMode = mode === "render" || mode === "describe";
-// Unpackaged, argv[1] is the app path; packaged, the file follows the exe.
-const argvSkip = process.defaultApp ? 2 : 1;
-const file = mode === "view" ? fileFromArgv(process.argv, argvSkip, process.cwd()) : arg("file");
-const out = arg("out");
-const t0 = Number(arg("t0") ?? Date.now());
+// ---------------------------------------------------------------------------
+// VA2h (#2665): no mode but view can hang. Electron answers an uncaught error
+// in main with a modal dialog, and a crashed or hung renderer leaves the
+// hidden window's process alive, so a caller waiting on the exit code would
+// wait forever. Every other mode ends in `headlessEnd`: the reason on stderr,
+// exit 1. A render also leaves its `--out` true to INV-6 (`abandonRender`),
+// and a capture writes the reason to `<out>.error.txt`.
+//
+// Electron's `unresponsive` needs input the renderer leaves unanswered, which
+// a hidden window never gets, so main also asks each window's page a trivial
+// question every second; no answer for `--hang-ms` (default 60 s) ends the run.
+// A page that is merely slow still answers between its tasks.
+// ---------------------------------------------------------------------------
+
+/** Set once the run is ending, so a late event (a renderer killed by the exit itself) changes nothing. */
+let ending = false;
+const errText = (err: unknown) => (err instanceof Error ? (err.stack ?? err.message) : String(err));
+/** How long a page may leave main's question unanswered (`--hang-ms`). */
+const HANG_MS = Number(arg("hang-ms") ?? 60000);
+
+/** The run ends: the reason on stderr, where it stopped (./modes/render.ts `whereStopped`), a render's `--out` left true to INV-6, exit 1. */
+function headlessEnd(reason: string): void {
+  if (ending) return;
+  ending = true;
+  let where = "";
+  try {
+    where = whereStopped();
+  } catch {
+    // Before the job is known: nothing was drawn.
+  }
+  const full = where ? `${reason}; ${where}` : reason;
+  const line = `apeGmshViewer: ${mode} failed: ${full}\n`;
+  process.stderr.write(line);
+  try {
+    if (mode === "render") abandonRender(full);
+    if (mode === "capture" && out) writeFileSync(`${out}.error.txt`, line);
+  } catch (err) {
+    process.stderr.write(`apeGmshViewer: ${mode}: the failure could not be recorded in --out: ${errText(err)}\n`);
+  }
+  // Out of the failing callback, and the windows gone first: one run that exited from inside it ended in an access violation, not 1.
+  setImmediate(() => {
+    for (const w of BrowserWindow.getAllWindows()) w.destroy();
+    app.exit(1);
+  });
+}
+
+const TICK_MS = 1000;
+
+/**
+ * Ask the page a trivial question every second; a page that leaves one
+ * question unanswered for HANG_MS is hung. The wait is timed from when the
+ * question was sent, and a tick that itself fires late (main was busy, so the
+ * answer may sit unread in main's queue) gives no verdict: it restarts the
+ * wait, so main's own stall is never blamed on the renderer (#2708 review).
+ */
+function watchPage(w: BrowserWindow): void {
+  let asking = false;
+  let sentAt = 0;
+  let lastTick = Date.now();
+  const timer = setInterval(() => {
+    const now = Date.now();
+    const late = now - lastTick > 2 * TICK_MS;
+    lastTick = now;
+    if (w.isDestroyed() || ending) {
+      clearInterval(timer);
+      return;
+    }
+    if (late) {
+      if (asking) sentAt = now;
+      return;
+    }
+    if (asking) {
+      if (now - sentAt > HANG_MS) {
+        clearInterval(timer);
+        headlessEnd(`the renderer stopped responding: its page left main's question unanswered for ${HANG_MS} ms (--hang-ms)`);
+      }
+      return;
+    }
+    asking = true;
+    sentAt = now;
+    w.webContents.executeJavaScript("0").then(
+      () => {
+        asking = false;
+      },
+      () => {
+        asking = false;
+      },
+    );
+  }, TICK_MS);
+}
+
+if (headless) {
+  // A listener of its own also stops Electron's default handler, which is the modal.
+  process.on("uncaughtException", (err) => headlessEnd(`an uncaught error in the main process: ${errText(err)}`));
+  process.on("unhandledRejection", (err) => headlessEnd(`an unhandled rejection in the main process: ${errText(err)}`));
+  app.on("render-process-gone", (_e, _contents, details) => headlessEnd(`the renderer process is gone (${details.reason}, exit code ${details.exitCode})`));
+  app.on("browser-window-created", (_e, w) => {
+    w.on("unresponsive", () => headlessEnd("the renderer stopped responding (Electron's unresponsive)"));
+    watchPage(w);
+  });
+}
 
 // Measurement of GPU throughput: lift the vsync and frame-rate caps.
 if (arg("uncapped") === "1") {
@@ -83,66 +208,96 @@ if ((mode === "measure" || mode === "capture" || mode === "measure-results") && 
 // A still is the spec's `size` in pixels, whatever the display's scale (ADR 0128 D9: a model still is exactly `size`).
 if (agentMode) app.commandLine.appendSwitch("force-device-scale-factor", "1");
 
-const jobFs: JobFs = {
+// ---------------------------------------------------------------------------
+// VU10 (ADR 0132 D8, D9; owner ruling option A, #2753): the study. A manifest
+// is read only from a path the user gave (a drop, argv, a double-click, the
+// render spec's `files.variants`), and its rows' paths stay here: the page
+// names a variant by row index and label. The compare set has a slot and a
+// results host of its own, apart from the window set and its `resultsHost`.
+// ---------------------------------------------------------------------------
+
+const variantsFs: VariantsFs = {
   readFile: (path) => readFileSync(path, "utf8"),
-  exists: existsSync,
-  isDir: (path) => statSync(path).isDirectory(),
-  list: (path) => readdirSync(path),
-  mkdir: (path) => mkdirSync(path, { recursive: true }),
-  writeFile: (path, text) => writeFileSync(path, text),
+  isFile: (path) => {
+    try {
+      return statSync(path).isFile();
+    } catch {
+      return false;
+    }
+  },
+  realpath: (path) => realpathSync.native(path),
+  fold: FOLD_CASE,
 };
 
+const study = new Study({
+  read: (manifest) => readVariants(manifest, variantsFs),
+  // Only the human's window follows a rewrite (D9.3); an agent run reads the spec's manifest once.
+  watch: (manifest, changed) => {
+    if (mode !== "view") return { close: () => undefined };
+    const listener = (cur: { mtimeMs: number; size: number }, prev: { mtimeMs: number; size: number }) => {
+      if (cur.mtimeMs !== prev.mtimeMs || cur.size !== prev.size) changed();
+    };
+    watchFile(manifest, { interval: 500 }, listener);
+    return { close: () => unwatchFile(manifest, listener) };
+  },
+  note: (message) => process.stderr.write(`apeGmshViewer: ${message}\n`),
+  recheck: (manifest, row) => resolveRow(manifest, row.path, variantsFs),
+  confined: (manifest, path) => confinedToStudy(manifest, path, variantsFs),
+});
+
 /**
- * ADR 0128 D2 startup of an agent mode: its arguments, its `--out` (absent
- * or an empty folder: spec/job.ts), Chromium's profile under `--out`
- * (INV-1), then the render job. Any refusal or unexpected error goes to
- * stderr and exits 2 at once, before any window, dialog or Chromium write:
- * a thrown error at this level would open a modal and hang the run, with the
- * profile still in %APPDATA% (review of #2660).
+ * D9.4: a row's set as main opens it: paired from the row's resolved model,
+ * each sibling (results, geometry, user) confined to the manifest's folder
+ * again, or why not.
  */
-function agentStartup(): { refused: boolean; job: RenderJobFiles | null } {
-  const refuse = (message: string) => {
-    process.stderr.write(`apeGmshViewer: ${message}\n`);
-    app.exit(2);
-    return { refused: true, job: null };
-  };
+function rowSet(open: string): { ok: true; set: OpenSet } | { ok: false; reason: string } {
+  let set: OpenSet;
   try {
-    if (mode === "describe" && (!file || !out)) return refuse("--mode=describe needs --file and --out");
-    if (mode === "render" && (!arg("spec") || !out)) return refuse("--mode=render needs --spec and --out");
-    const outDir = resolve(out!);
-    const busy = outRefusal(outDir, jobFs);
-    if (busy) return refuse(`--out refused: ${busy}`);
-    // INV-1: an agent run writes nothing outside `--out`, Chromium's profile and crash dumps included.
-    const profile = join(outDir, PROFILE_DIR);
-    app.setPath("userData", profile);
-    app.setPath("crashDumps", join(profile, "crashdumps"));
-    if (mode !== "render") return { refused: false, job: null };
-    const specPath = resolve(arg("spec")!);
-    const p = prepareRender(specPath, outDir, jobFs);
-    // D2: the whole spec is refused before any shot: no window, no PNG, the key named.
-    if (!p.ok) return refuse(`the spec ${specPath} is refused: ${p.key}: ${p.reason}`);
-    return { refused: false, job: p.job };
+    set = pairSet(open, existsSync);
   } catch (err) {
-    return refuse(`${mode} failed to start: ${err instanceof Error ? err.message : String(err)}`);
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
+  for (const p of [set.results, set.geometry, set.user, set.workspace, set.particles]) {
+    const why = study.confine(p);
+    if (why !== null) return { ok: false, reason: `a file of the variant's set leaves the study: ${why}` };
+  }
+  return { ok: true, set };
 }
 
-const startup = agentMode ? agentStartup() : { refused: false, job: null };
+/**
+ * D9.5: the compare set's results host, apart from the window set's
+ * `resultsHost`: `results:open` and `results:close` never touch it, and only
+ * `variants:compare`, `compare:readStep` and `compare:close` read or close it.
+ */
+const compareHost = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);
+
+// ADR 0128 D2: an agent mode's arguments, `--out` and render job are checked before any window (./modes/render.ts).
+const startup = agentMode ? agentStartup(study) : { refused: false, job: null };
 /** An agent mode refused at startup: no window opens (it has exited with code 2). */
 const outBusy = startup.refused;
-/** The render job: the validated spec and its set; null when the spec was refused (render.json names the key). */
+/** The render job: the validated spec and its set; null when the spec was refused (manifest.json names the key). */
 const renderJob = startup.job;
 
 // View mode is single-instance: a second launch hands its argv to the first
 // (the "second-instance" handler below) and exits.
 if (mode === "view" && !app.requestSingleInstanceLock()) app.exit(0);
 
+// ADR 0128 D5, D6: `--present` and `--snapshot` reach the running window and exit (./modes/reach.ts).
+if (reachMode) await reachWindow();
+
 let win: BrowserWindow | null = null;
 /** Renderer subscriptions ("open", "fileChanged"); a page load clears them. */
 const subscribed = new Set<string>();
 
+/** While an offer opens its set, what would be a dialog is collected for the offer's refusal instead. */
+let quietFails: string[] | null = null;
+
 function fail(message: string): void {
   process.stderr.write(`apeGmshViewer: ${message}\n`);
+  if (quietFails) {
+    quietFails.push(message);
+    return;
+  }
   if (mode === "view") void app.whenReady().then(() => dialog.showErrorBox("apeGmshViewer", message));
 }
 
@@ -154,18 +309,78 @@ function deliver(channel: "open" | "fileChanged", payload: unknown): void {
 }
 
 /** The open set and its watcher (view mode only). */
+/** The newest watcher: a user file that appears or goes is a `changed`, not a reopen, so only the watcher's set knows the user slot (`viewer:currentSet`). */
+let liveWatcher: SetWatcher | null = null;
 const session = new OpenSession({
   exists: existsSync,
-  watch: (opened, sink) => new SetWatcher(opened, sink).start(),
+  watch: (opened, sink) => (liveWatcher = new SetWatcher(opened, sink).start()),
   deliver,
   fail,
   note: (message) => process.stderr.write(`apeGmshViewer: ${message}\n`),
 });
-const openPath = (path: string, notify: boolean) => session.open(path, notify);
+/**
+ * Open what the user gave. VU10: a `<study>.variants.json` opens as the study,
+ * and its first row that passes as the window set (D9.1); any other file
+ * opens its set as before, and a file that is no row of the study ends it.
+ */
+function openPath(path: string, notify: boolean): boolean {
+  const abs = resolve(path);
+  if (isManifestPath(abs)) return openStudy(abs, notify);
+  const ok = session.open(abs, notify);
+  if (ok && study.manifest !== null && study.rowOfModel(session.set?.model ?? null) === null) {
+    closeCompare();
+    study.close();
+  }
+  windowLeavesCompare();
+  sendStudy();
+  return ok;
+}
+
+/**
+ * INV-6: the window set cannot also be the compare set. Whatever opened the
+ * compare row's own model as the window set (a second instance, a drop, an
+ * offer, macOS open-file, a model the renderer read) empties the compare slot,
+ * as `variants:switch` does, so every compare door then refuses (VU19 review F1).
+ */
+function windowLeavesCompare(): void {
+  const c = study.compare;
+  if (c !== null && study.rowOfModel(session.set?.model ?? null)?.index === c.row.index) closeCompare();
+}
+
+function openStudy(manifest: string, notify: boolean): boolean {
+  const r = study.open(manifest);
+  if (!r.ok) {
+    fail(r.reason);
+    return false;
+  }
+  compareHost.close();
+  const first = r.rows[0];
+  if (!first) {
+    sendStudy();
+    fail(`${manifest}: no variant can be opened: ${r.refused.map((x) => x.reason).join("; ")}`);
+    return false;
+  }
+  const now = study.row(first.index, first.label);
+  const set = now.ok ? rowSet(now.open) : now;
+  if (!now.ok || !set.ok) {
+    sendStudy();
+    fail(`${manifest}: ${"reason" in set ? set.reason : ""}`);
+    return false;
+  }
+  const ok = session.open(now.open, notify);
+  sendStudy();
+  return ok;
+}
 
 if (mode === "view") {
   if (file) openPath(file, false);
-  app.on("second-instance", (_e, argv, cwd) => {
+  app.on("second-instance", (_e, argv, cwd, data) => {
+    // INV-5: an agent's call lists or reads. It opens nothing, restores nothing, and takes no focus.
+    const kind = (data as { kind?: unknown } | null)?.kind;
+    if (kind !== undefined) {
+      heardFromAgent(data as Reach);
+      return;
+    }
     const next = fileFromArgv(argv, argvSkip, cwd);
     if (next) openPath(next, true);
     if (win) {
@@ -180,10 +395,27 @@ if (mode === "view") {
   });
 }
 
+// ADR 0128 D5, D6 in the running window: `viewer:offersReady`, `viewer:snapshotReply` and the offer queue (./modes/reach.ts).
+registerReach({ window: () => win, shown });
+
+/**
+ * A page load: the old page's subscriptions go, and so does every offer row the
+ * new page will not be sent (VU14, ./modes/reach.ts `offersPageLoading`). VU10:
+ * the compare slot goes too, because the new page starts with no compare set,
+ * and a slot it never opened is not one it may read (#2817 review 4).
+ */
+function pageLoading(): void {
+  materialTests.cancel();
+  closeCompare();
+  subscribed.clear();
+  offersPageLoading();
+}
+
 let appReadyAt = 0;
 ipcMain.handle("app:config", () => ({
-  mode,
-  file: mode === "view" ? (session.set?.model ?? null) : file ? resolve(file) : null,
+  // ADR 0134 D5: a particle run's page runs as the human's window (it reads no model); its job comes from `particles:harness`.
+  mode: particleRun ? "view" : mode,
+  file: particleRun ? null : mode === "view" ? (session.set?.model ?? null) : file ? resolve(file) : null,
   t0,
   appReadyMs: appReadyAt - t0,
   configMs: Date.now() - t0,
@@ -194,16 +426,70 @@ ipcMain.handle("app:config", () => ({
   results: (mode === "capture" || mode === "measure") && file ? pairSet(resolve(file), existsSync).results : null,
 }));
 
-ipcMain.handle("model:open", async (_e, path: string) => {
-  // A model the renderer opened on its own (a drop on the P0 page): the open
-  // set follows what is on screen (./session.ts).
-  if (mode === "view" && typeof path === "string") session.rendererOpened(path);
+/** The kind of `path` as the pairing names it, or null for a file the app does not pair. */
+function kindOf(path: string): Kind | null {
+  try {
+    return classify(path).kind;
+  } catch {
+    return null;
+  }
+}
+
+/** The open set after the renderer opened `path` as a model: the set of a `<stem>.h5`, else none. */
+function followModel(path: string): void {
+  if (kindOf(path) === "model") session.rendererOpened(path);
+  else session.close();
+  if (study.compare !== null && session.set !== null && study.rowOfModel(session.set.model)?.index === study.compare.row.index) {
+    windowLeavesCompare();
+    sendStudy();
+  }
+}
+
+/**
+ * VU12 (#2753), owner ruling "option A": the page is no longer trusted to name
+ * a path to open. These are the paths a user gesture or main itself produced:
+ * a file the user dropped, as Electron names it (preload.ts `gestured`, over
+ * `viewer:dropped`), and the paths main sent the page, which are the window's
+ * set (`windowSet`: argv / `--file`, `onOpen`, the render job) and `config().file`.
+ * VU13 (#2760): only the latest drop counts, and it is not spent by an open (a
+ * model the page reads on its own re-reads it on a rewrite); a drop the user
+ * has since replaced is no gesture.
+ */
+let dropped: string | null = null;
+ipcMain.on("viewer:dropped", (e, path: unknown) => {
+  if (typeof path === "string" && path !== "") dropped = path;
+  e.returnValue = null;
+});
+
+/** Why the page may not ask to open `path`, or null when a gesture or main produced it. */
+function ungestured(door: string, path: string): string | null {
+  if (dropped !== null && samePath(dropped, path)) return null;
+  const set = windowSet();
+  if (!("reason" in set) && [set.model, set.geometry, set.results].some((p) => samePath(p, path))) return null;
+  if (mode !== "view" && file && samePath(resolve(file), path)) return null;
+  return `${door} opens only a file the user dropped or a path main sent the page; refused ${path}`;
+}
+
+ipcMain.handle("model:open", async (_e, path: unknown) => {
+  if (typeof path !== "string") return { ok: false, error: `model:open needs a path; got ${shown(path)}` };
+  // A free string is refused before any read, so the set stays as it is (VU12).
+  const refused = ungestured("model:open", path);
+  if (refused !== null) return { ok: false, error: refused };
   let model;
   try {
     model = await openModel(path);
   } catch (err) {
+    // The renderer takes the old model off screen (state/reduce.ts `fileFailed`),
+    // so the old set ends either way (./session.ts). A `<stem>.h5` that failed
+    // (a model still being written) becomes the open set, watched, so its
+    // rewrite retries the read. Any other path (a `.user.h5`, a results file)
+    // never becomes the set: the user doors would then read beside it (#2752 review F1).
+    if (mode === "view" && typeof path === "string") followModel(path);
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+  // A model the renderer opened on its own (a drop on the P0 page): the open
+  // set follows what is on screen (./session.ts), by the same rule.
+  if (mode === "view" && typeof path === "string") followModel(path);
   // /provenance rides with the model; a refused or broken zone does not stop
   // the model from loading (the renderer shows why go-to-source is off).
   return {
@@ -216,12 +502,56 @@ ipcMain.handle("model:open", async (_e, path: string) => {
   };
 });
 
+/**
+ * VU12 (#2753): the set whose geometry and results files the `results:*` and
+ * `geometry:open` doors read, as main chose it and never as the request names
+ * it. View mode: the set on screen (`currentSet`), which a double-click, a
+ * second instance, a drop (`viewer:requestOpen`) or a model the renderer read
+ * (`followModel`) opened. Render mode: the job's set, from the spec. Describe,
+ * capture and measure: the set of `--file`, the one `render:job` and
+ * `app:config` hand the page. No other mode's page reads these doors. The
+ * reason when there is no set.
+ */
+function windowSet(): OpenSet | { reason: string } {
+  if (mode === "view") return currentSet() ?? { reason: "no set is open" };
+  // The job names no user or workspace file; the workspace doors take `<stem>.workspace.h5` beside its model (./workspace.ts `workspaceOf`).
+  // VU18: the set the shot in progress draws, the spec's or a variant row's (./modes/render.ts `render:variant`).
+  if (mode === "render") {
+    const d = drawnSet();
+    return d ? { ...d, user: null, workspace: null, particles: null } : { reason: "the render job was refused" };
+  }
+  if ((mode === "describe" || mode === "capture" || mode === "measure") && file) {
+    try {
+      return pairSet(resolve(file), existsSync);
+    } catch (err) {
+      return { reason: `the set of ${file} cannot be paired (${err instanceof Error ? err.message : String(err)})` };
+    }
+  }
+  return { reason: `--mode=${mode} opens no set` };
+}
+
+/**
+ * The window's set's `slot` file when `asked` names it (`samePath`: case-folded
+ * where the file system folds), else why not. Only the path this returns is read.
+ */
+function setFile(door: string, slot: "geometry" | "results", asked: string): { ok: true; path: string } | { ok: false; error: string } {
+  const set = windowSet();
+  if ("reason" in set) return { ok: false, error: `${door} reads only the open set's ${slot} file, and ${set.reason}; refused ${asked}` };
+  const own = set[slot];
+  if (own === null || !samePath(asked, own)) return { ok: false, error: `${door} reads only the open set's ${slot} file ${own ?? "(the set has none)"}; refused ${asked}` };
+  return { ok: true, path: own };
+}
+
 // V4b (#1728): the results file, read lazily here; the renderer holds its
-// metadata and asks for one step at a time (./results.ts).
+// metadata and asks for one step at a time (./results.ts). Each door reads
+// only the window's set's results file (`setFile`, VU12); a step or a scan of
+// a file the set has left is refused too, though the host still indexes it.
 const resultsHost = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);
 ipcMain.handle("results:open", (_e, path: unknown) => {
-  if (typeof path !== "string") return { ok: false, error: `results:open needs a path; got ${JSON.stringify(path)}` };
-  return resultsHost.open(path);
+  if (typeof path !== "string") return { ok: false, error: `results:open needs a path; got ${shown(path)}` };
+  const f = setFile("results:open", "results", path);
+  if (!f.ok) return f;
+  return resultsHost.open(f.path);
 });
 ipcMain.handle("results:readStep", (_e, req: unknown) => {
   const r = req as StepRequest | null;
@@ -232,11 +562,23 @@ ipcMain.handle("results:readStep", (_e, req: unknown) => {
     typeof r.step !== "number" ||
     typeof r.seq !== "number" ||
     (r.element !== undefined && typeof r.element !== "string") ||
-    (r.lineDiagram !== undefined && typeof r.lineDiagram !== "string")
+    (r.lineDiagram !== undefined && typeof r.lineDiagram !== "string") ||
+    (r.tensor !== undefined && !(Array.isArray(r.tensor) && r.tensor.every((c) => typeof c === "string")))
   ) {
-    return { ok: false, seq: -1, error: `results:readStep: malformed request ${JSON.stringify(req)}` };
+    return { ok: false, seq: -1, error: `results:readStep: malformed request ${shown(req)}` };
   }
-  return resultsHost.readStep(r);
+  const f = setFile("results:readStep", "results", r.path);
+  if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
+  return resultsHost.readStep({ ...r, path: f.path });
+});
+ipcMain.handle("results:hingeHistory", (_e, req: unknown) => {
+  const r = req as HingeHistoryRequest | null;
+  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || typeof r.element !== "number" || typeof r.seq !== "number") {
+    return { ok: false, seq: -1, error: `results:hingeHistory: malformed request ${shown(req)}` };
+  }
+  const f = setFile("results:hingeHistory", "results", r.path);
+  if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
+  return resultsHost.readHingeHistory({ ...r, path: f.path });
 });
 ipcMain.handle("results:close", () => resultsHost.close());
 // V4c1 (#1756): the history-range scan of a contour's field; progress goes to
@@ -256,27 +598,458 @@ ipcMain.handle("results:scan", (e, req: unknown) => {
     // V4c2b: a plan only with an element scan, and only one that checks (state/extrapolation.ts `checkPlan`).
     (r.plan !== undefined && (r.source !== "element" || !checkPlan(r.plan)))
   ) {
-    return { ok: false, scanId: -1, error: `results:scan: malformed request ${JSON.stringify(req)}` };
+    return { ok: false, scanId: -1, error: `results:scan: malformed request ${shown(req)}` };
   }
+  const f = setFile("results:scan", "results", r.path);
+  if (!f.ok) return { ok: false, scanId: r.scanId, error: f.error };
   const sender = e.sender;
   const progress = (p: { scanId: number; done: number; total: number }) => {
     if (!sender.isDestroyed()) sender.send("results:scanProgress", p);
   };
-  return resultsHost.scan(r, progress, mode === "capture" ? { chunkSteps: 1, paceMs: 2000 } : {});
+  return resultsHost.scan({ ...r, path: f.path }, progress, mode === "capture" ? { chunkSteps: 1, paceMs: 2000 } : {});
 });
 ipcMain.handle("results:scanCancel", (_e, scanId: unknown) => {
   if (typeof scanId === "number") resultsHost.cancelScan(scanId);
 });
 
+// ADR 0134 D5 (M2-S4 #2983): the particles. The index and one output of the window set's results file, through the
+// same `setFile` check as every `results:*` door (VU12): a `.ladruno` the set does not hold is refused. `particles:set`
+// takes no path: it reads the window set's own `<stem>.particles.h5`, and refuses when the set has none.
+ipcMain.handle("particles:index", (_e, path: unknown) => {
+  if (typeof path !== "string") return { ok: false, error: `particles:index needs a path; got ${shown(path)}` };
+  const f = setFile("particles:index", "results", path);
+  if (!f.ok) return f;
+  return resultsHost.particleIndex(f.path);
+});
+ipcMain.handle("particles:readOutput", (_e, req: unknown) => {
+  const r = req as ParticleOutputRequest | null;
+  if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || typeof r.output !== "number" || typeof r.seq !== "number" || (r.field !== null && typeof r.field !== "string")) {
+    return { ok: false, seq: -1, error: `particles:readOutput: malformed request ${shown(req)}` };
+  }
+  const f = setFile("particles:readOutput", "results", r.path);
+  if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
+  return resultsHost.readParticleOutput({ path: f.path, stage: r.stage, output: r.output, field: r.field, seq: r.seq });
+});
+ipcMain.handle("particles:set", () => {
+  const set = windowSet();
+  if ("reason" in set) return { ok: false, error: `particles:set reads only the open set's particle set, and ${set.reason}` };
+  if (!set.particles) return { ok: false, error: "particles:set: the open set has no <stem>.particles.h5" };
+  return readParticleSet(h5wasm as unknown as ResultsH5, h5wasm.ready, set.particles);
+});
+
+// ---------------------------------------------------------------------------
+// ADR 0135 D1: the material tester. The job is checked in main (materialTestScript.ts); it names no executable.
+const materialTests = new MaterialTestRunner();
+ipcMain.handle("materialTest:run", (_e, job: unknown, seq: unknown) => {
+  if (typeof seq !== "number") return { ok: false, seq: -1, build: null, error: `materialTest:run: malformed request ${shown(seq)}` };
+  return materialTests.run(job, seq);
+});
+ipcMain.handle("materialTest:cancel", () => materialTests.cancel());
+
+// VU10 (ADR 0132 D9): the variant doors. Each names a manifest row by index and
+// label (`study.row`, which refuses a mismatch); none takes a path. A switch
+// opens the row's set as the window set (D9.6). The compare door reads the
+// row's set into the compare slot and `compareHost`, and never adopts it: no
+// `session.open`, no `followModel`, no gesture record, so `windowSet` and
+// every window door are as they were (INV-6).
+// ---------------------------------------------------------------------------
+
+/** The study as the page sees it: the row on screen is the window set's model. */
+function studyView() {
+  const set = windowSet();
+  return study.view("reason" in set ? null : set.model);
+}
+
+function sendStudy(): void {
+  if (win) win.webContents.send("viewer:variants", studyView());
+}
+
+function closeCompare(): void {
+  compareHost.close();
+  study.compare = null;
+}
+
+// D9.3: a rewritten manifest is read again; a compare row it no longer holds leaves the slot.
+study.onChange = () => {
+  if (study.compare === null) compareHost.close();
+  sendStudy();
+};
+
+ipcMain.handle("variants:current", () => studyView());
+
+ipcMain.handle("variants:switch", (_e, index: unknown, label: unknown) => {
+  const r = study.row(index, label);
+  if (!r.ok) return { ok: false, reason: `variants:switch: ${r.reason}` };
+  // VU18: a render draws a variant row only as a shot of its spec names one (`variant`, ./modes/render.ts), never as the page asks.
+  if (mode !== "view") return { ok: false, reason: `variants:switch: --mode=${mode} has no window set to switch${mode === "render" ? "; a shot of the spec names the variant row it draws" : ""}` };
+  const s = rowSet(r.open);
+  if (!s.ok) return { ok: false, reason: `variants:switch: ${s.reason}` };
+  // The window set cannot also be the compare set.
+  if (study.compare?.row.index === r.row.index) closeCompare();
+  quietFails = [];
+  try {
+    const ok = session.open(r.open, true);
+    sendStudy();
+    return ok ? { ok: true } : { ok: false, reason: quietFails.join("; ") || `cannot open variant ${JSON.stringify(r.row.label)}` };
+  } finally {
+    quietFails = null;
+  }
+});
+
+/** The model file's lineage hashes, or why it has none (the compare set's results must pair with its own model). */
+async function modelHashes(path: string): Promise<{ femHash: string; modelHash: string } | string> {
+  const a = await openLineage(path);
+  if (!a.ok) return `its model ${path} cannot be read (${a.error})`;
+  if (!a.lineage?.femHash || !a.lineage.modelHash) return `its model ${path} stamps no fem_hash and model_hash in /meta/lineage`;
+  return { femHash: a.lineage.femHash, modelHash: a.lineage.modelHash };
+}
+
+ipcMain.handle("variants:compare", async (_e, index: unknown, label: unknown) => {
+  const r = study.row(index, label);
+  if (!r.ok) return { ok: false, reason: `variants:compare: ${r.reason}` };
+  const row = r.row;
+  const ws = windowSet();
+  if (!("reason" in ws) && (samePath(ws.model, r.open) || study.rowOfModel(ws.model)?.index === row.index)) {
+    return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)} is the window set; a compare set is another variant` };
+  }
+  // At most one compare set: a new one replaces it.
+  closeCompare();
+  const rs = rowSet(r.open);
+  if (!rs.ok) return { ok: false, reason: `variants:compare: ${rs.reason}` };
+  const set = rs.set;
+  if (set.results === null) return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)} has no results file beside ${r.open}` };
+  const own = await modelHashes(r.open);
+  if (typeof own === "string") return { ok: false, reason: `variants:compare: variant ${JSON.stringify(row.label)}: ${own}` };
+  const a = await compareHost.open(set.results);
+  if (!a.ok) return { ok: false, reason: `variants:compare: ${a.error}` };
+  const lin = a.meta.lineage;
+  // The compare set's results must be of its own model, by the hashes the window's pairing uses.
+  if (!lin || lin.femHash !== own.femHash || lin.modelHash !== own.modelHash) {
+    compareHost.close();
+    return { ok: false, reason: `variants:compare: ${set.results} does not pair with ${r.open} (fem_hash and model_hash differ, or are not stamped${a.meta.lineageReason ? `: ${a.meta.lineageReason}` : ""})` };
+  }
+  study.compare = { row, set, lineage: own };
+  // VF3-e: a set change drops the held compare model read (`compareModelSeen`, below) of another file.
+  if (compareModelSeen !== null && (set.model === null || !samePath(compareModelSeen.path, set.model))) compareModelSeen = null;
+  sendStudy();
+  return {
+    ok: true,
+    compare: {
+      index: row.index,
+      label: row.label,
+      results: set.results,
+      femHash: lin.femHash,
+      stages: compareStagesOf(a.meta),
+    },
+    nodeIds: a.nodeIds,
+  };
+});
+
+// The compare set's step: the request names the stage, step and request number only; the file is the compare slot's.
+ipcMain.handle("compare:readStep", (_e, req: unknown) => {
+  const r = req as { stage?: unknown; step?: unknown; seq?: unknown } | null;
+  const keys = r !== null && typeof r === "object" ? Object.keys(r).sort().join(",") : "";
+  if (!r || keys !== "seq,stage,step" || typeof r.stage !== "string" || typeof r.step !== "number" || typeof r.seq !== "number") {
+    return { ok: false, seq: -1, error: `compare:readStep takes { stage, step, seq } and never a path; got ${shown(req)}` };
+  }
+  const c = study.compare;
+  if (c === null || c.set.results === null) return { ok: false, seq: r.seq, error: "compare:readStep: no compare set is open" };
+  return compareHost.readStep({ path: c.set.results, stage: r.stage, step: r.step, seq: r.seq });
+});
+
+ipcMain.handle("compare:close", () => {
+  closeCompare();
+  sendStudy();
+});
+
+// ---------------------------------------------------------------------------
+// VU19 (#2861; ADR 0132 D9.5, owner ruling on #2845): the compare set's model
+// and `.user.h5`, through compare-slot doors of their own. Each reads only the
+// set main holds in `study.compare`, named by the slot: no door takes a path or
+// a row, so the page cannot name another file, and an answer carries the slot
+// it read, so the page drops one for a slot it no longer shows. None touches
+// `windowSet`, the gesture records, `followModel` or a writer (INV-6): the
+// compare user read never sweeps partials and makes no save token. With no
+// compare slot (`compare:close`, a page load, a switch onto it, a manifest
+// re-read that drops the row: D9.3) every door refuses. The window user doors
+// (`confined`) stay on the window set, so neither side reaches the other's file.
+// ---------------------------------------------------------------------------
+
+/** The compare slot as an answer names it: the row index and label, never a path. */
+const slotOf = (c: NonNullable<Study["compare"]>) => ({ index: c.row.index, label: c.row.label });
+
+/**
+ * The compare slot's `.user.h5`, from its model as main paired it (never the
+ * window set's), confined to the study again now; or why not.
+ */
+function compareUser(door: string): { ok: true; c: NonNullable<Study["compare"]>; user: string } | { ok: false; reason: string } {
+  const c = study.compare;
+  if (c === null) return { ok: false, reason: `${door}: no compare set is open` };
+  const from = c.set.model ?? c.set.results;
+  if (from === null) return { ok: false, reason: `${door}: the compare set has neither a model nor results` };
+  let user: string;
+  try {
+    user = candidates(from).user;
+  } catch (err) {
+    return { ok: false, reason: `${door}: the compare set's ${from} names no user file (${err instanceof Error ? err.message : String(err)})` };
+  }
+  const why = study.confine(user);
+  if (why !== null) return { ok: false, reason: `${door}: the compare set's user file leaves the study: ${why}` };
+  return { ok: true, c, user };
+}
+
+/** A compare door's request: an object with exactly `keys` (a path, or any other key, is refused), or why not. */
+function exactKeys(door: string, req: unknown, keys: readonly string[]): string | null {
+  const got = req !== null && typeof req === "object" && !Array.isArray(req) ? Object.keys(req).sort() : null;
+  if (got === null || got.join(",") !== [...keys].sort().join(",")) return `${door} takes ${keys.length ? `{ ${keys.join(", ")} }` : "{}"} and never a path; got ${shown(req)}`;
+  return null;
+}
+
+// VF3-e (#2963, #2902 item 4): reading a ~1M-element compare model costs 1.5-1.8 s and
+// ~620 MB of peak RSS, and the page asks for it on every compare open, so a re-open of the
+// same set answers from the last read. Only the answer's counts are held, never the
+// model. The key is the file as it is now (path, size, mtime) and the lineage hashes read
+// from it now (/meta/lineage, ~1 ms) and checked against the pairing first, so a file
+// rewritten since is read again and a re-pairing is refused as before. The page clears a
+// compare set with `compare:close` before it opens one again (renderer/contour.ts
+// `VariantRunner.check`), so the entry outlives the slot; a set change (`variants:compare`
+// pairing another model file) drops it.
+let compareModelSeen: { path: string; key: string; nodes: number; elements: number } | null = null;
+
+/** The compare model file as the cache keys it: its path, size and mtime (`stat`, taken before its lineage is read), and that lineage's hashes. */
+function compareModelKey(path: string, stat: { size: number; mtimeMs: number }, own: { femHash: string; modelHash: string }): string {
+  return JSON.stringify([path, stat.size, stat.mtimeMs, own.femHash, own.modelHash]);
+}
+
+// The compare set's model, read as main paired it: its mesh's identity, with the `fem_hash`
+// and `model_hash` checked again against the pairing main made at `variants:compare`.
+ipcMain.handle("compare:model", async (_e, req: unknown) => {
+  const bad = exactKeys("compare:model", req, []);
+  if (bad !== null) return { ok: false, slot: null, reason: bad };
+  const c = study.compare;
+  if (c === null || c.set.model === null) return { ok: false, slot: null, reason: "compare:model: no compare set is open" };
+  const slot = slotOf(c);
+  const path = c.set.model;
+  // Confined to the study again now, as the user doors are: a folder swapped for a junction since the open is refused.
+  const why = study.confine(path);
+  if (why !== null) return { ok: false, slot, reason: `compare:model: the compare set's model leaves the study: ${why}` };
+  // The file's stat before its lineage is read, so a rewrite after it never keys the held read with the new hashes.
+  let stat: { size: number; mtimeMs: number };
+  try {
+    stat = statSync(path);
+  } catch (err) {
+    return { ok: false, slot, reason: `compare:model: ${path} cannot be read (${err instanceof Error ? err.message : String(err)})` };
+  }
+  const own = await modelHashes(path);
+  // A slot closed or replaced while the file was read answers nothing of it.
+  if (study.compare !== c) return { ok: false, slot: null, reason: "compare:model: the compare set changed while its model was read" };
+  if (typeof own === "string") return { ok: false, slot, reason: `compare:model: ${own}` };
+  if (own.femHash !== c.lineage.femHash || own.modelHash !== c.lineage.modelHash) {
+    return { ok: false, slot, reason: `compare:model: ${path} no longer pairs with the compare results (fem_hash ${own.femHash}, model_hash ${own.modelHash}; paired by ${c.lineage.femHash}, ${c.lineage.modelHash})` };
+  }
+  const answer = (n: { nodes: number; elements: number }) => ({ ok: true, slot, femHash: own.femHash, modelHash: own.modelHash, nodes: n.nodes, elements: n.elements });
+  const key = compareModelKey(path, stat, own);
+  if (compareModelSeen !== null && compareModelSeen.key === key) return answer(compareModelSeen);
+  let model;
+  try {
+    model = await openModel(path);
+  } catch (err) {
+    return { ok: false, slot, reason: `compare:model: ${path} cannot be read (${err instanceof Error ? err.message : String(err)})` };
+  }
+  if (study.compare !== c) return { ok: false, slot: null, reason: "compare:model: the compare set changed while its model was read" };
+  // The counts are of the file whose hashes were checked: one rewritten during the read is refused, never held.
+  let still: string | null;
+  try {
+    still = compareModelKey(path, statSync(path), own);
+  } catch {
+    still = null;
+  }
+  if (still !== key) return { ok: false, slot, reason: `compare:model: ${path} was rewritten while it was read` };
+  compareModelSeen = { path, key, nodes: model.nodeIds.length, elements: model.blocks.reduce((n, b) => n + b.ids.length, 0) };
+  return answer(compareModelSeen);
+});
+
+// The compare set's `.user.h5` index, each zone and entry judged by A6 against the compare
+// set's own model and results; `path` is shown only, never sent back.
+ipcMain.handle("compare:userRead", async (_e, req: unknown) => {
+  const bad = exactKeys("compare:userRead", req, []);
+  if (bad !== null) return { slot: null, path: null, read: { ok: false, error: bad } };
+  await h5wasm.ready;
+  const u = compareUser("compare:userRead");
+  if (!u.ok) return { slot: null, path: null, read: { ok: false, error: u.reason } };
+  return { slot: slotOf(u.c), path: u.user, read: readUserSet(h5wasm as unknown as UserH5, u.user, u.c.set.model, u.c.set.results, listDir) };
+});
+
+// One component of a state-free ON_NODES user result of the compare set's `.user.h5`, judged
+// against the compare set's own model and results (A6) before its DATA is read.
+ipcMain.handle("compare:userReadResult", async (_e, req: unknown) => {
+  const bad = exactKeys("compare:userReadResult", req, ["name", "component"]);
+  const r = req as { name?: unknown; component?: unknown };
+  if (bad !== null || typeof r.name !== "string" || typeof r.component !== "string") {
+    return { slot: null, read: { ok: false, reason: "refused", detail: bad ?? `compare:userReadResult takes { name, component } as strings; got ${shown(req)}` } };
+  }
+  await h5wasm.ready;
+  const u = compareUser("compare:userReadResult");
+  if (!u.ok) return { slot: null, read: { ok: false, reason: "refused", detail: u.reason } };
+  return { slot: slotOf(u.c), read: readUserResultColumn(h5wasm as unknown as UserH5, u.user, u.c.set.model, u.c.set.results, listDir, r.name, r.component) };
+});
+
+// A /geometry sibling (./zones.ts): only the window's set's (`setFile`, VU12).
 ipcMain.handle("geometry:open", (_e, path: unknown) => {
-  if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${JSON.stringify(path)}` };
-  return openGeometry(path);
+  if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${shown(path)}` };
+  const f = setFile("geometry:open", "geometry", path);
+  if (!f.ok) return f;
+  return openGeometry(f.path);
+});
+
+/** A request as a log line, whatever the IPC carried (a BigInt, a cycle): never throws, unlike `JSON.stringify` (VU11, #2750). */
+function shown(req: unknown): string {
+  try {
+    return inspect(req, { depth: 3, breakLength: Infinity, maxArrayLength: 10, maxStringLength: 300 });
+  } catch {
+    return Object.prototype.toString.call(req);
+  }
+}
+
+/** The set on screen in view mode: the open set, with the user and workspace slots only the watcher knows (a file that appears there is a `changed`, not a reopen). */
+function currentSet(): OpenSet | null {
+  if (mode !== "view" || session.set === null) return null;
+  return liveWatcher === null ? session.set : { ...session.set, user: liveWatcher.set.user, workspace: liveWatcher.set.workspace };
+}
+
+/**
+ * VU11 (#2750): the one `.user.h5` the user doors read, and the model and
+ * results its staleness is judged against, all from the window's set and
+ * never from the request: in view mode the set on screen (`currentSet`), in
+ * render mode the job's set. The user file is the set's user slot, else
+ * `<stem>.user.h5` where one would be, as the renderer names it
+ * (state/reduce.ts `userPathOf`). The reason when there is none.
+ */
+function pairedUser(): { ok: true; user: string; model: string | null; results: string | null } | { ok: false; reason: string } {
+  // VU9b: capture reads the set of `--file` too, so its stills show the user file (it never writes: the save door refuses it).
+  const captured = mode === "capture" ? windowSet() : null;
+  const drawn = mode === "render" ? drawnSet() : null;
+  const set = mode === "view" ? currentSet() : drawn ? { model: drawn.model, results: drawn.results, user: null } : captured !== null && !("reason" in captured) ? captured : null;
+  if (set === null) return { ok: false, reason: mode === "view" || mode === "render" || mode === "capture" ? "no set is open" : `--mode=${mode} reads no user file` };
+  const from = set.model ?? set.results;
+  let user = set.user;
+  try {
+    if (user === null && from !== null) user = candidates(from).user;
+  } catch (err) {
+    return { ok: false, reason: `the open set's ${from} names no user file (${err instanceof Error ? err.message : String(err)})` };
+  }
+  if (user === null) return { ok: false, reason: "the open set has neither a model nor results" };
+  return { ok: true, user, model: set.model, results: set.results };
+}
+
+/**
+ * The window's set's files when `asked` names them (`samePath`: case-folded
+ * where the file system folds), else why not. Only what this returns is read.
+ */
+function confined(door: string, asked: { path: string; model?: string | null; results?: string | null }): ReturnType<typeof pairedUser> {
+  const p = pairedUser();
+  if (!p.ok) return { ok: false, reason: `${door} reads only the open set's user file, and ${p.reason}; refused ${asked.path}` };
+  if (!samePath(asked.path, p.user)) return { ok: false, reason: `${door} reads only the open set's user file ${p.user}; refused ${asked.path}` };
+  for (const k of ["model", "results"] as const) {
+    const a = asked[k];
+    if (a !== undefined && !samePath(a, p[k])) return { ok: false, reason: `${door} judges staleness only against the open set's ${k} ${p[k] ?? "(none)"}; refused ${a ?? "(none)"}` };
+  }
+  return p;
+}
+
+// VU9b (ADR 0130 A4, A7.3; HG9 on #2693): the combination door writes the
+// window set's `<stem>.user.h5` (`pairedUser`), never a path the page names;
+// only the human's window saves, and every agent mode's save is refused.
+const combinationDeps = nodeCombinationDeps(h5wasm as unknown as CombinationH5, h5wasm.ready, `apeGmshViewer ${app.getVersion()}`, listDir);
+registerCombinations(ipcMain, {
+  target: () => {
+    const p = pairedUser();
+    return p.ok ? { user: p.user, model: p.model, results: p.results } : { reason: p.reason };
+  },
+  cannotWrite: () => (mode === "view" ? null : `--mode=${mode} never writes the user file: only the human's window saves (ADR 0128 INV-1)`),
+  deps: combinationDeps,
+});
+
+// ADR 0130 slice VU3a: the set's `<stem>.user.h5`, read only when the renderer
+// asks, so the first frame reads none of it. The answer is the file's index
+// (reader/userFile.ts `UserIndex`, never a `/results` DATA value) and A6's
+// staleness against the set's model and results files (`OpenSet.model` and
+// `OpenSet.results`; null when absent). The request names the three files,
+// and each must be the window's set's (`pairedUser`); any other path is
+// refused (VU11, #2750). A file that cannot be read answers `ok: false` with
+// the reason, and raises nothing.
+ipcMain.handle("user:read", async (_e, req: unknown) => {
+  const r = req as { path?: unknown; model?: unknown; results?: unknown } | null;
+  const pathOrNull = (x: unknown) => x === null || typeof x === "string";
+  if (!r || typeof r.path !== "string" || !pathOrNull(r.model) || !pathOrNull(r.results)) {
+    return { ok: false, error: `user:read needs { path, model, results }; got ${shown(req)}` };
+  }
+  const p = confined("user:read", { path: r.path, model: r.model as string | null, results: r.results as string | null });
+  if (!p.ok) return { ok: false, error: p.reason };
+  await h5wasm.ready;
+  // VU9b, HG9 rule 4: the human's window sweeps this host's dead combination partials when it opens the file.
+  if (mode === "view") sweepOnOpen(combinationDeps, p.user);
+  const read = readUserSet(h5wasm as unknown as UserH5, p.user, p.model, p.results, listDir);
+  // VU9b: the token a combination save made on this read sends back (`combinations:save` refuses `stale` on another).
+  return read.ok ? { ...read, token: combinationToken(p.user, read.user.revision) } : read;
+});
+
+// ADR 0130 slice VU7b-1 (#2740): one result of one `/spectra` case of the
+// `.user.h5`, with its per-mode DATA and its reference state, on request
+// (reader/userSpectra.ts `CaseRead`). The case is judged by the same read as
+// `user:read`'s index, then its values are read; the renderer combines them
+// with VU4's evaluator. The path must be the window's set's user file
+// (`confined`, VU11). A refused or missing case, a path outside the set, and a
+// file that cannot be read answer `ok: false` with the evaluator's reason;
+// nothing raises.
+ipcMain.handle("user:readCase", async (_e, req: unknown): Promise<CaseRead> => {
+  const r = req as { path?: unknown; case?: unknown; target?: unknown; label?: unknown } | null;
+  if (!r || typeof r.path !== "string" || typeof r.case !== "string" || typeof r.label !== "string" || typeof r.target !== "string" || !Object.hasOwn(SPECTRA_FAMILIES, r.target)) {
+    return { ok: false, reason: "refused", detail: `user:readCase needs { path, case, target: ${Object.keys(SPECTRA_FAMILIES).join(" | ")}, label }; got ${shown(req)}` };
+  }
+  const p = confined("user:readCase", { path: r.path });
+  if (!p.ok) return { ok: false, reason: "refused", detail: p.reason };
+  await h5wasm.ready;
+  const h5 = h5wasm as unknown as UserH5;
+  try {
+    return readCaseValues(h5, p.user, readUserFile(h5, p.user, null).spectra, r.case, r.target as SpectrumTarget, r.label);
+  } catch (err) {
+    return { ok: false, reason: "refused", detail: `${p.user}: ${err instanceof Error ? err.message : String(err)}` };
+  }
+});
+
+// VU16 (#2800): one component of a state-free `ON_NODES` user result of the
+// `.user.h5`, as a contour column (reader/userFile.ts `UserColumnRead`). The
+// path must be the window's set's user file (`confined`, VU11), and the entry
+// is judged against the set's own model and results (A6) before its DATA is
+// read: a stale entry answers `stale` with its reason. A refused, absent,
+// per-state or non-nodal entry, a component it does not list, and a file that
+// cannot be read answer `ok: false` with the reason; nothing raises.
+ipcMain.handle("user:readResult", async (_e, req: unknown): Promise<UserColumnRead> => {
+  const r = req as { path?: unknown; name?: unknown; component?: unknown } | null;
+  if (!r || typeof r.path !== "string" || typeof r.name !== "string" || typeof r.component !== "string") {
+    return { ok: false, reason: "refused", detail: `user:readResult needs { path, name, component }; got ${shown(req)}` };
+  }
+  const p = confined("user:readResult", { path: r.path });
+  if (!p.ok) return { ok: false, reason: "refused", detail: p.reason };
+  await h5wasm.ready;
+  return readUserResultColumn(h5wasm as unknown as UserH5, p.user, p.model, p.results, listDir, r.name, r.component);
+});
+
+// VU9a (ADR 0132 D6, D7; HG9 on #2803): the window set's `<stem>.workspace.h5`,
+// read and written only as main names it (`windowSet`): the page never names
+// its path (option A, #2753). Only the human's window saves (ADR 0128 INV-1 as
+// ADR 0132 narrowed it); an agent mode reads it, and its save door refuses.
+registerWorkspace(ipcMain, {
+  set: windowSet,
+  cannotWrite: () => (mode === "view" ? null : `--mode=${mode} never writes the workspace: only the human's window saves (ADR 0128 INV-1, ADR 0132)`),
+  deps: nodeDeps(h5wasm as unknown as WorkspaceH5, h5wasm.ready, `apeGmshViewer ${app.getVersion()}`),
 });
 
 for (const verb of ["subscribe", "unsubscribe"] as const) {
   ipcMain.on(`viewer:${verb}`, (_e, channel: unknown) => {
     if (channel !== "open" && channel !== "fileChanged") {
-      fail(`viewer:${verb}: unknown channel ${JSON.stringify(channel)}`);
+      fail(`viewer:${verb}: unknown channel ${shown(channel)}`);
       return;
     }
     if (verb === "subscribe") subscribed.add(channel);
@@ -285,335 +1058,110 @@ for (const verb of ["subscribe", "unsubscribe"] as const) {
 }
 
 // The set already open, for a new onOpen listener (the preload replays it).
-ipcMain.handle("viewer:currentSet", () => (mode === "view" ? session.set : null));
+ipcMain.handle("viewer:currentSet", () => currentSet());
 
 ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
-  if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${JSON.stringify(path)}` };
+  if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${shown(path)}` };
+  const refused = ungestured("requestOpen", path);
+  if (refused !== null) return { ok: false, reason: refused };
   return openPath(path, true) ? { ok: true } : { ok: false, reason: `cannot open ${path}` };
 });
 
-ipcMain.handle("source:goto", (_e, path: unknown, line: unknown) => goToSource(path, line));
-
-ipcMain.handle("measure:metrics", async () => {
-  const metrics = app.getAppMetrics();
-  const kb = (type: string) =>
-    metrics.filter((m) => m.type === type).reduce((s, m) => s + (m.memory?.workingSetSize ?? 0), 0);
-  const gpu = (await app.getGPUInfo("basic")) as { gpuDevice?: { vendorId: number; deviceId: number; active?: boolean }[] };
-  return {
-    mainMB: kb("Browser") / 1024,
-    rendererMB: kb("Tab") / 1024,
-    gpuProcessMB: kb("GPU") / 1024,
-    gpuDevices: gpu.gpuDevice ?? [],
-  };
-});
-
-ipcMain.handle("measure:done", (_e, result: unknown) => {
-  writeFileSync(out!, JSON.stringify(result, null, 2));
-  // V4c1: the contour scrub (a model with a results sibling) prints its own ledger row.
-  const contour = (result as { contour?: ContourMeasure | null } | null)?.contour;
-  if (contour) printContourRow(contour);
-  // V4d: the same scrub with the deformed shape on.
-  const deform = (result as { deform?: ContourMeasure | null } | null)?.deform;
-  if (deform) printContourRow(deform);
-  // V4c2a: the scrub with an element contour on, then deformed too.
-  // V4c2b: and once per node-located draw mode.
-  for (const key of ["elements", "elementsDeform", "elementsAveraged", "elementsNode", "elementsDiscrete"] as const) {
-    const row = (result as Partial<Record<typeof key, ContourMeasure | null>> | null)?.[key];
-    if (row) printContourRow(row);
+// ADR 0128 D5: the click on an offer opens its set. Nothing an agent named raises a modal: a file that has gone refuses the offer in the list.
+// VU12 (#2753): the path and every one of `needs` (at least one) must be offerable (./modes/reach.ts `listedOffers`); any other is refused and the set stays.
+// VU13 (#2760): all of them one listed offer's files, or one set a listed offer left, so the set this open leaves goes with its offer.
+ipcMain.handle("viewer:offerOpen", (_e, path: unknown, needs: unknown) => {
+  if (typeof path !== "string" || !Array.isArray(needs) || needs.length === 0) return { ok: false, reason: `offerOpen needs a path and the files it needs; got ${shown(path)}, ${shown(needs)}` };
+  const asked: unknown[] = [path, ...needs];
+  const holds = (files: readonly string[]) => asked.every((f) => typeof f === "string" && files.some((o) => samePath(o, f)));
+  const offerRows = listedOffers();
+  const offer = offerRows.find((r) => holds(r.files));
+  if (!offer && !offerRows.some((r) => r.left.some(holds))) {
+    const known = (f: string) => offerRows.some((r) => [r.files, ...r.left].some((s) => s.some((o) => samePath(o, f))));
+    const stray = asked.find((f) => typeof f !== "string" || !known(f));
+    return { ok: false, reason: `offerOpen opens only the files of a set main offered or the set an offer left; refused ${shown(stray ?? asked)}` };
   }
-  // ADR 0122 slice 4 (#2129): a `<stem>.ladruno` beside the model gets its read row.
-  if (mode === "measure" && file) {
-    try {
-      measureLadrunoRead(resolve(file));
-    } catch (err) {
-      process.stderr.write(`apeGmshViewer: measure: the .ladruno read row: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
-      process.exitCode = 1;
-    }
+  for (const f of needs as string[]) {
+    if (!existsSync(f)) return { ok: false, reason: `no such file: ${f}` };
+    if (!statSync(f).isFile()) return { ok: false, reason: `${f} is not a file` };
   }
-  app.quit();
-});
-
-// ---------------------------------------------------------------------------
-// The .ladruno read row (ADR 0122 slice 4, #2129). With a `<stem>.ladruno`
-// beside the measured model, main times the .ladruno's index and one nodal
-// step, and the same for `<stem>.results.h5` of the same run when one exists,
-// then prints one MEASUREMENTS row per file. It runs after the orbit, so it
-// shares no clock with the first frame; the renderer's handle on the file is
-// closed first, so the index is a fresh open. The `layout` column names the
-// displacement dataset's chunk shape and filters: the fork writes chunked,
-// deflated datasets and NativeWriter contiguous ones, and that is what the
-// two read columns compare.
-// ---------------------------------------------------------------------------
-
-/** The translational displacement components, under the .ladruno and the native reader's names. */
-const DISPLACEMENT = /^(DISPLACEMENT\/U[xyz]|displacement_[xyz])$/;
-const WARM_REPEATS = 21;
-
-interface ReadRow {
-  file: string;
-  sizeBytes: number;
-  stage: string;
-  steps: number;
-  nodes: number;
-  components: string[];
-  layout: string;
-  indexMs: number;
-  stepColdMs: number;
-  stepWarmMs: number;
-}
-
-function measureLadrunoRead(model: string): void {
-  const results = pairSet(model, existsSync).results;
-  if (results === null || !/\.ladruno$/i.test(results)) return;
-  resultsHost.close();
-  const rows = [timeRead(results, openLadruno)];
-  const native = results.replace(/\.ladruno$/i, ".results.h5");
-  if (existsSync(native)) rows.push(timeRead(native, openResults));
-  printReadRows(rows);
-}
-
-/** The index (open to a full index) and the middle step of the displacement components, cold then warm. */
-function timeRead(path: string, open: (h5: ResultsH5, path: string) => ResultsFile | LadrunoFile): ReadRow {
-  const sizeBytes = statSync(path).size;
-  const [rf, indexMs] = timed(() => open(h5wasm as unknown as ResultsH5, path));
-  let row: Omit<ReadRow, "layout">;
-  let dataset: string;
+  // The set on screen joins the offer's row: its Back (or a refused offer's put-back) reopens it through this door. A Back itself leaves nothing to come back to.
+  const left = currentSet();
+  const leftFiles = left === null ? [] : [left.model, left.results].filter((f): f is string => f !== null);
+  const sameSet = (s: string[]) => s.length === leftFiles.length && s.every((f, i) => samePath(f, leftFiles[i]!));
+  if (offer && leftFiles.length > 0 && !offer.left.some(sameSet)) offer.left.push(leftFiles);
+  quietFails = [];
   try {
-    const s = rf.index.stages.find((st) => st.kind !== "mode" && st.nodes?.components.some((c) => DISPLACEMENT.test(c)));
-    if (!s?.nodes) {
-      const seen = rf.index.stages.map((st) => `${st.id}: ${st.nodes ? st.nodes.components.join(", ") : "no nodal results"}`);
-      throw new Error(`${path}: the read row needs a stage with nodal displacements; the file has ${seen.join("; ") || "no stages"}`);
-    }
-    const nodes = s.nodes;
-    const comps = nodes.components.filter((c) => DISPLACEMENT.test(c));
-    const mid = Math.floor(s.nSteps / 2);
-    const [, stepColdMs] = timed(() => rf.readNodalStep(s.id, comps, mid));
-    const warm = Array.from({ length: WARM_REPEATS }, () => timed(() => rf.readNodalStep(s.id, comps, mid))[1]);
-    // The .ladruno keeps one (T, N, C) DATA per response; the native file one (T, N) dataset per component.
-    dataset = rf instanceof LadrunoFile ? `${nodes.path}/DISPLACEMENT/DATA` : `${nodes.path}/${comps[0]!}`;
-    row = { file: path, sizeBytes, stage: s.name, steps: s.nSteps, nodes: nodes.ids.length, components: comps, indexMs, stepColdMs, stepWarmMs: median(warm) };
+    return openPath(path, true) ? { ok: true } : { ok: false, reason: quietFails.join("; ") || `cannot open ${path}` };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   } finally {
-    rf.close();
+    quietFails = null;
   }
-  return { ...row, layout: layoutOf(path, dataset) };
+});
+
+// VU13 (#2760): the editor opens only a source file the window's set's model names in its /provenance (./source.ts).
+ipcMain.handle("source:goto", async (_e, path: unknown, line: unknown) => goToSource(path, line, await setSources()));
+
+/** The source files the window's set's model names in its /provenance, read now (never the page's copy), or why there are none. */
+async function setSources(): Promise<SourceScope> {
+  const set = windowSet();
+  if ("reason" in set) return { reason: set.reason };
+  if (set.model === null) return { reason: "the open set has no model" };
+  const p = await openProvenance(set.model);
+  if (!p.ok) return { reason: `the /provenance of ${set.model} cannot be read (${p.error})` };
+  if (p.zone === null) return { reason: `${set.model} has no /provenance zone` };
+  return { files: provenanceSources(p.zone) };
 }
 
-/** `chunks [a, b, c], deflate` or `contiguous`, of one dataset (read after the timed handle is closed). */
-function layoutOf(path: string, dataset: string): string {
-  const f = openH5(h5wasm as unknown as H5Openable<h5wasm.File>, path);
-  try {
-    if (Number(f.file_id) < 0) throw new Error(`HDF5 could not open ${path}`);
-    const ds = f.get(dataset);
-    if (!(ds instanceof h5wasm.Dataset)) throw new Error(`${path}: ${dataset} is not a dataset`);
-    const chunks = ds.metadata.chunks;
-    const filters = ds.filters.map((x) => x.name || `filter ${x.id}`);
-    return [chunks ? `chunks [${chunks.join(", ")}]` : "contiguous", ...filters].join(", ");
-  } finally {
-    f.close();
-  }
-}
+// The `measure:*` handlers and the .ladruno read row (./modes/measure.ts, VH2 #2866).
+registerMeasure({ headlessEnd, errText, resultsHost, preload });
+registerParticleHarness({ headlessEnd, errText, set: windowSet });
 
-function printReadRows(rows: ReadRow[]): void {
-  process.stdout.write(
-    "| file | size (MB) | stage | steps | nodes | components | layout | index (ms) | one step cold / warm (ms) |\n" +
-      "|---|---|---|---|---|---|---|---|---|\n" +
-      rows
-        .map(
-          (r) =>
-            `| ${r.file.split(/[\\/]/).pop()} | ${(r.sizeBytes / 1048576).toFixed(2)} | ${r.stage} | ${r.steps} | ${r.nodes} | ${r.components.join(", ")} | ${r.layout} | ` +
-            `${r.indexMs.toFixed(1)} | ${r.stepColdMs.toFixed(2)} / ${r.stepWarmMs.toFixed(2)} |\n`,
-        )
-        .join(""),
-  );
-}
-
-/** Write one still: `--out` itself, or `<stem>.<suffix>.png` beside it. */
-ipcMain.handle("capture:still", async (e, suffix: string) => {
-  const win = BrowserWindow.fromWebContents(e.sender);
-  if (!win) throw new Error("capture: no window");
-  const img = await win.webContents.capturePage();
-  const size = img.getSize();
-  const safeSuffix = suffix ? suffix.replace(/[\\/]/g, "_") : "";
-  const path = safeSuffix ? out!.replace(/\.png$/i, "") + `.${safeSuffix}.png` : out!;
-  if (img.isEmpty() || size.width === 0) {
-    writeFileSync(`${out!}.error.txt`, `capturePage returned an empty image for ${path}`);
-    return null;
-  }
-  writeFileSync(path, img.toPNG());
-  return path;
+// The `capture:*` and `render:*` handlers (./modes/render.ts, VH3 #2868).
+registerRender({
+  rowSet,
+  closeCompare,
+  headlessEnd,
+  errText,
+  shown,
+  resultsHost,
+  isEnding: () => ending,
+  markEnding: () => {
+    ending = true;
+  },
 });
 
-ipcMain.handle("capture:done", () => app.quit());
-
-/** Capture only (V4b): resize the page to `width` x `height` CSS pixels, for a still at another window width. */
-ipcMain.handle("capture:resize", (e, width: unknown, height: unknown) => {
-  if (mode !== "capture") throw new Error("capture:resize: only in --mode=capture");
-  if (typeof width !== "number" || typeof height !== "number") throw new Error("capture:resize needs a width and a height");
-  BrowserWindow.fromWebContents(e.sender)?.setContentSize(Math.round(width), Math.round(height));
-});
-
-// ---------------------------------------------------------------------------
-// ADR 0128 D4 agent modes: the renderer (renderer/agentRender.ts) asks for its
-// job, hands over each still, and reports the run; main writes every file,
-// only into `--out` (INV-1), and only a PNG named by a shot of the spec.
-// ---------------------------------------------------------------------------
-
-/** The shot names a PNG may still be written under (each once). */
-const unwritten = new Set(renderJob?.spec.shots.map((s) => s.name) ?? []);
-
-function stillPath(name: unknown): string {
-  if (mode !== "render" || !renderJob) throw new Error("render: only in --mode=render");
-  if (typeof name !== "string" || !unwritten.has(name)) throw new Error(`render: ${JSON.stringify(name)} is not a shot of the spec still to be written`);
-  unwritten.delete(name);
-  return join(resolve(out!), `${name}.png`);
-}
-
-ipcMain.handle("render:job", () => {
-  if (mode === "render" && renderJob) return { mode, ...renderJob };
-  if (mode === "describe") {
-    const set = pairSet(resolve(file!), existsSync);
-    return { mode, model: set.model, geometry: set.geometry, results: set.results };
-  }
-  throw new Error(`render:job: not an agent mode (--mode=${mode})`);
-});
-
-/** A model-mode still the renderer composed (renderer/stillLayers.ts). */
-ipcMain.handle("render:png", (_e, name: unknown, png: unknown) => {
-  if (!(png instanceof Uint8Array) || png.length < 8) throw new Error("render:png needs the PNG bytes");
-  const path = stillPath(name);
-  writeFileSync(path, png);
-  return { path };
-});
-
-/** An app-mode still: the page as captured, which must be exactly the spec's size. */
-ipcMain.handle("render:capture", async (e, name: unknown) => {
-  const w = BrowserWindow.fromWebContents(e.sender);
-  if (!w || !renderJob) throw new Error("render:capture: no render window");
-  const path = stillPath(name);
-  const img = await w.webContents.capturePage();
-  const size = img.getSize();
-  const [width, height] = renderJob.spec.size;
-  if (img.isEmpty() || size.width !== width || size.height !== height) {
-    throw new Error(`render:capture ${String(name)}: the page captured as ${size.width} x ${size.height}, not the spec's ${width} x ${height}`);
-  }
-  writeFileSync(path, img.toPNG());
-  return { path, width: size.width, height: size.height };
-});
-
-ipcMain.handle("render:done", (_e, result: unknown) => {
-  if (!agentMode) throw new Error("render:done: not an agent mode");
-  const dir = resolve(out!);
-  const r = result as { manifest?: { shots: { status: string }[]; timing: object }; describe?: unknown } | null;
-  if (mode === "render") {
-    if (!r?.manifest) throw new Error("render:done: no manifest");
-    // ADR 0128 D3: the app's version is main's to know; `written_at` lies inside `timing`, the one part that varies between runs (src/spec/manifest.ts).
-    const { timing, ...rest } = r.manifest;
-    const manifest = { ...rest, app: { version: app.getVersion() }, timing: { ...timing, written_at: new Date().toISOString() } };
-    const path = join(dir, "manifest.json");
-    writeFileSync(path, JSON.stringify(manifest, null, 2));
-    const refused = r.manifest.shots.filter((s) => s.status !== "ok").length;
-    process.stdout.write(`apeGmshViewer: render: ${r.manifest.shots.length - refused} stills, ${refused} refused; ${path}\n`);
-    // D2: a refused shot makes the run's exit code non-zero; the other shots ran. (`app.quit()` exits 0 whatever process.exitCode says.)
-    agentExit(refused ? 1 : 0);
+ipcMain.handle("app:fail", (_e, message: unknown) => {
+  // A mode that fails must say so in its exit code (ADR 0128 D2: never a silent 0). `app.quit()` exits 0
+  // whatever process.exitCode says, which let a capture that threw at 38 of 59 stills exit 0 (#2665).
+  if (headless) {
+    headlessEnd(`the page failed: ${String(message)}`);
     return;
   }
-  if (!r?.describe) throw new Error("render:done: no description");
-  writeFileSync(join(dir, "describe.json"), JSON.stringify(r, null, 2));
-  process.stdout.write(`apeGmshViewer: describe: ${join(dir, "describe.json")}\n`);
-  agentExit(0);
-});
-
-/** End an agent mode with its exit code, the results file closed first. */
-function agentExit(code: number): void {
-  resultsHost.close();
-  app.exit(code);
-}
-
-/** The renderer's V4c1 contour scrub measurement (renderer/app.ts `measureContour`). */
-interface ContourMeasure {
-  file: string;
-  field: string;
-  steps: number;
-  scanMs: number;
-  scrubStepsPerSec: number;
-  stepMs: { median: number; max: number };
-  peakMB: { main: number; renderer: number };
-  cpu: { before: number; during: number };
-}
-
-function printContourRow(c: ContourMeasure): void {
-  const name = c.file.split(/[\\/]/).pop();
-  const peak = `${(c.peakMB.main + c.peakMB.renderer).toFixed(0)} (${c.peakMB.main.toFixed(0)} + ${c.peakMB.renderer.toFixed(0)})`;
-  process.stdout.write(
-    "| file | field | steps | CPU before / during | history scan (ms) | scrub (steps/s) | step median / max (ms) | peak MB main+renderer |\n" +
-      "|---|---|---|---|---|---|---|---|\n" +
-      `| ${name} | ${c.field} | ${c.steps} | ${c.cpu.before.toFixed(0)} / ${c.cpu.during.toFixed(0)} % | ${c.scanMs.toFixed(0)} | ` +
-      `${c.scrubStepsPerSec.toFixed(1)} | ${c.stepMs.median.toFixed(2)} / ${c.stepMs.max.toFixed(1)} | ${peak} |\n`,
-  );
-}
-
-/** Summed os.cpus() ticks: idle and total, for the CPU load of the machine. */
-function cpuTicks(): { idle: number; total: number } {
-  let idle = 0;
-  let total = 0;
-  for (const c of cpus()) {
-    idle += c.times.idle;
-    total += c.times.user + c.times.nice + c.times.sys + c.times.idle + c.times.irq;
-  }
-  return { idle, total };
-}
-let cpuMark = cpuTicks();
-/** V4c1 measure: the machine's CPU load (%) since the last call (a reviewer re-runs under other loads). */
-ipcMain.handle("measure:cpu", () => {
-  const now = cpuTicks();
-  const d = now.total - cpuMark.total;
-  const busy = d > 0 ? (100 * (d - (now.idle - cpuMark.idle))) / d : NaN;
-  cpuMark = now;
-  return busy;
-});
-/** V4c1 measure: the main and renderer working sets now (MB). */
-ipcMain.handle("measure:memory", () => {
-  const m = app.getAppMetrics();
-  const mb = (type: string) => m.filter((x) => x.type === type).reduce((s, x) => s + (x.memory?.workingSetSize ?? 0), 0) / 1024;
-  return { main: mb("Browser"), renderer: mb("Tab") };
-});
-
-ipcMain.handle("app:fail", (_e, message: string) => {
-  process.stderr.write(`apeGmshViewer: ${message}\n`);
-  // An agent mode that fails must say so in its exit code (ADR 0128 D2: never a silent 0).
-  if (agentMode) {
-    agentExit(1);
-    return;
-  }
-  if (mode !== "view") {
-    process.exitCode = 1;
-    app.quit();
-  }
+  process.stderr.write(`apeGmshViewer: ${String(message)}\n`);
 });
 
 app.whenReady().then(() => {
   appReadyAt = Date.now();
   if (mode === "measure-results") {
-    measureResultsMode(file!, out!).catch((err) => {
-      process.stderr.write(`apeGmshViewer: measure-results: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
-      process.exitCode = 1;
-      app.quit();
-    });
+    // Not process.exitCode with app.quit(), which exits 0.
+    measureResultsMode(file!, out!).catch((err) => headlessEnd(errText(err)));
     return;
   }
-  if (outBusy || (mode === "render" && !renderJob)) return;
+  if (badArgs !== null || reachMode || outBusy || (mode === "render" && !renderJob)) return;
   if (agentMode) mkdirSync(resolve(out!), { recursive: true });
   const w = new BrowserWindow({
     // ADR 0128 D9: a render window's page is the spec's size (at device scale 1, above).
-    width: renderJob ? renderJob.spec.size[0] : 1600,
+    width: renderJob ? renderJob.spec.size[0] : particleRun ? PARTICLE_WINDOW[0] : 1600,
     // A tall hidden window lets one still show the whole definition chain.
-    height: renderJob ? renderJob.spec.size[1] : mode === "capture" ? 1900 : 1000,
-    useContentSize: agentMode,
+    height: renderJob ? renderJob.spec.size[1] : particleRun ? PARTICLE_WINDOW[1] : mode === "capture" ? 1900 : 1000,
+    useContentSize: agentMode || particleRun,
     show: mode !== "capture" && !agentMode,
     backgroundColor: "#16181d",
     title: "apeGmshViewer",
     webPreferences: {
-      preload: join(here, "preload.cjs"),
+      preload,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -624,8 +1172,16 @@ app.whenReady().then(() => {
   w.setMenuBarVisibility(false);
   // Hiding the menu bar grows the page: a render page is put back at the spec's size.
   if (renderJob) w.setContentSize(renderJob.spec.size[0], renderJob.spec.size[1]);
-  // A page load drops the old page's subscriptions.
-  w.webContents.on("did-start-loading", () => subscribed.clear());
+  // A page load drops the old page's subscriptions and the offers it listed.
+  w.webContents.on("did-start-loading", pageLoading);
+  // VU15 review: `did-start-loading` fires only when the page goes from idle to loading, so a reload while the page
+  // is still loading (`deliver` reloads a page that has not subscribed yet) starts no such event. A new document
+  // in the main frame starts a navigation every time, so it is a page load too; an in-page or subframe one is not.
+  w.webContents.on("did-start-navigation", (d) => {
+    if (d.isMainFrame && !d.isSameDocument) pageLoading();
+  });
+  // VU15: the load that commits is the one whose page may listen for offers.
+  w.webContents.on("did-navigate", () => pageCommitted(w.webContents));
   w.on("closed", () => {
     win = null;
   });
@@ -633,290 +1189,8 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  materialTests.cancel();
   session.close();
   resultsHost.close();
   app.quit();
 });
-
-// ---------------------------------------------------------------------------
-// V4a measurement mode (#1707): the results.h5 read path, timed end to end.
-// Main reads with reader/results.ts; the renderer gets each step over this
-// app's IPC (ipcRenderer.invoke, preload `resultsStep`) and applies it to a
-// colour buffer. The renderer page is a blank hidden page: the app's own page
-// would start its view/measure flow on the file. Its apply is the WebGL work
-// three.js r186 does for a `needsUpdate` colour attribute (one bufferSubData
-// of the whole Float32Array, then a draw), written as raw WebGL2 calls
-// because three.js is bundled inside the app page and cannot be reached here.
-// Nothing here runs outside --mode=measure-results.
-// ---------------------------------------------------------------------------
-
-const median = (xs: number[]) => {
-  const s = [...xs].sort((a, b) => a - b);
-  return s.length ? s[Math.floor((s.length - 1) / 2)]! : NaN;
-};
-/** Scrub columns are means over the steps: the renderer's clock is coarsened to 0.1 ms. */
-const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
-const timed = <T>(f: () => T): [T, number] => {
-  const t = performance.now();
-  const v = f();
-  return [v, performance.now() - t];
-};
-
-/** Peak working sets of the main and renderer processes, sampled every 20 ms. */
-function memorySampler() {
-  const peak = { mainMB: 0, rendererMB: 0, sumMB: 0 };
-  const sample = () => {
-    const m = app.getAppMetrics();
-    const mb = (type: string) => m.filter((x) => x.type === type).reduce((s, x) => s + (x.memory?.workingSetSize ?? 0), 0) / 1024;
-    const a = mb("Browser");
-    const b = mb("Tab");
-    peak.mainMB = Math.max(peak.mainMB, a);
-    peak.rendererMB = Math.max(peak.rendererMB, b);
-    peak.sumMB = Math.max(peak.sumMB, a + b);
-  };
-  const id = setInterval(sample, 20);
-  return { peak, sample, stop: () => clearInterval(id) };
-}
-
-async function measureMpco(path: string, dataset: string) {
-  await h5wasm.ready;
-  const size = statSync(path).size;
-  let f: h5wasm.File | null = null;
-  const t = performance.now();
-  try {
-    f = openH5(h5wasm as unknown as H5Openable<h5wasm.File>, path);
-    // h5wasm returns a negative id instead of throwing when HDF5 refuses the file.
-    if (Number(f.file_id) < 0) throw new Error("HDF5 could not open the file (truncated, or not HDF5)");
-  } catch (err) {
-    return { kind: "mpco", file: path, sizeBytes: size, openMs: performance.now() - t, openError: err instanceof Error ? err.message : String(err) };
-  }
-  const openMs = performance.now() - t;
-  try {
-    const ds = f.get(dataset);
-    if (!(ds instanceof h5wasm.Dataset)) throw new Error(`${dataset} is not a dataset in ${path}`);
-    const [v, readMs] = timed(() => ds.value as ArrayBufferView);
-    return { kind: "mpco", file: path, sizeBytes: size, openMs, dataset, shape: ds.shape, readMs, bytes: v.byteLength };
-  } finally {
-    f.close();
-  }
-}
-
-async function measureResultsMode(path: string, outPath: string): Promise<void> {
-  const mem = memorySampler();
-  mem.sample();
-  if (/\.mpco$/i.test(path)) {
-    const dataset = arg("dataset");
-    if (!dataset) throw new Error("an .mpco file needs --dataset=<path>");
-    const r = await measureMpco(path, dataset);
-    mem.sample();
-    mem.stop();
-    const result = { ...r, peakMemory: mem.peak };
-    writeFileSync(outPath, JSON.stringify(result, null, 2));
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-    app.quit();
-    return;
-  }
-  await h5wasm.ready;
-  const sizeBytes = statSync(path).size;
-  const [rf, openMs] = timed(() => openResults(h5wasm as unknown as ResultsH5, path));
-  try {
-    const result = await measureOpen(rf, path, sizeBytes, openMs, mem);
-    writeFileSync(outPath, JSON.stringify(result, null, 2));
-    printResultsRow(result);
-  } finally {
-    rf.close();
-    mem.stop();
-    app.quit();
-  }
-}
-
-async function measureOpen(rf: ResultsFile, path: string, sizeBytes: number, openMs: number, mem: ReturnType<typeof memorySampler>) {
-  const s = rf.index.stages[0];
-  if (!s?.nodes || s.gauss.length === 0) throw new Error(`${path}: the measurement needs a stage with nodal results and a gauss group`);
-  const nodes = s.nodes;
-  const vec = ["displacement_x", "displacement_y", "displacement_z"].filter((c) => nodes.components.includes(c));
-  const g = s.gauss[0]!;
-  const comp = g.components[0]!;
-  const T = s.nSteps;
-  const mid = Math.floor(T / 2);
-  const rep = 21;
-
-  // Cold: the first read of this step in this process. Warm: the same read again (median of 21).
-  const [, nodalColdMs] = timed(() => rf.readNodalStep(s.id, vec, mid));
-  const nodalWarm = Array.from({ length: rep }, () => timed(() => rf.readNodalStep(s.id, vec, mid))[1]);
-  const [, elemColdMs] = timed(() => rf.readGaussStep(s.id, g.id, comp, mid));
-  const elemWarm = Array.from({ length: rep }, () => timed(() => rf.readGaussStep(s.id, g.id, comp, mid))[1]);
-  const node = nodes.ids[Math.floor(nodes.ids.length / 2)]!;
-  const [hist, historyColdMs] = timed(() => rf.readNodeHistory(s.id, vec[0]!, node));
-  const historyWarm = Array.from({ length: rep }, () => timed(() => rf.readNodeHistory(s.id, vec[0]!, node))[1]);
-  mem.sample();
-
-  const nodalEager = nodes.components.length * T * nodes.ids.length * 8;
-  const gaussEager = s.gauss.reduce((a, x) => a + x.components.length * T * x.nElements * x.nGauss * 8, 0);
-
-  // Main → renderer → apply, 100 consecutive steps from step 0 (or all, if fewer).
-  const SCRUB = Math.min(100, T);
-  ipcMain.handle("results:step", (_e, req: unknown) => {
-    const r = req as { kind: "nodal" | "gauss"; step: number };
-    const [values, readMs] =
-      r.kind === "gauss" ? timed(() => [rf.readGaussStep(s.id, g.id, comp, r.step)]) : timed(() => rf.readNodalStep(s.id, vec, r.step));
-    return { values, readMs };
-  });
-  const w = new BrowserWindow({
-    width: 1600,
-    height: 1000,
-    show: false,
-    webPreferences: { preload: join(here, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false },
-  });
-  await w.loadURL("data:text/html,<!doctype html><title>measure-results</title><body></body>");
-  mem.sample();
-  const rr = (await w.webContents.executeJavaScript(`(${rendererHarness.toString()})(${nodes.ids.length}, ${SCRUB}, ${mid})`)) as Awaited<
-    ReturnType<typeof rendererHarness>
-  >;
-  mem.sample();
-  w.destroy();
-  ipcMain.removeHandler("results:step");
-
-  const steps = rr.steps;
-  return {
-    kind: "results",
-    file: path,
-    sizeBytes,
-    nodes: nodes.ids.length,
-    elements: s.gauss.reduce((a, x) => a + x.nElements, 0),
-    steps: T,
-    fields: { nodal: nodes.components, gauss: s.gauss.map((x) => ({ group: x.id, nGauss: x.nGauss, components: x.components })) },
-    sourceType: rf.index.sourceType,
-    openMs,
-    nodalStep: { components: vec, coldMs: nodalColdMs, warmMs: median(nodalWarm) },
-    elementStep: { component: `${g.id}/${comp}`, values: g.nElements * g.nGauss, coldMs: elemColdMs, warmMs: median(elemWarm) },
-    nodeHistory: { node, values: hist.length, coldMs: historyColdMs, warmMs: median(historyWarm) },
-    transfer: {
-      nodalBytes: steps[0]?.bytes ?? 0,
-      nodalRoundTripMs: mean(steps.map((x) => x.roundTripMs)),
-      nodalReadInMainMs: mean(steps.map((x) => x.readMs)),
-      nodalTransferMs: mean(steps.map((x) => x.roundTripMs - x.readMs)),
-      gaussBytes: rr.gauss.bytes,
-      gaussTransferMs: rr.gauss.transferMs,
-    },
-    apply: { colourMs: mean(steps.map((x) => x.colourMs)), uploadDrawMs: mean(steps.map((x) => x.uploadDrawMs)) },
-    scrub: { steps: SCRUB, totalMs: rr.totalMs, stepsPerSecond: (1000 * SCRUB) / rr.totalMs },
-    peakMemory: mem.peak,
-    eagerBytes: { nodal: nodalEager, gauss: gaussEager, total: nodalEager + gaussEager },
-    gpu: rr.gpu,
-  };
-}
-
-/**
- * Runs in the renderer (serialised with toString, so it references nothing
- * outside itself). A points draw of `n` nodes; per step: invoke main, map the
- * displacement magnitude through jet into a Float32Array colour buffer,
- * bufferSubData it, draw, gl.finish().
- */
-async function rendererHarness(n: number, scrub: number, gaussStep: number) {
-  type Bridge = { resultsStep: (req: { kind: "nodal" | "gauss"; step: number }) => Promise<{ values: Float64Array[]; readMs: number }> };
-  const viewer = (window as unknown as { viewer: Bridge }).viewer;
-  const canvas = document.createElement("canvas");
-  canvas.width = 1584;
-  canvas.height = 961;
-  document.body.appendChild(canvas);
-  const gl = canvas.getContext("webgl2");
-  if (!gl) throw new Error("no WebGL2 context");
-  const sh = (type: number, src: string) => {
-    const s = gl.createShader(type)!;
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? "shader");
-    return s;
-  };
-  const prog = gl.createProgram()!;
-  gl.attachShader(prog, sh(gl.VERTEX_SHADER, "#version 300 es\nin vec3 p; in vec3 c; out vec3 vc; void main(){ vc=c; gl_Position=vec4(p*1.8-0.9,1.0); gl_PointSize=2.0; }"));
-  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, "#version 300 es\nprecision mediump float; in vec3 vc; out vec4 o; void main(){ o=vec4(vc,1.0); }"));
-  gl.linkProgram(prog);
-  gl.useProgram(prog);
-  const pos = new Float32Array(3 * n);
-  for (let i = 0; i < pos.length; i++) pos[i] = ((i * 7919) % 1000) / 1000;
-  const pb = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, pb);
-  gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
-  const pl = gl.getAttribLocation(prog, "p");
-  gl.enableVertexAttribArray(pl);
-  gl.vertexAttribPointer(pl, 3, gl.FLOAT, false, 0, 0);
-  const col = new Float32Array(3 * n);
-  const cb = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, cb);
-  gl.bufferData(gl.ARRAY_BUFFER, col, gl.DYNAMIC_DRAW);
-  const cl = gl.getAttribLocation(prog, "c");
-  gl.enableVertexAttribArray(cl);
-  gl.vertexAttribPointer(cl, 3, gl.FLOAT, false, 0, 0);
-  const mag = new Float32Array(n);
-  const steps: { roundTripMs: number; readMs: number; bytes: number; colourMs: number; uploadDrawMs: number }[] = [];
-  const t0 = performance.now();
-  for (let k = 0; k < scrub; k++) {
-    const a = performance.now();
-    const r = await viewer.resultsStep({ kind: "nodal", step: k });
-    const b = performance.now();
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (let i = 0; i < n; i++) {
-      let s2 = 0;
-      for (const v of r.values) s2 += v[i]! * v[i]!;
-      const m = Math.sqrt(s2);
-      mag[i] = m;
-      if (m < lo) lo = m;
-      if (m > hi) hi = m;
-    }
-    const span = hi > lo ? hi - lo : 1;
-    for (let i = 0; i < n; i++) {
-      const t = (mag[i]! - lo) / span;
-      col[3 * i] = Math.min(1, Math.max(0, 1.5 - Math.abs(4 * t - 3)));
-      col[3 * i + 1] = Math.min(1, Math.max(0, 1.5 - Math.abs(4 * t - 2)));
-      col[3 * i + 2] = Math.min(1, Math.max(0, 1.5 - Math.abs(4 * t - 1)));
-    }
-    const c = performance.now();
-    gl.bindBuffer(gl.ARRAY_BUFFER, cb);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, col);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.drawArrays(gl.POINTS, 0, n);
-    gl.finish();
-    const d = performance.now();
-    steps.push({ roundTripMs: b - a, readMs: r.readMs, bytes: r.values.reduce((s, v) => s + v.byteLength, 0), colourMs: c - b, uploadDrawMs: d - c });
-  }
-  const totalMs = performance.now() - t0;
-  const gt: number[] = [];
-  let gaussBytes = 0;
-  for (let i = 0; i < 5; i++) {
-    const a = performance.now();
-    const r = await viewer.resultsStep({ kind: "gauss", step: gaussStep });
-    gt.push(performance.now() - a - r.readMs);
-    gaussBytes = r.values[0]!.byteLength;
-  }
-  gt.sort((x, y) => x - y);
-  const dbg = gl.getExtension("WEBGL_debug_renderer_info");
-  return {
-    steps,
-    totalMs,
-    gauss: { bytes: gaussBytes, transferMs: gt[2]! },
-    gpu: dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : "unknown",
-  };
-}
-
-function printResultsRow(r: Awaited<ReturnType<typeof measureOpen>>): void {
-  const f0 = (x: number) => x.toFixed(0);
-  const f1 = (x: number) => x.toFixed(1);
-  const f2 = (x: number) => x.toFixed(2);
-  const MB = (b: number) => (b / 1048576).toFixed(1);
-  const fields = `${r.fields.nodal.length} nodal + ${r.fields.gauss.map((x) => `${x.components.length} x ${x.nGauss}-pt gauss`).join(", ")}`;
-  process.stdout.write(
-    "| date | commit | file | size (MB) | nodes | elements | steps | fields | open+index (ms) | nodal step cold / warm (ms) | element step cold / warm (ms) | node history (ms) | transfer main→renderer | apply colour + upload/draw (ms) | scrub (steps/s) | peak memory MB main+renderer | eager whole-history (MB) |\n" +
-      "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n" +
-      `| ${new Date().toISOString().slice(0, 10)} | ${arg("commit") ?? "?"} | ${r.file.split(/[\\/]/).pop()} | ${MB(r.sizeBytes)} | ${r.nodes} | ${r.elements} | ${r.steps} | ${fields} | ` +
-      `${f1(r.openMs)} | ${f2(r.nodalStep.coldMs)} / ${f2(r.nodalStep.warmMs)} | ${f2(r.elementStep.coldMs)} / ${f2(r.elementStep.warmMs)} | ${f1(r.nodeHistory.coldMs)} | ` +
-      `${(r.transfer.nodalBytes / 1024).toFixed(0)} KB in ${f2(r.transfer.nodalTransferMs)} ms | ${f2(r.apply.colourMs)} + ${f2(r.apply.uploadDrawMs)} | ${f1(r.scrub.stepsPerSecond)} | ` +
-      `${f0(r.peakMemory.sumMB)} (${f0(r.peakMemory.mainMB)} + ${f0(r.peakMemory.rendererMB)}) | ${MB(r.eagerBytes.total)} |\n\n` +
-      `detail: element step = ${r.elementStep.values} values; history = ${r.nodeHistory.values} values (warm ${f2(r.nodeHistory.warmMs)} ms); ` +
-      `scrub round trip ${f2(r.transfer.nodalRoundTripMs)} ms (read in main ${f2(r.transfer.nodalReadInMainMs)} ms); ` +
-      `gauss step transfer ${(r.transfer.gaussBytes / 1024).toFixed(0)} KB in ${f2(r.transfer.gaussTransferMs)} ms; ` +
-      `eager nodal ${MB(r.eagerBytes.nodal)} MB + gauss ${MB(r.eagerBytes.gauss)} MB; GPU "${r.gpu}"\n`,
-  );
-}

@@ -115,6 +115,12 @@ export function mountWindows(store: Store): () => void {
           return card;
         })
       : [];
+    // No card now and none before: nothing to replace, and reading the scroll
+    // below would force a layout of the whole page (#2838).
+    if (cards.length === 0 && host.children.length === 0) {
+      host.hidden = true;
+      return;
+    }
     // A re-render replaces the cards; keep where the user had scrolled (the
     // host's list, and each stage timeline's horizontal position), so a click
     // that selects a row deep in a window does not jump it back to the top.

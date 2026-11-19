@@ -14,6 +14,7 @@ import pytest
 
 from apeGmsh.results import Results
 from apeGmsh.results.readers import _mpco_layer_io as _mlayer
+from apeGmsh.results.readers._buckets import LayerBucketUnreadWarning
 from apeGmsh.results.readers._protocol import ResultLevel
 from apeGmsh.opensees._response_catalog import (
     ELE_TAG_ASDShellQ4,
@@ -600,7 +601,7 @@ class TestDiscoverLayerBuckets:
         with h5py.File(path, "r") as g:
             on_elem = g["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
             with pytest.warns(
-                _mlayer.LayerBucketUnreadWarning,
+                LayerBucketUnreadWarning,
                 match=r"999-WeirdShell\[201:0:0\]: class 'WeirdShell' has "
                       r"no layered-shell entry",
             ):

@@ -5,7 +5,9 @@ Every example so far recorded its run the same way: in-process, on the
 That's the right default, and the tutorials pick it on purpose so you reach
 an answer without a detour. It already chooses for you: the Ladruno fork
 records its own `.ladruno` file, a stock build with the MPCO recorder writes
-`.mpco`, and pip openseespy writes classic `.out` recorder files. But sooner
+`.mpco` and converts it to `.ladruno` when the program declares its stages
+(an unstaged program refuses there by name), and pip openseespy writes
+classic `.out` recorder files. But sooner
 or later you'll have a reason to choose yourself — a colleague wants the
 output in **STKO**, or you're driving a workflow built around classic
 `.out` **recorder files**.
@@ -213,7 +215,9 @@ the [read displacement & reactions](../how-to/read-results.md) how-to.
   you read it back* — and the read API (`results.nodes.get(pg=...,
   component=...)`) is identical across all three.
 - **The default is `emit_default`** (in-process, the recorder your build
-  has) — fewest moving parts, and the same script on every build.
+  has) — fewest moving parts. On a stock build with MPCO it needs the
+  program's stages declared with `ops.stage(...)`, and refuses by name
+  without them.
 - **`from_mpco`** gives you STKO-compatible output; it needs a sibling
   `model.h5` (`ops.h5`) + `fem=` to resolve names, and a local-disk path.
 - **`from_recorders`** reads classic `.out` files — the path for consuming

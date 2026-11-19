@@ -139,7 +139,7 @@
       "symbol": "EigenResult.mode_shape"
     },
     "EigenResult.results": {
-      "doc": "Write the modes with :meth:`to_native` (to a temp file) and",
+      "doc": "Write the modes with :meth:`to_ladruno` (to a temp file) and",
       "signature": "results(model_h5: \"'str | os.PathLike[str] | None'\" = None) -> \"'Results'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "EigenResult.results"
@@ -708,6 +708,12 @@
       "skill": "references/results.md",
       "symbol": "Results.close"
     },
+    "Results.combinations": {
+      "doc": "The set's User Combinations, evaluated per quantity on read (ADR 0130 D4).",
+      "signature": "combinations(user_h5: \"'Optional[str | Path]'\" = None, *, model_h5: \"'Optional[str | Path]'\" = None, spectra: 'Any' = None) -> \"'UserCombinations'\"",
+      "skill": "references/results.md",
+      "symbol": "Results.combinations"
+    },
     "Results.demo": {
       "doc": "Return a ready-to-view demo :class:`Results` (cantilever pushover).",
       "signature": "demo(**kwargs) -> \"'Results'\"",
@@ -890,7 +896,7 @@
     },
     "g.constraints.distributing_coupling": {
       "doc": "RBE3 / distributing coupling — distribute a load at a reference",
-      "signature": "distributing_coupling(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), weighting='uniform', k=None, k_alpha=None, host=None, kr=None, enforce='penalty', bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None) -> 'DistributingCouplingDef'",
+      "signature": "distributing_coupling(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), weighting='uniform', footprint=None, k=None, k_alpha=None, host=None, kr=None, enforce='penalty', bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None) -> 'DistributingCouplingDef'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.constraints.distributing_coupling"
     },
@@ -3564,6 +3570,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.LadrunoUP"
     },
+    "ops.element.SSPquadUP": {
+      "doc": "``alpha=`` is one value for the group; ``alpha_per_area=``",
+      "signature": "SSPquadUP(*, pg: 'str', material: 'NDMaterial | str', thickness: 'float', fluid_bulk: 'float', fluid_density: 'float', perm: 'tuple[float, float]', void_ratio: 'float', alpha: 'float | None' = None, body: 'tuple[float, float] | None' = None, alpha_per_area: 'float | None' = None) -> 'SSPquadUP'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.element.SSPquadUP"
+    },
     "ops.element.ShellDKGQ": {
       "doc": "",
       "signature": "ShellDKGQ(*, pg: 'str', section: '_ShellSection | str', damp: 'Damping | None' = None) -> 'ShellDKGQ'",
@@ -3923,6 +3935,96 @@
       "signature": "model(*, ndm: 'int', ndf: 'int') -> 'None'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.model"
+    },
+    "ops.mpm.analyze": {
+      "doc": "``mpm analyze``: ``steps`` explicit steps of size ``dt``.",
+      "signature": "analyze(steps: 'int', dt: 'float') -> 'Analyze'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.analyze"
+    },
+    "ops.mpm.body": {
+      "doc": "An MPM body: the elements of physical group ``pg``, lattice-seeded",
+      "signature": "body(pg: 'str', *, material: \"'NDMaterial | str'\", density: 'float', ppc: 'int', name: 'str | None' = None) -> 'Body'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.body"
+    },
+    "ops.mpm.damping": {
+      "doc": "``mpm damping local``: local non-viscous damping.",
+      "signature": "damping(alpha: 'float') -> 'Damping'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.damping"
+    },
+    "ops.mpm.fix": {
+      "doc": "``mpm fix``: zero grid-velocity ``components`` on ``face``.",
+      "signature": "fix(face: 'str', components: 'str') -> 'Fix'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.fix"
+    },
+    "ops.mpm.flip": {
+      "doc": "``mpm flip``: the FLIP fraction.",
+      "signature": "flip(alpha: 'float') -> 'Flip'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.flip"
+    },
+    "ops.mpm.gravity": {
+      "doc": "``mpm gravity``: the body force per unit mass.",
+      "signature": "gravity(*g: 'float') -> 'Gravity'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.gravity"
+    },
+    "ops.mpm.grid": {
+      "doc": "``mpm grid``: the background grid (one per model).",
+      "signature": "grid(*, origin: 'Sequence[float]', h: 'float', cells: 'Sequence[int]', basis: 'str | None' = None) -> 'Grid'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.grid"
+    },
+    "ops.mpm.gridvel": {
+      "doc": "``mpm gridvel ... v``: a prescribed grid velocity in a box.",
+      "signature": "gridvel(name: 'str', box: 'Sequence[Sequence[float]]', v: 'Sequence[float | str]', *, start: 'float | None' = None, translate: 'str | None' = None, profile: 'Sequence[float] | None' = None) -> 'Gridvel'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.gridvel"
+    },
+    "ops.mpm.gridvelAffine": {
+      "doc": "``mpm gridvel ... affine``: grid velocity ``L (x - ref)`` in a box.",
+      "signature": "gridvelAffine(name: 'str', box: 'Sequence[Sequence[float]]', L: 'Sequence[Sequence[float]]', *, ref: 'Sequence[float] | None' = None) -> 'GridvelAffine'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.gridvelAffine"
+    },
+    "ops.mpm.massCutoff": {
+      "doc": "``mpm massCutoff``: the active-node mass cutoff.",
+      "signature": "massCutoff(c: 'float') -> 'MassCutoff'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.massCutoff"
+    },
+    "ops.mpm.output": {
+      "doc": "``mpm output``: the particle results file (``.ladruno``).",
+      "signature": "output(path: 'str', *, every: 'int | None' = None, dt: 'float | None' = None, fields: 'Sequence[str] | None' = None, compress: 'int | None' = None, flush: 'float | None' = None) -> 'Output'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.output"
+    },
+    "ops.mpm.safety": {
+      "doc": "``mpm safety``: the time-step safety factor.",
+      "signature": "safety(s: 'float') -> 'Safety'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.safety"
+    },
+    "ops.mpm.timeSeries": {
+      "doc": "``mpm timeSeries``: the factor on gravity (a series or its name).",
+      "signature": "timeSeries(series: \"'_TimeSeriesPrimitive | str'\") -> 'TimeSeries'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.timeSeries"
+    },
+    "ops.mpm.units": {
+      "doc": "``mpm units``: the unit symbols of the set and the results.",
+      "signature": "units(length: 'str', force: 'str', time: 'str', *, system: 'str | None' = None) -> 'Units'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.units"
+    },
+    "ops.mpm.wall": {
+      "doc": "``mpm wall``: a stationary Coulomb wall on ``face``.",
+      "signature": "wall(face: 'str', mu: 'float') -> 'Wall'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.wall"
     },
     "ops.nDMaterial.ASDConcrete3D": {
       "doc": "Register a Petracca plastic-damage :class:`ASDConcrete3D` from physics.",

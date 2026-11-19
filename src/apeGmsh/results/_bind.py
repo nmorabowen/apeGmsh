@@ -26,13 +26,14 @@ from __future__ import annotations
 import warnings
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 
 if TYPE_CHECKING:
     from ..mesh.FEMData import FEMData
     from ..opensees.opensees_model import OpenSeesModel
+    from .readers._ladruno import StageStamp
     from .readers._protocol import ResultsReader
 
 
@@ -45,6 +46,11 @@ class ModelFemMismatchWarning(UserWarning):
     FEMData instead (no physical groups, no labels).  Either the
     ``model_h5`` belongs to another model, or the run added nodes the
     archive does not know; pass ``fem=`` to bind a FEMData regardless.
+
+    ``fem=`` (and so ``Results.from_fem``) warns too when the archive
+    declares no element tag map and the capture's elements are not the
+    fem's (#1408): the reader would read the capture's ops tags as fem
+    element ids, so ``pg=`` would answer with the wrong elements.
     """
 
 
@@ -65,6 +71,21 @@ class DuplicateStageNameWarning(UserWarning):
     The names are still attached, but ``results.stage(<name>)`` resolves
     to the first stage so named; select the others by id (``stage_<k>``)
     or by their ``MODEL_STAGE[<k>]`` alias.
+    """
+
+
+class UnpairedStageWarning(UserWarning):
+    """``model_h5=`` declares stages the ``.ladruno`` cannot be paired with.
+
+    The file carries no ``INFO/PROVENANCE@stage_names`` and holds fewer
+    stages than the program, and their recorded ``KIND`` s do not prove
+    which program stages they are (two program stages of one kind, or a
+    stage with no ``KIND`` evidence).  A recorder bound to a later stage
+    writes such a file; pairing it with the program's first stages would
+    name it wrongly (#2824).  An unstamped recorder transcode of more than
+    one stage warns too: it may hold the program's stages in any order.  The message names the stages, which keep
+    their ``MODEL_STAGE[<k>]`` names; stamp the file with the stages it
+    recorded to name them.
     """
 
 
@@ -204,8 +225,20 @@ def _resolve_fem_via_model(
 
     Resolution rules (#1325):
 
-    1. ``candidate`` provided: return it, unchecked — same contract as
-       :func:`_resolve_fem`.
+    1. ``candidate`` provided: return it, unless the archive declares no
+       ops<->fem element tag map and the capture's elements are not the
+       candidate's (:func:`_candidate_elements_reason`: elements the deck
+       added under new tags are extra, not a mismatch).
+       Without a tag map the reader reads ops tags as fem element ids, so
+       a deck that numbered its elements otherwise would answer ``pg=``
+       with the wrong elements and no error; that warns
+       :class:`ModelFemMismatchWarning` and binds a copy of the capture's
+       own FEMData (#1408), so each element read still warns that it
+       has no fem<->ops pairing (#2907).  ``Results.from_fem`` lands
+       here with ``model_h5`` its own ``fem.to_h5`` cache.  A candidate
+       with no elements, or a capture with none, has nothing to mislabel
+       and passes.  A bridge archive (``ops.h5``) relabels through its
+       tag map, so the candidate binds unchecked there.
     2. Otherwise the neutral FEMData archived in ``model_h5`` — the one
        the bridge emitted the run from, with its physical groups and
        labels — provided its node ids cover every node id the capture
@@ -227,7 +260,9 @@ def _resolve_fem_via_model(
     ``reader.spatial_dim()`` (the MPCO readers).
     """
     if candidate is not None:
-        return candidate
+        return _checked_candidate(
+            reader, candidate, model, model_path=model_path,
+        )
     embedded = reader.fem()
     model_fem = model.fem
     if embedded is None:
@@ -281,13 +316,133 @@ def _resolve_fem_via_model(
     return embedded
 
 
+def _checked_candidate(
+    reader: "ResultsReader",
+    candidate: "FEMData",
+    model: "OpenSeesModel",
+    *,
+    model_path: "str | Path",
+) -> "FEMData":
+    """Rule 1 of :func:`_resolve_fem_via_model`: ``fem=`` against the capture.
+
+    Only the elements are checked: with no tag map they are what the
+    reader pairs by id, and a wrong pairing reads the wrong elements
+    with no error (#1408).  The caller asserted the node pairing.
+
+    A mismatch binds a shallow copy of the capture's FEMData, never the
+    reader's own object (#2907).  ``Results._element_tag_pairing_missing``
+    tells the reader's snapshot from a caller's ``fem=`` by identity, and
+    warns :class:`WarnElementTagPairingMissing` on every element read of
+    the second.  The caller here passed ``fem=`` and reads by its fem
+    ids, which nothing translates, so the reads must keep that warning
+    as they did before the check replaced ``fem=``.
+    """
+    import copy
+
+    from .readers._tag_translation import ElementTagTranslator
+
+    if not ElementTagTranslator.from_model(model).is_empty:
+        return candidate
+    if not any(len(group.ids) for group in candidate.elements):
+        return candidate
+    embedded = reader.fem()
+    if embedded is None:
+        return candidate
+    reason = _candidate_elements_reason(embedded, candidate)
+    if reason is None:
+        return candidate
+    warnings.warn(
+        ModelFemMismatchWarning(
+            f"fem= does not match the capture's elements: "
+            f"model_h5={str(model_path)!r} declares no element tag map "
+            f"(/opensees/element_meta), so the capture's element tags are "
+            f"read as fem element ids, and {reason}. Number the deck's "
+            f"element tags as the fem's element ids, or bind a model.h5 "
+            f"written by ops.h5(...). Binding the capture's own MODEL group "
+            f"instead, which has no physical groups."
+        ),
+        stacklevel=4,
+    )
+    return copy.copy(embedded)
+
+
+def _candidate_elements_reason(
+    embedded: "FEMData", candidate: "FEMData",
+) -> "Optional[str]":
+    """Why ``fem=``'s elements cannot be read by the capture's tags.
+
+    ``None`` when they can.  Unlike :func:`_elements_reason` (the
+    ``model_h5=`` route, where the archive must hold the whole capture),
+    a capture element whose tag is not a fem id is an element the deck
+    added (a zeroLength spring, a link): extra, not a mismatch.  A
+    mismatch is any of:
+
+    * a shared id on another node set (permuted or shifted numbering);
+    * a capture tag the fem lacks, on the node set of a fem element the
+      capture does not hold under its own id (the fem's element 1 is
+      the capture's tag 7: renumbered);
+    * no capture element is a fem element at all.
+    """
+    def _rows(fem: "FEMData") -> "dict[int, tuple[int, ...]]":
+        rows: dict[int, tuple[int, ...]] = {}
+        for group in fem.elements:
+            ids = np.asarray(group.ids, dtype=np.int64)
+            conn = np.asarray(group.connectivity, dtype=np.int64)
+            for eid, row in zip(ids, conn):
+                rows[int(eid)] = tuple(sorted(int(n) for n in row))
+        return rows
+
+    fem_rows = _rows(candidate)
+    capture_rows = _rows(embedded)
+    if not capture_rows:
+        return None
+    held = {eid for eid, nodes in capture_rows.items()
+            if fem_rows.get(eid) == nodes}
+    unheld_by_nodes: dict[tuple[int, ...], int] = {}
+    for eid, nodes in fem_rows.items():
+        if eid not in held:
+            unheld_by_nodes.setdefault(nodes, eid)
+    differing: list[int] = []
+    renumbered: list[str] = []
+    for eid, nodes in capture_rows.items():
+        known = fem_rows.get(eid)
+        if known is not None:
+            if known != nodes:
+                differing.append(eid)
+        elif nodes in unheld_by_nodes:
+            renumbered.append(f"{eid} is fem element {unheld_by_nodes[nodes]}")
+    if not differing and not renumbered and held:
+        return None
+
+    def _some(items: "list[Any]") -> str:
+        shown = ", ".join(str(i) for i in items[:5])
+        more = f", ... ({len(items)} in all)" if len(items) > 5 else ""
+        return f"{shown}{more}"
+
+    parts = []
+    if renumbered:
+        parts.append(f"{len(renumbered)} renumbered (e.g. {_some(renumbered)})")
+    if differing:
+        parts.append(
+            f"{len(differing)} on other nodes than the fem element of that "
+            f"id (e.g. {_some(differing)})"
+        )
+    if not held:
+        parts.append("none is a fem element")
+    return f"of the capture's {len(capture_rows)} elements {'; '.join(parts)}"
+
+
 def _bind_stage_names(
     reader: "Any",
     model: "OpenSeesModel",
     *,
     model_path: "str | Path",
+    stamp: "Optional[StageStamp]" = None,
 ) -> None:
     """Name and kind the capture's stages after the archive's program.
+
+    ``stamp`` is a ``.ladruno``'s :func:`read_stage_stamp`; with it the
+    binding is :func:`_bind_ladruno_stage_names`. An ``.mpco`` has none.
 
     #1324 names, #1948 kinds: a stage's kind comes from its archived
     ``analysis`` record (:func:`_stage_kind`), not from ``analyze_dt``.
@@ -307,6 +462,11 @@ def _bind_stage_names(
     alike warns :class:`DuplicateStageNameWarning`: ``stage(<name>)``
     then resolves to the first, and the ids stay unique.
 
+    This is the ``.mpco`` path: an ``.mpco`` records no stage kind and
+    no stamp, so its stages pair by position.  A ``.ladruno`` binds by
+    its stamped names or a proven kind match instead
+    (:func:`_bind_ladruno_stage_names`, #2823).
+
     The reader has the last word on the pairing (#2101).  A ``.ladruno``
     stage records the ``KIND`` it ran, and where that disagrees with the
     program kind the reader renames nothing and warns
@@ -317,6 +477,15 @@ def _bind_stage_names(
     happened is read back from ``reader.stages()``, so the single-file
     and partitioned readers of both formats take the same path.
     """
+    if stamp is not None:
+        # Raised again from here, so each warning names the caller's line.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _bind_ladruno_stage_names(reader, model, model_path=model_path,
+                                      stamp=stamp)
+        for w in caught:
+            warnings.warn(w.message, w.category, stacklevel=3)
+        return
     program = [str(s.name) for s in model.stages()]
     if not program:
         return
@@ -350,18 +519,38 @@ def _bind_stage_names(
         # count warning below is then the only account of the run.
         return
     if len(capture) < len(program):
-        unrun = program[len(capture):]
-        warnings.warn(
-            StageCountMismatchWarning(
-                f"model_h5={str(model_path)!r} declares {len(program)} "
-                f"stages ({program}) but the capture holds only "
-                f"{len(capture)} MODEL_STAGE groups: a partial run. The "
-                f"first {len(capture)} program names are paired onto "
-                f"the capture in order; {unrun} have no capture."
-            ),
-            stacklevel=3,
-        )
-    repeated = sorted(n for n, k in Counter(paired).items() if k > 1)
+        _warn_partial_run(program, len(capture), model_path=model_path)
+    _warn_named_alike(capture, paired, model_path=model_path)
+
+
+def _warn_partial_run(
+    program: "list[str]", n_capture: int, *, model_path: "str | Path",
+    stacklevel: int = 4,
+) -> None:
+    unrun = program[n_capture:]
+    warnings.warn(
+        StageCountMismatchWarning(
+            f"model_h5={str(model_path)!r} declares {len(program)} "
+            f"stages ({program}) but the capture holds only "
+            f"{n_capture} MODEL_STAGE groups: a partial run. The "
+            f"first {n_capture} program names are paired onto "
+            f"the capture in order; {unrun} have no capture."
+        ),
+        stacklevel=stacklevel,
+    )
+
+
+def _warn_named_alike(
+    capture: "Sequence[Any]", paired: "Sequence[Optional[str]]", *,
+    model_path: "str | Path",
+) -> None:
+    """The duplicate and shadow warnings over the stages that took a name.
+
+    ``paired[i]`` is the program name ``capture[i]`` took, ``None`` where
+    it kept its own.
+    """
+    taken = [n for n in paired if n is not None]
+    repeated = sorted(n for n, k in Counter(taken).items() if k > 1)
     if repeated:
         warnings.warn(
             DuplicateStageNameWarning(
@@ -371,12 +560,14 @@ def _bind_stage_names(
                 f"(results.stage('stage_<k>')) or by their MODEL_STAGE "
                 f"alias."
             ),
-            stacklevel=3,
+            stacklevel=4,
         )
     ids = [s.id for s in capture]
     raw = [s.name for s in capture]          # the MODEL_STAGE[<k>] aliases
     shadowed = []
     for i, name in enumerate(paired):
+        if name is None:
+            continue
         if name in ids and ids.index(name) != i:
             shadowed.append(f"{name!r} (id {ids[i]!r}) by the id of stage {ids.index(name)}")
         elif name in raw and raw.index(name) != i:
@@ -390,8 +581,241 @@ def _bind_stage_names(
                 f"aliases, so select each stage by its own id, or rename "
                 f"it in the program."
             ),
-            stacklevel=3,
+            stacklevel=4,
         )
+
+
+#: The raw ``KIND`` s that say which kind of program stage ran.
+_EVIDENCE = ("static", "transient")
+#: The raw ``KIND`` s a stage may record without contradicting a program kind.
+_NO_EVIDENCE = (None, "eigen")
+
+
+def _bind_ladruno_stage_names(
+    reader: "Any",
+    model: "OpenSeesModel",
+    *,
+    model_path: "str | Path",
+    stamp: "StageStamp",
+) -> None:
+    """Name and kind a ``.ladruno``'s stages after the archive's program.
+
+    The ``.ladruno`` sibling of :func:`_bind_stage_names` (ADR 0122 D3,
+    #2823); ``stamp`` is the file's :func:`read_stage_stamp`. A stage is
+    never paired with a program stage by position alone (#2824):
+
+    * **Stamped** (``INFO/PROVENANCE@stage_names``): each stage takes the
+      program stage its stamp names, in any order. A stamped name equal to
+      the stage's own ``MODEL_STAGE[<k>]`` group (a stage that is no program
+      stage: modes) keeps the stage as it is. A name the program does not
+      declare, or a program stage of another kind than the ``KIND`` the
+      file recorded, raises :class:`StageStampRefused` naming it. No count
+      warning: the stamp says which stages ran. A file that also carries
+      ``stage_display_names`` (a ``stage_names=`` rename) binds the same
+      way and shows those names as the stages' names instead (the
+      program's kind still).
+    * **Unstamped**: a modes-only stage (``KIND="eigen"``, no step) is not a
+      program stage and keeps its name. The other stages pair with the
+      program by kind: as many stages as the program pairs one to one, and
+      a conflicting ``KIND`` renames nothing (the reader's
+      ``StageKindMismatchWarning``); fewer pair with the program's first
+      stages only when no other run of program stages fits their ``KIND`` s
+      (a partial run, :class:`StageCountMismatchWarning`); otherwise
+      nothing is renamed and :class:`UnpairedStageWarning` names the
+      stages. More stages than the program warn the count and rename
+      nothing.
+
+    Duplicate and shadowed names warn as in :func:`_bind_stage_names`.
+    """
+    from .readers._ladruno import StageStampRefused
+
+    program = list(model.stages())
+    names = [str(s.name) for s in program]
+    if not names:
+        return
+    hosts = [s for s in reader.stages() if s.kind != "mode"]
+    if len(hosts) != len(stamp.stages):
+        raise RuntimeError(
+            f"{stamp.source}: the reader lists {len(hosts)} MODEL_STAGE "
+            f"groups and the file {len(stamp.stages)}.")
+    odd = [f"{rec.group} records KIND {rec.kind!r}" for rec in stamp.stages
+           if rec.kind not in _EVIDENCE and rec.kind not in _NO_EVIDENCE]
+    kinds: "dict[int, str]" = {}
+
+    def kind_of(j: int) -> str:
+        if j not in kinds:
+            kinds[j] = _stage_kind(program[j], model_path=model_path)
+        return kinds[j]
+
+    if stamp.names is not None:
+        if odd:
+            raise StageStampRefused(
+                f"{stamp.source}: {'; '.join(odd)}, which is no stage kind; "
+                f"its stamped stage_names {list(stamp.names)} cannot be "
+                f"checked against model_h5={str(model_path)!r}.")
+        pairing = _pair_by_stamp(stamp, names, kind_of, model_path=model_path)
+    else:
+        by_kind = _pair_by_kind(stamp, names, kind_of, model_path=model_path)
+        if by_kind is None:
+            return
+        pairing = by_kind
+    shown = (stamp.display if stamp.display is not None
+             else [h.name if j is None else names[j]
+                   for h, j in zip(hosts, pairing)])
+    paired = [None if j is None and s == h.name else s
+              for h, j, s in zip(hosts, pairing, shown)]
+    if all(n is None for n in paired):
+        return
+    before = _stage_naming(reader)
+    reader.attach_stage_names(
+        list(shown),
+        [h.kind if j is None else kind_of(j) for h, j in zip(hosts, pairing)],
+    )
+    if _stage_naming(reader) == before:
+        return  # the reader declined the pairing and has said why
+    if stamp.names is None:
+        n_paired = sum(j is not None for j in pairing)
+        if n_paired < len(names):
+            _warn_partial_run(names, n_paired, model_path=model_path)
+    _warn_named_alike(hosts, paired, model_path=model_path)
+
+
+def _pair_by_stamp(
+    stamp: "StageStamp", names: "list[str]", kind_of: "Any", *,
+    model_path: "str | Path",
+) -> "list[Optional[int]]":
+    """The program stage each stamped stage names (``None``: not one)."""
+    from .readers._ladruno import StageStampRefused
+
+    assert stamp.names is not None
+    out: "list[Optional[int]]" = []
+    used: "set[int]" = set()
+    for rec, name in zip(stamp.stages, stamp.names):
+        candidates = [j for j, n in enumerate(names) if n == name]
+        if not candidates:
+            if name == rec.group:
+                out.append(None)    # the stamp keeps it: not a program stage
+                continue
+            raise StageStampRefused(
+                f"{stamp.source}: {rec.group} is stamped {name!r}, which "
+                f"model_h5={str(model_path)!r} does not declare (its stages "
+                f"are {names}). The file was stamped against another "
+                f"program; nothing is renamed.")
+        if rec.kind in _EVIDENCE:
+            fits = [j for j in candidates if kind_of(j) == rec.kind]
+            if not fits:
+                raise StageStampRefused(
+                    f"{stamp.source}: {rec.group} is stamped {name!r} and "
+                    f"records KIND {rec.kind!r}, but model_h5="
+                    f"{str(model_path)!r} declares {name!r} "
+                    f"{sorted({kind_of(j) for j in candidates})}. The stamp "
+                    f"contradicts the program; nothing is renamed.")
+        else:
+            fits = candidates
+            if len({kind_of(j) for j in fits}) > 1:
+                raise StageStampRefused(
+                    f"{stamp.source}: {rec.group} is stamped {name!r} and "
+                    f"records no stage kind (KIND {rec.kind!r}), and "
+                    f"model_h5={str(model_path)!r} declares {name!r} more than "
+                    f"once with kinds {sorted({kind_of(j) for j in fits})}; "
+                    f"which one it is cannot be told. Nothing is renamed.")
+        j = next((j for j in fits if j not in used), fits[0])
+        used.add(j)
+        out.append(j)
+    return out
+
+
+def _pair_by_kind(
+    stamp: "StageStamp", names: "list[str]", kind_of: "Any", *,
+    model_path: "str | Path",
+) -> "Optional[list[Optional[int]]]":
+    """The program stage each unstamped stage pairs with, by kind.
+
+    ``None`` when the caller has nothing to rename and has warned (or
+    needs no warning).
+    """
+    stages = stamp.stages
+    steps = [i for i, rec in enumerate(stages) if not rec.modes_only]
+    m, n = len(steps), len(names)
+    out: "list[Optional[int]]" = [None] * len(stages)
+    if not stages:
+        _warn_partial_run(names, 0, model_path=model_path, stacklevel=5)
+        return None
+    if m == 0:
+        return None     # modes only: no program stage ran here
+    if stamp.transcoded and m > 1:
+        groups = [stages[i].group for i in steps]
+        warnings.warn(
+            UnpairedStageWarning(
+                f"{stamp.source} is a recorder transcode with {m} stages "
+                f"({groups}) and no INFO/PROVENANCE@stage_names: it may hold "
+                f"the program's stages ({names}) in any order, so they are "
+                f"not paired by position. {groups} keep their names; read the "
+                f"recorders again with Results.from_recorders(...) to name "
+                f"them."
+            ),
+            stacklevel=4,
+        )
+        return None
+    if m > n:
+        warnings.warn(
+            StageCountMismatchWarning(
+                f"model_h5={str(model_path)!r} declares {n} stages "
+                f"({names}) but the capture holds {m} MODEL_STAGE groups "
+                f"with steps ({[stages[i].group for i in steps]}); keeping "
+                f"the capture's names. Select stages by MODEL_STAGE name or "
+                f"by id (results.stage('stage_<k>'))."
+            ),
+            stacklevel=4,
+        )
+        return None
+    evidence = [stages[i].kind if stages[i].kind in _EVIDENCE else None
+                for i in steps]
+    if m < n:
+        program_kinds: "list[Optional[str]]" = []
+        for j in range(n):
+            try:
+                program_kinds.append(kind_of(j))
+            except ValueError:
+                if j < m:
+                    raise
+                program_kinds.append(None)   # a wildcard: proves nothing
+        prefix_fits = all(e is None or e == program_kinds[j]
+                          for j, e in enumerate(evidence))
+        if prefix_fits and _embeddings(evidence, program_kinds) > 1:
+            groups = [stages[i].group for i in steps]
+            warnings.warn(
+                UnpairedStageWarning(
+                    f"model_h5={str(model_path)!r} declares {n} stages "
+                    f"({names}, kinds {program_kinds}) but {stamp.source} "
+                    f"holds {m} ({groups}, KIND {[stages[i].kind for i in steps]}) "
+                    f"and no INFO/PROVENANCE@stage_names, so which program "
+                    f"stages they recorded cannot be told (a recorder bound "
+                    f"to a later stage writes such a file). {groups} keep "
+                    f"their names; stamp the file with the stages it "
+                    f"recorded to name them."
+                ),
+                stacklevel=4,
+            )
+            return None
+    for j, i in enumerate(steps):
+        out[i] = j
+    return out
+
+
+def _embeddings(evidence: "list[Optional[str]]", kinds: "list[Optional[str]]") -> int:
+    """How many ways (0, 1 or 2, meaning "more") ``evidence`` runs in order
+    over ``kinds``; ``None`` on either side fits anything."""
+    m, n = len(evidence), len(kinds)
+    # ways[i][j]: embeddings of evidence[i:] into kinds[j:], capped at 2.
+    ways = [[0] * (n + 1) for _ in range(m + 1)]
+    for j in range(n + 1):
+        ways[m][j] = 1
+    for i in range(m - 1, -1, -1):
+        for j in range(n - 1, -1, -1):
+            fit = evidence[i] is None or kinds[j] is None or evidence[i] == kinds[j]
+            ways[i][j] = min(2, ways[i][j + 1] + (ways[i + 1][j + 1] if fit else 0))
+    return ways[0][0]
 
 
 def _stage_naming(reader: "Any") -> "list[tuple[str, str, str, tuple[str, ...]]]":

@@ -75,6 +75,41 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             f"requires the Ladruno fork backend (resolved {backend!r}); "
             "set APEGMSH_OPENSEES_BIN to the fork's dist\\bin"
         )
+    if os.environ.get("APEGMSH_FORK_PIN_ENFORCE") == "1":
+        _skip_off_pin()
+
+
+_PIN_FILE = _REPO / "FORK_PIN"
+
+
+def _pinned_sha() -> str:
+    for line in _PIN_FILE.read_text(encoding="utf-8").splitlines():
+        key, sep, val = line.partition("=")
+        if sep and key.strip() == "sha":
+            return val.strip()
+    raise RuntimeError(f"no sha= line in {_PIN_FILE}")
+
+
+def _skip_off_pin() -> None:
+    """``APEGMSH_FORK_PIN_ENFORCE=1`` (the nightly ``live-fork`` lane, or a
+    desk whose fork build is not the pin): a ``ladruno_fork`` test skips
+    unless the imported build stamp equals ``FORK_PIN``'s ``sha``.
+
+    It lives here, not in ``integration_ladruno/conftest.py``, so it covers
+    every ``ladruno_fork`` test: about thirty of them sit in
+    ``tests/opensees/live/``. The skip message is matched by the
+    ``live-fork`` summary step, so keep its first words."""
+    pinned = _pinned_sha()
+    from apeGmsh.opensees.emitter.live import get_backend_build
+    try:
+        imported = get_backend_build()
+    except Exception:
+        imported = None
+    if imported != pinned:
+        pytest.skip(
+            f"fork build mismatch: pinned {pinned[:12]}, "
+            f"imported {imported[:12] if imported else 'none'}"
+        )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -459,9 +494,25 @@ def _composed_artifacts(tmp_path_factory: pytest.TempPathFactory):
 
     out_dir = tmp_path_factory.mktemp("composed_artifacts")
     r = make_demo_results(path=str(out_dir), n_elements=4, n_steps=3)
-    results_path = Path(r._path)
     model_path = Path(r._model_path)
+    # The demo writes a .ladruno since #2778 (ADR 0131 D10 W2), so the
+    # composed native file is written here from the same run: its values,
+    # and its /model zone composed from the demo's own archive.
+    from apeGmsh.results.writers import NativeWriter
+
+    comps = {c: r.nodes.get(component=c)
+             for c in ("displacement_x", "displacement_y", "displacement_z")}
+    first = comps["displacement_x"]
+    fem = r.fem
     r.close()  # release the handle; tests open the files read-only
+    results_path = out_dir / "demo_results.h5"
+    with NativeWriter(results_path) as w:
+        w.open(fem=fem, model_h5_src=model_path)
+        w.stamp_element_index_space("fem")  # nodal rows only
+        sid = w.begin_stage(name="pushover", kind="static", time=first.time)
+        w.write_nodes(sid, "partition_0", node_ids=first.node_ids,
+                      components={c: s.values for c, s in comps.items()})
+        w.end_stage()
     return results_path, model_path
 
 

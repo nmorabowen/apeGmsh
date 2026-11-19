@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ._host import _ProcedureHost
+from ._modal import refuse_fork_verb_before_wipe
 
 # ---------------------------------------------------------------------------
 # Explicit critical-time-step (dt_cr) helpers (Ladruno fork).  Pure functions
@@ -139,11 +140,14 @@ class _ExplicitMixin(_ProcedureHost):
             )
         self._check_analysis_chain_for_analyze()
         self._check_explicit_solver_compat()
+        refuse_fork_verb_before_wipe(
+            self, "apeSees.critical_time_step", "fork criticalTimeStep")
 
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
@@ -212,12 +216,15 @@ class _ExplicitMixin(_ProcedureHost):
             )
         self._check_analysis_chain_for_analyze()
         self._check_explicit_solver_compat()
+        refuse_fork_verb_before_wipe(
+            self, "apeSees.analyze_explicit", "fork criticalTimeStep")
         self._warn_if_unguarded_explicit_run()
 
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
