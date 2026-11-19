@@ -19,6 +19,12 @@ snapshot offline and fails:
 - for each row the fork no longer has, and each member the fork does not
   accept.
 
+On the `live-fork` lane, `tests/opensees/integration_ladruno/
+test_mpm_fork_surface_live.py` reads the parser at `FORK_PIN` from the
+public fork and runs the same extraction. It fails when the snapshot differs,
+so a snapshot whose sha was typed in by hand does not pass. A failed read
+fails the test.
+
 At `ladruno-v20261118b` the fork has 36 subcommands: 13 are members, and 23
 are rows. Among the rows, `pforce` and `condForce` are mode A only and
 refused in mode F, and `particles` is written by the deck emitters rather
