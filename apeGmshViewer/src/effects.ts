@@ -28,6 +28,8 @@ import { buildLineDiagram3D, joinLadrunoElements, stateObjectDigest, visibleLine
 import type { StationPoints } from "./state/gaussPoints.ts";
 import { smartNodeSize } from "./state/nodes.ts";
 import { componentOf, particleRange, type ParticleFrame } from "./renderer/particles.ts";
+import { materialTestJobOf } from "./state/materialTest.ts";
+import type { MaterialTestJob, MaterialTestRun } from "./state/types.ts";
 import { contourView, crackFieldOf, deformView, draftJudgedOf, elementJoinKey, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
@@ -185,6 +187,12 @@ export interface Bridge {
   particleHarnessStill?(): Promise<string>;
   /** the run's result (measure) or its end (capture); main writes it and exits */
   particleHarnessDone?(result: unknown): Promise<void>;
+  /** ADR 0135: run the fork's uniaxial tester on one material (main's `materialTest:run`; main/materialTest.ts) */
+  materialTestRun?(job: MaterialTestJob, seq: number): Promise<
+    | { ok: true; seq: number; build: string; strain: Float64Array; stress: Float64Array; tangent: Float64Array }
+    | { ok: false; seq: number; build: string | null; error: string; superseded?: true }
+  >;
+  materialTestCancel?(): Promise<void>;
 }
 
 /**
@@ -298,6 +306,8 @@ export function parseRefusal(error: string): { zone: string; version: string; ac
 /** Every BlobRef the state holds (what the BlobStore keeps after a load). */
 export function blobRefsOf(s: State): BlobRef[] {
   const out: BlobRef[] = [];
+  const tested = s.materialTest.run?.curves;
+  if (tested) out.push(tested.strain, tested.stress, tested.tangent);
   if (s.mesh) {
     const m = s.mesh;
     out.push(m.linePositions, m.triPositions, m.edgePositions, m.lineElement, m.triElement, m.lineGroup, m.triGroup);
@@ -614,6 +624,8 @@ export class Effects {
       // ADR 0134 D5: the particle index the set calls for, then the frame the state names.
       this.store.subscribe((s) => this.syncParticles(s)),
       this.store.subscribe((s) => this.syncParticleFrame(s)),
+      // ADR 0135: the material tester run the state calls for.
+      this.store.subscribe((s) => this.syncMaterialTest(s)),
     );
     if (typeof this.bridge.onScanProgress === "function") {
       const off = this.bridge.onScanProgress((p) => {
@@ -1568,6 +1580,42 @@ export class Effects {
     // its results hold no particle stage, a set that holds nothing else too, with its notice (`syncParticles`).
     this.particleSetPath = set.particles ?? null;
     this.syncParticles(this.store.get());
+  }
+
+  // -- ADR 0135 D5: the material tester ------------------------------------------
+
+  /** the id of the run this side is waiting for; null when none */
+  private materialTestGoing: number | null = null;
+
+  /** Start the run the state calls for, cancel one it no longer does, and put the answer back as an event. */
+  private syncMaterialTest(s: State): void {
+    const run = s.materialTest.run;
+    const going = run?.status === "running" ? run.id : null;
+    const had = this.materialTestGoing;
+    if (going === had) return;
+    this.materialTestGoing = going;
+    if (going === null) {
+      if (had !== null && run?.id !== had) void this.bridge.materialTestCancel?.();
+      return;
+    }
+    const id = going;
+    const finish = (build: string | null, curves: MaterialTestRun["curves"], error: string | null): void => {
+      this.store.dispatch({ type: "materialTestFinished", id, build, curves, error });
+      this.blobs.retain(blobRefsOf(this.store.get()));
+    };
+    const answer = materialTestJobOf(s, run!.decl, run!.protocol);
+    const asked = "error" in answer
+      ? Promise.reject(new Error(answer.error))
+      : (this.bridge.materialTestRun?.(answer.job, id) ?? Promise.reject(new Error("this window cannot run the material tester")));
+    asked.then(
+      (a) => {
+        if (this.store.get().materialTest.run?.id !== id) return;
+        if (!a.ok) return finish(a.build, null, a.error);
+        const at = `materialTest/${id}`;
+        finish(a.build, { strain: this.blobs.put(`${at}/strain`, a.strain), stress: this.blobs.put(`${at}/stress`, a.stress), tangent: this.blobs.put(`${at}/tangent`, a.tangent) }, null);
+      },
+      (e: unknown) => finish(null, null, e instanceof Error ? e.message : String(e)),
+    );
   }
 
   // -- ADR 0134 D5: the particles -----------------------------------------------

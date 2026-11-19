@@ -9,6 +9,7 @@ import type { ContourState } from "./contour.ts";
 import type { DeformState } from "./deform.ts";
 import type { LineDiagramState } from "./lineDiagram.ts";
 import type { ArtifactInfo, ArtifactKind, BlockInfo, Decl, DeclPath, GeometryInfo, Lineage, MeshInfo, PhaseKey, Pick, ProvenanceEntry, SpatialNdm, StageElements, UnitSystemId } from "./model.ts";
+import type { MaterialTestState } from "./materialTest.ts";
 import type { OffersState } from "./offers.ts";
 import type { CracksState, LoadsState, PrincipalState, ReactionsState, SpringsState, SupportsState, VectorsState } from "./overlays.ts";
 import type { ResultStepStatus, ResultsInfo } from "./results.ts";
@@ -147,6 +148,8 @@ export interface State {
   };
   /** view requests: `frameSeq` counts `frameSelection` events; the frame effect acts on each change */
   view: { frameSeq: number };
+  /** ADR 0135: the material tester's run */
+  materialTest: MaterialTestState;
   /** the model's definition data (decls, decl_params, analysis, series, patterns, recorders, stages); null with no model or no /opensees */
   definitions: Definitions | null;
   /** the model's neutral `/loads/{nodal,element,sp}/{case}` tables; null when the file has none */

@@ -61,6 +61,9 @@ Then:
   it uses VS Code (`code -g file:line`) when `code` is on PATH, and otherwise
   the OS text editor, without the line (Notepad on Windows). It never uses
   the OS default opener, because on Windows that runs a `.py` file.
+- **Material tester** (ADR 0135; no screen yet). It runs the Ladruno fork's
+  `OpenSees.exe` from `$APEGMSH_OPENSEES` (a full path), or else from the
+  default install. The executable is never taken from a model.
 - **Results.** A `<stem>.results.h5` opens like the model: "Open with", a
   drop, `npm start -- x.results.h5`, or beside an opened model. It is drawn
   on the model only when its `/meta/lineage/model_hash` equals the model's

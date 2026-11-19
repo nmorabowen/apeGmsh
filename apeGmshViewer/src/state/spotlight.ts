@@ -128,6 +128,10 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   offerApplied: { kind: "system", reason: "dispatched by the offer runner when an applied offer's view is drawn" },
   offerRefused: { kind: "system", reason: "dispatched by the offer runner when the drawn view refuses an offer" },
   offerBackDone: { kind: "system", reason: "dispatched by the offer runner when Back has finished" },
+  // ADR 0135: the tool that dispatches the request is mounted by the shared host (slice S1b).
+  materialTestRequested: { kind: "gesture", reason: "the material tester tool starts a run from its own controls" },
+  materialTestFinished: { kind: "system", reason: "dispatched by effects with the answer of a material test run" },
+  materialTestCleared: { kind: "gesture", reason: "the material tester tool drops its run from its own controls" },
   openSpotlight: { kind: "gesture", reason: "Ctrl+K / header trigger that opens the Spotlight palette itself" },
   closeSpotlight: { kind: "gesture", reason: "Escape / backdrop gesture that closes the Spotlight palette" },
   setSpotlightMode: { kind: "gesture", reason: "internal drill-down navigation within the Spotlight palette" },

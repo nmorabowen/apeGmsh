@@ -21,6 +21,7 @@ import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
 import { initialCamera, reduceCamera } from "./reduce/camera.ts";
 import { initialState } from "./reduce/initial.ts";
 import { pickLineDiagram, reduceLineDiagram } from "./reduce/lineDiagram.ts";
+import { materialTestForAnotherModel, reduceMaterialTest } from "./reduce/materialTest.ts";
 import { reduceOffers } from "./reduce/offers.ts";
 import { reduceOverlays } from "./reduce/overlays.ts";
 import { reduceUser } from "./reduce/user.ts";
@@ -288,7 +289,9 @@ function reduceEvent(s: State, e: Event): State {
       const camera = anotherModel ? { ...initialCamera, seq: s.camera.seq } : s.camera;
       // VU9a: another model's set has another workspace; the last one's read is never edited against it.
       const workspace = anotherModel ? workspaceForAnotherModel(s.workspace) : s.workspace;
-      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera, workspace });
+      // ADR 0135: a tester run belongs to the model it read.
+      const materialTest = anotherModel ? materialTestForAnotherModel(s.materialTest) : s.materialTest;
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera, workspace, materialTest });
     }
     case "fileLoaded": {
       // A fileChanged that arrived while this read ran keeps the artifact
@@ -871,6 +874,12 @@ function reduceEvent(s: State, e: Event): State {
       const cur = { windows: s.windows, spotlight: s.spotlight, search: s.search };
       const next = reduceWindows(cur, e);
       return next === cur ? s : { ...s, ...next };
+    }
+    case "materialTestRequested":
+    case "materialTestFinished":
+    case "materialTestCleared": {
+      const materialTest = reduceMaterialTest(s, e);
+      return materialTest === s.materialTest ? s : { ...s, materialTest };
     }
     case "offerReceived":
     case "offerAssessed":
