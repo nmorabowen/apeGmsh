@@ -34,6 +34,8 @@ const repo = (rel: string) => fileURLToPath(new URL(`../../../${rel}`, import.me
 const ALL = repo("tests/fixtures/mpm/particles_v1m2.ladruno");
 const MIXED = repo("tests/fixtures/mpm/particles_mixed_v1m2.ladruno");
 const tmp = mkdtempSync(join(tmpdir(), "ladruno-particles-"));
+// The repair tests count repair folders under tmpdir(): this file's own root, so another test file's repair is not counted.
+for (const name of ["TEMP", "TMP", "TMPDIR"]) process.env[name] = tmp;
 after(() => rmSync(tmp, { recursive: true, force: true }));
 
 function withFile<T>(path: string, body: (f: LadrunoFile, p: LadrunoParticles) => T, opts: { part?: boolean } = {}): T {
