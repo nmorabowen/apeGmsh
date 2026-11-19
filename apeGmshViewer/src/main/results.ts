@@ -23,7 +23,8 @@
 // `fem_hash`, only when both are stamped (a stamp written in part reads as
 // unpaired, schema §7b.1); `element_index_space` stands in for the native
 // root stamp, and `stage_names` names the MODEL_STAGE groups when it counts
-// as many.
+// as many. `stage_display_names` labels them on top (W4d #2843): a stage's
+// `name` is what is shown, its `programName` what matches the model.
 //
 // A partitioned run (`<stem>.part-<N>.ladruno`, #2188) is opened as one file by
 // reader/ladrunoParts.ts, from any of its parts. Its identity on re-open is every
@@ -36,6 +37,10 @@ import {
   LadrunoFile,
   openLadruno,
   type LadrunoLineStationStep,
+  type LadrunoHingeHistory,
+  type LadrunoHingeStep,
+  type LadrunoSpringStep,
+  HINGE_TOKEN,
   type LineStationComponent,
 } from "../reader/ladruno.ts";
 import { LadrunoPartSet, openLadrunoSet, partOf, partSiblings } from "../reader/ladrunoParts.ts";
@@ -43,13 +48,16 @@ import { unopenedSibling } from "./pairing.ts";
 import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
 import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
-import type { ModeFacts, UnitSystemId } from "../state/types.ts";
+import type { CompareStageIn, ModeFacts, ParticleStageInfo, UnitSystemId } from "../state/types.ts";
+import type { ParticleStage } from "../reader/ladrunoParticles.ts";
+import { openParticleSet, type ParticleSet } from "../reader/particleSet.ts";
 import type { ProgramDecls } from "../model/types.ts";
 
 /** A `.ladruno` as main reads it: one file, or a part set read as one (#2188). */
 export type AnyLadruno = LadrunoFile | LadrunoPartSet;
 export type AnyResultsFile = ResultsFile | AnyLadruno;
 
+const hingeCountOf = (rf: AnyResultsFile, stage: string, warningsOut?: string[]): number => (rf instanceof LadrunoFile ? rf.hingeCount(stage, warningsOut) : 0);
 const isLadruno = (rf: AnyResultsFile): rf is AnyLadruno => rf instanceof LadrunoFile || rf instanceof LadrunoPartSet;
 const listDir = (dir: string): string[] => readdirSync(dir);
 
@@ -68,7 +76,10 @@ function identityOf(rf: AnyResultsFile): string | null {
 /** One stage as the renderer's store keeps it (state/types.ts `ResultsStage`). */
 export interface ResultsStageMeta {
   id: string;
+  /** the label every site shows: a `.ladruno`'s display name (`stage_display_names`), else the program name */
   name: string;
+  /** the program's stage name, which every match against the model uses (W4d #2843); a native file's stage name */
+  programName: string;
   kind: StageInfo["kind"];
   time: number[];
   nodal: string[];
@@ -85,6 +96,12 @@ export interface ResultsStageMeta {
   elementIndexSpace?: string | null;
   /** 1-D beam line-station components recorded in this stage (.ladruno) */
   lineStations?: LineStationComponent[];
+  /** zero-length springs this stage records a global `force` for (.ladruno, one file; reader/ladruno.ts `springCount`) */
+  springs?: number;
+  /** elements this stage records `hingeSummary` for (.ladruno, one file; reader/ladruno.ts `hingeCount`) */
+  hinges?: number;
+  /** whether marker colours run to the stage's largest value; false: to the step's, on a stage too large to scan */
+  hingeStageRange?: boolean;
   /** a `.ladruno` mode stage's eigen scalars (reader/ladruno.ts `LadrunoMode`); absent on every other stage */
   mode?: ModeFacts;
 }
@@ -155,7 +172,23 @@ export interface StepRequest {
   element?: string;
   /** .ladruno: one 1-D beam line-station component to read for this step */
   lineDiagram?: LineStationComponent;
+  /** the components of one tensor field (state/principal.ts), each read from every group that has it; verified files only */
+  tensor?: string[];
+  /** .ladruno: the zero-length springs' force at this step too */
+  springs?: boolean;
+  /** .ladruno: the beams' `hingeSummary` at this step too */
+  hinges?: boolean;
 }
+
+export interface HingeHistoryRequest {
+  path: string;
+  stage: string;
+  /** the element, as the file's rows name it */
+  element: number;
+  seq: number;
+}
+
+export type HingeHistoryAnswer = ({ ok: true; seq: number; stage: string } & LadrunoHingeHistory) | { ok: false; seq: number; error: string; changed?: true };
 
 export type StepAnswer =
   /** `gauss`: the requested element component by group id, (E * G,) element-major; {} with no `element` */
@@ -166,8 +199,16 @@ export type StepAnswer =
       step: number;
       nodal: Record<string, Float64Array>;
       gauss: Record<string, Float64Array>;
+      /** `tensor`: each requested component by group id, (E * G,) element-major; absent with no `tensor` */
+      tensor?: Record<string, Record<string, Float64Array>>;
       lineDiagram?: LadrunoLineStationStep | null;
       lineDiagramError?: string;
+      /** the springs' step when asked for (null: the read failed, `springsError` says why) */
+      springs?: LadrunoSpringStep | null;
+      springsError?: string;
+      /** the hinges' step when asked for (null: the read failed, `hingesError` says why) */
+      hinges?: LadrunoHingeStep | null;
+      hingesError?: string;
     }
   /** `changed`: the file on disk is not the one indexed; re-open it (`open`) before reading */
   | { ok: false; seq: number; error: string; changed?: true };
@@ -211,6 +252,111 @@ export interface ScanProgress {
   total: number;
 }
 
+// -- ADR 0134 D5: the particles, read here and sent one output at a time ---------
+
+/** The particle index of the indexed `.ladruno` (metadata only), or why it cannot be read. */
+export type ParticleIndexAnswer =
+  | { ok: true; path: string; stages: ParticleStageInfo[]; unread: { stage: string; reason: string }[] }
+  | { ok: false; error: string; changed?: true };
+
+/** One output of one particle stage: POSITION always, and the colour field when one is asked (and is not POSITION). */
+export interface ParticleOutputRequest {
+  path: string;
+  stage: string;
+  output: number;
+  field: string | null;
+  seq: number;
+}
+
+export type ParticleOutputAnswer =
+  /** `positions` (n * ndm) and `values` (n * nComp, null with no field) row-major, one row per particle of the output */
+  | { ok: true; seq: number; stage: string; output: number; step: number; time: number; ids: Float64Array; positions: Float64Array; values: Float64Array | null; nComp: number }
+  | { ok: false; seq: number; error: string; changed?: true };
+
+/** The seeded set (`<stem>.particles.h5`, Contract 1) as one stage of one output, with every per-particle array to colour by. */
+export type ParticleSetAnswer =
+  | { ok: true; path: string; stage: ParticleStageInfo; ids: Float64Array; positions: Float64Array; values: Record<string, Float64Array> }
+  | { ok: false; error: string };
+
+/** A `.ladruno` particle stage as the store keeps it. */
+export function particleStageInfo(s: ParticleStage): ParticleStageInfo {
+  return {
+    id: s.stageId,
+    name: s.group,
+    ndm: s.ndm,
+    units: { ...s.units },
+    grid: { origin: [...s.grid.origin], cellSize: [...s.grid.cellSize], numCells: [...s.grid.numCells], basis: s.grid.basis },
+    bodies: s.bodies.map((b) => ({ ...b })),
+    nOutputs: s.nOutputs,
+    steps: Array.from(s.steps),
+    time: Array.from(s.time),
+    counts: Array.from({ length: s.nOutputs }, (_, k) => s.offsets[k + 1]! - s.offsets[k]!),
+    fields: s.fields.map((f) => ({ name: f.name, displayName: f.displayName, components: [...f.components], dimension: f.dimension })),
+    refusedFields: s.refusedFields.map((r) => ({ ...r })),
+    torn: s.torn,
+  };
+}
+
+/** The fields a seeded set offers to colour by (Contract 1 §1.4): the per-particle datasets read, one component per column. */
+const SET_FIELDS = (set: ParticleSet): { info: ParticleStageInfo["fields"]; values: Record<string, Float64Array> } => {
+  const axes = set.ndm === 3 ? ["x", "y", "z"] : ["x", "y"];
+  const mass = set.massSource === "mass" ? "MASS" : "DENSITY";
+  return {
+    info: [
+      { name: "POSITION", displayName: "Position", components: axes, dimension: "L" },
+      { name: "VOLUME", displayName: "Volume", components: ["V"], dimension: "L^3" },
+      { name: mass, displayName: set.massSource === "mass" ? "Mass" : "Density", components: [set.massSource === "mass" ? "m" : "rho"], dimension: set.massSource === "mass" ? "F*t^2/L" : "F*t^2/L^4" },
+      { name: "GIMP_HALF_LENGTH", displayName: "GIMP half length", components: axes.map((a) => `l${a}`), dimension: "L" },
+      { name: "BODY_ID", displayName: "Body", components: ["body"], dimension: "" },
+      { name: "MATERIAL_TAG", displayName: "Material tag", components: ["tag"], dimension: "" },
+    ],
+    values: {
+      POSITION: set.positions,
+      VOLUME: set.volume,
+      [mass]: set.mass,
+      GIMP_HALF_LENGTH: set.gimpHalfLength,
+      BODY_ID: Float64Array.from(set.bodyIds),
+      MATERIAL_TAG: Float64Array.from(set.materialTags),
+    },
+  };
+};
+
+/** The particle reader of a results file, or why it holds no particles this app reads. */
+function particlesOf(rf: AnyResultsFile, path: string): NonNullable<LadrunoFile["particles"]> {
+  if (!(rf instanceof LadrunoFile)) {
+    throw new Error(`${baseName(path)} holds no particle results this app reads: particles are read from one .ladruno file (ADR 0134 D3)${rf instanceof LadrunoPartSet ? "; a partitioned run is serial-only for particles (C2-PART)" : ""}`);
+  }
+  if (rf.particles === null) throw new Error(`${baseName(path)} holds no particle results this app reads: its INFO@FORMAT_MINOR_VERSION is below 2 (C2-MINOR)`);
+  return rf.particles;
+}
+
+/** Read `<stem>.particles.h5` whole (it is the seeded set, read whole by reader/particleSet.ts) as the points layer draws it. */
+export async function readParticleSet(h5: ResultsH5, ready: Promise<unknown>, path: string): Promise<ParticleSetAnswer> {
+  try {
+    await ready;
+    const set = openParticleSet(h5, path);
+    const fields = SET_FIELDS(set);
+    const stage: ParticleStageInfo = {
+      id: "set",
+      name: baseName(path),
+      ndm: set.ndm,
+      units: { ...set.units },
+      grid: { origin: [...set.grid.origin], cellSize: [...set.grid.cellSize], numCells: [...set.grid.numCells], basis: set.grid.basis },
+      bodies: set.bodies.map((b) => ({ ...b })),
+      nOutputs: 1,
+      steps: [0],
+      time: [0],
+      counts: [set.count],
+      fields: fields.info,
+      refusedFields: [],
+      torn: null,
+    };
+    return { ok: true, path, stage, ids: set.ids, positions: set.positions, values: fields.values };
+  } catch (err) {
+    return { ok: false, error: message(err) };
+  }
+}
+
 /** How long the handle stays open after the last read (the D5 revisit trigger's 30 steps/s is 33 ms a step). */
 export const IDLE_CLOSE_MS = 500;
 
@@ -232,38 +378,76 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
 
 /**
- * Each stage's name (aligned with `index.stages`). A well-formed
- * INFO/PROVENANCE@stage_names names the MODEL_STAGE (host) stages when it
- * counts as many; a mode stage keeps its own name, its host prefix renamed.
- * Otherwise every stage keeps the file's name, and a malformed or miscounted
- * stage_names warns. An absent one is silent (the pairing says unstamped).
+ * Each stage's program name and display name (both aligned with
+ * `index.stages`; W4d #2843).
+ *
+ * Program names: a well-formed INFO/PROVENANCE@stage_names names the
+ * MODEL_STAGE (host) stages when it counts as many; a mode stage keeps its
+ * own name, its host prefix renamed. Otherwise every stage keeps the file's
+ * name, and a malformed or miscounted stage_names warns. An absent one is
+ * silent (the pairing says unstamped). Every match against the model
+ * (`/sequence`, `/opensees/stages`, a compare set) uses these.
+ *
+ * Display names: a well-formed INFO/PROVENANCE@stage_display_names (a
+ * `stage_names=` rename, W4c #2823) renames the host stages the same way,
+ * on top of the program names. It binds by stage_names, so one that is
+ * malformed, miscounted, holds an empty or whitespace-only name, or has no
+ * bound stage_names to go with shows the program names, and warns. They label the stage and are never matched.
  */
-function ladrunoStageNames(rf: AnyLadruno, warningsOut?: string[]): string[] {
+function ladrunoStageNames(rf: AnyLadruno, warningsOut?: string[]): { program: string[]; display: string[] } {
   const ix = rf.index;
   const own = ix.stages.map((s) => s.name);
   const prov = ix.provenance;
-  if (prov.state !== "present") return own;
-  const fact = prov.attrs.stage_names;
-  if (fact.state === "absent") return own;
-  const warn = (w: string) => warningsOut?.push(`${ix.path}: ${w}; the file's own stage names are shown`);
-  if (fact.state === "malformed" || prov.stageNames === null) {
-    warn(fact.state === "malformed" ? fact.reason : "INFO/PROVENANCE@stage_names could not be read");
-    return own;
-  }
+  if (prov.state !== "present") return { program: own, display: own };
   const hosts = ix.stages.filter((s) => Object.hasOwn(ix.fileKinds, s.id));
-  if (prov.stageNames.length !== hosts.length) {
-    warn(`INFO/PROVENANCE@stage_names names ${prov.stageNames.length} stage(s), the file has ${hosts.length} MODEL_STAGE group(s)`);
-    return own;
-  }
-  const renamed = new Map(hosts.map((h, k) => [h.id, { from: h.name, to: prov.stageNames![k]! }]));
   const hostOf = new Map(ix.modes.map((m) => [m.stageId, m.hostStageId]));
-  return ix.stages.map((s) => {
-    const r = renamed.get(s.id);
-    if (r) return r.to;
-    const host = hostOf.get(s.id);
-    const h = host === undefined ? undefined : renamed.get(host);
-    return h && s.name.startsWith(`${h.from}/`) ? `${h.to}/${s.name.slice(h.from.length + 1)}` : s.name;
-  });
+  const at = new Map(ix.stages.map((s, k) => [s.id, k]));
+  // `base` with the host stages named by `list` (one per host, in file order), a mode stage's host prefix renamed with it.
+  const rename = (base: string[], list: readonly string[]): string[] => {
+    const to = new Map(hosts.map((h, k) => [h.id, list[k]!]));
+    return ix.stages.map((s, k) => {
+      const r = to.get(s.id);
+      if (r !== undefined) return r;
+      const host = hostOf.get(s.id);
+      const t = host === undefined ? undefined : to.get(host);
+      const from = host === undefined ? undefined : base[at.get(host)!];
+      const name = base[k]!;
+      return t !== undefined && from !== undefined && name.startsWith(`${from}/`) ? `${t}/${name.slice(from.length + 1)}` : name;
+    });
+  };
+  // The attribute's list when it is well formed and counts the hosts; else null, and (unless absent) a warning.
+  const listOf = (attr: "stage_names" | "stage_display_names", list: string[] | null, shown: string): string[] | null => {
+    const fact = prov.attrs[attr];
+    if (fact.state === "absent") return null;
+    const warn = (w: string) => warningsOut?.push(`${ix.path}: ${w}; ${shown}`);
+    if (fact.state === "malformed" || list === null) {
+      warn(fact.state === "malformed" ? fact.reason : `INFO/PROVENANCE@${attr} could not be read`);
+      return null;
+    }
+    if (list.length !== hosts.length) {
+      warn(`INFO/PROVENANCE@${attr} names ${list.length} stage(s), the file has ${hosts.length} MODEL_STAGE group(s)`);
+      return null;
+    }
+    return list;
+  };
+  const bound = listOf("stage_names", prov.stageNames, "the file's own stage names are shown");
+  const program = bound ? rename(own, bound) : own;
+  if (!bound && prov.attrs.stage_display_names.state !== "absent") {
+    warningsOut?.push(
+      `${ix.path}: INFO/PROVENANCE@stage_display_names has no INFO/PROVENANCE@stage_names to bind the stages by; the file's own stage names are shown`,
+    );
+    return { program, display: program };
+  }
+  const shown = listOf("stage_display_names", prov.stageDisplayNames, "the program's stage names are shown");
+  // A display name that is empty or only whitespace labels nothing: degenerate, like a malformed list.
+  const blank = shown ? shown.findIndex((n) => n.trim() === "") : -1;
+  if (shown && blank >= 0) {
+    warningsOut?.push(
+      `${ix.path}: INFO/PROVENANCE@stage_display_names[${blank}] = ${JSON.stringify(shown[blank])} is empty or only whitespace; the program's stage names are shown`,
+    );
+    return { program, display: program };
+  }
+  return { program, display: shown ? rename(program, shown) : program };
 }
 
 /** One gauss group as the store keeps it, from either reader (a `.ladruno`'s since #2187). */
@@ -309,15 +493,19 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
       elementIndexSpace,
       stages: ix.stages.map((s, k) => ({
         id: s.id,
-        name: names[k]!,
+        name: names.display[k]!,
+        programName: names.program[k]!,
         kind: s.kind,
         time: Array.from(s.time),
         nodal: s.nodes ? [...s.nodes.components] : [],
         refusedNodal: s.nodes ? s.nodes.refused.map((r) => ({ ...r })) : [],
         gauss: s.gauss.map(gaussMeta),
-        unread: [...s.unread],
+        unread: hingeCountOf(rf, s.id, warningsOut) > 0 ? s.unread.filter((u) => u !== `ON_ELEMENTS/${HINGE_TOKEN}`) : [...s.unread],
         elementIndexSpace,
         lineStations: rf.availableLineStations(s.id, warningsOut),
+        springs: rf instanceof LadrunoFile ? rf.springCount(s.id, warningsOut) : 0,
+        hinges: hingeCountOf(rf, s.id, warningsOut),
+        hingeStageRange: rf instanceof LadrunoFile && rf.hingeRangeScanned(s.id),
         ...(modes.has(s.id) ? { mode: modes.get(s.id)! } : {}),
       })),
     };
@@ -337,6 +525,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
     stages: i.stages.map((s) => ({
       id: s.id,
       name: s.name,
+      programName: s.name,
       kind: s.kind,
       time: Array.from(s.time),
       nodal: s.nodes ? [...s.nodes.components] : [],
@@ -350,6 +539,15 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
     units: i.units,
     elementIndexSpace: i.elementIndexSpace,
   };
+}
+
+/**
+ * The compare set's stages as `variants:compare` answers them (state/types.ts
+ * `CompareStageIn`): the difference matches the window's stage by
+ * `programName`, so it is carried (W4d #2843). main.ts and the tests share it.
+ */
+export function compareStagesOf(meta: Pick<ResultsMeta, "stages">): CompareStageIn[] {
+  return meta.stages.map((s) => ({ id: s.id, name: s.name, programName: s.programName, nodal: [...s.nodal], time: [...s.time] }));
 }
 
 export class ResultsHost {
@@ -478,6 +676,19 @@ export class ResultsHost {
         for (const g of st.gauss) if (g.components.includes(req.element)) gauss[g.id] = rf.readGaussStep(s.id, g.id, req.element, req.step);
         if (!Object.keys(gauss).length) throw new Error(`stage ${s.id} has no gauss group with component ${JSON.stringify(req.element)}`);
       }
+      let tensor: Record<string, Record<string, Float64Array>> | undefined;
+      if (req.tensor !== undefined) {
+        const st = s as StageInfo;
+        const v = rf.elementIndexVerdict();
+        if (!v.verified) throw new Error(`element results of ${req.path} are refused: ${v.reason}`);
+        tensor = {};
+        for (const c of req.tensor) {
+          const byGroup: Record<string, Float64Array> = {};
+          for (const g of st.gauss) if (g.components.includes(c)) byGroup[g.id] = rf.readGaussStep(s.id, g.id, c, req.step);
+          if (!Object.keys(byGroup).length) throw new Error(`stage ${s.id} has no gauss group with component ${JSON.stringify(c)}`);
+          tensor[c] = byGroup;
+        }
+      }
       let lineDiagram: LadrunoLineStationStep | null | undefined;
       let lineDiagramError: string | undefined;
       if (req.lineDiagram !== undefined) {
@@ -497,6 +708,28 @@ export class ResultsHost {
           lineDiagramError = message(err);
         }
       }
+      let springs: LadrunoSpringStep | null | undefined;
+      let springsError: string | undefined;
+      if (req.springs) {
+        try {
+          if (!(rf instanceof LadrunoFile)) throw new Error(`${req.path} is not one .ladruno file: only it records zero-length spring forces the viewer reads`);
+          springs = rf.readSpringStep(s.id, req.step);
+        } catch (err) {
+          springs = null;
+          springsError = message(err);
+        }
+      }
+      let hinges: LadrunoHingeStep | null | undefined;
+      let hingesError: string | undefined;
+      if (req.hinges) {
+        try {
+          if (!(rf instanceof LadrunoFile)) throw new Error(`${req.path} is not one .ladruno file: only it records the hinge results the viewer reads`);
+          hinges = rf.readHingeStep(s.id, req.step);
+        } catch (err) {
+          hinges = null;
+          hingesError = message(err);
+        }
+      }
       return {
         ok: true,
         seq: req.seq,
@@ -504,9 +737,83 @@ export class ResultsHost {
         step: req.step,
         nodal,
         gauss,
+        ...(tensor !== undefined ? { tensor } : {}),
         ...(lineDiagram !== undefined ? { lineDiagram } : {}),
         ...(lineDiagramError !== undefined ? { lineDiagramError } : {}),
+        ...(springs !== undefined ? { springs } : {}),
+        ...(springsError !== undefined ? { springsError } : {}),
+        ...(hinges !== undefined ? { hinges } : {}),
+        ...(hingesError !== undefined ? { hingesError } : {}),
       };
+    } catch (err) {
+      return { ok: false, seq: req.seq, error: message(err) };
+    }
+  }
+
+  /** One element's `hingeSummary` over its stage. Another path is refused; a changed file answers `changed`. */
+  readHingeHistory(req: HingeHistoryRequest): HingeHistoryAnswer {
+    try {
+      const rf = this.handle(req.path);
+      if (!rf) return { ok: false, seq: req.seq, changed: true, error: `${req.path} changed on disk since it was indexed; it is read again before any hinge history` };
+      this.armIdle();
+      if (!(rf instanceof LadrunoFile)) throw new Error(`${req.path} is not one .ladruno file: only it records the hinge results the viewer reads`);
+      return { ok: true, seq: req.seq, stage: req.stage, ...rf.readHingeHistory(req.stage, req.element) };
+    } catch (err) {
+      return { ok: false, seq: req.seq, error: message(err) };
+    }
+  }
+
+  /**
+   * ADR 0134 D5: the particle stages of the indexed `.ladruno` (metadata only;
+   * reader/ladrunoParticles.ts read them at open), and the stages it refused,
+   * by group, with why. A file that is not one `.ladruno` read at
+   * FORMAT_MINOR_VERSION >= 2 holds no particles this app reads: refused, by name.
+   */
+  particleIndex(path: string): ParticleIndexAnswer {
+    try {
+      const rf = this.handle(path);
+      if (!rf) return { ok: false, changed: true, error: `${path} changed on disk since it was indexed; it is read again before its particles are shown` };
+      this.armIdle();
+      const p = particlesOf(rf, path);
+      return {
+        ok: true,
+        path,
+        stages: p.stages.map(particleStageInfo),
+        unread: p.refused.map((r) => ({ stage: r.group, reason: `refused: ${r.reason}` })),
+      };
+    } catch (err) {
+      return { ok: false, error: message(err) };
+    }
+  }
+
+  /**
+   * ADR 0134 D5: output `req.output` of particle stage `req.stage`: POSITION, and
+   * the colour field when one is asked, each by one hyperslab (`readOutput`): one
+   * output is in memory, never the history. Another path is refused; a changed file
+   * answers `changed`.
+   */
+  readParticleOutput(req: ParticleOutputRequest): ParticleOutputAnswer {
+    try {
+      const rf = this.handle(req.path);
+      if (!rf) return { ok: false, seq: req.seq, changed: true, error: `${req.path} changed on disk since it was indexed; it is read again before any output is shown` };
+      this.armIdle();
+      const p = particlesOf(rf, req.path);
+      const ndm = p.stage(req.stage).ndm;
+      const pos = p.readOutput(req.stage, req.output, "POSITION");
+      if (pos.nComp !== ndm) throw new Error(`stage ${req.stage}: POSITION has ${pos.nComp} components and the stage is ${ndm}-D`);
+      let values: Float64Array | null = null;
+      let nComp = 0;
+      if (req.field === "POSITION") {
+        values = pos.values;
+        nComp = pos.nComp;
+      } else if (req.field !== null) {
+        const o = p.readOutput(req.stage, req.output, req.field);
+        // The same rows of ID were read for both: the same particles, in the same order.
+        if (o.ids.length !== pos.ids.length) throw new Error(`stage ${req.stage} output ${req.output}: ${req.field} read ${o.ids.length} particles and POSITION ${pos.ids.length}`);
+        values = o.values;
+        nComp = o.nComp;
+      }
+      return { ok: true, seq: req.seq, stage: req.stage, output: req.output, step: pos.step, time: pos.time, ids: pos.ids, positions: pos.values, values, nComp };
     } catch (err) {
       return { ok: false, seq: req.seq, error: message(err) };
     }

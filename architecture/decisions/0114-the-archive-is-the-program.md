@@ -296,3 +296,135 @@ specs, so the cost change is expected to be within noise.
   stale. It is not this design's to fix.
 - #1446 (one region tag wasted per stage-claimed filtered recorder on
   the partitioned staged path) is fixed by S4, not in a fast lane.
+
+## Amendment — 2026-10-23 — D1: `equationConstraint` leaves the ledger (reverses #1341 Q3 for it; #2448)
+
+**Status:** Accepted. The maintainer ruled (a) on #2447 and approved this
+amendment in advance ("I approve", relayed on #2448, 2026-10-22). As a
+human-gate change it is merged by the maintainer.
+
+**Program slices:** #2447 (merged, PR #2497: the interim, ruling (c)) and
+#2448 (this amendment and the end state); both fix #2416. Chain issue
+#1201.
+
+### What D1 said
+
+D1 gave `h5` a third value, `ledger`, for verbs that `H5Emitter` counts
+and drops, and named its ratified end state (#1341, Q3): the contact,
+rebar and embed rows **plus `equationConstraint`**. Refusing
+`equationConstraint` instead would have broken ADR 0112 D1 (a file on
+every run). Keeping it in the ledger meant that a model tied on the
+equation route (`InterpolationRecord(kind=tie|distributing|embedded,
+enforce="equation")`, ADR 0068) had no `/opensees` record of its
+`equationConstraint` lines: replay wrote the model untied (#2416), and
+since #2415 it refused by name.
+
+### D1, amended
+
+1. **`equationConstraint` is `archive` at every scope.** Every line the
+   bridge writes is a row of `{scope}/constraints/equationConstraint`: the
+   global lines from opensees 2.35.0 (#2447), an `enforce="equation"`
+   tie's and an `apeSees.equation_constraint` row's alike, and a stage
+   block's lines from opensees 2.40.0 (#2448), with the row-aligned
+   `equationConstraint_emit_index` that the stage's other MP kinds share.
+   The `VERBS` row is `archive` with the store
+   `{scope}/constraints/equationConstraint`, and its `H5Emitter` method no
+   longer reaches `self._ledger`.
+2. **The replay writes each line where the bridge did.** A global row is
+   joined to its `/opensees/program` call by emit index (`compose.py`
+   9b′). A stage row is merged with the stage's `equalDOF`, `rigidLink`,
+   `rigidDiaphragm` and `embeddedNode` rows by the stage's emit index, so
+   it lands in the stage's own position. The #2416 refusal is lifted at
+   both scopes.
+3. **Archives that predate the rows still refuse by name.** An
+   equation-route tie whose lines are not among the stored rows refuses
+   with `BridgeError`. That covers every archive below 2.35.0 and a
+   stage-claimed tie in an archive below 2.40.0, which stores nothing the
+   lines could be rebuilt from. Such an archive is never replayed untied.
+   One partitioned case also refuses by name until #2530 is fixed. It is a
+   partitioned archive whose stage holds equation rows and a `fix` row
+   that repeats an earlier fix, with the same node and the same DOF mask.
+   The ghost replay of a rank that does not own the node (ADR 0027 INV-2)
+   stores the node's earlier fixes as that stage's rows, and the flat
+   replay would write them again. A stage that fixes other DOFs of a fixed
+   node replays. A deliberate re-fix with the same mask after a
+   `remove_sp` refuses too, because it cannot be told from a ghost row.
+4. **The ledger shrinks from 9 to 8.** `tests/opensees/contract/verbs_ledger.txt`
+   drops `equationConstraint` and lowers `N_LEDGER` to 8.
+
+### End state
+
+D1's ledger end state is now **the contact, rebar and embed rows only**
+(the rebar row, `embedded_rebar`, already left at K2b, opensees 2.29.0).
+At this amendment the ledger holds `contact`, `contact_plane`,
+`contact_surface`, `embedded_node` and four modal-family rows
+(`eigen_feast`, `modal_properties`, `modal_response_history`,
+`response_spectrum_analysis`); the modal rows are outside Q3's end state
+and stay shrink-only. The rest of D1, and Q3's ruling that a `ledger` row
+is visible and can only shrink, stand.
+
+### Consequences
+
+- On main, every equation-route record round-trips through `model.h5` at
+  global and stage scope, flat and partitioned. The R1b round-trip oracle
+  carries stage-claimed tie, distributing and embedded rows, flat and
+  partitioned, beside #2447's global ones. The one exception is item 3's
+  partitioned carve-out: a stage with equation rows and a fix that
+  repeats an earlier one's node and mask refuses by name until #2530.
+- `H5LedgerWarning` no longer fires for an equation tie, and the
+  `_skipped_equation_constraints` counter is gone with the ledger row.
+- Opensees schema 2.40.0 is the additive minor of the stage rows (a 2.39
+  reader refuses a 2.40 file; ADR 0113 D5).
+
+## Amendment note — 2026-11-13 — D1 amended, item 3: the #2530 carve-out is lifted
+
+**Status:** Accepted (ratified by the maintainer on 2026-11-13, PR #2955
+comment 6862698770; landed as `762f4790c`). **Program slice:** #2530
+(chain issue #1201).
+
+Item 3 of the 2026-10-23 amendment kept one partitioned case refused by
+name until #2530: a stage that holds equation rows and a `fix` row that
+repeats an earlier fix's node and DOF mask. That refusal is gone, and so
+is a silent duplicate it did not cover. A stage `equalDOF` from the fixed
+node 1 to a node on another rank wrote `fix 1` twice in the replay, with
+no refusal.
+
+- **Cause.** A stage-claimed MP tie that crosses ranks declares its far
+  nodes on the rank that does not own them, as ghosts (ADR 0027 INV-2).
+  Each ghost re-plays its owner's whole SP history inside that stage: the
+  global fixes, then each earlier stage's fixes and releases. The
+  archive stores those calls as rows of the stage. The flat replay is
+  partition-blind, so it wrote them again, for every MP kind.
+- **The archive already tells them apart.** Every stage `fix` and
+  `remove_sp` row has its `/opensees/decls/rows` declaration (opensees
+  2.25.0). A ghost's row takes the first declaration of its replay order
+  that targets it, or its owner's when the owner's call replicates it in
+  the same stage. A declaration's home is the first scope, in emit order
+  (global `bcs/fix`, then stage 0, 1, ...), whose `fix` or `remove_sp`
+  rows name it. The deck replay (`tcl`, `py`) drops a stage row whose
+  declaration's home is an earlier scope. Every row of the stage's own
+  declarations stays, including a deliberate re-fix with an earlier mask
+  after a release, which item 3 over-refused.
+- **The writer is unchanged.** The archive still stores the ghost rows,
+  and `to_h5` echoes them with their declarations. The partitioned decks
+  still write the ghost replays that INV-2 needs. There is no schema bump:
+  a 2.40 archive written before this change replays exactly by the same
+  rule.
+- **Archives without declaration rows still refuse by name.** A
+  partitioned archive whose global `bcs/fix` or stage `fix` / `remove_sp`
+  store has no declaration column covering its rows was written below
+  2.25.0, or is a rewrite of one. When a row of such a stage repeats an
+  earlier `fix` (node and mask) or `remove_sp` (node and DOF), as every
+  ghost row does, the replay refuses with `BridgeError`. It never writes a
+  ghost row twice. This applies to every MP kind, with or without
+  equation rows. So a pre-2.25 partitioned archive with a deliberate
+  same-mask re-fix after a release now refuses too: item 3 refused that
+  case only beside equation rows, and the stage `equalDOF` duplicate went
+  through.
+- **Scope of the drop.** Only the deck targets (`tcl`, `py`, `live`)
+  replay the filtered stages. The `to_h5` rewrite and its capture helpers
+  walk the stages as stored.
+- **Oracle.** The R1b corpus carries a stage equation tie (Lagrange) and a
+  stage `equalDOF` (Transformation) to the fixed node 1, flat and
+  partitioned. Both replay byte-identical to the bridge deck. With this
+  change reverted, the partitioned rows fail.

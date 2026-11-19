@@ -29,6 +29,11 @@ import pytest
 import gmsh
 from apeGmsh import apeGmsh
 
+#: #2830: no runnable phantom interface through Assembly yet.
+_ASSEMBLY_NO_2D_CONTINUUM = pytest.mark.xfail(
+    strict=True, reason='Assembly cannot rehydrate a 2-D continuum, so a phantom-interface model needs ndf=2 (refused: a beam needs the frame ndf) or ndf=3 (refused: ADR 0093 INV-1 element-less master); #2830')
+
+
 GRANULE = 1_000_000
 
 
@@ -356,6 +361,7 @@ def declare_phantom(ops) -> None:
         A=0.02, E=200e9, Iz=1.0e-4)
 
 
+@_ASSEMBLY_NO_2D_CONTINUUM
 def test_a_phantom_interface_carries_its_phantoms_per_instance(tmp_path):
     """Mixed ndf (ADR 0093 D4): the source deck has one ``-ndf 2`` phantom
     node per pair; one instance reproduces it, two carry two sets."""

@@ -1,4 +1,10 @@
-"""Phase 1 — multi-partition stitching."""
+"""Phase 1 — multi-partition stitching, on legacy files.
+
+``NativeWriter`` refuses a second partition per stage (ADR 0123 D5), so
+the multi-partition files these reads need are built with raw h5py
+(``tests/results/_native_legacy.py``). The reader keeps stitching them
+(D4).
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,7 +12,8 @@ from pathlib import Path
 import numpy as np
 
 from apeGmsh.results.readers import NativeReader
-from apeGmsh.results.writers import NativeWriter
+
+from tests.results._native_legacy import write_multi_partition
 
 
 def _write_partitioned(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -26,16 +33,11 @@ def _write_partitioned(path: Path) -> tuple[np.ndarray, np.ndarray]:
     p2_ux = np.array([[0.60, 0.70, 0.80, 0.90],
                        [0.66, 0.77, 0.88, 0.99]])
 
-    with NativeWriter(path) as w:
-        w.open()
-        sid = w.begin_stage(name="s", kind="transient", time=time)
-        w.write_nodes(sid, "partition_0", node_ids=p0_ids,
-                      components={"displacement_x": p0_ux})
-        w.write_nodes(sid, "partition_1", node_ids=p1_ids,
-                      components={"displacement_x": p1_ux})
-        w.write_nodes(sid, "partition_2", node_ids=p2_ids,
-                      components={"displacement_x": p2_ux})
-        w.end_stage()
+    write_multi_partition(path, {
+        "partition_0": (p0_ids, {"displacement_x": p0_ux}),
+        "partition_1": (p1_ids, {"displacement_x": p1_ux}),
+        "partition_2": (p2_ids, {"displacement_x": p2_ux}),
+    }, time=time, kind="transient")
 
     all_ids = np.concatenate([p0_ids, p1_ids, p2_ids])
     all_ux = np.concatenate([p0_ux, p1_ux, p2_ux], axis=1)
@@ -89,7 +91,8 @@ def test_filter_skips_partitions_with_no_match(tmp_path: Path) -> None:
 
 def test_shared_boundary_node_deduped(tmp_path: Path) -> None:
     # A boundary node replicated across partition domains must yield one
-    # column, not one per partition (F1). First occurrence wins.
+    # column, not one per partition (F1). Its copies agree, so it reads
+    # once (#2360; disagreeing copies refuse, test_native_repeated_node_ids).
     path = tmp_path / "run.h5"
     time = np.array([0.0, 1.0])
     # Node 3 is shared by both partitions with identical kinematics.
@@ -98,14 +101,10 @@ def test_shared_boundary_node_deduped(tmp_path: Path) -> None:
     p1_ids = np.array([3, 4], dtype=np.int64)
     p1_ux = np.array([[0.30, 0.40], [0.33, 0.44]])
 
-    with NativeWriter(path) as w:
-        w.open()
-        sid = w.begin_stage(name="s", kind="transient", time=time)
-        w.write_nodes(sid, "partition_0", node_ids=p0_ids,
-                      components={"displacement_x": p0_ux})
-        w.write_nodes(sid, "partition_1", node_ids=p1_ids,
-                      components={"displacement_x": p1_ux})
-        w.end_stage()
+    write_multi_partition(path, {
+        "partition_0": (p0_ids, {"displacement_x": p0_ux}),
+        "partition_1": (p1_ids, {"displacement_x": p1_ux}),
+    }, time=time, kind="transient")
 
     with NativeReader(path) as r:
         slab = r.read_nodes("stage_0", "displacement_x")

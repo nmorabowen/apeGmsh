@@ -59,6 +59,7 @@ from ...opensees._response_catalog import (
     mpco_gauss_group_aliases,
     parse_mpco_element_key,
 )
+from ._buckets import _PARENT_TOKEN_TO_MPCO_GROUP, parent_token_for_canonical
 from ._mpco_element_io import (
     SkippedBucket,
     _attr_scalar,
@@ -77,16 +78,6 @@ if TYPE_CHECKING:
 # Token routing — the parent token (damage / equivalent_plastic_strain)
 # determines the MPCO group; canonicals strip a suffix to recover it.
 # =====================================================================
-
-# Recognised parent tokens and their MPCO primary group names.
-_PARENT_TOKEN_TO_MPCO_GROUP: dict[str, str] = {
-    "damage": "damage",
-    "equivalent_plastic_strain": "equivalentPlasticStrain",
-    # Plastic-strain tensor (``-E material.plasticStrain``) — unlike the
-    # scalar states its per-GP components are named POSITIONALLY by the
-    # material's Voigt order (see :func:`parse_meta_components`).
-    "plastic_strain": "plasticStrain",
-}
 
 # Positional Voigt naming for the plastic-strain tensor: the material's
 # response vector follows its strain ordering, so a 6-component bucket
@@ -120,27 +111,6 @@ class MaterialStateComponentRefused(LookupError):
     not a ``ValueError``: the reader skips a malformed bucket on
     ``ValueError``, and a refusal must reach the caller.
     """
-
-
-def parent_token_for_canonical(canonical: str) -> str | None:
-    """Recover the parent material-state token from a canonical name.
-
-    Examples
-    --------
-    ``"damage"``                              → ``"damage"``
-    ``"damage_tension"``                      → ``"damage"``
-    ``"damage_compression"``                  → ``"damage"``
-    ``"damage_3"``                            → ``"damage"``
-    ``"equivalent_plastic_strain"``           → ``"equivalent_plastic_strain"``
-    ``"equivalent_plastic_strain_tension"``   → ``"equivalent_plastic_strain"``
-    ``"stress_xx"``                           → ``None``
-    """
-    for parent in _PARENT_TOKEN_TO_MPCO_GROUP:
-        if canonical == parent:
-            return parent
-        if canonical.startswith(parent + "_"):
-            return parent
-    return None
 
 
 # =====================================================================

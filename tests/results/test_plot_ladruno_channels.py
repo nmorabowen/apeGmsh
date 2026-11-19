@@ -22,6 +22,10 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "ladruno"
 ENERGY = FIXTURES / "energy.ladruno"
 NODE_ENVELOPE = FIXTURES / "node_envelope.ladruno"
 TRUSS = FIXTURES / "truss2d.ladruno"
+MPCO_FRAME = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "results"
+    / "elasticFrame.mpco"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -60,8 +64,16 @@ def test_energy_plot_absent_channel_raises() -> None:
 
 
 def test_energy_plot_non_ladruno_raises_typeerror() -> None:
-    with pytest.raises(TypeError, match="Ladruno-recorder feature"):
-        Results.demo(n_steps=2).plot.energy()
+    # A committed MPCO file, not the demo: the demo writes a .ladruno
+    # since #2778 (ADR 0131 D10), so it has the energy reader seam.
+    from tests.conftest import _stub_model_h5_path
+
+    r = Results.from_mpco(MPCO_FRAME, model_h5=_stub_model_h5_path())
+    try:
+        with pytest.raises(TypeError, match="Ladruno-recorder feature"):
+            r.plot.energy()
+    finally:
+        r.close()
 
 
 # ---------------------------------------------------------------------------

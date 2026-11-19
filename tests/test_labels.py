@@ -248,6 +248,75 @@ def test_rename_keyerror_when_missing(gmsh_session):
         labels.rename("ghost", "anything")
 
 
+def _label_pg_names(dim: int) -> dict[int, str]:
+    """``{pg_tag: name}`` of every physical group at *dim*, read from gmsh."""
+    return {
+        t: gmsh.model.getPhysicalName(d, t)
+        for d, t in gmsh.model.getPhysicalGroups(dim)
+    }
+
+
+def test_rename_onto_existing_label_refuses_and_writes_nothing(gmsh_session):
+    # #2577: renaming B onto a C that already exists at the same dim
+    # used to leave B's recreated group with no name in gmsh.
+    labels = _make_labels()
+    b = gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+    c = gmsh.model.occ.addBox(3, 0, 0, 1, 1, 1)
+    gmsh.model.occ.synchronize()
+    labels.add(3, [b], "B")
+    labels.add(3, [c], "C")
+    before = _label_pg_names(3)
+
+    with pytest.raises(ValueError, match=r"'C' already exists at dim=3"):
+        labels.rename("B", "C")
+    with pytest.raises(ValueError, match=r"'C' already exists at dim=3"):
+        labels.rename("B", "C", dim=3)
+
+    assert _label_pg_names(3) == before
+    assert labels.entities("B") == [b]
+    assert labels.entities("C") == [c]
+
+
+def test_rename_collision_at_one_dim_renames_no_other_dim(gmsh_session):
+    # A label spanning dims 2 and 3 meets C at dim 3 only.  The dim-2
+    # group comes first in the loop, so a check made inside the loop
+    # would rename it before refusing at dim 3: a partial write.
+    labels = _make_labels()
+    b = gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+    c = gmsh.model.occ.addBox(3, 0, 0, 1, 1, 1)
+    gmsh.model.occ.synchronize()
+    face = gmsh.model.getBoundary([(3, b)], oriented=False)[0][1]
+    labels.add(2, [face], "B")
+    with pytest.warns(UserWarning, match="ambiguous lookups"):
+        labels.add(3, [b], "B")
+    labels.add(3, [c], "C")
+    before = {d: _label_pg_names(d) for d in (2, 3)}
+
+    with pytest.raises(ValueError, match=r"dim=3"):
+        labels.rename("B", "C")
+
+    assert {d: _label_pg_names(d) for d in (2, 3)} == before
+    assert labels.entities("B", dim=2) == [face]
+    assert labels.entities("B", dim=3) == [b]
+    assert labels.entities("C", dim=3) == [c]
+
+
+def test_rename_onto_a_label_at_another_dim_is_allowed(gmsh_session):
+    # The refusal is per dim: C at dim 2 does not block B at dim 3.
+    labels = _make_labels()
+    b = gmsh.model.occ.addBox(0, 0, 0, 1, 1, 1)
+    gmsh.model.occ.synchronize()
+    face = gmsh.model.getBoundary([(3, b)], oriented=False)[0][1]
+    labels.add(2, [face], "C")
+    labels.add(3, [b], "B")
+
+    labels.rename("B", "C")
+
+    assert not labels.has("B")
+    assert labels.entities("C", dim=2) == [face]
+    assert labels.entities("C", dim=3) == [b]
+
+
 # ==================================================================
 # Labels.reverse_map / Labels.labels_for_entity
 # ==================================================================

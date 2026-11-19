@@ -221,7 +221,7 @@ def _extract_mesh_core(dim: int | None):
     -------
     tuple
         (node_tags, node_coords, elem_tags, groups,
-         used_tags, physical, labels, partitions)
+         used_tags, physical, labels, partitions, entity)
     """
     raw = extract_raw(dim=dim)
 
@@ -235,9 +235,12 @@ def _extract_mesh_core(dim: int | None):
     physical = PhysicalGroupSet(extract_physical_groups())
     labels   = LabelSet(extract_labels())
     partitions = extract_partitions(dim)
+    # The per-element source-entity stream, row-parallel to
+    # each group's ids.
+    entity = {code: info['entity'] for code, info in raw['groups'].items()}
 
     return (node_tags, node_coords, elem_tags, groups,
-            used_tags, physical, labels, partitions)
+            used_tags, physical, labels, partitions, entity)
 
 
 # =====================================================================
@@ -273,7 +276,7 @@ def _from_gmsh(
 
     # ── 1. Extract ────────────────────────────────────────────
     (node_tags, node_coords, elem_tags, groups,
-     used_tags, physical, labels, partitions) = _extract_mesh_core(dim)
+     used_tags, physical, labels, partitions, entity) = _extract_mesh_core(dim)
     # The model just read: a raw (dim, tag) selection on the snapshot
     # asks Gmsh only while this model is still the current one.
     gmsh_source = gmsh_model_identity()
@@ -574,6 +577,7 @@ def _from_gmsh(
         rebar_elements=rebar_elements or None,
         interfaces=interfaces or None,
         gmsh_source=gmsh_source,
+        entity=entity,
     )
 
     # ── 6. Snapshot mesh selections ───────────────────────────
@@ -873,7 +877,7 @@ def _from_msh(
         gmsh.merge(str(path))
 
         (node_tags, node_coords, elem_tags, groups,
-         used_tags, physical, labels, partitions) = _extract_mesh_core(dim)
+         used_tags, physical, labels, partitions, entity) = _extract_mesh_core(dim)
         gmsh_source = gmsh_model_identity()
 
         if remove_orphans:
@@ -905,6 +909,7 @@ def _from_msh(
             physical=physical, labels=labels,
             partitions=partitions or None,
             gmsh_source=gmsh_source,
+            entity=entity,
         )
     finally:
         _gmsh_release()

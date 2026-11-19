@@ -11,7 +11,7 @@ import type { State } from "../../src/state/types.ts";
 test("the frame redraws on a selection, a stage selection and a go-to-source answer", () => {
   const s = initialState;
   const cases: [string, State][] = [
-    ["selection", { ...s, selection: { decls: ["opensees/nDMaterial/#1"], picks: [] } }],
+    ["selection", { ...s, selection: { ...s.selection, decls: ["opensees/nDMaterial/#1"], picks: [] } }],
     ["stage", { ...s, stage: 0 }],
     ["source", { ...s, source: { ...s.source, last: { decl: "opensees/nDMaterial/#1", ok: false, reason: "missing" } } }],
     ["provenance", { ...s, provenance: [] }],

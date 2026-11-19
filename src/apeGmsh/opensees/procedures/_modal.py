@@ -31,6 +31,38 @@ if TYPE_CHECKING:
 from ._host import _ProcedureHost
 
 
+def refuse_fork_verb_before_wipe(
+    host: _ProcedureHost, verb: str, feature: str,
+) -> None:
+    """Refuse fork-only procedure ``verb`` on a stock build, before it
+    wipes the live domain (#2533).
+
+    A fork-only procedure (``complex_eigen``, ``modal_response_history``,
+    the FRF sweeps, ``critical_time_step``, ...) builds a fresh live
+    domain and only then issues its fork command, so on stock openseespy
+    the refusal at that command came after the user's domain was gone.
+    The verdict is ``capabilities().has_fork``, the resolver's one
+    backend verdict, which :meth:`_ModalMixin.eigen_feast` already read.
+    Call it after the verb's own argument checks and before
+    ``LiveOpsEmitter(wipe=True)``; the source scan in
+    ``tests/opensees/unit/test_refuse_before_wipe_sites.py`` fails a
+    procedure that calls a fork-only emitter method without it.
+
+    ``has_fork`` is one signal, the ``ladrunoBuild`` stamp, so a fork
+    built before that stamp (fork PR #718) is refused here too; the
+    message says so, as the chain refusal does.
+    """
+    if not host.capabilities().has_fork:
+        from ..emitter.live import _UNSTAMPED_FORK_NOTE
+
+        raise RuntimeError(
+            f"{verb} requires the Ladruno fork build of OpenSees "
+            f"({feature}); the in-process build reads as stock. "
+            "Nothing was run: the live domain is untouched."
+            + _UNSTAMPED_FORK_NOTE
+        )
+
+
 class _ModalMixin(_ProcedureHost):
     if TYPE_CHECKING:
         # ADR 0115 D2: the bridge's read session (``apeSees.__init__``);
@@ -150,10 +182,11 @@ class _ModalMixin(_ProcedureHost):
 
         # Local imports — keep openseespy + numpy out of bridge import
         # time for Tcl/Py/H5-only users.
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         self._drop_read_session("ops.eigen(...)")
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
@@ -230,11 +263,12 @@ class _ModalMixin(_ProcedureHost):
         # Local imports — keep openseespy + numpy out of bridge import
         # time for Tcl/Py/H5-only users.
         from ..analysis.modal import ModalPropertiesResult
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
         import numpy as np
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
@@ -244,6 +278,7 @@ class _ModalMixin(_ProcedureHost):
             eigenvalues=np.asarray(values, dtype=np.float64),
             properties=properties,
             _live=live_emitter,
+            unorm=bool(unorm),
         )
 
     def footfall_walking(
@@ -569,6 +604,11 @@ class _ModalMixin(_ProcedureHost):
                 out_limit[row] = limit_value
                 out_ratio[row] = best[0] / limit_value
 
+        # The key the lineage memo holds this model's archive under, taken
+        # after the solve: ``ops.h5()`` usually runs after this driver, so
+        # the model_hash is resolved from it in ``to_results``.
+        from .._internal.artifact_write import lineage_key
+
         return FootfallResult(
             nodes=resp_tags,
             f_dom=out_f_dom,
@@ -593,6 +633,7 @@ class _ModalMixin(_ProcedureHost):
             _matrix=matrix,
             _phi=phi,
             _f_dom_hf=out_f_dom_hf,
+            _lineage_key=lineage_key(self),
         )
 
     def _footfall_tags(
@@ -675,17 +716,15 @@ class _ModalMixin(_ProcedureHost):
         # missing-attribute gate cannot fire — pre-check the fork probe
         # for the friendly message (a pre-ADR-43 fork build still fails
         # with the OpenSees '-feast' parse error).
-        if not self.capabilities().has_fork:
-            raise RuntimeError(
-                "apeSees.eigen_feast requires the Ladruno fork build of "
-                "OpenSees (fork ADR-43 band-targeted FEAST eigensolver); "
-                "the in-process openseespy is not the fork."
-            )
+        refuse_fork_verb_before_wipe(
+            self, "apeSees.eigen_feast",
+            "fork ADR-43 band-targeted FEAST eigensolver")
 
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         self._drop_read_session("ops.eigen_feast(...)")
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
@@ -763,7 +802,7 @@ class _ModalMixin(_ProcedureHost):
             )
 
         from ..analysis.complex_eigen import ComplexEigenResult
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
 
         args: list[int | float | str] = []
         if tol is not None:
@@ -775,8 +814,11 @@ class _ModalMixin(_ProcedureHost):
         if closed_form:
             args.append("-closedForm")
 
+        refuse_fork_verb_before_wipe(
+            self, context, "fork ADR-46 complexEigen")
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
@@ -865,7 +907,7 @@ class _ModalMixin(_ProcedureHost):
             ModalHistoryResult,
             _damping_channel_args,
         )
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
         from ..pattern.pattern import Plain as _Plain
         import numpy as np
 
@@ -902,8 +944,11 @@ class _ModalMixin(_ProcedureHost):
                 )
             args.extend(("-modes", *mode_list))
 
+        refuse_fork_verb_before_wipe(
+            self, context, "fork ADR-44 modalResponseHistory")
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
@@ -929,6 +974,7 @@ class _ModalMixin(_ProcedureHost):
         modal_damp: Sequence[float] | None = None,
         solver: str = "-genBandArpack",
         scale: float | None = None,
+        require_mass: float | None = None,
     ) -> "ResponseSpectrumResult":
         """Run a response-spectrum analysis with native combination.
 
@@ -944,6 +990,12 @@ class _ModalMixin(_ProcedureHost):
         combined element forces / drifts from the combined
         displacements (combine those quantities' own per-mode peaks
         instead).
+
+        **Displacements only.** The committed field is the combined
+        nodal displacement; element forces, drifts and storey shears
+        read off that domain are not combined responses. For those use
+        :meth:`spectrum_after_gravity`, which combines each quantity's
+        signed per-mode values.
 
         Parameters
         ----------
@@ -973,12 +1025,21 @@ class _ModalMixin(_ProcedureHost):
             builds from ``c83ee812e`` (fork WP-202) apply under
             ``-combine`` and older ones parse and ignore: the scaled
             ordinates give the same answer on every build.
+        require_mass
+            Optional ratio in ``(0, 1]``: ``-requireMass`` (fork WP-212).
+            The fork refuses the analysis when the modes carry less than
+            this fraction of the free mass in ``direction``, and prints
+            the shortfall. ``None`` (the default) emits nothing. Needs
+            chain M (``ladruno-v20261027+``); an older build refuses
+            before the model is built
+            (:class:`~apeGmsh.opensees._target.ForkTooOldError`).
         """
+        from .._target import require_rsa_feature
         from ..analysis.modal import (
             ResponseSpectrumResult,
             _damping_channel_args,
         )
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
         import numpy as np
 
         context = "apeSees.response_spectrum_analysis"
@@ -1032,9 +1093,22 @@ class _ModalMixin(_ProcedureHost):
         args: list[int | float | str] = ["-Tn", *tn, "-Sa", *sa]
         args.extend(("-combine", combine))
         args.extend(damping_args)
+        if require_mass is not None:
+            r_val = float(require_mass)
+            if not 0.0 < r_val <= 1.0:
+                raise ValueError(
+                    f"{context}: require_mass must be in (0, 1], got "
+                    f"{require_mass!r}."
+                )
+            require_rsa_feature("responseSpectrumAnalysis -requireMass")
+            args.extend(("-requireMass", r_val))
 
+        refuse_fork_verb_before_wipe(
+            self, context,
+            "fork ADR-44 responseSpectrumAnalysis -combine")
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)
@@ -1046,6 +1120,199 @@ class _ModalMixin(_ProcedureHost):
             combine=combine,
             _live=live_emitter,
         )
+
+    def residual_modes(
+        self,
+        dirs: Sequence[int],
+        *,
+        num_modes: int,
+        period: float | str = "rayleigh",
+        replace: bool = False,
+        tol: float | None = None,
+        solver: str = "-genBandArpack",
+    ) -> "ModalPropertiesResult":
+        """Eigenmodes completed by the fork's missing-mass pseudo-modes, live.
+
+        **Fork-only** (chain M, WP-213). Builds and emits a fresh live
+        domain, then runs ``eigen`` (``num_modes`` modes),
+        ``residualModes -dir ...`` (:class:`~apeGmsh.opensees.analysis.
+        modal.ResidualModes`) and ``modalProperties -return``, in that
+        order: a later ``eigen`` would drop the pseudo-modes. The result
+        holds every mode of the completed set, the pseudo-modes last,
+        with the cumulative mass ratio of each direction in ``dirs`` at
+        100 %.
+
+        Parameters
+        ----------
+        dirs
+            Global translations (1, 2, 3) to complete, each once.
+        num_modes
+            Eigenmodes solved before the pseudo-modes are appended.
+        period
+            ``"rayleigh"`` (default): spectral analyses read each
+            pseudo-mode's Sa at its own Rayleigh period. A period ``T``
+            (s): ``responseSpectrumAnalysis`` reads Sa at ``T`` and sums
+            the pseudo-modes into one rigid mode (ADR 213 D3b, ASCE 7-22
+            §12.9.1.1).
+        replace
+            ``-replace``: drop pseudo-modes already in the set first.
+        tol
+            ``-tol``, the relative drop tolerance in ``(0, 1)``; ``None``
+            keeps the fork's default (``1e-4``).
+        solver
+            The eigen-solver flag (see :meth:`eigen`).
+
+        Raises
+        ------
+        BridgeError
+            The model runs under MPI (a partitioned model or an MPI
+            ``system``): the fork refuses ``residualModes`` on OpenSeesSP,
+            so the bridge refuses before emitting.
+        ForkTooOldError
+            The in-process build lacks ``residualModes``; raised before
+            the model is built.
+        """
+        from .._target import require_rsa_feature
+        from ..analysis.modal import ModalPropertiesResult, ResidualModes
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
+        import numpy as np
+
+        context = "apeSees.residual_modes"
+        self._modal_prereqs_and_guards(num_modes, context=context)
+        self._refuse_mpi_modal_basis(context, "residualModes")
+        record = ResidualModes(
+            dirs=tuple(dirs), period=period, replace=replace, tol=tol)
+        require_rsa_feature("residualModes")
+
+        bm = self.build()
+        self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
+        live_emitter = LiveOpsEmitter(wipe=True)
+        bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
+        live_emitter.eigen(num_modes, solver=solver)
+        record._emit(live_emitter, 0)
+        properties = live_emitter.modal_properties()
+        return ModalPropertiesResult(
+            eigenvalues=np.asarray(properties["eigenLambda"], dtype=np.float64),
+            properties=properties,
+            _live=live_emitter,
+        )
+
+    def ritz_vectors(
+        self,
+        n: int,
+        *,
+        dirs: Sequence[int] = (),
+        patterns: "Sequence[Plain | str]" = (),
+        cycles: Sequence[int] | None = None,
+        tol: float | None = None,
+    ) -> "ModalPropertiesResult":
+        """Load-dependent Ritz vectors as the mode set, live.
+
+        **Fork-only** (chain M, WP-215). Builds and emits a fresh live
+        domain, then runs ``ritzVectors`` (:class:`~apeGmsh.opensees.
+        analysis.modal.RitzVectors`) in place of ``eigen`` and
+        ``modalProperties -return``. Ritz periods are Rayleigh periods,
+        not natural periods.
+
+        The starting loads are ``M ι_d`` for each direction in ``dirs``,
+        then the reference loads of each pattern in ``patterns``, in
+        that order. The fork factors ``K`` through the defined analysis,
+        so the bridge must declare one (``ops.analysis.Static()`` and its
+        chain).
+
+        Parameters
+        ----------
+        n
+            Ritz vectors to generate (``>= 1``).
+        dirs
+            Global translations (1, 2, 3) whose inertia loads start the
+            sequence.
+        patterns
+            ``ops.pattern.Plain`` handles (or registered names) whose
+            reference loads start the sequence.
+        cycles
+            Blocks per start, one count per start (``dirs`` then
+            ``patterns``); ``0`` is no cap.
+        tol
+            ``-tol``, the relative M-norm drop in ``(0, 1)``; ``None``
+            keeps the fork's default (``1e-10``).
+
+        Raises
+        ------
+        BridgeError
+            The model runs under MPI (a partitioned model or an MPI
+            ``system``): the fork refuses ``ritzVectors`` on OpenSeesSP,
+            so the bridge refuses before emitting. Also when no analysis
+            is declared.
+        ForkTooOldError
+            The in-process build lacks ``ritzVectors``; raised before
+            the model is built.
+        """
+        from .._internal.types import Analysis
+        from .._target import require_rsa_feature
+        from ..analysis.modal import ModalPropertiesResult, RitzVectors
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
+        from ..pattern.pattern import Plain as _Plain
+        import numpy as np
+
+        context = "apeSees.ritz_vectors"
+        self._modal_prereqs_and_guards(1, context=context)
+        self._refuse_mpi_modal_basis(context, "ritzVectors")
+        if not any(isinstance(p, Analysis) for p in self._primitives):
+            raise BridgeError(
+                f"{context}: the fork factors K through the defined "
+                "analysis; declare one first (ops.analysis.Static() with "
+                "its chain)."
+            )
+        pattern_tags: list[int] = []
+        for handle in patterns:
+            pat = self._resolve(handle, base=_Plain)
+            tag = self.tag_for(pat) if isinstance(pat, _Plain) else None
+            if tag is None:
+                raise BridgeError(
+                    f"{context}: patterns takes ops.pattern.Plain handles "
+                    f"(or registered names) on this bridge, got {handle!r}."
+                )
+            pattern_tags.append(int(tag))
+        record = RitzVectors(
+            n=n, dirs=tuple(dirs), patterns=tuple(pattern_tags),
+            cycles=None if cycles is None else tuple(cycles), tol=tol)
+        require_rsa_feature("ritzVectors")
+
+        bm = self.build()
+        self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
+        live_emitter = LiveOpsEmitter(wipe=True)
+        bm.emit(live_emitter)
+        self._artifacts.after_emit(self)
+        record._emit(live_emitter, 0)
+        properties = live_emitter.modal_properties()
+        return ModalPropertiesResult(
+            eigenvalues=np.asarray(properties["eigenLambda"], dtype=np.float64),
+            properties=properties,
+            _live=live_emitter,
+        )
+
+    def _refuse_mpi_modal_basis(self, context: str, command: str) -> None:
+        """Refuse a partitioned model or an MPI ``system`` before emitting:
+        the fork refuses ``residualModes`` / ``ritzVectors`` on a
+        partitioned (OpenSeesSP) domain."""
+        from .._internal.build.ownership import is_partitioned
+        from .._internal.types import LinearSystem
+        from ..emitter.caps import is_mpi_system
+
+        mpi = [type(p).__name__ for p in self._primitives
+               if isinstance(p, LinearSystem)
+               and is_mpi_system(type(p).__name__)]
+        if is_partitioned(self._fem) or mpi:
+            why = (f"system {mpi[0]}" if mpi else "a partitioned model")
+            raise BridgeError(
+                f"{context}: {why} runs under MPI, and the fork refuses "
+                f"{command} on a partitioned (OpenSeesSP) domain. Use "
+                "eigen (apeSees.eigen / modal_properties) there."
+            )
 
     def _resolve_modal_excitation(
         self,

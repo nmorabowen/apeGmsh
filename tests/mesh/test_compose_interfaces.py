@@ -28,6 +28,11 @@ from apeGmsh.assembly import Assembly
 from apeGmsh.mesh.FEMData import FEMData
 from apeGmsh.opensees import apeSees
 
+#: #2830: no runnable phantom interface through Assembly yet.
+_ASSEMBLY_NO_2D_CONTINUUM = pytest.mark.xfail(
+    strict=True, reason='Assembly cannot rehydrate a 2-D continuum, so a phantom-interface model needs ndf=2 (refused: a beam needs the frame ndf) or ndf=3 (refused: ADR 0093 INV-1 element-less master); #2830')
+
+
 NORMAL = NormalLaw(kind="ent", k_per_area=1.0e9)
 TANGENTIAL = TangentialLaw(kind="epp", k_per_area=1.0e8, tau_b=2.5e5)
 THICKNESS = 0.5
@@ -272,6 +277,7 @@ def test_compose_translate_only_keeps_orient(tmp_path):
 # ======================================================================
 # Phantom bridge — coords transform, tags stay collision-free
 # ======================================================================
+@_ASSEMBLY_NO_2D_CONTINUUM
 def test_compose_rotates_and_translates_phantom_coords(tmp_path):
     mod = tmp_path / "mod.h5"
     host = tmp_path / "host.h5"
@@ -296,6 +302,7 @@ def test_compose_rotates_and_translates_phantom_coords(tmp_path):
         assert a.phantom_ndf == 2
 
 
+@_ASSEMBLY_NO_2D_CONTINUUM
 def test_two_phantom_carrying_models_do_not_collide(tmp_path):
     """The S6 sharp edge: both models mint phantoms from their OWN
     ``max(node_tag) + 1``, so the raw tags overlap. After the merge the
@@ -333,6 +340,7 @@ def test_two_phantom_carrying_models_do_not_collide(tmp_path):
         assert r.equal_dof_records[0].master_node == r.slave_node
 
 
+@_ASSEMBLY_NO_2D_CONTINUUM
 def test_post_compose_reresolution_mints_above_the_composed_phantoms(tmp_path):
     """A composed model whose phantoms sit above ``max(node_tag)`` is the
     one shape where a later mint could re-use a live tag. Pin that the

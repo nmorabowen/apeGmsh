@@ -167,7 +167,7 @@ def _quad_ops(fem) -> apeSees:
 
 def _mixed_ops(fem) -> apeSees:
     ops = apeSees(fem)
-    ops.model(ndm=2, ndf=2)
+    ops.model(ndm=2, ndf=3)
     mat = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
     ops.element.FourNodeQuad(
         pg="rock", thickness=THICKNESS, material=mat,

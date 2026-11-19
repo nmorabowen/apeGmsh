@@ -10,8 +10,8 @@ Comparing a schema version against a literal anywhere else in ``tests/``
 fails ``scripts/check_quirks.py`` (rule ``schema-literal``): it went stale
 and turned main red at 2.12.0, 2.13.0 and 2.16.0.
 """
-OPENSEES_CURRENT     = "2.37.0"  # #2470 joint offsets (a -jntOffset geomTransf line gains a jnt_offset dataset)
-OPENSEES_PRIOR_MINOR = "2.36.0"  # #2375 (a pinned OpenSeesTarget.mode is /opensees@target_mode)
+OPENSEES_CURRENT     = "2.40.0"  # K #2448 (a stage's equationConstraint lines are rows of its stage block)
+OPENSEES_PRIOR_MINOR = "2.39.0"  # VU5 #2685 (optional hash-excluded /opensees/combinations, ADR 0130 D4)
 OPENSEES_SOLVE_STAMP_FROM = "2.24.0"  # the minor that added the /opensees solve stamp (K1-5 #1462); fixed history
 OPENSEES_PARAM_TAGS_FROM = "2.27.0"  # the minor whose archives store every parameter tag (K1-8 #1465); fixed history
 OPENSEES_EMBEDDED_REBAR_FROM = "2.29.0"  # the minor whose archives store every reinforce tie (K2b #1795); fixed history
@@ -22,10 +22,14 @@ OPENSEES_EQUATION_CONSTRAINT_FROM = "2.35.0"  # the minor whose archives store e
 OPENSEES_BEFORE_EQUATION_CONSTRAINT = "2.34.0"  # the minor just below it, which stores none (K #2447); fixed history
 OPENSEES_TARGET_MODE_FROM = "2.36.0"  # the minor whose /opensees@target_mode keeps a pinned target (K #2375); fixed history
 OPENSEES_BEFORE_TARGET_MODE = "2.35.0"  # the minor just below it, which has no @target_mode (K #2375); fixed history
+OPENSEES_STAGE_EQUATION_CONSTRAINT_FROM = "2.40.0"  # the minor whose stage blocks store their equationConstraint lines (K #2448); fixed history
+OPENSEES_BEFORE_STAGE_EQUATION_CONSTRAINT = "2.39.0"  # the minor just below it, whose stage blocks store none (K #2448); fixed history
 OPENSEES_FLOOR       = "2.12.0"  # ADR 0113 D3 evidence gate (#1329): no 2.11-era file opens (neutral 2.7 stamps)
-NEUTRAL_CURRENT      = "2.35.0"  # #1338: additive `source` column on /loads/nodal (the definition kind)
-NEUTRAL_PRIOR_MINOR  = "2.34.0"  # #1291: /meta/ndm is the ops.model spatial dimension (0 = undeclared)
+NEUTRAL_CURRENT      = "2.36.0"  # #2551 S1: optional /elements/{alias}/entity (per-element source entity)
+NEUTRAL_PRIOR_MINOR  = "2.35.0"  # #1338: additive `source` column on /loads/nodal (the definition kind)
 NEUTRAL_FLOOR        = "2.10.0"  # B2 layout split; every later minor is additive or shimmed
+NEUTRAL_ENTITY_FROM  = "2.36.0"  # the minor that added /elements/{alias}/entity (#2551 S1); fixed history
+NEUTRAL_BEFORE_ENTITY = "2.35.0"  # the minor just below it, whose files carry no entity stream (#2551 S1); fixed history
 RESULTS_FLOOR        = "1.0.0"   # the results zone's first version
 RESULTS_CURRENT      = "1.2.0"   # #1746: optional root element_index_space stamp
 RESULTS_PRIOR_MINOR  = "1.1.0"   # Phase 6 (ADR 0021): /meta/lineage
@@ -37,3 +41,18 @@ PROVENANCE_CURRENT     = "1.1.0"  # V2d #1378: additive /provenance/records/orig
 PROVENANCE_PRIOR_MINOR = "1.0.0"  # V2a: /provenance zone registered
 GEOMETRY_FLOOR         = "1.0.0"
 PROVENANCE_FLOOR       = "1.0.0"
+# ADR 0130 <stem>.user.h5 zones (VU1 #2684): each starts at its floor.
+USER_META_CURRENT      = "1.0.0"
+USER_META_FLOOR        = "1.0.0"
+COMBINATIONS_CURRENT   = "1.0.0"
+COMBINATIONS_FLOOR     = "1.0.0"
+USER_RESULTS_CURRENT   = "1.0.0"
+USER_RESULTS_FLOOR     = "1.0.0"
+# ADR 0130 /modes and /spectra (VU6 #2690): each starts at its floor.
+MODES_CURRENT          = "1.0.0"
+MODES_FLOOR            = "1.0.0"
+SPECTRA_CURRENT        = "1.0.0"
+SPECTRA_FLOOR          = "1.0.0"
+# ADR 0130 /entities (VU8 #2692): starts at its floor.
+ENTITIES_CURRENT       = "1.0.0"
+ENTITIES_FLOOR         = "1.0.0"

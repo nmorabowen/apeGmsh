@@ -1,13 +1,13 @@
 {
  "about": "ADR 0113 D8 schema corpus. One entry per minor from each zone's floor to its current minor; status 'gap' entries carry the reason no real file exists. Built by scripts/build_schema_corpus.py.",
- "base": "812fa0bbee2f6b80421c4081eadad2dc689d5590",
+ "base": "d35ed72adaaee0276975146fa12f9eaf1ba0321e",
  "floors": {
   "neutral": "2.10.0",
   "opensees": "2.12.0"
  },
  "current": {
-  "neutral": "2.35.0",
-  "opensees": "2.37.0"
+  "neutral": "2.36.0",
+  "opensees": "2.40.0"
  },
  "entries": [
   {
@@ -654,8 +654,8 @@
   {
    "zone": "neutral",
    "minor": "2.35",
-   "sha": "9c526f0ce8198cc9f86c12f2ab747cdb0032fd6b",
-   "date": "2026-10-04",
+   "sha": "2ec87af3605fff00142bc916a65455aeeeb98396",
+   "date": "2026-10-26",
    "version": "2.35.0",
    "bump_commits": [
     "68a225bcf5d54d1bb0d886846beca7b327a40ef9"
@@ -665,7 +665,7 @@
    "files": {
     "h5": {
      "name": "neutral_2.35.h5",
-     "sha256": "723d44ce372d48d22df160cda70e1704c053585334d1d2916bcf822c2ab3e76d"
+     "sha256": "16ec6413a4005610007f7009df660e60fa16550ab51ab49ffb600ba0ee2ef9c4"
     },
     "dump": {
      "name": "neutral_2.35.dump.json",
@@ -674,7 +674,33 @@
    },
    "stamps": {
     "neutral": "2.35.0",
-    "opensees": "2.22.0"
+    "opensees": "2.37.0"
+   }
+  },
+  {
+   "zone": "neutral",
+   "minor": "2.36",
+   "sha": "c93b839d4e94beef33a3a668f204f71d0ece32d1",
+   "date": "2026-10-26",
+   "version": "2.36.0",
+   "bump_commits": [
+    "2693fb0cf5f614726a662a71f2cd12875e25a18b"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone neutral",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "neutral_2.36.h5",
+     "sha256": "1fce05f1cca8675dd66eada00ce0b21b323e68676bf478bbc1af0557e552b7fb"
+    },
+    "dump": {
+     "name": "neutral_2.36.dump.json",
+     "sha256": "17625823acb3c8e1ffcaad7eecee977582a0241aa6f61118d561a6979cc3be39"
+    }
+   },
+   "stamps": {
+    "neutral": "2.36.0",
+    "opensees": "2.37.0"
    }
   },
   {
@@ -1494,18 +1520,18 @@
   {
    "zone": "opensees",
    "minor": "2.37",
-   "sha": "9c63fae03e2577d61d487bb746fe52a8096031ab",
-   "date": "2026-10-26",
+   "sha": "95c1b8b91a2ef2787e0ec89c3f20a38b5b817f56",
+   "date": "2026-10-30",
    "version": "2.37.0",
    "bump_commits": [
-    "8c958645b07bf186d696ae321816532deaf72026"
+    "c5a383d821de0535e34cccb980dffd767c20c6b3"
    ],
    "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
    "status": "ok",
    "files": {
     "h5": {
      "name": "opensees_2.37.h5",
-     "sha256": "3e82b810cbe3e8c0ca1ffb4da1d3bdf5bc3f00d0b19c9d7c7b29c62b07b431d5"
+     "sha256": "3bbb046b258821b06d2d6c1db79aeab5bcaad23fa870245cbfb6be3c968c26c8"
     },
     "dump": {
      "name": "opensees_2.37.dump.json",
@@ -1517,8 +1543,98 @@
     }
    },
    "stamps": {
-    "neutral": "2.35.0",
+    "neutral": "2.36.0",
     "opensees": "2.37.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.38",
+   "sha": "b8cb3c25a810177ceccf9e9488e39bcd7589b361",
+   "date": "2026-11-01",
+   "version": "2.38.0",
+   "bump_commits": [
+    "4b1d9ac01ed96ef16b1521390d595002e1481302"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.38.h5",
+     "sha256": "de51d4611ca0179cd3b093ac0d0af45cec984e516dd8f5414757e5daaed722ed"
+    },
+    "dump": {
+     "name": "opensees_2.38.dump.json",
+     "sha256": "b7009ea5b26fb2176ddda57a73003abbaf914a12c114f975368f596a791b6c18"
+    },
+    "tcl": {
+     "name": "opensees_2.38.tcl",
+     "sha256": "1456e16f037e2e406c0310b4fac0f1e23991bed9cfd7370624eef7d2f336121f"
+    }
+   },
+   "stamps": {
+    "neutral": "2.36.0",
+    "opensees": "2.38.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.39",
+   "sha": "d35ed72adaaee0276975146fa12f9eaf1ba0321e",
+   "date": "2026-11-12",
+   "version": "2.39.0",
+   "bump_commits": [
+    "9f15eede998e88c7fde3e9a0b77aaa69a188fca7"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.39.h5",
+     "sha256": "08bfb1fe2588224a97fbd4af92143662fe5ed08ffd56fd62e44cf958ac7aef72"
+    },
+    "dump": {
+     "name": "opensees_2.39.dump.json",
+     "sha256": "a4cfa0bfdf723bb7276d1ae36e07eec7fae9ba99f730997d4be6ff9fc0d903b8"
+    },
+    "tcl": {
+     "name": "opensees_2.39.tcl",
+     "sha256": "1456e16f037e2e406c0310b4fac0f1e23991bed9cfd7370624eef7d2f336121f"
+    }
+   },
+   "stamps": {
+    "neutral": "2.36.0",
+    "opensees": "2.39.0"
+   }
+  },
+  {
+   "zone": "opensees",
+   "minor": "2.40",
+   "sha": "199fd1428bc0d7f4a0e880e733bb6bb3fc0f9500",
+   "date": "2026-11-12",
+   "version": "2.40.0",
+   "bump_commits": [
+    "90bf4abc8c3657038d8584cd9252318dcd71aa22"
+   ],
+   "generator": "tests/fixtures/schema_corpus/_era_generator.py --zone opensees",
+   "status": "ok",
+   "files": {
+    "h5": {
+     "name": "opensees_2.40.h5",
+     "sha256": "ac1f38e3b5dda635784092a4ae667ccac0127f78f4abd4685056d4f4a1027790"
+    },
+    "dump": {
+     "name": "opensees_2.40.dump.json",
+     "sha256": "5802e572de3378f82fb243c46030feade77968053d8cf3d95c5f23ace0f0fd90"
+    },
+    "tcl": {
+     "name": "opensees_2.40.tcl",
+     "sha256": "1456e16f037e2e406c0310b4fac0f1e23991bed9cfd7370624eef7d2f336121f"
+    }
+   },
+   "stamps": {
+    "neutral": "2.36.0",
+    "opensees": "2.40.0"
    }
   }
  ]

@@ -55,6 +55,11 @@ padded 0.0. The bump re-makes a cached transcode that holds the 0.0.
 elements differ in integration-point count is refused, where it was
 sliced across element boundaries. The bump re-makes a cached transcode
 that holds the mis-sliced record, so the record is re-read and refused.
+
+``PARSER_VERSION`` ``"1.4"`` (ADR 0131 D6): a transcode of nodal records
+only is written in the fork recorder's format, one ``MODEL_STAGE`` per
+stage, instead of native HDF5. The bump re-makes a cached native
+transcode of such a spec.
 """
 from __future__ import annotations
 
@@ -63,7 +68,7 @@ RESULTS_SCHEMA_VERSION = "1.2.0"
 #: Oldest results-zone version the reader opens (ADR 0113 (#1303)). It moves
 #: only with a major bump; ``schema_version.reader_floor`` reads it here.
 RESULTS_SCHEMA_FLOOR = "1.0.0"
-PARSER_VERSION = "1.3"
+PARSER_VERSION = "1.4"
 
 # Ladruno recorder on-disk format — the integer ``INFO/FORMAT_VERSION``
 # the ``.ladruno`` HDF5 writer stamps (currently 1). The reader is pinned

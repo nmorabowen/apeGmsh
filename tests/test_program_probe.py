@@ -11,6 +11,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 _spec = importlib.util.spec_from_file_location(
     "program_probe",
     Path(__file__).resolve().parent.parent / "scripts" / "program_probe.py",
@@ -36,9 +38,10 @@ def _checks(hours_ago: float, conclusion: str = "SUCCESS") -> list[dict]:
     ]
 
 
-def _verdict(hours_ago: float, verdict: str = "approve", sha: str = HEAD) -> dict:
+def _verdict(hours_ago: float, verdict: str = "approve", sha: str = HEAD,
+             association: str = "OWNER") -> dict:
     return {"body": f"Review-verdict: Opus 5.5 {verdict} {sha}\n\nnotes",
-            "createdAt": _iso(hours_ago)}
+            "createdAt": _iso(hours_ago), "authorAssociation": association}
 
 
 def _pr(number=1, *, created=1.0, updated=0.5, comments=(), checks=(),
@@ -89,6 +92,57 @@ def test_short_sha_matches_head():
 def test_changes_after_approve_at_head_withdraws_approval():
     pr = _pr(created=10, comments=[_verdict(6), _verdict(5, "changes")],
              checks=_checks(6))
+    assert _kinds([pr]) == []
+
+
+def test_verdict_from_an_outsider_does_not_count():
+    # #2878: the repo is public, so only OWNER/MEMBER/COLLABORATOR verdicts count.
+    for association in ("NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR"):
+        pr = _pr(comments=[_verdict(5, association=association)])
+        assert pp.verdicts(pr) == []
+        assert pp.approval_at_head(pr) is None
+    unlabelled = _verdict(5)
+    del unlabelled["authorAssociation"]
+    assert pp.approval_at_head(_pr(comments=[unlabelled])) is None
+
+
+@pytest.mark.parametrize("prefix", ["﻿", "​", "﻿​"])
+def test_verdict_led_by_an_invisible_mark_counts(prefix):
+    c = _verdict(5)
+    c["body"] = prefix + c["body"]
+    assert pp.approval_at_head(_pr(comments=[c])) is not None
+
+
+def test_verdict_with_crlf_line_ends_counts():
+    c = _verdict(5)
+    c["body"] = "notes\r\n﻿Review-verdict: Opus 5.5 approve " + HEAD + "\r\n"
+    assert pp.approval_at_head(_pr(comments=[c])) is not None
+
+
+def test_verdict_after_other_text_on_the_line_still_does_not_count():
+    # #1917: only a leading mark is dropped; a mid-line mark cannot forge one.
+    for body in (f"see ﻿Review-verdict: Opus approve {HEAD}",
+                 f"x Review-verdict: Opus approve {HEAD}"):
+        c = {**_verdict(5), "body": body}
+        assert pp.verdicts(_pr(comments=[c])) == []
+
+
+def test_bom_verdict_from_an_outsider_still_does_not_count():
+    c = _verdict(5, association="NONE")
+    c["body"] = "﻿" + c["body"]
+    assert pp.verdicts(_pr(comments=[c])) == []
+
+
+def test_verdict_from_a_member_or_collaborator_counts():
+    for association in ("OWNER", "MEMBER", "COLLABORATOR"):
+        pr = _pr(comments=[_verdict(5, association=association)])
+        assert pp.approval_at_head(pr) is not None
+
+
+def test_outsider_approve_after_member_changes_stays_withdrawn():
+    pr = _pr(created=10, checks=_checks(6), comments=[
+        _verdict(6), _verdict(5.5, "changes"), _verdict(5, association="NONE")])
+    assert pp.approval_at_head(pr) is None
     assert _kinds([pr]) == []
 
 

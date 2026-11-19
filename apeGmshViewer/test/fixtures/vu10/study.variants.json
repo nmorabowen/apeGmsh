@@ -1,0 +1,24 @@
+{
+  "format": "apegmsh-variants",
+  "version": "1.0.0",
+  "variants": [
+    {
+      "label": "Uncracked",
+      "path": "plate_uncracked.h5",
+      "params": {
+        "state": "uncracked",
+        "Ie/Ig": 1.0,
+        "E": 30000000000.0
+      }
+    },
+    {
+      "label": "Cracked",
+      "path": "cracked/plate_cracked.h5",
+      "params": {
+        "state": "cracked",
+        "Ie/Ig": 0.35,
+        "E": 10500000000.0
+      }
+    }
+  ]
+}

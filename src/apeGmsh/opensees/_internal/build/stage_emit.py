@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import numbers
+import re
 from typing import TYPE_CHECKING
 
 from typing import (
@@ -34,6 +35,7 @@ from .ownership import (
 
 if TYPE_CHECKING:
     from ...emitter.base import Emitter
+    from ..._target import BackendInfo
     from apeGmsh.mesh.FEMData import FEMData
     from ..tag_plan import TagPlan
 
@@ -692,6 +694,7 @@ MATERIAL_STATE_ELEMENT_TOKENS: dict[str, int | None] = {
     "tri6n": 8,
     "FourNodeTetrahedron": 4,
     "SSPquad": 4,
+    "SSPquadUP": 4,
     "SSPbrick": 8,
     "BezierTri6": 8,
     "BezierTet10": 10,
@@ -812,20 +815,55 @@ def _refuse_tcl_syntax(who: str, message: str) -> None:
 #: resetting their class-wide stage flag.
 MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 
-#: Fork builds measured for that reset, by exact ``ladrunoBuild()`` sha:
-#: does the build carry :data:`MD_STATIC_FIX_COMMIT`?  Ancestry checked on
-#: the fork (GitHub compare); each row is measured by the live reset test
-#: (``tests/opensees/stage/test_class_wide_stage_flag.py``).  A sha cannot
-#: be ordered, so a build joins only once it is measured, and the deck
-#: guard (:data:`MD_STATIC_RESET_GUARD`) refuses every fork build not
-#: listed ``True``.  A ``FORK_PIN`` bump adds its row (a unit lock fails
-#: otherwise).
-FORK_BUILD_HAS_MD_STATIC_FIX: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261023, which merges the fix: no reset.
-    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
-    # The maintainer's venv build, an ancestor of the fix: resets.
-    "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
-}
+#: The ``ladrunoSchema`` v1 capability that promises that fix
+#: (``kCapabilities`` in the fork's ``SRC/interpreter/LadrunoSchema.h``,
+#: listed at ``FORK_PIN`` ``cfe478254``).  The fork defines a capability's
+#: absence as "older build, refuse", so a v0 schema, which predates every
+#: name, lacks it.
+MD_STAGE_FLAG_CAPABILITY = "mdStageFlagPreserved"
+
+
+class ForkBuildCapability(NamedTuple):
+    """A behaviour a Ladruno fork build must promise by name before an
+    emitted deck runs on it (#2518).
+
+    Some fixes change no command and no option token, so no
+    :class:`ForkBuildFloor` probe can tell a fixed build from an older
+    one, and a sha cannot be ordered.  ``ladrunoSchema`` v1 lists such
+    behaviours in its ``capabilities``.  The deck asks the running build:
+    one without ``ladrunoBuild`` (stock) runs on; one with it runs only
+    when ``ladrunoSchema`` answers schema v1 whose ``capabilities`` list
+    holds :attr:`capability`.  Every other answer stops the deck with
+    :attr:`message`: no ``ladrunoSchema`` command, a call that fails, a
+    v0 schema, another version, or a list without the name (fail closed,
+    as ``_target`` reads any version but 0 and 1 as unknown).  A
+    command-existence probe would not do: v0 builds register
+    ``ladrunoSchema`` too.  The live route asks the engine it drives the
+    same question (:func:`engine_has_capability`).
+    """
+
+    #: The ``capabilities`` entry the running build must list.
+    capability: str
+    #: The error the deck stops with.
+    message: str
+
+
+def engine_has_capability(
+    guard: ForkBuildCapability, info: "BackendInfo", ops: object,
+) -> bool:
+    """Whether the engine ``ops``, which ``info`` describes, passes
+    ``guard``, as the deck's check would answer on it.
+
+    A readable schema (``info.schema``, v0 or v1) answers by its
+    ``capabilities``: empty for v0.  Without one, only an engine with no
+    ``ladrunoBuild`` command (stock) passes; a fork whose schema is
+    unknown (``schema is None``: no ``ladrunoSchema``, a failing call,
+    another version, a build that answers no sha) is refused, never
+    passed (fail closed).
+    """
+    if info.schema is not None:
+        return guard.capability in info.schema.capabilities
+    return not hasattr(ops, "ladrunoBuild")  # apegmsh-lint: getattr-undefined-ok fork-only OpenSees command, the one fork signal; the deck guard asks the same
 
 
 class ForkBuildAllowlist(NamedTuple):
@@ -847,37 +885,67 @@ class ForkBuildAllowlist(NamedTuple):
     message: str
     #: Whether a build without ``ladrunoBuild`` (stock) runs on.
     stock_runs: bool = True
+    #: When set (with ``stock_runs`` False), a build without
+    #: ``ladrunoBuild`` runs on iff its ``version`` answer starts with
+    #: ``X.Y.Z`` at or after this; any other answer stops the deck.
+    stock_min_version: "tuple[int, int, int] | None" = None
 
 
 #: A check an emitted deck runs on the build at its start.
-ForkBuildGuard: TypeAlias = "ForkBuildFloor | ForkBuildAllowlist"
+ForkBuildGuard: TypeAlias = (
+    "ForkBuildFloor | ForkBuildAllowlist | ForkBuildCapability")
 
 
-#: The error :data:`MD_STATIC_RESET_GUARD` stops a deck with.
+#: The error :data:`MD_STATIC_RESET_GUARD` stops a deck with, and the live
+#: route raises: one message on every route.
 MD_STATIC_RESET_MESSAGE = (
-    "apeGmsh: this deck builds an element or material after a stage "
+    "apeGmsh: this model builds an element or material after a stage "
     "flipped the class-wide stage flag ManzariDafalias::mElastFlag of "
     "ManzariDafalias and LadrunoSANISAND, and solves before flipping "
     "it again. A Ladruno fork build without fork commit "
     f"{MD_STATIC_FIX_COMMIT[:9]} resets that flag in the material "
     "constructor, so every one of these materials would go back to "
-    "elastic with no warning (apeGmsh issues #2444, #2516). The "
-    "running OpenSees is a fork build whose ladrunoBuild sha is not "
-    "one measured to carry the fix. Rebuild the Ladruno fork at "
-    "FORK_PIN, flip the whole group again after the activation, or "
-    "activate these elements before the flip."
+    "elastic with no warning (apeGmsh issues #2444, #2518). The "
+    "running OpenSees is a Ladruno fork build whose ladrunoSchema does "
+    f"not report the {MD_STAGE_FLAG_CAPABILITY} capability, so it cannot "
+    "be shown to carry the fix. Rebuild the Ladruno fork at FORK_PIN, "
+    "flip the whole group again after the activation, or activate these "
+    "elements before the flip."
 )
 
 
 #: The guard a deck whose solve could see the ManzariDafalias constructor
-#: reset runs (:meth:`MaterialStageCarriers.solve_fork_guards`).  The one
-#: hook for a fork capability marker of the fix: when the fork
-#: registers one, this becomes a :class:`ForkBuildFloor` on that command
-#: (with its own message) and the sha table goes.
-MD_STATIC_RESET_GUARD = ForkBuildAllowlist(
-    builds=tuple(sorted(
-        sha for sha, fixed in FORK_BUILD_HAS_MD_STATIC_FIX.items() if fixed)),
-    message=MD_STATIC_RESET_MESSAGE)
+#: reset runs (:meth:`MaterialStageCarriers.solve_fork_guards`), and the
+#: question the live route asks the engine it drives
+#: (``LiveOpsEmitter``, :func:`engine_has_capability`).
+MD_STATIC_RESET_GUARD = ForkBuildCapability(
+    capability=MD_STAGE_FLAG_CAPABILITY, message=MD_STATIC_RESET_MESSAGE)
+
+
+#: The ``ladrunoSchema`` v1 capability that promises ``recorder ladruno
+#: ... -R tag -RN nodeTag`` (fork WP-234): the node channel records the
+#: ``-R`` element nodes plus the ``-RN`` region's nodes.  A build without
+#: it fails on the unknown ``-RN`` option or, older still, ignores it.
+LADRUNO_NODE_REGION_CAPABILITY = "recorderLadrunoNodeRegion"
+
+#: The error :data:`LADRUNO_NODE_REGION_GUARD` stops a deck with, and the
+#: live route raises: one message on every route.
+LADRUNO_NODE_REGION_MESSAGE = (
+    "apeGmsh: this Ladruno recorder filters nodes and elements together "
+    "(nodes_pg or nodes with elements_pg or elements), so it is emitted as "
+    "two regions read by recorder ladruno -R and -RN (fork WP-234). One "
+    "OpenSees region cannot hold both lists, so without -RN the nodes "
+    "outside the recorded elements would be dropped with no error. The "
+    "running OpenSees is a Ladruno fork build whose ladrunoSchema does not "
+    f"report the {LADRUNO_NODE_REGION_CAPABILITY} capability. Rebuild the "
+    "Ladruno fork at or after WP-234, or drop one of the two selectors."
+)
+
+#: The guard a deck with a ``recorder ladruno ... -RN`` line runs, and the
+#: question the live route asks the engine it drives.
+LADRUNO_NODE_REGION_GUARD = ForkBuildCapability(
+    capability=LADRUNO_NODE_REGION_CAPABILITY,
+    message=LADRUNO_NODE_REGION_MESSAGE)
 
 
 #: The Ladruno fork merge that completes fork WP-202, WP-203 and WP-205:
@@ -892,8 +960,56 @@ C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 #: ``True`` is refused (fail closed).  A ``FORK_PIN`` bump adds its row (a
 #: unit lock fails otherwise).
 FORK_BUILD_HAS_C83: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261023: c83ee812e is its ancestor.
+    # FORK_PIN ladruno-v20261118b (cfe478254): c83ee812e is its ancestor
+    # (GitHub compare: ahead 459, behind 0). It is 3e738308c plus
+    # 61 commits: WP-232k MPM soil models (SANISAND, HS/HSSmall at
+    # particles), the new gridvel forms, `mpm stage`; mode F now applies
+    # gridvel and refuses pforce/condForce (OpenSees#1109).
+    "cfe47825407f2918081eb8083d5865206ddbfd69": True,
+    # ladruno-v20261118 (3e738308c): c83ee812e is its ancestor
+    # (GitHub compare: ahead 398, behind 0). It is 6ee968060 plus
+    # 35 commits: MPM B-spline bases (WP-232i) and anti-locking F-bar
+    # (WP-232j), the WP-234 recorder node region, and CPML late-time
+    # stability.
+    "3e738308c79846fe4bd76687d3af3c705a582c91": True,
+    # ladruno-v20261116 (6ee968060): c83ee812e is its ancestor
+    # (GitHub compare: ahead 363, behind 0). It is f0b9a1df6 plus
+    # 68 commits: the crash-safe (SWMR) recorder and its torn-last-stage
+    # rule, the MPM implicit mode A, writer presize and M0b measurements,
+    # and the LadrunoIMKBeam -endZones loads.
+    "6ee9680606e3d5d62c410d286547b8009d581159": True,
+    # ladruno-v20261114 (f0b9a1df6): c83ee812e is its ancestor
+    # (GitHub compare: ahead 295, behind 0). It is 6050d78e1 plus
+    # 84 commits: the MPM driver, contracts and particle writer, and
+    # the LadrunoHS, recorder and SANISAND fixes.
+    "f0b9a1df699f9634fd89c5942d69d90fe5ad27c4": True,
+    # ladruno-v20261103 (6050d78e1): c83ee812e is its ancestor
+    # (GitHub compare: ahead 211, behind 0). It is 23d937bc4 plus
+    # 123 commits: the LadrunoConcrete3D tangent, concrete integration,
+    # beam-column, contact and integrator fixes.
+    "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe": True,
+    # ladruno-v20261030b (23d937bc4): c83ee812e is its ancestor
+    # (GitHub compare: ahead 88, behind 0). It is c9004f48d plus
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
+    "23d937bc4011d1b29230671511531e23f777d78c": True,
+    # ladruno-v20261030 (c9004f48d): c83ee812e is its ancestor
+    # (GitHub compare: ahead 82, behind 0). It is 6ee6a04fd plus
+    # 5 commits that change only LadrunoConcrete3D.
+    "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
+    # ladruno-v20261029 (6ee6a04fd): c83ee812e is its ancestor
+    # (GitHub compare: ahead 77, behind 0). It is 3 commits past
+    # 9aadc76cc and changes only the release workflow.
+    "6ee6a04fdc9e8a4699b9c483284151f80b48f701": True,
+    # ladruno-v20261028: c83ee812e is its ancestor (GitHub
+    # compare: ahead 74, behind 0).
+    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
+    # ladruno-v20261023: c83ee812e is its ancestor.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
+    # A build one commit past fork wp/209 (0f2e73c2e), on fork branch
+    # build/86893bd: c83ee812e is its ancestor (GitHub compare: ahead 20,
+    # behind 0).
+    "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
     # The maintainer's venv build, which predates it: -pDelta runs without
     # the geometric stiffness, and modalProperties after eigen -feast exits
     # the process.
@@ -971,7 +1087,50 @@ MEMBRANE_WP208_FORK_COMMIT = "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f"
 FORK_BUILD_HAS_MEMBRANE_WP208: dict[str, bool] = {
     # The floor commit itself.
     MEMBRANE_WP208_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261023: b6d3e3d21 is its ancestor.
+    # FORK_PIN ladruno-v20261118b (cfe478254): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 457, behind 0). It is 3e738308c plus
+    # 61 commits: WP-232k MPM soil models (SANISAND, HS/HSSmall at
+    # particles), the new gridvel forms, `mpm stage`; mode F now applies
+    # gridvel and refuses pforce/condForce (OpenSees#1109).
+    "cfe47825407f2918081eb8083d5865206ddbfd69": True,
+    # ladruno-v20261118 (3e738308c): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 396, behind 0). It is 6ee968060 plus
+    # 35 commits: MPM B-spline bases (WP-232i) and anti-locking F-bar
+    # (WP-232j), the WP-234 recorder node region, and CPML late-time
+    # stability.
+    "3e738308c79846fe4bd76687d3af3c705a582c91": True,
+    # ladruno-v20261116 (6ee968060): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 361, behind 0). It is f0b9a1df6 plus
+    # 68 commits: the crash-safe (SWMR) recorder and its torn-last-stage
+    # rule, the MPM implicit mode A, writer presize and M0b measurements,
+    # and the LadrunoIMKBeam -endZones loads.
+    "6ee9680606e3d5d62c410d286547b8009d581159": True,
+    # ladruno-v20261114 (f0b9a1df6): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 293, behind 0). It is 6050d78e1 plus
+    # 84 commits: the MPM driver, contracts and particle writer, and
+    # the LadrunoHS, recorder and SANISAND fixes.
+    "f0b9a1df699f9634fd89c5942d69d90fe5ad27c4": True,
+    # ladruno-v20261103 (6050d78e1): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 209, behind 0). It is 23d937bc4 plus
+    # 123 commits: the LadrunoConcrete3D tangent, concrete integration,
+    # beam-column, contact and integrator fixes.
+    "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe": True,
+    # ladruno-v20261030b (23d937bc4): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 86, behind 0). It is c9004f48d plus
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
+    "23d937bc4011d1b29230671511531e23f777d78c": True,
+    # ladruno-v20261030 (c9004f48d): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 80, behind 0). It is 6ee6a04fd plus
+    # 5 commits that change only LadrunoConcrete3D.
+    "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
+    # ladruno-v20261029 (6ee6a04fd): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 75, behind 0). It is 3 commits past
+    # 9aadc76cc and changes only the release workflow.
+    "6ee6a04fdc9e8a4699b9c483284151f80b48f701": True,
+    # ladruno-v20261028 (compare: ahead 72, behind 0).
+    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
+    # ladruno-v20261023: b6d3e3d21 is its ancestor.
     "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
     # A ladruno build after the floor (compare: ahead 15, behind 0).
     "a8bcc07e901b99bad841357ee0b8a8d1de609aec": True,
@@ -1030,6 +1189,337 @@ def is_membrane_wp208(
         a in MEMBRANE_WP208_OPTIONS for a in args if isinstance(a, str))
 
 
+#: The Ladruno fork commit from which every 3-D beam element the bridge
+#: emits honours a 3-D ``eleLoad -beamUniform`` with a partial span or a
+#: trapezoid (``wy wz wx aL bL [wyb wzb wxb]``, the fork's
+#: ``Beam3dPartialUniformLoad``).  Fork WP-098 (``9d3c3216d``) adds the
+#: load to ``ElasticTimoshenkoBeam3d``, ``DispBeamColumn3d`` and
+#: ``LadrunoDispBeamColumn3d`` and makes ``ElasticBeam3d`` read the tail;
+#: fork WP-200 (this commit, a descendant of ``9d3c3216d``) adds it to
+#: the 3-D ``LadrunoIMKBeam``.  ``forceBeamColumn`` honoured it before;
+#: ``LadrunoForceBeamColumn`` enters later (``9f4e92c77``) with it.
+#: Fork build 79e062367, an ancestor of both, keeps only the start values
+#: on ``elasticBeamColumn`` and drops the whole load on the other three
+#: (``tests/opensees/live/test_beam_uniform_3d_trapezoid_live.py``).
+BEAM3D_PARTIAL_LOAD_FORK_COMMIT = "34df942c75fa8006da7fa930d32645c0fd37b20f"
+
+#: Fork builds measured for :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`, by
+#: exact ``ladrunoBuild()`` sha.  No command marks the load, so no
+#: :class:`ForkBuildFloor` probe can, and a sha cannot be ordered: a build
+#: joins once its ancestry is checked on the fork by a GitHub compare
+#: (a build GitHub cannot see is not listed), and every fork build not
+#: listed ``True`` is refused
+#: (fail closed).  A ``FORK_PIN`` bump adds its row (a unit lock fails
+#: otherwise).
+FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
+    # The floor commit itself.
+    BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
+    # FORK_PIN ladruno-v20261118b (cfe478254): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 487, behind 0). It is 3e738308c plus
+    # 61 commits: WP-232k MPM soil models (SANISAND, HS/HSSmall at
+    # particles), the new gridvel forms, `mpm stage`; mode F now applies
+    # gridvel and refuses pforce/condForce (OpenSees#1109).
+    "cfe47825407f2918081eb8083d5865206ddbfd69": True,
+    # ladruno-v20261118 (3e738308c): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 426, behind 0). It is 6ee968060 plus
+    # 35 commits: MPM B-spline bases (WP-232i) and anti-locking F-bar
+    # (WP-232j), the WP-234 recorder node region, and CPML late-time
+    # stability.
+    "3e738308c79846fe4bd76687d3af3c705a582c91": True,
+    # ladruno-v20261116 (6ee968060): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 391, behind 0). It is f0b9a1df6 plus
+    # 68 commits: the crash-safe (SWMR) recorder and its torn-last-stage
+    # rule, the MPM implicit mode A, writer presize and M0b measurements,
+    # and the LadrunoIMKBeam -endZones loads.
+    "6ee9680606e3d5d62c410d286547b8009d581159": True,
+    # ladruno-v20261114 (f0b9a1df6): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 323, behind 0). It is 6050d78e1 plus
+    # 84 commits: the MPM driver, contracts and particle writer, and
+    # the LadrunoHS, recorder and SANISAND fixes.
+    "f0b9a1df699f9634fd89c5942d69d90fe5ad27c4": True,
+    # ladruno-v20261103 (6050d78e1): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 239, behind 0). It is 23d937bc4 plus
+    # 123 commits: the LadrunoConcrete3D tangent, concrete integration,
+    # beam-column, contact and integrator fixes.
+    "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe": True,
+    # ladruno-v20261030b (23d937bc4): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 116, behind 0). It is c9004f48d plus
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
+    "23d937bc4011d1b29230671511531e23f777d78c": True,
+    # ladruno-v20261030 (c9004f48d): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 110, behind 0). It is 6ee6a04fd plus
+    # 5 commits that change only LadrunoConcrete3D.
+    "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
+    # ladruno-v20261029 (6ee6a04fd): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 105, behind 0). It is 3 commits past
+    # 9aadc76cc and changes only the release workflow.
+    "6ee6a04fdc9e8a4699b9c483284151f80b48f701": True,
+    # ladruno-v20261028 (compare: ahead 102, behind 0).
+    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
+    # ladruno-v20261023 (compare: ahead 35, behind 0); the live
+    # oracle tests/opensees/live/test_beam_uniform_3d_trapezoid_live.py
+    # passes on it.
+    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
+    # Fork WP-208, b6d3e3d21 (compare: ahead 30, behind 0).
+    "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f": True,
+    # A ladruno build after WP-208 (compare: ahead 45, behind 0).
+    "a8bcc07e901b99bad841357ee0b8a8d1de609aec": True,
+    # Fork branch build/86893bd, one commit past wp/209 (compare: ahead
+    # 48, behind 0).
+    "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
+    # The maintainer's venv build, an ancestor of 9d3c3216d: the live
+    # oracle fails 24 of its 28 cases on it.
+    "79e0623670c61c768357a01dff1477a4a0ef7e06": False,
+}
+
+
+def fork_build_has_beam3d_partial_load(build: "str | None") -> bool:
+    """Whether the build that answers ``ladrunoBuild()`` with ``build`` is
+    measured to carry :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`.
+
+    ``None`` (stock, or a fork build without the stamp) and every unlisted
+    sha are ``False``.
+    """
+    return FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD.get(build or "", False)
+
+
+#: The error a 3-D partial or trapezoidal ``-beamUniform`` stops with below
+#: the floor: the live route raises it and
+#: :data:`BEAM3D_PARTIAL_LOAD_GUARD` stops a deck with it.
+BEAM3D_PARTIAL_LOAD_MESSAGE = (
+    "apeGmsh: a 3-D eleLoad -type -beamUniform with a partial span or a "
+    "trapezoid on any element but forceBeamColumn requires the Ladruno "
+    "fork at or after fork commit "
+    f"{BEAM3D_PARTIAL_LOAD_FORK_COMMIT[:9]} (fork WP-098 and WP-200). "
+    "Older builds give a wrong answer with no warning: fork build "
+    "79e062367 keeps only the start values on elasticBeamColumn and "
+    "drops the whole load on ElasticTimoshenkoBeam, dispBeamColumn and "
+    "LadrunoDispBeamColumn while analyze returns 0 (apeGmsh issues "
+    "#2550, #2565). The running OpenSees has no ladrunoBuild command, or "
+    "its ladrunoBuild sha is not one measured to carry that commit. "
+    "Rebuild the Ladruno fork at FORK_PIN."
+)
+
+#: The guard a deck with a 3-D partial or trapezoidal ``-beamUniform``
+#: runs: stock is refused too, as the live route always refused it.
+BEAM3D_PARTIAL_LOAD_GUARD = ForkBuildAllowlist(
+    builds=tuple(sorted(
+        sha for sha, ok in FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD.items()
+        if ok)),
+    message=BEAM3D_PARTIAL_LOAD_MESSAGE,
+    stock_runs=False)
+
+
+def is_beam3d_partial_load(
+    args: "Sequence[int | float | str]", ndm: int,
+) -> bool:
+    """Whether ``eleLoad *args`` in an ``ndm`` model is a 3-D
+    ``-beamUniform`` with a partial span or a trapezoid: more than the
+    three values ``wy wz wx`` after the type.  The load the live route and
+    :data:`BEAM3D_PARTIAL_LOAD_GUARD` hold to
+    :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`."""
+    if ndm != 3 or "-type" not in args:
+        return False
+    at = list(args).index("-type")
+    return (
+        at + 1 < len(args) and args[at + 1] == "-beamUniform"
+        and len(args) - (at + 2) > 3)
+
+
+#: The element tokens whose 3-D partial or trapezoidal ``-beamUniform`` is
+#: right only at or after :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`, counted
+#: in the fork source by ``LOAD_TAG_Beam3dPartialUniformLoad`` branches:
+#: ``ElasticBeam3d`` has one that ignores the tail before ``9d3c3216d``;
+#: ``ElasticTimoshenkoBeam3d``, ``DispBeamColumn3d`` and
+#: ``LadrunoDispBeamColumn3d`` gain theirs at ``9d3c3216d``;
+#: ``LadrunoIMKBeam`` gains its at the floor; ``LadrunoForceBeamColumn``
+#: first exists after the floor, so it needs it too.  Listed for the
+#: record and the tests: the check itself refuses every token outside
+#: :data:`BEAM3D_PARTIAL_LOAD_SAFE_ELEMENTS` (fail closed).
+BEAM3D_PARTIAL_LOAD_FLOOR_ELEMENTS: frozenset[str] = frozenset({
+    "elasticBeamColumn", "ElasticTimoshenkoBeam", "dispBeamColumn",
+    "LadrunoDispBeamColumn", "LadrunoIMKBeam", "LadrunoForceBeamColumn",
+})
+
+#: The element tokens that honour the load without
+#: :data:`BEAM3D_PARTIAL_LOAD_FORK_COMMIT`, though only on a build that
+#: carries :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`
+#: (:data:`FORCE_BEAM_PARTIAL_LOAD_GUARD`).
+BEAM3D_PARTIAL_LOAD_SAFE_ELEMENTS: frozenset[str] = frozenset({
+    "forceBeamColumn",
+})
+
+#: The upstream OpenSees commit that makes ``ForceBeamColumn3d`` read the
+#: tail of the 3-D partial load (``computeReactions`` and
+#: ``computeSectionForces``).  Builds before it ignore the trapezoid part,
+#: and the ``OPS_VERSION`` 3.6.0 tag, which predates it, carries no
+#: partial-load branch at all.
+FORCE_BEAM_PARTIAL_LOAD_COMMIT = "f4c791df6a5886cd0a98e08be29582ae691eaa1c"
+
+#: The first ``OPS_VERSION`` every build of which carries
+#: :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`: upstream ``f1d16ac7f`` sets
+#: "3.7.0" and descends from it (GitHub compare: ahead 212, behind 0), and
+#: tag v3.7.0 contains it.  "3.6.0" names builds on both sides (tag v3.6.0
+#: is 652 commits behind it), so a build that answers 3.6.0 is refused,
+#: openseespy 3.6.0.3 included although it carries the fix.
+FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION: tuple[int, int, int] = (3, 7, 0)
+
+#: Fork builds measured for :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`, by
+#: exact ``ladrunoBuild()`` sha, each by a GitHub compare on the fork.
+#: Every fork build not listed ``True`` is refused (fail closed).  A
+#: ``FORK_PIN`` bump adds its row (a unit lock fails otherwise).
+FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD: dict[str, bool] = {
+    # The 3-D partial-load floor commit (compare: ahead 4045, behind 0).
+    BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
+    # FORK_PIN ladruno-v20261118b (cfe478254): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4532, behind 0). It is 3e738308c plus
+    # 61 commits: WP-232k MPM soil models (SANISAND, HS/HSSmall at
+    # particles), the new gridvel forms, `mpm stage`; mode F now applies
+    # gridvel and refuses pforce/condForce (OpenSees#1109).
+    "cfe47825407f2918081eb8083d5865206ddbfd69": True,
+    # ladruno-v20261118 (3e738308c): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4471, behind 0). It is 6ee968060 plus
+    # 35 commits: MPM B-spline bases (WP-232i) and anti-locking F-bar
+    # (WP-232j), the WP-234 recorder node region, and CPML late-time
+    # stability.
+    "3e738308c79846fe4bd76687d3af3c705a582c91": True,
+    # ladruno-v20261116 (6ee968060): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4436, behind 0). It is f0b9a1df6 plus
+    # 68 commits: the crash-safe (SWMR) recorder and its torn-last-stage
+    # rule, the MPM implicit mode A, writer presize and M0b measurements,
+    # and the LadrunoIMKBeam -endZones loads.
+    "6ee9680606e3d5d62c410d286547b8009d581159": True,
+    # ladruno-v20261114 (f0b9a1df6): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4368, behind 0). It is 6050d78e1 plus
+    # 84 commits: the MPM driver, contracts and particle writer, and
+    # the LadrunoHS, recorder and SANISAND fixes.
+    "f0b9a1df699f9634fd89c5942d69d90fe5ad27c4": True,
+    # ladruno-v20261103 (6050d78e1): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4284, behind 0). It is 23d937bc4 plus
+    # 123 commits: the LadrunoConcrete3D tangent, concrete integration,
+    # beam-column, contact and integrator fixes.
+    "6050d78e105bd4fc3a15ddb8ee521aa861a4dafe": True,
+    # ladruno-v20261030b (23d937bc4): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4161, behind 0). It is c9004f48d plus
+    # 6 commits: summed material return codes saturate (Tri31,
+    # FourNodeQuad, LadrunoQuad, Domain::update) and a recorder test.
+    "23d937bc4011d1b29230671511531e23f777d78c": True,
+    # ladruno-v20261030 (c9004f48d): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4155, behind 0). It is 6ee6a04fd plus
+    # 5 commits that change only LadrunoConcrete3D.
+    "c9004f48db4849473c4e277665bc9fd63cb84f87": True,
+    # ladruno-v20261029 (6ee6a04fd): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4150, behind 0). It is 3 commits past
+    # 9aadc76cc and changes only the release workflow.
+    "6ee6a04fdc9e8a4699b9c483284151f80b48f701": True,
+    # ladruno-v20261028 (compare: ahead 4147, behind 0).
+    "9aadc76cc2fba68365d3d3d26a751fbb600f0228": True,
+    # ladruno-v20261023 (compare: ahead 4080, behind 0).
+    "bdb69cea5a9fb17f474cb526e745ac5efb89b0be": True,
+    # Fork WP-208 (compare: ahead 4075, behind 0).
+    "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f": True,
+    # A ladruno build after WP-208 (compare: ahead 4090, behind 0).
+    "a8bcc07e901b99bad841357ee0b8a8d1de609aec": True,
+    # Fork branch build/86893bd (compare: ahead 4093, behind 0).
+    "86893bdf12a27799c73f5c0930b4c815d1b0592a": True,
+    # The maintainer's venv build (compare: ahead 3472, behind 0); the
+    # live oracle passes forceBeamColumn on it.
+    "79e0623670c61c768357a01dff1477a4a0ef7e06": True,
+}
+
+
+def fork_build_has_force_beam_partial_load(build: "str | None") -> bool:
+    """Whether the fork build that answers ``ladrunoBuild()`` with
+    ``build`` is measured to carry :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`.
+
+    ``None`` and every unlisted sha are ``False``.
+    """
+    return FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD.get(build or "", False)
+
+
+def stock_version_has_force_beam_partial_load(version: object) -> bool:
+    """Whether a stock build that answers ``version()`` with ``version``
+    carries :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`
+    (:data:`FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION`).  An answer that does
+    not start with ``X.Y.Z`` is ``False``."""
+    parsed = parse_ops_version(version)
+    return parsed is not None and (
+        parsed >= FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION)
+
+
+#: The error a 3-D partial or trapezoidal ``-beamUniform`` on
+#: ``forceBeamColumn`` alone stops with on a build that lacks
+#: :data:`FORCE_BEAM_PARTIAL_LOAD_COMMIT`.
+FORCE_BEAM_PARTIAL_LOAD_MESSAGE = (
+    "apeGmsh: a 3-D eleLoad -type -beamUniform with a partial span or a "
+    "trapezoid on forceBeamColumn needs a build with upstream OpenSees "
+    f"commit {FORCE_BEAM_PARTIAL_LOAD_COMMIT[:9]}: OpenSees "
+    f"{'.'.join(map(str, FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION))} or "
+    "later, or a Ladruno fork build measured to carry it. Older builds "
+    "drop the trapezoid part or the whole load, a wrong answer with no "
+    "warning (apeGmsh issue #2565). The running OpenSees reports a "
+    "version before that or one that cannot be read, or its ladrunoBuild "
+    "sha is not one measured to carry the commit. openseespy 3.6.0.3 "
+    "carries it but reports 3.6.0 like the 3.6.0 builds without it, so it "
+    "is refused too. Upgrade OpenSees, or rebuild the Ladruno fork at "
+    "FORK_PIN."
+)
+
+#: The guard a deck runs when its 3-D partial load reaches
+#: ``forceBeamColumn`` alone: a listed fork build, or stock at or after
+#: :data:`FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION`.
+FORCE_BEAM_PARTIAL_LOAD_GUARD = ForkBuildAllowlist(
+    builds=tuple(sorted(
+        sha for sha, ok in FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD.items()
+        if ok)),
+    message=FORCE_BEAM_PARTIAL_LOAD_MESSAGE,
+    stock_runs=False,
+    stock_min_version=FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION)
+
+
+class Beam3dPartialLoadTargets:
+    """Which build a 3-D partial or trapezoidal ``-beamUniform`` needs,
+    from the element tags it reaches.
+
+    An emitter notes every element it creates and removes.  Only the tags
+    of :data:`BEAM3D_PARTIAL_LOAD_SAFE_ELEMENTS` are kept, so the memory is
+    theirs and nothing else.  A load whose every target is a kept tag needs
+    :data:`FORCE_BEAM_PARTIAL_LOAD_GUARD`; one with any other target (a
+    listed element, an unknown token, a tag never created, or a target list
+    other than ``-ele t1 t2 ...``) needs :data:`BEAM3D_PARTIAL_LOAD_GUARD`
+    (fail closed).
+    """
+
+    def __init__(self) -> None:
+        self._safe: set[int] = set()
+
+    def note_element(self, ele_type: str, tag: int) -> None:
+        if ele_type in BEAM3D_PARTIAL_LOAD_SAFE_ELEMENTS:
+            self._safe.add(int(tag))
+        else:
+            self._safe.discard(int(tag))
+
+    def note_removed(self, tag: int) -> None:
+        self._safe.discard(int(tag))
+
+    def guard_for(
+        self, args: "Sequence[int | float | str]", ndm: int,
+    ) -> "ForkBuildAllowlist | None":
+        """The guard ``eleLoad *args`` in an ``ndm`` model needs, or
+        ``None`` for a load outside this check."""
+        if not is_beam3d_partial_load(args, ndm):
+            return None
+        if not args or args[0] != "-ele":
+            return BEAM3D_PARTIAL_LOAD_GUARD
+        targets = args[1:list(args).index("-type")]
+        if not targets or any(
+                isinstance(t, bool) or not isinstance(t, numbers.Integral)
+                or int(t) not in self._safe for t in targets):
+            return BEAM3D_PARTIAL_LOAD_GUARD
+        return FORCE_BEAM_PARTIAL_LOAD_GUARD
+
+
 def fork_guard_lines(
     guard: ForkBuildGuard, dialect: 'Literal["py", "tcl"]',
 ) -> list[str]:
@@ -1038,8 +1528,12 @@ def fork_guard_lines(
     A :class:`ForkBuildFloor` stops the deck when the build lacks its
     probe command; a :class:`ForkBuildAllowlist` when the build has
     ``ladrunoBuild`` and it does not answer a listed sha, or lacks it and
-    the guard is not ``stock_runs``.  Any other object raises.
+    the guard is not ``stock_runs``; a :class:`ForkBuildCapability` when
+    the build has ``ladrunoBuild`` and its ``ladrunoSchema`` is not a v1
+    schema listing the capability.  Any other object raises.
     """
+    if isinstance(guard, ForkBuildCapability):
+        return _capability_lines(guard, dialect)
     if isinstance(guard, ForkBuildFloor):
         message = fork_floor_message(guard)
         if dialect == "tcl":
@@ -1055,6 +1549,8 @@ def fork_guard_lines(
                 raise BridgeError(
                     f"ForkBuildAllowlist: {sha!r} is not a 40-hex "
                     "ladrunoBuild sha.")
+        if guard.stock_min_version is not None:
+            return _versioned_allowlist_lines(guard, dialect)
         if not guard.stock_runs:
             if dialect == "tcl":
                 return ['if {[info commands ladrunoBuild] eq "" || '
@@ -1086,7 +1582,114 @@ def fork_guard_lines(
                 f"        raise SystemExit({guard.message!r})"]
     raise BridgeError(
         f"fork_guard_lines: {type(guard).__name__} is not a fork build "
-        "guard (ForkBuildFloor or ForkBuildAllowlist).")
+        "guard (ForkBuildFloor, ForkBuildAllowlist or ForkBuildCapability).")
+
+
+#: A capability name the guards can quote as is: in a Tcl regexp, in a
+#: Python string literal, and as a JSON string without escapes.
+_CAPABILITY_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+
+
+def _capability_lines(
+    guard: ForkBuildCapability, dialect: 'Literal["py", "tcl"]',
+) -> list[str]:
+    """:func:`fork_guard_lines` for a :class:`ForkBuildCapability`.
+
+    Tcl has no JSON parser, so it matches the compact JSON the fork
+    renders: ``"schema_version":1`` (not 10, not 1.0) and the name
+    quoted as one entry of the ``"capabilities":[...]`` list (after the
+    ``[`` or a comma, before a comma or the ``]``).  The py deck parses
+    the answer with ``json.loads`` and checks the same two facts.
+    """
+    _refuse_tcl_syntax("ForkBuildCapability", guard.message)
+    cap = guard.capability
+    if not _CAPABILITY_RE.fullmatch(cap):
+        raise BridgeError(
+            f"ForkBuildCapability: {cap!r} is not a ladrunoSchema "
+            "capability name (a letter, then letters, digits or _).")
+    if dialect == "tcl":
+        return ['if {[info commands ladrunoBuild] ne ""} {',
+                '    if {[info commands ladrunoSchema] eq "" || '
+                "[catch {ladrunoSchema} _apesees_schema] || "
+                r'![regexp {"schema_version"\s*:\s*1([^0-9.eE]|$)} '
+                "$_apesees_schema] || "
+                r'![regexp {"capabilities"\s*:\s*\[(\s*|[^]]*,\s*)"'
+                f'{cap}'
+                r'"\s*[],]} $_apesees_schema]} {',
+                f'        error "{guard.message}"',
+                "    }",
+                "}"]
+    return ["if hasattr(ops, 'ladrunoBuild'):",
+            "    try:",
+            "        import json as _apesees_json",
+            "        _apesees_schema = _apesees_json.loads(ops.ladrunoSchema())",
+            "        _apesees_v = _apesees_schema['schema_version']",
+            "        _apesees_caps = _apesees_schema['capabilities']",
+            "        _apesees_ok = (type(_apesees_v) is int and _apesees_v == 1"
+            f" and type(_apesees_caps) is list and {cap!r} in _apesees_caps)",
+            "    except Exception:",
+            "        _apesees_ok = False",
+            "    if not _apesees_ok:",
+            f"        raise SystemExit({guard.message!r})"]
+
+
+def parse_ops_version(text: object) -> "tuple[int, int, int] | None":
+    """The ``X.Y.Z`` an OpenSees ``version`` answer starts with (both
+    interpreters return ``OPS_VERSION`` as is, e.g. ``"3.8.0"``), or
+    ``None`` when it starts with anything else."""
+    m = _OPS_VERSION_RE.match(str(text))
+    if m is None:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+_OPS_VERSION_RE = re.compile(r"\s*(\d+)\.(\d+)\.(\d+)")
+
+
+def _versioned_allowlist_lines(
+    guard: ForkBuildAllowlist, dialect: 'Literal["py", "tcl"]',
+) -> list[str]:
+    """:func:`fork_guard_lines` for an allowlist whose stock side runs on
+    from :attr:`ForkBuildAllowlist.stock_min_version`."""
+    assert guard.stock_min_version is not None
+    if guard.stock_runs:
+        raise BridgeError(
+            "ForkBuildAllowlist: stock_min_version needs stock_runs=False.")
+    floor = guard.stock_min_version
+    if dialect == "tcl":
+        return [
+            'if {[info commands ladrunoBuild] eq ""} {',
+            "    if {[catch {version} _apesees_version] || "
+            r"![regexp {^\s*(\d+\.\d+\.\d+)} $_apesees_version "
+            "-> _apesees_v] || "
+            f"[package vcompare $_apesees_v {'.'.join(map(str, floor))}] "
+            "< 0} {",
+            f'        error "{guard.message}"',
+            "    }",
+            "} elseif {[catch {ladrunoBuild} _apesees_build] || "
+            f"[lsearch -exact {{{' '.join(guard.builds)}}} "
+            "[string trim $_apesees_build]] < 0} {",
+            f'    error "{guard.message}"',
+            "}"]
+    return [
+        "if hasattr(ops, 'ladrunoBuild'):",
+        "    try:",
+        "        _apesees_build = str(ops.ladrunoBuild()).strip()",
+        "    except Exception:",
+        "        _apesees_build = ''",
+        f"    if _apesees_build not in {tuple(guard.builds)!r}:",
+        f"        raise SystemExit({guard.message!r})",
+        "else:",
+        "    import re as _apesees_re",
+        "    try:",
+        "        _apesees_version = str(ops.version())",
+        "    except Exception:",
+        "        _apesees_version = ''",
+        "    _apesees_v = _apesees_re.match("
+        r"r'\s*(\d+)\.(\d+)\.(\d+)', _apesees_version)",
+        "    if _apesees_v is None or tuple("
+        f"int(g) for g in _apesees_v.groups()) < {floor!r}:",
+        f"        raise SystemExit({guard.message!r})"]
 
 
 def _carried_material_tag(
@@ -1111,6 +1714,112 @@ def _carried_material_tag(
             "MATERIAL_STATE_ELEMENT_TOKENS with the element's grammar."
         )
     return int(value)
+
+
+class StageFlagResetWatch:
+    """Whether a solve could see the ManzariDafalias constructor reset
+    (#2516), from the calls an emitter makes.
+
+    On a fork build without :data:`MD_STATIC_FIX_COMMIT` the constructor
+    of a ``FORK_RESETS_STAGE_STATIC`` class sets the class-wide stage
+    flag to elastic, and every new element copies its material through
+    it.  So an ``element`` or ``nDMaterial`` made after a user flip left
+    the group at a non-zero stage, with no flip of the group again before
+    the next solve verb, gives that build's answer and no other:
+    :attr:`pending`.  Every element counts, whatever it carries: an
+    element of an unknown grammar could copy the material, so the watch
+    never misses one (fail closed).  A flip of the group after the
+    construction, and before the solve, makes every build agree
+    (``Elastic2Plastic()`` runs on each flip, whatever the flag held).
+
+    The deck emitters keep one in :class:`MaterialStageCarriers` and set
+    :attr:`rank` inside a partition block: the static is per process, so
+    a line inside a block acts on that rank only, and rank ``None`` is a
+    line outside every block, which every rank runs.  ``LiveOpsEmitter``
+    keeps one at rank ``None`` and feeds it only the calls that reach the
+    engine.
+    """
+
+    def __init__(self) -> None:
+        from ...stage._builder import (
+            CLASS_WIDE_STAGE_FLAG,
+            FORK_RESETS_STAGE_STATIC,
+            STAGE_FLAG_PARAMETERS,
+        )
+        #: The partition rank the next calls run on (``None``: every rank).
+        self.rank: int | None = None
+        # The class-wide group of each FORK_RESETS_STAGE_STATIC class; the
+        # stage a user flip left each group at, and the groups a
+        # construction reset since, both keyed by (group, rank).
+        self._reset_classes: dict[str, str] = {
+            cls: CLASS_WIDE_STAGE_FLAG[cls] for cls in FORK_RESETS_STAGE_STATIC}
+        self._flag_params = STAGE_FLAG_PARAMETERS
+        self._reset_group: dict[int, str] = {}
+        self._group_stage: dict[tuple[str, int | None], int] = {}
+        self._reset_pending: set[tuple[str, int | None]] = set()
+
+    @property
+    def pending(self) -> bool:
+        """Whether a construction reset a group on a resetting build and no
+        flip set it again."""
+        return bool(self._reset_pending)
+
+    def note_construction(self) -> None:
+        """An ``element`` or ``nDMaterial``: on a resetting build every
+        group a user flip left non-zero, on the ranks that run the line,
+        is now elastic there."""
+        rank = self.rank
+        for (group, at), stage in self._group_stage.items():
+            if stage != 0 and (rank is None or at is None or at == rank):
+                self._reset_pending.add((group, rank))
+
+    def note_material(self, mat_type: str, tag: int) -> None:
+        """``nDMaterial mat_type tag ...``: a construction, and the tag's
+        group from now on."""
+        self.note_construction()
+        if mat_type in self._reset_classes:
+            self._reset_group[int(tag)] = self._reset_classes[mat_type]
+        else:
+            self._reset_group.pop(int(tag), None)
+
+    def _set_group_stage(self, group: str, stage: int) -> None:
+        """A flip of ``group`` to ``stage``: it sets the flag on the ranks
+        that run the line.  A flip on every rank heals every pending
+        reset of the group; a flip on one rank heals only that rank's,
+        never one every rank owes (fail closed)."""
+        rank = self.rank
+        if rank is None:
+            for key in [k for k in self._group_stage if k[0] == group]:
+                del self._group_stage[key]
+            self._reset_pending = {
+                k for k in self._reset_pending if k[0] != group}
+        else:
+            self._reset_pending.discard((group, rank))
+        self._group_stage[(group, rank)] = int(stage)
+
+    def note_flip(self, mat_tag: int, stage: int) -> None:
+        """A user flip of ``mat_tag`` to ``stage`` (``updateMaterialStage``
+        or a stage-flag ``updateParameter``): it sets its group's flag on
+        every build."""
+        group = self._reset_group.get(int(mat_tag))
+        if group is not None:
+            self._set_group_stage(group, int(stage))
+
+    def note_parameter(
+        self, args: "Sequence[int | float | str]", value: float,
+    ) -> None:
+        """An ``updateParameter`` on ``args``: a stage-flag name sets the
+        flag of the material it names.  One with no material tag reaches
+        every material of its elements, so it may set any group's flag
+        and heals none."""
+        if not args or args[0] not in self._flag_params:
+            return
+        if len(args) > 1:
+            self.note_flip(int(args[1]), int(value))
+            return
+        if int(value) != 0:
+            for group in set(self._reset_group.values()):
+                self._group_stage[(group, self.rank)] = int(value)
 
 
 class MaterialStageCarriers:
@@ -1159,22 +1868,11 @@ class MaterialStageCarriers:
     (#2504).  The check is derived from the calls, like the lines it
     guards, so ``model_hash`` does not see it.
 
-    And it watches for the ManzariDafalias constructor reset (#2516).
-    On a fork build without :data:`MD_STATIC_FIX_COMMIT` the constructor
-    of a ``FORK_RESETS_STAGE_STATIC`` class sets the class-wide stage
-    flag to elastic, and every new element copies its material through
-    it.  So an ``element`` or ``nDMaterial`` emitted after a user flip
-    left the group at a non-zero stage, with no flip of the group again
-    before the next solve verb, gives that build's answer and no other.
-    :meth:`solve_fork_guards` then names :data:`MD_STATIC_RESET_GUARD`.
-    Every element counts, whatever it carries: an element of an
-    unknown grammar could copy the material, so the watch never misses
-    one (fail closed), and a staged deck builds its sections and
-    materials before its first stage block.  A flip of the group after
-    the construction, and before the solve, makes every build agree
-    (``Elastic2Plastic()`` runs on each flip, whatever the flag held).
-    The flag is per process, so the watch keeps each partition rank
-    apart: a flip inside one rank's block heals that rank only.
+    And it watches for the ManzariDafalias constructor reset
+    (:class:`StageFlagResetWatch`, #2516): :meth:`solve_fork_guards`
+    names :data:`MD_STATIC_RESET_GUARD` when a solve could see it.  The
+    flag is per process, so the watch keeps each partition rank apart: a
+    flip inside one rank's block heals that rank only.
     """
 
     def __init__(self) -> None:
@@ -1187,88 +1885,32 @@ class MaterialStageCarriers:
         self._rank: int | None = None
         # element tag -> its MATERIAL_STATE_FORK_FLOOR floor.
         self._floors: dict[int, ForkBuildFloor] = {}
-        from ...stage._builder import (
-            CLASS_WIDE_STAGE_FLAG,
-            FORK_RESETS_STAGE_STATIC,
-            STAGE_FLAG_PARAMETERS,
-        )
-        # The constructor-reset watch: the class-wide group of each
-        # FORK_RESETS_STAGE_STATIC class; the stage a user flip left each
-        # group at, and the groups a construction reset since, both keyed
-        # by (group, rank).  The static is per process, so a line inside
-        # a partition block acts on that rank only; rank None is a line
-        # outside every block, which every rank runs.
-        self._reset_classes: dict[str, str] = {
-            cls: CLASS_WIDE_STAGE_FLAG[cls] for cls in FORK_RESETS_STAGE_STATIC}
-        self._flag_params = STAGE_FLAG_PARAMETERS
-        self._reset_group: dict[int, str] = {}
-        self._group_stage: dict[tuple[str, int | None], int] = {}
-        self._reset_pending: set[tuple[str, int | None]] = set()
-
-    def _note_construction(self) -> None:
-        """An ``element`` or ``nDMaterial``: on a resetting build every
-        group a user flip left non-zero, on the ranks that run the line,
-        is now elastic there."""
-        rank = self._rank
-        for (group, at), stage in self._group_stage.items():
-            if stage != 0 and (rank is None or at is None or at == rank):
-                self._reset_pending.add((group, rank))
-
-    def _set_group_stage(self, group: str, stage: int) -> None:
-        """A flip of ``group`` to ``stage``: it sets the flag on the ranks
-        that run the line.  A flip on every rank heals every pending
-        reset of the group; a flip on one rank heals only that rank's,
-        never one every rank owes (fail closed)."""
-        rank = self._rank
-        if rank is None:
-            for key in [k for k in self._group_stage if k[0] == group]:
-                del self._group_stage[key]
-            self._reset_pending = {
-                k for k in self._reset_pending if k[0] != group}
-        else:
-            self._reset_pending.discard((group, rank))
-        self._group_stage[(group, rank)] = int(stage)
+        self._reset = StageFlagResetWatch()
 
     def note_flip(self, mat_tag: int, stage: int) -> None:
-        """A user flip of ``mat_tag`` to ``stage`` (``updateMaterialStage``
-        or a stage-flag ``updateParameter``): it sets its group's flag on
-        every build."""
-        group = self._reset_group.get(int(mat_tag))
-        if group is not None:
-            self._set_group_stage(group, int(stage))
+        """A user flip of ``mat_tag`` to ``stage``
+        (:meth:`StageFlagResetWatch.note_flip`)."""
+        self._reset.note_flip(mat_tag, stage)
 
     def note_parameter(
         self, args: "Sequence[int | float | str]", value: float,
     ) -> None:
-        """An ``updateParameter`` on ``args``: a stage-flag name sets the
-        flag of the material it names.  One with no material tag reaches
-        every material of its elements, so it may set any group's flag
-        and heals none."""
-        if not args or args[0] not in self._flag_params:
-            return
-        if len(args) > 1:
-            self.note_flip(int(args[1]), int(value))
-            return
-        if int(value) != 0:
-            for group in set(self._reset_group.values()):
-                self._group_stage[(group, self._rank)] = int(value)
+        """An ``updateParameter`` on ``args``
+        (:meth:`StageFlagResetWatch.note_parameter`)."""
+        self._reset.note_parameter(args, value)
 
     def solve_fork_guards(self) -> tuple[ForkBuildGuard, ...]:
         """The guards a solve verb needs: :data:`MD_STATIC_RESET_GUARD`
         once a construction reset a group on a resetting build and no
         flip set it again."""
-        return (MD_STATIC_RESET_GUARD,) if self._reset_pending else ()
+        return (MD_STATIC_RESET_GUARD,) if self._reset.pending else ()
 
     def note_material(
         self, mat_type: str, tag: int,
         params: "Sequence[int | float | str]" = (),
     ) -> None:
         tag = int(tag)
-        self._note_construction()
-        if mat_type in self._reset_classes:
-            self._reset_group[tag] = self._reset_classes[mat_type]
-        else:
-            self._reset_group.pop(tag, None)
+        self._reset.note_material(mat_type, tag)
         self._wraps.pop(tag, None)
         if mat_type in SWEPT_MATERIAL_CLASSES:
             self._swept.add(tag)
@@ -1299,7 +1941,7 @@ class MaterialStageCarriers:
     def note_element(
         self, token: str, tag: int, argv: "Sequence[int | float | str]",
     ) -> None:
-        self._note_construction()
+        self._reset.note_construction()
         floor = MATERIAL_STATE_FORK_FLOOR.get(token)
         if floor is not None:
             self._floors[int(tag)] = floor
@@ -1318,9 +1960,11 @@ class MaterialStageCarriers:
 
     def partition_open(self, rank: int) -> None:
         self._rank = int(rank)
+        self._reset.rank = int(rank)
 
     def partition_close(self) -> None:
         self._rank = None
+        self._reset.rank = None
 
     def _carriers_of(self, mat_tag: int) -> tuple[int, ...]:
         by_rank = self._carriers.get(int(mat_tag), {})

@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Literal, Sequence
 import gmsh
 import numpy as np
 
+from ._fem_extract import _is_partition_artifact
+
 if TYPE_CHECKING:
     import pandas as pd
     from .Mesh import Mesh
@@ -746,56 +748,82 @@ class _Partitioning:
 
     # ── internal ─────────────────────────────────────────────────
 
-    def _gather_partition_info(self) -> PartitionInfo:
-        """Query Gmsh to build :class:`PartitionInfo` after partitioning.
+    @staticmethod
+    def _owned_element_tags() -> list[tuple[int, list[int]]]:
+        """``(partition_id, element_tags)`` per owning partition entity.
 
-        When ``self._last_weights`` is populated (set by the weighted
-        path before/after the underlying ``partition_explicit`` call),
-        the per-partition weight totals are computed by walking every
-        partitioned entity's element tags and summing the cached
-        per-element weights.  Otherwise ``weights_per_partition`` is
-        left ``None``.
+        The one walk both :meth:`_gather_partition_info` and
+        :meth:`_elem_partition_map` count from, so they agree with
+        ``fem.partitions`` (``_fem_extract.extract_partitions``): each
+        mesh element once, in the partition that owns it (#2590).
+        Partition-interface and ghost entities are skipped with the
+        predicate FEMData extraction uses
+        (:func:`~apeGmsh.mesh._fem_extract._is_partition_artifact`,
+        #2582): interface entities hold new elements Gmsh meshes on a
+        cut, and ghost entities hold copies, under the same ids, of the
+        neighbouring partition's elements. An entity with no partition
+        id holds no partitioned element and is skipped, as extraction
+        does.
+
+        Raises
+        ------
+        RuntimeError
+            When a non-artifact entity holding elements names more than
+            one partition: those elements have no single owner, so no
+            count or map can hold each of them once.
         """
-        n = gmsh.model.getNumberOfPartitions()
-        elems_per: dict[int, int] = {}
-        weights = self._last_weights
-        weights_per: dict[int, float] | None = (
-            {} if weights is not None else None)
-
+        owned: list[tuple[int, list[int]]] = []
         for ent_dim, ent_tag in gmsh.model.getEntities():
-            try:
-                pparts = gmsh.model.getPartitions(ent_dim, ent_tag)
-            except Exception:
+            if _is_partition_artifact(int(ent_dim), int(ent_tag)):
                 continue
+            pparts = gmsh.model.getPartitions(ent_dim, ent_tag)
             if len(pparts) == 0:
                 continue
             _, etags_list, _ = gmsh.model.mesh.getElements(
                 ent_dim, ent_tag)
-            n_elems = sum(len(et) for et in etags_list)
-            for p in pparts:
-                elems_per[int(p)] = elems_per.get(int(p), 0) + n_elems
+            tags = [int(t) for et in etags_list for t in et]
+            if not tags:
+                continue
+            if len(pparts) != 1:
+                raise RuntimeError(
+                    f"partition entity ({ent_dim}, {ent_tag}) holds "
+                    f"{len(tags)} element(s) and names partitions "
+                    f"{[int(p) for p in pparts]}; an element must have "
+                    f"exactly one owning partition.")
+            owned.append((int(pparts[0]), tags))
+        return owned
 
+    def _gather_partition_info(self) -> PartitionInfo:
+        """Query Gmsh to build :class:`PartitionInfo` after partitioning.
+
+        Counts each mesh element once, in its owning partition
+        (:meth:`_owned_element_tags`), so ``elements_per_partition``
+        agrees with ``fem.partitions``. Every partition id ``1..n`` is a
+        key; a partition that owns no element reads ``0`` instead of
+        vanishing.
+
+        When ``self._last_weights`` is populated (set by the weighted
+        path before/after the underlying ``partition_explicit`` call),
+        the per-partition weight totals sum the cached per-element
+        weights over the same owned elements. Otherwise
+        ``weights_per_partition`` is left ``None``.
+        """
+        n = gmsh.model.getNumberOfPartitions()
+        elems_per: dict[int, int] = {p: 0 for p in range(1, n + 1)}
+        weights = self._last_weights
+        weights_per: dict[int, float] | None = (
+            {p: 0.0 for p in range(1, n + 1)}
+            if weights is not None else None)
+
+        for p, tags in self._owned_element_tags():
+            elems_per[p] = elems_per.get(p, 0) + len(tags)
             if weights is not None and weights_per is not None:
-                # Each entity is owned by exactly one partition in a
-                # standard METIS decomposition; tally each element's
-                # weight against every partition that claims this entity
-                # (ghost entities replicate across partitions — they're
-                # the same physical element, so we count their weight
-                # only against the partition where the element actually
-                # *lives*, which is the partition matching the entity's
-                # parent-of-tag in Gmsh).  In practice ``len(pparts)==1``
-                # for the owning entity and >1 for shared ghosts; we
-                # tally only when ``len(pparts)==1`` to avoid
-                # double-counting weight across ghosts.
-                if len(pparts) == 1:
-                    p = int(pparts[0])
-                    total = 0.0
-                    for et in etags_list:
-                        for tag in et:
-                            w = weights.get(int(tag))
-                            if w is not None:
-                                total += w
-                    weights_per[p] = weights_per.get(p, 0.0) + total
+                total = 0.0
+                for tag in tags:
+                    w = weights.get(tag)
+                    if w is not None:
+                        total += w
+                weights_per[p] = weights_per.get(p, 0.0) + total
 
         return PartitionInfo(
             n_parts=n,
@@ -804,28 +832,20 @@ class _Partitioning:
 
     # ── uncuttable-group override (ADR 0092 INV-4) ─────────────────
 
-    @staticmethod
-    def _elem_partition_map() -> dict[int, int]:
-        """``{element_tag: partition_id}`` from single-owner entities.
+    @classmethod
+    def _elem_partition_map(cls) -> dict[int, int]:
+        """``{element_tag: partition_id}``: each element's owning partition.
 
-        Mirrors the ghost-avoidance rule in ``_gather_partition_info``:
-        an entity with more than one partition id is the interface
-        topology Gmsh creates at a cut (``len(pparts) > 1``), not a
-        second real copy of the element, so it is excluded here too.
-        Every element tag present before partitioning ends up under
-        exactly one single-owner entity after it.
+        Built from :meth:`_owned_element_tags`, so it holds exactly the
+        elements ``fem.partitions`` holds, each under the partition
+        that owns it. A ghost copy never remaps an element to the
+        neighbouring partition, and a partition-interface element is
+        not a mesh element at all.
         """
         mapping: dict[int, int] = {}
-        for ent_dim, ent_tag in gmsh.model.getEntities():
-            pparts = gmsh.model.getPartitions(ent_dim, ent_tag)
-            if len(pparts) != 1:
-                continue
-            p = int(pparts[0])
-            _, etags_list, _ = gmsh.model.mesh.getElements(
-                ent_dim, ent_tag)
-            for etags in etags_list:
-                for tag in etags:
-                    mapping[int(tag)] = p
+        for p, tags in cls._owned_element_tags():
+            for tag in tags:
+                mapping[tag] = p
         return mapping
 
     def _enforce_uncuttable(

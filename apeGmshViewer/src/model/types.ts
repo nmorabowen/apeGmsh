@@ -12,6 +12,13 @@ export interface ElementBlock {
   dim: number;
   /** nodes per element (`npe` attr). */
   npe: number;
+  /**
+   * The `gmsh_name` attr: gmsh's type name, or the OpenSees class of a
+   * file-coded (`code = -class_tag`) block. Null when the file has none; a
+   * file-coded block without it is not drawn (mesh/fileCoded.ts). Optional
+   * so a block built in code without one reads as null.
+   */
+  gmshName?: string | null;
   ids: Float64Array;
   /** row-major (ids.length, npe) node tags. */
   connectivity: Float64Array;
@@ -82,6 +89,17 @@ export interface NameAlias {
   tag: number;
 }
 
+/**
+ * 2-D cross-section boundary loops in OpenSees `(y_local, z_local)`:
+ * `loops[0]` is the exterior boundary (CCW in `(y, z)`) and `loops[1..]` are
+ * interior holes (CW in `(y, z)`). Plain JSON only so it can live on `Decl`.
+ */
+export interface SectionProfile {
+  readonly loops: readonly (readonly (readonly [number, number])[])[];
+  readonly axisymmetric?: boolean;
+  readonly source: "computed" | "patches" | "parametric" | "elastic";
+}
+
 export interface OpenSeesZone {
   version: string;
   objects: OpsObject[];
@@ -89,6 +107,8 @@ export interface OpenSeesZone {
   names: NameAlias[];
   /** the model-definition data: declarations, analysis, series, patterns, recorders, stages */
   definitions: Definitions;
+  /** Optional `/opensees/computed_sections` `outline_yz` boundary loops keyed by section tag. */
+  computedOutlines?: Readonly<Record<number, readonly (readonly (readonly [number, number])[])[]>>;
 }
 
 /**

@@ -1,6 +1,7 @@
 # ADR 0125 — Discrete mesh import: a ready-made mesh into a live session, then the normal `get_fem_data` route
 
-**Status:** Proposed (2026-10-26). No implementation yet. A public session
+**Status:** Accepted (2026-11-19; approved by the maintainer in the T
+coordination session, recorded on #2570; proposed 2026-10-26). No implementation yet. A public session
 verb, `g.mesh.editing.import_discrete(...)`. It changes no Emitter Protocol,
 no H5 schema and no `FEMData` constructor. It promotes the private mechanism
 of the STKO translator ([ADR 0111](0111-stko-translator.md) D1,

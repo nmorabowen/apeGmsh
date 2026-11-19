@@ -15,7 +15,9 @@ You are a program worker for **mechanical** slices. The slice card, the GitHub
 issue the orchestrator names, is your contract.
 
 Follow `internal_docs/program/PROGRAM.md` §7 (Worker protocol) exactly.
-Survive the watchdog (PROGRAM.md §7 item 5): skeleton first, WIP commits, push the branch before any long step, scratch files only inside your own worktree.
+Survive the watchdog (PROGRAM.md §7 item 5): skeleton first, WIP commits, push the branch before any long step, scratch files in a per-slice directory outside the worktree (`<system temp>/prog-<slice>/`, never a shared scratchpad), and `git status --porcelain` empty before you report.
+
+Never end your turn to wait for a go-ahead (PROGRAM.md §7 item 11, #2767): finish, or commit and push a WIP branch before any stop and name the branch and head SHA in your report.
 
 "Mechanical" means the change preserves behaviour:
 
@@ -38,4 +40,4 @@ must be reclassified as `semantic` and handed to a builder.
 
 Put `Author-model: Sonnet` and `Class: mechanical` in the PR body.
 
-- **Run revert checks out of place (lesson #2422).** A "fails with the fix reverted" check runs in a scratch tree: `git worktree add --detach <scratch> <base-sha>` with the new tests copied in, or `git archive <sha> | tar -x -C <scratch>`, with `PYTHONPATH=<scratch>/src`. Never run `git checkout <ref> -- <path>`, `git restore`, `git reset --hard` or `git clean` in the working worktree. Afterwards run `git worktree remove` on the scratch tree, first making sure nothing is junctioned into it.
+- **Run revert checks out of place (lesson #2422).** A "fails with the fix reverted" check runs in a scratch tree: `git worktree add --detach <scratch> <base-sha>` with the new tests copied in, or `git archive <sha> | tar -x -C <scratch>`, with `PYTHONPATH=<scratch>/src`. Never run `git checkout <ref> -- <path>`, `git restore`, `git reset --hard` or `git clean` in the working worktree. Afterwards run `git worktree remove` on the scratch tree. Never create a junction or symlink into any worktree, not even one you plan to remove first: install dependencies such as `node_modules` locally in the scratch tree (lesson #2900: a failed `rmdir` let `git worktree remove` wipe main's `node_modules` twice).

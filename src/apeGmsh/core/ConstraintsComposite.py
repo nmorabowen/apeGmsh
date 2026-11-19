@@ -127,6 +127,46 @@ _FACE_TYPES = (TieDef, TiedContactDef)
 # need their own semantics and refuse the role at declare.
 _DECOUPLED_ROLE_TYPES = (KinematicCouplingDef, DistributingCouplingDef)
 
+#: distributing-coupling weightings that read the slave surface's faces.
+_FACE_WEIGHTINGS = ("area", "footprint")
+
+
+def _footprint_polygon(weighting: str, footprint):
+    """Validate ``footprint=`` against ``weighting``: required for
+    ``"footprint"`` (one convex planar polygon of at least 3 vertices in
+    order, or a sequence of them), refused otherwise. Returns a tuple of
+    polygons, each a tuple of 3-tuples."""
+    if weighting != "footprint":
+        if footprint is not None:
+            raise ValueError(
+                "distributing_coupling: footprint= is read only by "
+                f"weighting='footprint', got weighting={weighting!r}."
+            )
+        return None
+    if footprint is None:
+        raise ValueError(
+            "distributing_coupling: weighting='footprint' needs footprint=, "
+            "the polygon (x, y, z) vertices in order."
+        )
+    from apeGmsh._kernel.resolvers._constraint_resolver._footprint import (
+        polygon_frame,
+    )
+    if len(footprint) == 0:
+        raise ValueError("distributing_coupling: footprint= is empty.")
+    one = np.asarray(footprint[0], dtype=float).ndim == 1
+    polys = [footprint] if one else list(footprint)
+    out = []
+    for poly in polys:
+        pts = np.asarray(poly, dtype=float)
+        if pts.ndim != 2 or pts.shape[1] != 3 or pts.shape[0] < 3:
+            raise ValueError(
+                "distributing_coupling: each footprint polygon must be at "
+                f"least 3 (x, y, z) vertices, got shape {pts.shape}."
+            )
+        polygon_frame(pts)  # raises on a degenerate, non-planar or non-convex one
+        out.append(tuple(tuple(float(v) for v in p) for p in pts))
+    return tuple(out)
+
 
 def _as_role_label(ref, role: str) -> str:
     """Normalize a ``g.decouple_node`` handle to its label string.
@@ -3140,7 +3180,7 @@ class ConstraintsComposite(_DeclarationsMixin):
 
     def distributing_coupling(self, master_label, slave_label, *,
                               master_point=(0., 0., 0.),
-                              weighting="uniform",
+                              weighting="uniform", footprint=None,
                               k=None, k_alpha=None, host=None,
                               kr=None, enforce="penalty",
                               bipenalty_dtcr=None, bipenalty_wcap=None,
@@ -3196,7 +3236,19 @@ class ConstraintsComposite(_DeclarationsMixin):
             distributes like a uniform traction on the surface.
             Requires the slave label (or ``slave_entities``) to resolve
             to meshed surface faces; an independent node on no slave
-            face fails loud.
+            face fails loud. ``"footprint"`` ⇒ each slave face's
+            **overlap area** with the polygon ``footprint`` is split
+            equally among the face's nodes; only nodes with a positive
+            share become independents. It is the load of a uniform
+            pressure over the footprint lumped onto the mesh, so the
+            footprint need not follow element edges (a column section on
+            a coarser slab or mat mesh).
+        footprint : sequence of (x, y, z), or a sequence of them, optional
+            The convex planar polygon (at least 3 vertices, in order) of
+            ``weighting="footprint"``, or several (a wall node at a
+            junction: one strip per wall), whose shares add; required by
+            it and refused by the other weightings. The slave faces are
+            projected onto each polygon's plane.
         k : float | ``"auto"``, optional
             Translational penalty stiffness (``-k``). ``None`` ⇒ the fork
             default (``1e12``). ``"auto"`` scales it off a representative
@@ -3252,17 +3304,20 @@ class ConstraintsComposite(_DeclarationsMixin):
             decoupled node and a Part/PG; an ambiguous duplicate
             decoupled label.
         """
-        if weighting not in ("uniform", "area"):
+        if weighting not in ("uniform", "area", "footprint"):
             raise ValueError(
                 "distributing_coupling: weighting must be 'uniform' (equal "
-                "weights) or 'area' (tributary-area -w weights computed over "
-                f"the slave surface), got {weighting!r}."
+                "weights), 'area' (tributary-area -w weights computed over "
+                "the slave surface) or 'footprint' (overlap areas with the "
+                f"polygon footprint=), got {weighting!r}."
             )
+        footprint = _footprint_polygon(weighting, footprint)
         master_label = _as_role_label(master_label, "master_label")
         slave_label = _as_role_label(slave_label, "slave_label")
         return self._add_def(DistributingCouplingDef(
             master_label=master_label, slave_label=slave_label,
             master_point=master_point, weighting=weighting,
+            footprint=footprint,
             control=CouplingControl(
                 k=k, k_alpha=k_alpha, host=host, kr=kr, enforce=enforce,
                 bipenalty_dtcr=bipenalty_dtcr, bipenalty_wcap=bipenalty_wcap,
@@ -3690,7 +3745,7 @@ class ConstraintsComposite(_DeclarationsMixin):
         # weighting="area" distributing couplings consume slave faces too.
         has_face_constraints = has_face_constraints or any(
             isinstance(d, DistributingCouplingDef)
-            and getattr(d, "weighting", "uniform") == "area"
+            and getattr(d, "weighting", "uniform") in _FACE_WEIGHTINGS
             for d in self.constraint_defs)
         if (has_face_constraints and face_map is None
                 and not self._session_can_resolve_names()):
@@ -3937,7 +3992,7 @@ class ConstraintsComposite(_DeclarationsMixin):
         # connectivity for the tributary-area accumulation; "uniform"
         # stays node-set-only (no face_map requirement).
         s_faces = None
-        if getattr(defn, "weighting", "uniform") == "area":
+        if getattr(defn, "weighting", "uniform") in _FACE_WEIGHTINGS:
             s_faces = self._resolve_faces(defn.slave_label, "slave", defn, face_map)
         return resolver.resolve_distributing(defn, m, s, slave_face_conn=s_faces)
 

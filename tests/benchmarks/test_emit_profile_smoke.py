@@ -166,6 +166,20 @@ def test_phases_cell_reports_every_rank_on_cp1252_stdout(
     assert pb["held_b"] + pb["late_b"] == pb["resident_b"], pb
     assert 0 < pb["resident_b"] <= pb["window_peak_b"], pb
     assert 0.8 < pb["coverage"] <= 1.01, pb
+    # The residency guard (#2527).  ``fixed_dof_map`` (on the partitioned
+    # path since #2421) once opened with ``dict(inferred_ndf)``: a copy
+    # of the per-node ndf map, 48.5 B per global node at this cell, held
+    # into the rank blocks by ``FixedDofs.ndf``.  Allocated after the
+    # pre-block transient was freed, it lifted the first open above the
+    # window peak and emptied ``top_transient`` (the assertion below).
+    # What fixed_dof_map keeps legitimately scales with the FIXED nodes
+    # (the base face, 31^2 of 31^3 here: under 8 B/gn per site), so a
+    # 16 B/gn bound fails a per-node copy and passes everything else.
+    for site in pb["top_resident"]:
+        if "fixed_dof_map" in site["alloc"]:
+            assert site["b_per_gnode"] < 16.0, (
+                "fixed_dof_map holds a per-node allocation resident into "
+                "the rank blocks", site)
     assert pb["top_transient"] and pb["top_resident"], pb
     main = [b for b in rec["blocks"] if b["kind"] == "main"]
     assert sorted(b["rank"] for b in main) == [0, 1]

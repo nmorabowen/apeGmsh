@@ -60,6 +60,7 @@ from .eigen import EigenResult
 from .footfall_result import FootfallResult
 from .gravity_modal import GravityModalResult, GravityState
 from .spectrum import DesignSpectrum, SpectrumModalResult
+from .spectrum_tolerance import ParityTolerance
 from .modal import (
     FrequencyResponseResult,
     ModalHistoryResult,
@@ -206,4 +207,6 @@ __all__ = [
     # per-mode response spectrum about the gravity state (ADR 0124 D4)
     "DesignSpectrum",
     "SpectrumModalResult",
+    # period-propagated parity tolerance of an RSA comparison
+    "ParityTolerance",
 ]

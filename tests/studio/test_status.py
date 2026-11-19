@@ -97,7 +97,13 @@ def test_status_json_flag(tmp_path: Path, monkeypatch, capsys) -> None:
     assert payload["names"]["physical_groups"] == ["Rock"]
 
 
-def test_main_without_script_or_status(capsys) -> None:
+def test_main_without_script_or_status(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # The empty .apegmsh/ is the ceiling: resolve_root stops at it, so a
+    # parent project.json is never replayed (#2609).
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".apegmsh").mkdir()
     assert main([]) == 2
     assert "--status" in capsys.readouterr().err
 

@@ -495,6 +495,8 @@ def _normalize_node_list(
 
     ``()`` and an empty ``NodeSet`` (a group that matched nothing) are
     refused alike: either would drop the flag from the deck in silence.
+    When other items hold nodes, the message names the empty set's index
+    instead of calling the whole list empty.
     """
     if isinstance(value, (int, str, Node, NodeSet)) and not isinstance(value, bool):
         raw: tuple[object, ...] = (value,)
@@ -512,9 +514,15 @@ def _normalize_node_list(
         where = f"{field_name}[{idx}]"
         if isinstance(item, NodeSet):
             if not item.tags:
+                if all(isinstance(i, NodeSet) and not i.tags for i in raw):
+                    raise ValueError(
+                        f"{cls_name}: {field_name}= must not be empty "
+                        f"({where} is a NodeSet with no nodes)."
+                    )
                 raise ValueError(
-                    f"{cls_name}: {field_name}= must not be empty ({where} is "
-                    f"a NodeSet with no nodes)."
+                    f"{cls_name}: {where} is a NodeSet with no nodes (a "
+                    f"group that matched nothing); drop it from "
+                    f"{field_name}= or fix the group."
                 )
             out.extend(_normalize_node_ref(cls_name, where, int(t)) for t in item.tags)
         elif isinstance(item, bool) or not isinstance(item, (int, str, Node)):

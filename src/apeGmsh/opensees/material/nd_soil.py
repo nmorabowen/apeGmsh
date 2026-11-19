@@ -64,8 +64,8 @@ MULTI_YIELD_SOIL_CLASSES: frozenset[str] = frozenset({
 #: bodies: ``PressureIndependMultiYield.cpp:626``, ``PressureDependMultiYield.cpp:978``,
 #: ``PressureDependMultiYield02.cpp:1008``, ``UWmaterials/PM4Sand.cpp:726``,
 #: ``UWmaterials/PM4Silt.cpp:721`` (live code; PDMY02 keeps an older,
-#: commented-out 3-name block). A per-class catalogue that a refusal of an
-#: unidentified ``update_parameter`` name can consume.
+#: commented-out 3-name block). ``stage/_parameter_names.py`` reads it to
+#: refuse an ``s.update_parameter`` name that no object would take.
 SET_PARAMETER_NAMES: dict[str, frozenset[str]] = {
     "PressureIndependMultiYield": frozenset({
         "updateMaterialStage", "shearModulus", "bulkModulus",

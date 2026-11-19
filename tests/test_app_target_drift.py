@@ -2,8 +2,10 @@
 
 The app (``apeGmshViewer/``) hard-codes the version of each zone it was
 written against as ``<ZONE>_TARGET = { major, minor }`` in its reader
-(``read.ts`` for neutral, opensees, geometry, provenance and sequence;
-``results.ts`` for results). A file newer than a target opens with a
+(``read.ts`` for neutral, opensees, geometry, provenance, sequence and the
+``.user.h5`` zones user_meta, combinations, user_results, modes, spectra and
+entities; ``results.ts``
+for results). A file newer than a target opens with a
 "newer than this app" banner, so a target that lags its Python writer
 puts that banner on every file fresh from main (V4t, #1821).
 
@@ -33,12 +35,18 @@ import pytest
 from apeGmsh.opensees._internal.schema_version import (
     _ZONE_KEY,
     ASSEMBLY,
+    COMBINATIONS,
+    ENTITIES,
     GEOMETRY,
+    MODES,
     NEUTRAL,
     OPENSEES,
     PROVENANCE,
     RESULTS,
     SEQUENCE,
+    SPECTRA,
+    USER_META,
+    USER_RESULTS,
     reader_version,
 )
 
@@ -55,6 +63,12 @@ EXPECTED_HOME: dict[str, str] = {
     PROVENANCE: "apeGmshViewer/src/reader/read.ts",
     SEQUENCE: "apeGmshViewer/src/reader/read.ts",
     RESULTS: "apeGmshViewer/src/reader/results.ts",
+    USER_META: "apeGmshViewer/src/reader/read.ts",
+    COMBINATIONS: "apeGmshViewer/src/reader/read.ts",
+    USER_RESULTS: "apeGmshViewer/src/reader/read.ts",
+    MODES: "apeGmshViewer/src/reader/read.ts",
+    SPECTRA: "apeGmshViewer/src/reader/read.ts",
+    ENTITIES: "apeGmshViewer/src/reader/read.ts",
 }
 
 #: Python zones the app does not read, each with the reason. A zone here

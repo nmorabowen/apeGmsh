@@ -67,7 +67,7 @@ from .solid import (
     Tri31,
     stdBrick,
 )
-from .solid_up import LadrunoUP
+from .solid_up import LadrunoUP, SSPquadUP
 from .truss import CorotTruss, InertiaTruss, Truss
 from .two_node_link import TwoNodeLink
 from .zero_length import (
@@ -122,6 +122,7 @@ __all__ = [
     "LadrunoCST",
     "LadrunoLST",
     "LadrunoUP",
+    "SSPquadUP",
     # embedded reinforcement (Ladruno fork — resolver-produced coupling)
     "embedded_rebar_args",
 ]

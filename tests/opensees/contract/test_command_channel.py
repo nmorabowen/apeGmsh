@@ -1,7 +1,7 @@
 """Conformance: ``Emitter.command()`` on the five emitters (ADR 0114 D2/D3).
 
 The channel is fail-closed. A token is allowed only by a ``via="command"``
-row in ``VERBS``, and none ships yet, so the round trip below injects one
+row in ``VERBS``. The round trip below injects its own probe
 row through ``base.VERBS`` (the mapping ``command_row`` reads). It also
 pins the K1-2 ``H5Emitter`` helpers: ``_refuse`` raises
 :class:`H5RefusedVerb` naming the verb and its row, ``_ledger`` counts a
@@ -58,8 +58,16 @@ def _inject_row(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> Verb:
 
 # -- the fail-closed allow-list ---------------------------------------------
 
-def test_no_command_row_ships_yet() -> None:
-    assert not [k for k, v in VERBS.items() if v.via == "command"]
+def test_the_command_rows_are_the_chain_m_verbs() -> None:
+    # The first rows (A3a): the fork's residualModes / ritzVectors; then
+    # chain M link M3's ``mpm`` (ADR 0134 D8, a family of its own).
+    rows = {k: v for k, v in VERBS.items() if v.via == "command"}
+    assert set(rows) == {"residualModes", "ritzVectors", "mpm"}
+    family = {"residualModes": "modal", "ritzVectors": "modal", "mpm": "mpm"}
+    for verb, row in rows.items():
+        assert (row.family, row.scope, row.h5) == (family[verb], "global", "archive")
+        assert row.store == "/opensees/commands"
+        assert row.requires == frozenset({"fork"})
     assert VERBS["command"].via == "protocol"
     assert VERBS["command"].h5 == "archive"
     assert VERBS["command"].store == "/opensees/commands"
@@ -169,18 +177,20 @@ def test_h5_legacy_counters_read_the_ledger() -> None:
     e.embedded_node(3, 4)
     e.contact_surface(5, 6)
     e.contact_surface(7, 8)
-    # Opensees 2.35.0: a global equationConstraint line archives, so only
-    # the stage's is ledgered (stage rows: #2448).
+    # equationConstraint archives at every scope: a global line from
+    # opensees 2.35.0, a stage's from 2.40.0 (#2448), so it counts nowhere.
     e.equationConstraint(1, 1, 1.0, [(2, 1, -1.0)])
     e.stage_open("s0")
     e.equationConstraint(1, 1, 1.0, [(2, 1, -1.0)])
+    blk = e._stage_current
     e.stage_close()
     # K2b: embedded_rebar archives (opensees 2.29.0), so it counts nowhere.
     e.embedded_rebar(1, 2)
-    assert (e._skipped_embed_ties, e._skipped_contacts,
-            e._skipped_equation_constraints) == (1, 2, 1)
+    assert (e._skipped_embed_ties, e._skipped_contacts) == (1, 2)
     assert "embedded_rebar" not in e.ledger_counts
+    assert "equationConstraint" not in e.ledger_counts
     assert len(e._equation_constraints) == 1  # the global line, stored
+    assert blk is not None and len(blk.equation_constraints) == 1
 
 
 def test_h5_helpers_refuse_a_row_of_the_wrong_kind() -> None:

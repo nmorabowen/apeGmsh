@@ -6,10 +6,16 @@ Two target shapes, both addressed through an element because
 ``OPS_Parameter`` / ``OPS_addToParameter`` only accept ``node`` /
 ``element`` / ``region`` / ``loadPattern``:
 
-* an ELEMENT parameter (``xPerm`` on ``LadrunoUP``) — no trailing arg;
-* a MATERIAL parameter (``poissonRatio`` on ManzariDafalias) — the
-  material tag rides as the trailing argv, which is what
-  ``ManzariDafalias::setParameter`` matches on (``argv[1]``).
+* an ELEMENT parameter (``pressure``, which ``FourNodeQuad::setParameter``
+  takes itself) — no trailing arg;
+* a MATERIAL parameter (``nu`` on ElasticIsotropic, reached through the
+  quad's forwarding) — the material tag rides as the trailing argv, which
+  a tag-checked class such as ``ManzariDafalias::setParameter`` matches
+  on (``argv[1]``).
+
+The names are ones the fixture's FourNodeQuad / ElasticIsotropic take:
+``s.update_parameter`` refuses a name no catalogued target takes
+(``stage/_parameter_names.py``).
 
 Locks the emitted deck text on both targets and both emit targets
 (Tcl + openseespy), plus the emit slot.
@@ -99,11 +105,11 @@ def _ops_tags_of_soil(lines: list[str]) -> list[int]:
 def test_element_parameter_records_no_material_tag() -> None:
     ops, _mat = _soil_ops()
     with ops.stage(name="perm") as s:
-        rec = s.update_parameter("xPerm", 1e-5, pg="soil")
+        rec = s.update_parameter("pressure", 1e-5, pg="soil")
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     assert rec == UpdateParameterRecord(
-        name="xPerm", value=1e-5, pg="soil", elements=None, mat_tag=None,
+        name="pressure", value=1e-5, pg="soil", elements=None, mat_tag=None,
     )
     assert ops._stage_records[0].update_parameter_records == (rec,)
 
@@ -112,19 +118,19 @@ def test_material_parameter_records_the_material_tag() -> None:
     ops, mat = _soil_ops()
     with ops.stage(name="soften") as s:
         rec = s.update_parameter(
-            "poissonRatio", 0.35, pg="soil", material=mat,
+            "nu", 0.35, pg="soil", material=mat,
         )
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     assert rec.mat_tag == ops.tag_for(mat)
-    assert rec.name == "poissonRatio"
+    assert rec.name == "nu"
 
 
 def test_rejects_both_pg_and_elements() -> None:
     ops, _mat = _soil_ops()
     with ops.stage(name="bad") as s:
         with pytest.raises(ValueError, match="exactly one of pg= or elements="):
-            s.update_parameter("xPerm", 1.0, pg="soil", elements=[1])
+            s.update_parameter("pressure", 1.0, pg="soil", elements=[1])
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
 
@@ -133,7 +139,7 @@ def test_rejects_neither_pg_nor_elements() -> None:
     ops, _mat = _soil_ops()
     with ops.stage(name="bad") as s:
         with pytest.raises(ValueError, match="exactly one of pg= or elements="):
-            s.update_parameter("xPerm", 1.0)
+            s.update_parameter("pressure", 1.0)
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
 
@@ -157,7 +163,7 @@ def test_unregistered_material_fails_loud() -> None:
     with ops.stage(name="bad") as s:
         with pytest.raises(BridgeError, match="never registered"):
             s.update_parameter(
-                "poissonRatio", 0.35, pg="soil", material=stray,
+                "nu", 0.35, pg="soil", material=stray,
             )
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
@@ -169,11 +175,11 @@ def test_unregistered_material_fails_loud() -> None:
 
 
 def test_tcl_element_parameter_block() -> None:
-    """``xPerm`` on LadrunoUP-style element parameters: name only, no
-    trailing tag (fork ``LadrunoUP::setParameter`` matches argv[0])."""
+    """``pressure``, an element parameter: name only, no trailing tag
+    (``FourNodeQuad::setParameter`` matches argv[0])."""
     ops, _mat = _soil_ops()
     with ops.stage(name="perm") as s:
-        s.update_parameter("xPerm", 1e-5, pg="soil")
+        s.update_parameter("pressure", 1e-5, pg="soil")
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     emitter = TclEmitter()
@@ -188,21 +194,21 @@ def test_tcl_element_parameter_block() -> None:
     pid = int(block[0].split()[1])
     assert block == [
         f"parameter {pid}",
-        f"addToParameter {pid} element {e1} xPerm",
-        f"addToParameter {pid} element {e2} xPerm",
+        f"addToParameter {pid} element {e1} pressure",
+        f"addToParameter {pid} element {e2} pressure",
         f"updateParameter {pid} 1e-05",
         f"remove parameter {pid}",
     ]
 
 
 def test_tcl_material_parameter_block_carries_the_material_tag() -> None:
-    """``poissonRatio`` is a MATERIAL parameter: the element forwards the
-    argv tail to its GP materials, and ManzariDafalias matches on
-    ``argv[1] == its own tag`` — so the tag must be in the line."""
+    """``nu`` is a MATERIAL parameter: the element forwards the argv to
+    its GP materials, and a tag-checked class (ManzariDafalias) matches
+    on ``argv[1] == its own tag`` — so the tag must be in the line."""
     ops, mat = _soil_ops()
     mat_tag = ops.tag_for(mat)
     with ops.stage(name="soften") as s:
-        s.update_parameter("poissonRatio", 0.35, pg="soil", material=mat)
+        s.update_parameter("nu", 0.35, pg="soil", material=mat)
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     emitter = TclEmitter()
@@ -212,8 +218,8 @@ def test_tcl_material_parameter_block_carries_the_material_tag() -> None:
     add = [ln for ln in lines if ln.startswith("addToParameter ")]
     pid = int(add[0].split()[1])
     assert add == [
-        f"addToParameter {pid} element {e1} poissonRatio {mat_tag}",
-        f"addToParameter {pid} element {e2} poissonRatio {mat_tag}",
+        f"addToParameter {pid} element {e1} nu {mat_tag}",
+        f"addToParameter {pid} element {e2} nu {mat_tag}",
     ]
     assert f"updateParameter {pid} 0.35" in lines
 
@@ -221,7 +227,7 @@ def test_tcl_material_parameter_block_carries_the_material_tag() -> None:
 def test_tcl_elements_form_targets_only_the_listed_eids() -> None:
     ops, _mat = _soil_ops()
     with ops.stage(name="perm") as s:
-        s.update_parameter("yPerm", 2.0, elements=[2])
+        s.update_parameter("pressure", 2.0, elements=[2])
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     emitter = TclEmitter()
@@ -230,14 +236,14 @@ def test_tcl_elements_form_targets_only_the_listed_eids() -> None:
     _e1, e2 = _ops_tags_of_soil(lines)
     add = [ln for ln in lines if ln.startswith("addToParameter ")]
     assert len(add) == 1
-    assert add[0].split()[3:] == [str(e2), "yPerm"]
+    assert add[0].split()[3:] == [str(e2), "pressure"]
 
 
 def test_tcl_two_records_get_distinct_parameter_tags() -> None:
     ops, mat = _soil_ops()
     with ops.stage(name="both") as s:
-        s.update_parameter("xPerm", 1.0, pg="soil")
-        s.update_parameter("poissonRatio", 0.35, pg="soil", material=mat)
+        s.update_parameter("pressure", 1.0, pg="soil")
+        s.update_parameter("nu", 0.35, pg="soil", material=mat)
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     emitter = TclEmitter()
@@ -253,7 +259,7 @@ def test_tcl_two_records_get_distinct_parameter_tags() -> None:
 def test_tcl_unknown_element_id_fails_loud() -> None:
     ops, _mat = _soil_ops()
     with ops.stage(name="perm") as s:
-        s.update_parameter("xPerm", 1.0, elements=[999])
+        s.update_parameter("pressure", 1.0, elements=[999])
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     with pytest.raises(BridgeError, match="not registered with any Element"):
@@ -269,7 +275,7 @@ def test_py_emits_the_same_block() -> None:
     ops, mat = _soil_ops()
     mat_tag = ops.tag_for(mat)
     with ops.stage(name="soften") as s:
-        s.update_parameter("poissonRatio", 0.35, elements=[1], material=mat)
+        s.update_parameter("nu", 0.35, elements=[1], material=mat)
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     emitter = PyEmitter()
@@ -279,7 +285,7 @@ def test_py_emits_the_same_block() -> None:
     assert len(add) == 1
     pid = int(add[0].split("(")[1].split(",")[0])
     assert f"ops.parameter({pid})" in lines
-    assert add[0].endswith(f", 'poissonRatio', {mat_tag})")
+    assert add[0].endswith(f", 'nu', {mat_tag})")
     assert f"ops.updateParameter({pid}, 0.35)" in lines
     assert f"ops.remove('parameter', {pid})" in lines
 
@@ -292,7 +298,7 @@ def test_py_emits_the_same_block() -> None:
 def test_update_parameter_emits_after_the_chain_and_before_analyze() -> None:
     ops, _mat = _soil_ops()
     with ops.stage(name="perm") as s:
-        s.update_parameter("xPerm", 1.0, pg="soil")
+        s.update_parameter("pressure", 1.0, pg="soil")
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     rec = RecordingEmitter()
@@ -308,7 +314,7 @@ def test_update_parameter_is_scoped_to_its_own_stage() -> None:
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     with ops.stage(name="b") as s:
-        s.update_parameter("xPerm", 1.0, pg="soil")
+        s.update_parameter("pressure", 1.0, pg="soil")
         s.analysis(**_full_chain(ops))
         s.run(n_increments=1)
     rec = RecordingEmitter()
@@ -347,8 +353,8 @@ def test_h5_archive_stores_a_stage_that_updates_a_parameter(tmp_path) -> None:
     def build() -> apeSees:
         ops, mat = _soil_ops()
         with ops.stage(name="perm") as s:
-            s.update_parameter("xPerm", 1.0, pg="soil")
-            s.update_parameter("poissonRatio", 0.2, elements=[2], material=mat)
+            s.update_parameter("pressure", 1.0, pg="soil")
+            s.update_parameter("nu", 0.2, elements=[2], material=mat)
             s.analysis(**_full_chain(ops))
             s.run(n_increments=1)
         return ops
@@ -363,8 +369,8 @@ def test_h5_archive_stores_a_stage_that_updates_a_parameter(tmp_path) -> None:
         (stage,) = model.stages()
     assert [(r.name, r.value, r.pg, r.elements, r.mat_tag)
             for r in stage.update_parameters] == [
-        ("xPerm", 1.0, "soil", None, None),
-        ("poissonRatio", 0.2, None, (2,), 1),
+        ("pressure", 1.0, "soil", None, None),
+        ("nu", 0.2, None, (2,), 1),
     ]
     assert stage.update_parameter_param_tags == tuple(
         ((-1, pid),) for pid in pids)

@@ -8,7 +8,7 @@ frozen analysis results.  S1 ships geometric analysis; warping / plastic
 from __future__ import annotations
 
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Mapping
+from typing import TYPE_CHECKING, Literal, Mapping, cast
 
 import numpy as np
 
@@ -78,6 +78,38 @@ class SectionProperties:
         self._warp_solutions: tuple[_PartSolution, ...] = ()
         self._plastic: PlasticProperties | None = None
         self._unit_fields: _UnitFields | None = None
+
+    # ── pickling ─────────────────────────────────────────────────────
+
+    #: The lazy analysis caches and their unset values, as ``__init__``
+    #: leaves them.  The pickle carries the declaration, not the caches.
+    _MEMO_UNSET: "Mapping[str, object]" = MappingProxyType({
+        "_geometric": None,
+        "_warping": None,
+        "_warp_solutions": (),
+        "_plastic": None,
+        "_unit_fields": None,
+    })
+
+    def __getstate__(self) -> dict[str, object]:
+        """The declaration only: the inputs and snapshot, never the lazy
+        analysis caches, which an unpickled analyzer recomputes on demand.
+        The bridge's automatic ``model.h5`` write digests every primitive
+        by pickling it, a ``ComputedSection``'s analyzer included (#2567),
+        so a read-only ``stress()`` or ``plastic()`` between two emits must
+        not change the pickle.  A ``mappingproxy`` does not pickle, so the
+        read-only material view goes as a plain dict."""
+        state = self.__dict__.copy()
+        state["_materials"] = dict(self._materials)
+        state.update(self._MEMO_UNSET)
+        return state
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        """Refreeze the material view :meth:`__getstate__` thawed."""
+        state = dict(state)
+        materials = cast("Mapping[str, SectionMaterial]", state["_materials"])
+        state["_materials"] = MappingProxyType(dict(materials))
+        self.__dict__.update(state)
 
     # ── identity ─────────────────────────────────────────────────────
 

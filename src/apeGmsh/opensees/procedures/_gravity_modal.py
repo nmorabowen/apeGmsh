@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from .._internal.build.errors import BridgeError
 
@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     import numpy as np
 
     from ..analysis.gravity_modal import GravityModalResult
+    from ..analysis.modal import ResidualModes, RitzVectors
+    from ..pattern.pattern import Plain
     from ..analysis.spectrum import (
         DesignSpectrum,
         ResponseExtractor,
@@ -61,6 +63,18 @@ _KINK_TOL = 1e-3
 #: deforms is not judged on round-off.
 _ELEMENT_FLOOR = 1e-6
 
+#: A mode that fails the kink check is probed again at this multiple of its
+#: amplitude, and the second probe decides. A kink's ratio is the same at
+#: every amplitude (first order in the probe), a smooth element's grows
+#: with it (2.2e-6 to 2.0e-4 for the Corotational live frames, below
+#: ``_KINK_TOL``), and round-off shrinks with it: its second difference is a
+#: fixed size, set by the element's stiffness times the round-off in its
+#: nodal displacements. A near-rigid link (``I`` x 1e6 under 30 times the
+#: gravity) carries no gravity force, so no ``eps |N|`` floor reaches it,
+#: but it reads 1.48e-3 at the probe and 1.2e-5 at this multiple. It stays
+#: at 100: 1e3 would lift the Corotational frames to ~2e-3.
+_REPROBE = 100.0
+
 #: Before each leg the domain is settled with unloaded Linear steps until a
 #: step moves no node by more than this fraction of the probe, at most
 #: ``_SETTLE_STEPS`` steps: the legs start from the equilibrium, not from
@@ -72,6 +86,20 @@ _SETTLE_STEPS = 10
 #: A mode whose effective mass is below this fraction of the largest, in
 #: every requested direction, is not probed.
 _NEGLIGIBLE_MASS = 1e-12
+
+#: A spectrum direction whose free mass (``totalFreeMass``) falls short of
+#: the nodal mass on its unfixed DOFs by more than this fraction is refused:
+#: the modes miss some of the mass (gap 6, mass on MP-retained DOFs under
+#: Transformation before WP-211).
+_FREE_MASS_TOL = 1e-6
+
+#: A spectrum direction whose modes' effective masses sum to at most this
+#: fraction of its free mass is refused: every Γ is zero to round-off.
+_LOADED_MASS_TOL = 1e-6
+
+#: The leg key of the loaded nodes' elastic force (residual and Ritz modes);
+#: never an extractor name, since those are strings a user chose.
+_ELASTIC = "\0elastic"
 
 #: On the fork's ``-increment`` route, every imposed nodal translation must
 #: equal the static leg's ``± a φ / λ`` to this fraction of the probe.
@@ -88,6 +116,11 @@ class _GravityModalMixin(_ProcedureHost):
         *,
         p_delta: bool = True,
         solver: str = "-genBandArpack",
+        basis: str = "eigen",
+        ritz_dirs: Sequence[int] = (),
+        ritz_patterns: "Sequence[Plain | str]" = (),
+        residual: "Sequence[int] | None" = None,
+        residual_period: float | None = None,
     ) -> "GravityModalResult":
         """Gravity preload, ``loadConst``, then ``eigen`` + ``modalProperties``
         on the same live domain.
@@ -105,6 +138,29 @@ class _GravityModalMixin(_ProcedureHost):
            model; the step count is the ``dlam``).
         3. ``loadConst -time 0``: the gravity loads stay on, frozen.
         4. ``eigen`` on the current tangent, then ``modalProperties -return``.
+
+        **The mode set** (fork chain M, Ladruno ADR 213). The order is
+        fixed: the basis, then the residual pseudo-modes, then
+        ``modalProperties``, with no ``eigen`` in between (a later
+        ``eigen`` drops the pseudo-modes and the mode tags).
+
+        - ``basis="eigen"`` (default) solves ``eigen``; ``basis="ritz"``
+          runs ``ritzVectors num_modes`` instead, with the starting loads
+          ``M ι_d`` for each of ``ritz_dirs`` and the reference loads of
+          each of ``ritz_patterns`` (the gravity pattern gives a basis whose
+          static participation in that load is 100 %). Ritz periods are
+          Rayleigh periods, not natural periods.
+        - ``residual=dirs`` appends ``residualModes -dir dirs``: the
+          missing-mass pseudo-modes, so the modal mass of each direction
+          reaches 100 %. On a Ritz basis the fork re-solves the joint set
+          (all tagged Ritz).
+        - ``residual_period=T`` adds ``-period T``: a spectrum reads the
+          pseudo-modes' Sa at ``T`` and combines them as one rigid mode
+          (ADR 213 D3b). The fork refuses it on a Ritz basis, and so does
+          the bridge.
+
+        Each mode's kind is on the result
+        (:attr:`~apeGmsh.opensees.analysis.modal.ModalPropertiesResult.kinds`).
 
         **What ``p_delta`` means.** ``True`` solves step 4 after the preload,
         so the stiffness is ``K - Kg`` with ``Kg`` from the gravity axial
@@ -139,14 +195,30 @@ class _GravityModalMixin(_ProcedureHost):
             ``False``: modes on ``K`` before it.
         solver
             The ``eigen`` solver flag.
+        basis
+            ``"eigen"`` or ``"ritz"`` (``num_modes`` Ritz vectors).
+        ritz_dirs, ritz_patterns
+            The Ritz starting loads (``basis="ritz"`` only; at least one):
+            global translations, and ``ops.pattern.Plain`` handles or names.
+        residual
+            Directions (1, 2, 3) to complete with ``residualModes``, or
+            ``None``.
+        residual_period
+            The pseudo-modes' Sa period ``T`` (s), or ``None`` for their
+            Rayleigh periods. Needs ``residual``; refused with
+            ``basis="ritz"``.
 
         Raises
         ------
         ValueError
-            ``num_modes < 1``, or the integrator is not a fixed-increment
-            ``LoadControl`` reaching ``λ = 1``.
+            ``num_modes < 1``, the integrator is not a fixed-increment
+            ``LoadControl`` reaching ``λ = 1``, or the mode-set options do
+            not fit together.
         BridgeError
-            The analysis chain is incomplete, or not ``Static``.
+            The analysis chain is incomplete, or not ``Static``; or a Ritz
+            basis or residual is asked of an MPI (partitioned) model.
+        ForkTooOldError
+            ``basis="ritz"`` or ``residual`` on a build without chain M.
         NotImplementedError
             The model has registered stages (live runs flat models only,
             ADR 0121 D2).
@@ -154,10 +226,72 @@ class _GravityModalMixin(_ProcedureHost):
             The gravity analysis failed to converge, or the eigen solve
             moved the gravity state.
         """
+        context = "apeSees.modal_after_gravity"
         return self._run_gravity_modal(
-            num_modes, p_delta=p_delta, solver=solver,
-            context="apeSees.modal_after_gravity", hook=None,
+            num_modes, p_delta=p_delta, solver=solver, context=context,
+            hook=None, mode_set=self._mode_set(
+                num_modes, basis=basis, ritz_dirs=ritz_dirs,
+                ritz_patterns=ritz_patterns, residual=residual,
+                residual_period=residual_period, context=context),
         )
+
+    def _mode_set(
+        self,
+        num_modes: int,
+        *,
+        basis: str,
+        ritz_dirs: Sequence[int],
+        ritz_patterns: "Sequence[Plain | str]",
+        residual: "Sequence[int] | None",
+        residual_period: float | None,
+        context: str,
+    ) -> "tuple[RitzVectors | None, ResidualModes | None]":
+        """The chain M records the options ask for, validated and gated
+        (A4 probe, MPI) before anything is built."""
+        from .._target import require_rsa_feature
+        from ..analysis.modal import ResidualModes, RitzVectors
+        from ..pattern.pattern import Plain as _Plain
+
+        if basis not in ("eigen", "ritz"):
+            raise ValueError(
+                f"{context}: basis is 'eigen' or 'ritz', got {basis!r}.")
+        if basis == "eigen" and (len(ritz_dirs) > 0 or len(ritz_patterns) > 0):
+            raise ValueError(
+                f"{context}: ritz_dirs / ritz_patterns need basis='ritz'.")
+        if residual_period is not None and residual is None:
+            raise ValueError(
+                f"{context}: residual_period needs residual= (the directions "
+                "whose pseudo-modes read Sa at it).")
+        if residual_period is not None and basis == "ritz":
+            raise ValueError(
+                f"{context}: residual_period is refused on a Ritz basis: the "
+                "fork's residualModes re-solves a Ritz set jointly and refuses "
+                "-period there (WP-215).")
+        ritz = None
+        if basis == "ritz":
+            tags: list[int] = []
+            for handle in ritz_patterns:
+                pat = self._resolve(handle, base=_Plain)
+                tag = self.tag_for(pat) if isinstance(pat, _Plain) else None
+                if tag is None:
+                    raise BridgeError(
+                        f"{context}: ritz_patterns takes ops.pattern.Plain "
+                        f"handles (or registered names) on this bridge, got "
+                        f"{handle!r}.")
+                tags.append(int(tag))
+            ritz = RitzVectors(n=num_modes, dirs=tuple(ritz_dirs),
+                               patterns=tuple(tags))
+            self._refuse_mpi_modal_basis(context, "ritzVectors")
+            require_rsa_feature("ritzVectors")
+        extra = None
+        if residual is not None:
+            extra = ResidualModes(
+                dirs=tuple(residual),
+                period="rayleigh" if residual_period is None
+                else residual_period)
+            self._refuse_mpi_modal_basis(context, "residualModes")
+            require_rsa_feature("residualModes")
+        return ritz, extra
 
     def _run_gravity_modal(
         self,
@@ -167,10 +301,12 @@ class _GravityModalMixin(_ProcedureHost):
         solver: str,
         context: str,
         hook: "_Hook | None",
+        mode_set: "tuple[RitzVectors | None, ResidualModes | None]" = (None, None),
     ) -> "GravityModalResult":
         """The D1 sequence; ``hook`` runs once the modes exist, with the
         domain at its reference state (the gravity state, or the unloaded
-        one under ``p_delta=False``), and must leave it there."""
+        one under ``p_delta=False``), and must leave it there. ``mode_set``
+        is ``(ritz, residual)`` from :meth:`_mode_set`."""
         from ..analysis.gravity_modal import (
             GravityModalResult,
             snapshot_state,
@@ -178,7 +314,7 @@ class _GravityModalMixin(_ProcedureHost):
         )
         from ..analysis.modal import ModalPropertiesResult
         from .._readback import DroppedSession, open_session
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
         from .._internal.tag_plan import emit_mode
         import numpy as np
 
@@ -188,6 +324,7 @@ class _GravityModalMixin(_ProcedureHost):
 
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         self._read_state = DroppedSession(
             f"{context}(...) started on this bridge and did not complete"
         )
@@ -197,11 +334,27 @@ class _GravityModalMixin(_ProcedureHost):
         self._artifacts.after_emit(self)
         ops = live_emitter.ops
 
+        ritz, extra = mode_set
+
+        def solve_modes() -> "tuple[list[float], dict[str, list[float]]]":
+            # The basis, then the residual, then modalProperties, and no
+            # eigen in between (ADR 213: eigen clears the mode tags).
+            if ritz is not None:
+                ritz._emit(live_emitter, 0)
+                found: list[float] = []
+            else:
+                found = live_emitter.eigen(num_modes, solver=solver)
+            if extra is not None:
+                extra._emit(live_emitter, 0)
+            props = live_emitter.modal_properties()
+            if ritz is not None or extra is not None:
+                found = [float(v) for v in props["eigenLambda"]]
+            return found, props
+
         values: list[float] = []
         properties: dict[str, list[float]] = {}
         if not p_delta:
-            values = live_emitter.eigen(num_modes, solver=solver)
-            properties = live_emitter.modal_properties()
+            values, properties = solve_modes()
             if hook is not None:
                 hook(live_emitter, np.asarray(values, dtype=np.float64),
                      properties)
@@ -224,8 +377,7 @@ class _GravityModalMixin(_ProcedureHost):
         gravity = snapshot_state(ops)
 
         if p_delta:
-            values = live_emitter.eigen(num_modes, solver=solver)
-            properties = live_emitter.modal_properties()
+            values, properties = solve_modes()
 
         disp_drift, reac_drift = state_drift(gravity, snapshot_state(ops))
         if disp_drift != 0.0 or reac_drift != 0.0:
@@ -237,9 +389,14 @@ class _GravityModalMixin(_ProcedureHost):
         if p_delta and hook is not None:
             hook(live_emitter, np.asarray(values, dtype=np.float64),
                  properties)
+            # The hook settles the gravity state with unloaded Linear steps
+            # and returns the domain there, so the snapshot is retaken:
+            # ``gravity`` is the state the domain is left at, and
+            # ``gravity_drift()`` reads 0.0 until something moves it.
+            gravity = snapshot_state(ops)
 
         live_plan = bm._tag_plan(emit_mode(
-            bm, split=False,
+            bm,
             supports_partitions=live_emitter.caps.supports_partitions))
         self._read_state = open_session(
             live_emitter, ndm=bm.ndm,
@@ -265,6 +422,11 @@ class _GravityModalMixin(_ProcedureHost):
         extractors: "Mapping[str, ResponseExtractor]",
         p_delta: bool = True,
         solver: str = "-genBandArpack",
+        basis: str = "eigen",
+        ritz_dirs: Sequence[int] = (),
+        ritz_patterns: "Sequence[Plain | str]" = (),
+        residual: "Sequence[int] | None" = None,
+        residual_period: float | None = None,
     ) -> "SpectrumModalResult":
         """Per-mode response spectrum about the gravity state (ADR 0124 D4).
 
@@ -290,17 +452,26 @@ class _GravityModalMixin(_ProcedureHost):
         element: a second difference of an element's resisting force above
         ``1e-3`` of its first difference (a no-tension brace or a gap at zero
         strain, a material that loads and unloads on different branches,
-        such as ``Concrete01`` on its backbone) raises. Combine the result
+        such as ``Concrete01`` on its backbone) raises. A mode that fails
+        that check is probed again at 100 times the amplitude, judged there,
+        and takes its values from that probe: a kink's ratio does not depend
+        on the amplitude, while round-off (a near-rigid link, whose force is
+        a large stiffness times a tiny deformation) shrinks with it. Combine
+        the result
         with :meth:`SpectrumModalResult.combine` (CQC / SRSS) and
         :meth:`SpectrumModalResult.directional` (100/30 / SRSS); the gravity
         values are kept apart (:func:`~apeGmsh.opensees.analysis.spectrum.seismic_envelope`).
 
         The reference state is the gravity state with ``p_delta=True`` and
         the unloaded state with ``p_delta=False`` (modes and per-mode
-        responses on ``K``, gravity run afterwards). The domain ends at the
-        settled gravity state either way, checked against its snapshot; with
-        a loose declared test that is nearer equilibrium than the state the
-        gravity analysis stopped at.
+        responses on ``K``, gravity run afterwards). With ``p_delta=True``
+        the domain ends at the settled gravity state, checked against the
+        snapshot taken after settling; with a loose declared test that is
+        nearer equilibrium than the state the gravity analysis stopped at.
+        With ``p_delta=False`` it ends where the gravity analysis stopped.
+        Either way ``result.modal.gravity`` is the state the domain is left
+        at, so ``result.modal.gravity_drift()`` reads ``0.0`` right after the
+        call.
 
         ``responseSpectrumAnalysis -mode k`` is not used: it replaces the
         committed displacement with the modal one and commits, so the gravity
@@ -314,11 +485,41 @@ class _GravityModalMixin(_ProcedureHost):
         the kink check and the recorder refusal are the same on both routes,
         and the imposed displacement is checked against ``± a_k φ_k / λ_k``.
 
+        **Ritz and residual modes** (``basis``, ``residual``,
+        ``residual_period`` as in :meth:`modal_after_gravity`). A Ritz
+        vector or a pseudo-mode ``ψ`` is not an eigenvector, so a static
+        leg under ``a M ψ`` would move the domain by ``K⁻¹ M ψ``, not by
+        ``a ψ / λ``. Such a mode set therefore needs the ``-increment``
+        route (imposed legs, every extractor a built-in one), and is
+        refused on the static one. The values are those of the fork's RSA:
+        ``ψ Γ Sa / λ`` with the Rayleigh ``λ``. With ``residual_period=T``
+        the pseudo-modes read Sa at ``T``, and every combination on the
+        result sums them into one rigid mode at ``ω = 2π/T``
+        (:attr:`SpectrumModalResult.sa_periods`, ADR 213 D3b). The modes'
+        kinds are :attr:`SpectrumModalResult.kinds`; a Ritz or pseudo-mode
+        period is a Rayleigh period.
+
         **Nodal mass only.** The modal force is ``M φ`` built from the nodal
         masses, so a model whose mass sits in its elements (a section or
         material ``rho``, an element ``mass=``) is refused. Lump the mass to
         the nodes (``g.masses`` on the session, or ``ops.mass`` /
         ``mass_from_model``): that is the supported route.
+
+        **The modes must carry the loaded mass.** A spectrum direction is
+        refused when ``modalProperties`` counts less free mass along it
+        (``totalFreeMass``) than the nodes carry on DOFs no ``fix`` holds,
+        or when the modes' effective masses along it sum to at most
+        ``1e-6`` of the free mass (every Γ zero to round-off). The first is
+        what stock OpenSees and Ladruno forks older than
+        ``ladruno-v20261027`` (WP-211) give for mass on the constrained
+        nodes of a rigid diaphragm under ``constraints Transformation``: a
+        zero response, or a Γ too low when only some floors lose their
+        mass. These checks need the modes, so with ``p_delta=True`` they
+        run after the gravity analysis (in the per-mode step, on the
+        gravity state), and with ``p_delta=False`` before it. On those older
+        builds, mass on a node that an ``equalDOF`` ties to a fixed node is
+        refused too, although its Γ is right: put that mass on the fixed
+        node, or use a fork with WP-211.
 
         **No recorders.** Each probe leg and each return solve commits, and
         on the ``-increment`` route each leg calls the domain's recorders on
@@ -331,6 +532,13 @@ class _GravityModalMixin(_ProcedureHost):
         The driver always adds the extractor ``"base_shear"`` (the total
         support reaction per translational direction), so
         :meth:`SpectrumModalResult.base_shear` gives ``V_t`` per direction.
+        The result also carries each mode's inertia force ``m φ Γ Sa`` at
+        every massed node (:attr:`SpectrumModalResult.inertia`), from which
+        :meth:`SpectrumModalResult.storey_forces` sums storey shears and
+        moments per mode; each mode's total inertia is checked against its
+        total base reaction, and an
+        :class:`~apeGmsh.opensees.analysis.spectrum.InertiaBalanceWarning` is
+        issued when they differ by more than ``1e-3`` of the inertia.
 
         Parameters
         ----------
@@ -346,7 +554,7 @@ class _GravityModalMixin(_ProcedureHost):
             :class:`~apeGmsh.opensees.analysis.spectrum.ElementResponse`, or
             any callable, such as a story-shear aggregator). The name
             ``"base_shear"`` is reserved.
-        p_delta, solver
+        p_delta, solver, basis, ritz_dirs, ritz_patterns, residual, residual_period
             As :meth:`modal_after_gravity`.
 
         Raises
@@ -354,7 +562,9 @@ class _GravityModalMixin(_ProcedureHost):
         BridgeError
             The model carries element mass (refused: the modal force is
             built from nodal masses), declares a recorder, or a spectrum
-            names a direction outside ``1..ndm``.
+            names a direction outside ``1..ndm``, or a direction a spectrum
+            loads has less free mass than unfixed nodal mass, or a zero Γ
+            (to round-off) in every mode.
         ValueError
             No spectra or extractors, or an extractor's length changed.
         RuntimeError
@@ -366,6 +576,10 @@ class _GravityModalMixin(_ProcedureHost):
         from ..analysis.spectrum import SpectrumModalResult
 
         context = "apeSees.spectrum_after_gravity"
+        mode_set = self._mode_set(
+            num_modes, basis=basis, ritz_dirs=ritz_dirs,
+            ritz_patterns=ritz_patterns, residual=residual,
+            residual_period=residual_period, context=context)
         recorders = sorted({type(p).__name__ for p in self._primitives
                             if isinstance(p, Recorder)})
         if recorders:
@@ -404,16 +618,18 @@ class _GravityModalMixin(_ProcedureHost):
                  properties: "Mapping[str, Sequence[float]]") -> None:
             holder["out"] = self._per_mode_spectrum(
                 live_emitter, eigenvalues, properties, spectra_t, named,
-                context=context,
+                context=context, sa_period=residual_period,
             )
 
         modal = self._run_gravity_modal(
             num_modes, p_delta=p_delta, solver=solver, context=context,
-            hook=hook,
+            hook=hook, mode_set=mode_set,
         )
-        gravity_values, per_mode, labels, drift = cast(
+        gravity_values, per_mode, labels, drift, inertia, sa_periods = cast(
             "tuple[dict[str, np.ndarray], dict[str, np.ndarray], "
-            "dict[str, tuple[str, ...] | None], tuple[float, float]]",
+            "dict[str, tuple[str, ...] | None], tuple[float, float], "
+            "tuple[np.ndarray, tuple[int, ...], np.ndarray], "
+            "np.ndarray | None]",
             holder["out"],
         )
         if not p_delta:
@@ -424,14 +640,20 @@ class _GravityModalMixin(_ProcedureHost):
                 name: _evaluate(ex, ops, name, None, context)
                 for name, ex in named.items()
             }
-        return SpectrumModalResult(
+        result = SpectrumModalResult(
             modal=modal,
             spectra=spectra_t,
             gravity_values=gravity_values,
             per_mode=per_mode,
             labels=labels,
             restore_drift=drift,
+            inertia=inertia[0],
+            inertia_nodes=inertia[1],
+            inertia_coords=inertia[2],
+            sa_periods=sa_periods,
         )
+        result.check_inertia_balance(warn=True)
+        return result
 
     def _per_mode_spectrum(
         self,
@@ -442,9 +664,13 @@ class _GravityModalMixin(_ProcedureHost):
         extractors: "Mapping[str, ResponseExtractor]",
         *,
         context: str,
-    ) -> "tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, tuple[str, ...] | None], tuple[float, float]]":
+        sa_period: float | None = None,
+    ) -> "tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, tuple[str, ...] | None], tuple[float, float], tuple[np.ndarray, tuple[int, ...], np.ndarray], np.ndarray | None]":
         """The per-mode loop of ADR 0124 D4, about the domain's current
-        committed state; leaves the domain back at it."""
+        committed state; leaves the domain back at it. ``sa_period`` is the
+        ``residualModes -period`` the bridge emitted: the residual
+        pseudo-modes (``modeKind`` 1) read Sa at it, while λ stays their
+        own (ADR 213 D3b)."""
         import numpy as np
 
         from .._internal.types import SolutionAlgorithm, TimeSeries
@@ -467,13 +693,24 @@ class _GravityModalMixin(_ProcedureHost):
                 f"period; got {lam.tolist()}."
             )
         periods = 2.0 * np.pi / np.sqrt(lam)
+        kinds = np.asarray(properties.get("modeKind", [0] * lam.size),
+                           dtype=np.int64)
+        if kinds.size != lam.size:
+            raise RuntimeError(
+                f"{context}: modalProperties gives {kinds.size} mode kinds "
+                f"for {lam.size} modes.")
+        sa_periods = None
+        if sa_period is not None:
+            sa_periods = np.where(kinds == 1, float(sa_period), 0.0)
+        sa_at = periods if sa_periods is None else np.where(
+            sa_periods > 0.0, sa_periods, periods)
         components = ("MX", "MY", "MZ")
         gamma = np.stack([
             np.asarray(properties[f"partiFactor{components[s.direction - 1]}"],
                        dtype=np.float64)
             for s in spectra
         ])
-        coef = gamma * np.stack([s.sa(periods) for s in spectra])
+        coef = gamma * np.stack([s.sa(sa_at) for s in spectra])
 
         # The modal force is M φ with the nodal masses; element mass (which
         # modalProperties counts) would be missing from it.
@@ -495,7 +732,32 @@ class _GravityModalMixin(_ProcedureHost):
                 "the nodes instead (g.masses, or ops.mass / "
                 "mass_from_model), the supported route."
             )
+        # The mass the modes should act on: the nodal mass less what sits on
+        # SP-fixed DOFs (Penalty and Lagrange count those as free too, so
+        # the free mass may be larger, never smaller).
+        fixed = {int(t): {int(d) - 1 for d in ops.getFixedDOFs(t)}
+                 for t in ops.getFixedNodes()}
+        unfixed = np.zeros(ndm)
+        for t, m in masses.items():
+            held = fixed.get(t, set())
+            for d in range(min(ndm, m.size)):
+                if d not in held:
+                    unfixed[d] += m[d]
+        _check_loaded_mass(properties, unfixed, spectra, context)
         massed = [t for t in tags if np.any(masses[t] != 0.0)]
+        # Each mode's inertia force m φ Γ Sa at the massed nodes (A5-3): the
+        # load whose static response the legs measure, kept for the storey
+        # forces and the inertia / base-reaction balance. A residual or Ritz
+        # vector ψ is not an eigenvector (K ψ ≠ λ M ψ): the load whose static
+        # response is ψ Γ Sa / λ is the elastic force K ψ Γ Sa / λ, which can
+        # load nodes without mass. Such a set keeps every node with a free
+        # DOF on the node axis, and its non-eigen modes take that force from
+        # the imposed legs (an eigenmode's m φ Γ Sa is the same force).
+        elastic = bool(np.any(kinds != 0))
+        loaded = ([t for t in tags if len(fixed.get(t, set())) < masses[t].size]
+                  if elastic else massed)
+        width = max((masses[t].size for t in loaded), default=ndm)
+        inertia = np.zeros((len(spectra), lam.size, len(loaded), width))
 
         ts_tag = 1 + max(
             (int(tag) for p in self._primitives if isinstance(p, TimeSeries)
@@ -540,6 +802,19 @@ class _GravityModalMixin(_ProcedureHost):
         def element_forces() -> "dict[int, np.ndarray]":
             return {e: np.asarray(ops.eleForce(e), dtype=np.float64)
                     for e in elements}
+
+        def nodal_force() -> "np.ndarray":
+            # Each loaded node's resisting force at its free DOFs: with no
+            # load on, the force K u that holds the domain at its state.
+            ops.reactions()
+            out = np.zeros((len(loaded), width))
+            for i, t in enumerate(loaded):
+                r = np.asarray(ops.nodeReaction(t), dtype=np.float64)
+                held = fixed.get(t, set())
+                for d in range(min(width, r.size)):
+                    if d not in held:
+                        out[i, d] = r[d]
+            return out
 
         def disp() -> "dict[int, np.ndarray]":
             return {t: np.asarray(ops.nodeDisp(t), dtype=np.float64)
@@ -600,6 +875,84 @@ class _GravityModalMixin(_ProcedureHost):
             and _rsa_increment_available(ops) is True
         )
         gamma_peak = np.argmax(np.abs(gamma), axis=0)
+        if np.any(kinds != 0) and not increment:
+            raise BridgeError(
+                f"{context}: the mode set holds Ritz vectors or residual "
+                "pseudo-modes, which are not eigenvectors: a static leg under "
+                "a M ψ moves the domain by K⁻¹ M ψ, not by a ψ / λ. They "
+                "need the -increment route, which imposes ψ Γ Sa / λ as the "
+                "fork's RSA does: a fork build with responseSpectrumAnalysis "
+                "-increment (WP-207) and only the built-in extractors "
+                "(NodeDisp, NodeReaction, ElementResponse)."
+            )
+
+        def mode_legs(
+            k: int, phi: "dict[int, np.ndarray]", amp: float, scale: float,
+        ) -> "tuple[list[dict[str, np.ndarray]], list[dict[int, np.ndarray]]]":
+            """Mode ``k``'s two legs at ``scale`` times its amplitude: each
+            leg's change in every extractor and every element's resisting
+            force, from its own settled start."""
+            a = scale * amp
+            loads = {t: a * masses[t] * phi[t] for t in massed}
+            legs: list[dict[str, np.ndarray]] = []
+            forces: list[dict[int, np.ndarray]] = []
+            for sign in (1.0, -1.0):
+                where = f"mode {k + 1} {'+' if sign > 0 else '-'}"
+                start = {
+                    name: _evaluate(ex, ops, name, ref_values[name].size,
+                                    context)
+                    for name, ex in extractors.items()
+                }
+                start_forces = element_forces()
+                start_nodal = nodal_force() if elastic else None
+
+                def read() -> "tuple[dict[str, np.ndarray], dict[int, np.ndarray]]":
+                    changes = {
+                        name: _evaluate(ex, ops, name, ref_values[name].size,
+                                        context) - start[name]
+                        for name, ex in extractors.items()}
+                    if start_nodal is not None:
+                        changes[_ELASTIC] = nodal_force() - start_nodal
+                    return (
+                        changes,
+                        {e: f - start_forces[e]
+                         for e, f in element_forces().items()},
+                    )
+
+                if increment:
+                    # The same ± a φ / λ, imposed: the fork sets the trial
+                    # state to committed + sign_cmd Γ_d Sa φ / λ, so Sa is
+                    # the probe's amplitude over |Γ_d| (not the design Sa:
+                    # the legs stay at the probe size, where the kink check
+                    # below separates a tangent from a secant). The leg is
+                    # reverted to the committed (settled) reference exactly,
+                    # also when it or a read raises.
+                    d = int(gamma_peak[k])
+                    g = float(gamma[d, k])
+                    leg, force = _imposed_leg(ops, lambda: _impose_mode(
+                        ops, int(spectra[d].direction), float(periods[k]),
+                        a / abs(g), k + 1, sign * math.copysign(1.0, g),
+                        {t: sign * a * phi[t] / float(lam[k]) for t in tags},
+                        ndm, scale * probe, f"{context}: {where} leg",
+                    ), read)
+                else:
+                    pattern = 1 + max(
+                        (int(p) for p in ops.getPatterns()), default=0)
+                    ops.pattern("Plain", pattern, ts_tag, "-fact", sign)
+                    for t, f in loads.items():
+                        ops.load(t, *f.tolist())
+                    # One step on the current tangent, the one the modes
+                    # were solved on: the leg moves the domain by exactly
+                    # ± a φ / λ, whether or not the element's tangent is
+                    # consistent with its forces (the PDelta
+                    # transformation's is not).
+                    solve(f"{where} leg")
+                    leg, force = read()
+                    ops.remove("loadPattern", pattern)
+                    settle(f"{where} return")
+                legs.append(leg)
+                forces.append(force)
+            return legs, forces
 
         for k in range(n_modes):
             if not active[k] or not np.any(coef[:, k]):
@@ -613,90 +966,34 @@ class _GravityModalMixin(_ProcedureHost):
                     f"{context}: mode {k + 1} has effective mass but no node "
                     "translates in it."
                 )
+            for i, t in enumerate(loaded):
+                f = masses[t] * phi[t][:masses[t].size]
+                inertia[:, k, i, :f.size] = coef[:, k, None] * f[None, :]
             amp = probe * float(lam[k]) / peak
-            loads = {t: amp * masses[t] * phi[t] for t in massed}
-            # Each leg is an increment from its own settled start.
-            legs: list[dict[str, np.ndarray]] = []
-            forces: list[dict[int, np.ndarray]] = []
-            for sign in (1.0, -1.0):
-                where = f"mode {k + 1} {'+' if sign > 0 else '-'}"
-                start = {
-                    name: _evaluate(ex, ops, name, ref_values[name].size,
-                                    context)
-                    for name, ex in extractors.items()
-                }
-                start_forces = element_forces()
-                if increment:
-                    # The same ± a φ / λ, imposed: the fork sets the trial
-                    # state to committed + sign_cmd Γ_d Sa φ / λ, so Sa is
-                    # the probe's amplitude over |Γ_d| (not the design Sa:
-                    # the legs stay at the probe size, where the kink check
-                    # below separates a tangent from a secant).
-                    d = int(gamma_peak[k])
-                    g = float(gamma[d, k])
-                    _impose_mode(
-                        ops, int(spectra[d].direction), float(periods[k]),
-                        amp / abs(g), k + 1, sign * math.copysign(1.0, g),
-                        {t: sign * amp * phi[t] / float(lam[k])
-                         for t in tags},
-                        ndm, probe, f"{context}: {where} leg",
-                    )
-                else:
-                    pattern = 1 + max(
-                        (int(p) for p in ops.getPatterns()), default=0)
-                    ops.pattern("Plain", pattern, ts_tag, "-fact", sign)
-                    for t, f in loads.items():
-                        ops.load(t, *f.tolist())
-                    # One step on the current tangent, the one the modes
-                    # were solved on: the leg moves the domain by exactly
-                    # ± a φ / λ, whether or not the element's tangent is
-                    # consistent with its forces (the PDelta
-                    # transformation's is not).
-                    solve(f"{where} leg")
-                legs.append({
-                    name: _evaluate(ex, ops, name, ref_values[name].size,
-                                    context) - start[name]
-                    for name, ex in extractors.items()
-                })
-                forces.append({e: f - start_forces[e]
-                               for e, f in element_forces().items()})
-                if increment:
-                    # Back to the committed (settled) reference exactly.
-                    ops.responseSpectrumAnalysis("-revert")
-                else:
-                    ops.remove("loadPattern", pattern)
-                    settle(f"{where} return")
-            # Per element, the second difference of its resisting force
-            # against the first: second order in the probe for a smooth
-            # element, first order for one whose stiffness differs between
-            # the two legs (a no-tension brace at zero strain, a material
-            # that loads and unloads on different branches). Per element,
-            # so a slender kinked member is not hidden by stiff ones.
-            odd = {e: float(np.max(np.abs(forces[0][e] - forces[1][e]),
-                                   initial=0.0)) for e in elements}
-            floor = _ELEMENT_FLOOR * max(odd.values(), default=0.0)
-            worst, ratio = None, 0.0
-            for e in elements:
-                even = float(np.max(np.abs(forces[0][e] + forces[1][e]),
-                                    initial=0.0))
-                r = even / max(odd[e], floor) if even > 0.0 else 0.0
-                if r > ratio:
-                    worst, ratio = e, r
+            # Called before the loop moves on, so the closure's k, phi and
+            # amp are this mode's.
+            worst, ratio, scale, legs = _judge_kink(
+                elements, lambda s: mode_legs(k, phi, amp, s))
             if ratio > _KINK_TOL:
                 raise RuntimeError(
                     f"{context}: mode {k + 1}'s two probe legs met different "
                     f"stiffnesses in element {worst} (second difference of "
-                    f"its resisting force {ratio:.3e} of the first, limit "
-                    f"{_KINK_TOL:g}): a member changes stiffness at the "
-                    "reference state, such as a no-tension brace or a gap at "
-                    "zero strain, or a material that loads and unloads on "
-                    "different branches (Concrete01, Steel02 on their "
-                    "backbone). The response spectrum is linear about that "
-                    "state and is refused."
+                    f"its resisting force {ratio:.3e} of the first at "
+                    f"{_REPROBE:g} times the probe, limit {_KINK_TOL:g}, and "
+                    "above it at the probe): a member changes stiffness at "
+                    "the reference state, such as a no-tension brace or a "
+                    "gap at zero strain, or a material that loads and "
+                    "unloads on different branches (Concrete01, Steel02 on "
+                    "their backbone). The response spectrum is linear about "
+                    "that state and is refused."
                 )
+            # The values come from the legs the verdict was taken on.
             for name in extractors:
-                unit = (legs[0][name] - legs[1][name]) / (2.0 * amp)
+                unit = (legs[0][name] - legs[1][name]) / (2.0 * scale * amp)
                 per_mode[name][:, k, :] = coef[:, k, None] * unit[None, :]
+            if kinds[k] != 0:
+                unit = (legs[0][_ELASTIC] - legs[1][_ELASTIC]) / (2.0 * scale * amp)
+                inertia[:, k] = coef[:, k, None, None] * unit[None, :, :]
 
         algorithm._emit(live_emitter, self.tag_for(algorithm) or 0)
 
@@ -710,7 +1007,10 @@ class _GravityModalMixin(_ProcedureHost):
                 f"{drift[0]:.3e}, reaction {drift[1]:.3e}; limit "
                 f"{_RESTORE_TOL:g}). Tighten the declared convergence test."
             )
-        return ref_values, per_mode, labels, drift
+        coords = np.asarray([ops.nodeCoord(t)[:ndm] for t in loaded],
+                            dtype=np.float64).reshape(len(loaded), ndm)
+        return (ref_values, per_mode, labels, drift,
+                (inertia, tuple(loaded), coords), sa_periods)
 
 
     def _gravity_steps(self, context: str) -> int:
@@ -761,6 +1061,73 @@ class _GravityModalMixin(_ProcedureHost):
         return steps
 
 
+def _check_loaded_mass(
+    properties: "Mapping[str, Sequence[float]]",
+    unfixed: "np.ndarray",
+    spectra: "Sequence[DesignSpectrum]",
+    context: str,
+) -> None:
+    """Refuse a spectrum direction whose modes do not carry its mass (gap 6).
+
+    Γ divides by the free mass, ``totalFreeMass``. Stock OpenSees and forks
+    older than ``ladruno-v20261027`` (WP-211) count a DOF that the
+    ``Transformation`` handler retains through an MP constraint as fixed, so
+    the mass on a rigid diaphragm's constrained nodes drops out of it:
+    ``totalMass`` still matches the nodes, but the free mass falls short of
+    the nodal mass on DOFs no SP constraint fixes (``unfixed``), and Γ with
+    it: all of it (a zero response) or one floor's share (Γ too low). Such a
+    direction is refused, and so is a direction whose modes carry almost
+    none of the free mass (every Γ zero to round-off, or not a number).
+
+    Known false refusal on those builds: mass on a node that an
+    ``equalDOF`` ties to a fixed node is not fixed by a ``fix``, so it is
+    expected free, but the old build drops it. Γ is right there (the node
+    cannot move), yet the direction is refused.
+    """
+    import numpy as np
+
+    if "totalFreeMass" not in properties:
+        raise BridgeError(
+            f"{context}: modalProperties -return gives no 'totalFreeMass' on "
+            "this build, so the mass the modes act on cannot be checked "
+            "against the nodal mass. Use a build whose modalProperties "
+            "returns it (stock OpenSees since 2022, every Ladruno fork "
+            "release)."
+        )
+    free = np.asarray(properties["totalFreeMass"], dtype=np.float64)
+    for s in spectra:
+        d = s.direction - 1
+        if float(free[d]) < (1.0 - _FREE_MASS_TOL) * float(unfixed[d]):
+            raise BridgeError(
+                f"{context}: the spectrum along direction {s.direction} acts "
+                f"on a free mass of {float(free[d]):.6g} (modalProperties "
+                f"totalFreeMass) while the nodes carry {float(unfixed[d]):.6g} "
+                "on DOFs no fix holds in that direction, so Γ and the "
+                "response would miss the difference. The likely cause is "
+                "nodal mass on DOFs an MP constraint retains under "
+                "constraints Transformation (the constrained nodes of a "
+                "rigid diaphragm or rigid link), which stock OpenSees and "
+                "Ladruno forks older than ladruno-v20261027 (WP-211) count "
+                "as fixed. Use a fork with WP-211, put the mass on the "
+                "master node, or declare constraints Penalty or Lagrange. "
+                "Mass on a DOF that a load pattern's sp holds is also left "
+                "out of the free mass."
+            )
+        carried = float(np.sum(np.abs(np.asarray(
+            properties[f"partiMassM{'XYZ'[d]}"], dtype=np.float64))))
+        # Written so that a NaN effective mass is refused too.
+        if not carried > _LOADED_MASS_TOL * float(free[d]):
+            raise BridgeError(
+                f"{context}: the modes carry an effective mass of "
+                f"{carried:.3e} along direction {s.direction}, against a "
+                f"free mass of {float(free[d]):.6g}: every participation "
+                "factor Γ along it is zero to round-off, so the spectrum "
+                "along it gives no response. Request more modes, or check "
+                "that the mass the modes act on (modalProperties "
+                "totalFreeMass) is the model's."
+            )
+
+
 def _rsa_increment_available(ops: Any) -> "bool | None":
     """Whether the bound build takes ``responseSpectrumAnalysis -increment``
     (fork WP-207). Probed by ``responseSpectrumAnalysis -revert`` at the
@@ -775,6 +1142,80 @@ def _rsa_increment_available(ops: Any) -> "bool | None":
         # static path is correct on every build, so it runs.
         return None
     return True
+
+
+def _kink_ratio(
+    elements: "Sequence[int]",
+    forces: "Sequence[Mapping[int, np.ndarray]]",
+) -> "tuple[int | None, float]":
+    """The element whose two legs differ most in stiffness, and by how much.
+
+    ``forces`` holds each leg's change in every element's resisting force.
+    Per element, the second difference (``f⁺ + f⁻``) against the first
+    (``f⁺ - f⁻``): second order in the probe for a smooth element, first
+    order for one whose stiffness differs between the two legs (a
+    no-tension brace at zero strain, a material that loads and unloads on
+    different branches). Per element, so a slender kinked member is not
+    hidden by stiff ones; the first difference is floored at
+    ``_ELEMENT_FLOOR`` of the largest element's, so an element the mode
+    barely deforms is not judged on round-off.
+    """
+    import numpy as np
+
+    plus, minus = forces
+    odd = {e: float(np.max(np.abs(plus[e] - minus[e]), initial=0.0))
+           for e in elements}
+    floor = _ELEMENT_FLOOR * max(odd.values(), default=0.0)
+    worst, ratio = None, 0.0
+    for e in elements:
+        even = float(np.max(np.abs(plus[e] + minus[e]), initial=0.0))
+        r = even / max(odd[e], floor) if even > 0.0 else 0.0
+        if r > ratio:
+            worst, ratio = e, r
+    return worst, ratio
+
+
+_T = TypeVar("_T")
+
+
+def _judge_kink(
+    elements: "Sequence[int]",
+    legs_at: "Callable[[float], tuple[_T, Sequence[Mapping[int, np.ndarray]]]]",
+) -> "tuple[int | None, float, float, _T]":
+    """The kink verdict for one mode. ``legs_at(scale)`` runs the mode's two
+    legs at ``scale`` times its amplitude and returns ``(legs, forces)``.
+
+    :func:`_kink_ratio` of the legs at the probe, and where that exceeds
+    ``_KINK_TOL``, of the legs at ``_REPROBE`` times it instead. A kink
+    keeps its ratio at every amplitude, so it is refused either way;
+    round-off, whose second difference does not grow with the probe, falls
+    below the limit. Returns ``(worst, ratio, scale, legs)`` of the
+    legs that decided; the caller refuses when ``ratio`` exceeds
+    ``_KINK_TOL`` and otherwise takes its values from those legs.
+    """
+    scale = 1.0
+    legs, forces = legs_at(scale)
+    worst, ratio = _kink_ratio(elements, forces)
+    if ratio > _KINK_TOL:
+        scale = _REPROBE
+        legs, forces = legs_at(scale)
+        worst, ratio = _kink_ratio(elements, forces)
+    return worst, ratio, scale, legs
+
+
+def _imposed_leg(
+    ops: Any, impose: "Callable[[], None]", read: "Callable[[], _T]",
+) -> _T:
+    """One ``-increment`` leg: ``impose`` it, ``read`` the trial state, and
+    always return to the committed state with ``responseSpectrumAnalysis
+    -revert``, also when the imposition or a read raises, so a failed leg
+    (an imposed state off the mode, an extractor raising) does not leave
+    the domain at its trial state."""
+    try:
+        impose()
+        return read()
+    finally:
+        ops.responseSpectrumAnalysis("-revert")
 
 
 def _impose_mode(

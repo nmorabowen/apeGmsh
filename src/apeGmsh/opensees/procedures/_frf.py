@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ..pattern.pattern import Plain
 
 from ._host import _ProcedureHost
+from ._modal import refuse_fork_verb_before_wipe
 
 
 class _FrfMixin(_ProcedureHost):
@@ -244,7 +245,7 @@ class _FrfMixin(_ProcedureHost):
         it on a fresh live domain (eigen → modalProperties → command).
         Returns the live emitter's raw return."""
         from ..analysis.modal import _damping_channel_args, _node_tag
-        from ..emitter.live import LiveOpsEmitter
+        from ..emitter.live import LiveOpsEmitter, refuse_fork_chain_before_wipe
         from ..pattern.pattern import Plain as _Plain
 
         self._modal_prereqs_and_guards(num_modes, context=context)
@@ -324,8 +325,11 @@ class _FrfMixin(_ProcedureHost):
         if out is not None:
             args.extend(("-out", out))
 
+        refuse_fork_verb_before_wipe(
+            self, context, "fork ADR-44 modal frequency-domain sweep")
         bm = self.build()
         self._assert_fork_if_required()
+        refuse_fork_chain_before_wipe(bm)
         live_emitter = LiveOpsEmitter(wipe=True)
         bm.emit(live_emitter)
         self._artifacts.after_emit(self)

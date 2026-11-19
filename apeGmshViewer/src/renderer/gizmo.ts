@@ -24,8 +24,10 @@
 // `setClipOffset` per move (the mouse ray projected on the normal axis), and a
 // rotate one `setClipPose` per move (a trackball about the quad centre, the
 // offset re-anchored so the plane pivots there, not about the world origin).
-// Pointer-leave and cancel end a drag; an overlapping legend or panel wins the
-// press (`chromeAt`).
+// The drag holds pointer capture, so it survives the pointer leaving the canvas
+// (#1919); cancel or a lost capture ends it, and so does pointer-leave when the
+// capture could not be taken. An overlapping legend or panel wins the press
+// (`chromeAt`).
 
 import * as THREE from "three";
 import type { Box, Vec3 } from "../state/clip.ts";
@@ -312,8 +314,12 @@ export class PlaneGizmos {
 
 /** What the interactor needs of the viewport. */
 export interface GizmoHost {
-  /** the canvas: pointer events (the cursor shows the hover) */
-  readonly element: ListenTarget & { readonly style?: { cursor: string } };
+  /** the canvas: pointer events and their capture (the cursor shows the hover) */
+  readonly element: ListenTarget & {
+    readonly style?: { cursor: string };
+    setPointerCapture(id: number): void;
+    releasePointerCapture(id: number): void;
+  };
   /** the world ray through a client point */
   rayAt(clientX: number, clientY: number): Ray;
   /** the gizmo the ray grabs (PlaneGizmos.hit) */
@@ -338,6 +344,8 @@ type Drag =
 export class GizmoInteractor {
   private readonly host: GizmoHost;
   private drag: Drag | null = null;
+  /** the pointer whose capture the drag holds */
+  private captured: number | null = null;
   private cursor = "";
   private readonly off: (() => void)[] = [];
 
@@ -351,9 +359,16 @@ export class GizmoInteractor {
     on("pointerdown", (e) => this.onDown(e));
     on("pointermove", (e) => this.onMove(e));
     on("pointerup", (e) => this.onUp(e));
-    // The release may never come (a pointer that left the canvas, a lost press): the drag must not outlive it.
-    on("pointerleave", () => this.endDrag());
+    // The release may never come (a lost press, a capture taken away): the drag must not outlive it.
+    // A captured drag gets its release wherever the pointer is, so only an uncaptured one ends on leaving.
+    on("pointerleave", () => {
+      if (this.captured === null) this.endDrag();
+    });
     on("pointercancel", () => this.endDrag());
+    on("lostpointercapture", () => {
+      this.captured = null;
+      this.endDrag();
+    });
   }
 
   /** A gizmo gesture is in flight. */
@@ -395,6 +410,12 @@ export class GizmoInteractor {
       this.drag = { ...base, mode: "translate", axisPoint: g.centre, axisDir: g.normal, s0, offset0: plane.offset };
     }
     this.claim(e);
+    try {
+      this.host.element.setPointerCapture(e.pointerId);
+      this.captured = e.pointerId;
+    } catch {
+      // The pointer is already gone: the drag runs uncaptured, and leaving the canvas ends it.
+    }
   }
 
   private onMove(e: PointerEvent): void {
@@ -448,6 +469,14 @@ export class GizmoInteractor {
 
   private endDrag(): void {
     this.drag = null;
+    const id = this.captured;
+    if (id === null) return;
+    this.captured = null;
+    try {
+      this.host.element.releasePointerCapture(id);
+    } catch {
+      // The browser already released it (the pointer went away).
+    }
   }
 
   private hover(x: number, y: number): void {

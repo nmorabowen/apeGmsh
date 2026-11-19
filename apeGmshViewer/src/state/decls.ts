@@ -5,16 +5,17 @@
 // the same problem texts. test/store.test.ts holds the two engines against
 // each other on the fixture and on the synthetic fail-closed models.
 
-import { formatTable, type Field } from "../chain/resolve.ts";
+import { formatTable, MESH_ONLY_FIELD, type Field } from "../chain/resolve.ts";
 import {
   ELEMENT_SYNTAX,
   INTEGRATION_SYNTAX,
+  SECTION_SYNTAX,
   SECTIONS_WITH_MATERIAL_REFS,
   SECTIONS_WITHOUT_MATERIALS,
   type Decoded,
 } from "../chain/signatures.ts";
 import type { ModelFile, OpsFamily, OpsObject, Param } from "../model/types.ts";
-import { transformVecxzOf } from "../reader/read.ts";
+import { sectionProfileOf, transformJntOffsetOf, transformVecxzOf } from "../reader/read.ts";
 import type { Decl, DeclPath, ElementFacts } from "./types.ts";
 
 export const FAMILY_DIR: Record<OpsFamily, string> = {
@@ -86,6 +87,11 @@ function followSlots(out: Links, lookup: Lookup, owner: string, decoded: Decoded
 /** A Fiber section's materials: every patch / fiber / layer row names one by HDF5 path. */
 function sectionMaterials(out: Links, lookup: Lookup, sec: OpsObject): void {
   if (SECTIONS_WITHOUT_MATERIALS.has(sec.type)) return;
+  const syn = SECTION_SYNTAX[sec.type];
+  if (syn) {
+    followSlots(out, lookup, sec.path, syn(sec.params), sec.params, `${sec.path}@params`, `section ${sec.type}`);
+    return;
+  }
   if (!SECTIONS_WITH_MATERIAL_REFS.has(sec.type)) {
     out.problems.push(`${sec.path}: section type ${sec.type}: material links are not decoded`);
     return;
@@ -139,10 +145,7 @@ export function objectLinks(obj: OpsObject, lookup: Lookup): Links {
  */
 export function elementLinks(facts: ElementFacts, hasOpensees: boolean, lookup: Lookup, refsOnly = false): Links {
   const out: Links = { refs: {}, links: {}, problems: [] };
-  if (facts.cell && !refsOnly) {
-    if (!hasOpensees) out.problems.push("the file has no /opensees zone: there is no definition chain");
-    else if (facts.metas.length === 0) out.problems.push(`FEM element ${facts.femId} has no row in /opensees/element_meta/*/fem_eids`);
-  }
+  if (facts.cell && !refsOnly && !hasOpensees) out.problems.push("the file has no /opensees zone: there is no definition chain");
   for (const m of facts.metas) {
     const dec: Decoded = ELEMENT_SYNTAX[m.type]?.(m.args as Param[]) ?? { reason: `element type ${m.type} is not in the syntax table` };
     followSlots(out, lookup, refsOnly ? "" : `${m.h5}[${m.row}]`, dec, m.args, refsOnly ? "" : `${m.h5}/args[${m.row}]`, m.type, refsOnly);
@@ -210,6 +213,8 @@ export function elementFields(facts: ElementFacts, groupNames: string[], nodes: 
       note: "OpenSees-only element: no neutral-zone cell",
     });
   }
+  // A mesh cell the bridge was not asked to emit is legitimate (#2672): a fact, not a problem.
+  if (facts.cell && facts.metas.length === 0) fields.push(MESH_ONLY_FIELD);
   for (const m of facts.metas) {
     fields.push(
       { label: "OpenSees type", value: m.type, source: `${m.h5} (group name)`, interpreted: false },
@@ -257,9 +262,16 @@ export function objectPaths(model: ModelFile, warnings: string[]): Map<OpsObject
   return out;
 }
 
-export function objectDecl(obj: OpsObject, id: { path: DeclPath; name: string; nameSource: string }, lookup: Lookup): Decl {
+export function objectDecl(
+  obj: OpsObject,
+  id: { path: DeclPath; name: string; nameSource: string },
+  lookup: Lookup,
+  computedOutline?: readonly (readonly (readonly [number, number])[])[],
+): Decl {
   const links = objectLinks(obj, lookup);
   const vecxz = obj.family === "geomTransf" ? transformVecxzOf(obj) : [];
+  const jntOffset = obj.family === "geomTransf" ? transformJntOffsetOf(obj) : [];
+  const sectionProfile = obj.family === "section" ? sectionProfileOf(obj, computedOutline) : undefined;
   return {
     path: id.path,
     kind: obj.family,
@@ -274,5 +286,8 @@ export function objectDecl(obj: OpsObject, id: { path: DeclPath; name: string; n
     problems: links.problems,
     fields: objectFields(obj),
     ...(vecxz.length > 0 ? { vecxz } : {}),
+    ...(jntOffset.length > 0 ? { jntOffset } : {}),
+    ...(sectionProfile !== undefined ? { sectionProfile } : {}),
   };
 }
+

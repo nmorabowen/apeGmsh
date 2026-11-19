@@ -180,6 +180,7 @@ test("displacementAxes respects stage.refusedNodal for .ladruno DISPLACEMENT dat
   const stage: ResultsStage = {
     id: "MODEL_STAGE[1]",
     name: "gravity",
+    programName: "gravity",
     kind: "static",
     time: [0, 1],
     nodal: [],
@@ -490,11 +491,12 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
   const h = await opened(FRAME3D_MODEL, FRAME3D_LADRUNO);
   const prevDoc = (globalThis as { document?: unknown }).document;
   const aside = new FakeEl("aside");
+  const scaleAside = new FakeEl("div");
   const docEl = { dataset: { theme: "dark" } as Record<string, string | undefined> };
   (globalThis as { document?: unknown }).document = {
     documentElement: docEl,
     createElement: (tag: string) => new FakeEl(tag),
-    getElementById: (id: string) => (id === "line-diagram" ? aside : null),
+    getElementById: (id: string) => (id === "line-diagram" ? aside : id === "line-diagram-scale" ? scaleAside : null),
   };
   let unmount: (() => void) | null = null;
   try {
@@ -549,7 +551,7 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
       unlisten,
     ) as unknown as FakeEl | null;
     assert.ok(dom !== null);
-    assert.equal(dom.find("line-diagram-title")?.textContent, "section_force · Mz (bending_moment_z)");
+    assert.equal(scaleAside.find("vs-title")?.textContent, "section_force · Mz (bending_moment_z)");
 
     // Flip sign button (for Mz, flipped is true by default, so clicking it dispatches flipSign: false):
     const flipBtn = dom.find("line-diagram-flip");
@@ -620,6 +622,20 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
     assert.ok(dom !== null);
     assert.match(dom.find("line-diagram-notice")?.textContent ?? "", /1 3-D beam skipped/);
 
+    // Unit conversion on #line-diagram: converting from kN_m_s to N_mm_s scales Vy (force) by 1000 and Mz (moment) by 1e6:
+    h.store.dispatch({ type: "setContourUnits", source: "kN_m_s", target: "N_mm_s" });
+    for (const u of unlisten.splice(0)) u();
+    dom = renderLineDiagram(h.store.get(), undefined, unlisten) as unknown as FakeEl | null;
+    assert.ok(dom !== null);
+    // The card carries no colour bar or range controls; the scale in the viewport does:
+    assert.equal(dom.find("vs-ramp"), undefined);
+    assert.equal(dom.find("line-diagram-range-modes"), undefined);
+    assert.equal(scaleAside.find("vs-title")?.textContent, "section_force · Vy (shear_y) [N]");
+    assert.equal(scaleAside.find("vs-ticks")?.children[0]?.textContent, "-4.500e+4");
+    assert.equal(scaleAside.find("vs-ticks")?.children.at(-1)?.textContent, "6.000e+4");
+    assert.ok(scaleAside.find("line-diagram-range-modes") !== undefined);
+    assert.equal(scaleAside.hidden, false);
+
     // Switching to mesh phase (no lineStations) clears stale stepRange, scan, and notice, and hides #line-diagram:
     h.store.dispatch({ type: "setPhase", at: { kind: "mesh" } });
     assert.equal(h.store.get().lineDiagram.notice, null);
@@ -633,9 +649,16 @@ test("mountLineDiagram and renderLineDiagram render standalone #line-diagram pan
   }
 });
 
-test("Escalón 3: style.css prevents #banner/#line-diagram overlap and component select truncation", () => {
+test("Escalón 3: style.css prevents #banner/#line-diagram/#loads/#legend overlap and component select truncation", () => {
   const css = readFileSync(new URL("../../src/renderer/style.css", import.meta.url), "utf8");
-  assert.match(css, /#banner:not\(\[hidden\]\)\s*~\s*#line-diagram/);
+  const html = readFileSync(new URL("../../src/renderer/index.html", import.meta.url), "utf8");
+  assert.match(
+    html,
+    /<div id="left-rail">\s*<aside id="display" hidden data-collapsed="true"><\/aside>\s*<aside id="deform" hidden data-collapsed="true"><\/aside>\s*<aside id="line-diagram" hidden data-collapsed="true"><\/aside>\s*<aside id="contour" hidden data-collapsed="true"><\/aside>\s*<aside id="loads" hidden data-collapsed="true"><\/aside>\s*<aside id="reactions" hidden data-collapsed="true"><\/aside>\s*<aside id="vectors" hidden data-collapsed="true"><\/aside>\s*<aside id="principal" hidden data-collapsed="true"><\/aside>\s*<aside id="cracks" hidden data-collapsed="true"><\/aside>\s*<aside id="springs" hidden data-collapsed="true"><\/aside>\s*<aside id="hinges" hidden data-collapsed="true"><\/aside>\s*<aside id="legend" hidden data-collapsed="true"><\/aside>\s*<\/div>/
+  );
+  assert.match(css, /#left-rail\s*\{[^}]*display:\s*flex;\s*flex-direction:\s*column;/);
+  assert.match(css, /#banner:not\(\[hidden\]\)\s*~\s*#left-rail,\s*#banner:not\(\[hidden\]\)\s*~\s*#line-diagram/);
+  assert.doesNotMatch(css, /#line-diagram:not\(\[hidden\]\)\s*~\s*#loads\s*\{\s*top:/);
   assert.match(css, /\.line-diagram-pick\s+\.line-diagram-field\s*\{\s*flex:\s*0\s+0\s+auto;/);
 });
 

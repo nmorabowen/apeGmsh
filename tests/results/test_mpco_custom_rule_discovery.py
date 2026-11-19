@@ -35,7 +35,7 @@ from apeGmsh.opensees._response_catalog import (
 )
 from apeGmsh.opensees._response_catalog import mpco_gauss_group_aliases
 from apeGmsh.results import Results
-from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning
+from apeGmsh.results.readers._buckets import MPCOBucketSkippedWarning
 from apeGmsh.results.readers._mpco_element_io import discover_gauss_buckets
 from apeGmsh.results.readers._mpco_material_io import (
     discover_material_state_buckets,

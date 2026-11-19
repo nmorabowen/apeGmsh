@@ -32,9 +32,11 @@ import type {
   OpsObject,
   Param,
   ProgramDecls,
+  SectionProfile,
   Table,
 } from "../model/types.ts";
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
+import { equivalentRectProfile } from "./equivalentSection.ts";
 import { openH5, type H5FS } from "./h5open.ts";
 
 /** The parts of the h5wasm module this reader uses. */
@@ -66,8 +68,14 @@ export interface H5File extends H5Group {
   close(): unknown;
 }
 
-/** The schema versions this reader was written against (ADR 0023). */
-export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
+/**
+ * The schema versions this reader was written against (ADR 0023).
+ *
+ * neutral 2.36.0 (#2551): an optional `/elements/{alias}/entity` dataset
+ * (the per-element source gmsh entity). The app does not need it, and
+ * `readBlock` reads only the datasets it names, so the extra one is ignored.
+ */
+export const NEUTRAL_TARGET = { major: 2, minor: 36 } as const;
 /**
  * opensees 2.27.0: `/opensees/decls` (2.25), `/opensees/decl_params` (2.26,
  * K1-7), and 2.27's additions (K1-8, h5-schema.md "Parameter tags (opensees
@@ -177,16 +185,48 @@ export const NEUTRAL_TARGET = { major: 2, minor: 35 } as const;
  * table; the scene still draws each beam between its nodes, not its offset
  * ends.
  *
+ * opensees 2.38.0 (#2613, h5-schema.md "/opensees/decl_params"): the
+ * decl_params row of a typed `recorder.Ladruno` gains a `precision` field
+ * (`"f64"` or `"f32"`, the recorded data's on-disk element type). Replay
+ * data inside the hash-excluded decl_params JSON, which the app does not
+ * read, so nothing here reads differently; model_hash is unchanged.
+ *
+ * opensees 2.39.0 (ADR 0130 slice 5, h5-schema.md "<stem>.user.h5"): the
+ * optional `/opensees/combinations` group holds the combinations `apeSees`
+ * declares. The app does not read it yet, so nothing here reads differently;
+ * it is hash-excluded, so model_hash is unchanged.
+ *
+ * opensees 2.40.0 (#2448, h5-schema.md "Stage scope (opensees 2.40.0)"): a
+ * stage block's `constraints` group may hold `equationConstraint` (the
+ * global group's columns) and `equationConstraint_emit_index`, the lines of
+ * the equation ties the stage claims. Replay data the app does not read, so
+ * nothing here reads differently. The rows are hashed: a 2.40 re-emit of a
+ * model with such a tie has a new model_hash, which the results pairing
+ * shows as a plain mismatch.
+ *
  * tests/test_app_target_drift.py fails when any `*_TARGET` here (or
  * `RESULTS_TARGET` in results.ts) differs from its Python writer's version:
  * bump it only after reading that zone's history entry in h5-schema.md.
  */
-export const OPENSEES_TARGET = { major: 2, minor: 37 } as const;
+export const OPENSEES_TARGET = { major: 2, minor: 40 } as const;
 /** The ADR 0112 zones (V2a specs): read by geometry.ts and provenance.ts. */
 export const GEOMETRY_TARGET = { major: 1, minor: 0 } as const;
 export const PROVENANCE_TARGET = { major: 1, minor: 1 } as const;
 /** The root `/sequence` zone (ADR 0112 D2(b), V0 decision 8: "1.0.0"), read here when a file carries it. */
 export const SEQUENCE_TARGET = { major: 1, minor: 0 } as const;
+/**
+ * The `<stem>.user.h5` zones the app reads (ADR 0130 slice VU3a, reader/userFile.ts):
+ * `/meta`, `/combinations` and the index of `/results`, each at its first version,
+ * and `/modes` checked as a zone (its version and columns; the staleness table
+ * needs it). `/spectra` is read as an index of its cases (VU7), and `/entities`
+ * whole (VU8, reader/userEntities.ts): its cuts, storeys and point sets.
+ */
+export const USER_META_TARGET = { major: 1, minor: 0 } as const;
+export const COMBINATIONS_TARGET = { major: 1, minor: 0 } as const;
+export const USER_RESULTS_TARGET = { major: 1, minor: 0 } as const;
+export const MODES_TARGET = { major: 1, minor: 0 } as const;
+export const SPECTRA_TARGET = { major: 1, minor: 0 } as const;
+export const ENTITIES_TARGET = { major: 1, minor: 0 } as const;
 /**
  * The lowest minor of each zone this reader opens, under the zone's target
  * major (ADR 0113 D1/D7: one floor table, the only place the version check
@@ -195,11 +235,11 @@ export const SEQUENCE_TARGET = { major: 1, minor: 0 } as const;
  * first era whose files open (2.11 is the 0-based rank flip, but every 2.11
  * writer stamped a neutral zone below the neutral floor, so no 2.11 file
  * opens); the ADR 0112 zones (geometry, provenance, sequence) start at their
- * first version. tests/test_app_floor_drift.py compares every row with
- * Python's `reader_floor(zone)`.
+ * first version, and so do the `.user.h5` zones (ADR 0130). tests/test_app_floor_drift.py
+ * compares every row with Python's `reader_floor(zone)`.
  * TODO(V4): results 1.0 joins this table with the app's results reader.
  */
-export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0 } as const;
+export const ZONE_FLOOR = { neutral: 10, opensees: 12, geometry: 0, provenance: 0, sequence: 0, user_meta: 0, combinations: 0, user_results: 0, modes: 0, spectra: 0, entities: 0 } as const;
 
 /**
  * ADR 0113 D7, the app's rule for one zone's `/meta/<key>` stamp:
@@ -401,11 +441,14 @@ class Reader {
         `${g.path}/connectivity has ${connectivity.length} values for ${ids.length} x ${npe}`,
       );
     }
+    const name = a["gmsh_name"];
+    if (name !== undefined && typeof name !== "string") throw new SchemaError(`${g.path}@gmsh_name is not a string`);
     return {
       alias,
       code: num(a["code"], `${g.path}@code`),
       dim: num(a["dim"], `${g.path}@dim`),
       npe,
+      gmshName: name ?? null,
       ids,
       connectivity,
     };
@@ -480,7 +523,9 @@ class Reader {
         names.push({ name: nm[i]!, kind: kd[i]!, tag: tg[i]! });
       }
     }
+    for (const o of objects) checkJntOffset(o);
     const definitions = this.readDefinitions(g);
+    const computedOutlines = this.readComputedOutlines(g);
     // A 2.25+ file declares every tag (the writer refuses a row no declaration
     // claims): an object no `decls/tags` run owns is a broken file, never a
     // fallback to an app-made key.
@@ -492,7 +537,50 @@ class Reader {
         }
       }
     }
-    return { version, objects, elementMeta, names, definitions };
+    return {
+      version,
+      objects,
+      elementMeta,
+      names,
+      definitions,
+      ...(computedOutlines ? { computedOutlines } : {}),
+    };
+  }
+
+  private readComputedOutlines(
+    g: H5Group,
+  ): Readonly<Record<number, readonly (readonly (readonly [number, number])[])[]>> | undefined {
+    if (!has(g, "computed_sections")) return undefined;
+    const cs = this.group(g, "computed_sections");
+    if (!has(cs, "tag") || !has(cs, "payload")) return undefined;
+    const tg = numbers(this.dataset(cs, "tag"));
+    const pl = strings(this.dataset(cs, "payload"));
+    if (tg.length !== pl.length) {
+      throw new SchemaError(`${cs.path}: tag (${tg.length}) and payload (${pl.length}) lengths differ`);
+    }
+    const out: Record<number, readonly (readonly (readonly [number, number])[])[]> = {};
+    let any = false;
+    for (let i = 0; i < tg.length; i++) {
+      const tag = tg[i]!;
+      const where = `${joinPath(cs.path, "payload")}[${i}]`;
+      if (!Number.isInteger(tag)) throw new SchemaError(`${joinPath(cs.path, "tag")}[${i}] = ${tag} is not an integer`);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(pl[i]!);
+      } catch {
+        throw new SchemaError(`${where} is not valid JSON`);
+      }
+      // A payload written before outline_yz existed has no key: Tier 1A just does not apply.
+      const raw = (parsed as { outline_yz?: unknown } | null)?.outline_yz;
+      if (raw === undefined) continue;
+      const loops = outlineLoopsOf(raw);
+      if (!loops) throw new SchemaError(`${where}: outline_yz is not a list of closed (y, z) loops of 3+ finite points`);
+      if (loops.length > 0) {
+        out[tag] = loops;
+        any = true;
+      }
+    }
+    return any ? out : undefined;
   }
 
   /**
@@ -1122,8 +1210,18 @@ function joinPath(parent: string, name: string): string {
   return parent === "/" ? `/${name}` : `${parent}/${name}`;
 }
 
+/**
+ * The names each open group lists, read once: `group` and `dataset` ask per
+ * child, and listing the group for each is quadratic in its children (#2835).
+ * The file is open read-only, so a group's listing cannot change.
+ */
+const listed = new WeakMap<H5Group, ReadonlySet<string>>();
+
+/** Whether `g` lists `name`. A listing, not `g.get`, which reads a broken link as absent (#424). */
 function has(g: H5Group, name: string): boolean {
-  return g.keys().includes(name);
+  let names = listed.get(g);
+  if (!names) listed.set(g, names = new Set(g.keys()));
+  return names.has(name);
 }
 
 function num(v: Param | Param[] | undefined, where: string): number {
@@ -1346,7 +1444,9 @@ export function transformVecxzOf(obj: OpsObject): { tag: number; vecxz: [number,
   }
   // Fallback for synthetic geomTransf objects constructed without `tables` in tests:
   if (
-    (obj.params.length === 3 || obj.params.length === 9) &&
+    (obj.params.length === 3 ||
+      obj.params.length === 9 ||
+      (obj.params.length === 10 && obj.params[3] === "-jntOffset")) &&
     typeof obj.params[0] === "number" &&
     typeof obj.params[1] === "number" &&
     typeof obj.params[2] === "number" &&
@@ -1373,4 +1473,597 @@ export function modelTransformVecxz(model: ModelFile): Map<number, [number, numb
   }
   return out;
 }
+
+/** `outline_yz` as loops of finite `(y, z)` points, or `null` when any part is malformed. */
+function outlineLoopsOf(raw: unknown): [number, number][][] | null {
+  if (!Array.isArray(raw)) return null;
+  const loops: [number, number][][] = [];
+  for (const loop of raw) {
+    if (!Array.isArray(loop) || loop.length < 3) return null;
+    const pts: [number, number][] = [];
+    for (const pt of loop) {
+      if (!Array.isArray(pt) || pt.length !== 2 || !pt.every((v) => typeof v === "number" && Number.isFinite(v))) return null;
+      pts.push([pt[0] as number, pt[1] as number]);
+    }
+    loops.push(pts);
+  }
+  return loops;
+}
+
+/**
+ * Refuse a `geomTransf` whose `jnt_offset` the bridge could not have written,
+ * as the Python reader does (`h5_reader._transform_record`): `(n, 4)` in 2-D
+ * or `(n, 6)` in 3-D, finite, one row per `per_element_emitted_tag`. A broken
+ * table must not draw the member on its node line as if it had no offset.
+ */
+export function checkJntOffset(obj: OpsObject): void {
+  if (obj.family !== "geomTransf") return;
+  const jnt = obj.tables["jnt_offset"];
+  if (jnt === undefined) return;
+  const where = joinPath(obj.path, "jnt_offset");
+  const cols = jnt.columns.length;
+  if (cols !== 6 && cols !== 4) throw new SchemaError(`${where} has ${cols} columns; the bridge writes 4 in 2-D or 6 in 3-D`);
+  const flat = flattenNumericRows(jnt.rows);
+  if (jnt.rows.length === 0 || flat.length !== jnt.rows.length * cols || !flat.every(Number.isFinite)) {
+    throw new SchemaError(`${where} is not a finite (${jnt.rows.length}, ${cols}) table`);
+  }
+  const tagTable = obj.tables["per_element_emitted_tag"];
+  const nTags = tagTable ? flattenNumericRows(tagTable.rows).length : 1;
+  if (nTags !== jnt.rows.length) {
+    throw new SchemaError(`${where} has ${jnt.rows.length} rows for ${nTags} emitted tags`);
+  }
+}
+
+/**
+ * Extract `(emittedTag, dI, dJ)` rigid joint-offset vectors in global `(X, Y, Z)`
+ * from a `/opensees/transforms/<name>` `OpsObject` (`jnt_offset` of shape
+ * `(n, 6)` in 3-D or `(n, 4)` in 2-D, joined against `per_element_emitted_tag`).
+ * Only rows with a non-zero offset at I or J are returned.
+ */
+export function transformJntOffsetOf(
+  obj: OpsObject,
+): { tag: number; dI: [number, number, number]; dJ: [number, number, number] }[] {
+  if (obj.family !== "geomTransf") return [];
+  const jntTable = obj.tables["jnt_offset"];
+  if (jntTable !== undefined) {
+    const cols = jntTable.columns.length;
+    if ((cols !== 6 && cols !== 4) || jntTable.rows.length === 0) return [];
+    const flatJnt = flattenNumericRows(jntTable.rows);
+    if (flatJnt.length < cols || flatJnt.length % cols !== 0) return [];
+    const nRows = flatJnt.length / cols;
+    const tagTable = obj.tables["per_element_emitted_tag"];
+    const flatTags = tagTable ? flattenNumericRows(tagTable.rows) : [obj.tag];
+    const n = Math.min(nRows, flatTags.length);
+    const out: { tag: number; dI: [number, number, number]; dJ: [number, number, number] }[] = [];
+    for (let r = 0; r < n; r++) {
+      const tag = flatTags[r]!;
+      const base = r * cols;
+      const dXi = flatJnt[base]!;
+      const dYi = flatJnt[base + 1]!;
+      const dZi = cols === 6 ? flatJnt[base + 2]! : 0;
+      const dXj = flatJnt[base + (cols === 6 ? 3 : 2)]!;
+      const dYj = flatJnt[base + (cols === 6 ? 4 : 3)]!;
+      const dZj = cols === 6 ? flatJnt[base + 5]! : 0;
+      if (
+        Number.isInteger(tag) &&
+        Number.isFinite(dXi) &&
+        Number.isFinite(dYi) &&
+        Number.isFinite(dZi) &&
+        Number.isFinite(dXj) &&
+        Number.isFinite(dYj) &&
+        Number.isFinite(dZj) &&
+        (Math.hypot(dXi, dYi, dZi) > 0 || Math.hypot(dXj, dYj, dZj) > 0)
+      ) {
+        out.push({ tag, dI: [dXi, dYi, dZi], dJ: [dXj, dYj, dZj] });
+      }
+    }
+    return out;
+  }
+  // Fallback for synthetic geomTransf objects carrying `-jntOffset` in `params`:
+  const idx = obj.params.indexOf("-jntOffset");
+  if (idx >= 0) {
+    const rem = obj.params.slice(idx + 1);
+    if (rem.length >= 6 && rem.slice(0, 6).every((x) => typeof x === "number" && Number.isFinite(x))) {
+      const [dXi, dYi, dZi, dXj, dYj, dZj] = rem.slice(0, 6) as number[];
+      if (Math.hypot(dXi!, dYi!, dZi!) > 0 || Math.hypot(dXj!, dYj!, dZj!) > 0) {
+        return [{ tag: obj.tag, dI: [dXi!, dYi!, dZi!], dJ: [dXj!, dYj!, dZj!] }];
+      }
+    } else if (rem.length >= 4 && rem.slice(0, 4).every((x) => typeof x === "number" && Number.isFinite(x))) {
+      const [dXi, dYi, dXj, dYj] = rem.slice(0, 4) as number[];
+      if (Math.hypot(dXi!, dYi!) > 0 || Math.hypot(dXj!, dYj!) > 0) {
+        return [{ tag: obj.tag, dI: [dXi!, dYi!, 0], dJ: [dXj!, dYj!, 0] }];
+      }
+    }
+  }
+  return [];
+}
+
+function rectLoop(yMin: number, yMax: number, zMin: number, zMax: number): [number, number][] {
+  return [
+    [yMin, zMin],
+    [yMax, zMin],
+    [yMax, zMax],
+    [yMin, zMax],
+  ];
+}
+
+function circleLoop(
+  yC: number,
+  zC: number,
+  r: number,
+  ccw: boolean,
+  nSeg = 24,
+): [number, number][] {
+  const pts: [number, number][] = [];
+  for (let i = 0; i < nSeg; i++) {
+    const k = ccw ? i : nSeg - i;
+    const theta = (2 * Math.PI * (k % nSeg)) / nSeg;
+    pts.push([yC + r * Math.cos(theta), zC + r * Math.sin(theta)]);
+  }
+  return pts;
+}
+
+function circSectorLoop(
+  yC: number,
+  zC: number,
+  intR: number,
+  extR: number,
+  startDeg: number,
+  endDeg: number,
+  nSeg = 24,
+): [number, number][] {
+  const a0 = (startDeg * Math.PI) / 180;
+  const a1 = (endDeg * Math.PI) / 180;
+  const nArc = Math.max(4, Math.ceil((Math.abs(a1 - a0) / (2 * Math.PI)) * nSeg));
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= nArc; i++) {
+    const theta = a0 + ((a1 - a0) * i) / nArc;
+    pts.push([yC + extR * Math.cos(theta), zC + extR * Math.sin(theta)]);
+  }
+  if (intR > 1e-6 * extR) {
+    for (let i = nArc; i >= 0; i--) {
+      const theta = a0 + ((a1 - a0) * i) / nArc;
+      pts.push([yC + intR * Math.cos(theta), zC + intR * Math.sin(theta)]);
+    }
+  } else {
+    pts.push([yC, zC]);
+  }
+  if (signedArea2D(pts) < 0) pts.reverse();
+  return pts;
+}
+
+function signedArea2D(pts: readonly (readonly [number, number])[]): number {
+  let a2 = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [y0, z0] = pts[i]!;
+    const [y1, z1] = pts[(i + 1) % pts.length]!;
+    a2 += y0 * z1 - y1 * z0;
+  }
+  return 0.5 * a2;
+}
+
+function simplifyLoop2D(pts: readonly [number, number][]): [number, number][] {
+  const ring = pts.map(([y, z]): [number, number] => [y, z]);
+  let changed = true;
+  while (changed && ring.length > 3) {
+    changed = false;
+    const n = ring.length;
+    for (let i = 0; i < n; i++) {
+      const [py, pz] = ring[(i - 1 + n) % n]!;
+      const [cy, cz] = ring[i]!;
+      const [ny, nz] = ring[(i + 1) % n]!;
+      const uy = cy - py, uz = cz - pz;
+      const vy = ny - cy, vz = nz - cz;
+      const nu = Math.hypot(uy, uz), nv = Math.hypot(vy, vz);
+      if (nu === 0 || nv === 0 || (Math.abs(uy * vz - uz * vy) <= 1e-9 * nu * nv && uy * vy + uz * vz > 0)) {
+        ring.splice(i, 1);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return ring;
+}
+
+/**
+ * The outline of a section made only of `circ` patches, or `undefined` when it
+ * cannot be drawn exactly. Every patch must share one centre. Full rings give
+ * an outer circle at the largest external radius and a hole at the smallest
+ * internal one. Sectors are drawn as one sector when there is a single patch,
+ * or as a full ring when same-radius sectors together span 360°.
+ */
+function circPatchesProfile(
+  circs: readonly { yC: number; zC: number; intR: number; extR: number; a0: number; a1: number }[],
+): SectionProfile | undefined {
+  const c0 = circs[0]!;
+  const maxExtRad = Math.max(...circs.map((c) => c.extR));
+  const tol = 1e-6 * maxExtRad;
+  if (!circs.every((c) => Math.abs(c.yC - c0.yC) <= tol && Math.abs(c.zC - c0.zC) <= tol)) return undefined;
+  const isSector = (c: { a0: number; a1: number }): boolean => Math.abs(c.a1 - c.a0) < 359.9;
+  if (circs.some(isSector)) {
+    if (circs.length === 1) {
+      return { loops: [circSectorLoop(c0.yC, c0.zC, c0.intR, c0.extR, c0.a0, c0.a1)], source: "patches" };
+    }
+    const sameRadii = circs.every((c) => Math.abs(c.intR - c0.intR) <= tol && Math.abs(c.extR - c0.extR) <= tol);
+    const span = circs.reduce((acc, c) => acc + Math.abs(c.a1 - c.a0), 0);
+    if (!sameRadii || Math.abs(span - 360) > 0.1) return undefined;
+  }
+  const minIntRad = Math.min(...circs.map((c) => c.intR));
+  const loops: [number, number][][] = [circleLoop(c0.yC, c0.zC, maxExtRad, true)];
+  if (minIntRad > tol) loops.push(circleLoop(c0.yC, c0.zC, minIntRad, false));
+  const axisymmetric = Math.hypot(c0.yC, c0.zC) <= tol;
+  return { loops, ...(axisymmetric ? { axisymmetric: true } : {}), source: "patches" };
+}
+
+function unionAxisAlignedRects(
+  rects: readonly { yMin: number; yMax: number; zMin: number; zMax: number }[],
+): [number, number][][] {
+  if (rects.length === 0) return [];
+  if (rects.length === 1) {
+    const r = rects[0]!;
+    return [rectLoop(r.yMin, r.yMax, r.zMin, r.zMax)];
+  }
+  const uniqueCoords = (vals: number[]): number[] => {
+    const sorted = [...vals].sort((a, b) => a - b);
+    const out: number[] = [];
+    for (const v of sorted) {
+      if (out.length === 0 || Math.abs(v - out[out.length - 1]!) > 1e-9) out.push(v);
+    }
+    return out;
+  };
+  const ys = uniqueCoords(rects.flatMap((r) => [r.yMin, r.yMax]));
+  const zs = uniqueCoords(rects.flatMap((r) => [r.zMin, r.zMax]));
+  const ny = ys.length - 1;
+  const nz = zs.length - 1;
+  if (ny <= 0 || nz <= 0) return [];
+
+  const solid = (iy: number, iz: number): boolean => {
+    if (iy < 0 || iy >= ny || iz < 0 || iz >= nz) return false;
+    const ym = 0.5 * (ys[iy]! + ys[iy + 1]!);
+    const zm = 0.5 * (zs[iz]! + zs[iz + 1]!);
+    return rects.some((r) => ym >= r.yMin - 1e-12 && ym <= r.yMax + 1e-12 && zm >= r.zMin - 1e-12 && zm <= r.zMax + 1e-12);
+  };
+
+  const stride = zs.length;
+  const vKey = (iy: number, iz: number) => iy * stride + iz;
+  const adj = new Map<number, number[]>();
+  const addEdge = (u: number, v: number) => {
+    const list = adj.get(u);
+    if (list) list.push(v);
+    else adj.set(u, [v]);
+  };
+
+  for (let iy = 0; iy < ny; iy++) {
+    for (let iz = 0; iz < nz; iz++) {
+      if (!solid(iy, iz)) continue;
+      if (!solid(iy, iz - 1)) addEdge(vKey(iy, iz), vKey(iy + 1, iz));
+      if (!solid(iy + 1, iz)) addEdge(vKey(iy + 1, iz), vKey(iy + 1, iz + 1));
+      if (!solid(iy, iz + 1)) addEdge(vKey(iy + 1, iz + 1), vKey(iy, iz + 1));
+      if (!solid(iy - 1, iz)) addEdge(vKey(iy, iz + 1), vKey(iy, iz));
+    }
+  }
+
+  const loops: [number, number][][] = [];
+  for (const [start, outs] of adj) {
+    while (outs.length > 0) {
+      const next0 = outs.shift()!;
+      const raw: [number, number][] = [
+        [ys[Math.floor(start / stride)]!, zs[start % stride]!],
+      ];
+      let curr = next0;
+      while (curr !== start) {
+        raw.push([ys[Math.floor(curr / stride)]!, zs[curr % stride]!]);
+        const cOuts = adj.get(curr);
+        if (!cOuts || cOuts.length === 0) break;
+        curr = cOuts.shift()!;
+      }
+      const simp = simplifyLoop2D(raw);
+      if (simp.length >= 3) loops.push(simp);
+    }
+  }
+  loops.sort((a, b) => {
+    const aa = signedArea2D(a);
+    const ab = signedArea2D(b);
+    if ((aa > 0) !== (ab > 0)) return aa > 0 ? -1 : 1;
+    return Math.abs(ab) - Math.abs(aa);
+  });
+  return loops;
+}
+
+/**
+ * The outline of the union of simple CCW polygons that tile without overlap
+ * and meet along shared edges (a cold-formed HSS: four wall rects and four
+ * quarter-ring corners), or `undefined` when that union cannot be drawn
+ * exactly. Every edge is split at the other polygons' vertices lying on it;
+ * an edge met by its reverse is interior and cancels; what is left is chained
+ * into loops (outer CCW, holes CW, the order `sectionProfileOf` already uses).
+ * It fails closed on a `null` input, a repeated edge (overlap), a vertex with
+ * more than one way on (pinch), crossing edges, a point covered twice, or a
+ * loop area that differs from the summed patch area.
+ */
+function unionTiledPolygons(
+  polys: readonly ([number, number][] | null)[],
+): [number, number][][] | undefined {
+  if (polys.length === 0 || polys.some((p) => p === null || p.length < 3)) return undefined;
+  const rings = polys as [number, number][][];
+  if (rings.some((r) => signedArea2D(r) <= 0)) return undefined;
+  const scale = Math.max(...rings.flat().map(([y, z]) => Math.max(Math.abs(y), Math.abs(z))), 1e-300);
+  const tol = 1e-7 * scale;
+
+  // Shared vertex table: points within tol are one vertex
+  const verts: [number, number][] = [];
+  const vid = (y: number, z: number): number => {
+    for (let i = 0; i < verts.length; i++) {
+      if (Math.abs(verts[i]![0] - y) <= tol && Math.abs(verts[i]![1] - z) <= tol) return i;
+    }
+    verts.push([y, z]);
+    return verts.length - 1;
+  };
+  for (const r of rings) for (const [y, z] of r) vid(y, z);
+
+  // Directed edges, split at every vertex lying strictly inside them
+  const edges = new Map<string, number>();
+  for (const r of rings) {
+    for (let i = 0; i < r.length; i++) {
+      const a = vid(...r[i]!);
+      const b = vid(...r[(i + 1) % r.length]!);
+      if (a === b) continue;
+      const [ay, az] = verts[a]!;
+      const [by, bz] = verts[b]!;
+      const dy = by - ay, dz = bz - az;
+      const len2 = dy * dy + dz * dz;
+      const len = Math.sqrt(len2);
+      const inner: [number, number][] = [];
+      for (let k = 0; k < verts.length; k++) {
+        if (k === a || k === b) continue;
+        const [py, pz] = verts[k]!;
+        const t = ((py - ay) * dy + (pz - az) * dz) / len2;
+        if (t * len <= tol || (1 - t) * len <= tol) continue;
+        if (Math.abs((py - ay) * dz - (pz - az) * dy) / len <= tol) inner.push([t, k]);
+      }
+      inner.sort((u, v) => u[0] - v[0]);
+      const chain = [a, ...inner.map(([, k]) => k), b];
+      for (let j = 0; j + 1 < chain.length; j++) {
+        const key = `${chain[j]},${chain[j + 1]}`;
+        if (edges.has(key)) return undefined; // the same edge twice: overlapping patches
+        edges.set(key, 1);
+      }
+    }
+  }
+  // Interior edges: an edge met by its reverse
+  for (const key of [...edges.keys()]) {
+    const [u, v] = key.split(",");
+    const rev = `${v},${u}`;
+    if (edges.has(key) && edges.has(rev)) {
+      edges.delete(key);
+      edges.delete(rev);
+    }
+  }
+  const segs = [...edges.keys()].map((k) => k.split(",").map(Number) as [number, number]);
+  if (segs.length < 3) return undefined;
+
+  // No two boundary edges may cross or touch away from a shared end vertex
+  const cross = (o: [number, number], p: [number, number], q: [number, number]): number =>
+    (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]);
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      const [a, b] = segs[i]!;
+      const [c, d] = segs[j]!;
+      if (a === c || a === d || b === c || b === d) continue;
+      const A = verts[a]!, B = verts[b]!, C = verts[c]!, D = verts[d]!;
+      const d1 = cross(A, B, C), d2 = cross(A, B, D), d3 = cross(C, D, A), d4 = cross(C, D, B);
+      if (d1 === 0 && d2 === 0) {
+        // Collinear: they meet only if their spans along the line overlap
+        const ax = Math.abs(B[0] - A[0]) >= Math.abs(B[1] - A[1]) ? 0 : 1;
+        const lo1 = Math.min(A[ax]!, B[ax]!), hi1 = Math.max(A[ax]!, B[ax]!);
+        const lo2 = Math.min(C[ax]!, D[ax]!), hi2 = Math.max(C[ax]!, D[ax]!);
+        if (Math.min(hi1, hi2) - Math.max(lo1, lo2) >= -tol) return undefined;
+      } else if (d1 * d2 <= 0 && d3 * d4 <= 0) {
+        return undefined;
+      }
+    }
+  }
+
+  // Chain into loops: each boundary vertex has exactly one way on
+  const next = new Map<number, number>();
+  for (const [u, v] of segs) {
+    if (next.has(u)) return undefined;
+    next.set(u, v);
+  }
+  const seen = new Set<number>();
+  const loops: [number, number][][] = [];
+  for (const start of next.keys()) {
+    if (seen.has(start)) continue;
+    const raw: [number, number][] = [];
+    let curr = start;
+    while (!seen.has(curr)) {
+      seen.add(curr);
+      raw.push(verts[curr]!);
+      const n = next.get(curr);
+      if (n === undefined) return undefined;
+      curr = n;
+    }
+    if (curr !== start) return undefined;
+    const simp = simplifyLoop2D(raw);
+    if (simp.length < 3) return undefined;
+    loops.push(simp);
+  }
+
+  // Every point is covered at most once: just left of each loop the winding is 1
+  const winding = (y: number, z: number): number => {
+    let w = 0;
+    for (const loop of loops) {
+      for (let i = 0; i < loop.length; i++) {
+        const [y0, z0] = loop[i]!;
+        const [y1, z1] = loop[(i + 1) % loop.length]!;
+        const side = (y1 - y0) * (z - z0) - (y - y0) * (z1 - z0);
+        if (z0 <= z && z1 > z && side > 0) w++;
+        else if (z0 > z && z1 <= z && side < 0) w--;
+      }
+    }
+    return w;
+  };
+  for (const loop of loops) {
+    const [y0, z0] = loop[0]!;
+    const [y1, z1] = loop[1]!;
+    const len = Math.hypot(y1 - y0, z1 - z0);
+    const off = Math.min(1e-4 * scale, 0.25 * len);
+    const my = 0.5 * (y0 + y1) - ((z1 - z0) / len) * off;
+    const mz = 0.5 * (z0 + z1) + ((y1 - y0) / len) * off;
+    if (winding(my, mz) !== 1) return undefined;
+  }
+  const patchArea = rings.reduce((acc, r) => acc + signedArea2D(r), 0);
+  const loopArea = loops.reduce((acc, l) => acc + signedArea2D(l), 0);
+  if (Math.abs(loopArea - patchArea) > 1e-6 * patchArea) return undefined;
+
+  loops.sort((a, b) => {
+    const aa = signedArea2D(a);
+    const ab = signedArea2D(b);
+    if ((aa > 0) !== (ab > 0)) return aa > 0 ? -1 : 1;
+    return Math.abs(ab) - Math.abs(aa);
+  });
+  return loops;
+}
+
+/**
+ * Resolve a 2-D cross-section boundary polygon (`SectionProfile`) in OpenSees
+ * `(y_local, z_local)` from a `/opensees/sections/<name>` `OpsObject` and any
+ * `/opensees/computed_sections` sidecar `outline_yz`.
+ */
+export function sectionProfileOf(
+  obj: OpsObject,
+  computedOutline?: readonly (readonly (readonly [number, number])[])[],
+): SectionProfile | undefined {
+  if (obj.family !== "section") return undefined;
+
+  // Tier 1A: ComputedSection boundary polygon from /opensees/computed_sections
+  if (computedOutline && computedOutline.length > 0) {
+    return { loops: computedOutline, source: "computed" };
+  }
+
+  // Tier 1B: Fiber / FiberThermal / NDFiber patches
+  const patches = obj.tables["patches"];
+  if (patches && patches.rows.length > 0) {
+    const tCol = patches.columns.indexOf("kind") >= 0 ? patches.columns.indexOf("kind") : patches.columns.indexOf("type");
+    const pCol = patches.columns.indexOf("coords") >= 0 ? patches.columns.indexOf("coords") : patches.columns.indexOf("params");
+    if (tCol >= 0 && pCol >= 0) {
+      const rects: { yMin: number; yMax: number; zMin: number; zMax: number }[] = [];
+      const quads: [number, number][][] = [];
+      const circs: { yC: number; zC: number; intR: number; extR: number; a0: number; a1: number }[] = [];
+      // Fail closed: a patch this reader cannot draw exactly drops the whole
+      // profile (the member stays a line) rather than drawing part of it.
+      let drawable = true;
+
+      for (const row of patches.rows) {
+        const kind = String(row[tCol] ?? "");
+        const rawP = row[pCol];
+        const p = Array.isArray(rawP) ? rawP.map((v) => (typeof v === "number" ? v : Number.NaN)) : [];
+        if (kind === "rect" && p.length >= 4 && p.slice(0, 4).every(Number.isFinite)) {
+          const yMin = Math.min(p[0]!, p[2]!);
+          const yMax = Math.max(p[0]!, p[2]!);
+          const zMin = Math.min(p[1]!, p[3]!);
+          const zMax = Math.max(p[1]!, p[3]!);
+          if (yMax > yMin && zMax > zMin) rects.push({ yMin, yMax, zMin, zMax });
+        } else if ((kind === "quad" || kind === "quadr") && p.length >= 8 && p.slice(0, 8).every(Number.isFinite)) {
+          const ys = [p[0]!, p[2]!, p[4]!, p[6]!];
+          const zs = [p[1]!, p[3]!, p[5]!, p[7]!];
+          const yMin = Math.min(...ys), yMax = Math.max(...ys);
+          const zMin = Math.min(...zs), zMax = Math.max(...zs);
+          const isAxisRect = ys.every((y) => Math.abs(y - yMin) < 1e-9 || Math.abs(y - yMax) < 1e-9) &&
+            zs.every((z) => Math.abs(z - zMin) < 1e-9 || Math.abs(z - zMax) < 1e-9);
+          if (isAxisRect && yMax > yMin && zMax > zMin) {
+            rects.push({ yMin, yMax, zMin, zMax });
+          } else {
+            const q: [number, number][] = [[p[0]!, p[1]!], [p[2]!, p[3]!], [p[4]!, p[5]!], [p[6]!, p[7]!]];
+            if (signedArea2D(q) < 0) q.reverse();
+            quads.push(q);
+          }
+        } else if (kind === "circ" && p.length >= 4 && p.slice(0, 4).every(Number.isFinite) && p[3]! > 0) {
+          const a0 = Number.isFinite(p[4]) ? p[4]! : 0;
+          const a1 = Number.isFinite(p[5]) ? p[5]! : 360;
+          circs.push({ yC: p[0]!, zC: p[1]!, intR: Math.max(0, p[2]!), extR: p[3]!, a0, a1 });
+        } else {
+          drawable = false;
+        }
+      }
+
+      const families = (rects.length > 0 ? 1 : 0) + (quads.length > 0 ? 1 : 0) + (circs.length > 0 ? 1 : 0);
+      if (drawable && families === 1 && circs.length > 0) {
+        const profile = circPatchesProfile(circs);
+        if (profile) return profile;
+      } else if (drawable && families === 1 && rects.length > 0) {
+        const loops = unionAxisAlignedRects(rects);
+        if (loops.length > 0) return { loops, source: "patches" };
+      } else if (drawable && families === 1 && quads.length === 1) {
+        return { loops: [quads[0]!], source: "patches" };
+      } else if (drawable && families === 2 && rects.length > 0 && circs.length > 0) {
+        // A rect + circ mix (a cold-formed HSS: walls plus quarter-ring corners)
+        const loops = unionTiledPolygons([
+          ...rects.map((r) => rectLoop(r.yMin, r.yMax, r.zMin, r.zMax)),
+          ...circs.map((c) =>
+            Math.abs(c.a1 - c.a0) >= 359.9
+              ? null
+              : circSectorLoop(c.yC, c.zC, c.intR, c.extR, c.a0, c.a1)),
+        ]);
+        if (loops) return { loops, source: "patches" };
+      }
+    }
+  }
+
+  // Tier 2: Parametric sections (WFSection2d, RCSection2d, ElasticTube)
+  const p = obj.params;
+  if (obj.type === "WFSection2d" && p.length >= 5 && p.slice(1, 5).every((v) => typeof v === "number" && v > 0)) {
+    const [, d, tw, bf, tf] = p as number[];
+    const hy = d! / 2;
+    const wy = Math.max(0, hy - tf!);
+    const hz = bf! / 2;
+    const wz = tw! / 2;
+    if (wy > 0 && hz > wz) {
+      const iLoop: [number, number][] = [
+        [-hy, -hz],
+        [-wy, -hz],
+        [-wy, -wz],
+        [wy, -wz],
+        [wy, -hz],
+        [hy, -hz],
+        [hy, hz],
+        [wy, hz],
+        [wy, wz],
+        [-wy, wz],
+        [-wy, hz],
+        [-hy, hz],
+      ];
+      return { loops: [iLoop], source: "parametric" };
+    }
+    return { loops: [rectLoop(-hy, hy, -hz, hz)], source: "parametric" };
+  }
+  if (obj.type === "RCSection2d" && p.length >= 5 && typeof p[3] === "number" && typeof p[4] === "number" && p[3] > 0 && p[4] > 0) {
+    const d = p[3];
+    const b = p[4];
+    return { loops: [rectLoop(-d / 2, d / 2, -b / 2, b / 2)], source: "parametric" };
+  }
+  if (obj.type === "ElasticTube" && p.length >= 3 && typeof p[1] === "number" && typeof p[2] === "number" && p[1] > 0 && p[2] > 0) {
+    const rOut = p[1] / 2;
+    const rIn = Math.max(0, rOut - p[2]);
+    const loops: [number, number][][] = [circleLoop(0, 0, rOut, true)];
+    if (rIn > 1e-6 * rOut) loops.push(circleLoop(0, 0, rIn, false));
+    return { loops, axisymmetric: true, source: "parametric" };
+  }
+
+  // Tier 3: Elastic / ElasticShear / ElasticTimoshenko equivalent rectangle from (A, Iz[, Iy])
+  if (obj.type === "Elastic" || obj.type === "ElasticShear") {
+    // [E, A, Iz] in 2-D; [E, A, Iz, Iy, G, J] in 3-D
+    const profile = p.length >= 6 ? equivalentRectProfile(p[1], p[2], p[3]) : p.length >= 3 ? equivalentRectProfile(p[1], p[2]) : null;
+    if (profile) return profile;
+  }
+  if (obj.type === "ElasticTimoshenko" && p.length >= 5) {
+    // [E, G, A, Iz, alphaY] in 2-D; [E, G, A, Iz, Iy, J, alphaY, alphaZ] in 3-D
+    // (upstream ElasticTimoshenkoSection3d: J sits at [5], not Iz)
+    const profile = p.length >= 8 ? equivalentRectProfile(p[2], p[3], p[4]) : equivalentRectProfile(p[2], p[3]);
+    if (profile) return profile;
+  }
+
+  return undefined;
+}
+
 

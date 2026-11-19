@@ -195,7 +195,7 @@ def test_2d_end_length_on_a_collinear_run_refuses(tmp_path: Path) -> None:
         lambda o: o.geomTransf.Linear(jnt_offset=InsertionPoint(
             cardinal_point=8, depth=0.6, end_offset_i=0.2)),
     )
-    with pytest.raises(BridgeError, match=r"meet at node 3 turning 0 deg, outside the 30-150 deg.*#2551"):
+    with pytest.raises(BridgeError, match=r"meet at node 3 turning 0 deg, outside the 30-150 deg.*carries no source curves"):
         ops.tcl(str(tmp_path / "m.tcl"))
 
 

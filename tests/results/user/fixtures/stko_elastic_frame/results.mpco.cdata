@@ -1,0 +1,62 @@
+#Begin LOCAL AXES definitions.
+#elem_id q.w q.x q.y q.z (quaternion components)
+*LOCAL_AXES
+1 0 0.707107 0 0.707107
+2 0 0.707107 0 0.707107
+3 1 0 0 0
+
+#Begin SECTION OFFSET definitions.
+#elem_id yOffset zOffset (2D, in element local coordinate system)
+*SECTION_OFFSET
+
+#Begin BEAM PROFILE definitions.
+#For each profile the following data is provided:
+#PROFILE_ID
+#NPOINTS NTRIANGLES NEDGES NSWEEPS
+#points: DATASET(NPOINTS X [x y]), 1 point per line
+#triangles: DATASET(NTRIANGLES X [p1 p2 p3]) 1 triangle per line
+#edges: DATASET(NEDGES X [N  p1 p2 p3 ... pN]) 1 edge per line, with N=number of points in edge, P1,...,PN n points
+#sweeps: DATASET(NSWEEPS X [p1]) 1 id per line
+*BEAM_PROFILE
+1
+4 2 4 4
+-150 -200
+150 -200
+150 200
+-150 200
+0 1 2
+0 2 3
+2 0 1
+2 1 2
+2 2 3
+2 3 0
+0
+1
+2
+3
+
+#Begin BEAM PROFILE assignments.
+#For each element (only those with a profile assigned) the following data is provided:
+#ELEM_ID N_PROFILES PROF_ID_1 PROF_WEIGHT_1 ... PROF_ID_N PROF_WEIGHT_N
+#Where: #ELEM_ID = the id of the element
+#N_PROFILES = the number of profiles assigned to this element
+#PROF_ID_i = the i-th profile
+#PROF_WEIGHT_i = the i-th profile weight, normalized [0-1] to the element length
+*BEAM_PROFILE_ASSIGNMENT
+1 1 1 1
+2 1 1 1
+3 1 1 1
+
+#Begin ELEMENT INFO data.
+#For each element in the mesh (or a subset of them) the following data is provided:
+#ELEM_ID GEOM (LENGTH+)GEOMNAME SUBGEOM TYPE PPID (LENGTH+)PPNAME EPID (LENGTH+)EPNAME
+#Where: #ELEM_ID = the id of the element
+#GEOM = the parent geometry id (0 if none)
+#GEOMNAME = the parent geometry name
+#SUBGEOM = the 0-based index of the sub-geometry
+#TYPE = the type of the subgeometry
+*ELEMENT_INFO
+1 7 5 Merge 0 Edge 1 7 elastic 2 14 elasticBeamCol
+2 7 5 Merge 1 Edge 1 7 elastic 2 14 elasticBeamCol
+3 7 5 Merge 2 Edge 1 7 elastic 2 14 elasticBeamCol
+

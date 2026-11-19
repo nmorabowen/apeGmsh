@@ -1,0 +1,49 @@
+{
+ "corners": {
+  "checked": true,
+  "matched": 4,
+  "max_distance": 0.0,
+  "members": [
+   true,
+   true,
+   true,
+   true
+  ],
+  "total": 4,
+  "verdict": "moved"
+ },
+ "corners and inside": {
+  "checked": true,
+  "matched": 4,
+  "max_distance": 0.0,
+  "members": [
+   true,
+   true,
+   true,
+   true,
+   false,
+   false,
+   false,
+   false,
+   false,
+   false
+  ],
+  "total": 10,
+  "verdict": "partial"
+ },
+ "inside": {
+  "checked": true,
+  "matched": 0,
+  "max_distance": null,
+  "members": [
+   false,
+   false,
+   false,
+   false,
+   false,
+   false
+  ],
+  "total": 6,
+  "verdict": "lost"
+ }
+}

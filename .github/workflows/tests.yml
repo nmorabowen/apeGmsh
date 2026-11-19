@@ -189,8 +189,9 @@ jobs:
   # releases, which would move the measured count under our feet; bump
   # the pins and re-measure the baseline together, in one PR.
   # apeGmshViewer (ADR 0112): the app's own checks, run when the PR or push
-  # touches apeGmshViewer/ (or this workflow, or the pairing oracle's test,
-  # fixture and stamp_provenance). Not a required check yet: it
+  # touches apeGmshViewer/, this workflow, the pairing oracle's test, fixture and
+  # stamp_provenance, or a path outside apeGmshViewer/ that the viewer's tests read
+  # (#2995; the list is in the filter step). Not a required check yet: it
   # joins the land_pr.py list once the maintainer promotes it.
   app-tests:
     runs-on: ubuntu-latest
@@ -203,7 +204,7 @@ jobs:
       # fails closed: the checks run unless a successful diff against the PR
       # base (merge-base) or the pushed-from commit shows no change; a manual
       # run and any error in here run them (set -e makes an error a red step).
-      - name: Did apeGmshViewer/ change?
+      - name: Did apeGmshViewer/ or a file its tests read change?
         id: changes
         run: |
           set -euo pipefail
@@ -221,10 +222,31 @@ jobs:
             *)
               echo "${{ github.event_name }}: running the app checks"; exit 0 ;;
           esac
+          # Everything the app's tests read from outside apeGmshViewer/ (#2995). Each
+          # path is read by a test under apeGmshViewer/test/ (list: the PR body of #2995):
+          #   architecture/schemas/      test/variants/manifest.test.ts (schema + examples)
+          #   tests/fixtures/ladruno/    test/reader/userFile.test.ts (truss2d.ladruno)
+          #   tests/fixtures/mpm/        test/reader/mpmBaseline.test.ts
+          #   tests/fixtures/simplex_gp/ test/contour/extrapolation.test.ts
+          #   tests/fixtures/user_results/ test/reader/userConformance.test.ts
+          #   tests/results/user/test_user_fingerprint.py   test/reader/rf1.test.ts
+          #   src/apeGmsh/results/_gauss_extrapolation.py   test/meshFileCoded.test.ts
+          #   examples/shoebuckle_arch.py                   test/zones/provenance.test.ts
+          #   *.ladruno anywhere (git ls-files)             test/contour/contour.test.ts
           # The pairing oracle (#2129) runs here too: it fires on its test, its
           # input fixture and stamp_provenance, the Python half of what it checks.
-          changed=$(git diff --name-only "$range" -- apeGmshViewer/ .github/workflows/tests.yml \
-            tests/test_app_ladruno_pairing_oracle.py tests/fixtures/ladruno/truss2d.ladruno \
+          changed=$(git diff --name-only "$range" -- apeGmshViewer/ \
+            .github/workflows/tests.yml \
+            architecture/schemas/ \
+            tests/fixtures/ladruno/ \
+            tests/fixtures/mpm/ \
+            tests/fixtures/simplex_gp/ \
+            tests/fixtures/user_results/ \
+            tests/results/user/test_user_fingerprint.py \
+            src/apeGmsh/results/_gauss_extrapolation.py \
+            examples/shoebuckle_arch.py \
+            '*.ladruno' \
+            tests/test_app_ladruno_pairing_oracle.py \
             src/apeGmsh/results/readers/_ladruno_provenance.py)
           if [ -z "$changed" ]; then
             echo "app=false" >> "$GITHUB_OUTPUT"
@@ -440,8 +462,13 @@ jobs:
     # it. The qt lane already learned this and caps each file at 300 s.
     # 40, not 25: suite wall time on main ran 950-1467 s over 7 runs and
     # run 39168105807 was cancelled at teardown after passing (#2166).
-    # TEMP (#2544): runner variance puts green runs at 37-39 min; restore to 40 once the slow-runner cause is fixed.
-    timeout-minutes: 60
+    # #2544: green runs were bimodal, 22-25 or 37-39 min. Two causes: the
+    # runners differ (the slow mode is ~1.7x slower on every test,
+    # pure-Python ones included; a slow one logged AMD EPYC 7763), and four tests/test_phase_3f_1.py cases
+    # spent 140 s each in a quadratic emit-index join (fixed in
+    # opensees_model._emit_indices). "Runner hardware" below logs the CPU,
+    # and --durations lists any test over 5 s, so the next drift is visible.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -470,6 +497,9 @@ jobs:
           # being importorskip'd (they stay skipped in every other lane).
           pip install -e ".[plot,viewer,dxf,partition-pymetis,section-oracle]" pytest
 
+      - name: Runner hardware (#2544)
+        run: lscpu | grep -E 'Model name|^CPU\(s\)' || true
+
       - name: Run curated suite
         run: |
           # `not qt` must be repeated here even though pyproject's
@@ -482,7 +512,8 @@ jobs:
           # blocking one. They belong to the qt lane, which gives each
           # file its own X server and a 300 s cap.
           pytest tests -q -p no:cacheprovider \
-            -m "not live and not subprocess and not bench and not qt"
+            -m "not live and not subprocess and not bench and not qt" \
+            --durations=30 --durations-min=5
 
   # The `subprocess`-marked tests, which `suite` and `live-stock` both
   # deselect. They spawn fresh interpreters (or the standalone OPENSEES
@@ -609,6 +640,10 @@ jobs:
         # that skips or goes unselected here fails the job.
         env:
           APEGMSH_WARRANT_LANE: stock
+          # #2849: unbuffered stdout plus -v below put each test's nodeid in
+          # the log before its body runs, so a native exit(0) mid-run leaves
+          # the dying test as the last line instead of an unnamed 66%.
+          PYTHONUNBUFFERED: "1"
         run: |
           # `not qt` must be repeated: -m is single-valued, so this
           # REPLACES pyproject's addopts -m rather than anding with it
@@ -623,7 +658,7 @@ jobs:
           # end, so the step requires that report, with at least one
           # passed test and no failure or error in it.
           rm -f live-stock-junit.xml
-          pytest tests -q -p no:cacheprovider -rs \
+          pytest tests -v -p no:cacheprovider -rs \
             -m "live and not qt and not subprocess and not bench" \
             --junitxml=live-stock-junit.xml
           python - <<'EOF'

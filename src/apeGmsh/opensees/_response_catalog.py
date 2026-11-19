@@ -108,6 +108,7 @@ ELE_TAG_SSPbrick = 121
 ELE_TAG_FourNodeQuad = 31
 ELE_TAG_Tri31 = 33
 ELE_TAG_SSPquad = 119
+ELE_TAG_SSPquadUP = 120
 ELE_TAG_Twenty_Node_Brick = 49
 ELE_TAG_EightNodeQuad = 208
 ELE_TAG_SixNodeTri = 209
@@ -1174,6 +1175,24 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
         class_tag=ELE_TAG_SSPquad,
     ),
 
+    # ── SSPquadUP (4-node u-p, 1 GP Quad_GL_1) ───────────────────────
+    # C++ class: SSPquadUP (stock UWelements). setResponse keeps only
+    # ``stress2D3`` / ``strain2D3`` for itself and hands every other
+    # keyword to its PlaneStrain material copy, whose ``stress`` /
+    # ``strain`` are the same Vector(3) (effective stress).
+    ("SSPquadUP", IntRule.Quad_GL_1, "stress"): _continuum_layout(
+        n_gp=1, natural_coords=_QUAD_GL_1_COORDS,
+        coord_system="isoparametric",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_SSPquadUP,
+    ),
+    ("SSPquadUP", IntRule.Quad_GL_1, "strain"): _continuum_layout(
+        n_gp=1, natural_coords=_QUAD_GL_1_COORDS,
+        coord_system="isoparametric",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_SSPquadUP,
+    ),
+
     # ── Twenty_Node_Brick (20-node, 27 GPs Hex_GL_3) ─────────────────
     # C++ class: Twenty_Node_Brick. Tcl name: ``20NodeBrick``.
     # 27-GP rule emitted in corner-edge-face-centroid order (see the
@@ -2166,6 +2185,37 @@ def is_line_station_synthesis_catalogued(class_name: str) -> bool:
     nodal forces, but its stations come from ``section force``.
     """
     return class_name in _ELASTIC_BEAM_NODAL_CLASSES
+
+
+#: OpenSees ``element`` command token -> the catalogued C++ classes it
+#: builds, for a line-stations ``element_class_name`` given as the command
+#: a user types. Each command builds its ``2d`` or ``3d`` class by
+#: the model's ``ndm``; the classes of one command share their station
+#: source (``section force`` or ``localForce``), so the token decides it
+#: without the ``ndm``. Commands whose classes the catalog does not list
+#: (``mixedBeamColumn``, ``timoshenkoBeamColumn``) are left out, and keep
+#: their "not listed" warning.
+LINE_STATION_CLASSES_FOR_COMMAND: "dict[str, tuple[str, ...]]" = {
+    "elasticBeamColumn": ("ElasticBeam2d", "ElasticBeam3d"),
+    "ElasticTimoshenkoBeam": (
+        "ElasticTimoshenkoBeam2d", "ElasticTimoshenkoBeam3d"),
+    "forceBeamColumn": ("ForceBeamColumn2d", "ForceBeamColumn3d"),
+    "dispBeamColumn": ("DispBeamColumn2d", "DispBeamColumn3d"),
+    "LadrunoForceBeamColumn": (
+        "LadrunoForceBeamColumn2d", "LadrunoForceBeamColumn3d"),
+    "LadrunoDispBeamColumn": (
+        "LadrunoDispBeamColumn2d", "LadrunoDispBeamColumn3d"),
+}
+
+
+def line_station_classes(name: str) -> "tuple[str, ...]":
+    """The C++ classes a line-stations ``element_class_name`` stands for.
+
+    A command token of :data:`LINE_STATION_CLASSES_FOR_COMMAND` resolves
+    to its classes; any other name is taken as a class name and returned
+    alone, catalogued or not.
+    """
+    return LINE_STATION_CLASSES_FOR_COMMAND.get(name, (name,))
 
 
 # ---------------------------------------------------------------------

@@ -3,77 +3,81 @@
 // The event union is exhaustive: the `never` check at the end of the switch
 // fails to compile when an event is added without a case, and an event the
 // code does not know raises at run time.
+//
+// A slice whose events write only its own part of the state has its own
+// sub-reducer under reduce/, the way the clip events call `reduceClip`: each
+// takes its sub-state, and what it reads of the rest as explicit inputs, and
+// returns the same object when nothing changed. The model's events and the
+// cases that read or write several slices (the files, the selection, the
+// phase, the results, the contour and the deformed shape) stay here, as do
+// the follow-ups a delegated event needs from another slice (`withPhase`,
+// `withLineDiagramPick`, `syncLineDiagramDerived`).
 
-import { initialClip, reduceClip } from "./clip.ts";
+import { reduceClip } from "./clip.ts";
+import { particleSystemOf, reduceParticles } from "./results.ts";
 import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";
+import { defaultLineDiagramComponent, lineDiagramKeysOf } from "./lineDiagram.ts";
+import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
+import { initialCamera, reduceCamera } from "./reduce/camera.ts";
+import { initialState } from "./reduce/initial.ts";
+import { pickLineDiagram, reduceLineDiagram } from "./reduce/lineDiagram.ts";
+import { materialTestForAnotherModel, reduceMaterialTest } from "./reduce/materialTest.ts";
+import { reduceOffers } from "./reduce/offers.ts";
+import { reduceOverlays } from "./reduce/overlays.ts";
+import { reduceUser } from "./reduce/user.ts";
+import { reduceVariants } from "./reduce/variants.ts";
+import { reduceWindows } from "./reduce/windows.ts";
+import { reduceWorkspace, workspaceForAnotherModel } from "./reduce/workspace.ts";
+import { elementsOfDecl, selectedElementsOf } from "./search.ts";
 import {
-  defaultLineDiagramComponent,
-  initialLineDiagramState,
-  LINE_DIAGRAM_CMAP_NAMES,
-  lineDiagramKeysOf,
-} from "./lineDiagram.ts";
-import { elementsOfDecl } from "./search.ts";
-import { deformOf, elementJoinKey, geometryPairing, resultsPairing, stageCount, stageIdentity, syncLineDiagramDerived } from "./selectors.ts";
+  combinationFieldsOf,
+  combinationRequestOf,
+  deformOf,
+  compareUserRequestOf,
+  differencePlanOf,
+  elementJoinKey,
+  geometryPairing,
+  resultsPairing,
+  stageCount,
+  stageIdentity,
+  syncLineDiagramDerived,
+  userResultPickOf,
+  userResultRequestOf,
+} from "./selectors.ts";
 import { initialSearch, initialSpotlight } from "./spotlight.ts";
-import {
-  LINE_STATION_COMPONENTS,
-  WINDOW_KINDS,
-  type ArtifactInfo,
-  type ArtifactKind,
-  type ContourState,
-  type DeclPath,
-  type DeformState,
-  type Event,
-  type LineDiagramState,
-  type LoadsState,
-  type PhaseKey,
-  type SpatialNdm,
-  type State,
-  type UnitSystemId,
-} from "./types.ts";
+import { THEME_MODES } from "../theme/tokens.ts";
+import { SET_KINDS, TARGET_KINDS } from "./types.ts";
+import type { ArtifactInfo, ArtifactKind, ContourState, DeclPath, Event, MeshInfo, PhaseKey, Pick, State, UnitSystemId } from "./types.ts";
 import { UNIT_SYSTEM_IDS } from "./units.ts";
 
-/** The deformed shape before the user turns it on: true scale, no ghost (V4d; the Qt defaults). */
-export const initialDeform: DeformState = { on: false, scale: 1, ghost: false, measured: null };
+export { canonicalPose, initialCamera, ROLL_TOLERANCE } from "./reduce/camera.ts";
+export { emptyRecord, initialContour, initialDeform, initialLineDiagram, initialState } from "./reduce/initial.ts";
+export { initialOffers, MAX_OFFERS } from "./reduce/offers.ts";
+export { initialCracks, initialHinges, initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./reduce/overlays.ts";
+export { NO_USER_FILE, userEventOf, userInfoOf, userPathOf, userReadable } from "./reduce/user.ts";
+export { initialVariants } from "./reduce/variants.ts";
+export { initialWorkspace } from "./reduce/workspace.ts";
 
-export const initialLineDiagram: LineDiagramState = initialLineDiagramState;
+type Markers = { on: boolean; size: number | null; auto: boolean };
 
-export const initialLoads: LoadsState = {
-  on: false,
-  scale: 1,
-  showNodalForces: true,
-  showNodalMoments: true,
-  showElementLoads: true,
-  showSp: true,
-  includeSupportReactions: false,
-  scaleBySeries: false,
-  selectedPatterns: null,
-};
+/** On while the size is automatic asks for it to be chosen again (null); the user's own size stays. */
+function markersOn<M extends Markers>(m: M, on: boolean): M {
+  if (m.on === on) return m;
+  return { ...m, on, size: on && m.auto ? null : m.size };
+}
 
-/** No model, no dimension. */
-const NO_NDM: SpatialNdm = { ndm: null, reason: "no model is loaded" };
+/** A user's size (clamped), the effects' choice (`auto`), or null to choose again. */
+function markerSize<M extends Markers>(m: M, size: number | null, auto: boolean | undefined): M {
+  if (size === null) return { ...m, size: null, auto: true };
+  if (!Number.isFinite(size)) return m;
+  return { ...m, size: Math.max(NODE_SIZE_MIN, Math.min(NODE_SIZE_MAX, size)), auto: auto === true };
+}
 
-/** A record with no prototype: a key named `constructor` or `__proto__` is just a key. */
-export const emptyRecord = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
-
-/** The contour before anything is picked: whole-history range, jet (V4c1). */
-export const initialContour: ContourState = {
-  source: "nodal",
-  gauss: "cell",
-  join: null,
-  field: null,
-  component: null,
-  range: "history",
-  fixed: null,
-  cmap: "jet",
-  declaredUnits: null,
-  sourceUnits: null,
-  targetUnits: "as_stored",
-  stepRange: null,
-  scan: null,
-  notice: null,
-  reads: 0,
-};
+/** The opacity a model opens on: solids translucent when they would hide beams, else opaque. */
+export function defaultOpacity(mesh: MeshInfo): number {
+  const hasLines = mesh.counts.lineCells > 0 || mesh.counts.opsOnly > 0;
+  return mesh.counts.solidCells > 0 && hasLines ? 0.35 : 1;
+}
 
 function syncContourUnits(c: ContourState, declaredUnits: UnitSystemId | null, keepManual: boolean): ContourState {
   if (declaredUnits !== null) {
@@ -86,44 +90,27 @@ function syncContourUnits(c: ContourState, declaredUnits: UnitSystemId | null, k
   return { ...c, declaredUnits: null };
 }
 
-export const initialState: State = {
-  artifacts: { geometry: null, model: null, results: null },
-  decls: emptyRecord(),
-  names: emptyRecord(),
-  blocks: [],
-  mesh: null,
-  phase: { axis: [], at: null },
-  selection: { decls: [], picks: [] },
-  hover: null,
-  visibility: { hidden: [], edges: true, opacity: 1, colourBy: "group" },
-  inspector: { pinned: [] },
-  windows: { open: [] },
-  overrides: {},
-  geometry: null,
-  provenance: [],
-  provenanceOrigin: false,
-  source: { seq: 0, request: null, last: null },
-  view: { frameSeq: 0 },
-  definitions: null,
-  neutralLoads: null,
-  sequence: { status: "absent" },
-  stage: null,
-  lineage: null,
-  stageElements: { status: "none" },
-  results: null,
-  resultStep: null,
-  contour: initialContour,
-  ndm: NO_NDM,
-  units: null,
-  deform: initialDeform,
-  clip: initialClip,
-  lineDiagram: initialLineDiagram,
-  loads: initialLoads,
-  spotlight: initialSpotlight,
-  search: initialSearch,
-};
+/** The element kind emptied; the active kind and the node kind stay (ADR 0138 D2). */
+const noElements = (sel: State["selection"]): State["selection"] => ({ ...sel, decls: [], picks: [] });
 
-const NO_SELECTION: State["selection"] = { decls: [], picks: [] };
+/** A node tag as a selection holds it: a non-negative integer (a FEM id). */
+function nodeTag(t: unknown, where: string): number {
+  if (typeof t !== "number" || !Number.isInteger(t) || t < 0) throw new RangeError(`${where}: ${JSON.stringify(t)} is not a node tag`);
+  return t;
+}
+
+/**
+ * The node kind's tags after one edit, in pick order (ADR 0138 D2, D9). One
+ * pass over each list, through a set, so an edit costs what its lists hold.
+ */
+export function editNodes(now: readonly number[], tags: readonly number[], mode: "replace" | "add" | "toggle"): number[] {
+  for (const t of tags) nodeTag(t, "selectNodes");
+  if (mode === "replace") return [...new Set(tags)];
+  const have = new Set(now);
+  if (mode === "add") return [...now, ...[...new Set(tags)].filter((t) => !have.has(t))];
+  const flip = new Set(tags);
+  return [...now.filter((t) => !flip.has(t)), ...[...flip].filter((t) => !have.has(t))];
+}
 
 function opened(path: string): ArtifactInfo {
   return {
@@ -145,7 +132,28 @@ function samePhase(a: PhaseKey, b: PhaseKey): boolean {
   if (a.kind === "stage" && b.kind === "stage") return a.index === b.index;
   // The same results stage is the same phase; the step is the position within it.
   if (a.kind === "results" && b.kind === "results") return a.stage === b.stage;
+  if (a.kind === "combination" && b.kind === "combination") return a.name === b.name;
   return true;
+}
+
+/**
+ * Why User Combination `name` cannot be shown now, or null when it can: the
+ * mesh is loaded and the set's `.user.h5` lists it (a refused row is never
+ * shown). While the file is read again the combination stays (`pending`), so a
+ * re-read does not drop the state the user picked; its old value is not shown.
+ */
+function combinationProblem(s: State, name: string): string | null {
+  if (!s.mesh) return "no mesh is loaded";
+  const u = s.user;
+  if (u === null) return "the set has no .user.h5";
+  if (u.status === "reading") return null;
+  if (u.status === "failed") return `the user file is refused: ${u.error}`;
+  const c = u.info.combinations;
+  if (c === null) return `${u.path} holds no User Combination`;
+  if (!c.ok) return `/combinations is refused: ${c.reason}`;
+  if (c.items.some((x) => x.name === name)) return null;
+  const r = c.refused.find((x) => x.name === name);
+  return r ? `User Combination ${JSON.stringify(name)} is refused: ${r.reason} (${r.detail})` : `the user file lists no User Combination ${JSON.stringify(name)}`;
 }
 
 /** The steps of results stage `stage`, or 0 when there is no such stage. */
@@ -186,7 +194,9 @@ function withPhase(s: State, preserveLineNotice = false): State {
     s.results.stages.forEach((_, i) => axis.push({ kind: "results", stage: i, step: 0 }));
   }
   const prev = s.phase.at;
-  let at = prev && axis.some((k) => samePhase(k, prev)) ? prev : (axis.find((k) => k.kind === "mesh") ?? axis[0] ?? null);
+  // VU7b-2: a User Combination is off the axis; it stays shown while the user file still lists it.
+  const kept = prev !== null && (prev.kind === "combination" ? combinationProblem(s, prev.name) === null : axis.some((k) => samePhase(k, prev)));
+  let at = kept ? prev : (axis.find((k) => k.kind === "mesh") ?? axis[0] ?? null);
   // A results position keeps its step while the stage still has it; a stage
   // that shrank (a re-read) clamps it to its last step.
   if (at?.kind === "results") {
@@ -195,7 +205,9 @@ function withPhase(s: State, preserveLineNotice = false): State {
     else if (at.step >= n) at = { ...at, step: n - 1 };
   }
   const resultStep = at?.kind === "results" && s.resultStep && s.resultStep.stage === at.stage && s.resultStep.step === at.step ? s.resultStep : null;
-  return withLineDiagramPick(withContourPick({ ...s, phase: { axis, at }, resultStep }), preserveLineNotice);
+  // A combination's read belongs to the combination shown, and to nothing after it.
+  const combination = at?.kind === "combination" ? s.combination : null;
+  return withLineDiagramPick(withContourPick({ ...s, phase: { axis, at }, resultStep, combination }), preserveLineNotice);
 }
 
 /** The stage a contour pick is checked against: the results stage shown. */
@@ -207,103 +219,68 @@ const shownStage = (s: State) => (s.phase.at?.kind === "results" ? s.results?.st
  * notice stands, and the user picks again (`setContourField` clears it).
  */
 function withContourPick(s: State): State {
+  if (s.phase.at?.kind === "combination") return withCombinationPick(s, s.phase.at.name);
   if (s.visibility.colourBy !== "contour" || s.contour.field !== null || s.contour.notice !== null) return s;
   const pick = defaultPick(shownStage(s));
   return pick ? { ...s, contour: { ...s.contour, ...pick } } : s;
 }
 
 /**
+ * VU7b-2: on a User Combination, a pick it offers stays; any other is replaced
+ * by its first component (a stage's `DISPLACEMENT/Ux` carries over, because a
+ * case names its columns as a `.ladruno` stage does). A combination colours by
+ * one nodal component; it never offers a magnitude.
+ */
+function withCombinationPick(s: State, name: string): State {
+  if (s.visibility.colourBy !== "contour") return s;
+  const f = combinationFieldsOf(s, name);
+  if (!f.ok) return s;
+  const c = s.contour;
+  if (c.source === "nodal" && f.fields.some((x) => x.name === c.field && x.components.some((y) => y.key === c.component))) return s;
+  const first = f.fields[0]!;
+  return { ...s, contour: { ...c, source: "nodal", field: first.name, component: first.components[0]!.key, join: null, notice: null } };
+}
+
+/**
  * Auto-pick a line-station component when landing on a results stage with
- * `lineStations` and `lineDiagram.component` is null or absent from the stage.
+ * `lineStations` and `lineDiagram.component` is null or absent from the stage
+ * (reduce/lineDiagram.ts `pickLineDiagram`), then re-derive the chains and the
+ * hover from the selection when it asks.
  */
 function withLineDiagramPick(s: State, preserveNotice = false): State {
-  const stage = shownStage(s);
-  const avail = stage?.lineStations;
-  if (!avail || avail.length === 0) {
-    if (stage !== undefined && s.lineDiagram.component !== null) {
-      const prevComp = s.lineDiagram.component;
-      const notice = `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`;
-      return {
-        ...s,
-        lineDiagram: {
-          ...s.lineDiagram,
-          component: null,
-          flipSign: null,
-          stepRange: null,
-          scan: null,
-          notice,
-          drawnBeams: [],
-          chains: [],
-          hover: null,
-        },
-      };
-    }
-    if (
-      s.lineDiagram.stepRange === null &&
-      s.lineDiagram.scan === null &&
-      s.lineDiagram.drawnBeams.length === 0 &&
-      s.lineDiagram.chains.length === 0 &&
-      s.lineDiagram.hover === null
-    ) {
-      return s;
-    }
-    return {
-      ...s,
-      lineDiagram: {
-        ...s.lineDiagram,
-        stepRange: null,
-        scan: null,
-        drawnBeams: [],
-        chains: [],
-        hover: null,
-      },
-    };
-  }
-  if (s.lineDiagram.component !== null && avail.includes(s.lineDiagram.component)) {
-    const keys = lineDiagramKeysOf(s);
-    const keepStep = keys !== null && s.lineDiagram.stepRange?.key === keys.step;
-    const keepScan = keys !== null && s.lineDiagram.scan?.key === keys.scan;
-    const nextNotice = keepStep || preserveNotice ? s.lineDiagram.notice : null;
-    if (keepStep && keepScan && s.lineDiagram.notice === nextNotice) return syncLineDiagramDerived(s);
-    return syncLineDiagramDerived({
-      ...s,
-      lineDiagram: {
-        ...s.lineDiagram,
-        stepRange: keepStep ? s.lineDiagram.stepRange : null,
-        scan: keepScan ? s.lineDiagram.scan : null,
-        notice: nextNotice,
-        drawnBeams: keepStep ? s.lineDiagram.drawnBeams : [],
-        chains: keepStep ? s.lineDiagram.chains : [],
-        hover: keepStep ? s.lineDiagram.hover : null,
-      },
-    });
-  }
-  const prevComp = s.lineDiagram.component;
-  const picked = defaultLineDiagramComponent(avail);
-  const notice =
-    prevComp !== null && prevComp !== picked
-      ? picked !== null
-        ? `Stage ${stage.name || stage.id} has no ${prevComp} line stations; switched to ${picked}.`
-        : `Stage ${stage.name || stage.id} has no ${prevComp} line stations; the line-diagram pick was cleared.`
-      : null;
-  if (picked === s.lineDiagram.component && s.lineDiagram.notice === notice) return syncLineDiagramDerived(s);
-  return {
-    ...s,
-    lineDiagram: {
-      ...s.lineDiagram,
-      component: picked,
-      flipSign: null,
-      stepRange: null,
-      scan: null,
-      notice,
-      drawnBeams: [],
-      chains: [],
-      hover: null,
-    },
-  };
+  const { ld, sync } = pickLineDiagram(s.lineDiagram, shownStage(s), () => lineDiagramKeysOf(s), preserveNotice);
+  const t = ld === s.lineDiagram ? s : { ...s, lineDiagram: ld };
+  return sync ? syncLineDiagramDerived(t) : t;
 }
 
 export function reduce(s: State, e: Event): State {
+  const next = reduceEvent(s, e);
+  return e.type === "setContourField" ? withoutCompareUser(next) : next;
+}
+
+/** The variants reducer's inputs for a Hide: `showCompareUser` with no pick reads none of them. */
+const HIDE_INPUTS = {
+  differenceKey: () => {
+    throw new Error("showCompareUser (Hide) asked for the difference key");
+  },
+  compareUserKey: () => {
+    throw new Error("showCompareUser (Hide) asked for the compare user key");
+  },
+};
+
+/**
+ * VF (#2943, #2902 item 3): a contour field pick replaces a compare user
+ * result drawn, as the panel's Hide does. One contour at a time, and
+ * `contourView` draws the compare result before the pick, so leaving it would
+ * keep it on screen whatever field the legend picked. A pick the reducer
+ * refused threw before this, so the compare result stays.
+ */
+function withoutCompareUser(s: State): State {
+  if (s.variants.shown === null) return s;
+  return { ...s, variants: reduceVariants(s.variants, { type: "showCompareUser", pick: null }, HIDE_INPUTS) };
+}
+
+function reduceEvent(s: State, e: Event): State {
   switch (e.type) {
     case "fileOpened": {
       const prev = s.artifacts[e.artifact];
@@ -316,7 +293,14 @@ export function reduce(s: State, e: Event): State {
       const lineDiagram = clearedResults
         ? { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null }
         : s.lineDiagram;
-      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram });
+      // VA1: opening another model drops the camera of the one shown; the same path again (a reload, a retry after a failed read) keeps it.
+      const anotherModel = e.artifact === "model" && !(prev && prev.path === e.path);
+      const camera = anotherModel ? { ...initialCamera, seq: s.camera.seq } : s.camera;
+      // VU9a: another model's set has another workspace; the last one's read is never edited against it.
+      const workspace = anotherModel ? workspaceForAnotherModel(s.workspace) : s.workspace;
+      // ADR 0135: a tester run belongs to the model it read.
+      const materialTest = anotherModel ? materialTestForAnotherModel(s.materialTest) : s.materialTest;
+      return withPhase({ ...s, artifacts: { ...s.artifacts, [e.artifact]: info }, results, contour, lineDiagram, camera, workspace, materialTest });
     }
     case "fileLoaded": {
       // A fileChanged that arrived while this read ran keeps the artifact
@@ -339,8 +323,9 @@ export function reduce(s: State, e: Event): State {
       const keep = reread && s.stage !== null && stageIdentity(s.sequence, s.stage) === stageIdentity(sequence, s.stage);
       const modelUnits = e.load.units ?? null;
       const declaredUnits = modelUnits ?? s.results?.units ?? null;
-      const hasLines = mesh.counts.lineCells > 0 || mesh.counts.opsOnly > 0;
-      const opacity = reread ? s.visibility.opacity : mesh.counts.solidCells > 0 && hasLines ? 0.35 : 1;
+      const opacity = reread ? s.visibility.opacity : defaultOpacity(mesh);
+      const extrudeFrames = reread ? s.visibility.extrudeFrames : false;
+      const showOffsets = reread ? s.visibility.showOffsets : Boolean(mesh.frameExtrusion?.hasJointOffsets);
       return withPhase({
         ...s,
         phase: reread ? s.phase : { ...s.phase, at: null },
@@ -361,14 +346,22 @@ export function reduce(s: State, e: Event): State {
         contour: syncContourUnits(s.contour, declaredUnits, reread || s.results !== null),
         loads: reread ? s.loads : { ...s.loads, selectedPatterns: null },
         stage: keep ? s.stage : null,
-        selection: NO_SELECTION,
+        selection: { ...s.selection, decls: [], picks: [], nodes: [] },
         hover: null,
-        visibility: { ...s.visibility, hidden: [], opacity },
+        visibility: { ...s.visibility, hidden: [], opacity, extrudeFrames, showOffsets },
+        // A chosen size belongs to the model it was chosen for; the user's own stays.
+        nodes: { ...s.nodes, on: reread ? s.nodes.on : false, size: s.nodes.auto ? null : s.nodes.size },
+        hinges: { ...s.hinges, on: reread ? s.hinges.on : false, size: s.hinges.auto ? null : s.hinges.size, element: reread ? s.hinges.element : null, history: null, notice: null },
+        gaussPoints: { ...s.gaussPoints, on: reread ? s.gaussPoints.on : false, size: s.gaussPoints.auto ? null : s.gaussPoints.size, measured: null },
         inspector: { pinned: [] },
         spotlight: reread ? s.spotlight : { ...initialSpotlight, seq: s.spotlight.seq },
         search: reread ? s.search : { ...initialSearch, seq: s.search.seq },
         // The request count survives the re-read (see State.source).
         source: { seq: s.source.seq, request: null, last: null },
+        // VA1: a read of the path already read keeps the view (a re-read, and a
+        // retry after a failed re-read). A path never read opens framed: a pose
+        // moved while it loaded, or after its first read failed, is not its own.
+        camera: s.camera.read === info.path ? s.camera : { ...initialCamera, seq: s.camera.seq, read: info.path },
       });
     }
     case "setLoaded": {
@@ -403,7 +396,11 @@ export function reduce(s: State, e: Event): State {
         windows: s.windows,
         geometry: s.geometry,
         results: s.results,
-        contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
+        // ADR 0130: the .user.h5 is the set's; renderer/app.ts opens and closes it with the set.
+        user: s.user,
+        // ADR 0134 D5: the particles are the set's, not the model's (a particle set draws with no model).
+        particles: s.particles,
+        contour: syncContourUnits(initialState.contour, s.results?.units ?? particleSystemOf(s.particles), false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
         source: { ...initialState.source, seq: s.source.seq },
@@ -411,6 +408,18 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
+        // VA1: the theme is the window's. The camera stands through a failed
+        // re-read of the model shown; a failed first read of a path drops a
+        // pose moved while it loaded (the model shown then was another one),
+        // and the path stays unread (camera.read), so its retry opens framed.
+        camera: s.camera.read === e.path ? s.camera : { ...initialCamera, seq: s.camera.seq },
+        theme: s.theme,
+        // VA5: offers last for the window session (ADR 0128 D5).
+        offers: s.offers,
+        // VU10: the study and the compare set are the window's, not the model's (a switch loads another model).
+        variants: s.variants,
+        // VU9a: a failed read of the model leaves no workspace edited against it; a read that lands reads it again.
+        workspace: workspaceForAnotherModel(s.workspace),
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -434,7 +443,9 @@ export function reduce(s: State, e: Event): State {
         windows: s.windows,
         geometry: s.geometry,
         results: s.results,
-        contour: syncContourUnits(initialState.contour, s.results?.units ?? null, false),
+        user: s.user,
+        particles: s.particles,
+        contour: syncContourUnits(initialState.contour, s.results?.units ?? particleSystemOf(s.particles), false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
         source: { ...initialState.source, seq: s.source.seq },
@@ -442,6 +453,15 @@ export function reduce(s: State, e: Event): State {
         deform: { ...s.deform, measured: null },
         // V4e1: the section planes stand too (the slider re-derives its range from the next mesh).
         clip: s.clip,
+        // VA1: the camera and the theme are the window's, not the model's.
+        camera: s.camera,
+        theme: s.theme,
+        // VA5: offers last for the window session (ADR 0128 D5).
+        offers: s.offers,
+        // VU10: the study and the compare set are the window's, not the model's (a switch loads another model).
+        variants: s.variants,
+        // VU9a: the closed set's workspace leaves; the pick kind and the request count are the window's.
+        workspace: workspaceForAnotherModel(s.workspace),
         lineDiagram: { ...s.lineDiagram, stepRange: null, scan: null, drawnBeams: [], chains: [], hover: null },
         loads: { ...s.loads, selectedPatterns: null },
       });
@@ -465,19 +485,41 @@ export function reduce(s: State, e: Event): State {
     }
     case "select":
       if (!(e.pick.decl in s.decls)) throw new Error(`select: ${e.pick.decl} is not a declaration of the loaded model`);
-      return syncLineDiagramDerived({ ...s, selection: { decls: [e.pick.decl], picks: [e.pick] } });
+      return syncLineDiagramDerived({ ...s, selection: { ...s.selection, decls: [e.pick.decl], picks: [e.pick] } });
     case "selectAdd": {
       if (!(e.pick.decl in s.decls)) throw new Error(`selectAdd: ${e.pick.decl} is not a declaration of the loaded model`);
-      if (s.selection.decls.includes(e.pick.decl)) {
-        const decls = s.selection.decls.filter((d) => d !== e.pick.decl);
-        const picks = s.selection.picks.filter((p) => p.decl !== e.pick.decl);
-        return syncLineDiagramDerived(
-          decls.length === 0 ? { ...s, selection: NO_SELECTION } : { ...s, selection: { decls, picks } },
-        );
+      const sel = s.selection;
+      if (sel.decls.includes(e.pick.decl)) {
+        const decls = sel.decls.filter((d) => d !== e.pick.decl);
+        const picks = sel.picks.filter((p) => p.decl !== e.pick.decl);
+        return syncLineDiagramDerived({ ...s, selection: { ...sel, decls, picks } });
+      }
+      // An element selected through a group, label or material it belongs to: Shift+click takes it out, and
+      // each such declaration is replaced by its other elements (ADR 0138 Context: the group stayed selected).
+      const covering = e.pick.decl in s.decls && s.decls[e.pick.decl]!.kind === "element"
+        ? sel.decls.filter((d) => s.decls[d]?.kind !== "element" && elementsOfDecl(s, d).includes(e.pick.decl))
+        : [];
+      if (covering.length) {
+        const drop = new Set(covering), have = new Set(sel.decls);
+        const decls: DeclPath[] = [], picks: Pick[] = [];
+        sel.decls.forEach((d, i) => {
+          if (!drop.has(d)) {
+            decls.push(d);
+            picks.push(sel.picks[i]!);
+            return;
+          }
+          for (const m of elementsOfDecl(s, d)) {
+            if (m === e.pick.decl || have.has(m)) continue;
+            have.add(m);
+            decls.push(m);
+            picks.push({ decl: m, at: null, nodes: null });
+          }
+        });
+        return syncLineDiagramDerived({ ...s, selection: { ...sel, decls, picks } });
       }
       return syncLineDiagramDerived({
         ...s,
-        selection: { decls: [...s.selection.decls, e.pick.decl], picks: [...s.selection.picks, e.pick] },
+        selection: { ...sel, decls: [...sel.decls, e.pick.decl], picks: [...sel.picks, e.pick] },
       });
     }
     case "selectDecls": {
@@ -485,11 +527,29 @@ export function reduce(s: State, e: Event): State {
         if (!(d in s.decls)) throw new Error(`selectDecls: ${d} is not a declaration of the loaded model`);
       }
       const next = uniq(e.add ? [...s.selection.decls, ...e.decls] : e.decls);
-      const picks = next.map((decl) => s.selection.picks.find((p) => p.decl === decl) ?? { decl, at: null, nodes: null });
-      return syncLineDiagramDerived({ ...s, selection: { decls: next, picks } });
+      // One map of the picks already held: a lookup per declaration made adding to a large selection quadratic.
+      const held = new Map(s.selection.picks.map((p) => [p.decl, p] as const));
+      const picks = next.map((decl) => held.get(decl) ?? { decl, at: null, nodes: null });
+      return syncLineDiagramDerived({ ...s, selection: { ...s.selection, decls: next, picks } });
     }
-    case "clearSelection":
-      return s.selection.decls.length === 0 ? s : syncLineDiagramDerived({ ...s, selection: NO_SELECTION });
+    case "clearSelection": {
+      const kind = e.kind ?? s.selection.active;
+      if (!(TARGET_KINDS as readonly string[]).includes(kind)) throw new RangeError(`clearSelection: ${JSON.stringify(kind)} is not a target kind`);
+      if (kind === "node") return s.selection.nodes.length === 0 ? s : { ...s, selection: { ...s.selection, nodes: [] } };
+      return s.selection.decls.length === 0 ? s : syncLineDiagramDerived({ ...s, selection: noElements(s.selection) });
+    }
+    case "selectNodes": {
+      if (!["replace", "add", "toggle"].includes(e.mode)) throw new RangeError(`selectNodes: ${JSON.stringify(e.mode)} is not replace, add or toggle`);
+      const nodes = editNodes(s.selection.nodes, e.tags, e.mode);
+      const same = nodes.length === s.selection.nodes.length && nodes.every((t, i) => t === s.selection.nodes[i]);
+      return same ? s : { ...s, selection: { ...s.selection, nodes } };
+    }
+    case "setWorkspaceKind": {
+      // The sets panel's toggle is the active kind (ADR 0138 D2): one value, read by the click and by a new set.
+      if (!(SET_KINDS as readonly string[]).includes(e.kind)) throw new RangeError(`setWorkspaceKind: ${JSON.stringify(e.kind)} is not nodes or elements`);
+      const active = e.kind === "nodes" ? "node" : "element";
+      return s.selection.active === active ? s : { ...s, selection: { ...s.selection, active } };
+    }
     case "hover":
       return syncLineDiagramDerived({ ...s, hover: e.at });
     case "setHidden": {
@@ -521,8 +581,42 @@ export function reduce(s: State, e: Event): State {
     case "setColourBy":
       if (e.by !== "group" && e.by !== "role" && e.by !== "contour") throw new RangeError(`setColourBy: ${JSON.stringify(e.by)}`);
       return s.visibility.colourBy === e.by ? s : withContourPick({ ...s, visibility: { ...s.visibility, colourBy: e.by } });
+    case "toggleExtrudeFrames": {
+      const next = e.on !== undefined ? Boolean(e.on) : !s.visibility.extrudeFrames;
+      return s.visibility.extrudeFrames === next ? s : { ...s, visibility: { ...s.visibility, extrudeFrames: next } };
+    }
+    case "toggleShowOffsets": {
+      const next = e.on !== undefined ? Boolean(e.on) : !s.visibility.showOffsets;
+      return s.visibility.showOffsets === next ? s : { ...s, visibility: { ...s.visibility, showOffsets: next } };
+    }
+    case "setNodes": {
+      const nodes = markersOn(s.nodes, e.on);
+      return nodes === s.nodes ? s : { ...s, nodes };
+    }
+    case "setNodeSize": {
+      const nodes = markerSize(s.nodes, e.size, e.auto);
+      return nodes === s.nodes ? s : { ...s, nodes };
+    }
+    case "setGaussPoints": {
+      const gaussPoints = markersOn(s.gaussPoints, e.on);
+      return gaussPoints === s.gaussPoints ? s : { ...s, gaussPoints };
+    }
+    case "setGaussSize": {
+      const gaussPoints = markerSize(s.gaussPoints, e.size, e.auto);
+      return gaussPoints === s.gaussPoints ? s : { ...s, gaussPoints };
+    }
+    case "gaussMeasured": {
+      if (!Number.isInteger(e.count) || e.count < 0) throw new RangeError(`gaussMeasured: ${e.count} points`);
+      return { ...s, gaussPoints: { ...s.gaussPoints, measured: { stage: e.stage, count: e.count, refused: e.refused, notes: e.notes } } };
+    }
     case "setPhase":
-      if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
+      if (e.at.kind === "combination") {
+        if (typeof e.at.name !== "string") throw new RangeError(`setPhase: a combination is named by a string; got ${JSON.stringify(e.at)}`);
+        const why = combinationProblem(s, e.at.name);
+        if (why !== null) throw new Error(`setPhase: User Combination ${JSON.stringify(e.at.name)} cannot be shown: ${why}`);
+        // The user file must be read: a pending re-read keeps a combination shown, it does not open one.
+        if (s.user?.status !== "ready") throw new Error(`setPhase: User Combination ${JSON.stringify(e.at.name)} cannot be shown: the user file is not read yet`);
+      } else if (!s.phase.axis.some((k) => samePhase(k, e.at))) throw new Error(`setPhase: ${JSON.stringify(e.at)} is not on the phase axis`);
       if (e.at.kind === "results") checkStep(s, e.at.stage, e.at.step, "setPhase");
       return withPhase({
         ...s,
@@ -550,11 +644,13 @@ export function reduce(s: State, e: Event): State {
         warnings: [...e.warnings, ...(e.info.partial ? [`${e.info.path.split(/[\\/]/).pop()}: ${e.info.partial}; it is read as it stands`] : [])],
       };
       // A re-read keeps the results position only while that index still
-      // names the same stage (its id and name); otherwise the phase leaves it.
+      // names the same stage (its id and program name; W4d #2843: a display
+      // rename re-stamped onto the file is a label, not another stage);
+      // otherwise the phase leaves it.
       const at = s.phase.at;
       const old = at?.kind === "results" ? s.results?.stages[at.stage] : undefined;
       const now = at?.kind === "results" ? e.info.stages[at.stage] : undefined;
-      const keep = !old || (now !== undefined && now.id === old.id && now.name === old.name);
+      const keep = !old || (now !== undefined && now.id === old.id && now.programName === old.programName);
       const declaredUnits = s.units ?? e.info.units ?? null;
       const rereadResults = prev.status === "ready";
       const firstLineStage = e.info.stages.find((st) => (st.lineStations?.length ?? 0) > 0);
@@ -610,7 +706,8 @@ export function reduce(s: State, e: Event): State {
         lineSwitchNotice !== null,
       );
       const c = next.contour;
-      if (c.field === null || c.component === null) return next;
+      // VU16: a user result is the user file's, not the results'; a re-read of the results keeps it.
+      if (c.field === null || c.component === null || c.source === "user") return next;
       const field = c.field, component = c.component;
       const stage = shownStage(next);
       const has = stage ? hasPick(stage, c.source, field, component) : e.info.stages.some((st) => hasPick(st, c.source, field, component));
@@ -622,7 +719,32 @@ export function reduce(s: State, e: Event): State {
     }
     case "setContourField": {
       const source = e.source ?? "nodal";
-      if (source !== "nodal" && source !== "element") throw new RangeError(`setContourField: source ${JSON.stringify(source)}`);
+      if (source !== "nodal" && source !== "element" && source !== "user") throw new RangeError(`setContourField: source ${JSON.stringify(source)}`);
+      const at = s.phase.at;
+      if (source === "user") {
+        // VU16: a state-free ON_NODES user result the set's .user.h5 lists, and one of its columns. A stale one is
+        // picked, and the contour refuses it with A6's reason (selectors `userResultContour`).
+        if (at?.kind === "combination") throw new RangeError(`setContourField: User Combination ${JSON.stringify(at.name)} is shown; a user result is not drawn over it`);
+        const p = userResultPickOf(s, e.field);
+        if (!p.ok) throw new RangeError(`setContourField: ${p.reason}`);
+        if (!p.entry.components.includes(e.component)) {
+          throw new RangeError(`setContourField: user result ${JSON.stringify(e.field)} has no component ${JSON.stringify(e.component)}; its components are ${p.entry.components.join(", ")}`);
+        }
+        const c = s.contour;
+        if (c.source === source && c.field === e.field && c.component === e.component && c.notice === null) return s;
+        return { ...s, contour: { ...c, source, field: e.field, component: e.component, join: null, notice: null } };
+      }
+      if (at?.kind === "combination") {
+        // VU7b-2: what the combination offers: one nodal component of the cases it reaches.
+        const f = combinationFieldsOf(s, at.name);
+        if (!f.ok) throw new RangeError(`setContourField: User Combination ${JSON.stringify(at.name)} offers no field: ${f.reason}`);
+        if (source !== "nodal" || !f.fields.some((x) => x.name === e.field && x.components.some((y) => y.key === e.component))) {
+          throw new RangeError(`setContourField: ${e.field} / ${e.component} is not a ${source} component User Combination ${JSON.stringify(at.name)} offers`);
+        }
+        const c = s.contour;
+        if (c.source === source && c.field === e.field && c.component === e.component && c.notice === null) return s;
+        return { ...s, contour: { ...c, source, field: e.field, component: e.component, join: null, notice: null } };
+      }
       const stage = shownStage(s);
       const ok = stage ? hasPick(stage, source, e.field, e.component) : (s.results?.stages ?? []).some((st) => hasPick(st, source, e.field, e.component));
       if (!ok) throw new RangeError(`setContourField: ${e.field} / ${e.component} is not a ${source} field component of ${stage ? `stage ${stage.id}` : "the results"}`);
@@ -654,14 +776,16 @@ export function reduce(s: State, e: Event): State {
       if (!CMAP_NAMES.includes(e.cmap)) throw new RangeError(`setContourCmap: ${JSON.stringify(e.cmap)}`);
       return s.contour.cmap === e.cmap ? s : { ...s, contour: { ...s.contour, cmap: e.cmap } };
     case "setContourUnits": {
-      if (e.source !== undefined && !UNIT_SYSTEM_IDS.includes(e.source)) {
-        throw new RangeError(`setContourUnits: source ${JSON.stringify(e.source)}`);
+      const hasSource = e.source !== undefined || e.sourceUnits !== undefined;
+      const rawSource = e.source !== undefined ? e.source : e.sourceUnits;
+      if (rawSource !== undefined && rawSource !== null && !UNIT_SYSTEM_IDS.includes(rawSource)) {
+        throw new RangeError(`setContourUnits: source ${JSON.stringify(rawSource)}`);
       }
-      const targetUnits = e.target ?? s.contour.targetUnits;
+      const targetUnits = e.target ?? e.targetUnits ?? s.contour.targetUnits;
       if (targetUnits !== "as_stored" && !UNIT_SYSTEM_IDS.includes(targetUnits)) {
         throw new RangeError(`setContourUnits: target ${JSON.stringify(targetUnits)}`);
       }
-      const sourceUnits = s.contour.declaredUnits ?? e.source ?? s.contour.sourceUnits;
+      const sourceUnits = s.contour.declaredUnits ?? (hasSource ? (rawSource ?? null) : s.contour.sourceUnits);
       if (s.contour.sourceUnits === sourceUnits && s.contour.targetUnits === targetUnits) return s;
       return { ...s, contour: { ...s.contour, sourceUnits, targetUnits } };
     }
@@ -709,12 +833,6 @@ export function reduce(s: State, e: Event): State {
       return { ...s, inspector: { pinned: [...s.inspector.pinned, e.decl] } };
     case "inspectorUnpin":
       return { ...s, inspector: { pinned: s.inspector.pinned.filter((d) => d !== e.decl) } };
-    case "openWindow":
-      if (!WINDOW_KINDS.includes(e.window)) throw new RangeError(`openWindow: ${JSON.stringify(e.window)} is not a window kind`);
-      if (s.windows.open.includes(e.window)) return s;
-      return { ...s, windows: { open: [...s.windows.open, e.window] } };
-    case "closeWindow":
-      return { ...s, windows: { open: s.windows.open.filter((w) => w !== e.window) } };
     case "requestSource": {
       // A declaration, or a /provenance record the app has no declaration
       // for (a synthesised series or pattern, from the sources listing).
@@ -729,6 +847,16 @@ export function reduce(s: State, e: Event): State {
     case "frameSelection":
       if (!s.mesh) return s;
       return { ...s, view: { frameSeq: s.view.frameSeq + 1 } };
+    case "setCamera":
+    case "cameraMoved": {
+      // ADR 0134 D5: particles drawn with no mesh are something to frame too (renderer/viewport.ts `fitParticles`).
+      const particles = s.particles?.status === "ready" && s.particles.on && s.particles.stages.length > 0;
+      const camera = reduceCamera(s.camera, e, { drawn: s.mesh !== null || s.geometry !== null || particles, nothingSelected: () => selectedElementsOf(s).length === 0 });
+      return camera === s.camera ? s : { ...s, camera };
+    }
+    case "setTheme":
+      if (!(THEME_MODES as readonly string[]).includes(e.theme)) throw new RangeError(`setTheme: ${JSON.stringify(e.theme)} is not a theme (${THEME_MODES.join(", ")})`);
+      return s.theme === e.theme ? s : { ...s, theme: e.theme };
     case "selectStage": {
       if (e.index === null) return s.stage === null ? s : { ...s, stage: null };
       const n = stageCount(s.sequence);
@@ -752,239 +880,127 @@ export function reduce(s: State, e: Event): State {
       const clip = reduceClip(s.clip, e, s.mesh?.center ?? [0, 0, 0]);
       return clip === s.clip ? s : { ...s, clip };
     }
-    case "setLineDiagram": {
-      const on: unknown = e.on;
-      if (typeof on !== "boolean") throw new RangeError(`setLineDiagram: ${JSON.stringify(on)}`);
-      return s.lineDiagram.on === on
-        ? s
-        : syncLineDiagramDerived(withLineDiagramPick({ ...s, lineDiagram: { ...s.lineDiagram, on } }));
-    }
-    case "setLineDiagramComponent": {
-      if (!LINE_STATION_COMPONENTS.includes(e.component)) {
-        throw new RangeError(`setLineDiagramComponent: ${JSON.stringify(e.component)}`);
-      }
-      const stage = shownStage(s);
-      if (stage?.lineStations && stage.lineStations.length > 0 && !stage.lineStations.includes(e.component)) {
-        throw new RangeError(`setLineDiagramComponent: ${e.component} is not a line-station component of stage ${stage.id}`);
-      }
-      if (s.lineDiagram.component === e.component && s.lineDiagram.flipSign === null && s.lineDiagram.notice === null) return s;
-      return {
-        ...s,
-        lineDiagram: {
-          ...s.lineDiagram,
-          component: e.component,
-          flipSign: null,
-          stepRange: null,
-          scan: null,
-          notice: null,
-          drawnBeams: [],
-          chains: [],
-          hover: null,
-        },
-      };
-    }
+    case "setLineDiagram":
+    case "setLineDiagramComponent":
     case "setLineDiagramScale":
-      if (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0) {
-        throw new RangeError(`setLineDiagramScale: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
-      }
-      return s.lineDiagram.scale === e.scale
-        ? s
-        : syncLineDiagramDerived({ ...s, lineDiagram: { ...s.lineDiagram, scale: e.scale } });
     case "setLineDiagramPlane":
-      if (e.plane !== "local" && e.plane !== "screen") {
-        throw new RangeError(`setLineDiagramPlane: ${JSON.stringify(e.plane)}`);
-      }
-      return s.lineDiagram.plane === e.plane && s.lineDiagram.notice === null
-        ? s
-        : { ...s, lineDiagram: { ...s.lineDiagram, plane: e.plane, notice: null } };
     case "setLineDiagramCmap":
-      if (!LINE_DIAGRAM_CMAP_NAMES.includes(e.cmap)) {
-        throw new RangeError(`setLineDiagramCmap: ${JSON.stringify(e.cmap)}`);
-      }
-      return s.lineDiagram.cmap === e.cmap ? s : { ...s, lineDiagram: { ...s.lineDiagram, cmap: e.cmap } };
     case "setLineDiagramFill":
-      if (typeof e.fill !== "boolean") throw new RangeError(`setLineDiagramFill: ${JSON.stringify(e.fill)}`);
-      return s.lineDiagram.fill === e.fill ? s : { ...s, lineDiagram: { ...s.lineDiagram, fill: e.fill } };
     case "setLineDiagramFlipSign":
-      if (e.flipSign !== null && typeof e.flipSign !== "boolean") {
-        throw new RangeError(`setLineDiagramFlipSign: ${JSON.stringify(e.flipSign)}`);
-      }
-      return s.lineDiagram.flipSign === e.flipSign
-        ? s
-        : syncLineDiagramDerived({ ...s, lineDiagram: { ...s.lineDiagram, flipSign: e.flipSign } });
-    case "setLineDiagramRange": {
-      if (e.range !== "history" && e.range !== "step" && e.range !== "fixed") {
-        throw new RangeError(`setLineDiagramRange: ${JSON.stringify(e.range)}`);
-      }
-      let fixed = s.lineDiagram.fixed;
-      if (e.range === "fixed") {
-        fixed = e.fixed ?? s.lineDiagram.fixed;
-        if (!fixed || !Number.isFinite(fixed.min) || !Number.isFinite(fixed.max) || !(fixed.min < fixed.max)) {
-          throw new RangeError(`setLineDiagramRange: a fixed range needs a finite min below a finite max; got ${JSON.stringify(fixed)}`);
-        }
-      }
-      return { ...s, lineDiagram: { ...s.lineDiagram, range: e.range, fixed } };
+    case "setLineDiagramRange":
+    case "lineDiagramStepRange":
+    case "lineDiagramScan": {
+      const lineDiagram = reduceLineDiagram(s.lineDiagram, e, { stage: () => shownStage(s), keys: () => lineDiagramKeysOf(s) });
+      if (lineDiagram === s.lineDiagram) return s;
+      const t = { ...s, lineDiagram };
+      // Turned on, it picks a component for the stage shown; a new scale, sign or drawn set re-derives the chains and the hover.
+      if (e.type === "setLineDiagram") return syncLineDiagramDerived(withLineDiagramPick(t));
+      return e.type === "setLineDiagramScale" || e.type === "setLineDiagramFlipSign" || e.type === "lineDiagramStepRange" ? syncLineDiagramDerived(t) : t;
     }
-    case "lineDiagramStepRange": {
-      if (lineDiagramKeysOf(s)?.step !== e.key) return s;
-      const prevNotice = s.lineDiagram.notice;
-      const keepSwitchNotice =
-        s.lineDiagram.stepRange === null &&
-        prevNotice !== null &&
-        prevNotice.includes(" line stations; switched to ");
-      const nextNotice =
-        e.notice === undefined
-          ? prevNotice
-          : keepSwitchNotice
-            ? e.notice === null || prevNotice.includes(e.notice)
-              ? prevNotice
-              : `${prevNotice} ${e.notice}`
-            : e.notice;
-      const drawnBeams =
-        e.drawnBeams !== undefined
-          ? e.drawnBeams.map((b) => ({
-              decl: b.decl,
-              elementId: b.elementId,
-              nodeStart: b.nodeStart,
-              nodeEnd: b.nodeEnd,
-              pStart: [b.pStart[0], b.pStart[1], b.pStart[2]] as [number, number, number],
-              pEnd: [b.pEnd[0], b.pEnd[1], b.pEnd[2]] as [number, number, number],
-              length: b.length,
-              xLocal: [b.xLocal[0], b.xLocal[1], b.xLocal[2]] as [number, number, number],
-              extrudeDir: [b.extrudeDir[0], b.extrudeDir[1], b.extrudeDir[2]] as [number, number, number],
-              xi: [...b.xi],
-              values: [...b.values],
-              autoScale: b.autoScale,
-              ...(b.spanMode !== undefined ? { spanMode: b.spanMode } : {}),
-              ...(b.spanReason !== undefined ? { spanReason: b.spanReason } : {}),
-            }))
-          : e.min === null
-            ? []
-            : s.lineDiagram.drawnBeams;
-      return syncLineDiagramDerived({
-        ...s,
-        lineDiagram: {
-          ...s.lineDiagram,
-          stepRange: { key: e.key, min: e.min, max: e.max },
-          notice: nextNotice,
-          drawnBeams,
-        },
-      });
-    }
-    case "lineDiagramScan":
-      if (lineDiagramKeysOf(s)?.scan !== e.scan.key) return s;
-      return { ...s, lineDiagram: { ...s.lineDiagram, scan: e.scan } };
+    case "setSupports":
+    case "setPrincipal":
+    case "setCracks":
+    case "setReactions":
+    case "setSprings":
+    case "setHinges":
+    case "setVectors":
     case "setLoads": {
-      if (e.on !== undefined && typeof e.on !== "boolean") {
-        throw new RangeError(`setLoads: on ${JSON.stringify(e.on)}`);
-      }
-      if (e.scale !== undefined && (typeof e.scale !== "number" || !Number.isFinite(e.scale) || e.scale <= 0)) {
-        throw new RangeError(`setLoads: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
-      }
-      const cur = s.loads;
-      let on = e.on ?? cur.on;
-      const scale = e.scale ?? cur.scale;
-      const showNodalForces = e.showNodalForces ?? cur.showNodalForces;
-      const showNodalMoments = e.showNodalMoments ?? cur.showNodalMoments;
-      const showElementLoads = e.showElementLoads ?? cur.showElementLoads;
-      const showSp = e.showSp ?? cur.showSp;
-      const includeSupportReactions = e.includeSupportReactions ?? cur.includeSupportReactions;
-      const scaleBySeries = e.scaleBySeries ?? cur.scaleBySeries;
-      let selectedPatterns = cur.selectedPatterns;
-      if (e.selectedPatterns !== undefined) {
-        selectedPatterns = e.selectedPatterns === null ? null : [...new Set(e.selectedPatterns)];
-      } else if (e.togglePattern !== undefined) {
-        const key = e.togglePattern;
-        if (!cur.on || cur.selectedPatterns === null) {
-          on = e.on ?? true;
-          selectedPatterns = [key];
-        } else if (cur.selectedPatterns.includes(key)) {
-          const rest = cur.selectedPatterns.filter((p) => p !== key);
-          if (rest.length === 0) {
-            on = e.on ?? false;
-            selectedPatterns = null;
-          } else {
-            selectedPatterns = rest;
-          }
-        } else {
-          selectedPatterns = [...cur.selectedPatterns, key];
-        }
-      }
-      const samePatterns =
-        selectedPatterns === cur.selectedPatterns ||
-        (selectedPatterns !== null &&
-          cur.selectedPatterns !== null &&
-          selectedPatterns.length === cur.selectedPatterns.length &&
-          selectedPatterns.every((p, i) => p === cur.selectedPatterns![i]));
-      if (
-        on === cur.on &&
-        scale === cur.scale &&
-        showNodalForces === cur.showNodalForces &&
-        showNodalMoments === cur.showNodalMoments &&
-        showElementLoads === cur.showElementLoads &&
-        showSp === cur.showSp &&
-        includeSupportReactions === cur.includeSupportReactions &&
-        scaleBySeries === cur.scaleBySeries &&
-        samePatterns
-      ) {
-        return s;
-      }
-      return {
-        ...s,
-        loads: {
-          on,
-          scale,
-          showNodalForces,
-          showNodalMoments,
-          showElementLoads,
-          showSp,
-          includeSupportReactions,
-          scaleBySeries,
-          selectedPatterns,
-        },
-      };
+      const cur = { supports: s.supports, principal: s.principal, cracks: s.cracks, reactions: s.reactions, springs: s.springs, hinges: s.hinges, vectors: s.vectors, loads: s.loads };
+      const next = reduceOverlays(cur, e);
+      return next === cur ? s : { ...s, ...next };
     }
-    case "openSpotlight": {
-      const mode = e.mode ?? "root";
-      const query = e.query ?? s.spotlight.query;
-      if (s.spotlight.open && s.spotlight.mode === mode && s.spotlight.query === query) return s;
-      return { ...s, spotlight: { ...s.spotlight, open: true, mode, query } };
-    }
+    case "openWindow":
+    case "closeWindow":
+    case "openSpotlight":
     case "closeSpotlight":
-      return !s.spotlight.open && s.spotlight.mode === "root" && s.spotlight.query === "" && s.spotlight.clauses.length === 0
-        ? s
-        : { ...s, spotlight: { ...s.spotlight, open: false, mode: "root", query: "", clauses: [] } };
-    case "setSpotlightMode": {
-      const query = e.query ?? "";
-      if (s.spotlight.mode === e.mode && s.spotlight.query === query) return s;
-      return { ...s, spotlight: { ...s.spotlight, mode: e.mode, query } };
-    }
+    case "setSpotlightMode":
     case "setSpotlightQuery":
-      return s.spotlight.query === e.query ? s : { ...s, spotlight: { ...s.spotlight, query: e.query } };
-    case "addSpotlightClause": {
-      const seq = s.spotlight.seq + 1;
-      const clause = { ...e.clause, id: `sp-${seq}` };
-      return { ...s, spotlight: { ...s.spotlight, clauses: [...s.spotlight.clauses, clause], seq } };
-    }
-    case "removeSpotlightClause": {
-      const clauses = s.spotlight.clauses.filter((c) => c.id !== e.id);
-      return clauses.length === s.spotlight.clauses.length ? s : { ...s, spotlight: { ...s.spotlight, clauses } };
-    }
+    case "addSpotlightClause":
+    case "removeSpotlightClause":
     case "clearSpotlightClauses":
-      return s.spotlight.clauses.length === 0 ? s : { ...s, spotlight: { ...s.spotlight, clauses: [] } };
     case "setSearchText":
-      return s.search.text === e.text ? s : { ...s, search: { ...s.search, text: e.text } };
-    case "addSearchClause": {
-      const seq = s.search.seq + 1;
-      const clause = { ...e.clause, id: `q-${seq}` };
-      return { ...s, search: { ...s.search, clauses: [...s.search.clauses, clause], seq } };
+    case "addSearchClause":
+    case "removeSearchClause":
+    case "clearSearch": {
+      const cur = { windows: s.windows, spotlight: s.spotlight, search: s.search };
+      const next = reduceWindows(cur, e);
+      return next === cur ? s : { ...s, ...next };
     }
-    case "removeSearchClause": {
-      const clauses = s.search.clauses.filter((c) => c.id !== e.id);
-      return clauses.length === s.search.clauses.length ? s : { ...s, search: { ...s.search, clauses } };
+    case "materialTestRequested":
+    case "materialTestFinished":
+    case "materialTestCleared": {
+      const materialTest = reduceMaterialTest(s, e);
+      return materialTest === s.materialTest ? s : { ...s, materialTest };
     }
-    case "clearSearch":
-      return s.search.text === "" && s.search.clauses.length === 0 ? s : { ...s, search: { ...s.search, text: "", clauses: [] } };
+    case "offerReceived":
+    case "offerAssessed":
+    case "applyOffer":
+    case "backOffer":
+    case "offerApplied":
+    case "offerRefused":
+    case "offerBackDone": {
+      // INV-5: an offer event touches the offers and nothing else of the state.
+      const offers = reduceOffers(s.offers, e);
+      return offers === s.offers ? s : { ...s, offers };
+    }
+    case "userOpened":
+    case "userRead":
+    case "userClosed":
+    case "combinationRead":
+    case "userResultRead": {
+      const cur = { user: s.user, combination: s.combination, userResult: s.userResult };
+      const next = reduceUser(cur, e, { combinationKey: () => combinationRequestOf(s)?.key, userResultKey: () => userResultRequestOf(s)?.key });
+      if (next === cur) return s;
+      const t = { ...s, ...next };
+      // VU7b-2: another user file state leaves a User Combination shown that the file no longer lists (withPhase); off a combination the phase is not touched.
+      const fileChanged = e.type === "userOpened" || e.type === "userRead" || e.type === "userClosed";
+      return fileChanged && s.phase.at?.kind === "combination" ? withPhase(t) : t;
+    }
+    case "particlesOpened":
+    case "particlesLoaded":
+    case "particlesFailed":
+    case "particlesClosed":
+    case "setParticleStage":
+    case "setParticleOutput":
+    case "setParticleColour":
+    case "setParticleGrid":
+    case "setParticlesOn":
+    case "particleFrame": {
+      const particles = reduceParticles(s.particles, e);
+      if (particles === s.particles) return s;
+      // The header's Native units: the model's, else the results', else the particle stage's UNIT_SYSTEM (ADR 0134 D5).
+      const declared = s.units ?? s.results?.units ?? particleSystemOf(particles);
+      const contour = declared === s.contour.declaredUnits ? s.contour : syncContourUnits(s.contour, declared, true);
+      return { ...s, particles, contour };
+    }
+    case "variantsRead":
+    case "variantSwitch":
+    case "variantSwitched":
+    case "variantCompare":
+    case "compareOpened":
+    case "setDifference":
+    case "differenceRead":
+    case "compareModelRead":
+    case "compareUserRead":
+    case "showCompareUser":
+    case "compareUserResultRead": {
+      const differenceKey = () => {
+        const p = differencePlanOf(s);
+        return p !== null && p.ok ? p.key : null;
+      };
+      const variants = reduceVariants(s.variants, e, { differenceKey, compareUserKey: () => compareUserRequestOf(s)?.key ?? null });
+      return variants === s.variants ? s : { ...s, variants };
+    }
+    case "workspaceReading":
+    case "workspaceRead":
+    case "workspaceSave":
+    case "workspaceSaved":
+    case "workspacePreview":
+    case "dismissWorkspaceAside": {
+      // VU9a: a workspace event touches the workspace slice and nothing else.
+      const workspace = reduceWorkspace(s.workspace, e);
+      return workspace === s.workspace ? s : { ...s, workspace };
+    }
     default: {
       const unknown: never = e;
       throw new Error(`reduce: unknown event ${JSON.stringify(unknown)}`);

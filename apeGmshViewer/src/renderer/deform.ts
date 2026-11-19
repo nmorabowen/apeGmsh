@@ -17,7 +17,7 @@ import { deformedPositions, GHOST_OPACITY, missingMarkers } from "../state/defor
 import { deformView } from "../state/selectors.ts";
 import type { MeshInfo, State } from "../state/types.ts";
 import { DARK, OFFICE, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
-import { highlightObjects, selectionBounds, type Focus, type Prims } from "./selection.ts";
+import { selectionBounds, type Focus, type Prims } from "./selection.ts";
 
 /** Every primitive's positions (6 floats per segment, 9 per triangle, 6 per outline edge; original order), and what they show. */
 export interface FullPositions {
@@ -25,6 +25,11 @@ export interface FullPositions {
   tri: Float32Array;
   /** the outline edges, moved through their own node ids (MeshInfo.vertexNodes.edge), like the faces */
   edge: Float32Array;
+  clearLine?: Float32Array;
+  frameTri?: Float32Array;
+  frameEdge?: Float32Array;
+  offsetLine?: Float32Array;
+  offsetJoint?: Float32Array;
   /** `base` for the undeformed mesh, else `<displacement key>|scale <s>` */
   key: string;
   /** the displacement drawn (its `missing` flags mark nodes drawn undeformed); null for the base */
@@ -33,7 +38,23 @@ export interface FullPositions {
 
 /** The undeformed positions, from the mesh blobs (never written to). */
 export function basePositions(info: MeshInfo, blobs: BlobStore): FullPositions {
-  return { line: blobs.f32(info.linePositions), tri: blobs.f32(info.triPositions), edge: blobs.f32(info.edgePositions), key: "base", disp: null };
+  const fe = info.frameExtrusion;
+  return {
+    line: blobs.f32(info.linePositions),
+    tri: blobs.f32(info.triPositions),
+    edge: blobs.f32(info.edgePositions),
+    ...(fe
+      ? {
+          clearLine: blobs.f32(fe.clearLinePositions),
+          frameTri: blobs.f32(fe.triPositions),
+          frameEdge: blobs.f32(fe.edgePositions),
+          offsetLine: blobs.f32(fe.offsetLinePositions),
+          offsetJoint: blobs.f32(fe.offsetJointPositions),
+        }
+      : {}),
+    key: "base",
+    disp: null,
+  };
 }
 
 /**
@@ -62,6 +83,11 @@ export function deformFull(base: FullPositions, disp: DisplacementData, scale: n
     line: deformedPositions(base.line, disp.line.d, scale),
     tri: deformedPositions(base.tri, disp.tri.d, scale),
     edge: deformedPositions(base.edge, disp.edge.d, scale),
+    ...(base.clearLine ? { clearLine: deformedPositions(base.clearLine, disp.line.d, scale) } : {}),
+    ...(base.frameTri && disp.frameTri ? { frameTri: deformedPositions(base.frameTri, disp.frameTri.d, scale) } : {}),
+    ...(base.frameEdge && disp.frameEdge ? { frameEdge: deformedPositions(base.frameEdge, disp.frameEdge.d, scale) } : {}),
+    ...(base.offsetLine && disp.offsetLine ? { offsetLine: deformedPositions(base.offsetLine, disp.offsetLine.d, scale) } : {}),
+    ...(base.offsetJoint && disp.offsetJoint ? { offsetJoint: deformedPositions(base.offsetJoint, disp.offsetJoint.d, scale) } : {}),
     key,
     disp,
   };
@@ -75,18 +101,6 @@ export function deformFull(base: FullPositions, disp: DisplacementData, scale: n
  */
 export function drawnPositions(full: FullPositions | null, info: MeshInfo, blobs: BlobStore): FullPositions {
   return full ?? basePositions(info, blobs);
-}
-
-/** The selection outline (thick lines and fill, selection.ts `highlightObjects`) over the drawn positions. */
-export function selectionOutline(
-  full: FullPositions | null,
-  info: MeshInfo,
-  blobs: BlobStore,
-  prims: readonly Prims[],
-  makeLines: (positions: Float32Array, widthPx: number) => THREE.Object3D,
-): THREE.Object3D[] {
-  const pos = drawnPositions(full, info, blobs);
-  return highlightObjects(pos.line, pos.tri, prims, makeLines);
 }
 
 /**
@@ -201,10 +215,172 @@ export function missingMarkerObjects(
   });
 }
 
+/** The camera layer of the ghost's surfaces (selection.ts HALO_LAYER is another); the main pass never draws them. */
+const GHOST_LAYER = 2;
+/** The ghost target's size over the drawing buffer's: with no MSAA there, this is its anti-aliasing. */
+const GHOST_SUPERSAMPLE = 2;
+
+/** Where the composite draws in the transparent pass: over the opaque mesh's blended edges (renderOrder 0), or ahead of every blended part of a translucent mesh. */
+const COMPOSITE_OVER = 0.5;
+const COMPOSITE_UNDER = -2;
+
+/**
+ * Whether the scene shows a translucent surface, the case where the ghost
+ * composites under the mesh (owner rulings on #2664): a visible mesh of
+ * triangles, not the ghost's own, whose material blends at an opacity below 1.
+ * That is the user's surface opacity below 1, and also the 3-D frames the line
+ * diagram draws at 0.25 under an opacity of 1. Fat lines and outline edges are
+ * not surfaces, and neither is what draws after both triangles (renderOrder from
+ * COMPOSITE_OVER up: the plane gizmos and the selection fill).
+ */
+export function translucentSurfaces(scene: THREE.Object3D): boolean {
+  let found = false;
+  scene.traverseVisible((o) => {
+    // Only what draws before the over triangle: the plane gizmos (renderOrder 1) and the selection fill (9) draw after both, as on main.
+    if (found || o.type !== "Mesh" || o.renderOrder >= COMPOSITE_OVER || o.layers.isEnabled(GHOST_LAYER) || o.name.startsWith("ghost composite")) return;
+    const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[];
+    found = (Array.isArray(mat) ? mat : [mat]).some((x) => x.visible && x.transparent && x.opacity < 1);
+  });
+  return found;
+}
+
+/** The ghost's surfaces write sRGB themselves: three writes linear into a render target, and the blending must stay in the space the canvas blends in. */
+function encodeSrgb(m: THREE.Material): void {
+  m.onBeforeCompile = (p) => {
+    p.fragmentShader = p.fragmentShader.replace("#include <colorspace_fragment>", "gl_FragColor = sRGBTransferOETF( gl_FragColor );");
+  };
+}
+
+/**
+ * Pixel-stable (#2664): a blended triangle in the 4x MSAA canvas gives other
+ * pixels from frame to frame with nothing changed (D3D11 on an RTX 3070: up to
+ * 1200 px and 8 levels against depth already there, 1 or 2 levels in about one
+ * frame in 40 against none). With no MSAA it does not. So the ghost's surfaces are
+ * drawn into their own target, with no MSAA, tested against the depth of the
+ * opaque scene drawn there first, and this full-screen triangle lays the result
+ * over the canvas, covering every sample of every pixel the ghost reaches.
+ *
+ * It blends in its own shader, not in the canvas (#2715). The canvas's blend was
+ * still not reproducible where the ghost lies over a pixel whose samples differ
+ * (the mesh's silhouette and its edge lines): about 200 px, 1 level, in an app
+ * shot after a model shot, which one depending on timing, with the same GL work
+ * and the same target. Blending over cleared samples only was stable; over the
+ * mesh's samples it was not. So the triangle copies the canvas as it is (resolved)
+ * just before it draws, blends the ghost over that copy, and writes the result
+ * with no blending, one value to every sample of the pixel; it discards where the
+ * ghost is empty, so those pixels keep their own samples. The blend is the same
+ * sum (premultiplied over), now taken once per pixel on the resolved colour: a
+ * pixel may round 1 level apart from the canvas's per-sample blend.
+ *
+ * It goes after the mesh's own blended outline edges (renderOrder 0), which differed
+ * in about 1 frame in 100 when they blended over it (5 levels; 0 of 12,000 frames
+ * this way), and before the gizmos and the selection (renderOrder 1 and up).
+ *
+ * Over translucent surfaces (`translucentSurfaces`) it goes first, under them
+ * (owner rulings on #2664: that look stays). The pass sorts before any object
+ * draws, so there are two triangles, one at each place, and each frame the first
+ * one (which draws the target) decides which of the two draws; the other draws
+ * nothing (an empty draw range). No pixel identity is claimed there:
+ * the mesh's own blended triangles are in the canvas, and blended triangles there
+ * differ from frame to frame, so a view spec refuses a ghost shot over them
+ * (spec/verdict.ts). The app-chrome capture race is apart (#2696).
+ */
+function ghostComposite(): THREE.Mesh[] {
+  const target = new THREE.WebGLRenderTarget(1, 1, { samples: 0, depthBuffer: true, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  // What the canvas holds under the composite, copied (resolved) just before it draws.
+  let below = new THREE.FramebufferTexture(1, 1);
+  const m = new THREE.ShaderMaterial({
+    uniforms: { ghost: { value: target.texture }, below: { value: below } },
+    vertexShader: "varying vec2 vUv; void main() { vUv = 0.5 * position.xy + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+    // The target holds what blending over nothing leaves: colour already multiplied by alpha. The blend is
+    // this shader's, written to every sample alike; a pixel the ghost does not reach is left as it is.
+    fragmentShader:
+      "uniform sampler2D ghost; uniform sampler2D below; varying vec2 vUv; void main() {" +
+      " vec4 g = texture2D(ghost, vUv); if (g == vec4(0.0)) discard;" +
+      " gl_FragColor = g + texelFetch(below, ivec2(gl_FragCoord.xy), 0) * (1.0 - g.a); }",
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+    blending: THREE.NoBlending,
+  });
+  m.addEventListener("dispose", () => {
+    target.dispose();
+    below.dispose();
+  });
+  const triangle = (name: string, renderOrder: number): THREE.Mesh => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
+    const t = new THREE.Mesh(g, m);
+    t.name = name;
+    t.renderOrder = renderOrder;
+    t.frustumCulled = false;
+    t.userData["clipExempt"] = true;
+    return t;
+  };
+  const quad = triangle("ghost composite under", COMPOSITE_UNDER);
+  const over = triangle("ghost composite", COMPOSITE_OVER);
+  let under = false;
+  const size = new THREE.Vector2();
+  /** Copy the canvas as it is now into `below`, for the triangle that draws (the other one draws nothing). */
+  const copyBelow = (renderer: THREE.WebGLRenderer, draws: boolean): void => {
+    if (!draws) return;
+    if (below.image.width !== size.x || below.image.height !== size.y) {
+      below.dispose();
+      below = new THREE.FramebufferTexture(size.x, size.y);
+      m.uniforms["below"]!.value = below;
+    }
+    renderer.copyFramebufferToTexture(below);
+  };
+  over.onBeforeRender = (renderer) => {
+    over.geometry.setDrawRange(0, under ? 0 : Infinity);
+    copyBelow(renderer, !under);
+  };
+  const clearColor = new THREE.Color();
+  quad.onBeforeRender = (renderer, scene, camera) => {
+    under = translucentSurfaces(scene);
+    quad.geometry.setDrawRange(0, under ? Infinity : 0);
+    renderer.getDrawingBufferSize(size);
+    target.setSize(size.x * GHOST_SUPERSAMPLE, size.y * GHOST_SUPERSAMPLE);
+    const back = renderer.getRenderTarget(), autoClear = renderer.autoClear, mask = camera.layers.mask, clearAlpha = renderer.getClearAlpha();
+    renderer.getClearColor(clearColor);
+    const buffers = renderer.state.buffers;
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0, 0);
+    buffers.color.setMask(true);
+    buffers.depth.setMask(true);
+    renderer.clear();
+    renderer.autoClear = false;
+    // The depth of what is opaque: the ghost was never tested against what blends after it. The lights join the ghost's layer on the way.
+    const blended: THREE.Object3D[] = [quad, over];
+    scene.traverseVisible((o) => {
+      if ((o as THREE.Light).isLight) o.layers.enable(GHOST_LAYER);
+      const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      if (mat && (Array.isArray(mat) ? mat : [mat]).some((x) => x.transparent)) blended.push(o);
+    });
+    for (const o of blended) o.visible = false;
+    buffers.color.setMask(false);
+    buffers.color.setLocked(true);
+    renderer.render(scene, camera);
+    buffers.color.setLocked(false);
+    buffers.color.setMask(true);
+    for (const o of blended) o.visible = true;
+    camera.layers.set(GHOST_LAYER);
+    renderer.render(scene, camera);
+    camera.layers.mask = mask;
+    renderer.autoClear = autoClear;
+    renderer.setClearColor(clearColor, clearAlpha);
+    renderer.setRenderTarget(back);
+    copyBelow(renderer, under);
+  };
+  return [quad, over];
+}
+
 /**
  * The reference ghost: the drawn primitives undeformed, faces and lines in
- * one neutral colour at the Qt ghost opacity, behind the deformed mesh
- * (no depth write, drawn first).
+ * one neutral colour at the Qt ghost opacity (no depth write). The surfaces go
+ * through `ghostComposite`, over what blends in the deformed mesh; 1-D lines
+ * blend in the canvas ahead of it, where lines draw the same pixels every time.
  */
 export function ghostObjects(
   info: MeshInfo,
@@ -212,22 +388,51 @@ export function ghostObjects(
   drawn: { lineMap: Int32Array; triMap: Int32Array },
   edgeMap: Int32Array | null,
   mode: ThemeMode = "dark",
+  frameTriMap: Int32Array | null = null,
+  frameEdgeMap: Int32Array | null = null,
+  drawnLineMap: Int32Array | null = null,
+  showOffsets = false,
 ): THREE.Object3D[] {
   // Always the mesh blobs: the ghost is the undeformed mesh, whatever is drawn.
   const base = basePositions(info, blobs);
-  const edges = edgeMap ? gatherInto(base.edge, edgeMap, 6) : null;
+  const surfEdges = edgeMap ? gatherInto(base.edge, edgeMap, 6) : null;
+  const fEdges = frameEdgeMap && base.frameEdge ? gatherInto(base.frameEdge, frameEdgeMap, 6) : null;
+  const edges =
+    surfEdges && fEdges
+      ? (() => {
+          const out = new Float32Array(surfEdges.length + fEdges.length);
+          out.set(surfEdges, 0);
+          out.set(fEdges, surfEdges.length);
+          return out;
+        })()
+      : (surfEdges ?? fEdges);
   const t = themeTokens(mode);
   const out: THREE.Object3D[] = [];
   if (edges?.length) {
     // The undeformed outline edges, as the Qt ghost keeps its wireframe.
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(edges, 3));
-    const e = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: toHexNumber(t.geometryCurve), transparent: true, opacity: GHOST_OPACITY, depthWrite: false }));
+    // One target pixel wide is 1 / GHOST_SUPERSAMPLE of a canvas pixel, so the opacity makes up what the width lost.
+    const e = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: toHexNumber(t.geometryCurve), transparent: true, opacity: GHOST_OPACITY * GHOST_SUPERSAMPLE, depthWrite: false }));
+    encodeSrgb(e.material);
     e.name = "ghost edges";
     e.renderOrder = -1;
+    e.layers.set(GHOST_LAYER);
     out.push(e);
   }
-  const tri = gatherInto(base.tri, drawn.triMap, 9);
+  const surfTri = gatherInto(base.tri, drawn.triMap, 9);
+  const fTri = frameTriMap && base.frameTri ? gatherInto(base.frameTri, frameTriMap, 9) : null;
+  const tri =
+    surfTri.length && fTri?.length
+      ? (() => {
+          const out = new Float32Array(surfTri.length + fTri.length);
+          out.set(surfTri, 0);
+          out.set(fTri, surfTri.length);
+          return out;
+        })()
+      : surfTri.length
+        ? surfTri
+        : (fTri ?? surfTri);
   if (tri.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(tri, 3));
@@ -236,12 +441,16 @@ export function ghostObjects(
       color: toHexNumber(t.geometrySurface), side: THREE.DoubleSide, flatShading: true,
       transparent: true, opacity: GHOST_OPACITY, depthWrite: false,
     });
+    encodeSrgb(m);
     const mesh = new THREE.Mesh(g, m);
     mesh.name = "ghost faces";
     mesh.renderOrder = -1;
+    mesh.layers.set(GHOST_LAYER);
     out.push(mesh);
   }
-  const line = gatherInto(base.line, drawn.lineMap, 6);
+  if (out.length) out.push(...ghostComposite());
+  const lineSrc = showOffsets && base.clearLine ? base.clearLine : base.line;
+  const line = gatherInto(lineSrc, drawnLineMap ?? drawn.lineMap, 6);
   if (line.length) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(line, 3));
@@ -263,6 +472,7 @@ export function applyGhostVisibility(ghost: THREE.Group, edgesOn: boolean, full:
   const showFaces = opacity > 0;
   for (const o of ghost.children) {
     if (o.name === "ghost edges") o.visible = showEdges;
+    else if (o.name.startsWith("ghost composite")) o.visible = showFaces;
     else if (o.name === "ghost faces" || o instanceof THREE.Mesh) o.visible = showFaces;
   }
 }

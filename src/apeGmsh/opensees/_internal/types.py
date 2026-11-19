@@ -49,6 +49,8 @@ __all__ = [
     "SolutionAlgorithm",
     "Integrator",
     "Analysis",
+    "ModalBasis",
+    "MPM",
 ]
 
 
@@ -304,3 +306,17 @@ class Integrator(Primitive):
 
 class Analysis(Primitive):
     """Abstract base for ``analysis <Type>`` primitives."""
+
+
+class ModalBasis(Primitive):
+    """Abstract base for the fork's mode-set commands (``residualModes``,
+    ``ritzVectors``): emitted through ``command()`` after the model is
+    built, never registered on a bridge."""
+
+
+class MPM(Primitive):
+    """Abstract base for the fork's ``mpm`` sub-commands (ADR 0134 D8):
+    the background grid, the bodies seeded into the deck's particle set,
+    and the engine settings. Registered on a bridge and emitted through
+    ``command("mpm", ...)``, so every declaration is a
+    ``/opensees/commands`` row of ``model.h5`` (ADR 0134 D2)."""

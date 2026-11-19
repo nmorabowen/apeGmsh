@@ -14,6 +14,8 @@ via ``partition_explicit`` — see ``_Partitioning._enforce_uncuttable``.
 """
 from __future__ import annotations
 
+import warnings
+
 import gmsh
 import pytest
 
@@ -388,3 +390,39 @@ class TestUncuttablePreservesEverythingElse:
 
         assert info.weights_per_partition is not None, (
             "the override cleared the weight cache it was supposed to restore")
+
+
+class TestUncuttableWithGhostCells:
+    """With ``Mesh.PartitionCreateGhostCells=1`` the ghost copies of an
+    element sit on an entity that names the *neighbouring* partition;
+    the old element map sent them there, so a group already whole on
+    one partition tallied as split and was "moved" (#2590)."""
+
+    def test_whole_group_is_left_alone_with_ghost_cells(
+            self, g, monkeypatch):
+        _build_two_body_contact_model(g)
+        part = g.mesh.partitioning
+        assert part is g.mesh.partitioning
+
+        def _no_reassignment(*_args, **_kwargs):
+            raise AssertionError(
+                "the group is already whole on partition 1, yet the "
+                "override tried to reassign it")
+
+        old_ghost = gmsh.option.getNumber("Mesh.PartitionCreateGhostCells")
+        gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", 1)
+        try:
+            part.partition(2)
+            fem = g.mesh.queries.get_fem_data(dim=None)
+            # The group: every element partition 1 owns, which borders
+            # partition 2 and so has ghost copies there.
+            group = fem.partitions[1].element_ids.tolist()
+            monkeypatch.setattr(part, "partition_explicit", _no_reassignment)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", UserWarning)
+                info = part._enforce_uncuttable(2, group)
+        finally:
+            gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", old_ghost)
+
+        assert info.elements_per_partition == {
+            rec.id: len(rec.element_ids) for rec in fem.partitions}

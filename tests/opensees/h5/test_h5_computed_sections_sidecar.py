@@ -77,6 +77,10 @@ def test_elastic_kind_writes_provenance(g, tmp_path: Path) -> None:
     assert payload["n_parts"] == 1
     assert payload["materials"]["bar"]["E"] == pytest.approx(200e3)
     assert payload["materials"]["bar"]["fy"] == pytest.approx(345.0)
+    assert len(payload["outline_yz"]) == 1
+    assert [pytest.approx(pt) for pt in payload["outline_yz"][0]] == [
+        [-2.0, -1.0], [2.0, -1.0], [2.0, 1.0], [-2.0, 1.0],
+    ]
 
     # the tag joins to the ordinary section capture
     with h5py.File(str(p), "r") as f:
@@ -104,7 +108,42 @@ def test_fiber_kind_writes_provenance(g, tmp_path: Path) -> None:
     assert payload["kind"] == "fiber"
     assert payload["fiber_pgs"] == ["bar"]
     assert payload["GJ"] == pytest.approx(sec.warping().GJ)
+    assert len(payload["outline_yz"]) == 1
+    assert [pytest.approx(pt) for pt in payload["outline_yz"][0]] == [
+        [-2.0, -1.0], [2.0, -1.0], [2.0, 1.0], [-2.0, 1.0],
+    ]
     assert "E_ref" not in payload
+
+
+def test_hollow_section_writes_outer_and_hole_outline_yz(
+    g, tmp_path: Path,
+) -> None:
+    g.sections.rect_hollow_face(4.0, 6.0, 0.5, label="box")
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(dim=2)
+    g.mesh.generation.set_order(2)
+    fem = g.mesh.queries.get_fem_data(dim=2)
+    sec = SectionProperties(
+        fem,
+        materials={"box": SectionMaterial(E=200e3, nu=0.3, fy=345.0)},
+        name="HSS",
+    )
+    p = tmp_path / "model.h5"
+    _frame(lambda ops: ops.section.ComputedSection(analysis=sec)).h5(str(p))
+
+    rows = read_computed_sections(str(p))
+    assert len(rows) == 1
+    payload = json.loads(rows[0][2])
+    loops = payload["outline_yz"]
+    assert len(loops) == 2
+    # Outer loop: CCW in (y_local, z_local) for b=4 (z in [-2, 2]), h=6 (y in [-3, 3])
+    assert [pytest.approx(pt) for pt in loops[0]] == [
+        [-3.0, -2.0], [3.0, -2.0], [3.0, 2.0], [-3.0, 2.0],
+    ]
+    # Inner hole loop: CW in (y_local, z_local) for b_in=3 (z in [-1.5, 1.5]), h_in=5 (y in [-2.5, 2.5])
+    assert [pytest.approx(pt) for pt in loops[1]] == [
+        [-2.5, -1.5], [-2.5, 1.5], [2.5, 1.5], [2.5, -1.5],
+    ]
 
 
 def test_no_computed_section_writes_no_group(tmp_path: Path) -> None:
@@ -227,12 +266,23 @@ def _section_lines(deck: str) -> list[str]:
 def _bridge_and_replay(
         g, tmp_path: Path, case: str, *, drop_sidecar: bool = False,
 ) -> tuple[list[str], list[str]]:
+    from apeGmsh._core import default_artifact_dir
+    from apeGmsh.opensees._internal.artifact_write import BridgeArtifactWarning
+
     material, factory, _literals = _REPLAY_CASES[case]
     sec = _analyzer(g, material=material)
     ops = _frame(lambda o: factory(o, sec))
     deck = tmp_path / "bridge.tcl"
     archive = tmp_path / "model.h5"
-    ops.tcl(str(deck), progress=False, flat=True)
+    # The deck emit writes the automatic model.h5 (ADR 0112 D1).  A
+    # ComputedSection's analyzer must pickle into the P5 digest, or the
+    # write is skipped with only a warning (#2567).
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", BridgeArtifactWarning)
+        ops.tcl(str(deck), progress=False, flat=True)
+    auto = default_artifact_dir() / "simple_frame.h5"
+    assert auto.is_file()
+    assert len(read_computed_sections(str(auto))) == 1
     ops.h5(str(archive))
     if drop_sidecar:
         with h5py.File(str(archive), "r+") as f:
@@ -360,6 +410,91 @@ def test_a_faulty_sidecar_row_warns(
     with pytest.warns(ReplaySlotTypeWarning, match=match):
         out = st.recover("section", tag, "Elastic", (200000, 8.5))
     assert out == (200000, 8.5)
+
+
+def _pickled(obj: object) -> bytes:
+    import pickle
+
+    return pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _computed(sec: SectionProperties) -> SectionProperties:
+    """Fill every lazy cache: geometric, warping, plastic, stress."""
+    sec.analyze()
+    sec.stress(N=1.0)
+    return sec
+
+
+def test_section_properties_pickle_round_trip(g) -> None:
+    """``SectionProperties`` pickles (#2567): the read-only material view
+    is thawed for the pickle and refrozen on load, with every material
+    and the analysis numbers intact."""
+    import pickle
+    from types import MappingProxyType
+
+    sec = _analyzer(g, material=SectionMaterial(E=200e3, nu=0.3, G=80e3))
+    back = pickle.loads(_pickled(sec))
+    assert type(back._materials) is MappingProxyType
+    assert dict(back.materials) == dict(sec.materials)
+    assert back.name == "PG24"
+    assert back.warping().GJ == pytest.approx(sec.warping().GJ)
+    assert back.geometric().area == pytest.approx(sec.geometric().area)
+    # the source keeps its own frozen view
+    assert type(sec._materials) is MappingProxyType
+
+
+def test_an_unpickled_analyzer_recomputes_lazily(g) -> None:
+    """The pickle carries the declaration, not the caches: an analyzer
+    unpickled after every analysis ran starts with none cached, and
+    recomputes each one to the same numbers."""
+    import pickle
+
+    sec = _computed(_analyzer(g))
+    back = pickle.loads(_pickled(sec))
+    assert back._geometric is None and back._warping is None
+    assert back._plastic is None and back._unit_fields is None
+    assert back._warp_solutions == ()
+    assert back.geometric().area == pytest.approx(sec.geometric().area)
+    assert back.warping().GJ == pytest.approx(sec.warping().GJ)
+    assert back.plastic().Mp_xx == pytest.approx(sec.plastic().Mp_xx)
+    assert back.stress(N=1.0).sigma_zz == pytest.approx(
+        sec.stress(N=1.0).sigma_zz)
+
+
+def test_equal_analyzers_pickle_equal_whatever_was_computed(g) -> None:
+    """Two analyzers of one mesh and one material pickle to the same bytes
+    when only one of them has run its analyses: a cache is not part of
+    the declaration."""
+    g.sections.rect_face(2.0, 4.0, label="bar")
+    g.mesh.sizing.set_global_size(0.4)
+    g.mesh.generation.generate(dim=2)
+    g.mesh.generation.set_order(2)
+    fem = g.mesh.queries.get_fem_data(dim=2)
+    mat = SectionMaterial(E=200e3, nu=0.3, fy=345.0)
+    fresh = SectionProperties(fem, materials={"bar": mat}, name="PG24")
+    used = _computed(
+        SectionProperties(fem, materials={"bar": mat}, name="PG24"))
+    assert _pickled(used) == _pickled(fresh)
+
+
+@pytest.mark.parametrize("query", ["stress", "plastic"])
+def test_a_read_only_query_keeps_the_declaration_digest(
+        g, tmp_path: Path, query: str) -> None:
+    """A read-only ``stress()`` or ``plastic()`` between two emits is no
+    new declaration: the P5 digest (and so the automatic write, the
+    lineage memo and ``ops.results``) does not see it."""
+    from apeGmsh.opensees._internal.artifact_write import lineage_key
+
+    sec = _analyzer(g)
+    ops = _frame(lambda o: o.section.ComputedSection(analysis=sec))
+    ops.tcl(str(tmp_path / "bridge.tcl"), progress=False, flat=True)
+    before = lineage_key(ops)
+    assert before is not None
+    if query == "stress":
+        sec.stress(N=1.0)
+    else:
+        sec.plastic()
+    assert lineage_key(ops) == before
 
 
 def test_reader_tolerates_absence(tmp_path: Path) -> None:

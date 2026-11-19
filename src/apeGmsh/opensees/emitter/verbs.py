@@ -12,7 +12,8 @@ and the lock pins the moves:
     token routed through ``Emitter.command()``, which is itself the
     last Protocol method (K1-2). The ``command`` rows are the channel's
     allow-list (``base.command_row``): a token without one raises on
-    every emitter. None ships yet; K4 moves typed fork verbs onto it.
+    every emitter. The first are ``residualModes`` / ``ritzVectors``
+    (A3a); K4 moves typed fork verbs onto it.
 ``family``
     The kind of model fact the verb states; one of :data:`FAMILIES`.
 ``scope``
@@ -71,6 +72,8 @@ FAMILIES: Final[frozenset[str]] = frozenset({
     "partition",
     # The command channel itself; the fact a token states is its own row's.
     "channel",
+    # The fork's MPM engine (ADR 0134 D8): grid, bodies, settings, analyze.
+    "mpm",
 })
 
 #: The ``op`` and ``what`` vocabularies of ``/sequence.changes``.
@@ -120,6 +123,19 @@ def _p(
     )
 
 
+def _c(
+    verb: str, family: str, scope: Scope, h5: H5, store: str, *,
+    requires: frozenset[str] = _NONE,
+) -> Verb:
+    """A ``command()`` token's row (ADR 0114 D2): no Protocol method, so
+    its ``returns`` is the channel's ``None``."""
+    return Verb(
+        verb=verb, via="command", family=family, scope=scope, h5=h5,
+        store=store, requires=requires, returns="None",
+        seq_op="", seq_what="", decl=False,
+    )
+
+
 _ROWS: Final[tuple[Verb, ...]] = (
     # -- Model ------------------------------------------------------------
     _p("model", "model", "global", "archive", "/meta@ndm"),
@@ -146,10 +162,10 @@ _ROWS: Final[tuple[Verb, ...]] = (
     _p("embedded_rebar", "embed", "global", "archive",
        "{scope}/constraints/embeddedRebar", requires=_FORK,
        seq=("add", "constraint"), decl=True),
-    # Global lines archive (opensees 2.35.0); a stage's lines are still
-    # dropped, so the row stays ``ledger`` and its stage store is empty.
-    _p("equationConstraint", "constraint", "both", "ledger",
-       "{scope}/constraints/equationConstraint|",
+    # Global lines archive from opensees 2.35.0, a stage's from 2.40.0
+    # (ADR 0114 D1 as amended: no longer a ledger row).
+    _p("equationConstraint", "constraint", "both", "archive",
+       "{scope}/constraints/equationConstraint",
        seq=("add", "constraint"), decl=True),
     _p("embedded_node", "embed", "global", "ledger", "",
        requires=_FORK, seq=("add", "constraint"), decl=True),
@@ -301,6 +317,19 @@ _ROWS: Final[tuple[Verb, ...]] = (
     # Method 75, the last. H5 writes an allow-listed token as a
     # ``/opensees/commands`` row; an unknown token raises on every emitter.
     _p("command", "channel", "both", "archive", _CMD),
+    # -- Command tokens ---------------------------------------------------
+    # The fork's chain M modal-basis commands (WP-213, WP-215), emitted by
+    # ``analysis.modal.ResidualModes`` / ``RitzVectors``. Like ``eigen``
+    # they run after the model is built; H5 writes each as a
+    # ``/opensees/commands`` row.
+    _c("residualModes", "modal", "global", "archive", _CMD, requires=_FORK),
+    _c("ritzVectors", "modal", "global", "archive", _CMD, requires=_FORK),
+    # The fork's MPM engine (WP-232, ADR 0134 D8), emitted by the members of
+    # ``opensees/mpm.py``: one row per sub-command call (``grid``, ``body``,
+    # ``fix``, ...). A ``body`` row is apeGmsh's: the deck emitters write it
+    # as a comment beside the particle set's ``mpm particles -file`` line,
+    # which is never a row (ADR 0134 D1). The live route refuses the token.
+    _c("mpm", "mpm", "global", "archive", _CMD, requires=_FORK),
 )
 
 #: One row per verb, keyed by verb name.
@@ -321,9 +350,11 @@ SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
         "lines", "line_count", "line_buffer", "write_to", "preamble",
         "stream_to", "stream_fragment_count", "stream_finish",
         "stream_abort", "eigen_feast_parallel", "eigen_parallel",
-        "partition_spans",
+        "partition_spans", "bind_particle_set",
     }),
-    "py": frozenset({"lines", "line_count", "line_buffer", "write_to"}),
+    "py": frozenset({
+        "lines", "line_count", "line_buffer", "write_to", "bind_particle_set",
+    }),
     "live": frozenset({
         "frequency_response", "steady_state_dynamics", "complex_eigen",
         "random_response", "ladruno_projection_tie_force",
@@ -339,7 +370,7 @@ SIDE_CHANNELS: Final[Mapping[str, frozenset[str]]] = MappingProxyType({
         "set_solve_stamp", "solve_stamp", "set_declarations",
         "set_declaration", "restore_declarations", "unclaimed_fix_rows",
         "claim_fix_rows", "set_declaration_rows", "unclaimed_remove_sp_rows",
-        "claim_remove_sp_rows", "set_decl_params",
+        "claim_remove_sp_rows", "set_decl_params", "set_combinations",
     }),
     "recording": frozenset(),
 })

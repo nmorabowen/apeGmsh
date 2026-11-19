@@ -97,6 +97,78 @@ def _validate_connectivity(
 # Raw extraction (dict of arrays — no FEMData yet)
 # =====================================================================
 
+def _model_entity(dim: int, tag: int) -> tuple[int, int]:
+    """The model entity ``(dim, tag)`` was cut from, following ``getParent``.
+
+    A partitioned mesh moves elements onto partition entities; Gmsh's
+    ``getParent`` names the entity each one was cut from, and
+    ``(-1, -1)`` on a model entity. The chain is followed to its end; a
+    model entity is its own result.
+    """
+    cur_dim, cur_tag = dim, tag
+    seen = {(cur_dim, cur_tag)}
+    while True:
+        p_dim, p_tag = gmsh.model.getParent(cur_dim, cur_tag)
+        p_dim, p_tag = int(p_dim), int(p_tag)
+        if p_dim < 0:
+            break
+        if (p_dim, p_tag) in seen:
+            raise RuntimeError(
+                f"Gmsh getParent cycles at entity ({p_dim}, {p_tag}) "
+                f"from ({dim}, {tag}); cannot resolve the elements' "
+                f"source entity."
+            )
+        seen.add((p_dim, p_tag))
+        cur_dim, cur_tag = p_dim, p_tag
+    return cur_dim, cur_tag
+
+
+def _is_partition_artifact(dim: int, tag: int) -> bool:
+    """True when ``(dim, tag)`` holds elements partitioning added.
+
+    Two kinds of entity carry elements that are not elements of the
+    mesh, and both are skipped at extraction so a partitioned FEMData
+    holds each mesh element once, exactly as the unpartitioned mesh
+    does (#2582):
+
+    * a **partition-interface** entity
+      (``Mesh.PartitionCreateTopology``, on by default): Gmsh meshes
+      the cut between two partitions with new lower-dimensional
+      elements (lines between surfaces, triangles between volumes,
+      points where a cut meets a curve). Its parent is the entity of
+      *higher* dimension the cut lies in, so the chain ends on a model
+      entity of another dimension.
+    * a **ghost** entity (``Mesh.PartitionCreateGhostCells``): it holds
+      copies, under the same element ids, of the neighbouring
+      partition's elements, which are already extracted from the
+      partition that owns them.
+
+    A model entity (no parent) is never an artifact, whatever its tag:
+    a MSH2 file may classify real elements on elementary tag ``0``.
+    """
+    if gmsh.model.getType(dim, tag).startswith("Ghost"):
+        return True
+    m_dim, m_tag = _model_entity(dim, tag)
+    return (m_dim, m_tag) != (dim, tag) and m_dim != dim
+
+
+def _source_entity(dim: int, tag: int) -> int:
+    """The source-entity tag of elements classified on ``(dim, tag)``.
+
+    The tag of the model entity ``(dim, tag)`` was cut from
+    (:func:`_model_entity`) when that entity has dimension ``dim``,
+    else ``-1``. Extraction skips partition-interface and ghost
+    entities (:func:`_is_partition_artifact`) before asking, so ``-1``
+    remains only for a tag that is not positive (a MSH2 file may
+    classify elements on elementary tag ``0``); a ghost or interface
+    entity still answers ``-1`` here.
+    """
+    if gmsh.model.getType(dim, tag).startswith("Ghost"):
+        return -1
+    m_dim, m_tag = _model_entity(dim, tag)
+    return m_tag if m_dim == dim and m_tag > 0 else -1
+
+
 def extract_raw(dim: int | None = 2) -> dict:
     """Pull raw FEM arrays from the current Gmsh session.
 
@@ -113,48 +185,79 @@ def extract_raw(dim: int | None = 2) -> dict:
         ``elem_tags``, ``used_tags``.
 
         ``groups`` is ``dict[int, dict]`` keyed by Gmsh element type
-        code, with each value containing ``'ids'``, ``'conn'``,
-        ``'gmsh_name'``, ``'dim'``, ``'order'``, ``'npe'``.
+        code (ascending), with each value containing ``'ids'``,
+        ``'conn'``, ``'entity'``, ``'gmsh_name'``, ``'dim'``,
+        ``'order'``, ``'npe'``.  ``'entity'`` is the ``(E,) int32``
+        source-entity stream: row-parallel to ``'ids'``, the
+        tag of the model entity of the element's own dimension the
+        element is classified on, a partition entity resolved to its
+        parent (:func:`_source_entity`).
+
+        Partition-interface and ghost elements are not extracted
+        (:func:`_is_partition_artifact`): a partitioned mesh yields the
+        same element ids as the unpartitioned one.
     """
     # --- nodes (full mesh) ---
     raw_tags, raw_coords, _ = gmsh.model.mesh.getNodes()
     node_tags   = np.array(raw_tags, dtype=np.int64)
     node_coords = np.array(raw_coords).reshape(-1, 3)
 
-    # --- elements, grouped by type ---
+    # --- elements, per model entity, grouped by type ---
+    # One ``getElements(d, tag)`` per entity rather than one global
+    # ``getElements(dim, -1)``: Gmsh builds the global call by walking
+    # the same entities, in ``getEntities`` order, inside each ascending
+    # type code. Concatenating the per-entity blocks in that order
+    # reproduces its ids and connectivity byte for byte, and the loop
+    # learns each block's entity at no extra Gmsh call per element.
     gmsh_dim = -1 if dim is None else dim
-    elem_types, elem_tags_list, node_tags_list = \
-        gmsh.model.mesh.getElements(dim=gmsh_dim, tag=-1)
+    blocks: dict[int, list[tuple[ndarray, ndarray, int]]] = {}
+    for ent_dim, ent_tag in gmsh.model.getEntities(gmsh_dim):
+        if _is_partition_artifact(int(ent_dim), int(ent_tag)):
+            continue
+        etypes, etags_list, enodes_list = gmsh.model.mesh.getElements(
+            dim=ent_dim, tag=ent_tag)
+        if len(etypes) == 0:
+            continue
+        source = _source_entity(int(ent_dim), int(ent_tag))
+        for etype, etags, enodes in zip(etypes, etags_list, enodes_list):
+            if len(etags) == 0:
+                continue
+            blocks.setdefault(int(etype), []).append((etags, enodes, source))
 
     groups: dict[int, dict] = {}
     all_elem_tags: list[int] = []
 
-    for etype, etags, enodes in zip(
-        elem_types, elem_tags_list, node_tags_list
-    ):
-        etype = int(etype)
+    for etype in sorted(blocks):
         props = gmsh.model.mesh.getElementProperties(etype)
         # props: (name, dim, order, n_nodes, local_coords, n_primary)
         npe = props[3]
-        ids = np.array(etags, dtype=np.int64)
-        conn = np.array(enodes, dtype=np.int64).reshape(-1, npe)
-
-        if etype in groups:
-            # Multiple entities of the same type — concatenate
-            prev = groups[etype]
-            prev['ids'] = np.concatenate([prev['ids'], ids])
-            prev['conn'] = np.concatenate([prev['conn'], conn])
+        parts = blocks.pop(etype)
+        if len(parts) == 1:
+            etags, enodes, source = parts[0]
+            ids = np.array(etags, dtype=np.int64)
+            conn = np.array(enodes, dtype=np.int64).reshape(-1, npe)
+            entity = np.full(ids.size, source, dtype=np.int32)
         else:
-            groups[etype] = {
-                'ids':       ids,
-                'conn':      conn,
-                'gmsh_name': props[0],
-                'dim':       int(props[1]),
-                'order':     int(props[2]),
-                'npe':       npe,
-            }
-
-        all_elem_tags.extend(int(t) for t in etags)
+            ids = np.concatenate(
+                [np.asarray(p[0], dtype=np.int64) for p in parts])
+            conn = np.concatenate(
+                [np.asarray(p[1], dtype=np.int64) for p in parts]
+            ).reshape(-1, npe)
+            entity = np.repeat(
+                np.array([p[2] for p in parts], dtype=np.int32),
+                [len(p[0]) for p in parts],
+            )
+        del parts
+        groups[etype] = {
+            'ids':       ids,
+            'conn':      conn,
+            'entity':    entity,
+            'gmsh_name': props[0],
+            'dim':       int(props[1]),
+            'order':     int(props[2]),
+            'npe':       npe,
+        }
+        all_elem_tags.extend(ids.tolist())
 
     # --- integrity guard: every connectivity tag must be a real node ---
     _validate_connectivity(groups, node_tags)
@@ -341,6 +444,10 @@ def extract_partitions(dim: int | None) -> dict[int, dict]:
     dict[int, dict]
         ``{partition_id: {'node_ids': ndarray, 'element_ids': ndarray}}``
         Empty dict if the mesh is not partitioned.
+
+        Partition-interface and ghost entities are skipped
+        (:func:`_is_partition_artifact`), as in :func:`extract_raw`:
+        each element belongs to the one partition that owns it.
     """
     try:
         n_parts = gmsh.model.getNumberOfPartitions()
@@ -355,6 +462,8 @@ def extract_partitions(dim: int | None) -> dict[int, dict]:
     dims = [dim] if dim is not None else list(range(4))
     for d in dims:
         for ent_dim, ent_tag in gmsh.model.getEntities(d):
+            if _is_partition_artifact(int(ent_dim), int(ent_tag)):
+                continue
             try:
                 pparts = gmsh.model.getPartitions(ent_dim, ent_tag)
             except Exception:

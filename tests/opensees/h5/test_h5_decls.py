@@ -521,7 +521,7 @@ CLASS: dict[str, str] = {
         "update_material_stage", "addToParameter", "step_hook_ramp",
         "flip_element_stage", "rayleigh", "modal_damping", "eigen",
         "profiler", "command", "update_parameter", "set_node_vel",
-        "set_node_accel")},
+        "set_node_accel", "residualModes", "ritzVectors", "mpm")},
     **{v: "part" for v in (
         "section_close", "patch", "fiber", "layer", "pattern_close", "load",
         "eleLoad", "sp", "recorder_declaration_begin",
@@ -529,7 +529,11 @@ CLASS: dict[str, str] = {
     **{v: "neutral" for v in (
         "node", "equalDOF", "rigidLink", "rigidDiaphragm", "embeddedNode",
         # K2b: g.reinforce ties, declared by the FEM snapshot.
-        "embedded_rebar")},
+        "embedded_rebar",
+        # An equation tie's lines, declared by the FEM snapshot; an
+        # apeSees.equation_constraint row has its own /opensees/decls
+        # entry, checked against the store's last rows (no rows column).
+        "equationConstraint")},
     **{v: "control" for v in (
         "model", "constraints", "numberer", "system", "test", "algorithm",
         "integrator", "analysis", "analyze", "stage_open", "stage_close",
@@ -554,6 +558,8 @@ ROWS_STORE: dict[str, tuple[str, ...]] = {
     "rayleigh": ("commands", "rayleigh"),
     "modal_damping": ("commands",), "eigen": ("commands",),
     "profiler": ("commands",), "command": ("commands",),
+    "residualModes": ("commands",), "ritzVectors": ("commands",),
+    "mpm": ("commands",),
 }
 
 #: ``tagged`` stores: group path below a scope -> allocator kind.
@@ -619,7 +625,11 @@ def _param_stage_model() -> apeSees:
 
     Both quads are declared, so nodes 5 and 6 are not orphans and the
     stage's ``analyze`` solves on stock (#2372: with the Fill quad
-    undeclared the system was singular, the #2220 abort)."""
+    undeclared the system was singular, the #2220 abort).
+
+    The element-parameter record names ``pressure``, which
+    ``FourNodeQuad::setParameter`` takes itself; it named ``xPerm``, a
+    ``LadrunoUP`` name no object here takes, which #2377 now refuses."""
     ops = apeSees(_two_quad_fem(), default_orientation=None)
     ops.model(ndm=2, ndf=2)
     mat = ops.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
@@ -627,7 +637,7 @@ def _param_stage_model() -> apeSees:
     ops.element.FourNodeQuad(pg="Fill", thickness=1.0, material=mat)
     ops.fix(pg="Base", dofs=(1, 1))
     with ops.stage(name="params") as s:
-        s.update_parameter("xPerm", 1e-5, pg="Rock")
+        s.update_parameter("pressure", 1e-5, pg="Rock")
         s.update_parameter("E", 2e6, pg="Rock", material=mat)
         s.zero_velocities(nodes=[3])
         s.zero_velocities()
@@ -686,8 +696,18 @@ def _all_verb_models() -> list[apeSees]:
         s.profile()                                     # stage commands rows
         s.analysis(**_chain(prof))
         s.run(n_increments=1)
+    # The ``mpm`` block (ADR 0134 D2): global ``command`` rows, each under
+    # its member's declaration.
+    mpm = apeSees(_two_quad_fem(), default_orientation=None, units="N_m_s")
+    mpm.model(ndm=2, ndf=2)
+    mmat = mpm.nDMaterial.ElasticIsotropic(E=1e6, nu=0.3, rho=0.0)
+    mpm.fix(pg="Base", dofs=(1, 1))
+    mpm.mpm.grid(origin=(0.0, 0.0), h=0.5, cells=(4, 6))
+    mpm.mpm.body("Rock", material=mmat, density=1.0, ppc=2)
+    mpm.mpm.gravity(0.0, -9.81)
+    mpm.mpm.analyze(2, 1.0e-4)
     return [
-        flat, prof, _param_stage_model(), _staged(named=True),
+        flat, prof, mpm, _param_stage_model(), _staged(named=True),
         _build_kitchen_sink_bridge(),
         _build_two_stage_bridge(),
         build_material_stage_bridge(_make_two_quad_fem_stub()),
@@ -750,9 +770,12 @@ def test_every_declaration_verb_has_its_key(tmp_path: Path) -> None:
             assert any(d.family == "equation_constraint"
                        for d in table.decls)
     # Each ``rows`` verb and the region store were exercised.
-    # ``command`` has no bridge caller yet (ADR 0114 Q7): a row of it would
-    # meet no open declaration and refuse at write, which
-    # ``test_tagless_row_without_a_declaration_refuses`` pins for the path.
-    assert set(ROWS_STORE) - {"command"} <= seen, sorted(
-        set(ROWS_STORE) - {"command"} - seen)
+    # ``command`` rows come from the ``mpm`` model (ADR 0134 D2); the
+    # column holds the method, so its tokens are seen as ``command``.
+    # ``residualModes`` / ``ritzVectors`` (A3a) run only in the live
+    # one-shots (``apeSees.residual_modes`` / ``ritz_vectors``), so no
+    # archived model carries one.
+    unreached = {"residualModes", "ritzVectors", "mpm"}
+    assert set(ROWS_STORE) - unreached <= seen, sorted(
+        set(ROWS_STORE) - unreached - seen)
     assert {"region", "rayleigh_region"} <= seen

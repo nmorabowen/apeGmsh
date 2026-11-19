@@ -91,6 +91,9 @@ class _ProcedureHost:
         def _modal_prereqs_and_guards(
             self, num_modes: int, *, context: str,
         ) -> None: ...
+        def _refuse_mpi_modal_basis(
+            self, context: str, command: str,
+        ) -> None: ...
         def _resolve_load_pattern_tag(
             self,
             load: "Plain | str",

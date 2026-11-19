@@ -835,3 +835,180 @@ class TestPartitionSetComposite:
         assert not fem.partitions
         assert list(fem.partitions) == []
         assert fem.partitions.ids == []
+
+
+# =====================================================================
+# #2582 — partitioning adds no elements to FEMData
+# =====================================================================
+
+def _gmsh_element_table(dim: int | None) -> dict[int, tuple[int, ...]]:
+    """``{element id: connectivity}`` straight from Gmsh, for ``dim``
+    (``None``: every dimension)."""
+    table: dict[int, tuple[int, ...]] = {}
+    for d in (range(4) if dim is None else [dim]):
+        etypes, etags, enodes = gmsh.model.mesh.getElements(dim=d, tag=-1)
+        for etype, tags, nodes in zip(etypes, etags, enodes):
+            npe = gmsh.model.mesh.getElementProperties(etype)[3]
+            conn = np.asarray(nodes, dtype=np.int64).reshape(-1, npe)
+            for eid, row in zip(np.asarray(tags).tolist(), conn.tolist()):
+                table[int(eid)] = tuple(int(n) for n in row)
+    return table
+
+
+def _element_table(fem) -> dict[int, tuple[int, ...]]:
+    """``{element id: connectivity}`` over every group of ``fem``."""
+    table: dict[int, tuple[int, ...]] = {}
+    for grp in fem.elements:
+        for eid, conn in zip(np.asarray(grp.ids).tolist(),
+                             np.asarray(grp.connectivity).tolist()):
+            assert eid not in table, f"element {eid} extracted twice"
+            table[int(eid)] = tuple(int(n) for n in conn)
+    return table
+
+
+class TestPartitionAddsNoElements:
+    """``partition(n)`` must not change which elements FEMData holds.
+
+    The oracle is Gmsh's own element table (ids and connectivity) of
+    the same mesh, read before partitioning. Gmsh's
+    default ``Mesh.PartitionCreateTopology=1`` meshes each cut with new
+    lower-dimensional elements (lines between surfaces, triangles
+    between volumes, points where a cut meets a curve), and
+    ``Mesh.PartitionCreateGhostCells=1`` copies the neighbouring
+    partition's elements under the same ids. Both used to reach
+    FEMData as extra elements (#2582).
+    """
+
+    @pytest.mark.parametrize("ghost", [0, 1], ids=["no-ghost", "ghost"])
+    @pytest.mark.parametrize(
+        "model_dim, fem_dim",
+        [(2, 2), (2, None), (3, 3), (3, 2), (3, None)],
+        ids=["2d-dim2", "2d-all", "3d-dim3", "3d-dim2", "3d-all"])
+    def test_partitioned_elements_equal_unpartitioned(
+            self, g, ghost, model_dim, fem_dim):
+        if model_dim == 2:
+            _build_plate(g)
+        else:
+            _build_box(g)
+        before = _gmsh_element_table(fem_dim)
+        assert before
+
+        old_ghost = gmsh.option.getNumber("Mesh.PartitionCreateGhostCells")
+        old_topo = gmsh.option.getNumber("Mesh.PartitionCreateTopology")
+        gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", ghost)
+        gmsh.option.setNumber("Mesh.PartitionCreateTopology", 1)
+        try:
+            g.mesh.partitioning.partition(3)
+            kinds = {gmsh.model.getType(*e) for e in gmsh.model.getEntities()}
+            interface = [
+                e for e in gmsh.model.getEntities()
+                if gmsh.model.getParent(*e)[0] > e[0]]
+            fem = g.mesh.queries.get_fem_data(dim=fem_dim)
+        finally:
+            gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", old_ghost)
+            gmsh.option.setNumber("Mesh.PartitionCreateTopology", old_topo)
+
+        # The mesh really carries what extraction must leave out.
+        assert interface, "partition() created no interface entity"
+        assert any(k.startswith("Ghost") for k in kinds) == bool(ghost)
+
+        after = _element_table(fem)
+        assert after == before
+
+        # Each element lies in exactly one partition, and the
+        # partitions cover exactly the FEMData elements.
+        owner: dict[int, int] = {}
+        for rec in fem.partitions:
+            for eid in rec.element_ids.tolist():
+                assert eid not in owner, (
+                    f"element {eid} in partitions {owner[eid]} and {rec.id}")
+                owner[int(eid)] = rec.id
+        assert set(owner) == set(after)
+        assert len(fem.partitions) == 3
+
+        # Every element has a source entity of its own dimension: the
+        # interface elements were the ``-1`` rows (#2572).
+        for code, ent in fem.elements.entity.items():
+            assert not (np.asarray(ent) == -1).any(), code
+
+
+# =====================================================================
+# #2590 — partition() counts each element once, in its owner
+# =====================================================================
+
+class TestPartitionCountsOwnedElements:
+    """``PartitionInfo`` and ``_elem_partition_map`` agree with FEMData.
+
+    The oracle is the unpartitioned mesh's element table (Gmsh, read
+    before partitioning): ``elements_per_partition`` must sum to its
+    size and the element map must hold exactly its ids. Both are then
+    cross-checked per partition against ``fem.partitions``. Before the
+    fix ``elements_per_partition`` also counted partition-interface and
+    ghost elements, and with ``Mesh.PartitionCreateGhostCells=1`` the
+    map sent every ghost-copied element to the neighbouring partition.
+    """
+
+    @staticmethod
+    def _partition(g, model_dim, ghost, n_parts=2):
+        if model_dim == 2:
+            _build_plate(g)
+        else:
+            _build_box(g)
+        before = _gmsh_element_table(None)
+        old_ghost = gmsh.option.getNumber("Mesh.PartitionCreateGhostCells")
+        gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", ghost)
+        try:
+            info = g.mesh.partitioning.partition(n_parts)
+            kinds = {gmsh.model.getType(*e) for e in gmsh.model.getEntities()}
+            emap = g.mesh.partitioning._elem_partition_map()
+            fem = g.mesh.queries.get_fem_data(dim=None)
+        finally:
+            gmsh.option.setNumber("Mesh.PartitionCreateGhostCells", old_ghost)
+        # The mesh really carries the ghost copies the counts must skip.
+        assert any(k.startswith("Ghost") for k in kinds) == bool(ghost)
+        return before, info, emap, fem
+
+    @pytest.mark.parametrize("ghost", [0, 1], ids=["no-ghost", "ghost"])
+    @pytest.mark.parametrize("model_dim", [2, 3], ids=["2d", "3d"])
+    def test_counts_and_map_match_fem_partitions(self, g, ghost, model_dim):
+        before, info, emap, fem = self._partition(g, model_dim, ghost)
+
+        assert sum(info.elements_per_partition.values()) == len(before)
+        assert set(emap) == set(before)
+
+        owner = {int(e): rec.id for rec in fem.partitions
+                 for e in rec.element_ids.tolist()}
+        assert emap == owner
+        assert info.elements_per_partition == {
+            rec.id: len(rec.element_ids) for rec in fem.partitions}
+
+    def test_weights_count_each_element_once_with_ghosts(self, g):
+        """Ghost entities name one partition, so the old weight tally
+        (``len(pparts) == 1``) summed a ghost copy's weight into the
+        neighbouring partition too."""
+        before, _info, _emap, fem = self._partition(g, 2, ghost=1)
+        part = g.mesh.partitioning
+        part._last_weights = {eid: 1.0 for eid in before}
+        info = part._gather_partition_info()
+        assert info.weights_per_partition == {
+            rec.id: float(len(rec.element_ids)) for rec in fem.partitions}
+
+    def test_partition_owning_no_element_reads_zero(self, g):
+        """Gmsh counts a declared partition that owns nothing (here
+        partition 2 of 3); it reads ``0`` rather than vanishing from
+        ``elements_per_partition`` as it vanishes from
+        ``fem.partitions``."""
+        _build_plate(g)
+        all_tags = sorted(_gmsh_element_table(None))
+        mid = len(all_tags) // 2
+        parts = [1] * mid + [3] * (len(all_tags) - mid)
+        info = g.mesh.partitioning.partition_explicit(3, all_tags, parts)
+        fem = g.mesh.queries.get_fem_data(dim=None)
+
+        assert info.n_parts == 3
+        assert info.elements_per_partition == {
+            1: mid, 2: 0, 3: len(all_tags) - mid}
+        assert fem.partitions.ids == [1, 3]
+        assert {p: c for p, c in info.elements_per_partition.items()
+                if c} == {
+            rec.id: len(rec.element_ids) for rec in fem.partitions}

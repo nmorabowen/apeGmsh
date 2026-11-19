@@ -9,7 +9,8 @@ from a hand-typed section, by design).  This sidecar adds the missing
 analyzer, under which materials/policy/reference moduli.  It answers
 "where did these numbers come from", never "re-run the solve" — the
 analyzer mesh is deliberately NOT persisted (the authoring script is
-the reproducible source).
+the reproducible source). Only its boundary is, as ``outline_yz``, so a
+viewer can draw the true cross-section.
 
 Layout (only written when at least one ``ComputedSection`` emitted)::
 
@@ -18,7 +19,8 @@ Layout (only written when at least one ``ComputedSection`` emitted)::
         analyzer_name  (vlen utf-8)  — the analyzer handle ("" if unnamed)
         payload        (vlen utf-8)  — JSON provenance blob (kind,
                                        reference moduli / GJ, policy,
-                                       part/element counts, materials)
+                                       part/element counts, materials,
+                                       outline_yz boundary loops)
 
 ``computed_sections`` is in
 :data:`apeGmsh.opensees._internal.lineage.MODEL_HASH_EXCLUDED_CHILDREN`:
@@ -57,9 +59,11 @@ def computed_section_payload(prim: object) -> str:
     import json
 
     from apeGmsh.opensees.section.computed import ComputedSection
+    from apeGmsh.sections._geometric import boundary_loops_yz
 
     assert isinstance(prim, ComputedSection)
     analysis = prim.analysis
+    geo = analysis.geometric()
     materials = {
         pg: {
             "E": mat.E,
@@ -76,6 +80,9 @@ def computed_section_payload(prim: object) -> str:
         "n_parts": analysis.n_parts,
         "n_elements": analysis._snapshot.n_elements,
         "materials": materials,
+        "outline_yz": boundary_loops_yz(
+            analysis._snapshot, cx=geo.cx, cy=geo.cy
+        ),
     }
     if prim.kind == "elastic":
         from apeGmsh.sections._lowering import lower_to_elastic

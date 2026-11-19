@@ -44,7 +44,7 @@ neutral zone; ignore what else is in the file.
 **Read this before reading any data.** Getting it wrong is the one
 mistake that produces plausible-looking garbage instead of an error.
 
-Versions are **semver strings**, not integers — `"2.35.0"`, stored as
+Versions are **semver strings**, not integers — `"2.36.0"`, stored as
 HDF5 variable-length UTF-8 string attributes. Each zone carries its own
 independent version; they do not share a number.
 
@@ -55,7 +55,7 @@ independent version; they do not share a number.
 | `schema_version` | — | **no** — legacy envelope |
 
 The neutral zone is gated by **`neutral_schema_version` alone**. At the
-time of writing the writer stamps `2.35.0`.
+time of writing the writer stamps `2.36.0`.
 
 `schema_version` is a back-compatibility envelope that predates the
 per-zone split. Its value is "whichever writer wrote last" — the
@@ -262,15 +262,19 @@ Each `/elements/{type}` group carries five attributes:
 | `dim` | int64 | topological dimension (1 line, 2 surface, 3 volume) |
 | `order` | int64 | interpolation order |
 
-and three datasets:
+and these datasets:
 
 | Dataset | dtype | Shape | Always? |
 |---|---|---|---|
 | `/elements/{type}/ids` | int64 | `(E,)` | yes |
 | `/elements/{type}/connectivity` | int64 | `(E, npe)` | yes |
 | `/elements/{type}/module_label` | vlen UTF-8 | `(E,)` | yes |
+| `/elements/{type}/entity` | int32 | `(E,)` | no (2.36.0) |
 
-Row-aligned, as with nodes. Node ordering within a connectivity row is
+Row-aligned, as with nodes. `entity` is the tag of the gmsh model entity
+of dimension `dim` that each element was meshed on (partition entities
+already resolved to their parent), `-1` when unknown. It is on every
+element group or on none; a reader that does not need it can ignore it. Node ordering within a connectivity row is
 gmsh's node ordering for that element type — take it from `gmsh_name`
 and `code`, not from a guess.
 

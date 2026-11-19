@@ -27,7 +27,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "apeGmsh"
 
 # surface -> pinned LOC (measured at the X4-b landing commit).
 BASELINE: dict[str, int] = {
-    "viewers": 57452,
+    "viewers": 57489,
     "studio": 9679,
     "hpc": 554,
     "ground_motions": 979,

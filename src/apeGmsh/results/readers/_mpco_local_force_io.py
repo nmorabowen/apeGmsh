@@ -48,13 +48,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy import ndarray
 
-from ...opensees._response_catalog import (
-    LAYER_CATALOG,
-    NON_BEAM_LINE_CLASSES,
-    RESPONSE_CATALOG,
-    ZEROLENGTH_CATALOG,
-    local_force_station_signs,
-)
+from ...opensees._response_catalog import local_force_station_signs
+from ._buckets import LINE_STATION_NON_BEAM_CLASSES, is_non_beam_class
+from ._ladruno_element_io import untagged_local_force_names
 
 if TYPE_CHECKING:
     import h5py
@@ -92,11 +88,14 @@ _BRACKET_CLASS_RE = re.compile(r"^\d+-(?P<cls>[^\[]+)\[")
 class NoLineStationTokensError(ValueError):
     """A ``localForce`` bucket names no station force or moment at all.
 
-    A truss's ``C1..C4`` (MPCO's names for an untagged response), a
-    corotational truss's bare ``N``, a wall's ``Fx_i``: these are element
-    force vectors, not beam line stations, so line-station discovery passes
-    over them. Every other parse failure is a malformed beam bucket and
-    raises.
+    A truss's ``C1..C4`` (MPCO's names for an untagged response, on a
+    non-beam class), a corotational truss's bare ``N``, a wall's ``Fx_i``:
+    these are element force vectors, not beam line stations, so
+    line-station discovery passes over them. An untagged ``C1..Cn`` bucket
+    of any other class is no such vector: a LadrunoIMKBeam's reads by its
+    catalog order, and any other class's raises
+    (:func:`untagged_local_force_names`, #2022). Every other parse failure
+    is a malformed beam bucket and raises.
     """
 
 
@@ -184,6 +183,15 @@ def parse_local_force_layout(
             f"{len(tokens)} columns ({components_raw!r}) but its DATA rows "
             f"are {data_width} wide; refusing to guess the layout."
         )
+
+    # An untagged ``C1..Cn`` bucket: named by its class's catalog order
+    # (LadrunoIMKBeam), refused for any other beam class, left as it is
+    # (and so passed over) for a non-beam class.
+    named = untagged_local_force_names(
+        bracket_class(bracket_key), tokens, f"localForce bucket {bracket_key!r}",
+    )
+    if named is not None:
+        tokens = list(named)
 
     parsed: list[tuple[int, str, int]] = []      # (col_idx, base, station)
     for col_idx, tok in enumerate(tokens):
@@ -351,35 +359,10 @@ LINE_STATION_SOURCE_TOKENS = frozenset({
     "localForce", "localForces", "basicForce", "basicForces",
 })
 
-#: The classes that are no beam, from the response catalog's family
-#: tables: the continuum, shell and truss classes of ``RESPONSE_CATALOG``,
-#: the shells of ``LAYER_CATALOG``, the springs of ``ZEROLENGTH_CATALOG``,
-#: and the bearings, walls and links of ``NON_BEAM_LINE_CLASSES``. A
-#: never-source bucket of one of these is silent: a bearing's or a wall's
-#: element forces are no beam's stations. Every other class warns, a beam
-#: the catalog does not know (``ModElasticBeam3d``) above all.
-LINE_STATION_NON_BEAM_CLASSES: frozenset[str] = frozenset(
-    NON_BEAM_LINE_CLASSES
-    | {cname for cname, _rule, _tok in RESPONSE_CATALOG}
-    | {cname for cname, _tok in LAYER_CATALOG}
-    | {cname for cname, _tok in ZEROLENGTH_CATALOG}
-)
-
-
 def bracket_class(bracket_key: str) -> str | None:
     """``5-ElasticBeam3d[1:0:0]`` -> ``ElasticBeam3d``; ``None`` unparsed."""
     m = _BRACKET_CLASS_RE.match(bracket_key)
     return None if m is None else m.group("cls")
-
-
-def is_non_beam_class(class_name: str | None) -> bool:
-    """True when ``class_name`` is in :data:`LINE_STATION_NON_BEAM_CLASSES`.
-
-    ``None`` or ``""`` (a bucket key whose class does not parse) is not
-    known to be a non-beam, so it answers False: its never-source bucket
-    is named, not passed over.
-    """
-    return bool(class_name) and class_name in LINE_STATION_NON_BEAM_CLASSES
 
 
 #: ``basicForce``'s two-station components: the basic-system end moments

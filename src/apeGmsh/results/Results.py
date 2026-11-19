@@ -72,6 +72,7 @@ bodies that need it. This keeps the import-DAG polarity tested by
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
@@ -88,6 +89,7 @@ from ._composites import (
     NodeResultsComposite,
 )
 from ._inspect import ResultsInspect
+from ._particles import ParticleResultsComposite
 from .readers._protocol import EigenMode, ResultsReader, StageInfo
 
 if TYPE_CHECKING:
@@ -96,6 +98,7 @@ if TYPE_CHECKING:
     from ..opensees._internal.lineage import Lineage
     from ..opensees.opensees_model import OpenSeesModel
     from .plot import ResultsPlot
+    from .user._states import UserCombinations
 
 
 # Sentinel for ``Results._derive`` so we can distinguish
@@ -340,6 +343,14 @@ def _in_notebook_kernel() -> bool:
     return type(shell).__name__ == "ZMQInteractiveShell"
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether two paths name one file; a path that cannot be read is not the same."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
 class Results:
     """Top-level results object. Returned by ``Results.from_*`` constructors.
 
@@ -397,6 +408,8 @@ class Results:
         # Composites
         self.nodes = NodeResultsComposite(self)
         self.elements = ElementResultsComposite(self)
+        # MPM particle outputs of a .ladruno (ADR 0134 D4).
+        self.particles = ParticleResultsComposite(self)
         self.inspect = ResultsInspect(self)
         self._plot: Optional["ResultsPlot"] = None
 
@@ -481,20 +494,23 @@ class Results:
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
-        ``model=`` is required (else :class:`TypeError`); its ``/opensees/``
-        zone is embedded in the transcoded file, which
-        :meth:`Results.from_native` then opens.
+        ``model=`` is required (else :class:`TypeError`).
 
-        Parses the ``.out`` / ``.xml`` files emitted at
-        ``output_dir`` (matching what ``spec.emit_recorders(...)`` or
-        the apeGmsh OpenSees bridge's Tcl/Py emit produced) into an
-        apeGmsh native HDF5, caches the result at
-        ``cache_root``, and opens it through ``NativeReader``.
+        Parses the ``.out`` / ``.xml`` files emitted at ``output_dir``
+        (matching what ``spec.emit_recorders(...)`` or the bridge's Tcl/Py
+        emit produced), caches the result at ``cache_root`` and opens it
+        (ADR 0131 D6). Nodal records only, over ``ops.stage`` blocks of ``model``
+        with their kinds (any order or subset), are cached as ``<key>.ladruno``
+        stamped against ``<key>.model.h5`` (``opensees_backend="unknown"``, the
+        stage names), read by name with ``from_ladruno(model_h5=)`` and bound to
+        ``model``. Any other run (an element record, ``displacement_increment``,
+        a stage the program does not declare or of another kind) is cached as
+        native HDF5 embedding ``model``'s ``/opensees/`` zone (keeps the names).
+        A layers record refuses by name; modal records are not emitted.
 
-        Caching: unchanged input files, model, stage name and stage kind
-        reuse the cached HDF5 (``writers/_cache.py``). Recorders sample
-        every step or every ``dt=``: sampling at arbitrary caller
-        instants has no recorder equivalent.
+        Caching: unchanged input files, model, stage names and kinds reuse
+        the cached file (``writers/_cache.py``). Recorders sample every step
+        or every ``dt=``, never at arbitrary caller instants.
 
         ``stage_id`` matches the per-stage filename prefix used by
         :meth:`ResolvedRecorderSpec.emit_recorders` together with
@@ -507,16 +523,14 @@ class Results:
         run into one file, one stage each with its name and kind; it
         excludes ``stage_id`` / ``stage_name`` / ``stage_kind``.
 
-        Nodes, element forces, gauss points and line stations are
-        transcoded; fiber and layer records are skipped (``.out`` cannot
-        carry them; use MPCO) and modal records are not emitted. Rows
-        are labelled with the spec's FEM ids, so the files must come from
-        an emit that translated them to OpenSees tags
+        Rows are labelled with the spec's FEM ids, so the files must come
+        from an emit that translated them to OpenSees tags
         (``spec.emit_recorders(..., model=)`` or
         ``spec.to_tcl_commands(model=)``).
         """
         if model is None:
             raise TypeError(_MODEL_REQUIRED_MESSAGE)
+        from .readers._ladruno_writer import open_transcode, transcode_target
         from .schema._versions import PARSER_VERSION
         from .transcoders import RecorderTranscoder
         from .writers import _cache
@@ -527,10 +541,7 @@ class Results:
                 "(the spec's snapshot_id must match)."
             )
 
-        # When stage_id is provided and stage_name was left at its
-        # default, mirror stage_id so the resulting Results stage is
-        # named meaningfully (otherwise everything ends up as
-        # "analysis" regardless of which stage the user loaded).
+        # stage_id names the stage when stage_name is left at its default.
         if stage_id is not None and stage_name in (None, "analysis"):
             stage_name = stage_id
         stages = None if stages is None else tuple(stages)   # read a generator once
@@ -551,18 +562,19 @@ class Results:
             model_token=_cache.model_cache_token(model), stages=plan,
         )
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
-
-        if not cached_h5.exists():
-            # The model's /opensees/ zone, written beside the target for
-            # NativeWriter to copy in at open time (ADR 0020).
-            model_h5_src: Path = cached_h5.with_suffix(".model.h5")
+        model_h5_src: Path = cached_h5.with_suffix(".model.h5")   # embedded, or stamped by
+        target = transcode_target(spec, cached_h5, plan, model, model_h5_src)
+        if not target.exists() or not model_h5_src.exists():
             model.to_h5(model_h5_src)
+        if not target.exists():
             RecorderTranscoder(
-                spec, out_dir, cached_h5, fem, stage_name=stage_name,
+                spec, out_dir, target, fem, stage_name=stage_name,
                 stage_kind=stage_kind, file_format=file_format, stage_id=stage_id,
                 model_h5_src=model_h5_src, stages=stages,
             ).run()
-
+        if target != cached_h5:
+            (res := open_transcode(target, plan, fem=fem, model_h5=model_h5_src))._model = model
+            return res   # bound to the caller's model, as the native route is
         return cls.from_native(cached_h5, fem=fem, model=model)
 
     @classmethod
@@ -733,17 +745,29 @@ class Results:
         ``MODEL`` group (no physical groups) is bound instead. Without
         ``model_h5=`` the file's ``MODEL`` group is bound, as before.
 
-        Stage names with ``model_h5=`` (ADR 0122 design point 9, #2101):
-        as in :meth:`from_mpco`, the ``ops.stage(name=...)`` names and
-        each stage's ``analysis`` kind from ``/opensees/stages`` replace
-        the file's ``MODEL_STAGE[<k>]`` names in order, and
-        ``MODEL_STAGE[<k>]`` stays resolvable as an alias. The count
-        rules and warnings are :meth:`from_mpco`'s. A ``.ladruno`` stage
-        also records the ``KIND`` it ran, so where that disagrees with
-        the program kind the pairing is misaligned: nothing is renamed
-        and ``StageKindMismatchWarning`` is the one warning (#2079 Q7).
-        A stage recorded ``KIND=eigen`` (every stage of a recorder that
-        asks for modes) or with no ``KIND`` is no evidence either way.
+        Stage names with ``model_h5=`` (ADR 0122 D3, #2101, #2823): the
+        ``ops.stage(name=...)`` names and each stage's ``analysis`` kind
+        from ``/opensees/stages`` replace the file's ``MODEL_STAGE[<k>]``
+        names, which stay resolvable as aliases; a stage is never paired
+        with a program stage by position alone
+        (``_bind.py::_bind_ladruno_stage_names``):
+
+        * a file stamped with ``INFO/PROVENANCE@stage_names`` binds each
+          stage to the program stage its stamp names, in any order; a
+          stage stamped with its own ``MODEL_STAGE`` name (modes) keeps
+          it. A stamped name the program does not declare, or a program
+          stage of another kind than the recorded ``KIND``, raises
+          ``StageStampRefused`` naming it;
+        * an unstamped file: a modes-only stage (``KIND=eigen``, no step)
+          is no program stage and keeps its name. The others pair one to
+          one when they are as many as the program's stages, where a
+          disagreeing ``KIND`` renames nothing and warns
+          ``StageKindMismatchWarning`` (#2079 Q7; ``KIND=eigen`` or none
+          is no evidence either way); fewer pair with the program's first
+          stages only when their ``KIND`` s fit no other run of program
+          stages (a partial run, ``StageCountMismatchWarning``), and
+          otherwise keep their names with ``UnpairedStageWarning``.
+
         Without ``model_h5=`` the file's names stand.
 
         The file records no per-node ndf, so the recorder writes 0.0 for
@@ -751,6 +775,14 @@ class Results:
         With ``model_h5=`` a one-file read gives NaN there, from the
         model's ``/opensees/nodes_ndf``; without it a rotation read over
         continuum elements warns ``AbsentDofWarning`` once (#1971).
+
+        MPM particles (ADR 0134 D3/D4): at ``INFO/FORMAT_MINOR_VERSION
+        >= 2`` a stage's particle group reads through
+        :attr:`particles` (``results.particles.get(component=...)``). An
+        all-particle file opens without ``model_h5=``: it has no FEM
+        (:attr:`fem` is ``None``), its broker wraps the empty stage
+        model, and a node or element read of a particle-only stage
+        refuses by name. A part file with particles is refused.
 
         Keys on ``INFO/GENERATOR="Ladruno"`` + a supported
         ``FORMAT_VERSION`` (the reader rejects a ``.mpco`` / foreign file
@@ -769,23 +801,23 @@ class Results:
         )
 
         if isinstance(path, (list, tuple)):
-            paths = [Path(p) for p in path]
+            files = [Path(p) for p in path]
             reader = (
-                LadrunoMultiPartitionReader(paths)
-                if len(paths) > 1
-                else LadrunoReader(paths[0])
+                LadrunoMultiPartitionReader(files)
+                if len(files) > 1
+                else LadrunoReader(files[0])
             )
-            anchor = paths[0]
+            anchor = files[0]
         else:
             anchor = Path(path)
-            discovered = (
+            files = (
                 discover_partition_files(anchor)
                 if merge_partitions else [anchor]
             )
             reader = (
-                LadrunoMultiPartitionReader(discovered)
-                if len(discovered) > 1
-                else LadrunoReader(discovered[0])
+                LadrunoMultiPartitionReader(files)
+                if len(files) > 1
+                else LadrunoReader(files[0])
             )
         # A step after the open that raises closes the reader
         # first (the file is free again on Windows), then re-raises.
@@ -821,8 +853,14 @@ class Results:
                     reader, fem, bound_model, model_path=model_h5,
                     spatial_dim=spatial_dim,
                 )
-                # The program's stage names and kinds, as in from_mpco.
-                _bind_stage_names(reader, bound_model, model_path=model_h5)
+                # The program's stage names and kinds: by the file's
+                # stamped stage_names, else by a proven kind match, never
+                # by position alone (ADR 0122 D3).
+                from .readers._ladruno import read_stage_stamp
+                _bind_stage_names(
+                    reader, bound_model, model_path=model_h5,
+                    stamp=read_stage_stamp(files),
+                )
                 # Attach the fem_eid↔ops-tag translator whenever the
                 # model carries a real element_meta pairing — see the
                 # twin comment in :meth:`from_mpco` (the pairing diverges
@@ -1005,6 +1043,19 @@ class Results:
         OpenSeesModel and its embedded FEMData can be reached.
         """
         return self._model
+
+    @property
+    def path(self) -> Optional[Path]:
+        """The results file these Results read, or ``None`` when none.
+
+        The path the constructor opened: a ``.ladruno`` (the first
+        partition of a merged ``<stem>.part-<N>.ladruno`` set), an
+        ``.mpco``, a native ``.h5``, or the recorders' cache. Stage and
+        mode scopes carry it. Read-only. The Windows stills draw this
+        file with apeGmshViewer, which opens a ``.ladruno`` only
+        (ADR 0128 slice 6, VA6b).
+        """
+        return self._path
 
     # ------------------------------------------------------------------
     # Units & unit-system translation
@@ -1516,6 +1567,166 @@ class Results:
                 period_s=float(s.period_s),
             ))
         return out
+
+    def combinations(
+        self,
+        user_h5: "Optional[str | Path]" = None,
+        *,
+        model_h5: "Optional[str | Path]" = None,
+        spectra: Any = None,
+    ) -> "UserCombinations":
+        """The set's User Combinations, evaluated per quantity on read (ADR 0130 D4).
+
+        ``user_h5`` is the set's ``<stem>.user.h5``. Omitted, the first that
+        exists beside this file is used: ``<model stem>.user.h5``, then this
+        file's stem without ``.part-<N>`` and ``.results``. ``model_h5``
+        (default: the archive this was opened with) brings its
+        ``/opensees/combinations`` into the table. ``spectra`` reads the
+        ``spectrum`` and ``reference`` terms; by default it is a
+        :class:`~apeGmsh.results.user.UserSpectra` over that ``.user.h5``'s
+        ``/spectra``, judged stale against ``model_h5`` (ADR 0130 A6), so a
+        stale zone's terms are refused unless ``evaluate(...,
+        allow_stale=True)``.
+
+        A term names a stage by its stamped name, else ``stage_<i>`` (A3).
+        The names are bound when the results are opened (``model_h5=``), never
+        here: a read does not rename the caller's stages. So when the model
+        (``model_h5``, or the one this was opened with) declares program stage
+        names and none of them names a stage here, every ``stage`` and
+        ``mode`` term is refused, with a reason that says to open the results
+        with ``model_h5=``; otherwise a term could read a different stage than
+        the same set opened with its model. That holds however the
+        ``Results`` was opened (``from_fem`` binds a neutral cache archive
+        that names no stage). A ``Results`` with no names from either source
+        keeps ``stage_<i>``, and so does one whose reader declined that same
+        model's names when it was opened.
+
+        ``evaluate(state, component, level=...)`` combines a recorded result
+        (``level="domain"`` a ``/spectra`` domain value such as
+        ``base_shear``), ``evaluate(state, user_result=...)`` a user result. A state handle of
+        another ``Results`` is refused.
+        """
+        from .user._evaluate import CombinationRefused
+        from .user._spectra_source import UserSpectra
+        from .user._states import UserCombinations, user_file_beside
+
+        model = model_h5 if model_h5 is not None else self._model_path
+        unbound = None if model is None else self._unbound_stage_names(Path(model))
+        if user_h5 is None:
+            user_h5 = user_file_beside(
+                None if self._path is None else Path(self._path),
+                None if model is None else Path(model))
+        if spectra is None:
+            spectra = UserSpectra(user_h5, model_h5=model)
+
+        def handle(obj: Any) -> Optional[str]:
+            if not isinstance(obj, Results):
+                return None
+            if obj._reader is not self._reader:
+                raise CombinationRefused(
+                    "", "foreign-handle", "this state handle belongs to another "
+                    "Results; combining states of different runs is refused "
+                    "(ADR 0130 D4, A7)")
+            if obj._stage_id is None:
+                raise TypeError(
+                    "an unscoped Results is not a state; use results.stage(...)")
+            return obj._stage_id
+
+        return UserCombinations(
+            self,
+            user_h5=None if user_h5 is None else Path(user_h5),
+            model_h5=None if model is None else Path(model),
+            results_file=self._path,
+            handle=handle,
+            spectra=spectra,
+            unbound_stages=unbound,
+        )
+
+    def _unbound_stage_names(self, model_h5: Path) -> Optional[str]:
+        """Why stage terms cannot be resolved here, or ``None`` when they can.
+
+        ``None`` when ``model_h5`` declares no program stage names, or when the
+        reader names its own stages (a native file). Otherwise the names must
+        be this ``Results``' binding: its stamped stages, in order, are a prefix
+        of the model's names, and every stage after them is unstamped (a
+        partial run stamps only the stages that ran). Two refusals:
+
+        * no stage is stamped: the results were opened without that model;
+          except when they were opened with that same file and the reader
+          declined its names (a KIND or count mismatch), where ``stage_<i>``
+          stands;
+        * the stamps are another model's: the names here would read other
+          stages than ``model_h5``'s.
+
+        A ``.ladruno`` stamped against ``model_h5`` (its hashes) with
+        ``INFO/PROVENANCE@stage_names`` binds by those names, in any order:
+        its binding is ``model_h5``'s when each stage carries the stamped
+        name (and a stage stamped with its own ``MODEL_STAGE`` name, none).
+
+        Nothing is renamed: each reason says how to bind the names.
+        """
+        import h5py
+
+        from .user._states import canonical_stage_name
+
+        if not hasattr(self._reader, "attach_stage_names"):
+            return None
+        with h5py.File(model_h5, "r") as f:
+            if "opensees" not in f or "stages" not in f["opensees"]:
+                return None
+        from ..opensees.opensees_model import OpenSeesModel
+
+        names = [str(s.name) for s in OpenSeesModel.from_h5(model_h5).stages()]
+        if not names:
+            return None
+        hosts = [s for s in self._all_stages() if s.kind != "mode"]
+        stamped = [canonical_stage_name(s) != s.id for s in hosts]
+        by_name = self._stamped_binding(model_h5, hosts, names)
+        if by_name is not None and (any(stamped) or not by_name[1]):
+            if by_name[0]:
+                return None  # the binding model_h5's stamp gives
+            return (
+                f"these results are bound to another model's stage names "
+                f"({[canonical_stage_name(s) for s in hosts]}), not to "
+                f"model_h5={str(model_h5)!r}'s {names}; open them with "
+                f"model_h5={str(model_h5)!r} (ADR 0130 A3)"
+            )
+        k = stamped.index(False) if False in stamped else len(stamped)
+        here = [canonical_stage_name(s) for s in hosts[:k]]
+        if k == 0:
+            if self._model_path is not None and _same_file(Path(self._model_path), model_h5):
+                return None  # the reader declined these names at open, and said why
+            return (
+                f"model_h5={str(model_h5)!r} declares the stage names {names}, and "
+                f"these results were opened without that model, so their stages "
+                f"are named stage_<i>; a term would read another stage than the "
+                f"same set opened with its model. Open the results with "
+                f"model_h5={str(model_h5)!r} so the names are bound (ADR 0130 A3)"
+            )
+        if not any(stamped[k:]) and here == names[:k]:
+            return None  # this binding, in full or for a partial run
+        return (
+            f"these results are bound to another model's stage names "
+            f"({[canonical_stage_name(s) for s in hosts]}), not to "
+            f"model_h5={str(model_h5)!r}'s {names}; open them with "
+            f"model_h5={str(model_h5)!r} (ADR 0130 A3)"
+        )
+
+    def _stamped_binding(
+        self, model_h5: Path, hosts: "list[Any]", names: "list[str]",
+    ) -> "Optional[tuple[bool, bool]]":
+        """``(this binding is the stamp's under names, the stamp names a
+        program stage)`` for a results file whose ``stage_names`` is
+        stamped (:func:`~.readers._ladruno.stamped_stage_binding`); ``None``
+        for any other file."""
+        from .readers._ladruno import stamped_stage_binding
+        from .user._states import canonical_stage_name
+
+        if self._path is None:
+            return None
+        return stamped_stage_binding(
+            Path(self._path), model_h5, [h.id for h in hosts],
+            [canonical_stage_name(h) for h in hosts], names)
 
     # ------------------------------------------------------------------
     # Stage-scoped properties (raise on unscoped or wrong-kind access)
@@ -2465,6 +2676,7 @@ class Results:
         )
         new.nodes = NodeResultsComposite(new)
         new.elements = ElementResultsComposite(new)
+        new.particles = ParticleResultsComposite(new)
         new.inspect = ResultsInspect(new)
         new._plot = None
         # Custom scalar definitions (ADR 0076) follow stage / mode

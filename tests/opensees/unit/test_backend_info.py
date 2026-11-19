@@ -252,17 +252,32 @@ def test_footfall_results_carry_the_live_backend(
     from apeGmsh.opensees.analysis.footfall_result import FootfallResult
     from tests.conftest import _MockFem
 
-    monkeypatch.setattr(live, "get_backend_info", _fork_info)
+    from apeGmsh.results.user import UserFile
+
     res = object.__new__(FootfallResult)
     for name, value in {
         "nodes": (1,), "a_p": np.array([1.0]), "ratio": np.array([0.5]),
         "f_dom": np.array([4.0]),
     }.items():
         object.__setattr__(res, name, value)
-    out = res.to_results(_MockFem([1, 2]), tmp_path / "ff.h5")
-    with h5py.File(out, "r") as f:
-        assert f.attrs["opensees_backend"] == "fork"
-        assert f.attrs["opensees_build"] == _SHA
+    fem = _MockFem([1, 2])
+    model = tmp_path / "ff.h5"
+    with h5py.File(model, "w") as f:
+        f.create_group("meta/lineage").attrs["fem_hash"] = fem.snapshot_id
+
+    # ADR 0131 D6: the .user.h5 has no backend attrs; /meta@writer names it.
+    monkeypatch.setattr(live, "get_backend_info", _fork_info)
+    out = res.to_results(fem, tmp_path / "ff.user.h5", model_h5=model)
+    writer = UserFile(out).writer
+    assert writer is not None
+    assert writer.startswith("apeGmsh footfall_walking ")
+    assert writer.endswith(f"; opensees fork {_SHA}")
+
+    monkeypatch.setattr(live, "get_backend_info", lambda: BackendInfo(
+        kind="stock", build=None, version=None, source="x"))
+    out = res.to_results(fem, tmp_path / "ff.user.h5", model_h5=model)
+    writer = UserFile(out).writer
+    assert writer is not None and writer.endswith("; opensees stock")
 
 
 def test_parallel_modal_to_native_does_not_stamp_the_in_process_build(
@@ -533,3 +548,56 @@ def test_command_queries_speak_only_for_the_engine_that_answered() -> None:
     assert info.has_command("LadrunoTie", engine="dl") is True
     # the classic Tcl binary a subprocess runs is another engine: unknown
     assert info.has_command("LadrunoTie", engine="classic") is None
+
+
+# --------------------------------------------------------------------------
+# ladrunoSchema v1 (fork WP-185 at 9aadc76cc, apeGmsh#2517): v0 + capabilities
+# --------------------------------------------------------------------------
+#: The shape fork ``SRC/interpreter/LadrunoSchema.h`` renders at 9aadc76cc:
+#: keys sorted, compact separators, ``schema_version`` 1.
+_V1_TEXT = (
+    f'{{"build":"{_SHA}","capabilities":["mdStageFlagPreserved"],'
+    '"commands":["LadrunoTie","ladrunoBuild","ladrunoSchema"],"engine":"dl",'
+    '"options":{"LadrunoRCConcrete":{"-Cd":{"nargs":"list","since":"PR-155"}}},'
+    '"schema_version":1}'
+)
+
+
+def _v1_obj(**over: Any) -> dict[str, Any]:
+    obj = json.loads(_V1_TEXT)
+    obj.update(over)
+    return obj
+
+
+def test_v1_schema_as_the_fork_renders_it_parses() -> None:
+    info = backend_info_of(_with_schema(_V1_TEXT))
+    s = info.schema
+    assert s is not None
+    assert (s.schema_version, s.build, s.engine) == (1, _SHA, "dl")
+    assert s.capabilities == frozenset({"mdStageFlagPreserved"})
+    assert info.supports_option("LadrunoRCConcrete", "-Cd") is True
+    assert info.has_command("ladrunoSchema") is True
+    again = backend_info_of(_with_schema(_V1_TEXT))
+    assert info == again and hash(info) == hash(again)
+
+
+def test_v0_schema_promises_no_capability() -> None:
+    s = backend_info_of(_with_schema()).schema
+    assert s is not None and s.schema_version == 0
+    assert s.capabilities == frozenset()
+
+
+@pytest.mark.parametrize("obj", [
+    _v1_obj(capabilities="mdStageFlagPreserved"),
+    _v1_obj(capabilities=["mdStageFlagPreserved", 3]),
+    _v1_obj(capabilities=[""]),
+    _v1_obj(capabilities=["a", "a"]),
+    # v1 without its new key, and v0 with it: each key set is exact
+    {k: v for k, v in _v1_obj().items() if k != "capabilities"},
+    _schema_obj(capabilities=["mdStageFlagPreserved"]),
+    # a later version in v1's shape is not read as v1
+    _v1_obj(schema_version=2),
+])
+def test_doubtful_v1_is_unknown(obj: dict[str, Any]) -> None:
+    assert _schema_from_obj(obj, _SHA) is None
+    assert _schema_from_obj(_v1_obj(), _SHA) is not None
