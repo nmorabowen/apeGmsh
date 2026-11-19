@@ -606,7 +606,7 @@ test("VF #2940: gauss_node on a field whose one group has no natural coordinates
   assert.equal(line, fallbackNotice(v));
   assert.match(
     line!,
-    /^Element contour stress: group\(s\) hex_G8 cannot be extrapolated to the nodes \(gauss_node\), so each of their elements gives its mean to its corners \(cell_averaged\), averaged at the nodes\. Why: group hex_G8 has no natural coordinates .*PARAM_DOMAIN is not "\[-1,1\]" \(a BezierTri6's or BezierTet10's barycentric points\).*\(a warning when the file opened names the group, the class or the domain\)\.$/,
+    /^Element contour stress: group\(s\) hex_G8 cannot be extrapolated to the nodes \(gauss_node\), so each of their elements gives its mean to its corners \(cell_averaged\), averaged at the nodes\. Why: group hex_G8 has no natural coordinates .*PARAM_DOMAIN is not "\[-1,1\]" and is no "bary" rule the reader can convert \(an unknown TOPOLOGY or FAMILY, or a row outside the simplex\).*\(a warning when the file opened names the group, the class or the domain\)\.$/,
   );
   assert.ok(!noticesOf(h.store.get()).some((n) => n.startsWith("Element contour refused")), "a substitution, not a refusal");
 
@@ -716,20 +716,22 @@ test("VF #2940: a mixed view keeps gauss_node, names only the refused group, and
   h.effects.dispose();
 });
 
-// -- VF2 (#2950): BezierTri6 falls back as BezierTet10 does ---------------------------------------------------------
-//   X13 the fallback removed (main before #2940)            -> "a real BezierTri6 ..." (the plan throws)
+// -- VF2 (#2950), superseded by #3071: BezierTri6 is extrapolated; SixNodeTri still falls back ----------------------
+//   X13 the fallback removed (main before #2940)            -> "a real BezierTri6 ..." (the plan throws on SixNodeTri)
 //   X14 the whole field falls back, not the group           -> "a real BezierTri6 ..." (the quad's corners)
+//   X15 BezierTri6 read node-0-first (the Lagrange frame)    -> "a real BezierTri6 ..." (its corners rotate)
 //
 // tests/fixtures/simplex_gp/tri.ladruno is one fork solve (test_gauss_simplex_coords.py's SOLVE, build 79e062367):
 // every element is loaded with u_i = x_i^2 / 2, so the strain eps_ii a quadratic element records at a Gauss point
-// IS that point's x_i. The BezierTri6 (element 3) writes its points with PARAM_DOMAIN "bary", so the reader offers
-// no natural coordinates; its mean is then the closed form: its three Gauss points are a degree-2 rule on a
-// straight-sided triangle, whose mean position is the centroid of the corners TRI below.
+// IS that point's x_i. The BezierTri6 (element 3) writes its points with PARAM_DOMAIN "bary", which the reader now
+// converts (reader/ladrunoElements.ts baryToGmsh, #3071): eps_ii is linear in position, so its three Gauss values
+// extrapolate exactly onto each corner of TRI below, and each corner reads its own coordinate (closed form). The
+// SixNodeTri writes no GP_PARAM at all, so it still has no natural coordinates and still draws its element mean.
 
 const SIMPLEX_TRI = fileURLToPath(new URL("../../../tests/fixtures/simplex_gp/tri.ladruno", import.meta.url));
 const TRI = [[0.1, 0.2], [2.3, 0.4], [0.6, 1.8]];
 
-test("VF2 #2950: a real BezierTri6 .ladruno group has no natural coordinates, so gauss_node draws its element mean (the centroid, closed form), per group, while the quad beside it is extrapolated", () => {
+test("VF2 #2950 / #3071: a real BezierTri6 .ladruno group gets natural coordinates and extrapolates to its corners' own coordinates (closed form); the SixNodeTri with no GP_PARAM still draws its element mean, per group", () => {
   const rf = openLadruno(H5, SIMPLEX_TRI);
   try {
     const st = rf.index.stages[0]!;
@@ -737,10 +739,13 @@ test("VF2 #2950: a real BezierTri6 .ladruno group has no natural coordinates, so
     const bez = byClass("BezierTri6");
     const six = byClass("SixNodeTri");
     const quad = byClass("FourNodeQuad");
-    assert.equal(bez.naturalCoords, null, "PARAM_DOMAIN \"bary\": no natural coordinates offered");
+    // BezierTri6's GP3_xi rule is gmsh (u, v) already (BezierTri6.cpp N0 = xi3^2): the rows as stored.
+    assert.deepEqual(bez.naturalCoords, [[1 / 6, 1 / 6], [2 / 3, 1 / 6], [1 / 6, 2 / 3]], "PARAM_DOMAIN \"bary\": BezierTri6's rows, in gmsh's frame");
+    assert.equal(six.naturalCoords, null, "no GP_PARAM: no natural coordinates offered");
     assert.ok(quad.naturalCoords, "the quad's [-1,1] GP_PARAM is offered");
-    // The open names the BezierTri6 group and its domain (the warning the refusal points at).
-    assert.ok(rf.index.warnings.some((w) => w.includes("strains/33000-BezierTri6[1000:1:0]") && /PARAM_DOMAIN is "bary"/.test(w)), rf.index.warnings.join("\n"));
+    // The open no longer refuses the BezierTri6's domain; it still names the SixNodeTri that has no GP_PARAM.
+    assert.ok(!rf.index.warnings.some((w) => /PARAM_DOMAIN is "bary"/.test(w)), rf.index.warnings.join("\n"));
+    assert.ok(rf.index.warnings.some((w) => w.includes("209-SixNodeTri") && /has no QUADRATURE\/GP_PARAM/.test(w)), rf.index.warnings.join("\n"));
 
     // The cells the model gives these elements: the file's own connectivity, as gmsh tri6 (9) and quad4 (3).
     const f = new h5wasm.File(SIMPLEX_TRI, "r");
@@ -763,11 +768,13 @@ test("VF2 #2950: a real BezierTri6 .ladruno group has no natural coordinates, so
     assert.deepEqual(groups.map((g) => g.eids[0]), [2, 5, 3]);
     const v = extrapolationVerdict(groups, cells);
     assert.equal(v.corners, null);
-    // The two tri6 groups with no coordinates fall back (SixNodeTri writes no GP_PARAM at all); the quad does not.
-    assert.deepEqual(meanFallbackGroups(groups, v), [six.id, bez.id]);
+    // Only the SixNodeTri (no GP_PARAM at all) falls back, with noCoordinatesRefusal's words; the BezierTri6 and the quad do not.
+    assert.match(v.matrix!, /^group strains\/209-SixNodeTri\[0:0:0\] has no natural coordinates these shape functions can read: .*no QUADRATURE\/GP_PARAM/);
+    assert.ok(!v.matrix!.includes("group strains/33000-BezierTri6"), v.matrix!);
+    assert.deepEqual(meanFallbackGroups(groups, v), [six.id]);
     assert.throws(() => buildPlan("gauss_node", groups, cells), /buildPlan: group strains\/209-SixNodeTri/);
-    assert.throws(() => buildPlan("gauss_node_discrete", groups, cells, [six.id, bez.id]), /buildPlan: /);
-    const plan = buildPlan("gauss_node", groups, cells, [six.id, bez.id]);
+    assert.throws(() => buildPlan("gauss_node_discrete", groups, cells, [six.id]), /buildPlan: /);
+    const plan = buildPlan("gauss_node", groups, cells, [six.id]);
 
     // Each class labels its columns its own way (the file's COMP_NAMES); column `axis` is eps_ii in all three.
     assert.deepEqual(bez.components.slice(0, 2), ["strains/eps_xx", "strains/eps_yy"]);
@@ -777,10 +784,16 @@ test("VF2 #2950: a real BezierTri6 .ladruno group has no natural coordinates, so
       const vals = [six, quad, bez].map((g) => rf.readGaussStep(st.id, g.id, g.components[axis]!, 0));
       const r = applyPlan(plan, vals);
       const centroid = TRI.reduce((a, p) => a + p[axis]!, 0) / 3;
-      // The BezierTri6's corners (positions 7..9: SixNodeTri 3, quad 4, then BezierTri6 3) hold its mean: the centroid.
-      for (let c = 7; c < 10; c++) assert.ok(Math.abs(r.corner[c]! - centroid) <= 1e-12, `${comp}: BezierTri6 corner ${c - 7}: ${r.corner[c]} vs centroid ${centroid}`);
-      // Extrapolated instead, each corner would take its own coordinate (the strain is the position): the two differ.
+      // The BezierTri6's corners (positions 7..9: SixNodeTri 3, quad 4, then BezierTri6 3) are extrapolated: each takes
+      // its own coordinate, since the strain is the position (closed form). Its mean, the centroid, differs from each.
+      for (let c = 7; c < 10; c++) {
+        const want = TRI[c - 7]![axis]!;
+        assert.ok(Math.abs(r.corner[c]! - want) <= 1e-9, `${comp}: BezierTri6 corner ${c - 7}: ${r.corner[c]} vs its coordinate ${want}`);
+      }
       assert.ok(TRI.every((p) => Math.abs(p[axis]! - centroid) > 0.1));
+      // The SixNodeTri (positions 0..2) still holds its element mean on each corner.
+      const sixMean = vals[0]!.reduce((a, b) => a + b, 0) / vals[0]!.length;
+      for (let c = 0; c < 3; c++) assert.ok(rel(r.corner[c]!, sixMean), `${comp}: SixNodeTri corner ${c}: ${r.corner[c]} vs its mean ${sixMean}`);
       // The quad, with coordinates, keeps its extrapolation: its own matrix on its values, not its mean.
       const m = extrapolationMatrix(3, quad.naturalCoords!)!;
       const q = vals[1]!;

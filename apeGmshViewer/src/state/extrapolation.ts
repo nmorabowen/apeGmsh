@@ -197,7 +197,7 @@ function noCoordinatesRefusal(id: string): string {
   return (
     `group ${id} has no natural coordinates these shape functions can read: a native _natural_coords that is not floating point, ` +
     `a native triangle or tet group whose _natural_coords match neither the Gauss table older apeGmsh versions wrote for its class nor the current one (#2274), ` +
-    `a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]" (a BezierTri6's or BezierTet10's barycentric points), ` +
+    `a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]" and is no "bary" rule the reader can convert (an unknown TOPOLOGY or FAMILY, or a row outside the simplex), ` +
     `or a .ladruno group with no QUADRATURE/GP_PARAM ` +
     `(a warning when the file opened names the group, the class or the domain)`
   );
