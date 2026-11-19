@@ -309,3 +309,43 @@ slice 10 deletes native results; no new native file is written in the
 meantime. D2 holds: the app reads `.ladruno` against the fork's format
 documents and its `GENERATOR` and `FORMAT_VERSION` gate, and imports
 nothing from apeGmsh.
+
+## Pointer (2026-11-10): ADR 0132
+
+[ADR 0132](0132-workspace-file-and-variants-manifest.md) (Accepted 2026-11-03)
+supersedes two clauses of this ADR in part. D1: a set's files are no longer
+only what a run leaves behind. The set gains `<stem>.workspace.h5`, which the
+user makes in the app, which no run writes, and which a run's unconditional
+rewrite of its artifacts never touches. D3, as
+[ADR 0130](0130-states-quantities-and-the-user-results-file.md) D2 amended it:
+the app writes one zone of `.user.h5` and one whole file,
+`<stem>.workspace.h5`. ADR 0132 now governs `<stem>.workspace.h5` and the
+variants manifest `<study>.variants.json`. The decision text above is
+unchanged.
+
+## Pointer (2026-11-13): ADR 0134
+
+[ADR 0134](0134-mpm-particles.md) (Accepted 2026-11-13) amends D1's
+artifact table by one row: `<deck stem>.particles.h5`, the particle set. The
+deck emitter writes it next to the deck it emits, in the same call. The fork
+owns its format, as it owns `.ladruno`. It has an overwrite rule of its own,
+which `src/apeGmsh/_artifact_policy.py` does not govern, and it pairs with
+its model by stem only. Like `.user.h5` and `.workspace.h5`, it is a file of
+the set, not a zone of `model.h5`. ADR 0134 D1 governs the file. The decision
+text above is unchanged.
+
+## Pointer (2026-11-18): ADR 0135
+
+[ADR 0135](0135-material-tester-runs-the-fork.md) (Accepted 2026-11-18) amends
+D4: besides reading the artifacts and the schema documents, the app may run the
+Ladruno fork's `OpenSees.exe` on one declared material, under that ADR's rules for
+untrusted model values. The wall against apeGmsh and Python stands. The decision
+text above is unchanged.
+
+## Pointer (2026-11-18): ADR 0137
+
+[ADR 0137](0137-apegmshviewer-large-models-and-tool-hosting.md) (Accepted 2026-11-18) amends three decisions.
+D5: HDF5 may be read in an Electron utility process of the app's own, as well as in-process. D6: the one store stays in the
+model window, and tool windows receive a small one-way context, send events and request data. D7: one model window, plus
+tool placements in separate-renderer tool windows, a dock and anchored cards. ADR 0137 governs tool hosting and the supported
+model size. The decision text above is unchanged.

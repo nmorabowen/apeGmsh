@@ -238,6 +238,40 @@ CORPUS: tuple[Model, ...] = (
                 # #2416: the equation-route ties (equationConstraint lines).
                 "tie_equation", "distributing_equation", "embedded_equation")
       for p in _B),
+    # #2448: the same equation-route ties claimed by a stage, whose block
+    # stores their lines (opensees 2.40.0); the last row mixes them with a
+    # stage equalDOF over two stages, so the stage merge order is seen.
+    *(_m("test_h5_mp_constraints_replay", "_staged_mp_bridge", stages=s,
+         partitioned=p)
+      for s in ("tie_equation", "distributing_equation", "embedded_equation",
+                "tie_equation,rot_equal_dof;top_a_distributing")
+      for p in _B),
+    # ... and a stage whose equation lines precede a penalty embedded
+    # node's element, so the stage emit-index merge is seen for them.
+    _m("test_h5_mp_constraints_replay", "_staged_mp_bridge",
+       stages="tie_equation,pen_embedded", partitioned=False),
+    # #2530: a stage equation tie and a stage equalDOF across the ranks to
+    # the fixed base node 1, which the partitioned emit ghosts and re-fixes
+    # inside the stage; the replay drops the ghost's row by its declaration.
+    *(_m("test_h5_mp_constraints_replay", "_staged_mp_bridge", stages=s,
+         partitioned=p, handler=h)
+      for s, h in (("tie_fixed_master", "Lagrange"),
+                   ("fixed_equal_dof", "Transformation"))
+      for p in _B),
+    # #2531: two equal equation ties, as one ``s.tie(name=...)`` over two
+    # equal ties leaves: a named pair and an unnamed one across the ranks
+    # (auto Lagrange, no analyze), and a named pair a stage claims and
+    # solves. The partitioned capture once kept one row of each pair. The
+    # stage pair is rank-local under Penalty: two equal equations make a
+    # Lagrange solve singular, and the live net runs every row.
+    *(_m("test_h5_mp_constraints_replay", "_mp_bridge", kinds=k,
+         partitioned=p)
+      for k in ("tie_equation,tie_equation",
+                "distributing_equation,distributing_equation")
+      for p in _B),
+    *(_m("test_h5_mp_constraints_replay", "_staged_mp_bridge",
+         stages="tie_local,tie_local", partitioned=p, handler="Penalty")
+      for p in _B),
     # #2440: the ManzariDafalias ``-stage 0`` line is the deck emitter's, so
     # the archive stores none of it and the replay writes it back: before
     # the analyze of the stage that adds the upper quad, then the user's 1.

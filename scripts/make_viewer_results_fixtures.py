@@ -337,13 +337,20 @@ def deform_fixtures(out_dir: Path) -> None:
     ``deform_2d.h5`` is composed by the bridge with ``ops.model(ndm=2, ndf=2)``,
     so ``/meta/ndm`` is 2 (neutral 2.34.0 on): a 2 x 1 rectangle of 4 x 2
     ``FourNodeQuad`` (``Panel``) at z = 0, and a 2 m tie of 4 ``Truss``
-    segments (``Tie``) along y = 1.5. ``deform_2d.results.h5`` holds one
-    static stage, ``load``, of ``DEFORM_STEPS`` steps with only
-    ``displacement_x`` and ``displacement_y`` (the shorthand clipped to
-    ``ndm``, as h5-schema.md says a 2-D file has no ``displacement_z``)::
+    segments (``Tie``) along y = 1.5. ``deform_2d.ladruno`` (V1a, #2763;
+    ADR 0131 D10 stage 0, in place of the native ``deform_2d.results.h5``)
+    holds one static ``MODEL_STAGE[1]`` of ``DEFORM_STEPS`` steps with only
+    ``ON_NODES/DISPLACEMENT`` ``Ux,Uy`` (``ndm`` columns, as the fork
+    recorder writes a 2-D model), stamped against ``deform_2d.h5``
+    (ADR 0122 D3)::
 
         s = 0.01 * (k + 1)
-        displacement_x = s * y,  displacement_y = s * (0.5 * x + 0.25 * y)
+        Ux = s * y,  Uy = s * (0.5 * x + 0.25 * y)
+
+    No engine solved the values, so the stamp says
+    ``opensees_backend="unknown"``; no element bucket is written
+    (``PROVENANCE@unsupported`` names ``elements``), and the elements bind
+    from ``deform_2d.h5``.
     """
     from apeGmsh.opensees import apeSees
 
@@ -369,19 +376,35 @@ def deform_fixtures(out_dir: Path) -> None:
     ops.element.Truss(pg="Tie", A=1e-3, material=steel)
     model_path = out_dir / f"{name}.h5"
     ops.h5(str(model_path))
+    print(f"wrote {model_path.name}: {len(fem.nodes.ids)} nodes, {len(fem.elements.ids)} elements, ndm 2")
+    deform_ladruno(model_path)
 
+
+def deform_ladruno(model_path: Path) -> None:
+    """Write ``<stem>.ladruno`` beside the ``deform_2d`` model at ``model_path``, stamped against it.
+
+    The nodes are read back from the model file, so ``--deform-ladruno``
+    rewrites the committed ``deform_2d.ladruno`` against the committed
+    ``deform_2d.h5`` without composing the model again (a fresh compose
+    writes the current schema versions, hence another ``model_hash``).
+    """
+    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.results.readers._ladruno_writer import write_nodal_history
+
+    fem = FEMData.from_h5(str(model_path))
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     xyz = np.asarray(fem.nodes.coords, dtype=np.float64).reshape(-1, 3)
-    res_path = out_dir / f"{name}.results.h5"
-    with NativeWriter(res_path) as w:
-        w.open(fem=fem, source_type="domain_capture", analysis_label="V4d synthetic 2-D (#1765)", model_h5_src=model_path)
-        k = np.arange(DEFORM_STEPS, dtype=np.float64)
-        sid = w.begin_stage(name="load", kind="static", time=(k + 1) / DEFORM_STEPS)
-        steps = [deform_values(xyz, kk) for kk in range(DEFORM_STEPS)]
-        w.write_nodes(sid, "partition_0", node_ids=node_ids,
-                      components={c: np.stack([st[c] for st in steps]) for c in steps[0]})
-        w.end_stage()
-    print(f"wrote {model_path.name} and {res_path.name}: {node_ids.size} nodes, {len(fem.elements.ids)} elements, ndm 2")
+    res_path = model_path.with_suffix(".ladruno")
+    k = np.arange(DEFORM_STEPS, dtype=np.float64)
+    steps = [deform_values(xyz, kk) for kk in range(DEFORM_STEPS)]
+    # DATA[T x n x ndm]: Ux, Uy per node, rows in node_ids order.
+    disp = np.stack([np.stack([st["displacement_x"], st["displacement_y"]], axis=-1) for st in steps])
+    write_nodal_history(
+        res_path, model_h5=model_path, node_ids=node_ids, coords=xyz, ndm=2,
+        kind="static", time=(k + 1) / DEFORM_STEPS, results={"DISPLACEMENT": disp},
+        source="viewer-fixture", opensees_backend="unknown",
+    )
+    print(f"wrote {res_path.name}: {node_ids.size} nodes, {DEFORM_STEPS} steps, stamped against {model_path.name}")
 
 
 def stamp_variants(out_dir: Path) -> None:
@@ -976,7 +999,8 @@ def main() -> None:
     ap.add_argument("--tet-size", type=float, default=0.0335)
     ap.add_argument("--staged", action="store_true", help="write the V4b staged pair (staged_activation.h5 + .results.h5)")
     ap.add_argument("--contour", action="store_true", help="write the V4c1 contour pairs (contour_staged.*, contour_nodata.*)")
-    ap.add_argument("--deform", action="store_true", help="write the V4d 2-D pair (deform_2d.h5 + .results.h5)")
+    ap.add_argument("--deform", action="store_true", help="write the V4d 2-D pair (deform_2d.h5 + .ladruno)")
+    ap.add_argument("--deform-ladruno", action="store_true", help="write deform_2d.ladruno only, stamped against the existing deform_2d.h5 (V1a)")
     ap.add_argument("--stamped", action="store_true", help="write results_stamped.h5, the small file with element_index_space='fem' (V4g)")
     ap.add_argument("--reinforced", action="store_true", help="write reinforced.h5 + oracle, a 2.31 model with embeddedRebar ties (V4m)")
     ap.add_argument("--elements", action="store_true", help="write the V4c2a element-contour pairs (elem_*.h5 + .results.h5)")
@@ -1005,6 +1029,9 @@ def main() -> None:
         return
     if args.deform:
         deform_fixtures(HERE)
+        return
+    if args.deform_ladruno:
+        deform_ladruno(HERE / "deform_2d.h5")
         return
     if args.staged:
         staged_activation(HERE)

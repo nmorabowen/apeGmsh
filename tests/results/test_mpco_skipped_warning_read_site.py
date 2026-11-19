@@ -28,7 +28,8 @@ from apeGmsh.opensees._response_catalog import (
     IntRule,
 )
 from apeGmsh.results import Results
-from apeGmsh.results.readers._mpco import MPCOBucketSkippedWarning, MPCOReader
+from apeGmsh.results.readers._buckets import MPCOBucketSkippedWarning
+from apeGmsh.results.readers._mpco import MPCOReader
 from tests.conftest import _stub_model_h5_path
 from tests.results.test_mpco_custom_rule_discovery import (
     _add_damage,

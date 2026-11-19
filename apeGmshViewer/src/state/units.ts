@@ -113,6 +113,7 @@ export type FieldDimensionKind =
   | "angle"
   | "frequency"
   | "length"
+  | "curvature"
   | "velocity"
   | "acceleration"
   | "force"
@@ -134,6 +135,7 @@ const DIM_SPECS: Readonly<Record<FieldDimensionKind, DimensionExponents>> = {
   angle: { kind: "angle", f: 0, l: 0, t: 0 },
   frequency: { kind: "frequency", f: 0, l: 0, t: -1 },
   length: { kind: "length", f: 0, l: 1, t: 0 },
+  curvature: { kind: "curvature", f: 0, l: -1, t: 0 },
   velocity: { kind: "velocity", f: 0, l: 1, t: -1 },
   acceleration: { kind: "acceleration", f: 0, l: 1, t: -2 },
   force: { kind: "force", f: 1, l: 0, t: 0 },
@@ -144,7 +146,7 @@ const DIM_SPECS: Readonly<Record<FieldDimensionKind, DimensionExponents>> = {
 };
 
 /**
- * Classify a contour field into its physical dimension in `(F, L, T)`.
+ * Classify a contour or line-diagram field into its physical dimension in `(F, L, T)`.
  * Mode shapes (`stageKind === "mode"`) are unscaled eigenvectors and stay dimensionless.
  */
 export function classifyFieldDimension(
@@ -154,23 +156,63 @@ export function classifyFieldDimension(
 ): DimensionExponents {
   if (stageKind === "mode") return DIM_SPECS.dimensionless;
   const name = field.toLowerCase();
-  if (name === "rotation") return DIM_SPECS.angle;
+  if (
+    name === "rotation" ||
+    name === "chord_rotation" ||
+    name === "chord_rotation_y" ||
+    name === "chord_rotation_z" ||
+    name.startsWith("chord_rotation_")
+  ) {
+    return DIM_SPECS.angle;
+  }
   if (name.endsWith("_hz") || name === "frequency") return DIM_SPECS.frequency;
+  if (
+    name === "curvature" ||
+    name === "curvature_y" ||
+    name === "curvature_z" ||
+    name.startsWith("curvature_") ||
+    name === "torsional_strain" ||
+    name === "kappay" ||
+    name === "kappaz" ||
+    name === "theta"
+  ) {
+    return DIM_SPECS.curvature;
+  }
   if (
     name === "footfall_r" ||
     name.startsWith("footfall_r_") ||
     name === "footfall_utilization" ||
+    name === "axial_strain" ||
+    name === "shear_strain_y" ||
+    name === "shear_strain_z" ||
+    name.startsWith("shear_strain_") ||
+    name === "eps" ||
+    name === "gammay" ||
+    name === "gammaz" ||
     name.startsWith("strain") ||
     name.startsWith("damage")
   ) {
     return DIM_SPECS.dimensionless;
   }
-  if (name === "displacement" || name.startsWith("displacement_")) return DIM_SPECS.length;
+  if (
+    name === "displacement" ||
+    name.startsWith("displacement_") ||
+    name === "axial_extension"
+  ) {
+    return DIM_SPECS.length;
+  }
   if (name === "velocity" || name.startsWith("velocity_")) return DIM_SPECS.velocity;
   if (name === "acceleration" || name.startsWith("acceleration_")) return DIM_SPECS.acceleration;
   if (
     name === "reaction_force" ||
     name === "axial_force" ||
+    name === "n" ||
+    name === "shear_force_y" ||
+    name === "shear_force_z" ||
+    name === "shear_y" ||
+    name === "shear_z" ||
+    name === "vy" ||
+    name === "vz" ||
     name === "shear" ||
     name.startsWith("shear_") ||
     name === "rib_shear" ||
@@ -180,7 +222,13 @@ export function classifyFieldDimension(
   }
   if (
     name === "reaction_moment" ||
+    name === "bending_moment_y" ||
+    name === "bending_moment_z" ||
+    name === "torsional_moment" ||
     name === "torsion" ||
+    name === "t" ||
+    name === "my" ||
+    name === "mz" ||
     name === "rib_moment_pos" ||
     name === "rib_moment_neg" ||
     name.startsWith("rib_moment_")
@@ -214,6 +262,8 @@ export function unitSymbolFor(kind: FieldDimensionKind, sys: UnitSystemSpec): st
       return "Hz";
     case "length":
       return L;
+    case "curvature":
+      return `1/${L}`;
     case "velocity":
       return `${L}/${T}`;
     case "acceleration":

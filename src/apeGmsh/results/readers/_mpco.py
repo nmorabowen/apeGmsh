@@ -36,8 +36,36 @@ from . import _mpco_material_io as _mmat
 from . import _mpco_nodal_io as _mnodal
 from . import _mpco_spring_io as _mspring
 from . import _mpco_translation as _mtr
+from ._buckets import (
+    _PROGRAM_STAGE_KINDS,
+    PARTITION_REDUCTION_NONE,
+    ModeEntry,
+    MPCOBucketSkippedWarning,
+    RotationMask,
+    _empty_element_slab,
+    _empty_fiber_slab,
+    _empty_gauss_slab,
+    _empty_layer_slab,
+    _empty_line_station_slab,
+    _empty_node_slab,
+    _empty_spring_slab,
+    attach_nodes_ndf,
+    canonical_node_component,
+    discover_modes,
+    locate_node_component,
+    modal_components,
+    mode_stage_layout,
+    model_node_ids,
+    partition_reduction_from_name,
+    read_mode_shape,
+)
+from ...opensees._response_catalog import (
+    PER_MATERIAL_STRAIN_CLASSES,
+    needs_per_material_strain,
+    parse_mpco_element_key,
+)
 from ._gauss_refusals import GaussDimensionMixed
-from ._mpco_refusals import MPCOElementInTwoBuckets
+from ._buckets import MPCOElementInTwoBuckets
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 from ._tag_translation import ElementTagTranslator
 
@@ -45,52 +73,11 @@ if TYPE_CHECKING:
     import h5py
 
     from ...mesh.FEMData import FEMData
+    from ._buckets import RolesSource
 
 
 # Stage groups in MPCO are ``MODEL_STAGE[<stamp>]``
 _STAGE_PREFIX = "MODEL_STAGE["
-
-#: The kinds a program stage takes (:meth:`MPCOReader.attach_stage_names`).
-_PROGRAM_STAGE_KINDS = frozenset({"static", "transient"})
-
-
-class MPCOBucketSkippedWarning(UserWarning):
-    """A bucket the MPCO reader leaves unread, so its elements return no
-    values.
-
-    It covers two kinds of bucket:
-
-    * **Refused by its decoder** at read time, at the material-state,
-      spring and line-station levels (malformed ``META``, a
-      ``NUM_COLUMNS`` mismatch, a missing ``GP_X``, a section code with
-      no canonical). One warning per read names the file, every such
-      bucket and the decoder's reason.
-    * **Left out at discovery**, one warning per bucket naming its path,
-      the reason and the file:
-
-      - at the Gauss and material-state levels, a bucket on a nonzero
-        custom-rule index (#2115), and a standard-rule bucket whose
-        class and rule have no ``RESPONSE_CATALOG`` row (#2160);
-      - at the spring level, a ZeroLength-family bucket on a nonzero
-        custom-rule index (#2160);
-      - at the Gauss, material-state, spring, fiber and line-station
-        levels, a bucket whose bracket key does not parse as
-        ``<tag>-<Class>[<rule>:<cust>:<hdr>]`` (#2165). A key under two
-        alias groups of one token is named once.
-
-    Discovery only records a skipped bucket; the read names it, and only
-    when the bucket holds an element the read asked for (``element_ids``,
-    or a selection that resolves to them). An unfiltered read and a
-    component listing name every one, and a bucket whose ``ID`` cannot
-    be read is always named. The same filter holds for a bucket refused
-    by its decoder (#2165).
-
-    The layer level names its unread buckets, an unparseable key among
-    them, in
-    :class:`~apeGmsh.results.readers._mpco_layer_io.LayerBucketUnreadWarning`,
-    and the nodal-force level in
-    :class:`~apeGmsh.results.readers._mpco_nodal_io.NodalForceBucketSkippedWarning`.
-    """
 
 
 def _warn_skipped_buckets(
@@ -129,6 +116,98 @@ class MPCOGaussDimensionMixed(GaussDimensionMixed):
     class's elements answers (#2165).
     """
 
+
+class MPCOLineStationSourcesMixed(UserWarning):
+    """One element reads different station sets for different components
+    (#2070).
+
+    A beam whose sections answer no shear (a ``forceBeamColumn`` over an
+    ``Elastic`` section without ``-alpha``) writes a ``section.force``
+    bucket of ``P, Mz, My, T`` only. Its ``shear_y`` then falls to the
+    next-ranked source, the two ``localForce`` end stations, while its
+    axial force and moments read at every section. Each value is right,
+    so the read answers; the warning names, by element class, the
+    component that changed source, its station count, and the components
+    the ``section.force`` bucket does carry with theirs.
+    """
+
+
+def _section_force_without(
+    bucket_grp: "h5py.Group",
+    model_elements: "h5py.Group",
+    bucket: "_mline._LineBucket",
+    component: str,
+    element_ids: "Optional[ndarray]",
+) -> "dict[int, tuple[str, tuple[str, ...], int]]":
+    """The requested elements of a ``section.force`` bucket that records
+    other components but not ``component``.
+
+    Maps each element id (the file's tag) to ``(class, components,
+    station count)``. Empty when the bucket records ``component`` (its
+    slab was empty for another reason: no requested element, no step).
+    """
+    layout, _gp_x = _mline.resolve_bucket_layout(
+        model_elements, bucket_grp, bucket,
+    )
+    if component in layout.component_layout or "ID" not in bucket_grp:
+        return {}
+    ids = np.asarray(bucket_grp["ID"][...]).flatten().astype(np.int64)
+    if element_ids is not None:
+        ids = ids[np.isin(ids, np.asarray(element_ids, dtype=np.int64))]
+    entry = (bucket.elem_key.class_name, tuple(layout.component_layout),
+             int(layout.n_gauss_points))
+    return {int(e): entry for e in ids}
+
+
+def _warn_mixed_station_sources(
+    mixed: "dict[tuple[str, tuple[str, ...], int], tuple[set[tuple[str, int]], set[int]]]",
+    *, component: str, source: str, index_to_fem: Any,
+) -> None:
+    """One :class:`MPCOLineStationSourcesMixed` for a line-stations read.
+
+    ``mixed`` maps each ``section.force`` bucket's ``(class, components,
+    station count)`` to the ``(source token, station count)`` pairs its
+    elements read ``component`` from instead, and those elements' file
+    tags (``index_to_fem`` names them as the read returns them). An
+    empty map warns nothing. ``stacklevel`` points at the reader
+    method's caller.
+    """
+    if not mixed:
+        return
+    parts = []
+    for (cls, comps, n_sec), (sources, tags) in sorted(mixed.items()):
+        eids = sorted(int(e) for e in index_to_fem(
+            np.array(sorted(tags), dtype=np.int64)))
+        fallback = " and ".join(
+            f"{n} station(s) from {tok}" for tok, n in sorted(sources))
+        parts.append(
+            f"{cls} element(s) {eids[:10]}{' ...' if len(eids) > 10 else ''}"
+            f" read {component!r} at {fallback}, but {list(comps)} at "
+            f"{n_sec} section.force station(s), whose bucket records no "
+            f"{component!r}")
+    warnings.warn(
+        f"MPCO line-stations read of {component!r} in {source} mixes "
+        f"station sets: " + "; ".join(parts) + ". Each value is right, but "
+        f"the element's components do not share stations. A section that "
+        f"answers {component!r} reads every component at the sections.",
+        MPCOLineStationSourcesMixed, stacklevel=3,
+    )
+
+
+class MPCOStrainNotRecorded(ValueError):
+    """A gauss strain read covers elements of a class that answers no
+    element-level strain, and the file holds no strain rows for them
+    (#2893).
+
+    The classes are :data:`~apeGmsh.opensees._response_catalog.PER_MATERIAL_STRAIN_CLASSES`
+    (Tri31): ``ops.eleResponse(eid, "strains")`` is empty on them, so an
+    MPCO ``-E strains`` record leaves their elements out of every strain
+    bucket. Returning the other classes' rows would drop them in silence,
+    so the read refuses, naming the elements and the way out: a recorder
+    declared with ``element_class_name="Tri31"`` records strain per Gauss
+    point (``material.strain``), and those rows read as usual. A read that
+    leaves those elements out of scope answers.
+    """
 
 
 def _refuse_mixed_gauss_dims(
@@ -175,7 +254,7 @@ def _refuse_duplicate_element_ids(
 
     ``to_fem`` relabels an OpenSees tag to its fem id (the read's
     ``index_to_fem``); ``None`` when no tag map is attached. The policy
-    is :func:`~._mpco_refusals.refuse_element_in_two_buckets`'s; this
+    is :func:`~._buckets.refuse_element_in_two_buckets`'s; this
     variant also names the read and, under a tag map, the fem id.
     """
     if not parts:
@@ -348,7 +427,7 @@ class MPCOReader:
         # Mode stage id -> (host MODEL_STAGE group, its ModeEntry).
         # Mode stages are not MODEL_STAGE groups, so they never enter
         # ``_stage_to_mpco``; reads branch on this map first.
-        self._mode_refs: dict[str, tuple[str, _mnodal.ModeEntry]] = {}
+        self._mode_refs: dict[str, tuple[str, ModeEntry]] = {}
         self._host_ids: list[str] = []
         self._fem_cache: "Optional[FEMData] | _Sentinel" = _SENTINEL
         # ADR 0043 slice 1.3 — MPCO buckets are keyed by the OpenSees ops
@@ -357,7 +436,7 @@ class MPCOReader:
         # from the bound model's element_meta; ``None`` = no translation
         # (direct constructions / pre-attach reads behave as before).
         self._tag_map: "Optional[ElementTagTranslator]" = None
-        self._rotation_mask = _mnodal.RotationMask(self._path.name)
+        self._rotation_mask = RotationMask(self._path.name)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -422,7 +501,7 @@ class MPCOReader:
 
     def attach_nodes_ndf(
         self, nodes_ndf: "dict[int, int] | None", ndm: int, *,
-        roles: "_mnodal.RolesSource",
+        roles: "RolesSource",
     ) -> None:
         """Store the model's per-node ndf and DOF roles: rotation reads
         then give NaN at a node whose DOF layout has no such rotation
@@ -433,7 +512,7 @@ class MPCOReader:
         Called by :meth:`Results.from_mpco` once the model is loaded.
         """
         self._ensure_stages()
-        self._rotation_mask.attach(nodes_ndf, ndm, _mnodal.model_node_ids(
+        self._rotation_mask.attach(nodes_ndf, ndm, model_node_ids(
             [self._h5[name] for name in self._stage_to_mpco.values()],
         ), roles=roles)
 
@@ -526,7 +605,7 @@ class MPCOReader:
             ))
             on_nodes = _child(grp, "RESULTS/ON_NODES")
             host_sets.append(
-                [] if on_nodes is None else _mnodal.discover_modes(
+                [] if on_nodes is None else discover_modes(
                     on_nodes, source=f"{self._path.name} {name}",
                 )
             )
@@ -535,7 +614,7 @@ class MPCOReader:
         # right after the MODEL_STAGE that holds it (the layout of a
         # native results file).
         modes_after: dict[int, list[StageInfo]] = {}
-        for h, sid, mname, entry in _mnodal.mode_stage_layout(
+        for h, sid, mname, entry in mode_stage_layout(
             self._host_ids, names, host_sets,
         ):
             self._mode_refs[sid] = (names[h], entry)
@@ -653,7 +732,7 @@ class MPCOReader:
             on_nodes = _child(
                 self._h5[self._mode_refs[stage_id][0]], "RESULTS/ON_NODES",
             )
-            return [] if on_nodes is None else _mnodal.modal_components(on_nodes)
+            return [] if on_nodes is None else modal_components(on_nodes)
         mpco_name = self._stage_to_mpco.get(stage_id)
         if mpco_name is None:
             return []
@@ -667,7 +746,7 @@ class MPCOReader:
                 grp = on_nodes[result_name]
                 comps = _parse_components_attr(grp.attrs.get("COMPONENTS"))
                 for comp_label in comps:
-                    canonical = _mtr.canonical_node_component(
+                    canonical = canonical_node_component(
                         result_name, comp_label,
                     )
                     if canonical is not None:
@@ -926,7 +1005,7 @@ class MPCOReader:
         if stage_id in self._mode_refs:
             # A mode shape is the same at every copy of a node.
             comps = self.available_components(stage_id, ResultLevel.NODES)
-            return _mtr.PARTITION_REDUCTION_NONE if component in comps else None
+            return PARTITION_REDUCTION_NONE if component in comps else None
         mpco_name = self._stage_to_mpco.get(stage_id)
         if mpco_name is None:
             return None
@@ -936,7 +1015,7 @@ class MPCOReader:
         loc = _locate_canonical_in_mpco(on_nodes, component)
         if loc is None:
             return None
-        return _mtr.partition_reduction_from_name(loc[0])
+        return partition_reduction_from_name(loc[0])
 
     def read_nodes(
         self,
@@ -1038,7 +1117,7 @@ class MPCOReader:
         on_nodes = _child(self._h5[host], "RESULTS/ON_NODES")
         got = (
             None if on_nodes is None
-            else _mnodal.read_mode_shape(
+            else read_mode_shape(
                 on_nodes, entry, component, node_ids=node_ids,
             )
         )
@@ -1151,6 +1230,12 @@ class MPCOReader:
         element_index_parts: list[ndarray] = []
         station_coord_parts: list[ndarray] = []
         section_force_eids: set[int] = set()
+        # Elements whose section.force bucket records other components
+        # but not this one: id -> (class, components, station count).
+        no_component: dict[int, tuple[str, tuple[str, ...], int]] = {}
+        # (class, components, station count) -> ({(token, count)}, {ids})
+        mixed: dict[tuple[str, tuple[str, ...], int],
+                    tuple[set[tuple[str, int]], set[int]]] = {}
 
         # ── section.force / Custom-rule path ────────────────────────
         token, buckets, scan_skipped = _mline.scan_line_station_buckets(
@@ -1173,6 +1258,10 @@ class MPCOReader:
                     t_idx=t_idx, element_ids=element_ids,
                 )
                 if result is None:
+                    no_component.update(_section_force_without(
+                        bucket_grp, model_elements, bucket, component,
+                        element_ids,
+                    ))
                     continue
                 values, element_index, station_coord = result
                 values_parts.append(values)
@@ -1253,6 +1342,14 @@ class MPCOReader:
                 keep_mask = ~np.isin(element_index, list(covered))
                 if not keep_mask.any():
                     continue
+                kept, counts = np.unique(
+                    element_index[keep_mask], return_counts=True)
+                for eid, n in zip(kept.tolist(), counts.tolist()):
+                    if eid in no_component:
+                        fallback, eids = mixed.setdefault(
+                            no_component[eid], (set(), set()))
+                        fallback.add((src_token, int(n)))
+                        eids.add(int(eid))
                 values_parts.append(values[:, keep_mask])
                 element_index_parts.append(element_index[keep_mask])
                 station_coord_parts.append(station_coord[keep_mask])
@@ -1280,6 +1377,10 @@ class MPCOReader:
         _warn_skipped_buckets(
             skipped + unranked, what="line-stations read",
             source=self._path.name,
+        )
+        _warn_mixed_station_sources(
+            mixed, component=component, source=self._path.name,
+            index_to_fem=index_to_fem,
         )
 
         if not values_parts:
@@ -1331,6 +1432,12 @@ class MPCOReader:
         )
         _melem.warn_skipped_buckets(
             scan_skipped, element_ids=element_ids, stacklevel=2,
+        )
+        self._refuse_unrecorded_strain(
+            self._h5[mpco_name], component,
+            [on_elements[b.mpco_group_name][b.bracket_key] for b in buckets]
+            + [skip.group for skip in scan_skipped],
+            element_ids=element_ids, index_to_fem=index_to_fem,
         )
         if not buckets:
             return _empty_gauss_slab(component, time, t_idx)
@@ -1479,6 +1586,111 @@ class MPCOReader:
         self._refuse_repeated_elements(
             row_parts, what=f"gauss read of {component!r}",
             index_to_fem=index_to_fem,
+        )
+
+    def _refuse_unrecorded_strain(
+        self,
+        stage: "h5py.Group",
+        component: str,
+        strain_buckets: "list[h5py.Group]",
+        *,
+        element_ids: Optional[ndarray],
+        index_to_fem: Any,
+    ) -> None:
+        """Raise :class:`MPCOStrainNotRecorded` when a strain read covers
+        elements of a class with no element-level strain response and no
+        bucket of the read holds their rows (#2893).
+
+        The elements in scope are those of ``stage``'s ``MODEL/ELEMENTS``
+        listing whose class is in ``PER_MATERIAL_STRAIN_CLASSES`` and
+        whose catalog strain row carries ``component``, narrowed to
+        ``element_ids`` (OpenSees tags; ``None`` asks for every element).
+        ``strain_buckets`` is every bucket the scan found for the read,
+        read or skipped: an element with a row in one of them is recorded
+        (a skipped bucket is already named by its own warning). A file
+        whose stage lists no elements has none in scope.
+        """
+        import h5py
+
+        mapping = _melem.canonical_to_gauss_token(component)
+        if mapping is None:
+            return
+        catalog_token = mapping[1]
+        # Not a strain read for any such class (a stress read): no listing
+        # is looked at.
+        if not any(needs_per_material_strain(cls, catalog_token)
+                   for cls in PER_MATERIAL_STRAIN_CLASSES):
+            return
+        elements = _child(stage, "MODEL/ELEMENTS")
+        if elements is None:
+            return
+        in_scope: dict[str, list[ndarray]] = {}
+        for ds_name in elements:
+            ds = elements[ds_name]
+            if not (isinstance(ds, h5py.Dataset) and ds.ndim == 2
+                    and ds.shape[0] and ds.shape[1]):
+                continue
+            tags = np.asarray(ds[:, 0], dtype=np.int64)
+            if element_ids is not None:
+                tags = tags[np.isin(tags, np.asarray(element_ids, np.int64))]
+            if not tags.size:
+                continue
+            try:
+                key = parse_mpco_element_key(ds_name)
+            except ValueError as exc:
+                # Only a listing the read covers can hide such a class.
+                raise ValueError(
+                    f"MPCO gauss read of {component!r} in {self._path.name}: "
+                    f"the element listing {ds.name} names no class ({exc}), "
+                    f"and the read covers its element(s) "
+                    f"{np.asarray(index_to_fem(tags), np.int64).tolist()}, "
+                    f"so it cannot tell whether they answer element-level "
+                    f"strain."
+                ) from exc
+            if not needs_per_material_strain(key.class_name, catalog_token):
+                continue
+            # A class whose strain row lacks the component would not answer
+            # it from any record; one with no row is kept in scope.
+            layout = _melem.catalog_layout(
+                key, catalog_token, where=ds.name,
+            )
+            answers = layout is None or component in (
+                layout.component_layout
+                + (_melem._PLANE_OUT_OF_PLANE.get(layout.component_layout),)
+            )
+            if not answers:
+                continue
+            in_scope.setdefault(key.class_name, []).append(tags)
+        if not in_scope:
+            return
+        recorded = np.concatenate([np.empty(0, dtype=np.int64)] + [
+            np.asarray(grp["ID"][...], dtype=np.int64).ravel()
+            for grp in strain_buckets if "ID" in grp
+        ])
+        missing = {
+            cls: np.setdiff1d(np.concatenate(parts), recorded)
+            for cls, parts in in_scope.items()
+        }
+        missing = {cls: ids for cls, ids in missing.items() if ids.size}
+        if not missing:
+            return
+        listing = "; ".join(
+            f"{cls} element(s) "
+            f"{np.asarray(index_to_fem(ids), dtype=np.int64).tolist()}"
+            for cls, ids in sorted(missing.items())
+        )
+        classes = sorted(missing)
+        raise MPCOStrainNotRecorded(
+            f"MPCO gauss read of {component!r} in {self._path.name} covers "
+            f"{listing}, and the file holds no strain rows for them. "
+            f"{', '.join(classes)} answers no element-level strain "
+            f"(ops.eleResponse(eid, 'strains') is empty), so a strains "
+            f"record leaves those elements out, and the read would drop "
+            f"them in silence. Record the strain with "
+            f"element_class_name={classes[0]!r} on the recorder "
+            f"declaration, which records it per Gauss point "
+            f"(material.strain), or read only elements of other classes "
+            f"(element_ids, or a physical group without them)."
         )
 
     def _refuse_repeated_elements(
@@ -1819,7 +2031,7 @@ def attach_model_nodes_ndf(
     see :func:`_mpco_nodal_io.attach_nodes_ndf`."""
     from ._mpco_multi import MPCOMultiPartitionReader
 
-    _mnodal.attach_nodes_ndf(
+    attach_nodes_ndf(
         reader, (MPCOReader, MPCOMultiPartitionReader), model_h5, ndm,
     )
 
@@ -1866,7 +2078,7 @@ def _locate_canonical_in_mpco(
     :func:`_mpco_translation.locate_node_component` pick the group by its
     precedence, never by HDF5 iteration order.
     """
-    return _mtr.locate_node_component(
+    return locate_node_component(
         (
             (name, _parse_components_attr(
                 on_nodes_grp[name].attrs.get("COMPONENTS"),
@@ -1877,82 +2089,3 @@ def _locate_canonical_in_mpco(
     )
 
 
-def _empty_node_slab(component: str, time: ndarray, t_idx) -> NodeSlab:
-    if t_idx is None:
-        t_idx = np.arange(time.size, dtype=np.int64)
-    return NodeSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        node_ids=np.array([], dtype=np.int64),
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )
-
-
-def _empty_element_slab(component: str, time: ndarray, time_slice) -> ElementSlab:
-    t_idx = resolve_time_slice(time_slice, time)
-    return ElementSlab(
-        component=component,
-        values=np.zeros((t_idx.size, 0, 0), dtype=np.float64),
-        element_ids=np.array([], dtype=np.int64),
-        time=time[t_idx],
-    )
-
-
-def _empty_gauss_slab(component: str, time: ndarray, t_idx) -> GaussSlab:
-    return GaussSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        element_index=np.array([], dtype=np.int64),
-        natural_coords=np.zeros((0, 3), dtype=np.float64),
-        local_axes_quaternion=None,
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )
-
-
-def _empty_line_station_slab(
-    component: str, time: ndarray, t_idx,
-) -> LineStationSlab:
-    return LineStationSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        element_index=np.array([], dtype=np.int64),
-        station_natural_coord=np.array([], dtype=np.float64),
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )
-
-
-def _empty_fiber_slab(component: str, time: ndarray, t_idx) -> FiberSlab:
-    return FiberSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        element_index=np.array([], dtype=np.int64),
-        gp_index=np.array([], dtype=np.int64),
-        y=np.array([], dtype=np.float64),
-        z=np.array([], dtype=np.float64),
-        area=np.array([], dtype=np.float64),
-        material_tag=np.array([], dtype=np.int64),
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )
-
-
-def _empty_layer_slab(component: str, time: ndarray, t_idx) -> LayerSlab:
-    return LayerSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        element_index=np.array([], dtype=np.int64),
-        gp_index=np.array([], dtype=np.int64),
-        layer_index=np.array([], dtype=np.int64),
-        sub_gp_index=np.array([], dtype=np.int64),
-        thickness=np.array([], dtype=np.float64),
-        local_axes_quaternion=np.zeros((0, 4), dtype=np.float64),
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )
-
-
-def _empty_spring_slab(component: str, time: ndarray, t_idx) -> SpringSlab:
-    return SpringSlab(
-        component=component,
-        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
-        element_index=np.array([], dtype=np.int64),
-        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
-    )

@@ -91,7 +91,7 @@ def test_ns_wrapper_threads_p_delta() -> None:
     assert ops.element.ASDShellT3(pg="Cols", section=sec, p_delta=True).p_delta
 
 
-_PIN = "6ee6a04fdc9e8a4699b9c483284151f80b48f701"
+_PIN = "cfe47825407f2918081eb8083d5865206ddbfd69"
 #: The maintainer's venv build, which predates c83ee812e.
 _STALE_FORK = "79e0623670c61c768357a01dff1477a4a0ef7e06"
 
@@ -291,6 +291,8 @@ def test_rsa_scale_multiplies_sa_and_emits_no_scale_token(
 ) -> None:
     """Exact on every build: the fork's -scale is ignored before c83ee812e."""
     monkeypatch.setattr(live, "LiveOpsEmitter", _RsaLive)
+    # A fork-only verb: it refuses on stock before the wipe (#2533).
+    monkeypatch.setattr(live, "_get_ops", lambda: _ForkOps(_pin_sha()))
     ops = apeSees(cast(Any, make_two_node_beam()))
     ops.model(ndm=3, ndf=6)
     ops.response_spectrum_analysis(

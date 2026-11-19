@@ -1,5 +1,22 @@
-import re, collections, datetime as dt, random
-SP = r"C:/Users/nmora/AppData/Local/Temp/claude/C--Users-nmora-Github-apeGmsh--claude-worktrees-apegmsh-strains-assessment-c5f7dd/8e66ae63-de64-40a9-90ff-defa6b33bbfd/scratchpad/panel/P8"
+"""Triage KPIs from the commit log: PR counts over 90 days, fix share, CHANGELOG/index/skill
+touch rates, >2000-line hub touches, and a same-file proximity test for fix PRs.
+
+The weekly triage names the gh method as the method of record; this is a prototype.
+
+Run from a clone of the repo:
+
+    python internal_docs/program/prototypes/prstats2.py [WORKDIR]
+
+WORKDIR holds the input ``log_names.txt`` (a ``--name-only`` log with a
+``@@@<sha>\\t<date>\\t<subject>`` header per commit). Default: ``<system temp>/prstats2``.
+If the file is missing it is generated from the current directory's history.
+"""
+import re, collections, datetime as dt, random, os, sys, subprocess, tempfile
+SP = sys.argv[1] if len(sys.argv) > 1 else os.path.join(tempfile.gettempdir(), "prstats2")
+os.makedirs(SP, exist_ok=True)
+if not os.path.exists(os.path.join(SP, "log_names.txt")):
+    with open(os.path.join(SP, "log_names.txt"), "w", encoding="utf-8") as fh:
+        subprocess.run(["git", "log", "--name-only", "--format=@@@%H%x09%as%x09%s"], stdout=fh, check=True)
 commits = []; cur = None
 for line in open(SP + "/log_names.txt", encoding="utf-8", errors="replace"):
     line = line.rstrip("\n")

@@ -1,0 +1,3506 @@
+{
+ "version": 1,
+ "rtol": 1e-12,
+ "about": "ADR 0130 D4 conformance fixture; written by make_conformance.py. null is NaN.",
+ "states": {
+  "stage|D|-1|0": {
+   "key_names": [
+    "id"
+   ],
+   "keys": [
+    [
+     1
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ]
+   ],
+   "components": [
+    "ux",
+    "uy"
+   ],
+   "values": [
+    [
+     1.0,
+     2.0
+    ],
+    [
+     3.0,
+     4.0
+    ],
+    [
+     5.0,
+     6.0
+    ]
+   ]
+  },
+  "stage|L|-1|0": {
+   "key_names": [
+    "id"
+   ],
+   "keys": [
+    [
+     1
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ]
+   ],
+   "components": [
+    "ux",
+    "uy"
+   ],
+   "values": [
+    [
+     0.5,
+     -1.0
+    ],
+    [
+     2.0,
+     0.0
+    ],
+    [
+     -3.0,
+     1.0
+    ]
+   ]
+  },
+  "stage|W|-1|0": {
+   "key_names": [
+    "id"
+   ],
+   "keys": [
+    [
+     1
+    ],
+    [
+     2
+    ]
+   ],
+   "components": [
+    "ux"
+   ],
+   "values": [
+    [
+     10.0
+    ],
+    [
+     20.0
+    ]
+   ]
+  },
+  "stage|E|-1|0": {
+   "key_names": [
+    "id"
+   ],
+   "keys": [
+    [
+     1
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ]
+   ],
+   "components": [
+    "ux",
+    "uy"
+   ],
+   "values": [
+    [
+     1.0,
+     null
+    ],
+    [
+     -7.0,
+     2.0
+    ],
+    [
+     3.0,
+     -3.0
+    ]
+   ]
+  },
+  "mode|eig|-1|1": {
+   "key_names": [
+    "id"
+   ],
+   "keys": [
+    [
+     1
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ]
+   ],
+   "components": [
+    "ux",
+    "uy"
+   ],
+   "values": [
+    [
+     1.0,
+     0.0
+    ],
+    [
+     0.5,
+     0.2
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ]
+  },
+  "mode|eig|-1|2": {
+   "key_names": [
+    "id"
+   ],
+   "keys": [
+    [
+     1
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ]
+   ],
+   "components": [
+    "ux",
+    "uy"
+   ],
+   "values": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     -0.5,
+     0.3
+    ],
+    [
+     1.0,
+     0.0
+    ]
+   ]
+  },
+  "mode|eig|-1|3": {
+   "key_names": [
+    "id"
+   ],
+   "keys": [
+    [
+     1
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ]
+   ],
+   "components": [
+    "ux",
+    "uy"
+   ],
+   "values": [
+    [
+     0.2,
+     0.2
+    ],
+    [
+     0.1,
+     -0.4
+    ],
+    [
+     -0.3,
+     0.6
+    ]
+   ]
+  },
+  "spectrum|Ex|-1|1": {
+   "key_names": [
+    "id"
+   ],
+   "keys": [
+    [
+     1
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ]
+   ],
+   "components": [
+    "ux",
+    "uy"
+   ],
+   "values": [
+    [
+     3.0,
+     1.0
+    ],
+    [
+     2.0,
+     -2.0
+    ],
+    [
+     1.0,
+     0.5
+    ]
+   ]
+  },
+  "spectrum|Ex|-1|2": {
+   "key_names": [
+    "id"
+   ],
+   "keys": [
+    [
+     1
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ]
+   ],
+   "components": [
+    "ux",
+    "uy"
+   ],
+   "values": [
+    [
+     4.0,
+     -1.0
+    ],
+    [
+     -1.0,
+     2.0
+    ],
+    [
+     0.5,
+     1.0
+    ]
+   ]
+  },
+  "reference|Ex|-1|0": {
+   "key_names": [
+    "id"
+   ],
+   "keys": [
+    [
+     1
+    ],
+    [
+     2
+    ],
+    [
+     3
+    ]
+   ],
+   "components": [
+    "ux",
+    "uy"
+   ],
+   "values": [
+    [
+     0.1,
+     0.1
+    ],
+    [
+     0.2,
+     0.2
+    ],
+    [
+     0.3,
+     0.3
+    ]
+   ]
+  }
+ },
+ "other_states": {
+  "stage|GD|-1|0": {
+   "key_names": [
+    "id",
+    "sub"
+   ],
+   "keys": [
+    [
+     5,
+     0
+    ],
+    [
+     5,
+     1
+    ],
+    [
+     6,
+     0
+    ]
+   ],
+   "components": [
+    "sxx"
+   ],
+   "values": [
+    [
+     1.0
+    ],
+    [
+     2.0
+    ],
+    [
+     3.0
+    ]
+   ]
+  },
+  "stage|GL|-1|0": {
+   "key_names": [
+    "id",
+    "sub"
+   ],
+   "keys": [
+    [
+     5,
+     1
+    ],
+    [
+     6,
+     0
+    ],
+    [
+     6,
+     1
+    ]
+   ],
+   "components": [
+    "sxx"
+   ],
+   "values": [
+    [
+     10.0
+    ],
+    [
+     20.0
+    ],
+    [
+     30.0
+    ]
+   ]
+  },
+  "stage|XD|-1|0": {
+   "key_names": [
+    "kind",
+    "row"
+   ],
+   "keys": [
+    [
+     "cut",
+     0
+    ],
+    [
+     "storey",
+     2
+    ]
+   ],
+   "components": [
+    "V"
+   ],
+   "values": [
+    [
+     4.0
+    ],
+    [
+     -1.0
+    ]
+   ]
+  },
+  "stage|XL|-1|0": {
+   "key_names": [
+    "kind",
+    "row"
+   ],
+   "keys": [
+    [
+     "cut",
+     0
+    ],
+    [
+     "a_point_set",
+     1
+    ]
+   ],
+   "components": [
+    "V"
+   ],
+   "values": [
+    [
+     6.0
+    ],
+    [
+     2.5
+    ]
+   ]
+  }
+ },
+ "eigenvalues": {
+  "mode|eig|-1|1": 39.47841760435743,
+  "mode|eig|-1|2": 157.91367041742973,
+  "mode|eig|-1|3": 986.9604401089358
+ },
+ "cases": {
+  "Ex": {
+   "mode": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "lambda": [
+    39.47841760435743,
+    48.738787165873376,
+    6168.502750680849,
+    10966.22711232151
+   ],
+   "sa_period": [
+    0.0,
+    0.0,
+    0.05,
+    0.05
+   ],
+   "damping": [
+    0.05,
+    0.05,
+    0.03,
+    0.02
+   ],
+   "increments": [
+    {
+     "key_names": [
+      "id"
+     ],
+     "keys": [
+      [
+       1
+      ],
+      [
+       2
+      ],
+      [
+       3
+      ]
+     ],
+     "components": [
+      "ux",
+      "uy"
+     ],
+     "values": [
+      [
+       3.0,
+       1.0
+      ],
+      [
+       2.0,
+       -2.0
+      ],
+      [
+       1.0,
+       0.5
+      ]
+     ]
+    },
+    {
+     "key_names": [
+      "id"
+     ],
+     "keys": [
+      [
+       1
+      ],
+      [
+       2
+      ],
+      [
+       3
+      ]
+     ],
+     "components": [
+      "ux",
+      "uy"
+     ],
+     "values": [
+      [
+       4.0,
+       -1.0
+      ],
+      [
+       -1.0,
+       2.0
+      ],
+      [
+       0.5,
+       1.0
+      ]
+     ]
+    },
+    {
+     "key_names": [
+      "id"
+     ],
+     "keys": [
+      [
+       1
+      ],
+      [
+       2
+      ],
+      [
+       3
+      ]
+     ],
+     "components": [
+      "ux",
+      "uy"
+     ],
+     "values": [
+      [
+       0.5,
+       0.25
+      ],
+      [
+       1.0,
+       -0.5
+      ],
+      [
+       0.2,
+       0.1
+      ]
+     ]
+    },
+    {
+     "key_names": [
+      "id"
+     ],
+     "keys": [
+      [
+       1
+      ],
+      [
+       2
+      ],
+      [
+       3
+      ]
+     ],
+     "components": [
+      "ux",
+      "uy"
+     ],
+     "values": [
+      [
+       -0.25,
+       0.5
+      ],
+      [
+       0.5,
+       0.5
+      ],
+      [
+       0.1,
+       -0.3
+      ]
+     ]
+    }
+   ]
+  },
+  "Ey": {
+   "mode": [
+    1,
+    2,
+    3
+   ],
+   "lambda": [
+    61.68502750680849,
+    438.6490844928604,
+    3947.8417604357433
+   ],
+   "sa_period": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "damping": [
+    0.05,
+    0.05,
+    0.05
+   ],
+   "increments": [
+    {
+     "key_names": [
+      "id"
+     ],
+     "keys": [
+      [
+       1
+      ],
+      [
+       2
+      ],
+      [
+       3
+      ]
+     ],
+     "components": [
+      "ux",
+      "uy"
+     ],
+     "values": [
+      [
+       1.0,
+       3.0
+      ],
+      [
+       -2.0,
+       1.0
+      ],
+      [
+       0.5,
+       2.0
+      ]
+     ]
+    },
+    {
+     "key_names": [
+      "id"
+     ],
+     "keys": [
+      [
+       1
+      ],
+      [
+       2
+      ],
+      [
+       3
+      ]
+     ],
+     "components": [
+      "ux",
+      "uy"
+     ],
+     "values": [
+      [
+       0.5,
+       -1.0
+      ],
+      [
+       1.0,
+       1.0
+      ],
+      [
+       -0.5,
+       0.5
+      ]
+     ]
+    },
+    {
+     "key_names": [
+      "id"
+     ],
+     "keys": [
+      [
+       1
+      ],
+      [
+       2
+      ],
+      [
+       3
+      ]
+     ],
+     "components": [
+      "ux",
+      "uy"
+     ],
+     "values": [
+      [
+       0.1,
+       0.2
+      ],
+      [
+       0.3,
+       -0.2
+      ],
+      [
+       0.2,
+       0.1
+      ]
+     ]
+    }
+   ]
+  },
+  "Ebad": {
+   "mode": [
+    1
+   ],
+   "lambda": [
+    0.0
+   ],
+   "sa_period": [
+    0.0
+   ],
+   "damping": [
+    0.05
+   ],
+   "increments": [
+    {
+     "key_names": [
+      "id"
+     ],
+     "keys": [
+      [
+       1
+      ],
+      [
+       2
+      ],
+      [
+       3
+      ]
+     ],
+     "components": [
+      "ux",
+      "uy"
+     ],
+     "values": [
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0
+      ]
+     ]
+    }
+   ]
+  }
+ },
+ "combinations": [
+  {
+   "name": "ULS",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.2
+    },
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.6
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "D+W",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "W",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "srss_list",
+   "rule": "srss",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": -2.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "abs_list",
+   "rule": "abs_sum",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": -2.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "env_max",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 2.0
+    },
+    {
+     "kind": "stage",
+     "source": "E",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "max",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "env_min",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 2.0
+    },
+    {
+     "kind": "stage",
+     "source": "E",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "min",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "env_absmax",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": -1.0
+    },
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 2.0
+    }
+   ],
+   "envelope": "absmax",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "modal_cqc",
+   "rule": "cqc",
+   "terms": [
+    {
+     "kind": "mode",
+     "source": "eig",
+     "step": -1,
+     "mode": 1,
+     "factor": 1.0
+    },
+    {
+     "kind": "mode",
+     "source": "eig",
+     "step": -1,
+     "mode": 2,
+     "factor": 1.0
+    },
+    {
+     "kind": "mode",
+     "source": "eig",
+     "step": -1,
+     "mode": 3,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": 0.05
+  },
+  {
+   "name": "modal_srss",
+   "rule": "srss",
+   "terms": [
+    {
+     "kind": "mode",
+     "source": "eig",
+     "step": -1,
+     "mode": 1,
+     "factor": 1.0
+    },
+    {
+     "kind": "mode",
+     "source": "eig",
+     "step": -1,
+     "mode": 2,
+     "factor": 1.0
+    },
+    {
+     "kind": "mode",
+     "source": "eig",
+     "step": -1,
+     "mode": 3,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "Ex_cqc",
+   "rule": "cqc",
+   "terms": [
+    {
+     "kind": "spectrum",
+     "source": "Ex",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "Ex_cqc_d02",
+   "rule": "cqc",
+   "terms": [
+    {
+     "kind": "spectrum",
+     "source": "Ex",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": 0.02
+  },
+  {
+   "name": "Ex_srss",
+   "rule": "srss",
+   "terms": [
+    {
+     "kind": "spectrum",
+     "source": "Ex",
+     "step": -1,
+     "mode": 0,
+     "factor": 2.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "Ex_abs",
+   "rule": "abs_sum",
+   "terms": [
+    {
+     "kind": "spectrum",
+     "source": "Ex",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "Ey_cqc",
+   "rule": "cqc",
+   "terms": [
+    {
+     "kind": "spectrum",
+     "source": "Ey",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "dir",
+   "rule": "directional",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "Ex_cqc",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "combination",
+     "source": "Ey_cqc",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": 0.3,
+   "damping": null
+  },
+  {
+   "name": "plus",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "ULS",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "combination",
+     "source": "dir",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "minus",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "ULS",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "combination",
+     "source": "dir",
+     "step": -1,
+     "mode": 0,
+     "factor": -1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "seismic_max",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "plus",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "combination",
+     "source": "minus",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "max",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "seismic_min",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "plus",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "combination",
+     "source": "minus",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "min",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "k_cqc",
+   "rule": "cqc",
+   "terms": [
+    {
+     "kind": "spectrum",
+     "source": "Ex",
+     "step": -1,
+     "mode": 1,
+     "factor": 1.0
+    },
+    {
+     "kind": "spectrum",
+     "source": "Ex",
+     "step": -1,
+     "mode": 2,
+     "factor": -1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "k_linear",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "spectrum",
+     "source": "Ex",
+     "step": -1,
+     "mode": 1,
+     "factor": 1.0
+    },
+    {
+     "kind": "reference",
+     "source": "Ex",
+     "step": -1,
+     "mode": 0,
+     "factor": 2.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "twice_ULS",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "ULS",
+     "step": -1,
+     "mode": 0,
+     "factor": 2.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "bad_lambda",
+   "rule": "cqc",
+   "terms": [
+    {
+     "kind": "spectrum",
+     "source": "Ebad",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "no_stage",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "Q",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "env_unit",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "E",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "max",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "gauss_ULS",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "GD",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.2
+    },
+    {
+     "kind": "stage",
+     "source": "GL",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.6
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "entity_env",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "XD",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "stage",
+     "source": "XL",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "max",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "uses_model",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "M_base",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.5
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "clash",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "cyc_a",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "cyc_b",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "cyc_b",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "cyc_a",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "reaches_cyc",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    },
+    {
+     "kind": "combination",
+     "source": "cyc_a",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "on_absent",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "combination",
+     "source": "nobody",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": " padded",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "dup",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "dup",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "bad_rule",
+   "rule": "median",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "no_terms",
+   "rule": "linear",
+   "terms": [],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "bad_param",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "bad_term",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stack",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "both_faults",
+   "rule": "envelope",
+   "terms": [
+    {
+     "kind": "stack",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  }
+ ],
+ "model_combinations": [
+  {
+   "name": "M_base",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "D",
+     "step": -1,
+     "mode": 0,
+     "factor": 2.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "clash",
+   "rule": "linear",
+   "terms": [
+    {
+     "kind": "stage",
+     "source": "L",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  },
+  {
+   "name": "M_case",
+   "rule": "cqc",
+   "terms": [
+    {
+     "kind": "spectrum",
+     "source": "Ex",
+     "step": -1,
+     "mode": 0,
+     "factor": 1.0
+    }
+   ],
+   "envelope": "",
+   "fraction": null,
+   "damping": null
+  }
+ ],
+ "quantities": {
+  "recorded": {
+   "linear": true,
+   "scale": 1.0,
+   "stored": {}
+  },
+  "m_xx": {
+   "linear": true,
+   "scale": 0.5,
+   "stored": {}
+  },
+  "wood_armer_top": {
+   "linear": false,
+   "scale": 3.0,
+   "stored": {
+    "ULS": {
+     "key_names": [
+      "id"
+     ],
+     "keys": [
+      [
+       1
+      ],
+      [
+       2
+      ],
+      [
+       3
+      ]
+     ],
+     "components": [
+      "ux",
+      "uy"
+     ],
+     "values": [
+      [
+       9.0,
+       8.0
+      ],
+      [
+       7.0,
+       6.0
+      ],
+      [
+       5.0,
+       4.0
+      ]
+     ]
+    }
+   }
+  }
+ },
+ "table": [
+  {
+   "origin": "user",
+   "row": 28,
+   "name": "clash",
+   "reason": "clash"
+  },
+  {
+   "origin": "user",
+   "row": 29,
+   "name": "cyc_a",
+   "reason": "cycle"
+  },
+  {
+   "origin": "user",
+   "row": 30,
+   "name": "cyc_b",
+   "reason": "cycle"
+  },
+  {
+   "origin": "user",
+   "row": 31,
+   "name": "reaches_cyc",
+   "reason": "cycle"
+  },
+  {
+   "origin": "user",
+   "row": 32,
+   "name": "on_absent",
+   "reason": "unresolved"
+  },
+  {
+   "origin": "user",
+   "row": 33,
+   "name": " padded",
+   "reason": "empty-name"
+  },
+  {
+   "origin": "user",
+   "row": 34,
+   "name": "dup",
+   "reason": "duplicate"
+  },
+  {
+   "origin": "user",
+   "row": 35,
+   "name": "dup",
+   "reason": "duplicate"
+  },
+  {
+   "origin": "user",
+   "row": 36,
+   "name": "bad_rule",
+   "reason": "unknown-rule"
+  },
+  {
+   "origin": "user",
+   "row": 37,
+   "name": "no_terms",
+   "reason": "no-terms"
+  },
+  {
+   "origin": "user",
+   "row": 38,
+   "name": "bad_param",
+   "reason": "bad-param"
+  },
+  {
+   "origin": "user",
+   "row": 39,
+   "name": "bad_term",
+   "reason": "bad-term"
+  },
+  {
+   "origin": "user",
+   "row": 40,
+   "name": "both_faults",
+   "reason": "bad-param"
+  },
+  {
+   "origin": "model",
+   "row": 1,
+   "name": "clash",
+   "reason": "clash"
+  },
+  {
+   "origin": "model",
+   "row": 2,
+   "name": "M_case",
+   "reason": "bad-term"
+  }
+ ],
+ "goldens": {
+  "recorded": {
+   "ULS": {
+    "signed": true,
+    "badges": [
+     "superposition assumes linearity"
+    ],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      2.0,
+      0.7999999999999998
+     ],
+     [
+      6.8,
+      4.8
+     ],
+     [
+      1.1999999999999993,
+      8.799999999999999
+     ]
+    ]
+   },
+   "D+W": {
+    "signed": true,
+    "badges": [
+     "superposition assumes linearity"
+    ],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      11.0,
+      null
+     ],
+     [
+      23.0,
+      null
+     ],
+     [
+      null,
+      null
+     ]
+    ]
+   },
+   "srss_list": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.4142135623730951,
+      2.8284271247461903
+     ],
+     [
+      5.0,
+      4.0
+     ],
+     [
+      7.810249675906654,
+      6.324555320336759
+     ]
+    ]
+   },
+   "abs_list": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      2.0,
+      4.0
+     ],
+     [
+      7.0,
+      4.0
+     ],
+     [
+      11.0,
+      8.0
+     ]
+    ]
+   },
+   "env_max": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.0,
+      null
+     ],
+     [
+      4.0,
+      4.0
+     ],
+     [
+      5.0,
+      6.0
+     ]
+    ]
+   },
+   "env_min": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.0,
+      null
+     ],
+     [
+      -7.0,
+      0.0
+     ],
+     [
+      -6.0,
+      -3.0
+     ]
+    ]
+   },
+   "env_absmax": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      4.0,
+      4.0
+     ],
+     [
+      6.0,
+      6.0
+     ]
+    ]
+   },
+   "modal_cqc": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.0202591790883424,
+      1.0217492174254277
+     ],
+     [
+      0.7071040279925386,
+      0.5380185677318169
+     ],
+     [
+      1.0411737631326432,
+      1.1673844172088539
+     ]
+    ]
+   },
+   "modal_srss": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.019803902718557,
+      1.019803902718557
+     ],
+     [
+      0.714142842854285,
+      0.5385164807134505
+     ],
+     [
+      1.044030650891055,
+      1.16619037896906
+     ]
+    ]
+   },
+   "Ex_cqc": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      6.03453408172938,
+      1.2713825776076642
+     ],
+     [
+      2.314771402998258,
+      2.053236112601796
+     ],
+     [
+      1.3465272657726617,
+      1.3277618600866807
+     ]
+    ]
+   },
+   "Ex_cqc_d02": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      5.299003450213573,
+      1.5202271369528846
+     ],
+     [
+      2.597555456434413,
+      2.6446933068658693
+     ],
+     [
+      1.2106757059095972,
+      1.1898211267610028
+     ]
+    ]
+   },
+   "Ex_srss": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      10.012492197250394,
+      3.2015621187164243
+     ],
+     [
+      5.385164807134504,
+      5.656854249492381
+     ],
+     [
+      2.3151673805580453,
+      2.2715633383201093
+     ]
+    ]
+   },
+   "Ex_abs": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      7.25,
+      2.75
+     ],
+     [
+      4.5,
+      4.0
+     ],
+     [
+      1.8,
+      1.7
+     ]
+    ]
+   },
+   "Ey_cqc": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.126640681061117,
+      3.1603532802840193
+     ],
+     [
+      2.249168765729313,
+      1.4331610982979122
+     ],
+     [
+      0.7312186514406872,
+      2.06833115446253
+     ]
+    ]
+   },
+   "dir": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      6.372526286047716,
+      3.5417680535663187
+     ],
+     [
+      2.9895220327170517,
+      2.4831844420911695
+     ],
+     [
+      1.565892861204868,
+      2.4666597124885343
+     ]
+    ]
+   },
+   "plus": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      8.372526286047716,
+      4.341768053566319
+     ],
+     [
+      9.789522032717052,
+      7.283184442091169
+     ],
+     [
+      2.7658928612048674,
+      11.266659712488533
+     ]
+    ]
+   },
+   "minus": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      -4.372526286047716,
+      -2.741768053566319
+     ],
+     [
+      3.810477967282948,
+      2.3168155579088303
+     ],
+     [
+      -0.36589286120486864,
+      6.333340287511465
+     ]
+    ]
+   },
+   "seismic_max": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      8.372526286047716,
+      4.341768053566319
+     ],
+     [
+      9.789522032717052,
+      7.283184442091169
+     ],
+     [
+      2.7658928612048674,
+      11.266659712488533
+     ]
+    ]
+   },
+   "seismic_min": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      -4.372526286047716,
+      -2.741768053566319
+     ],
+     [
+      3.810477967282948,
+      2.3168155579088303
+     ],
+     [
+      -0.36589286120486864,
+      6.333340287511465
+     ]
+    ]
+   },
+   "k_cqc": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      3.694230041872921,
+      1.7164076923845821
+     ],
+     [
+      2.6252829815000767,
+      3.4328153847691643
+     ],
+     [
+      0.8814603319273743,
+      0.8814603319273743
+     ]
+    ]
+   },
+   "k_linear": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      3.2,
+      1.2
+     ],
+     [
+      2.4,
+      -1.6
+     ],
+     [
+      1.6,
+      1.1
+     ]
+    ]
+   },
+   "twice_ULS": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      4.0,
+      1.5999999999999996
+     ],
+     [
+      13.6,
+      9.6
+     ],
+     [
+      2.3999999999999986,
+      17.599999999999998
+     ]
+    ]
+   },
+   "bad_lambda": {
+    "refused": "bad-param"
+   },
+   "no_stage": {
+    "refused": "unresolved"
+   },
+   "env_unit": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.0,
+      null
+     ],
+     [
+      3.0,
+      4.0
+     ],
+     [
+      5.0,
+      6.0
+     ]
+    ]
+   },
+   "gauss_ULS": {
+    "signed": true,
+    "badges": [
+     "superposition assumes linearity"
+    ],
+    "key_names": [
+     "id",
+     "sub"
+    ],
+    "keys": [
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      6,
+      0
+     ],
+     [
+      6,
+      1
+     ]
+    ],
+    "components": [
+     "sxx"
+    ],
+    "values": [
+     [
+      null
+     ],
+     [
+      18.4
+     ],
+     [
+      35.6
+     ],
+     [
+      null
+     ]
+    ]
+   },
+   "entity_env": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "kind",
+     "row"
+    ],
+    "keys": [
+     [
+      "a_point_set",
+      1
+     ],
+     [
+      "cut",
+      0
+     ],
+     [
+      "storey",
+      2
+     ]
+    ],
+    "components": [
+     "V"
+    ],
+    "values": [
+     [
+      null
+     ],
+     [
+      6.0
+     ],
+     [
+      null
+     ]
+    ]
+   },
+   "uses_model": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      3.0,
+      6.0
+     ],
+     [
+      9.0,
+      12.0
+     ],
+     [
+      15.0,
+      18.0
+     ]
+    ]
+   },
+   "clash": {
+    "refused": "refused"
+   },
+   "cyc_a": {
+    "refused": "refused"
+   },
+   "cyc_b": {
+    "refused": "refused"
+   },
+   "reaches_cyc": {
+    "refused": "refused"
+   },
+   "on_absent": {
+    "refused": "refused"
+   },
+   " padded": {
+    "refused": "refused"
+   },
+   "dup": {
+    "refused": "refused"
+   },
+   "bad_rule": {
+    "refused": "refused"
+   },
+   "no_terms": {
+    "refused": "refused"
+   },
+   "bad_param": {
+    "refused": "refused"
+   },
+   "bad_term": {
+    "refused": "refused"
+   },
+   "both_faults": {
+    "refused": "refused"
+   }
+  },
+  "m_xx": {
+   "ULS": {
+    "signed": true,
+    "badges": [
+     "superposition assumes linearity"
+    ],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.0,
+      0.3999999999999999
+     ],
+     [
+      3.4,
+      2.4
+     ],
+     [
+      0.5999999999999996,
+      4.3999999999999995
+     ]
+    ]
+   },
+   "env_max": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.5,
+      null
+     ],
+     [
+      2.0,
+      2.0
+     ],
+     [
+      2.5,
+      3.0
+     ]
+    ]
+   },
+   "env_unit": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.5,
+      null
+     ],
+     [
+      1.5,
+      2.0
+     ],
+     [
+      2.5,
+      3.0
+     ]
+    ]
+   },
+   "env_absmax": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.5,
+      1.0
+     ],
+     [
+      2.0,
+      2.0
+     ],
+     [
+      3.0,
+      3.0
+     ]
+    ]
+   },
+   "srss_list": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.7071067811865476,
+      1.4142135623730951
+     ],
+     [
+      2.5,
+      2.0
+     ],
+     [
+      3.905124837953327,
+      3.1622776601683795
+     ]
+    ]
+   },
+   "twice_ULS": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      2.0,
+      0.7999999999999998
+     ],
+     [
+      6.8,
+      4.8
+     ],
+     [
+      1.1999999999999993,
+      8.799999999999999
+     ]
+    ]
+   },
+   "plus": {
+    "refused": "unresolved"
+   },
+   "uses_model": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.5,
+      3.0
+     ],
+     [
+      4.5,
+      6.0
+     ],
+     [
+      7.5,
+      9.0
+     ]
+    ]
+   }
+  },
+  "wood_armer_top": {
+   "ULS": {
+    "signed": true,
+    "badges": [
+     "superposition assumes linearity"
+    ],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      9.0,
+      8.0
+     ],
+     [
+      7.0,
+      6.0
+     ],
+     [
+      5.0,
+      4.0
+     ]
+    ]
+   },
+   "env_max": {
+    "refused": "not-linear"
+   },
+   "env_unit": {
+    "signed": false,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      3.0,
+      null
+     ],
+     [
+      9.0,
+      12.0
+     ],
+     [
+      15.0,
+      18.0
+     ]
+    ]
+   },
+   "env_absmax": {
+    "refused": "not-linear"
+   },
+   "srss_list": {
+    "refused": "not-linear"
+   },
+   "twice_ULS": {
+    "refused": "not-linear"
+   },
+   "plus": {
+    "refused": "not-linear"
+   },
+   "uses_model": {
+    "refused": "not-linear"
+   }
+  }
+ },
+ "lone": {
+  "recorded": {
+   "stage|D|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.0,
+      2.0
+     ],
+     [
+      3.0,
+      4.0
+     ],
+     [
+      5.0,
+      6.0
+     ]
+    ]
+   },
+   "stage|W|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ]
+    ],
+    "components": [
+     "ux"
+    ],
+    "values": [
+     [
+      10.0
+     ],
+     [
+      20.0
+     ]
+    ]
+   },
+   "mode|eig|-1|2": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.0,
+      1.0
+     ],
+     [
+      -0.5,
+      0.3
+     ],
+     [
+      1.0,
+      0.0
+     ]
+    ]
+   },
+   "spectrum|Ex|-1|1": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      3.0,
+      1.0
+     ],
+     [
+      2.0,
+      -2.0
+     ],
+     [
+      1.0,
+      0.5
+     ]
+    ]
+   },
+   "reference|Ex|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.1,
+      0.1
+     ],
+     [
+      0.2,
+      0.2
+     ],
+     [
+      0.3,
+      0.3
+     ]
+    ]
+   },
+   "stage|GD|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id",
+     "sub"
+    ],
+    "keys": [
+     [
+      5,
+      0
+     ],
+     [
+      5,
+      1
+     ],
+     [
+      6,
+      0
+     ]
+    ],
+    "components": [
+     "sxx"
+    ],
+    "values": [
+     [
+      1.0
+     ],
+     [
+      2.0
+     ],
+     [
+      3.0
+     ]
+    ]
+   },
+   "spectrum|Ex|-1|0": {
+    "refused": "bad-term"
+   },
+   "stage|Q|-1|0": {
+    "refused": "unresolved"
+   }
+  },
+  "m_xx": {
+   "stage|D|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      0.5,
+      1.0
+     ],
+     [
+      1.5,
+      2.0
+     ],
+     [
+      2.5,
+      3.0
+     ]
+    ]
+   }
+  },
+  "wood_armer_top": {
+   "stage|D|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      3.0,
+      6.0
+     ],
+     [
+      9.0,
+      12.0
+     ],
+     [
+      15.0,
+      18.0
+     ]
+    ]
+   },
+   "stage|L|-1|0": {
+    "signed": true,
+    "badges": [],
+    "key_names": [
+     "id"
+    ],
+    "keys": [
+     [
+      1
+     ],
+     [
+      2
+     ],
+     [
+      3
+     ]
+    ],
+    "components": [
+     "ux",
+     "uy"
+    ],
+    "values": [
+     [
+      1.5,
+      -3.0
+     ],
+     [
+      6.0,
+      0.0
+     ],
+     [
+      -9.0,
+      3.0
+     ]
+    ]
+   },
+   "stage|Q|-1|0": {
+    "refused": "unresolved"
+   }
+  }
+ }
+}

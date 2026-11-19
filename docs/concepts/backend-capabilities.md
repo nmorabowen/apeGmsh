@@ -95,7 +95,7 @@ so it is worth knowing which you are looking at.
 
 | Class | What you see | Which primitives |
 |---|---|---|
-| **Gated by apeGmsh** | `RuntimeError` naming the fork, what still works, and the stock alternative | Elements, integrators, the `LadrunoProjection` handler, contact, FEAST, profiler, the modal family |
+| **Gated by apeGmsh** | `RuntimeError` naming the fork, what still works, and the stock alternative | Elements, integrators, the `LadrunoProjection` handler, contact, FEAST, profiler, the modal family, the `mpm` family (live route, every build) |
 | **Rejected by the engine** | `OpenSeesError: See stderr output`, with an `unknown …` warning on stderr | Materials, `system Pardiso`, the fork recorders |
 
 The first class exists because those commands are the ones stock OpenSees
@@ -309,6 +309,47 @@ Material-level response tokens (`material.<token>`) are a fork-recorder
 feature: the fork splits them into `material <k> <token>` per Gauss point.
 The bare spelling records nothing, so `ops.recorder.Ladruno` / `MPCO`
 refuse it and name the prefixed form.
+
+### MPM (the `mpm` engine)
+
+The fork's Material Point Method engine is driven by `ops.mpm.*`, one
+member per `mpm` sub-command
+([ADR 0134](https://github.com/nmorabowen/apeGmsh/blob/main/architecture/decisions/0134-mpm-particles.md)).
+It needs a fork release that carries `mpm` (`ladruno-v20261114`, build
+`f0b9a1df6`, or later).
+
+| Member | Fork line | Notes |
+|---|---|---|
+| `ops.mpm.grid(origin=, h=, cells=, basis=)` | `mpm grid <tag> -origin .. -h .. -cells .. [-basis ..]` | one per model; its tag is written above every `pattern` tag and every other member's tag, and `ops.tag_for(grid)` returns it |
+| `ops.mpm.body(pg, material=, density=, ppc=, name=)` | none: the body is seeded into the particle set | lattice seeding of the physical group's `tri3` / `quad4` / `tet4` / `hex8` elements; every body shares one `ppc` |
+| `ops.mpm.fix(face, components)` | `mpm fix <face> <components>` | |
+| `ops.mpm.wall(face, mu)` | `mpm wall <face> <mu>` | |
+| `ops.mpm.gridvel(name, box, v, start=, translate=, profile=)` | `mpm gridvel <name> box <lo..> <hi..> v <v..> [start ..] [translate ..] [profile <t0> <Tr> <t1>]` | prescribes the grid velocity on the nodes inside `box = (lo, hi)`, a component of `v` may be `"free"`; needs `ladruno-v20261118b` or later, which applies it in mode F (earlier releases ignore it); `translate` needs `start` or `profile`; no `track` |
+| `ops.mpm.gridvelAffine(name, box, L, ref=)` | `mpm gridvel <name> box <lo..> <hi..> affine <L> [ref ..]` | prescribes `L (x - ref)`, `L` given by rows; same release; no `setAffine` |
+| `ops.mpm.gravity(*g)` | `mpm gravity <g..>` | |
+| `ops.mpm.timeSeries(series)` | `mpm timeSeries <tsTag>` | |
+| `ops.mpm.damping(alpha)` | `mpm damping local <alpha>` | |
+| `ops.mpm.flip(alpha)` | `mpm flip <alpha>` | |
+| `ops.mpm.massCutoff(c)` | `mpm massCutoff <c>` | |
+| `ops.mpm.safety(s)` | `mpm safety <s>` | |
+| `ops.mpm.units(L, F, T, system=)` | `mpm units <L> <F> <T> [-system ..]` | without it the particle set takes the bridge's `units=`; each symbol, and `system`, is one word |
+| `ops.mpm.output(path, ...)` | `mpm output <path> ...` | the particle results, a `.ladruno` file |
+| `ops.mpm.analyze(steps, dt)` | `mpm analyze <n> <dt>` | |
+
+MPM is **deck-only**. `ops.tcl(path)` and `ops.py(path)` seed the bodies
+and write `<deck stem>.particles.h5` beside the deck, and the deck reads it
+from its own folder. The two are written together or not at all, and an
+existing particle set is replaced only when an apeGmsh emit wrote it. A
+deck with no `mpm` member written over an MPM deck removes the apeGmsh set
+that deck read, once the new deck is written in its place, so a viewer never
+pairs it with a stale set. Any other file of that stem (a set a sibling deck
+such as `case.tcl` reads while `case.py` is written, or a file no apeGmsh
+emit wrote) is kept, and the emit warns (`StaleParticleSetWarning`) naming
+it. The live route (`ops.run()`, `ops.analyze()`, every in-process procedure)
+refuses a model with an `mpm` member on every build, before the domain is
+touched, and so do a partitioned or per-rank emit and a staged model
+(staged MPM is not in this version). A fork v1 run also needs every FE node fixed: fix the seeding mesh's nodes
+with `ops.fix`.
 
 ## Stock engine defects
 

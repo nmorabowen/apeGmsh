@@ -13,7 +13,7 @@ at the user-facing surface (charter P12).
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable, Sequence
+from typing import TYPE_CHECKING, Iterable, Literal, Sequence
 
 from ...recorder import (
     MPCO,
@@ -362,6 +362,7 @@ class _RecorderNS(_BridgeNamespace):
         nsteps: int | None = None,
         energy: bool = False,
         energy_pg: str | None = None,
+        precision: Literal["f64", "f32"] = "f64",
         nodes: tuple[int, ...] | None = None,
         nodes_pg: str | None = None,
         elements: tuple[int, ...] | None = None,
@@ -375,6 +376,10 @@ class _RecorderNS(_BridgeNamespace):
         ``Results.energy()``). At least one of ``nodal_responses``,
         ``elem_responses``, ``energy`` or ``energy_pg`` must be supplied;
         both ``dT`` and ``nsteps`` raises.
+
+        ``precision="f32"`` records the per-step data as float32
+        (``-precision f32``, about half the file); the default ``"f64"``
+        emits no flag. Any other value raises.
 
         ``nodes=`` / ``nodes_pg=`` and ``elements=`` / ``elements_pg=``
         are pairwise mutex; supplying any of the four triggers
@@ -403,6 +408,7 @@ class _RecorderNS(_BridgeNamespace):
                 nsteps=nsteps,
                 energy=energy,
                 energy_pg=energy_pg,
+                precision=precision,
                 nodes=nodes,
                 nodes_pg=nodes_pg,
                 elements=elements,

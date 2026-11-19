@@ -13,6 +13,7 @@ permissions:
 jobs:
   detect:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -30,8 +31,20 @@ jobs:
           python scripts/find_orphans.py --format md > orphans.md
           code=$?
           cat orphans.md
-          if [ "$code" -gt 1 ]; then exit "$code"; fi
-          echo "found=$code" >> "$GITHUB_OUTPUT"
+          # 0 clean, 1 findings, 2 a detection failed. A crash (an import error
+          # exits 1 with an empty report) must not read as "findings": each of
+          # 0 and 1 needs its positive marker in the report, else the job fails.
+          # Exit 2 still reports what the other detection found, then fails.
+          case "$code" in
+            0) if grep -q '^No orphaned work found' orphans.md; then
+                 echo "found=0" >> "$GITHUB_OUTPUT"
+               else echo "failed=1" >> "$GITHUB_OUTPUT"; fi ;;
+            1) if grep -q '^| ' orphans.md; then echo "found=1" >> "$GITHUB_OUTPUT"
+               else echo "failed=1" >> "$GITHUB_OUTPUT"; fi ;;
+            2) echo "failed=1" >> "$GITHUB_OUTPUT"
+               if grep -q '^| ' orphans.md; then echo "found=1" >> "$GITHUB_OUTPUT"; fi ;;
+            *) exit "$code" ;;
+          esac
 
       - name: Open or update the tracking issue
         if: steps.find.outputs.found == '1'
@@ -51,3 +64,7 @@ jobs:
           else
             gh issue create --title "$title" --body-file body.md
           fi
+
+      - name: Fail the job when a detection failed
+        if: steps.find.outputs.failed == '1'
+        run: exit 1

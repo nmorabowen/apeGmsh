@@ -49,7 +49,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from typing import Iterable
+from typing import Iterable, Literal
 
 from .._vocabulary import (
     expand_many,
@@ -128,6 +128,28 @@ def _check_precision(precision: "int | None", where: str) -> None:
         raise ValueError(
             f"{where}: precision must be a positive int (the significant "
             f"digits per written value), got {precision!r}."
+        )
+
+
+#: The on-disk precisions the fork's ``recorder ladruno -precision`` takes
+#: (``LadrunoRecorder.cpp``). The fork also accepts the spellings
+#: ``float32`` / ``single`` / ``float64`` / ``double``, and *warns and keeps
+#: f64* on anything else; the bridge admits only the two canonical tokens
+#: so a typo cannot silently record in the other precision.
+LADRUNO_PRECISIONS: frozenset[str] = frozenset({"f64", "f32"})
+
+
+def _check_ladruno_precision(precision: object, where: str) -> None:
+    """Refuse a ``precision`` outside :data:`LADRUNO_PRECISIONS`.
+
+    The fork parser falls back to f64 with a warning on an unknown token,
+    so an unchecked value would run and write the wrong precision
+    unnoticed; the bridge fails closed at construction instead.
+    """
+    if not isinstance(precision, str) or precision not in LADRUNO_PRECISIONS:
+        raise ValueError(
+            f"{where}: precision must be 'f64' or 'f32' (the on-disk "
+            f"element type of the recorded data), got {precision!r}."
         )
 
 
@@ -1004,10 +1026,11 @@ class Ladruno(FilterableRecorder):
 
     OpenSees command (value channels + region filter + energy balance)::
 
-        recorder ladruno fname.ladruno [-N nodal_responses...]
+        recorder ladruno fname.ladruno [-precision f32]
+                                       [-N nodal_responses...]
                                        [-E elem_responses...]
                                        [-T dt $dt | -T nsteps $n]
-                                       [-R $regTag]
+                                       [-R $regTag [-RN $nodeRegTag]]
                                        [-G energy]
 
     The ``.ladruno`` recorder is forked from the frozen ``MPCORecorder``
@@ -1033,6 +1056,24 @@ class Ladruno(FilterableRecorder):
     vice versa) — the auto-region would carry no entries on the other
     side and produce an empty stream. The ``-R $tag`` is emitted
     **before** ``-G energy`` so the energy flag stays last.
+
+    **Nodes and elements together** (fork WP-234). An OpenSees
+    ``MeshRegion`` cannot hold a node list and an element list at once:
+    ``setNodes`` and ``setElements`` each wipe both, and ``-ele`` rebuilds
+    the nodes from the elements, so one ``region -node ... -ele ...`` line
+    silently keeps only the element nodes. When a node selector
+    (``nodes=``/``nodes_pg=``) and an element selector
+    (``elements=``/``elements_pg=``) are both given, Ladruno therefore
+    emits **two** regions — ``region $tag -ele ...`` and
+    ``region $nodeTag -node ...`` — and passes ``-R $tag -RN $nodeTag``.
+    The fork records ``-N`` rows on the ``-R`` element nodes plus the
+    ``-RN`` nodes, and ``-E`` rows on the ``-R`` elements only. That is how
+    embedded rebar nodes (whose minted truss elements carry no FEM id and
+    must stay out of the file) get their displacements recorded. Only a
+    fork build whose ``ladrunoSchema`` lists the
+    ``recorderLadrunoNodeRegion`` capability reads ``-RN``: the live route
+    refuses another build by name, and a Tcl / openseespy deck checks the
+    running build at its start and stops with the same message.
 
     ``energy=True`` adds the fork's whole-model energy-balance channel
     (``-G energy`` → ``RESULTS/ON_DOMAIN/energyBalance``, components
@@ -1063,10 +1104,25 @@ class Ladruno(FilterableRecorder):
     like the value filter (ADR 0064 §4). Read any region's balance via
     ``Results.energy(region=<tag>)``; whole-model via ``Results.energy()``.
 
+    **Precision.** ``precision="f32"`` emits ``-precision f32`` right after
+    the file name, and the fork stores the per-step result DATA as
+    float32 (about half the bytes, ~7 significant digits; the fork stamps
+    the choice in the file's ``INFO/STORED_PRECISION``). The default
+    ``"f64"`` emits no flag, so a default deck is byte-identical to one
+    written before the field existed. The flag precedes ``-N``/``-E`` so
+    it never sits where the fork's ``-G`` parser eats trailing tokens.
+    The value is archived in ``ops.h5`` with the recorder's other fields
+    (the ``/opensees/decl_params`` row), so a reader knows the recorded
+    precision without opening the ``.ladruno``.
+
     Parameters
     ----------
     file
         Output ``.ladruno`` (HDF5) file path.
+    precision
+        On-disk element type of the recorded data: ``"f64"`` (default,
+        lossless) or ``"f32"`` (``-precision f32``, lossy). Anything else
+        raises ``ValueError``; the fork would otherwise warn and keep f64.
     nodal_responses
         Tuple of ``-N`` tokens (e.g. ``("displacement",
         "reactionForce")``). Empty tuple means no nodal recording.
@@ -1111,10 +1167,18 @@ class Ladruno(FilterableRecorder):
     # decoupled energy region.
     energy: bool = False
     energy_pg: str | None = None
+    # On-disk precision of the recorded data: ``"f64"`` emits no flag
+    # (byte-identical decks); ``"f32"`` emits ``-precision f32``.
+    precision: Literal["f64", "f32"] = "f64"
     # Region tags for ``-G energy $tag...`` (decoupled energy regions),
     # populated by ``materialize`` / the partition planner from
     # ``energy_pg``. End users never set this directly.
     _energy_region_tags: tuple[int, ...] = ()
+    # The ``-RN $tag`` node region (fork WP-234), populated by
+    # ``materialize`` / the partition planner when both a node and an
+    # element selector are set (:meth:`splits_filter`). End users never
+    # set this directly.
+    _node_region_tag: int | None = None
 
     def __post_init__(self) -> None:
         if not (
@@ -1127,6 +1191,7 @@ class Ladruno(FilterableRecorder):
                 "Ladruno: at least one of nodal_responses, "
                 "elem_responses, energy or energy_pg required."
             )
+        _check_ladruno_precision(self.precision, "Ladruno")
         self._validate_cadence()
         self._validate_filter()
         self._validate_elem_tokens()
@@ -1178,14 +1243,30 @@ class Ladruno(FilterableRecorder):
             ops_tags.append(int(ops_tag))
         return tuple(ops_tags)
 
+    def splits_filter(self) -> bool:
+        """True iff the filter needs a separate ``-RN`` node region.
+
+        Both a node selector and an element selector set: one OpenSees
+        region cannot carry both lists (``MeshRegion::setNodes`` /
+        ``setElements`` each wipe both), so the nodes go to their own
+        region, read by the fork's ``-RN`` (WP-234).
+        """
+        return (
+            (self.nodes is not None or self.nodes_pg is not None)
+            and (self.elements is not None or self.elements_pg is not None)
+        )
+
     def region_keys(self) -> tuple[str, ...]:
-        """The value-filter region (base), then the decoupled energy region.
+        """The value-filter region (base), the ``-RN`` node region when the
+        filter splits, then the decoupled energy region.
 
         The energy region (``energy_pg``) is independent of the ``-R``
         value filter (the fork's ``-G energy <tag>`` list is orthogonal to
         ``-R``); it takes its own tag, after the filter's.
         """
         keys = FilterableRecorder.region_keys(self)
+        if self.splits_filter():
+            keys = (*keys, "nodes")
         if self.energy_pg is not None:
             keys = (*keys, "energy")
         return keys
@@ -1211,7 +1292,27 @@ class Ladruno(FilterableRecorder):
         # ``@dataclass(slots=True)`` classes, which the decorator rebuilds,
         # leaving the ``super()`` ``__class__`` cell stale (TypeError).
         spec: FilterableRecorder = self
-        if self.has_filter():
+        if self.splits_filter():
+            # Two regions: ``-ele`` under the filter tag (``-R``) and
+            # ``-node`` under its own tag (``-RN``). One region with both
+            # flags would keep only the element nodes (WP-234).
+            node_ids, elem_ids = self.resolve_filter_ids(
+                fem, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+            )
+            region_tag = region_tags["filter"]
+            node_tag = region_tags["nodes"]
+            emitter.region(region_tag, "-ele", *elem_ids)
+            emitter.region(node_tag, "-node", *node_ids)
+            spec = replace(
+                self,
+                nodes_pg=None,
+                elements_pg=None,
+                nodes=node_ids,
+                elements=elem_ids,
+                _region_tag=region_tag,
+                _node_region_tag=node_tag,
+            )
+        elif self.has_filter():
             spec = FilterableRecorder._write_planned_regions(
                 self, emitter, fem, region_tags, fem_eid_to_ops_tag,
             )
@@ -1241,7 +1342,18 @@ class Ladruno(FilterableRecorder):
         # the energy flag must trail it — the fork's ``-G`` parser eagerly
         # eats trailing ints and cannot rewind past a following flag, so
         # ``-G energy [$tag...]`` is always the final option.
-        args: list[int | float | str] = [self.file, *self._value_channel_args()]
+        args: list[int | float | str] = [self.file]
+        if self.precision != "f64":
+            # Right after the file, before the value channels: the fork
+            # parses options in any order, but ``-G`` eats trailing
+            # tokens, so the flag never follows it. f64 is the fork's
+            # default and emits nothing (byte-identical decks).
+            args += ["-precision", self.precision]
+        args += self._value_channel_args()
+        if self._node_region_tag is not None:
+            # ``-RN`` beside the ``-R`` that ``_value_channel_args`` put
+            # last, and before ``-G`` (which eats trailing tokens).
+            args += ["-RN", self._node_region_tag]
         if self.energy or self._energy_region_tags:
             args += ["-G", "energy"]
             if self._energy_region_tags:

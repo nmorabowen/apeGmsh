@@ -12,7 +12,7 @@ a partial FEMData without an element-class table. This mirrors
 * element order comes from the BASIS ``ORDER`` attr; the topological dim
   is the response catalog's parent dimension for a catalogued class, else
   the BASIS ``TOPOLOGY``, else a class-name guess that is warned
-  (:func:`apeGmsh.mesh._femdata_mpco_io.element_dim`). A ``TOPOLOGY``
+  (:func:`apeGmsh.mesh._femdata_dims.element_dim`). A ``TOPOLOGY``
   that contradicts the catalog is named in its own
   ``ElementDimContradictionWarning``; each warning names a class once
   per session.
@@ -76,7 +76,7 @@ def read_fem_from_ladruno(group: "h5py.Group") -> "FEMData":
             [coords, np.zeros((coords.shape[0], 1), dtype=np.float64)]
         )
 
-    from ._femdata_mpco_io import (
+    from ._femdata_dims import (
         element_dim,
         warn_dim_contradictions,
         warn_unknown_dims,

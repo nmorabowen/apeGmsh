@@ -19,6 +19,7 @@ from .._internal.analyze_rc import COMMIT_ABORT_MESSAGE, COMMIT_ABORT_RC
 from .._internal.build.errors import BridgeError
 from .._internal.build.stage_emit import (
     ASDSHELL_PDELTA_GUARD,
+    LADRUNO_NODE_REGION_GUARD,
     MEMBRANE_WP208_GUARD,
     Beam3dPartialLoadTargets,
     ForkBuildGuard,
@@ -156,8 +157,9 @@ def deck_run_lineage(
     if why:
         warnings.warn(
             f"The deck {deck or '(unnamed)'} writes no run record: {why}. "
-            "read_deck_mpco of its .mpco will read it with "
-            "Results.from_mpco.",
+            "read_deck_mpco of its .mpco refuses an unstaged program by "
+            "name (no run record); declare the stages with ops.stage(...) "
+            "so the deck converts by them.",
             RuntimeWarning, stacklevel=_stacklevel_outside_package(),
         )
         return None
@@ -629,6 +631,11 @@ class PyEmitter:
             header.append(provenance_stamp(backend))
         header += ["import openseespy.opensees as ops", "ops.wipe()"]
         self._lines: _LineBuf = _LineBuf(header)
+        # ADR 0134 D1: the ``mpm particles -file`` line of the particle set
+        # this deck reads (``bind_particle_set``), written after its
+        # ``mpm grid``; unbound, an ``mpm grid`` refuses.
+        self._mpm_particles_line: str | None = None
+        self._mpm_grid_written = False
         # The elements each swept material is on, for its plastic flip.
         self._stage_carriers = MaterialStageCarriers()
         # The elements a 3-D partial -beamUniform may load on any build.
@@ -721,10 +728,18 @@ class PyEmitter:
     #: Trims nodes to ``_model_ndm`` and refuses a lossy trim (#1337).
     _dropped_axes: DroppedAxisGuard = DroppedAxisGuard.BEFORE_MODEL
 
+    #: Builder ndf in force, learned from :meth:`model`; ``None`` until then.
+    _builder_ndf: "int | None" = None
+    #: ``(ndf, index of the restore line, indent)`` of the open mass
+    #: bracket, so a run of consecutive off-envelope masses in one block
+    #: shares one bracket.
+    _mass_bracket: "tuple[int, int, str] | None" = None
+
     def model(self, *, ndm: int, ndf: int) -> None:
         # openseespy.model takes positional + flag-style args:
         # ops.model('basic', '-ndm', 3, '-ndf', 6).
         self._model_ndm = ndm
+        self._builder_ndf = ndf
         self._dropped_axes = DroppedAxisGuard(ndm)
         self._lines.append(
             _ops_call("model", "basic", "-ndm", ndm, "-ndf", ndf)
@@ -775,7 +790,30 @@ class PyEmitter:
         self._lines.append(_ops_call("fix", tag, *dofs))
 
     def mass(self, tag: int, *values: float) -> None:
-        self._lines.append(_ops_call("mass", tag, *values))
+        line = _ops_call("mass", tag, *values)
+        n, env = len(values), self._builder_ndf
+        if env is None or n == env:
+            self._lines.append(line)
+            return
+        # openseespy's ``mass`` sizes the matrix by the BUILDER ndf, not
+        # the node's (``OPS_addNodalMass``), so a mass on a node whose ndf
+        # differs from the envelope dies in ``Node::setMass``.  The bridge
+        # sizes ``values`` to the node's ndf; bracket the line in
+        # ``model basic -ndf <n>``.  An openseespy ``model`` re-issue only
+        # sets ndm/ndf (``OPS_model``), so the bracket purges nothing.
+        lines = self._lines
+        if self._mass_bracket == (n, len(lines) - 1, lines.indent):
+            # Extend the bracket the previous mass opened: insert before
+            # its restore line.
+            lines.insert(len(lines) - 1, lines.indent + line)
+            self._mass_bracket = (n, len(lines) - 1, lines.indent)
+            return
+        lines.append(_ops_call(
+            "model", "basic", "-ndm", self._model_ndm, "-ndf", n))
+        lines.append(line)
+        lines.append(_ops_call(
+            "model", "basic", "-ndm", self._model_ndm, "-ndf", env))
+        self._mass_bracket = (n, len(lines) - 1, lines.indent)
 
     # -- MP constraints (ADR 0022, Phase 7b) -----------------------------
 
@@ -1025,6 +1063,10 @@ class PyEmitter:
     # -- Recorders ----------------------------------------------------------
 
     def recorder(self, kind: str, *args: int | float | str) -> None:
+        if kind == "ladruno" and "-RN" in args:
+            # Only a fork build listing the capability reads -RN; the deck
+            # checks the running build at its start (fork WP-234).
+            self._require_fork_floors((LADRUNO_NODE_REGION_GUARD,))
         if kind == "mpco" and args and str(args[0]) not in self._mpco_files:
             self._mpco_files.append(str(args[0]))
         if kind == "mpco" and args and self._run_record:
@@ -1743,4 +1785,56 @@ class PyEmitter:
 
     def command(self, verb: str, *args: int | float | str) -> None:
         command_row(verb)
+        if verb == "mpm":
+            self._mpm_command(args)
+            return
         self._lines.append(_ops_call(verb, *args))
+
+    # -- MPM (ADR 0134 D1) ------------------------------------------------
+
+    def bind_particle_set(self, particle_path: str) -> None:
+        """Bind the particle set this deck reads (ADR 0134 D1).
+
+        ``apeSees.py`` and the replay call it with ``<deck stem>.particles.h5``
+        before the emit; the deck's ``mpm grid`` call is then followed by
+        ``import os`` and ``ops.mpm('particles', '-file',
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "<name>"))``,
+        so the set is found beside the deck whatever the working directory.
+        """
+        from .._mpm import py_particles_line
+
+        self._mpm_particles_line = py_particles_line(particle_path)
+
+    def _mpm_command(self, args: tuple[int | float | str, ...]) -> None:
+        """Render one ``mpm`` row: a ``body`` row is a comment (its particles
+        are in the set), ``grid`` is followed by the set's ``-file`` line."""
+        sub = args[0] if args else None
+        if sub == "particles":
+            raise BridgeError(
+                "PyEmitter.command('mpm', 'particles', ...): the particle "
+                "set's -file line is written by the deck emitter for its own "
+                "deck (bind_particle_set), never passed as a row (ADR 0134 D1)."
+            )
+        if sub == "body":
+            self._lines.append("# " + _ops_call("mpm", *args)
+                               + "  (seeded into the particle set)")
+            return
+        if sub == "grid":
+            if self._mpm_particles_line is None:
+                raise BridgeError(
+                    "PyEmitter: an mpm grid needs its deck's particle set, "
+                    "and this emitter has none bound. An MPM model is "
+                    "emitted by apeSees.tcl(path) / apeSees.py(path) (or "
+                    "OpenSeesModel.build('py', out=path)), which seed "
+                    "<deck stem>.particles.h5 beside the deck (ADR 0134 D1)."
+                )
+            if self._mpm_grid_written:
+                raise BridgeError(
+                    "PyEmitter: a second mpm grid; the fork's v1 has one "
+                    "per Domain (ADR 0134).")
+            self._mpm_grid_written = True
+            self._lines.append(_ops_call("mpm", *args))
+            self._lines.append("import os")
+            self._lines.append(self._mpm_particles_line)
+            return
+        self._lines.append(_ops_call("mpm", *args))

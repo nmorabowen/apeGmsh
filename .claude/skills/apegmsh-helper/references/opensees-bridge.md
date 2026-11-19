@@ -52,6 +52,18 @@ Session declarations all still flow into the **`model.h5` neutral
 zone** (`ops.h5(path)`), so the **viewer / `Results`** see everything
 regardless of whether a pattern imported it.
 
+> **The bridge writes `<model_name>.h5` on its own (ADR 0112 D1).** Every
+> live build / `ops.analyze` / `ops.run()` / `ops.tcl` / `ops.py` / `modal_deck` emit ends by writing the
+> full archive (neutral + `/opensees` + `/provenance`) to
+> `<dir>/<fem.model_name>.h5`, once per changed set of declarations (a
+> loop of emits on one model writes once). `<dir>` is
+> `$APEGMSH_ARTIFACT_DIR` when set, else the `__main__` script's folder,
+> else the cwd. The session's `save_to=` does **not** move it, so a session
+> saved to `out/m.h5` still leaves `<model_name>.h5` beside the script
+> unless `APEGMSH_ARTIFACT_DIR` is set. Failures warn once
+> (`BridgeArtifactWarning`) and never raise; `ops.h5(path)` is the explicit
+> save and bypasses this. `# src/apeGmsh/opensees/_internal/artifact_write.py`
+
 > **Two execution modes — no mixing (ADR 0051 §5).** Non-staged (a
 > global `ops.pattern.*` + the chain + `ops.analyze`/`ops.eigen`) OR
 > staged (every pattern stage-scoped via `s.pattern(series=...)`, run
@@ -203,11 +215,38 @@ The bridge is agnostic; pick by mechanics. One-clause defaults (for the
 |---|---|---|
 | 3-D solid (hex/tet) | `stdBrick` / `FourNodeTetrahedron` | fork: `LadrunoBrick(formulation="ssp")` or `"bbar"` (stabilized hourglass / near-incompressible); stock: no anti-locking hex yet (`SSPbrick` / `bbarBrick` are deferred) |
 | 2-D solid | `FourNodeQuad` (fork: `LadrunoQuad(formulation="ssp")` stabilized; `SSPquad` is deferred) | `Tri31` only where a quad mesh won't form |
+| 2-D saturated soil (u-p) | stock `SSPquadUP` (quad4, every node ndf 3: ux, uy, p) | fork `LadrunoUP` (honest p in the disp slot, tri/quad/TH shapes; `ladruno.md`) |
 | Shell | `ShellMITC4` (general 4-node) | `ASDShellQ4` (drilling DOF, large-disp), `ShellDKGQ` (thin, no shear) |
 | Beam/column | `forceBeamColumn` (force-based, fewer elems for spread plasticity) | `dispBeamColumn` (displacement-based, stiff/short members or when force-based won't converge) |
 
 Fiber sections (`ops.section.Fiber`) make beams/shells nonlinear; `elasticBeamColumn`
 stays linear. Fork-only continuum (`LadrunoBrick` etc.) is in `ladruno.md`.
+
+**Stock u-p: `SSPquadUP`.** `ops.element.SSPquadUP(pg="soil", material=dp,
+thickness=1.0, fluid_bulk=Kf, fluid_density=rho_w, perm=(k1, k2),
+void_ratio=e, alpha=0.25*h**2/(K + 4*G/3), body=(0.0, -9.81))` emits
+`element SSPquadUP tag n1..n4 matTag t fBulk fDen k1 k2 e alpha b1 b2`.
+`perm` is `k_hydraulic / gamma_w`; `body` is an acceleration (times the
+material `rho` = saturated density); `alpha` is pressure stabilization, not
+Biot's. ndf 3 is inferred per node. Its pore pressure is the **velocity**
+of DOF 3 (`nodeVel(n, 3)`); `nodeDisp(n, 3)` is the time integral. Ask for
+the canonical `pore_pressure`: `.read("pore_pressure")` and
+`ops.recorder.declare(nodes=("pore_pressure",), ...)` +`ops.results` read
+it from the right slot (SSPquadUP: vel DOF 3; LadrunoUP: disp DOF ndm+1).
+Drain a face with `ops.fix(pg="Top", dofs=(0, 0, 1))`. The coupling Q·p
+lives in the damping matrix, so in a model holding an SSPquadUP the bridge
+forms `reactions -dynamic` for `.read("reaction_force_*")` and records
+`reactionIncInertia` for declared reactions (both include M·a).
+Run it transient (Newmark γ ≥ 0.5, the C0 rung used γ=0.6, β=0.3025, with
+`UmfPack`), and change the permeability between stages with
+`s.update_parameter("hPerm" | "vPerm", k, pg="soil")`.
+
+On a graded mesh pass `alpha_per_area=0.25/(K + 4*G/3)` instead of `alpha=`:
+each element gets `alpha_e = alpha_per_area * A_e` from its own area (the
+namespace measures the areas from the FEM snapshot). alpha scales with h², so
+one value per group is wrong for most cells of a graded block; a graded u-p
+strip diverged in its geostatic stage with the group's mean, largest and
+smallest cell alike, and converged only per element.
 
 ### Springs, hinges, dashpots (ZeroLength family)
 
@@ -504,7 +543,7 @@ res.to_dataframe()            # per node: f_dom frf_max a_p_lf a_espa_hf a_p reg
 res.frf(j)                    # (freq, |A_ij|) acceleration per unit force, i defaults to exc_node[j]
 res.mode_table(j)             # (f_n, phi_i, phi_j, a_p,m) — the Eq 7-4 rows of the impulse branch
 res.modes.f_n, res.modes.beta # the basis and its per-mode damping
-res.to_results(fem, path)     # one-frame nodal map → Results.from_fem(fem, path, kind="native")
+res.to_results(fem, "bay.user.h5", model_h5="model.h5")   # state-free "footfall" user result → UserFile(path).read_result("footfall")
 ```
 
 What it computes, per response node: the FRF between walker and occupant
@@ -1101,14 +1140,34 @@ not co-presence.
    (`apeGmsh.opensees.emitter.live`) inside the `with` block. The
    single read-back is `run.results()` after the block closes. The route
    follows the build (`run.route`): the fork records `.ladruno`
-   (`Results.from_ladruno`), a stock build with MPCO records `.mpco`
-   (`Results.from_mpco`), and pip openseespy records classic `.out`
-   files (`Results.from_recorders`); the two stock routes warn once
-   with `DefaultRouteWarning`. Modal records refuse there: modes come
+   (`Results.from_ladruno`); a stock build with MPCO records `.mpco`
+   and `run.results()` converts it to `<stem>.ladruno` beside it, never
+   reading it with `Results.from_mpco`; pip openseespy records classic
+   `.out` files (`Results.from_recorders`) after one
+   `DefaultRouteWarning`. The stock MPCO route converts only when the
+   stage kinds are facts (ADR 0131 D5): `model_h5` declares
+   `ops.stage(...)` blocks, each with an analysis of known kind.
+   Otherwise it refuses by name at `__enter__` with `StageKindRefused`
+   (an `MPCOConversionRefused`; the recorder is removed and nothing is
+   recorded), naming the remedies:
+   declare the stages with `ops.stage(...)`, or run the program as a
+   deck emitted with `analyze_steps=`. No stage kind is defaulted, and
+   `ops.run()` refuses a staged program until #2181, so in process this
+   route refuses today. A deck's `.mpco` is read with `ops.results(path)`
+   (below), or `read_deck_mpco(path, model_h5=)` from
+   `apeGmsh.results.live`: it converts a staged deck, or an unstaged one
+   emitted with `analyze_steps=` (its run record `<file>.run.json`), and
+   otherwise refuses by name. Modal records refuse there: modes come
    from `ops.eigen(n)`, whose `EigenResult.results()` /
-   `.to_native(path)` / `.to_ladruno(path)` write and open them; a
-   plain openseespy deck's modes come from
-   `apeGmsh.results.live.capture_live_modes`. The old in-process
+   `.to_ladruno(path)` write a stamped `.ladruno` (with the bridge
+   archive beside it as `<stem>.h5`) and open it; a plain openseespy
+   deck's modes come from
+   `apeGmsh.results.live.capture_live_modes(model_h5_or_fem, n, path)`,
+   which also writes a `.ladruno` (an `.h5` path refuses). Over a bare
+   FEMData archive (`fem.to_h5`, no `model_hash`) the stamp carries
+   `fem_hash` alone and the file pairs by the mesh: the viewer pairs it
+   by `fem_hash`, and the fork route's `run.results()` reads it with no
+   warning (ADR 0133). The old in-process
    capture route was deleted (#2191).
 
 The canonical component vocabulary is the neutral top-level
@@ -1129,6 +1188,22 @@ The canonical component vocabulary is the neutral top-level
 > records it on the fork with no declaration at all. Full emit/read contract:
 > `Ladruno_implementation/ladruno_apegmsh_contract.md` in the fork. The fork is
 > opt-in; stock `openseespy` (no `.ladruno`) stays first-class.
+>
+> **Filtering nodes and elements together.** `Ladruno(nodes_pg=..., elements_pg=...)`
+> (or `nodes=` / `elements=`) emits **two** regions, `region $t -ele ...` and
+> `region $tn -node ...`, and passes `-R $t -RN $tn`: `-N` rows cover the `-R`
+> element nodes plus the `-RN` nodes, `-E` rows the `-R` elements only. One
+> OpenSees region cannot carry both lists (`MeshRegion::setNodes` /
+> `setElements` each wipe both, and `-ele` rebuilds the nodes), so the old
+> single `region -node ... -ele ...` line silently dropped `nodes_pg`. Use it to
+> record nodes that have no recorded element, e.g. embedded rebar
+> (`g.rebar.place(coupling="embedded", emit_elements=True)`): keep the minted
+> truss elements out with `elements_pg="solids"` and put the bar nodes in
+> `nodes_pg`. Needs a fork build whose `ladrunoSchema` lists
+> `recorderLadrunoNodeRegion` (fork WP-234): the live route raises
+> `BridgeError` naming it on an older build, and a deck checks the running
+> build at its start. Only one selector side → one region, as before. MPCO
+> (stock, no `-RN`) still writes the single combined region.
 
 ## Native model.h5 — two zones + schema constants
 
@@ -1201,6 +1276,18 @@ deck: `OpenSees.exe` exits 0 after a Tcl `error`, so the deck's completion line 
 `ops.wipe()` closes the live domain and flushes every recorder file, so a recorder file or an
 `.mpco` is complete in the same script; it also closes the bridge's read session. Node and
 Element recorders take `precision=<positive int>`, the significant digits written per value.
+
+**`ops.results(path)` reads the deck run back (ADR 0115 D3, ADR 0131 D11).** Pass the path the
+finished `py`/`tcl(run=True)` wrote; it returns a `Results`. One `recorder.Ladruno` is read with
+`Results.from_ladruno`. One `recorder.MPCO` is converted to `<stem>.ladruno` beside the `.mpco`
+and that file is read; it is never read with `Results.from_mpco`. The conversion needs the stage
+kinds to be facts: declare `ops.stage(...)` blocks, or run the unstaged deck with
+`analyze_steps=`, which writes `<file>.run.json` for the converter's checks. Otherwise the read
+refuses by name, and it never replaces a `.ladruno` the converter did not write.
+`recorder.declare(nodes=...)` and typed `recorder.Node` text records (`time_format="dt"`) are
+read with `Results.from_recorders`. Every other record refuses the whole read, and so do a
+staged or partitioned run with text records, two history recorders, and a history recorder
+beside text ones.
 
 **Per-rank Tcl decks — `ops.tcl(path, per_rank=True)` (ADR 0061).** For a
 **partitioned** model, write the driver deck at `path` plus one guard-free

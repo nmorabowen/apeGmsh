@@ -35,7 +35,7 @@ from apeGmsh.results.readers._mpco_line_io import (
     MPCO_SECTION_NAME_TO_CODE,
     canonical_to_line_station_token,
 )
-from apeGmsh.results.readers._mpco_material_io import parent_token_for_canonical
+from apeGmsh.results.readers._buckets import parent_token_for_canonical
 from apeGmsh.results.spec._emit import (
     collect_mpco_tokens,
     emit_logical,
@@ -391,6 +391,7 @@ def test_mpco_line_station_bending_moment_stays_section_force() -> None:
         category="line_stations", name="b",
         components=("axial_force", "bending_moment_y", "bending_moment_z"),
         dt=None, n_steps=None, element_ids=np.array([1]),
+        element_class_name="ForceBeamColumn3d",
     )
     assert collect_mpco_tokens([rec]) == ([], ["section.force"])
 
@@ -583,9 +584,13 @@ _MPCO_SECTION_DEFORMATION_NAMES = frozenset(
 
 
 def _line(components, name="beam") -> ResolvedRecorderRecord:
+    # A catalogued section-force class: these tests pin the token routing,
+    # and an unclassed record warns (tested in
+    # test_results_mpco_emit_line_stations_elastic.py), #2070.
     return ResolvedRecorderRecord(
         category="line_stations", name=name, components=tuple(components),
         dt=None, n_steps=None, element_ids=np.array([1]),
+        element_class_name="ForceBeamColumn3d",
     )
 
 

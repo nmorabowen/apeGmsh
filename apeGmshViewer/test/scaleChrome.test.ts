@@ -1,0 +1,142 @@
+// The contour scale's stored preference, the banner's closed line, and the
+// page structure the left rail and the scale rely on.
+
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import { bannerSummary } from "../src/panels/banner.ts";
+import { signRampCss } from "../src/state/lineDiagram.ts";
+import { parseSavedScale } from "../src/ui/scaleChrome.ts";
+
+test("parseSavedScale: reads what the app writes", () => {
+  assert.deepEqual(parseSavedScale('{"orient":"vertical","at":{"left":10,"top":20}}'), { orient: "vertical", at: { left: 10, top: 20 } });
+  assert.deepEqual(parseSavedScale('{"orient":"horizontal","at":null}'), { orient: "horizontal", at: null });
+});
+
+test("parseSavedScale: anything else is ignored, so the default place holds", () => {
+  for (const raw of [null, "", "not json", "null", "3", "{}", '{"orient":"diagonal","at":null}', '{"orient":"vertical"}', '{"orient":"vertical","at":{"left":"1","top":2}}', '{"orient":"vertical","at":{"left":1}}', '{"orient":"vertical","at":{"left":null,"top":2}}']) {
+    assert.equal(parseSavedScale(raw), null, String(raw));
+  }
+});
+
+test("signRampCss: the colours change at zero, not at the bar's midpoint", () => {
+  assert.match(signRampCss("dark"), / 50%, /);
+  assert.match(signRampCss("dark", { min: -300, max: 100 }), / 75%, /);
+  assert.match(signRampCss("dark", { min: 2, max: 4 }), / 0%, #\w+ 0%, /, "all positive");
+  assert.match(signRampCss("dark", { min: -4, max: -2 }), / 100%, /, "all negative");
+  assert.match(signRampCss("dark", { min: 3, max: 3 }), / 50%, /, "constant");
+});
+
+test("bannerSummary: one message is shown as itself, several as counts of each kind", () => {
+  assert.equal(bannerSummary(0, 0, 1, "the one warning"), "the one warning");
+  assert.equal(bannerSummary(1, 0, 0, "the one refusal"), "the one refusal");
+  assert.equal(bannerSummary(0, 0, 9, "first"), "9 warnings");
+  assert.equal(bannerSummary(2, 1, 9, "first"), "2 refused · 1 notice · 9 warnings");
+});
+
+test("the scale is a sibling after the banner and the rails, so it paints over them and clears a banner", () => {
+  const html = readFileSync(new URL("../src/renderer/index.html", import.meta.url), "utf8");
+  const at = (id: string) => html.indexOf(`id="${id}"`);
+  assert.ok(at("banner") > 0 && at("banner") < at("viewport-scale"));
+  assert.ok(at("rail") < at("scale-stack"), "a drag across the right rail must stay on top of it");
+  assert.ok(at("scale-stack") < at("viewport-scale") && at("viewport-scale") < at("line-diagram-scale"), "the two scales stack, contour first");
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  assert.match(css, /body\[data-still-chrome="model"\] #scale-stack \{ display: none; \}/);
+});
+
+/**
+ * A px property (`top:`, `bottom:`, `max-height:`) of the first style.css rule
+ * whose selector list names `selector`, evaluated with the banner's published
+ * variables (panels/banner.ts) and a viewport `vh` px tall: its
+ * `min(...)`/`max(...)`/`calc(...)` of px and vh terms, as
+ * test/state/user.test.ts's cssTop. Null when the rule does not set it.
+ */
+function cssPx(selector: string, prop: string, at: { bannerTop?: number; bannerH?: number; vh: number }): number | null {
+  const raw = cssValue(selector, prop);
+  if (raw === null) return null;
+  let expr = raw;
+  if (at.bannerTop !== undefined) expr = expr.replace(/var\(--banner-top, 58px\)/g, `${at.bannerTop}px`);
+  if (at.bannerH !== undefined) expr = expr.replace(/var\(--banner-h, 0px\)/g, `${at.bannerH}px`);
+  expr = expr.replace(/(\d+(?:\.\d+)?)vh/g, (_, n: string) => `${(Number(n) * at.vh) / 100}px`);
+  assert.match(expr, /^[\d\s+.()a-z,-]+$/, `an expression this test can evaluate: ${expr}`);
+  assert.doesNotMatch(expr, /var\(/, `a variable this test does not set: ${expr}`);
+  const js = expr.replace(/(\d+(?:\.\d+)?)px/g, "$1").replace(/max\(/g, "Math.max(").replace(/min\(/g, "Math.min(").replace(/calc\(/g, "(");
+  return Function(`return ${js};`)() as number;
+}
+
+/** A property's text in the first style.css rule whose selector list names `selector`; null when that rule does not set it. */
+function cssValue(selector: string, prop: string): string | null {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8");
+  const rule = new RegExp(`(?:^|[},])\\s*(?:[^{}]*,\\s*)?${selector.replace(/[[\]()~:]/g, "\\$&")}\\s*(?:,[^{}]*)?\\{([^}]*)\\}`, "m").exec(css);
+  assert.ok(rule, `style.css has no rule for ${selector}`);
+  const body = rule[1]!.replace(/\/\*[\s\S]*?\*\//g, "");
+  const m = new RegExp(`(?:^|[\\s;])${prop}:\\s*([^;]+);`).exec(body);
+  return m ? m[1]!.trim() : null;
+}
+
+const SCALE = "#banner:not([hidden]) ~ #scale-stack";
+const RAIL = "#banner:not([hidden]) ~ #left-rail";
+
+test("#2924 item 7: the colour scales sit 8 px below a shown banner however tall it is drawn, as the left rail does", () => {
+  const top = (bannerTop: number, bannerH: number, vh = 1000) => cssPx(SCALE, "top", { bannerTop, bannerH, vh });
+  // A one-line banner (about 30 px at 58 px, or at 106 px under a one-line scrubber bar): 168 px, as before.
+  assert.equal(top(58, 30), 168);
+  assert.equal(top(106, 30), 168);
+  // An app-chrome still draws the whole list (#2921 still 2: 2 notices, 136 px): the scale clears the banner's bottom by 8 px.
+  for (const [t, h] of [[58, 136], [58, 240], [106, 240], [106, 380]] as const) {
+    assert.equal(top(t, h), t + h + 8, `banner at ${t} px, ${h} px tall`);
+    assert.equal(top(t, h), cssPx(RAIL, "top", { bannerTop: t, bannerH: h, vh: 1000 }), "the scale and the rail clear the banner alike");
+  }
+});
+
+test("#2944 review: a banner at its height cap never pushes the colour scales off the bottom", () => {
+  // The stack is bounded below as the left rail is.
+  assert.equal(cssPx("#scale-stack", "bottom", { vh: 1000 }), 16);
+  assert.equal(cssPx("#left-rail", "bottom", { vh: 1000 }), 16);
+  // The banner's own cap, as style.css draws it in a still or open.
+  const capped = 'body[data-still-chrome="app"] #banner';
+  for (const vh of [600, 800, 1000, 1400]) {
+    const cap = cssPx(capped, "max-height", { vh });
+    assert.equal(cap, vh - 180, `the banner's cap at ${vh} px`);
+    for (const bannerTop of [58, 106]) {
+      const t: number = cssPx(SCALE, "top", { bannerTop, bannerH: cap!, vh })!;
+      // It starts by half the height (never above 168 px), painting over the banner's tail, and leaves the
+      // horizontal contour scale (131 px drawn in the D7 still) room above the bottom bound.
+      assert.equal(t, Math.max(168, vh / 2), `${vh} px viewport, banner at ${bannerTop} px`);
+      assert.ok(t + 131 <= vh - 16, `${vh} px: the scale's ${t} + 131 px fits above the bottom bound`);
+    }
+  }
+});
+
+test("#2944 delta review: in an app-chrome still the scales paint over the open banner's tail; in the window the open banner stays on top", () => {
+  // Under the cap the scales overlap the banner (a 1600×420 still: top 210 px, banner bottom 242 px), and
+  // the still draws the banner at a z-index, so document order alone leaves the scales under it.
+  const z = (selector: string) => {
+    const v = cssValue(selector, "z-index");
+    assert.ok(v !== null && /^\d+$/.test(v), `${selector} has a numeric z-index: ${v}`);
+    return Number(v);
+  };
+  const stillBanner = z('body[data-still-chrome="app"] #banner');
+  const stillScale = z('body[data-still-chrome="app"] #scale-stack');
+  assert.ok(stillScale > stillBanner, `still: the scales (${stillScale}) over the banner (${stillBanner})`);
+  // The window: the open banner (a click, to read the list) keeps its z-index over a stack that sets none.
+  assert.equal(z("#banner[data-open]"), stillBanner);
+  assert.equal(cssValue("#scale-stack", "z-index"), null, "the stack has no z-index outside a still");
+});
+
+test("#1762: below 1560 px the Windows menu sits left of the right rail, and the left rail ends above it", () => {
+  const css = readFileSync(new URL("../src/renderer/style.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const rail = css.match(/#rail \{\n\s*position: fixed; top: \d+px; right: (\d+)px; bottom: \d+px; width: (\d+)px;/);
+  assert.ok(rail, "the #rail rule moved");
+  const railLeftEdge = Number(rail[1]) + Number(rail[2]);
+  const media = css.match(/@media \(min-width: (\d+)px\) and \(max-width: (\d+)px\) \{\n\s*body:not\(\[data-rail-collapsed="true"\]\) #windows-menu \{ left: auto; right: (\d+)px; transform: none; \}/);
+  assert.ok(media, "the Windows menu has no rule keeping it off the rail");
+  const [min, max, right] = [Number(media[1]), Number(media[2]), Number(media[3])];
+  assert.ok(right >= railLeftEdge, `right ${right} clears the rail's ${railLeftEdge} px`);
+  const MENU = 550, LEFT_RAIL = 308;
+  assert.ok(max / 2 + MENU / 2 <= max - railLeftEdge, "at the top of the range the centred menu already clears the rail");
+  assert.ok(min - right - MENU >= 0, "at the bottom of the range the menu stays on screen");
+  const leftRail = css.match(/@media \(max-width: (\d+)px\) \{\n\s*#left-rail \{ bottom: 72px; \}/);
+  assert.ok(leftRail);
+  assert.ok(Number(leftRail[1]) >= right + MENU + LEFT_RAIL + 16, "the left rail ends above the menu wherever they share a column");
+});

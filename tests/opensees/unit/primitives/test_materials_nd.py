@@ -678,12 +678,18 @@ class TestLadrunoConcrete3D:
         assert m.Df == 1.0 and m.As == 2.0 and m.rho == 0.0
         assert m.ct_temper == "none" and m.auto_regularize is False
 
-    def test_emit_minimal_is_just_required(self) -> None:
+    # -Df / -hardening are always emitted (the deck runs what Python
+    # reports, whatever the fork's constructor default); the rest only
+    # when they differ from it.
+    _ALWAYS = ("-Df", 1.0, "-hardening", 0.3, 0.5)
+
+    def test_emit_minimal_is_required_plus_df_and_hardening(self) -> None:
         rec = RecordingEmitter()
         self._base()._emit(rec, tag=1)
         assert rec.calls == [
             ("nDMaterial",
-             ("LadrunoConcrete3D", 1, 30e9, 0.2, 30e6, 3e6, 120.0, 12000.0),
+             ("LadrunoConcrete3D", 1, 30e9, 0.2, 30e6, 3e6, 120.0, 12000.0,
+              *self._ALWAYS),
              {}),
         ]
 
@@ -707,7 +713,7 @@ class TestLadrunoConcrete3D:
     def test_emit_kupfer_when_non_default(self) -> None:
         rec = RecordingEmitter()
         self._base(kupfer=1.25)._emit(rec, tag=3)
-        assert rec.calls[0][1][8:] == ("-kupfer", 1.25)
+        assert rec.calls[0][1][8:] == ("-kupfer", 1.25, *self._ALWAYS)
 
     def test_dependencies_is_empty(self) -> None:
         assert self._base().dependencies() == ()
@@ -749,28 +755,28 @@ class TestLadrunoConcrete3D:
     def test_tension_law_emits_its_token(self, law: str) -> None:
         rec = RecordingEmitter()
         self._base(tension_law=law)._emit(rec, tag=1)
-        assert rec.calls[0][1][8:] == ("-tensionLaw", law)
+        assert rec.calls[0][1][13:] == ("-tensionLaw", law)
 
     @pytest.mark.parametrize("fp", ["cdpm2", "legacy"])
     def test_flow_potential_emits_its_token(self, fp: str) -> None:
         rec = RecordingEmitter()
         self._base(flow_potential=fp)._emit(rec, tag=1)
-        assert rec.calls[0][1][8:] == ("-flowPotential", fp)
+        assert rec.calls[0][1][13:] == ("-flowPotential", fp)
 
     def test_eps_fc_and_gc_legacy_emit(self) -> None:
         rec = RecordingEmitter()
         self._base(eps_fc=2e-3)._emit(rec, tag=1)
-        assert rec.calls[0][1][8:] == ("-epsFc", 2e-3)
+        assert rec.calls[0][1][13:] == ("-epsFc", 2e-3)
         rec = RecordingEmitter()
         self._base(gc_legacy=True)._emit(rec, tag=1)
-        assert rec.calls[0][1][8:] == ("-gcLegacy",)
+        assert rec.calls[0][1][13:] == ("-gcLegacy",)
 
     def test_all_new_flags_in_order(self) -> None:
         rec = RecordingEmitter()
         self._base(
             tension_law="exp", eps_fc=1e-3, flow_potential="legacy",
         )._emit(rec, tag=1)
-        assert rec.calls[0][1][8:] == (
+        assert rec.calls[0][1][13:] == (
             "-tensionLaw", "exp", "-epsFc", 1e-3, "-flowPotential", "legacy",
         )
 

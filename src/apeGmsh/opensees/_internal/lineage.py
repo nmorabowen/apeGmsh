@@ -98,9 +98,11 @@ WARNING_PREFIX: str = "[lineage] "
 #: stores (the values are already hashed through each store's row), so
 #: hashing it again would only make ``model_hash`` depend on the field
 #: encoding; excluded on the same grounds as ``decls``.
+#: ``combinations`` (ADR 0130 D4) is evaluated when results are read and
+#: reaches no deck, so adding one leaves the model's identity alone.
 MODEL_HASH_EXCLUDED_CHILDREN: frozenset[str] = frozenset(
     {"cuts", "sweeps", "regions", "names", "computed_sections", "decls",
-     "decl_params"}
+     "decl_params", "combinations"}
 )
 
 #: Attributes of ``/opensees`` itself excluded from :func:`compute_model_hash`.

@@ -9,7 +9,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { mountLegend, SURFACE_OPACITY_PRESETS } from "../src/panels/legend.ts";
 import { edgesShown, type FullPositions } from "../src/renderer/deform.ts";
-import { fitDistance, HALO_COLOUR, HALO_LAYER, HALO_PX, highlightObjects, hitElement, maskBytes, outlineOf, pulseAt, PULSE_MS, PULSE_SCALE, SELECTION_COLOUR, selectionBounds } from "../src/renderer/selection.ts";
+import { elementOutlines, fitDistance, HALO_COLOUR, HALO_LAYER, HALO_PX, highlightObjects, hitElement, maskBytes, nearestNodeOf, nodeVertexPositions, pulseAt, PULSE_MS, PULSE_SCALE, SELECTION_COLOUR, selectedPrims, selectionBounds } from "../src/renderer/selection.ts";
 import { Viewport } from "../src/renderer/viewport.ts";
 import { initialState, reduce, Store } from "../src/state/store.ts";
 import type { Event, MeshInfo, Pick, State } from "../src/state/types.ts";
@@ -25,24 +25,60 @@ test("the selection core is the office accent #E69F00 and the halo is white (#13
 });
 
 test("every highlight object sits on HALO_LAYER (the mask pass) and on the default layer (the frame), without depth test", () => {
-  // One segment and one quad (two triangles, fanned from the first corner).
-  const lp = new Float32Array([0, 0, 0, 1, 0, 0]);
-  const tp = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0]);
+  // One segment, a quad's fill over the faces' own position buffer, and one node.
+  const faces = new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0]), 3);
   const made: number[] = [];
-  const objs = highlightObjects(lp, tp, [{ lines: [0], tris: [0, 1] }], (pos, width) => {
+  const line = (pos: Float32Array, width: number) => {
     made.push(width);
     return new THREE.LineSegments(new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(pos, 3)), new THREE.LineBasicMaterial());
-  });
-  assert.equal(objs.length, 3, "segments, outline, fill");
-  assert.deepEqual(made, [9, 6], "thick segments, thinner outline");
+  };
+  const points = (pos: Float32Array) => new THREE.Points(new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(pos, 3)), new THREE.PointsMaterial());
+  const objs = highlightObjects(faces, Uint32Array.from([0, 1, 2, 3, 4, 5]), new Float32Array([0, 0, 0, 1, 0, 0]), new Float32Array([0, 0, 0, 0, 1, 0]), new Float32Array([0, 0, 0]), line, points);
+  assert.equal(objs.length, 4, "segments, element outlines, fill, nodes");
+  assert.deepEqual(made, [9, 6], "thick segments, thinner outlines");
   for (const o of objs) {
     assert.ok(o.layers.isEnabled(HALO_LAYER), `${o.type} on the halo layer`);
     assert.ok(o.layers.isEnabled(0), `${o.type} still on the default layer`);
     assert.equal(((o as THREE.Mesh).material as THREE.Material).depthTest, false, `${o.type} draws over everything`);
   }
-  // The quad's outline is its four sides, not its diagonal.
-  assert.equal(outlineOf(tp, [0, 1]).length / 6, 4);
-  assert.deepEqual(highlightObjects(lp, tp, [], () => new THREE.Object3D()), []);
+  const fill = objs.find((o) => o instanceof THREE.Mesh) as THREE.Mesh;
+  assert.equal(fill.geometry.getAttribute("position"), faces, "the fill shares the faces' buffer, so it moves with the deformed shape");
+  assert.deepEqual(highlightObjects(null, new Uint32Array(0), new Float32Array(0), new Float32Array(0), new Float32Array(0), line, points), []);
+});
+
+test("ADR 0138 D8: the selected primitives are what is drawn of the selected elements, as indices over the drawn order", () => {
+  // Elements 0 and 1; element 1 owns segment 1 and triangles 1 and 2; triangle 2 is hidden (not in triMap).
+  const drawn = { lineMap: Int32Array.from([0, 1]), triMap: Int32Array.from([0, 1]) };
+  const lineElement = Int32Array.from([0, 1]), triElement = Int32Array.from([0, 1, 1]);
+  const prims = selectedPrims(drawn, lineElement, triElement, Uint8Array.from([0, 1]));
+  assert.deepEqual([...prims.triIndex], [3, 4, 5], "drawn triangle 1: vertices 3 to 5 of the faces' buffer");
+  assert.deepEqual([...prims.segments], [1]);
+  assert.equal(selectedPrims(drawn, lineElement, triElement, Uint8Array.from([0, 0])).triIndex.length, 0);
+});
+
+test("each selected element's outline is the edges only one of its triangles has, keyed by node tags", () => {
+  // Element 0: a quad of two triangles on nodes 1-2-3-4 (diagonal 1-3). Element 1: one triangle, not selected.
+  const triNodes = Float64Array.from([1, 2, 3, 1, 3, 4, 3, 2, 5]);
+  const triPos = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 2, 0, 0]);
+  const map = Int32Array.from([0, 1, 2]), el = Int32Array.from([0, 0, 1]);
+  assert.equal(elementOutlines(map, el, Uint8Array.from([1, 0]), triNodes, triPos).length / 6, 4, "the quad's four sides, not its diagonal");
+  assert.equal(elementOutlines(map, el, Uint8Array.from([1, 1]), triNodes, triPos).length / 6, 7, "each element outlined on its own");
+  // 130,000 one-triangle elements, all selected: one small map per element.
+  const n = 130000, nodes = new Float64Array(3 * n), pos = new Float32Array(9 * n);
+  for (let i = 0; i < 3 * n; i++) nodes[i] = i;
+  const t = performance.now();
+  const out = elementOutlines(Int32Array.from({ length: n }, (_, i) => i), Int32Array.from({ length: n }, (_, i) => i), new Uint8Array(n).fill(1), nodes, pos);
+  assert.equal(out.length, 18 * n);
+  assert.ok(performance.now() - t < 1500, `took ${(performance.now() - t).toFixed(0)} ms`);
+});
+
+test("ADR 0138 D2: a click picks the hit primitive's vertex nearest the hit, where it is drawn", () => {
+  const vertexNodes = { line: Float64Array.from([7, 8]), tri: Float64Array.from([1, 2, 3]) };
+  // The triangle drawn displaced by +100 in y (the deformed shape): the nearest drawn corner wins, not the undeformed one.
+  const pos = { line: new Float32Array([0, 0, 0, 2, 0, 0]), tri: new Float32Array([0, 100, 0, 1, 100, 0, 0, 101, 0]) };
+  assert.equal(nearestNodeOf({ kind: "tri", index: 0 }, [0.9, 100.1, 0], vertexNodes, pos), 2);
+  assert.equal(nearestNodeOf({ kind: "line", index: 0 }, [0.4, 0, 0], vertexNodes, pos), 7);
+  assert.deepEqual([...nodeVertexPositions([3, 8, 99], vertexNodes, { lineMap: Int32Array.from([0]), triMap: Int32Array.from([0]) }, pos)], [2, 0, 0, 0, 101, 0], "first drawn vertex of each; node 99 is not drawn");
 });
 
 test("the mask target is one RGBA8 texel per device pixel", () => {
@@ -335,9 +371,12 @@ test("mountLegend: exposes .legend-mesh only when 2-D/3-D cells exist, and disab
   ]);
   const legendRoot = new FakeLegendEl("DIV");
   legendRoot.id = "legend";
+  // The mesh row lives on the Display card, which the legend panel fills.
+  const displayRoot = new FakeLegendEl("DIV");
+  const others: Record<string, FakeLegendEl> = { legend: legendRoot, display: displayRoot, deform: new FakeLegendEl("DIV"), "viewport-scale": new FakeLegendEl("DIV"), contour: new FakeLegendEl("DIV") };
   const prevDoc = (globalThis as { document?: unknown }).document;
   (globalThis as { document?: unknown }).document = {
-    getElementById: (id: string) => (id === "legend" ? legendRoot : null),
+    getElementById: (id: string) => others[id] ?? null,
     createElement: (t: string) => new FakeLegendEl(t.toUpperCase()),
   };
   // 1-D-only mesh (faceCells = 0, solidCells = 0): .legend-mesh is omitted.
@@ -347,7 +386,7 @@ test("mountLegend: exposes .legend-mesh only when 2-D/3-D cells exist, and disab
     mesh: { legend: [], counts: { lineCells: 2, faceCells: 0, solidCells: 0, opsOnly: 0, points: 0 } } as unknown as MeshInfo,
   };
   const unmount1d = mountLegend(store1d);
-  assert.equal(legendRoot.all((e) => e.has("legend-mesh")).length, 0, "1-D-only model has no .legend-mesh row");
+  assert.equal(displayRoot.all((e) => e.has("legend-mesh")).length, 0, "1-D-only model has no .legend-mesh row");
   unmount1d();
 
   // Mesh with 2-D/3-D cells: .legend-mesh appears.
@@ -358,8 +397,8 @@ test("mountLegend: exposes .legend-mesh only when 2-D/3-D cells exist, and disab
   };
   const unmount = mountLegend(store);
   try {
-    const btn = (cls: string) => legendRoot.all((e) => e.has(cls))[0]!;
-    assert.equal(legendRoot.all((e) => e.has("legend-mesh")).length, 1);
+    const btn = (cls: string) => displayRoot.all((e) => e.has(cls))[0]!;
+    assert.equal(displayRoot.all((e) => e.has("legend-mesh")).length, 1);
     assert.ok(btn("mesh-edges").has("on"), "edges starts on");
     assert.equal(btn("mesh-edges").disabled, false);
     assert.ok(btn("mesh-opacity-solid").has("on"), "solid (1) starts on");

@@ -449,20 +449,22 @@ def test_two_node_link_end_node_records_rotation(
 
 
 # ---------------------------------------------------------------------------
-# pore_pressure: never a silent ``-dof -1``
+# pore_pressure: never a silent ``-dof -1``, never the PFEM ``pressure``
 # ---------------------------------------------------------------------------
 
 
 def test_pore_pressure_refuses_on_a_frame() -> None:
     ops = _beam_2d()
     ops.recorder.declare(nodes=("pore_pressure",), pg="Top")
-    with pytest.raises(BridgeError, match="pore_pressure.*PFEM"):
+    with pytest.raises(BridgeError, match="carries no pore pressure"):
         _node_recorders(ops)
 
 
-def test_pore_pressure_refuses_on_a_up_node() -> None:
+def test_pore_pressure_on_a_ladruno_up_node_is_its_disp_slot() -> None:
     """The OpenSees ``pressure`` node response is the PFEM pressure
-    constraint: on a u-p node it is not the pore pressure either."""
+    constraint, so it is never used: a LadrunoUP node keeps p in
+    displacement DOF ``ndm + 1`` (honest p), and that is what is
+    recorded, in its own file."""
     from tests.opensees.unit.test_label_selector_fix_merge import (
         build_footing_fem,
     )
@@ -472,6 +474,46 @@ def test_pore_pressure_refuses_on_a_up_node() -> None:
     mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=0.0)
     ops.element.LadrunoUP(pg="Plate", material=mat, Kf=2.2e6, poro=0.4,
                           rhoF=1.0, perm=(1e-4, 1e-4))
-    ops.recorder.declare(nodes=("pore_pressure",), pg="Bottom")
-    with pytest.raises(BridgeError, match=r"pore_pressure.*DOF \(3\)"):
-        _node_recorders(ops)
+    ops.recorder.declare(nodes=("pore_pressure",), pg="Bottom",
+                         file_root="out", name="p")
+    lines = _node_recorders(ops)
+    assert len(lines) == 1
+    assert lines[0][2].endswith("p__default__pressure.out")
+    assert _dofs_and_token(lines[0]) == ((3,), "disp")
+
+
+def _ssp_up_footing() -> apeSees:
+    from tests.opensees.unit.test_label_selector_fix_merge import (
+        build_footing_fem,
+    )
+
+    ops = apeSees(build_footing_fem(), default_orientation=None)
+    ops.model(ndm=2, ndf=3)
+    mat = ops.nDMaterial.ElasticIsotropic(E=1e4, nu=0.3, rho=2.0)
+    ops.element.SSPquadUP(
+        pg="Plate", material=mat, thickness=1.0, fluid_bulk=2.2e6,
+        fluid_density=1.0, perm=(1e-4, 1e-4), void_ratio=0.7, alpha=1e-6)
+    return ops
+
+
+def test_pore_pressure_on_a_ssp_quad_up_node_is_vel_dof_3() -> None:
+    """Stock SSPquadUP keeps the time integral of p in DOF 3 of ``disp``;
+    p itself is the velocity of DOF 3."""
+    ops = _ssp_up_footing()
+    ops.recorder.declare(nodes=("pore_pressure", "displacement_y"),
+                         pg="Bottom", file_root="out", name="p")
+    lines = _node_recorders(ops)
+    by_file = {str(a[2]).rsplit("/", 1)[-1]: _dofs_and_token(a) for a in lines}
+    assert by_file == {
+        "p__default__pressure.out": ((3,), "vel"),
+        "p__default__disp.out": ((2,), "disp"),
+    }
+
+
+def test_reactions_are_recorded_inc_inertia_on_a_ssp_quad_up_model() -> None:
+    ops = _ssp_up_footing()
+    ops.recorder.declare(nodes=("reaction_force_y",), pg="Bottom",
+                         file_root="out", name="r")
+    (line,) = _node_recorders(ops)
+    assert str(line[2]).endswith("r__default__reactionIncInertia.out")
+    assert _dofs_and_token(line) == ((2,), "reactionIncInertia")

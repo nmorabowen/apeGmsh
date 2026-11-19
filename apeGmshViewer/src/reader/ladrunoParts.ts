@@ -474,7 +474,9 @@ export class LadrunoPartSet {
     const groups = new Map<string, number[]>();
     ls.forEach((l, j) => groups.set(key(l!), [...(groups.get(key(l!)) ?? []), j]));
     if (groups.size > 1) {
-      const said = [...groups.values()].map((js) => `part(s) ${indexList(js)} model_hash ${ls[js[0]!]!.modelHash.slice(0, 8)}…, fem_hash ${ls[js[0]!]!.femHash.slice(0, 8)}…`).join("; ");
+      // A fem_hash-only stamp (ADR 0133) has no model_hash: it is a different stamp from a two-hash one.
+      const modelHash = (h: string | null) => (h === null ? "absent" : `${h.slice(0, 8)}…`);
+      const said = [...groups.values()].map((js) => `part(s) ${indexList(js)} model_hash ${modelHash(ls[js[0]!]!.modelHash)}, fem_hash ${ls[js[0]!]!.femHash.slice(0, 8)}…`).join("; ");
       return { lineage: null, reason: `the parts of the set carry different stamps (${said}): they were stamped against different models, and the set pairs with none` };
     }
     return { lineage: { ...ls[0]! }, reason: null };

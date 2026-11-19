@@ -82,6 +82,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
+from ._internal._combinations_h5 import (
+    Combination,
+    CombinationsZone,
+    read_combinations,
+)
 from ._internal.lineage import Lineage
 from .emitter.caps import (
     REQUIRES_TOKENS,
@@ -115,8 +120,9 @@ if TYPE_CHECKING:  # pragma: no cover - import for type checkers only
     from ._internal.build.records import InitialStressRecord
     from ._internal.compose import _ReplayOrder
     from ._target import BackendInfo, TargetMode
-    from .emitter.base import Emitter
     from .emitter.h5 import H5Emitter
+    from .emitter.py import PyEmitter
+    from .emitter.tcl import TclEmitter
 
 
 __all__ = ["OpenSeesModel"]
@@ -175,8 +181,10 @@ def _fem_element_arity(fem: Any) -> dict[int, int]:
 def _equation_constraint_records(declarations: Any) -> "tuple[Any, ...]":
     """The archive's ``apeSees.equation_constraint`` rows, in call order.
 
-    ``H5Emitter`` ledgers the ``equationConstraint`` verb, so the only
-    record of a row is its declaration's ``/opensees/decl_params`` entry
+    Each row's declaration has a ``/opensees/decl_params`` entry (the only
+    record of the row in an archive below opensees 2.35.0, which stores no
+    ``equationConstraint`` line; the reader checks the stored rows against
+    it from that minor on)
     (K1-7, opensees 2.26.0): an ``EquationConstraintRecord`` with ``cnode``,
     ``cdof``, ``ccoef`` and ``retained``. Each is re-validated by
     ``make_equation_constraint_record``. A declaration whose entry is
@@ -524,6 +532,8 @@ class OpenSeesModel:
     _computed_sections: tuple[tuple[int, str, str], ...] = field(
         default_factory=tuple
     )
+    #: ``/opensees/combinations`` as read (ADR 0130 D4; opensees 2.39.0).
+    _combinations: CombinationsZone = field(default_factory=CombinationsZone)
     #: Tagged damping objects read from ``/opensees/dampings`` (ADR 0053
     #: D3b; empty when none emitted). Replayed before elements so an
     #: element-flag ``-damp`` resolves.
@@ -706,6 +716,7 @@ class OpenSeesModel:
         from ._internal._names_h5 import read_names
 
         names = read_names(spath, opensees_root=opensees_root)
+        combinations = read_combinations(spath, opensees_root=opensees_root)
 
         from ._internal._computed_sections_h5 import read_computed_sections
 
@@ -826,6 +837,7 @@ class OpenSeesModel:
             _lineage=lineage,
             _names=tuple(names),
             _computed_sections=tuple(computed_sections),
+            _combinations=combinations,
             _nodes_ndf=nodes_ndf,
             _initial_stress=initial_stress,
             _initial_stress_param_tags=initial_stress_param_tags,
@@ -1117,6 +1129,9 @@ class OpenSeesModel:
 
             refuse_unreplayable_streams(
                 self._fem, equation_rows=self._equation_tie_rows())
+            # A partitioned archive that cannot tell a ghost's SP rows
+            # from a stage's own refuses here too.
+            self._deck_stages()
         if target == "tcl":
             return self._build_text("tcl", out, flat=flat)
         if target == "py":
@@ -1293,6 +1308,19 @@ class OpenSeesModel:
         (ADR 0055 P2.3).
         """
         return self._stages
+
+    def _deck_stages(self) -> "tuple[Any, ...]":
+        """The stages the deck targets replay: :meth:`stages` without the
+        ``fix`` / ``remove_sp`` rows a partitioned emit stored for a ghost
+        node's replay of its owner's earlier SP history (#2530). Refuses
+        a partitioned archive that cannot tell those rows apart. ``to_h5``
+        echoes :meth:`stages` unchanged."""
+        from ._internal.compose import stages_without_ghost_sp_rows
+
+        return stages_without_ghost_sp_rows(
+            stages=self._stages, fixes=self._fixes,
+            declarations=self._declarations,
+            partitioned=bool(self._partitions))
 
     def partitions(self) -> "tuple[Any, ...]":
         """Return every emitted partition block (ADR 0027 schema 2.10.0).
@@ -1510,6 +1538,13 @@ class OpenSeesModel:
         :meth:`name_for` for keyed lookups.
         """
         return self._names
+
+    def combinations(self) -> tuple[Combination, ...]:
+        """Return the combinations ``apeSees`` declared (ADR 0130 D4), in
+        file order, without any row refused at read (a warning names those).
+        Empty below opensees 2.39.0.
+        """
+        return self._combinations.valid
 
     def computed_sections(self) -> tuple[tuple[int, str, str], ...]:
         """Return the ``ComputedSection`` provenance rows
@@ -1856,15 +1891,17 @@ class OpenSeesModel:
         return _ReplayOrder(self._program, self._declarations)
 
     def _equation_tie_rows(self) -> "tuple[Any, ...]":
-        """The archived global equation-tie lines: the
+        """The archived equation-tie lines: the global
         ``equationConstraint`` rows of :attr:`_mp_constraints` without the
-        ``apeSees.equation_constraint`` rows, which are the last ones."""
+        ``apeSees.equation_constraint`` rows, which are the last ones, then
+        every stage block's (opensees 2.40.0; a user row is never staged)."""
         from .emitter.h5_reader import EquationConstraintRecordRO
 
         rows = [r for _i, r in self._mp_constraints
                 if isinstance(r, EquationConstraintRecordRO)]
-        return tuple(rows[:len(rows) - _user_equation_count(
-            self._declarations)])
+        staged = [r for st in self._stages for r in st.equation_constraints]
+        return (*rows[:len(rows) - _user_equation_count(self._declarations)],
+                *staged)
 
     def _stores_equation_lines(self) -> bool:
         """Whether the source archive stores its ``equationConstraint``
@@ -1885,11 +1922,15 @@ class OpenSeesModel:
         return _link_user_equation_calls(
             program, _user_equation_count(self._declarations))
 
-    def _populate_emitter(self, emitter: Any, *, flat: bool = False) -> None:
+    def _populate_emitter(
+        self, emitter: Any, *, flat: bool = False, deck: bool = False,
+    ) -> None:
         """Walk the record graph and drive ``emitter`` through the
         schema-relevant Protocol methods.
 
-        ``flat`` is :meth:`build`'s (``"tcl"`` / ``"py"`` only).
+        ``flat`` is :meth:`build`'s (``"tcl"`` / ``"py"`` only). ``deck``
+        replays :meth:`_deck_stages` (the deck targets) instead of the
+        stored stages, which the ``to_h5`` capture helpers walk as stored.
 
         This is the body of the tcl / py / live :meth:`build` targets.
         Delegates to
@@ -2004,7 +2045,9 @@ class OpenSeesModel:
         # _replay_staged_into.  Non-staged models take the flat path.
         if self._stages:
             _replay_staged_into(
-                emitter, stages=self._stages, commands=self._commands,
+                emitter,
+                stages=self._deck_stages() if deck else self._stages,
+                commands=self._commands,
                 program=self._program, flat=flat,
                 declarations=self._declarations,
                 requires=self.replay_requires(), **replay_kwargs,
@@ -2438,6 +2481,8 @@ class OpenSeesModel:
         # every store's row order, so the rows columns still apply.
         if self._declarations is not None:
             emitter_fresh.restore_declarations(self._declarations)
+        # ADR 0130 D4: echo the table verbatim, a refused row included.
+        emitter_fresh.set_combinations(self._combinations.rows_for_rewrite())
         _compose_model_h5(
             self._fem,
             emitter_fresh,
@@ -2468,7 +2513,30 @@ class OpenSeesModel:
         # The archive keeps the target's mode, never its machine paths
         # (opensees 2.36.0): the rebuilt deck stamps as the bridge's did.
         backend = deck_backend(OpenSeesTarget(mode=self._target_mode))
-        emitter: "Emitter"
+        # ADR 0134 D1/D2: an archive with ``mpm`` rows replays its particle
+        # set too, seeded from the stored rows and the neutral-zone mesh,
+        # beside the deck it writes and checked before either is written.
+        mpm_rows = self._mpm_rows()
+        particles = None
+        stale = None
+        if not mpm_rows and out is not None:
+            # D1: a deck with no mpm rows drops the apeGmsh set the deck it
+            # overwrites reads (decided here, removed once it is written).
+            from ._mpm import stale_particle_set
+
+            stale = stale_particle_set(str(out))
+        if mpm_rows:
+            if out is None:
+                raise ValueError(
+                    f"OpenSeesModel.build({kind!r}): the archive declares mpm "
+                    "members, whose particle set is written beside the deck "
+                    "as <deck stem>.particles.h5 (ADR 0134 D1); pass out= "
+                    "for the deck's path.")
+            from .mpm import prepare_particle_set
+
+            particles = prepare_particle_set(
+                self._fem, mpm_rows, str(out), model_units=self.units)
+        emitter: "TclEmitter | PyEmitter"
         if kind == "tcl":
             from .emitter.tcl import TclEmitter
 
@@ -2477,11 +2545,27 @@ class OpenSeesModel:
             from .emitter.py import PyEmitter
 
             emitter = PyEmitter(backend=backend)
-        self._populate_emitter(emitter, flat=flat)
+        if particles is not None:
+            emitter.bind_particle_set(str(particles.path))
+        self._populate_emitter(emitter, flat=flat, deck=True)
         text = "\n".join(emitter.lines()) + "\n"
+        if particles is not None:
+            from ._mpm import write_particle_set
+
+            write_particle_set(particles)
         if out is not None:
-            Path(out).write_text(text, encoding="utf-8")
+            from ._mpm import write_deck_then_remove
+
+            # D1: a stale set goes only once its deck is replaced.
+            write_deck_then_remove(str(out), lambda f: f.write(text), stale)
         return text
+
+    def _mpm_rows(self) -> "tuple[tuple[int | float | str, ...], ...]":
+        """The archived ``mpm`` rows (ADR 0134 D2), the arguments after
+        the token, in emit order."""
+        return tuple(
+            tuple(c.positional) for c in self._commands
+            if c.method == "command" and c.token == "mpm")
 
     def _build_live(self) -> None:
         """Drive an in-process :class:`LiveOpsEmitter` over the deck.
@@ -2503,8 +2587,17 @@ class OpenSeesModel:
                 "raises). Use build('tcl') / build('py') for staged "
                 "decks."
             )
-        from .emitter.live import LiveOpsEmitter, get_backend_info
+        from .emitter.live import (
+            MPM_LIVE_REFUSAL,
+            LiveOpsEmitter,
+            get_backend_info,
+        )
 
+        # ADR 0134 D1/D7: MPM is deck-only; refuse before the wipe.
+        if self._mpm_rows():
+            raise RuntimeError(
+                "OpenSeesModel.build('live'): " + MPM_LIVE_REFUSAL.format(
+                    what="mpm rows"))
         # ADR 0114 D6: a model whose flat replay needs the fork, an MPCO
         # build or an MPI system cannot be built into this domain; refuse
         # before the wipe, naming the gap. The flat replay's own need, not
@@ -2523,7 +2616,7 @@ class OpenSeesModel:
             pinned=tuple(t for t in requires
                          if t not in self._verbs_replay_requires()))
         emitter = LiveOpsEmitter(wipe=True)
-        self._populate_emitter(emitter)
+        self._populate_emitter(emitter, deck=True)
 
 
 def refuse_live_requires(

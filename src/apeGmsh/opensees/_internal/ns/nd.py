@@ -779,6 +779,7 @@ class _NDMaterialNS(_BridgeNamespace):
         cdf: float = 0.0,
         implex: bool = False,
         tangent: str = "secant",
+        units: str = "MPa-mm-N",
         name: str | None = None,
     ) -> ASDConcrete3D:
         """Register a Petracca plastic-damage :class:`ASDConcrete3D` from physics.
@@ -794,7 +795,7 @@ class _NDMaterialNS(_BridgeNamespace):
             ASDConcrete3D.from_fc(
                 E=E, v=v, fc=fc, ft=ft, Gf=Gf, Gc=Gc, lch_ref=lch_ref,
                 rho=rho, Kc=Kc, eta=eta, cdf=cdf, implex=implex,
-                tangent=tangent,
+                tangent=tangent, units=units,
             ),
             name=name,
         )
@@ -1123,6 +1124,7 @@ class _NDMaterialNS(_BridgeNamespace):
         eps_fc: float | None = None,
         gc_legacy: bool = False,
         flow_potential: str | None = None,
+        ec: float | None = None,
         name: str | None = None,
     ) -> LadrunoConcrete3D:
         """Register a :class:`LadrunoConcrete3D` CDPM2-grade solid concrete.
@@ -1144,7 +1146,7 @@ class _NDMaterialNS(_BridgeNamespace):
                 lch=lch, auto_regularize=auto_regularize, implex=implex,
                 eta=eta, ct_temper=ct_temper, hoop_k=hoop_k, hoop_fy=hoop_fy,
                 tension_law=tension_law, eps_fc=eps_fc, gc_legacy=gc_legacy,
-                flow_potential=flow_potential,
+                flow_potential=flow_potential, ec=ec,
             ),
             name=name,
         )

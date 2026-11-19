@@ -151,7 +151,10 @@ a node set with a per-set DOF selection, carrying the correct moment-arm
 transport so an *offset* reference couples rigidly. Its flexible counterpart is
 `distributing_coupling` — RBE3 — which distributes a force at a reference point
 over a node set as a statically equivalent pattern while the set stays
-deformable, with `weighting="area"` for a traction-like spread. Reach for RBE2
+deformable, with `weighting="area"` for a traction-like spread over the whole
+slave surface, or `weighting="footprint"` with a polygon `footprint=` for the
+spread of a uniform pressure over just that polygon (a column section on a
+slab or mat mesh whose edges do not follow it). Reach for RBE2
 when the region must move rigidly (a loading platen); RBE3 when you want to
 *introduce a load* without stiffening anything. Both emit dedicated Ladruno
 fork elements: the deck is written on any build, but running it needs the fork.

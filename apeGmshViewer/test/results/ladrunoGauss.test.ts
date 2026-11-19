@@ -27,6 +27,7 @@ import { LadrunoError, openLadruno, type LadrunoFile } from "../../src/reader/la
 import { uniqueElementIds, type IdList } from "../../src/reader/ladrunoChecks.ts";
 import { gatherGauss } from "../../src/reader/ladrunoElements.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
+import { gaussFields } from "../../src/state/contour.ts";
 import { applyPlan, buildPlan, extrapolationVerdict, shapeOf, type CellOf } from "../../src/state/extrapolation.ts";
 
 await h5wasm.ready;
@@ -533,4 +534,95 @@ test("main: an unverified .ladruno never serves element values", async () => {
   const s = h.readStep({ path: p, stage: "stage_0", step: 0, seq: 1, element: "stress/sigma11" });
   assert.ok(!s.ok && /element results of .* are refused: .*"ops_tag"/.test(s.error));
   h.close();
+});
+
+// -- a class the recorder has no quadrature rule for (YOO T2_solid, fork 6050d78e) ----------
+
+const HEX_MODEL = "33002-LadrunoBrick[0:0]";
+const HEX_KEY = "33002-LadrunoBrick[0:0:0]";
+const HEX = `stresses/${HEX_KEY}`;
+const HEX_LABELS = ["sigma11", "sigma22", "sigma33", "sigma12", "sigma23", "sigma13"];
+/** DATA[t, e, i * 6 + c] for the bucket's GAUSS_ID row i (Gauss point gaussId[i]): distinct for every (t, element, point, component). */
+const hexValue = (t: number, e: number, g: number, c: number) => 1000 * (t + 1) + 100 * e + 10 * g + c;
+
+/**
+ * A copy with a LadrunoBrick element group as the fork writes it when its recorder has no rule for the class
+ * (INTEGRATION_RULE 0, TOPOLOGY "custom", no QUADRATURE), and a `stresses` bucket of elements 7 and 8 with 8 Gauss
+ * points of 6 components; `gp` adds a QUADRATURE/GP_PARAM of that dtype.
+ */
+function withHexBucket(gaussId = [0, 1, 2, 3, 4, 5, 6, 7], gp: "none" | "int" = "none"): string {
+  return edited(QUAD, (f) => {
+    const m = (f.get(`${STAGE}/MODEL/ELEMENTS`) as h5wasm.Group).create_group(HEX_MODEL);
+    m.create_attribute("FAMILY", "lagrange");
+    m.create_attribute("GEOMETRY", 0);
+    m.create_attribute("INTEGRATION_RULE", 0);
+    m.create_attribute("NUM_CTRL", 8);
+    m.create_attribute("PARAM_DOMAIN", "[-1,1]");
+    m.create_attribute("TOPOLOGY", "custom");
+    m.create_dataset({ name: "CONNECTIVITY", data: new Int32Array(18), shape: [2, 9] });
+    if (gp === "int") m.create_group("QUADRATURE").create_dataset({ name: "GP_PARAM", data: new Int32Array(24), shape: [8, 3] });
+    const ids = [7, 8];
+    const G = gaussId.length;
+    const data = new Float64Array(2 * ids.length * G * 6);
+    for (let t = 0; t < 2; t++) for (let e = 0; e < ids.length; e++) for (let i = 0; i < G; i++) for (let c = 0; c < 6; c++) {
+      data[((t * ids.length + e) * G + i) * 6 + c] = hexValue(t, e, gaussId[i]!, c);
+    }
+    const g = (f.get(ELEMS) as h5wasm.Group).create_group("stresses").create_group(HEX_KEY);
+    g.create_dataset({ name: "ID", data: new Int32Array(ids), shape: [ids.length, 1] });
+    g.create_dataset({ name: "TIME", data: SRC.time });
+    g.create_dataset({ name: "STEP", data: new Int32Array([0, 1]) });
+    g.create_dataset({ name: "DATA", data, shape: [2, ids.length, G * 6] });
+    g.create_attribute("NUM_COLUMNS", G * 6);
+    const cm = g.create_group("COLUMN_MAP");
+    const col = (v: number[]) => ({ data: new Int32Array(v), shape: [v.length, 1] });
+    cm.create_attribute("COMP_NAMES", Array(G).fill(HEX_LABELS.join(",")).join("\n"));
+    cm.create_dataset({ name: "LEVELS", ...col(Array(G).fill(4)) });
+    cm.create_dataset({ name: "GAUSS_ID", ...col(gaussId) });
+    cm.create_dataset({ name: "NUM_COMP", ...col(Array(G).fill(6)) });
+    cm.create_dataset({ name: "MULTIPLICITY", ...col(Array(G).fill(1)) });
+    cm.create_dataset({ name: "FIBER_ID", ...col(Array(G).fill(-1)) });
+  });
+}
+
+test("no QUADRATURE/GP_PARAM (LadrunoBrick, rule 0): the Gauss values read in GAUSS_ID order, no position is offered, and the open warns why", () => {
+  // GAUSS_ID out of order: the column of Gauss point g is the row that names g, never the row index.
+  const gaussId = [3, 0, 7, 1, 5, 2, 6, 4];
+  withFile(withHexBucket(gaussId), (r) => {
+    const s = r.index.stages[0]!;
+    const g = s.gauss.find((x) => x.id === HEX);
+    assert.ok(g, `no gauss group ${HEX}; groups: ${s.gauss.map((x) => x.id).join(", ")}`);
+    assert.deepEqual(g.refused, []);
+    assert.deepEqual(g.components, HEX_LABELS.map((l) => `stresses/${l}`));
+    assert.equal(g.nGauss, 8);
+    assert.equal(g.nElements, 2);
+    assert.equal(g.classTag, 33002);
+    assert.equal(g.naturalCoords, null, "a position no file gives is never offered");
+    const w = r.index.warnings.filter((x) => x.includes(HEX_KEY));
+    assert.equal(w.length, 1, r.index.warnings.join("\n"));
+    assert.match(w[0]!, /33002-LadrunoBrick\[0:0\] has no QUADRATURE\/GP_PARAM \(INTEGRATION_RULE 0\), so its 8 Gauss points are read per element but not placed/);
+    for (const [c, label] of HEX_LABELS.entries()) {
+      for (const t of [0, 1]) {
+        const v = r.readGaussStep("stage_0", HEX, `stresses/${label}`, t);
+        assert.deepEqual(Array.from(v), [0, 1].flatMap((e) => Array.from({ length: 8 }, (_, gp) => hexValue(t, e, gp, c))), `${label} step ${t}`);
+      }
+    }
+    // The element field is drawable (flat per element), not refused; at-nodes is refused for this group, by reason.
+    const field = gaussFields(s.gauss.map((x) => ({ ...x, elementIds: undefined }))).find((f) => f.name === "stresses");
+    assert.ok(field);
+    assert.equal(field.refused, null);
+    const v = extrapolationVerdict([{ id: HEX, nElements: 2, nGauss: 8, eids: new Float64Array([7, 8]), naturalCoords: g.naturalCoords }], () => ({ code: 5, nodes: [1, 2, 3, 4, 5, 6, 7, 8] }));
+    assert.match(v.matrix!, /stresses\/33002-LadrunoBrick\[0:0:0\] has no natural coordinates .*no QUADRATURE\/GP_PARAM/);
+    // The quad buckets beside it are untouched.
+    assert.deepEqual(s.gauss.find((x) => x.id === STRESS)!.refused, []);
+  });
+});
+
+test("no QUADRATURE/GP_PARAM still checks GAUSS_ID: a repeated Gauss point refuses the bucket by name", () => {
+  const reasons = refusalOf(withHexBucket([0, 1, 2, 3, 4, 5, 6, 6]), HEX);
+  assert.ok(reasons.length === 6 && reasons.every((x) => /GAUSS_ID = \[0, 1, 2, 3, 4, 5, 6, 6\] is not each GP_PARAM row 0\.\.7 once/.test(x)), reasons.join("\n"));
+});
+
+test("a QUADRATURE/GP_PARAM that is there but not floating point still refuses the bucket", () => {
+  const reasons = refusalOf(withHexBucket(undefined, "int"), HEX);
+  assert.ok(reasons.length === 6 && reasons.every((x) => /QUADRATURE\/GP_PARAM is not a floating-point .* so its Gauss points cannot be placed/.test(x)), reasons.join("\n"));
 });

@@ -10,6 +10,7 @@ import * as h5wasm from "h5wasm/node";
 import { readGeometry, type GeometryZone } from "../reader/geometry.ts";
 import { filePath, isPseudoFile, readProvenance, type ProvenanceZone } from "../reader/provenance.ts";
 import { openH5, type H5Openable } from "../reader/h5open.ts";
+import { isRemotePath } from "./source.ts";
 
 const isFile = (p: string): boolean => {
   try {
@@ -129,8 +130,9 @@ export async function openProvenance(path: string): Promise<ProvenanceAnswer> {
     await h5wasm.ready;
     const zone = readProvenance(h5, path);
     // Only main can see the disk: a source with no digest opens only when its
-    // path is a file now (provenance.ts, SourceSite.recorded).
-    if (zone) zone.present = zone.files.path.map((p, i) => !isPseudoFile(p) && isFile(filePath(zone, i)));
+    // path is a file now (provenance.ts, SourceSite.recorded). VU14 (#2771): a
+    // path naming another machine is never looked up, so it is not present.
+    if (zone) zone.present = zone.files.path.map((p, i) => !isPseudoFile(p) && !isRemotePath(filePath(zone, i)) && isFile(filePath(zone, i)));
     return { ok: true, zone };
   } catch (err) {
     return { ok: false, error: message(err) };

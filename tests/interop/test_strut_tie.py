@@ -114,34 +114,46 @@ def test_schema_and_case_are_checked() -> None:
 
 @pytest.mark.ladruno_fork
 @pytest.mark.slow
-def test_corbel_pushover_refuses_a_step_out_of_equilibrium(
+def test_corbel_pushover_curve_rises_past_cracking_in_equilibrium(
     record_property: Any,
 ) -> None:
-    """#2602: at the pinned fork, ``LadrunoConcrete3D``'s return map fails
-    silently (``setTrialStrain`` returns 0 with the off-surface trial
-    stress), so a step past cracking is accepted out of equilibrium and the
-    run refuses. Before the guard this test accepted ``stopped="divergence"``
-    and a capacity above 150 kN from such a path. Once chain F makes the
-    return map fail loudly (#2602 route 2), the expectation goes back to a
-    curve that rises past the plain-concrete cracking peak (about 136 kN on
-    this mesh) to more than 150 kN."""
-    with pytest.raises(PushoverRefusedError) as info:
-        strut_tie_pushover(
-            _load("corbel.stm.json"),
-            mesh_size=45.0,
-            extra_fixed_planes=(("x", -400.0, (0, 1)),),
-            target_displacement=0.3,
-            steps=10,
-        )
-    err = info.value
-    record_property("refused_step", err.step)
-    record_property("refusal", str(err))
-    assert err.reason == "unbalanced"
-    assert "is not in equilibrium" in str(err)
-    pts = err.points
-    assert pts[0] == [0.0, 0.0] and len(pts) == err.step
+    """The reinforced corbel's curve rises past the plain-concrete cracking
+    peak (about 136 kN on this mesh without bars) to more than 150 kN, with
+    every accepted step in equilibrium.
+
+    At ``ladruno-v20261029`` and before, ``LadrunoConcrete3D`` returned 0
+    from a failed return map, so a step past cracking was accepted out of
+    equilibrium and the equilibrium guard refused it (#2602). From
+    ``ladruno-v20261030`` (fork PR #1038) it returns a negative code, Newton
+    cuts the step, and the run completes in equilibrium (#2622)."""
+    result = strut_tie_pushover(
+        _load("corbel.stm.json"),
+        mesh_size=45.0,
+        extra_fixed_planes=(("x", -400.0, (0, 1)),),
+        target_displacement=0.3,
+        steps=10,
+    )
+    curve = result.overlays["fe_curve"]
+    pts = curve["points"]
+    record_property("capacity_N", curve["capacity"])
+    record_property("stopped", curve["stopped"])
+    record_property("n_points", len(pts))
+    record_property(
+        "max_relative_unbalance", curve["equilibrium"]["max_relative_unbalance"]
+    )
+    assert len(pts) >= 4
+    assert pts[0] == [0.0, 0.0]
     assert all(b[0] > a[0] for a, b in itertools.pairwise(pts))
-    assert len(pts) < 2 or pts[1][1] > 0.0  # the elastic first step rises
+    assert curve["capacity"] == max(p[1] for p in pts)
+    # Reinforced: the tie bars carry the region well past the plain-concrete
+    # cracking peak.
+    assert curve["capacity"] > 150.0e3
+    assert "ties as Steel02" in curve["source"]
+    assert result.overlays["fe_summary"]["ties_modelled"]["T1"] > 0.0
+    assert curve["stopped"] in ("target", "post_peak")
+    assert curve["equilibrium"]["max_relative_unbalance"] <= 5e-3
+    assert pts[1][1] > 0.0  # the elastic first step rises
+    json.dumps(result.overlays, allow_nan=False)
 
 
 @pytest.mark.ladruno_fork
@@ -214,6 +226,20 @@ def test_cook_mitchell_double_corbel_pushover_against_the_paper(
     equilibrated run: 0.7 × 471 kN (the strut-and-tie prediction, the
     floor) < per side < 1.1 × 502 kN (the measured load), with
     ``stopped == "post_peak"``. Chain F (#2602 route 2) restores it.
+
+    **#2622 (FORK_PIN ladruno-v20261030): the fork refuses the failed
+    return map, and the run still refuses, later.** Fork PR #1038 (refusal
+    rule B of the amended #2602 ruling) makes ``LadrunoConcrete3D`` return
+    a negative code when its last plane-stress pass fails or σ22 stays
+    unconverged, so Newton cuts the step instead of accepting a diverged
+    state. The run gets past step 2 and then refuses on every MKL path the
+    #2602 matrix measured: at steps 65–121, with ``"unbalanced"`` (MKL_CBWR
+    unset on AMD) or ``"no_convergence"`` (AVX2, AVX512, COMPATIBLE). The
+    step and the reason vary with the MKL path, so neither is pinned; the
+    test asserts that the run refuses past the #2602 branch point with one
+    of the two reasons and that the error carries the equilibrated curve.
+    The return-map robustness behind the refusal, the 2 % MKL agreement and
+    the paper bracket are #2621.
     """
     model = _load("cook_mitchell_corbel.stm.json")
     with pytest.raises(PushoverRefusedError) as info:
@@ -223,11 +249,29 @@ def test_cook_mitchell_double_corbel_pushover_against_the_paper(
     err = info.value
     record_property("refused_step", err.step)
     record_property("refusal", str(err))
-    assert err.reason == "unbalanced"
-    assert err.step == 2  # the branch point of the #2602 diagnosis
+    record_property("reason", err.reason)
+    # The pin before #1038 refused here, at step 2 (live-fork 40826555866).
+    assert err.step > 2
     assert err.relative_tolerance == 5e-3
+    if err.reason == "unbalanced":
+        # An accepted state out of equilibrium: its unbalanced force is kept.
+        assert err.unbalance is not None and math.isfinite(err.unbalance)
+        assert err.unbalance > 0.0
+    elif err.reason == "no_convergence":
+        # OpenSees reverted the unconverged step, so there is no state.
+        assert err.unbalance is None
+    else:
+        pytest.fail(f"unknown refusal reason {err.reason!r}")
+    assert f"step {err.step} " in str(err)
+    # The curve: the origin plus every step before the refused one, each in
+    # equilibrium, with the control displacement increasing.
+    assert len(err.points) == err.step
+    assert err.points[0] == [0.0, 0.0]
+    assert all(math.isfinite(d) and math.isfinite(p) for d, p in err.points)
+    assert all(b[0] > a[0] for a, b in itertools.pairwise(err.points))
     equilibrated_per_side = max(p[1] for p in err.points) / 2.0
-    assert equilibrated_per_side < 0.7 * COOK_MITCHELL_STM_PREDICTION_N
+    record_property("equilibrated_per_side_N", equilibrated_per_side)
+    assert equilibrated_per_side > 0.0
 
 
 # ---------------------------------------------------------------------------

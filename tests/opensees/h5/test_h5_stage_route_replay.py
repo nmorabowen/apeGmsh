@@ -16,8 +16,12 @@ holds the emit's model, owners included, to the one the replay reads from
 a pre-fix archive.
 
 The fork's constructor reset (#2443) is not a route check: the deck checks
-the build it runs on (#2516, ``stage_emit.MD_STATIC_RESET_GUARD``), and the
-replayed deck carries that check as the bridge's deck does.
+the build it runs on (#2516, ``stage_emit.MD_STATIC_RESET_GUARD``; since
+#2518 it asks for the ``mdStageFlagPreserved`` capability), and the
+replayed deck carries that check as the bridge's deck does.  A carrier of a
+second material of the flipped class-wide group, activated after the flip,
+is a route check since #2534: it enters plastic with no
+``Elastic2Plastic()``, as a carrier of the flipped material does (#2445).
 
 A pre-fix archive is written here with the checks switched off, the way
 the bridge wrote it before them: ``check_stage_routes`` at stage close and,
@@ -238,16 +242,22 @@ def _multi_element_on_quads() -> apeSees:
 
 
 def _flip_then_activate(*, system: str = "UmfPack", reflip: bool = False,
-                        own_material: bool = False,
+                        own_material: bool = False, elastic: bool = False,
                         mode: "str | None" = None) -> apeSees:
-    """Sand on ``A`` flipped plastic, then ``C`` activated.  With
-    ``own_material``, ``C`` carries a second ManzariDafalias (the fork's
-    constructor reset, #2443) instead of the same sand (#2445).  ``mode``
-    pins the bridge's ``OpenSeesTarget``."""
+    """Sand on ``A`` flipped plastic, then ``C`` activated.  ``C`` carries
+    the same sand (#2445); with ``own_material``, a second
+    ManzariDafalias, of the same class-wide group (#2534); with
+    ``elastic``, an ElasticIsotropic, of no group.  ``mode`` pins the
+    bridge's ``OpenSeesTarget``."""
     ops = _ops(mode)
     sand = _md(ops, "sand")
     _host(ops, "A", sand)
-    _host(ops, "C", _md(ops, "sand_c") if own_material else sand)
+    if elastic:
+        carried = ops.nDMaterial.ElasticIsotropic(name="fill", E=1e5,
+                                                  nu=0.3)
+    else:
+        carried = _md(ops, "sand_c") if own_material else sand
+    _host(ops, "C", carried)
     _stage(ops, "plastic", lambda s: s.update_material_stage(
         materials=[sand], stage=1))
 
@@ -332,6 +342,15 @@ REFUSED: dict[str, tuple[Callable[[], apeSees], str, str]] = {
         _flip_then_activate, "#2445",
         "SixNodeTri on pg 'C' carries nDMaterial tag 1, whose stage flag "
         "an earlier stage left plastic"),
+    # #2534: the flag is the class-wide group's, so a carrier of a second
+    # ManzariDafalias, which the flip never named, is refused as the
+    # carrier of the flipped sand is.  Before #2534 an R1b VALID case
+    # (``own_material_on_stock``).
+    "activation of a second material of the group after the plastic flip": (
+        lambda: _flip_then_activate(own_material=True), "#2534",
+        "SixNodeTri on pg 'C' carries nDMaterial tag 2, whose stage flag "
+        "an earlier stage left plastic (ManzariDafalias::mElastFlag is one "
+        "flag for every material of the class)"),
     # #2528: the flip at 'push' counts only the carriers alive at it, so
     # each of these is refused at 'install', where the carrier enters.
     "activation after a flip of every alive carrier": (
@@ -355,11 +374,14 @@ REFUSED: dict[str, tuple[Callable[[], apeSees], str, str]] = {
 
 
 def _fork_reset(mode: "str | None" = None) -> apeSees:
-    """The fork's constructor reset (#2443): a second ManzariDafalias
-    activated after the plastic flip, on a fork-only chain (Pardiso), so
-    the archive requires the fork."""
-    return _flip_then_activate(system="Pardiso", own_material=True,
-                               mode=mode)
+    """The deck's check for the fork's constructor reset (#2443, #2516):
+    an element built after the plastic flip, with no flip of the group
+    before the next solve, on a fork-only chain (Pardiso), so the archive
+    requires the fork.  The element carries an ElasticIsotropic: a
+    carrier of the group activated so is refused at stage close (#2445,
+    #2534), while the deck's watch counts every element, whatever it
+    carries (``stage_emit.MaterialStageCarriers``, fail closed)."""
+    return _flip_then_activate(system="Pardiso", elastic=True, mode=mode)
 
 
 # ---------------------------------------------------------------------------
@@ -404,10 +426,12 @@ def valid_bridge(case: str) -> apeSees:
         return ops
     if case == "reflip_on_activation":
         return _flip_then_activate(reflip=True)
-    if case == "own_material_on_stock":
-        # The fork-reset model on a stock chain: it replays byte for byte,
-        # the deck's build check included.
-        return _flip_then_activate(own_material=True)
+    if case == "elastic_fill_on_stock":
+        # An element of no class-wide group activated after the plastic
+        # flip, on a stock chain: it replays byte for byte, the deck's
+        # build check included.  (A second ManzariDafalias there was the
+        # case ``own_material_on_stock`` until #2534 refused it.)
+        return _flip_then_activate(elastic=True)
     if case == "ladruno_quads":
         # One sand on two LadrunoQuad, flipped plastic: a
         # MATERIAL_STATE_ELEMENTS class from the fork-floor table, so the
@@ -428,7 +452,7 @@ def valid_bridge(case: str) -> apeSees:
 
 
 VALID = ("both_routes", "beside_clay", "whole_group_elastic",
-         "reflip_on_activation", "own_material_on_stock", "ladruno_quads",
+         "reflip_on_activation", "elastic_fill_on_stock", "ladruno_quads",
          "alive_at_the_flip", "alive_at_the_flip_materialstate")
 
 
@@ -547,43 +571,45 @@ def _guard_block(lines: "list[str]", guard: "list[str]") -> str:
     return chr(10).join(guard)
 
 
-def test_the_replayed_guard_runs_at_the_pin_and_stops_on_stale(
+def test_the_replayed_guard_runs_on_the_capability_and_stops_without(
     tmp_path: Path,
 ) -> None:
-    """The replayed deck's check, on stub engines: the pin and stock run
-    on, the stale fork build 79e062367 stops by name."""
+    """The replayed deck's check, on stub engines (#2518): stock and a
+    fork whose ``ladrunoSchema`` v1 lists ``mdStageFlagPreserved`` run on;
+    a fork without it (v0, no ``ladrunoSchema``, every case of the deck
+    test's table) stops with the one message."""
     import types
+
+    from tests.opensees.integration.test_deck_md_static_guard import (
+        SCHEMA_CASES,
+        py_guard_passes,
+        tcl_guard_passes,
+    )
 
     path = tmp_path / "reset.h5"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         _fork_reset("fork").h5(str(path))
-    pin = MD_STATIC_RESET_GUARD.builds[0]
-    stale = "79e0623670c61c768357a01dff1477a4a0ef7e06"
     py = compile(_guard_block(_replay(path, "py").splitlines(), _PY_GUARD),
                  "<guard>", "exec")
     exec(py, {"ops": types.SimpleNamespace()})
-    exec(py, {"ops": types.SimpleNamespace(ladrunoBuild=lambda: pin)})
-    with pytest.raises(SystemExit) as stop:
-        exec(py, {"ops": types.SimpleNamespace(ladrunoBuild=lambda: stale)})
-    assert stop.value.code == MD_STATIC_RESET_GUARD.message
+    assert not py_guard_passes(py, None)
     tkinter = pytest.importorskip("tkinter")
-    tcl, block = tkinter.Tcl(), _guard_block(
+    block = _guard_block(
         _replay(path, "tcl", flat=True).splitlines(), _TCL_GUARD)
-    tcl.eval(block)
-    tcl.eval(f"proc ladrunoBuild {{}} {{ return {pin} }}")
-    tcl.eval(block)
-    tcl.eval(f"proc ladrunoBuild {{}} {{ return {stale} }}")
-    with pytest.raises(tkinter.TclError) as err:
-        tcl.eval(block)
-    assert str(err.value) == MD_STATIC_RESET_GUARD.message
+    tkinter.Tcl().eval(block)
+    assert not tcl_guard_passes(tkinter, block, None)
+    for name, (schema, ok) in SCHEMA_CASES.items():
+        assert py_guard_passes(py, schema) is ok, name
+        assert tcl_guard_passes(tkinter, block, schema) is ok, name
 
 
 @pytest.mark.live
 @pytest.mark.ladruno_fork
 def test_the_replayed_fork_reset_deck_on_the_fork(tmp_path: Path) -> None:
-    """``live-fork``: the replayed deck passes its check at FORK_PIN; on the
-    stale fork build (the local 79e062367) it stops by name."""
+    """``live-fork``: the replayed deck passes its check at FORK_PIN, whose
+    ``ladrunoSchema`` lists ``mdStageFlagPreserved``; on the stale fork
+    build (the local 79e062367) it stops by name."""
     from tests.opensees.integration.test_deck_md_static_guard import (
         run_guarded_head,
     )

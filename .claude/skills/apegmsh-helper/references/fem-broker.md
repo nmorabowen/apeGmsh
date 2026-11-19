@@ -283,8 +283,12 @@ g.save()                # writes to the ctor save_to= target
 g.save("ckpt.h5")       # or an explicit path
 ```
 
-Without `save_to=`, `end()` still writes `<model_name>.h5` and
-`<model_name>.geometry.h5` beside the running script (ADR 0112 D1), and
+`save_to=None` is **not** "don't save". Without `save_to=`, `end()` still
+writes `<model_name>.h5` and `<model_name>.geometry.h5` in the
+conventional directory (ADR 0112 D1): `$APEGMSH_ARTIFACT_DIR` when set,
+else beside the running script, else the cwd. There is no user-facing
+opt-out; `save_to=` only redirects this one write (the bridge's own
+automatic `<model_name>.h5` ignores it, see opensees-bridge.md). And
 `model_name` defaults to the script's stem (`python frame.py` ->
 `frame.h5`). In a notebook, `-c` or stdin there is no script: with no
 `model_name=` nothing is written and one warning says so. A later run of
@@ -306,6 +310,10 @@ Write semantics & traps:
 - `g.save()`/`to_h5` write **only the neutral zone** (no `/opensees/`).
   To persist the OpenSees deck too, use `apeSees(fem).h5(path)` (writes
   **both** neutral + opensees zones — see opensees-bridge.md).
+- `APEGMSH_ARTIFACT_DIR=<dir>` redirects every conventional-path write
+  (session `end()` without `save_to=`, and the bridge's automatic
+  write); it is read at write time, so setting it in-process before
+  `end()` works too.
 - `save_to=` does **not** autosave eagerly. The write happens in
   `end()` (i.e. `__exit__` or explicit `g.end()`). If the process dies
   before `end()`, nothing is written.

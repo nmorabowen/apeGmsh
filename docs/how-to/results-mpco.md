@@ -112,9 +112,13 @@ data came from MPCO.
   each rank stores only its own elements' share.
   Pass `merge_partitions=False` to read only the named partition.
 - **MPCO vs the default route:** use MPCO for STKO interoperability and
-  parallel runs; use `spec.emit_default(...)` when one in-process script
-  should run on whatever build it finds: the fork's `.ladruno`, a stock
-  `.mpco`, or pip's `.out` files, all read with the same API.
+  parallel runs; use `spec.emit_default(...)` for one in-process script
+  across builds: the fork's `.ladruno`, or pip's `.out` files, all read
+  with the same API. On a stock build with MPCO the default route converts
+  the `.mpco` to `.ladruno` when the program declares its stages with
+  `ops.stage(...)`, and refuses an unstaged program by name; it never
+  reads the `.mpco` with `from_mpco`. Run such a program as a deck emitted
+  with `analyze_steps` and read it with `read_deck_mpco`.
 
 ## See also
 

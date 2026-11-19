@@ -83,6 +83,7 @@ from typing import Any, Iterable, Literal, cast
 from ._internal.build.errors import BridgeError
 from ._internal.build.recorders import _emit_recorder_declaration
 from ._internal.build.pg_expand import expand_pg_to_elements
+from ._internal._combinations_h5 import CombinationsZone, read_combinations_group
 from ._internal.compose import _compose_model_h5, _path_stem
 from .emitter.base import Emitter
 from .emitter.h5 import H5Emitter
@@ -155,6 +156,7 @@ class ModelData:
         self._ndm = int(ndm)
         self._ndf = int(ndf)
         self._model_name = model_name
+        self._loaded_combinations = CombinationsZone()
         self._em = H5Emitter(
             model_name=model_name or "model",
             snapshot_id=str(getattr(fem, "snapshot_id", "") or ""),
@@ -436,6 +438,7 @@ class ModelData:
         line-only frame declared with ``ndm=2`` writes ``2`` (#1291).
         """
         name = self._model_name or _path_stem(path)
+        self._em.set_combinations(self._loaded_combinations.rows_for_rewrite())
         _compose_model_h5(
             self._fem,
             self._em,
@@ -490,18 +493,44 @@ class ModelData:
             ``path`` does not exist.
         OSError
             ``path`` is not a valid HDF5 file (h5py.File raises).
+        SchemaVersionError
+            The file's opensees zone is below the floor or newer than this
+            reader.
+        MalformedH5Error
+            ``/opensees`` exists but ``/meta`` stamps no opensees version.
         """
         import h5py
         import numpy as np
 
         from ..mesh.FEMData import FEMData
+        from ._internal.schema_version import (
+            OPENSEES,
+            read_zone_version,
+            reader_version,
+            validate_zone_version,
+        )
+        from .emitter.h5_reader import MalformedH5Error, read_spatial_ndm
+
+        # The opensees stamp is judged before the neutral zone is read: a
+        # file with /opensees and no stamp at all would otherwise be refused
+        # by FEMData for its empty envelope, which names the wrong zone. A
+        # file with only the envelope reads it as the opensees version.
+        with h5py.File(path, "r") as f:
+            if "opensees" in f:
+                meta_attrs = f["meta"].attrs if "meta" in f else {}
+                opensees_version = read_zone_version(meta_attrs, OPENSEES)
+                if opensees_version is None:
+                    raise MalformedH5Error(
+                        f"{path}: /meta carries no opensees zone version")
+                # A newer file would lose what this reader does not know
+                # on a rewrite, and be stamped with this reader's version.
+                validate_zone_version(
+                    opensees_version, reader_version(OPENSEES), zone=OPENSEES)
 
         # Broker — its ``snapshot_id`` already round-trips through
         # ``FEMData.from_h5`` (read from /meta, not recomputed), but
         # we still carry the source value opaque below.
         fem = FEMData.from_h5(path)
-
-        from .emitter.h5_reader import read_spatial_ndm
 
         with h5py.File(path, "r") as f:
             meta = f["meta"]
@@ -531,6 +560,8 @@ class ModelData:
             if "opensees" not in f:
                 return md
             ops_grp = f["opensees"]
+            # ADR 0130 D4: write() echoes the combinations it does not edit.
+            md._loaded_combinations = read_combinations_group(ops_grp)
 
             # ADR 0055 Phase 2 laundering guard: ModelData reads only
             # the orientation zone, so re-saving via ``write()`` would

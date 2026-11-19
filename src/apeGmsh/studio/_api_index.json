@@ -139,7 +139,7 @@
       "symbol": "EigenResult.mode_shape"
     },
     "EigenResult.results": {
-      "doc": "Write the modes with :meth:`to_native` (to a temp file) and",
+      "doc": "Write the modes with :meth:`to_ladruno` (to a temp file) and",
       "signature": "results(model_h5: \"'str | os.PathLike[str] | None'\" = None) -> \"'Results'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "EigenResult.results"
@@ -708,6 +708,12 @@
       "skill": "references/results.md",
       "symbol": "Results.close"
     },
+    "Results.combinations": {
+      "doc": "The set's User Combinations, evaluated per quantity on read (ADR 0130 D4).",
+      "signature": "combinations(user_h5: \"'Optional[str | Path]'\" = None, *, model_h5: \"'Optional[str | Path]'\" = None, spectra: 'Any' = None) -> \"'UserCombinations'\"",
+      "skill": "references/results.md",
+      "symbol": "Results.combinations"
+    },
     "Results.demo": {
       "doc": "Return a ready-to-view demo :class:`Results` (cantilever pushover).",
       "signature": "demo(**kwargs) -> \"'Results'\"",
@@ -890,7 +896,7 @@
     },
     "g.constraints.distributing_coupling": {
       "doc": "RBE3 / distributing coupling — distribute a load at a reference",
-      "signature": "distributing_coupling(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), weighting='uniform', k=None, k_alpha=None, host=None, kr=None, enforce='penalty', bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None) -> 'DistributingCouplingDef'",
+      "signature": "distributing_coupling(master_label, slave_label, *, master_point=(0.0, 0.0, 0.0), weighting='uniform', footprint=None, k=None, k_alpha=None, host=None, kr=None, enforce='penalty', bipenalty_dtcr=None, bipenalty_wcap=None, absolute=False, name=None) -> 'DistributingCouplingDef'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.constraints.distributing_coupling"
     },
@@ -3318,6 +3324,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.capabilities"
     },
+    "ops.combination": {
+      "doc": "Declare a combination, archived in ``model.h5`` (ADR 0130 D4).",
+      "signature": "combination(name: 'str', terms: \"'Iterable[object]'\", *, rule: 'str' = 'linear', envelope: 'str' = '', fraction: 'float | None' = None, damping: 'float | None' = None) -> 'Combination'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.combination"
+    },
     "ops.complex_eigen": {
       "doc": "Complex / state-space modal analysis via the live emitter.",
       "signature": "complex_eigen(num_modes: 'int', *, solver: 'str' = '-genBandArpack', tol: 'float | None' = None, closed_form: 'bool' = False) -> \"'ComplexEigenResult'\"",
@@ -3557,6 +3569,12 @@
       "signature": "LadrunoUP(*, pg: 'str', material: 'NDMaterial | str', Kf: 'float', poro: 'float', rhoF: 'float', perm: 'tuple[float, ...] | None' = None, thick: 'float | None' = None, permH: 'tuple[float, ...] | None' = None, gammaW: 'float | None' = None, alpha: 'float | None' = None, Ks: 'float | None' = None, body: 'tuple[float, ...] | None' = None, fluidBody: 'tuple[float, ...] | None' = None, formulation: 'str' = 'std', lumped: 'bool' = False, stab: 'str | float | tuple[str, float] | None' = None, dynSeepage: 'str | bool | None' = None, geom: 'str | None' = None) -> 'LadrunoUP'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.element.LadrunoUP"
+    },
+    "ops.element.SSPquadUP": {
+      "doc": "``alpha=`` is one value for the group; ``alpha_per_area=``",
+      "signature": "SSPquadUP(*, pg: 'str', material: 'NDMaterial | str', thickness: 'float', fluid_bulk: 'float', fluid_density: 'float', perm: 'tuple[float, float]', void_ratio: 'float', alpha: 'float | None' = None, body: 'tuple[float, float] | None' = None, alpha_per_area: 'float | None' = None) -> 'SSPquadUP'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.element.SSPquadUP"
     },
     "ops.element.ShellDKGQ": {
       "doc": "",
@@ -3890,7 +3908,7 @@
     },
     "ops.modal_after_gravity": {
       "doc": "Gravity preload, ``loadConst``, then ``eigen`` + ``modalProperties``",
-      "signature": "modal_after_gravity(num_modes: 'int', *, p_delta: 'bool' = True, solver: 'str' = '-genBandArpack') -> \"'GravityModalResult'\"",
+      "signature": "modal_after_gravity(num_modes: 'int', *, p_delta: 'bool' = True, solver: 'str' = '-genBandArpack', basis: 'str' = 'eigen', ritz_dirs: 'Sequence[int]' = (), ritz_patterns: \"'Sequence[Plain | str]'\" = (), residual: \"'Sequence[int] | None'\" = None, residual_period: 'float | None' = None) -> \"'GravityModalResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.modal_after_gravity"
     },
@@ -3918,9 +3936,99 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.model"
     },
+    "ops.mpm.analyze": {
+      "doc": "``mpm analyze``: ``steps`` explicit steps of size ``dt``.",
+      "signature": "analyze(steps: 'int', dt: 'float') -> 'Analyze'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.analyze"
+    },
+    "ops.mpm.body": {
+      "doc": "An MPM body: the elements of physical group ``pg``, lattice-seeded",
+      "signature": "body(pg: 'str', *, material: \"'NDMaterial | str'\", density: 'float', ppc: 'int', name: 'str | None' = None) -> 'Body'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.body"
+    },
+    "ops.mpm.damping": {
+      "doc": "``mpm damping local``: local non-viscous damping.",
+      "signature": "damping(alpha: 'float') -> 'Damping'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.damping"
+    },
+    "ops.mpm.fix": {
+      "doc": "``mpm fix``: zero grid-velocity ``components`` on ``face``.",
+      "signature": "fix(face: 'str', components: 'str') -> 'Fix'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.fix"
+    },
+    "ops.mpm.flip": {
+      "doc": "``mpm flip``: the FLIP fraction.",
+      "signature": "flip(alpha: 'float') -> 'Flip'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.flip"
+    },
+    "ops.mpm.gravity": {
+      "doc": "``mpm gravity``: the body force per unit mass.",
+      "signature": "gravity(*g: 'float') -> 'Gravity'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.gravity"
+    },
+    "ops.mpm.grid": {
+      "doc": "``mpm grid``: the background grid (one per model).",
+      "signature": "grid(*, origin: 'Sequence[float]', h: 'float', cells: 'Sequence[int]', basis: 'str | None' = None) -> 'Grid'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.grid"
+    },
+    "ops.mpm.gridvel": {
+      "doc": "``mpm gridvel ... v``: a prescribed grid velocity in a box.",
+      "signature": "gridvel(name: 'str', box: 'Sequence[Sequence[float]]', v: 'Sequence[float | str]', *, start: 'float | None' = None, translate: 'str | None' = None, profile: 'Sequence[float] | None' = None) -> 'Gridvel'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.gridvel"
+    },
+    "ops.mpm.gridvelAffine": {
+      "doc": "``mpm gridvel ... affine``: grid velocity ``L (x - ref)`` in a box.",
+      "signature": "gridvelAffine(name: 'str', box: 'Sequence[Sequence[float]]', L: 'Sequence[Sequence[float]]', *, ref: 'Sequence[float] | None' = None) -> 'GridvelAffine'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.gridvelAffine"
+    },
+    "ops.mpm.massCutoff": {
+      "doc": "``mpm massCutoff``: the active-node mass cutoff.",
+      "signature": "massCutoff(c: 'float') -> 'MassCutoff'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.massCutoff"
+    },
+    "ops.mpm.output": {
+      "doc": "``mpm output``: the particle results file (``.ladruno``).",
+      "signature": "output(path: 'str', *, every: 'int | None' = None, dt: 'float | None' = None, fields: 'Sequence[str] | None' = None, compress: 'int | None' = None, flush: 'float | None' = None) -> 'Output'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.output"
+    },
+    "ops.mpm.safety": {
+      "doc": "``mpm safety``: the time-step safety factor.",
+      "signature": "safety(s: 'float') -> 'Safety'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.safety"
+    },
+    "ops.mpm.timeSeries": {
+      "doc": "``mpm timeSeries``: the factor on gravity (a series or its name).",
+      "signature": "timeSeries(series: \"'_TimeSeriesPrimitive | str'\") -> 'TimeSeries'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.timeSeries"
+    },
+    "ops.mpm.units": {
+      "doc": "``mpm units``: the unit symbols of the set and the results.",
+      "signature": "units(length: 'str', force: 'str', time: 'str', *, system: 'str | None' = None) -> 'Units'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.units"
+    },
+    "ops.mpm.wall": {
+      "doc": "``mpm wall``: a stationary Coulomb wall on ``face``.",
+      "signature": "wall(face: 'str', mu: 'float') -> 'Wall'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.wall"
+    },
     "ops.nDMaterial.ASDConcrete3D": {
       "doc": "Register a Petracca plastic-damage :class:`ASDConcrete3D` from physics.",
-      "signature": "ASDConcrete3D(*, E: 'float', v: 'float', fc: 'float', ft: 'float | None' = None, Gf: 'float | None' = None, Gc: 'float | None' = None, lch_ref: 'float | None' = None, rho: 'float' = 0.0, Kc: 'float' = 0.6666666666666666, eta: 'float' = 0.0, cdf: 'float' = 0.0, implex: 'bool' = False, tangent: 'str' = 'secant', name: 'str | None' = None) -> 'ASDConcrete3D'",
+      "signature": "ASDConcrete3D(*, E: 'float', v: 'float', fc: 'float', ft: 'float | None' = None, Gf: 'float | None' = None, Gc: 'float | None' = None, lch_ref: 'float | None' = None, rho: 'float' = 0.0, Kc: 'float' = 0.6666666666666666, eta: 'float' = 0.0, cdf: 'float' = 0.0, implex: 'bool' = False, tangent: 'str' = 'secant', units: 'str' = 'MPa-mm-N', name: 'str | None' = None) -> 'ASDConcrete3D'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.nDMaterial.ASDConcrete3D"
     },
@@ -3974,7 +4082,7 @@
     },
     "ops.nDMaterial.LadrunoConcrete3D": {
       "doc": "Register a :class:`LadrunoConcrete3D` CDPM2-grade solid concrete.",
-      "signature": "LadrunoConcrete3D(*, E: 'float', nu: 'float', fc: 'float', ft: 'float', Gf: 'float', Gc: 'float', e: 'float | None' = None, kupfer: 'float' = 1.16, Df: 'float' = 1.0, As: 'float' = 2.0, rho: 'float' = 0.0, hardening: 'tuple[float, float]' = (0.3, 0.5), ductility: 'tuple[float, float, float, float]' = (0.08, 0.003, 2.0, 1e-06), lch: 'float' = 1.0, auto_regularize: 'bool' = False, implex: 'bool' = False, eta: 'float' = 0.0, ct_temper: 'str' = 'none', hoop_k: 'float' = 0.0, hoop_fy: 'float' = 1e+30, tension_law: 'str | None' = None, eps_fc: 'float | None' = None, gc_legacy: 'bool' = False, flow_potential: 'str | None' = None, name: 'str | None' = None) -> 'LadrunoConcrete3D'",
+      "signature": "LadrunoConcrete3D(*, E: 'float', nu: 'float', fc: 'float', ft: 'float', Gf: 'float', Gc: 'float', e: 'float | None' = None, kupfer: 'float' = 1.16, Df: 'float' = 1.0, As: 'float' = 2.0, rho: 'float' = 0.0, hardening: 'tuple[float, float]' = (0.3, 0.5), ductility: 'tuple[float, float, float, float]' = (0.08, 0.003, 2.0, 1e-06), lch: 'float' = 1.0, auto_regularize: 'bool' = False, implex: 'bool' = False, eta: 'float' = 0.0, ct_temper: 'str' = 'none', hoop_k: 'float' = 0.0, hoop_fy: 'float' = 1e+30, tension_law: 'str | None' = None, eps_fc: 'float | None' = None, gc_legacy: 'bool' = False, flow_potential: 'str | None' = None, ec: 'float | None' = None, name: 'str | None' = None) -> 'LadrunoConcrete3D'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.nDMaterial.LadrunoConcrete3D"
     },
@@ -4238,7 +4346,7 @@
     },
     "ops.recorder.Ladruno": {
       "doc": "Construct + register a ``recorder ladruno`` (fork-only).",
-      "signature": "Ladruno(*, file: 'str', nodal_responses: 'tuple[str, ...]' = (), elem_responses: 'tuple[str, ...]' = (), dT: 'float | None' = None, nsteps: 'int | None' = None, energy: 'bool' = False, energy_pg: 'str | None' = None, nodes: 'tuple[int, ...] | None' = None, nodes_pg: 'str | None' = None, elements: 'tuple[int, ...] | None' = None, elements_pg: 'str | None' = None, name: 'str | None' = None) -> 'Ladruno'",
+      "signature": "Ladruno(*, file: 'str', nodal_responses: 'tuple[str, ...]' = (), elem_responses: 'tuple[str, ...]' = (), dT: 'float | None' = None, nsteps: 'int | None' = None, energy: 'bool' = False, energy_pg: 'str | None' = None, precision: \"Literal['f64', 'f32']\" = 'f64', nodes: 'tuple[int, ...] | None' = None, nodes_pg: 'str | None' = None, elements: 'tuple[int, ...] | None' = None, elements_pg: 'str | None' = None, name: 'str | None' = None) -> 'Ladruno'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.recorder.Ladruno"
     },
@@ -4376,7 +4484,7 @@
     },
     "ops.spectrum_after_gravity": {
       "doc": "Per-mode response spectrum about the gravity state (ADR 0124 D4).",
-      "signature": "spectrum_after_gravity(num_modes: 'int', *, spectra: \"'Sequence[DesignSpectrum]'\", extractors: \"'Mapping[str, ResponseExtractor]'\", p_delta: 'bool' = True, solver: 'str' = '-genBandArpack') -> \"'SpectrumModalResult'\"",
+      "signature": "spectrum_after_gravity(num_modes: 'int', *, spectra: \"'Sequence[DesignSpectrum]'\", extractors: \"'Mapping[str, ResponseExtractor]'\", p_delta: 'bool' = True, solver: 'str' = '-genBandArpack', basis: 'str' = 'eigen', ritz_dirs: 'Sequence[int]' = (), ritz_patterns: \"'Sequence[Plain | str]'\" = (), residual: \"'Sequence[int] | None'\" = None, residual_period: 'float | None' = None) -> \"'SpectrumModalResult'\"",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.spectrum_after_gravity"
     },
@@ -4622,7 +4730,7 @@
     },
     "ops.uniaxialMaterial.ASDConcrete1D": {
       "doc": "``uniaxialMaterial ASDConcrete1D`` — Petracca plastic-damage (1-D).",
-      "signature": "ASDConcrete1D(*, E: 'float', fc: 'float', ft: 'float | None' = None, Gf: 'float | None' = None, Gc: 'float | None' = None, lch_ref: 'float | None' = None, eta: 'float' = 0.0, implex: 'bool' = False, name: 'str | None' = None) -> '_ASDConcrete1DCls'",
+      "signature": "ASDConcrete1D(*, E: 'float', fc: 'float', ft: 'float | None' = None, Gf: 'float | None' = None, Gc: 'float | None' = None, lch_ref: 'float | None' = None, eta: 'float' = 0.0, implex: 'bool' = False, units: 'str' = 'MPa-mm-N', name: 'str | None' = None) -> '_ASDConcrete1DCls'",
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.uniaxialMaterial.ASDConcrete1D"
     },

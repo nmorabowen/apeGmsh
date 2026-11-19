@@ -360,6 +360,8 @@ class ModalPropertiesResult:
     ----------
     eigenvalues
         1-D ``np.ndarray`` of ``λ_i = ω_i²`` in OpenSees order.
+    unorm
+        ``True`` when ``properties`` came from ``modalProperties -unorm``.
     properties
         The raw ``modalProperties -return`` dict — per-mode series keyed
         ``partiFactor<C>`` / ``partiMass<C>`` / ``partiMassesCumu<C>`` /
@@ -392,6 +394,11 @@ class ModalPropertiesResult:
     # prefixed; not part of the user-facing surface.
     _live: "LiveOpsEmitter"
 
+    #: Whether ``properties`` came from ``modalProperties -unorm``: its
+    #: factors are then in the displacement-normalised basis, not the
+    #: domain eigenvectors' (the basis caveat above).
+    unorm: bool = False
+
     @property
     def omega(self) -> np.ndarray:
         """Natural circular frequencies ``ω_i = √λ_i`` (rad/s)."""
@@ -406,6 +413,28 @@ class ModalPropertiesResult:
     def periods(self) -> np.ndarray:
         """Natural periods ``T_i = 1 / f_i`` (s)."""
         return 1.0 / self.freq
+
+    @property
+    def kinds(self) -> tuple[str, ...]:
+        """Each mode's kind: ``"eigen"``, ``"residual"`` (a ``residualModes``
+        pseudo-mode) or ``"ritz"`` (a ``ritzVectors`` vector), from the
+        fork's ``modeKind`` in ``modalProperties -return`` (0, 1, 2). A
+        build without mode tags returns no ``modeKind``: every mode is then
+        ``"eigen"``. A residual or Ritz mode's period is its Rayleigh
+        period, not a natural period."""
+        raw = self.properties.get("modeKind")
+        if raw is None:
+            return ("eigen",) * len(self.eigenvalues)
+        names = {0: "eigen", 1: "residual", 2: "ritz"}
+        out = []
+        for k in raw:
+            if int(k) not in names:
+                raise ValueError(
+                    f"ModalPropertiesResult.kinds: unknown modeKind {k!r}; "
+                    "the fork's tags are 0 (eigen), 1 (residual), 2 (ritz)."
+                )
+            out.append(names[int(k)])
+        return tuple(out)
 
     @property
     def total_mass(self) -> np.ndarray:
@@ -1447,7 +1476,9 @@ class ParallelModalResult:
         ``model_h5`` is the bridge archive the deck was emitted from
         (``ops.h5``). ``MODEL/NODES`` is its fem, ``MODEL/ELEMENTS`` is
         empty (``INFO/PROVENANCE@unsupported`` says so), and the file is
-        stamped against it::
+        stamped against it. Its ``stage_names`` is the stage's own
+        ``MODEL_STAGE[1]``: the modes are no program stage, so a staged
+        archive never names the stage after one (#2824)::
 
             res = ParallelModalResult.from_job(job_dir)
             p = res.to_ladruno("modes.ladruno", model_h5="model.h5")
