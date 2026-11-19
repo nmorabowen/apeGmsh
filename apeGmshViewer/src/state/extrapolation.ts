@@ -197,7 +197,7 @@ function noCoordinatesRefusal(id: string): string {
   return (
     `group ${id} has no natural coordinates these shape functions can read: a native _natural_coords that is not floating point, ` +
     `a native triangle or tet group whose _natural_coords match neither the Gauss table older apeGmsh versions wrote for its class nor the current one (#2274), ` +
-    `a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]" (a BezierTri6's or BezierTet10's barycentric points), ` +
+    `a .ladruno QUADRATURE whose PARAM_DOMAIN is not "[-1,1]" and is no "bary" rule the reader can convert (an unknown TOPOLOGY or FAMILY, or a row outside the simplex), ` +
     `or a .ladruno group with no QUADRATURE/GP_PARAM ` +
     `(a warning when the file opened names the group, the class or the domain)`
   );
@@ -206,9 +206,9 @@ function noCoordinatesRefusal(id: string): string {
 /**
  * VF (#2940, the owner's rulings on #2924 item 2; VF2 #2950 for BezierTri6):
  * the groups whose only reason a `gauss_node` field cannot be drawn is that
- * they have no natural coordinates (a BezierTri6's or BezierTet10's
- * barycentric Gauss points in a `.ladruno`, which the reader offers none
- * for), when that is the verdict's whole refusal; null otherwise.
+ * they have no natural coordinates (a `.ladruno` group with no GP_PARAM, or
+ * a PARAM_DOMAIN or "bary" frame reader/ladrunoElements.ts cannot convert),
+ * when that is the verdict's whole refusal; null otherwise.
  * Those groups, and only those, are drawn `cell_averaged` (each element's
  * mean on its corners, which needs no coordinates; `buildPlan`'s
  * `meanGroups`); every other group of the field is still extrapolated, and
@@ -247,7 +247,8 @@ export function extrapolationVerdict(groups: readonly PlanGroupInput[], cellOf: 
     }
     codesSeen.set(g.id, codes);
     if (g.nGauss > 1) {
-      // #2187: a `.ladruno` group offers none when its QUADRATURE's PARAM_DOMAIN is not the [-1,1] these shape functions read;
+      // #2187: a `.ladruno` group offers none when its QUADRATURE's PARAM_DOMAIN is neither the [-1,1] these shape functions
+      // read nor a "bary" rule whose frame reader/ladrunoElements.ts `baryToGmsh` knows;
       // #2274: a native simplex group offers none when its rows are neither its class's older table nor its current one.
       if (!g.naturalCoords) matrix.push(noCoordinatesRefusal(g.id));
       else {
