@@ -370,6 +370,7 @@ def test_utf8_streams_prints_rho_on_a_cp1252_console(monkeypatch):
         print("ρ", file=out, flush=True)
     out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="\n")
     monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
     _utf8_streams()
     print("ρ")
     out.flush()
@@ -391,3 +392,15 @@ def test_utf8_streams_leaves_a_stream_without_reconfigure_alone(monkeypatch):
     monkeypatch.setattr(sys, "stderr", io.StringIO())
     _utf8_streams()
     assert sys.stdout is plain
+
+
+def test_main_prints_rho_on_a_cp1252_console(monkeypatch):
+    import io
+    import sys
+
+    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="\n")
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    assert lookup_main(["g.loads.gravity"]) == 0
+    out.flush()
+    assert "ρ".encode("utf-8") in out.buffer.getvalue()
