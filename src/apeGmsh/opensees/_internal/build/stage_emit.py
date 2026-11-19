@@ -963,8 +963,8 @@ FORK_BUILD_HAS_C83: dict[str, bool] = {
     # FORK_PIN ladruno-v20261118b (cfe478254): c83ee812e is its ancestor
     # (GitHub compare: ahead 459, behind 0). It is 3e738308c plus
     # 61 commits: WP-232k MPM soil models (SANISAND, HS/HSSmall at
-    # particles), the new gridvel forms, `mpm stage`, and mode-F
-    # gridvel/pforce actually applied (OpenSees#1109).
+    # particles), the new gridvel forms, `mpm stage`; mode F now applies
+    # gridvel and refuses pforce/condForce (OpenSees#1109).
     "cfe47825407f2918081eb8083d5865206ddbfd69": True,
     # ladruno-v20261118 (3e738308c): c83ee812e is its ancestor
     # (GitHub compare: ahead 398, behind 0). It is 6ee968060 plus
@@ -1090,8 +1090,8 @@ FORK_BUILD_HAS_MEMBRANE_WP208: dict[str, bool] = {
     # FORK_PIN ladruno-v20261118b (cfe478254): b6d3e3d21 is its ancestor
     # (GitHub compare: ahead 457, behind 0). It is 3e738308c plus
     # 61 commits: WP-232k MPM soil models (SANISAND, HS/HSSmall at
-    # particles), the new gridvel forms, `mpm stage`, and mode-F
-    # gridvel/pforce actually applied (OpenSees#1109).
+    # particles), the new gridvel forms, `mpm stage`; mode F now applies
+    # gridvel and refuses pforce/condForce (OpenSees#1109).
     "cfe47825407f2918081eb8083d5865206ddbfd69": True,
     # ladruno-v20261118 (3e738308c): b6d3e3d21 is its ancestor
     # (GitHub compare: ahead 396, behind 0). It is 6ee968060 plus
@@ -1217,8 +1217,8 @@ FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
     # FORK_PIN ladruno-v20261118b (cfe478254): 34df942c7 is its ancestor
     # (GitHub compare: ahead 487, behind 0). It is 3e738308c plus
     # 61 commits: WP-232k MPM soil models (SANISAND, HS/HSSmall at
-    # particles), the new gridvel forms, `mpm stage`, and mode-F
-    # gridvel/pforce actually applied (OpenSees#1109).
+    # particles), the new gridvel forms, `mpm stage`; mode F now applies
+    # gridvel and refuses pforce/condForce (OpenSees#1109).
     "cfe47825407f2918081eb8083d5865206ddbfd69": True,
     # ladruno-v20261118 (3e738308c): 34df942c7 is its ancestor
     # (GitHub compare: ahead 426, behind 0). It is 6ee968060 plus
@@ -1375,8 +1375,8 @@ FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD: dict[str, bool] = {
     # FORK_PIN ladruno-v20261118b (cfe478254): f4c791df6 is its ancestor
     # (GitHub compare: ahead 4532, behind 0). It is 3e738308c plus
     # 61 commits: WP-232k MPM soil models (SANISAND, HS/HSSmall at
-    # particles), the new gridvel forms, `mpm stage`, and mode-F
-    # gridvel/pforce actually applied (OpenSees#1109).
+    # particles), the new gridvel forms, `mpm stage`; mode F now applies
+    # gridvel and refuses pforce/condForce (OpenSees#1109).
     "cfe47825407f2918081eb8083d5865206ddbfd69": True,
     # ladruno-v20261118 (3e738308c): f4c791df6 is its ancestor
     # (GitHub compare: ahead 4471, behind 0). It is 6ee968060 plus
