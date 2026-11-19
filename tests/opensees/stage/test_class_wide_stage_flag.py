@@ -754,7 +754,12 @@ _MD_STATIC_FIX = MD_STATIC_FIX_COMMIT
 #: capability.  It stays the live reset test's record of what each build
 #: does, for the v0 builds that carry the fix but cannot say so.
 _FORK_BUILD_HAS_MD_STATIC_FIX: "dict[str, bool]" = {
-    # FORK_PIN ladruno-v20261118b (cfe478254): 43b235bbb is its ancestor
+    # FORK_PIN ladruno-v20261119 (f9864cfec): 43b235bbb is its ancestor
+    # (GitHub compare: ahead 478, behind 0). It is cfe478254 plus
+    # 4 commits: WP-235 `hingeStatus` beam response (OpenSees#1113)
+    # and the LadrunoBondSlip reversal friction slider (OpenSees#1115).
+    "f9864cfec04c92a4a602d202ffe3237e01004858": True,
+    # ladruno-v20261118b (cfe478254): 43b235bbb is its ancestor
     # (GitHub compare: ahead 474, behind 0); its ladrunoSchema is v1 and
     # lists mdStageFlagPreserved (fork LadrunoSchema.h kCapabilities).
     "cfe47825407f2918081eb8083d5865206ddbfd69": True,
