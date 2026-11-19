@@ -4,19 +4,38 @@
 // support pattern) are listed by default and marked `synth`; their source is
 // the user's call of that verb (maintainer ruling on #1378). It shares the
 // right rail with the inspector, below it (design brief on #1426). It
-// dispatches events and reads selectors, nothing else.
+// dispatches events and reads selectors, nothing else. The rows are added a
+// page at a time: a large model has tens of thousands, and building and laying
+// out every one cost seconds at load (#2838).
 
-import { sourceFailure, sourcesHeaderOf, sourcesOf } from "../state/selectors.ts";
+import { sourceFailure, sourcesHeaderOf, sourcesOf, type SourceRow } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
 import { byId, el, listen } from "../ui/dom.ts";
+
+/** Rows added at a time. */
+export const SOURCES_PAGE = 200;
+/** How close to the end of the list (px) scrolling adds the next page. */
+const NEAR_END = 400;
 
 export function mountSources(store: Store): () => void {
   const panel = byId("sources");
   let unlisten: (() => void)[] = [];
+  // How many rows are built, kept across a redraw of the same listing.
+  let shown = SOURCES_PAGE;
+  let listing: State["provenance"] | null = null;
+  let showMore = () => {};
+  const offScroll = listen(panel, "scroll", () => {
+    if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - NEAR_END) showMore();
+  });
   const render = (s: State, prev: State | null) => {
     if (prev && s.provenance === prev.provenance && s.decls === prev.decls && s.source === prev.source && s.artifacts === prev.artifacts) return;
     for (const u of unlisten) u();
     unlisten = [];
+    showMore = () => {};
+    if (s.provenance !== listing) {
+      listing = s.provenance;
+      shown = SOURCES_PAGE;
+    }
     const header = sourcesHeaderOf(s);
     // Nothing to list (no model, no /provenance, no record): no box at all.
     panel.hidden = header === null;
@@ -28,7 +47,7 @@ export function mountSources(store: Store): () => void {
     head.append(el("span", "legend-count", header.synthesised ? `${header.count} · ${header.synthesised} synthesised` : String(header.count)));
     const parts: HTMLElement[] = [head];
     if (header.notice) parts.push(el("div", "sources-notice", header.notice));
-    for (const r of sourcesOf(s)) {
+    const rowOf = (r: SourceRow): HTMLElement => {
       const synth = r.origin === "synthesised";
       const row = el("div", "source-row" + (synth ? " synthesised" : ""));
       // The key wraps only after a `/`: a <wbr> after each segment, and the
@@ -54,7 +73,28 @@ export function mountSources(store: Store): () => void {
       if (r.off !== null) row.append(el("div", "f-src source-off", r.off));
       const failed = sourceFailure(s, r.key);
       if (failed) row.append(el("div", "source-failed", `go to source: ${failed}`));
-      parts.push(row);
+      return row;
+    };
+    const rows = sourcesOf(s);
+    parts.push(...rows.slice(0, shown).map(rowOf));
+    if (shown < rows.length) {
+      const more = el("button", "sources-more");
+      const label = () => {
+        more.textContent = `show ${Math.min(SOURCES_PAGE, rows.length - shown)} more (${rows.length - shown} left)`;
+      };
+      label();
+      showMore = () => {
+        const from = shown;
+        shown = Math.min(from + SOURCES_PAGE, rows.length);
+        more.before(...rows.slice(from, shown).map(rowOf));
+        if (shown < rows.length) label();
+        else {
+          more.remove();
+          showMore = () => {};
+        }
+      };
+      unlisten.push(listen(more, "click", () => showMore()));
+      parts.push(more);
     }
     panel.replaceChildren(...parts);
   };
@@ -62,6 +102,7 @@ export function mountSources(store: Store): () => void {
   const unsubscribe = store.subscribe(render);
   return () => {
     unsubscribe();
+    offScroll();
     for (const u of unlisten) u();
   };
 }
