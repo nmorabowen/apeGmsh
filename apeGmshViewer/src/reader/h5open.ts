@@ -159,11 +159,20 @@ function checkedGroups(h5: { readonly FS: H5FS | null; readonly Module?: H5Group
   let diagnosed = false;
   let stack: string | null = null;
   fs.write = (stream, buffer, offset, length, ...rest) => {
-    if (stream.nfd === 2) {
-      diagnosed = true;
-      if (stack !== null) stack += latin1.decode(buffer.subarray(offset, offset + length));
+    if (stream.nfd !== 2) return write(stream, buffer, offset, length, ...rest);
+    diagnosed = true;
+    if (stack !== null) stack += latin1.decode(buffer.subarray(offset, offset + length));
+    // A diagnostic always reports itself written. When the host refuses it (EAGAIN: a full
+    // non-blocking stderr pipe, as under `node --test` on Linux), libc marks stderr in error
+    // and drops the rest of that fprintf, so the stack read above would lose the frame that
+    // tells an object header from a group index (`in H5O_protect()`), and a torn stage would
+    // read as a damaged index. Losing the text on the host's stderr is harmless.
+    try {
+      write(stream, buffer, offset, length, ...rest);
+    } catch {
+      // The host's stderr refused the diagnostic; the stack already holds it.
     }
-    return write(stream, buffer, offset, length, ...rest);
+    return length;
   };
   const names = mod.get_names;
   mod.get_names = (file_id, path, recursive) => {
