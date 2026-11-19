@@ -21,7 +21,6 @@ HOST_SCHEMA = 1
 # Windows: OpenProcess fails with ACCESS_DENIED for live processes we
 # cannot query; INVALID_PARAMETER for a non-existent PID.
 _ERROR_ACCESS_DENIED = 5
-_ERROR_INVALID_PARAMETER = 87
 # GetExitCodeProcess reports STILL_ACTIVE until the process exits.
 _STILL_ACTIVE = 259
 # Largest value either platform treats as a PID (a Windows DWORD; POSIX

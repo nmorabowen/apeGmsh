@@ -24,16 +24,6 @@ BUSY_SCHEMA = 1
 _TORN_GRACE_S = 2.0
 
 
-class BusyError(RuntimeError):
-    """Habitat is locked by another live process."""
-
-    def __init__(self, info: dict[str, Any]) -> None:
-        self.info = info
-        pid = info.get("pid")
-        op = info.get("op") or "run_until"
-        super().__init__(f"BUSY: habitat locked by pid={pid} op={op}")
-
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

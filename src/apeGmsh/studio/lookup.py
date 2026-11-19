@@ -6,11 +6,20 @@ Prints ~20 lines: symbol, signature, skill pointer, one-line doc.
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 from typing import Optional, Sequence
 
 
+def _utf8_streams() -> None:
+    """UTF-8 stdout/stderr: signatures carry ``ρ``, which cp1252 cannot print."""
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):  # captured test streams are not
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    _utf8_streams()
     parser = argparse.ArgumentParser(
         prog="python -m apeGmsh.studio.lookup",
         description=(

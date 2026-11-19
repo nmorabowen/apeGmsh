@@ -356,3 +356,51 @@ def test_index_build_is_byte_deterministic() -> None:
         "committed _api_index.json is not what the builder emits; "
         "run `python -m apeGmsh.studio.lookup --build`"
     )
+
+
+def test_utf8_streams_prints_rho_on_a_cp1252_console(monkeypatch):
+    import io
+    import sys
+
+    from apeGmsh.studio.lookup import _utf8_streams
+
+    raw = io.BytesIO()
+    out = io.TextIOWrapper(raw, encoding="cp1252")
+    with pytest.raises(UnicodeEncodeError):
+        print("ρ", file=out, flush=True)
+    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="\n")
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    _utf8_streams()
+    print("ρ")
+    out.flush()
+    assert out.buffer.getvalue() == "ρ\n".encode("utf-8")
+
+
+def test_utf8_streams_leaves_a_stream_without_reconfigure_alone(monkeypatch):
+    import io
+    import sys
+
+    from apeGmsh.studio.lookup import _utf8_streams
+
+    class Plain:
+        def write(self, s):
+            return len(s)
+
+    plain = Plain()
+    monkeypatch.setattr(sys, "stdout", plain)
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    _utf8_streams()
+    assert sys.stdout is plain
+
+
+def test_main_prints_rho_on_a_cp1252_console(monkeypatch):
+    import io
+    import sys
+
+    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="\n")
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    assert lookup_main(["g.loads.gravity"]) == 0
+    out.flush()
+    assert "ρ".encode("utf-8") in out.buffer.getvalue()
