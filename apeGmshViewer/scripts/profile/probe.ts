@@ -74,7 +74,9 @@ export function installProbe(this: Probe["store"]): void {
   };
   // Frames and long tasks, for the whole life of the page; `reset` starts a scenario's window.
   let last = performance.now();
-  const tick = (now: number) => {
+  // The time the callback ran, not its argument: that stays on the vsync grid while the page thread is late.
+  const tick = () => {
+    const now = performance.now();
     intervals.push(now - last);
     last = now;
     requestAnimationFrame(tick);
