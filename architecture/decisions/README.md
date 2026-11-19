@@ -148,4 +148,4 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0132](0132-workspace-file-and-variants-manifest.md) | The workspace file and the variants manifest: `<stem>.workspace.h5` and `<study>.variants.json` | Accepted |
 | [0133](0133-fem-hash-pairing-for-femdata-archives.md) | A `.ladruno` pairs to a bare FEMData archive by `fem_hash` | Accepted |
 | [0134](0134-mpm-particles.md) | MPM in apeGmsh: the particle set beside the deck, particle results in `.ladruno`, a three.js points layer | Accepted |
-| [0137](0137-apegmshviewer-large-models-and-tool-hosting.md) | apeGmshViewer: memory sets the supported model size, and tools run under one host with several placements | Proposed |
+| [0137](0137-apegmshviewer-large-models-and-tool-hosting.md) | apeGmshViewer: memory sets the supported model size, and tools run under one host with several placements | Accepted |

@@ -1,12 +1,13 @@
 # ADR 0137 — apeGmshViewer: memory sets the supported model size, and tools run under one host with several placements
 
-**Status:** Proposed (2026-11-18). The owner accepts it by merging the PR that carries it. The pointer in ADR 0112 lands
-with it (ADR 0121 D5).
+**Status:** Accepted (2026-11-18; approved by the owner). Merging the PR that carries this Status is the acceptance. The
+pointer in ADR 0112 lands with it (ADR 0121 D5).
 
 **Owner:** nmora
 
-**Builds on** [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md). **Keeps** the ceiling the owner set on #2362
-(2^24 nodes and 2^24 elements per stage, about 15M triangles; its named refusal is not built yet, and #2373 will add it).
+**Builds on** [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md). **Keeps** the owner's ceiling from #2362
+(2^24 nodes and 2^24 elements per stage, about 15M triangles). Its by-name refusal is planned in open #2373 and is not built
+yet.
 **Amends** ADR 0112 D5, D6 and D7 (D14
 here). **Settles** the hosting question that ADR 0135 D5 (#3040) leaves open. **Supersedes** nothing.
 

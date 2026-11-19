@@ -1,4 +1,4 @@
-### ADDED — ADR 0137 (Proposed): apeGmshViewer large models and tool hosting. No code changes.
+### ADDED — ADR 0137 (Accepted): apeGmshViewer large models and tool hosting. No code changes.
 
 - Design only: the stated model support, loading in a utility process, memory warnings before any refusal, one shared step
   read, and no prefetch or step worker yet.
