@@ -6,7 +6,7 @@ with it (ADR 0121 D5).
 **Owner:** nmora
 
 **Builds on** [ADR 0112](0112-files-are-the-model-and-a-read-only-app.md). **Keeps** the ceiling the owner set on #2362
-(2^24 nodes and 2^24 elements per stage, about 15M triangles; #2373 specifies its named refusal, which is not built yet).
+(2^24 nodes and 2^24 elements per stage, about 15M triangles; its named refusal is not built yet, and #2373 will add it).
 **Amends** ADR 0112 D5, D6 and D7 (D14
 here). **Settles** the hosting question that ADR 0135 D5 (#3040) leaves open. **Supersedes** nothing.
 
@@ -178,12 +178,12 @@ same store mounted without product changes and held a 16.9 ms p95 while both orb
 | Order | Slice | Tracks |
 |---|---|---|
 | 1 | H0: the window and navigation policy (D13) | |
-| 2 | Re-measure load time and peak memory with #3047 to #3049 | #3056 |
-| 3 | Memory warnings (D4 stage 1) | #3057 |
+| 2 | Re-measure load time and peak memory once #3047 to #3049 have landed | #3056 |
+| 3 | Memory warnings (D4 stage 1). Pausing tools and refusing tool windows land with H1, when a tool window first exists | #3057 |
 | 4 | Loading and history scans in a utility process (D2) | #3058 |
 | 5 | H1: the tool host, the contract and one separate-renderer window with a placeholder tool | |
 | 6 | H2: the shared chart and the data broker | |
-| 7 | H3: the shared step read (D5) | #3059 |
+| 7 | H3: the shared step read (D5), no later than the first tool that reads step data | #3059 |
 | 8 | H4: the tiled tool window | |
 | 9 | H5: the dock in the model window | |
 | 10 | H6: the 3D view as a tile | |
@@ -202,7 +202,8 @@ spike report lists each one.
 - Whether 42 KB per cell holds on other models, or after the load fixes.
 - Whether Electron reports commit headroom on Windows in the form D4 needs.
 - Any behaviour above about 130,000 cells. Scaling beyond the tested models is extrapolation.
-- The cost of the extra process hop in D2.
+- The cost of the extra process hop in D2, and how step reads (D3) reach the open file and index once `results:open` moves;
+  `ResultsHost` holds both today (#3058).
 - Discrete GPUs, WebGL tools, and machines other than the one above. A WebGL tool also uses the shared GPU process.
 - Real tools: the spike's costly tools are synthetic stand-ins.
 - More than 8 tiles.
@@ -230,4 +231,5 @@ spike report lists each one.
 - State that a tool needs from the model window must go through `ToolContext` or a request, so new tool features may need a
   contract change. The contract is reviewed when each of the first tools lands.
 - Frame timing must use the time the callback ran. The `requestAnimationFrame` timestamp stays on the vsync grid and hides
-  page-thread stalls, which the spike found in `src/renderer/harness/measure.ts`.
+  page-thread stalls. `scripts/profile/probe.ts` (`npm run profile`, #2705) has the same flaw, and its fix follows #2705.
+  `src/renderer/harness/measure.ts` (`npm run measure`) still needs one.
