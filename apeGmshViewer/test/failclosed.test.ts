@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import * as h5wasm from "h5wasm/node";
-import { resolveChain } from "../src/chain/resolve.ts";
+import { MESH_ONLY_FIELD, resolveChain } from "../src/chain/resolve.ts";
+import { elementFields, elementLinks } from "../src/state/decls.ts";
 import { buildMesh } from "../src/mesh/build.ts";
 import type { ElementMeta, ModelFile, OpsObject, Param } from "../src/model/types.ts";
 import { parseRefusal } from "../src/effects.ts";
@@ -121,9 +122,19 @@ test("a dangling material_ref is reported", () => {
   assert.ok(c.problems.some((p) => p.includes(`material_ref ${U}/Missing_9 does not exist`)));
 });
 
-test("an element without an element_meta row says so", () => {
+test("a mesh cell without an element_meta row is shown as mesh only, not as a problem (#2672)", () => {
   const c = resolveChain(model(complete(), []), ref);
-  assert.deepEqual(c.problems, ["FEM element 1 has no row in /opensees/element_meta/*/fem_eids"]);
+  assert.deepEqual(c.problems, []);
+  assert.equal(c.root.type, "(mesh only)");
+  assert.deepEqual(c.root.fields.find((f) => f.label === "OpenSees element"), MESH_ONLY_FIELD);
+});
+
+test("the store's element rows agree: mesh only is a field, never a problem (#2672)", () => {
+  const facts = { femId: 1, cell: { alias: "line2", block: 0, row: 0 }, inlineNodes: [], groups: [], metas: [] };
+  const lookup = { byTag: () => [], byH5: () => null };
+  assert.deepEqual(elementLinks(facts, true, lookup).problems, []);
+  assert.ok(elementFields(facts, [], [1, 2], 2).includes(MESH_ONLY_FIELD));
+  assert.deepEqual(elementLinks(facts, false, lookup).problems, ["the file has no /opensees zone: there is no definition chain"]);
 });
 
 test("mesh: two hexes sharing a face draw 10 boundary quads and 20 outline edges", () => {

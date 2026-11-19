@@ -70,6 +70,7 @@ import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } 
 import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
 import { compareStagesOf, readParticleSet, ResultsHost, type ParticleOutputRequest, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
+import { MaterialTestRunner } from "./materialTest.ts";
 import { OpenSession, Study } from "./session.ts";
 import { confinedToStudy, isManifestPath, readVariants, resolveRow, type VariantsFs } from "../reader/variants.ts";
 import { goToSource, provenanceSources, type SourceScope } from "./source.ts";
@@ -404,6 +405,7 @@ registerReach({ window: () => win, shown });
  * and a slot it never opened is not one it may read (#2817 review 4).
  */
 function pageLoading(): void {
+  materialTests.cancel();
   closeCompare();
   subscribed.clear();
   offersPageLoading();
@@ -627,6 +629,14 @@ ipcMain.handle("particles:set", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ADR 0135 D1: the material tester. The job is checked in main (materialTestScript.ts); it names no executable.
+const materialTests = new MaterialTestRunner();
+ipcMain.handle("materialTest:run", (_e, job: unknown, seq: unknown) => {
+  if (typeof seq !== "number") return { ok: false, seq: -1, build: null, error: `materialTest:run: malformed request ${shown(seq)}` };
+  return materialTests.run(job, seq);
+});
+ipcMain.handle("materialTest:cancel", () => materialTests.cancel());
+
 // VU10 (ADR 0132 D9): the variant doors. Each names a manifest row by index and
 // label (`study.row`, which refuses a mismatch); none takes a path. A switch
 // opens the row's set as the window set (D9.6). The compare door reads the
@@ -1170,6 +1180,7 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  materialTests.cancel();
   session.close();
   resultsHost.close();
   app.quit();

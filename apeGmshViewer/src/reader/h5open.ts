@@ -37,6 +37,48 @@ export interface H5Openable<F> {
 
 const exact = new WeakSet<H5FS>();
 
+/** h5wasm's read binding: every `Dataset` read (`value`, `json_value`, `slice`, `to_array`) calls it. */
+interface H5ReadBinding {
+  get_dataset_data(file_id: bigint, path: string, count: bigint[] | null, offset: bigint[] | null, strides: bigint[] | null, ptr: bigint): number;
+  get_dataset_metadata(file_id: bigint, path: string): { size: number; total_size: number };
+  readonly HEAPU8: Uint8Array;
+}
+
+const checked = new WeakSet<object>();
+
+/**
+ * #3010: make a refused read throw, for every reader at once (see "A read that
+ * says when HDF5 refused it" below). Idempotent per module. A stand-in h5 with
+ * no `Module` (the open tests) has no reads to check.
+ */
+function checkedReads(mod: H5ReadBinding | null | undefined): void {
+  if (mod === undefined || mod === null || checked.has(mod)) return;
+  if (typeof mod.get_dataset_data !== "function" || typeof mod.get_dataset_metadata !== "function") {
+    throw new Error("h5wasm's Module has no get_dataset_data/get_dataset_metadata, so read errors cannot be checked (#3010); refusing to open HDF5 files (check the pinned h5wasm version)");
+  }
+  const read = mod.get_dataset_data;
+  mod.get_dataset_data = (file_id, path, count, offset, strides, ptr) => {
+    const status = read(file_id, path, count, offset, strides, ptr);
+    if (status >= 0) return status;
+    // h5wasm reclaims a variable-length buffer on the way out, even after a throw: zeroed, it holds nothing to free.
+    try {
+      const { size, total_size } = mod.get_dataset_metadata(file_id, path);
+      const n = count ? count.reduce((a, c) => a * Number(c), 1) : total_size;
+      mod.HEAPU8.fill(0, Number(ptr), Number(ptr) + size * n);
+    } catch {
+      // The dataset no longer opens, so the reclaim finds nothing to walk either.
+    }
+    throw new H5ReadError(`${path}: HDF5 refused to read this dataset (its chunk index or data does not read)`);
+  };
+  checked.add(mod);
+}
+
+/** What every open and create needs first: exact file ids, and reads that report a refusal. */
+function prepare(h5: { readonly FS: H5FS | null }): void {
+  exactInodes(h5.FS);
+  checkedReads((h5 as { Module?: H5ReadBinding | null }).Module);
+}
+
 /** Make `fs.fstat` report the exact 64-bit file id, or throw. Idempotent per FS. */
 function exactInodes(fs: H5FS | null): void {
   if (fs === null) throw new Error("h5wasm is not ready: await h5wasm.ready before opening an HDF5 file");
@@ -61,6 +103,88 @@ function exactInodes(fs: H5FS | null): void {
     return st;
   };
   exact.add(fs);
+}
+
+// -- A listing or lookup that says when a group index does not read ---------------------
+//
+// h5wasm's `Group.keys()` calls `Module.get_names`, whose C++ drops H5Literate2's status: when
+// a group's B-tree is damaged, the iteration stops and the names found so far come back as the
+// whole group, so a stage silently loses its results. `Group.get` calls `Module.get_type`, whose
+// C++ ignores both of its statuses: the same damage makes an existing dataset, and a name that
+// does not exist, come back as type 0, a group. The only trace is HDF5's error stack, which its
+// default handler writes to stderr, through `FS.write` on host fd 2.
+//
+// `checkedGroups` watches that write around each call. Any diagnostic during a listing is a
+// failure. A lookup needs the stack's content, because HDF5 also reports an error on a sound
+// file: a path below a dataset, through a dangling soft link or through an external link. Those
+// never reach the metadata cache, and a damaged index always fails loading into it. An object
+// header that does not load (`H5O_protect`) is not the index: the link was found, `get` answers
+// as before, and the object's own reads refuse it (the `.ladruno` torn-stage rule relies on this).
+//
+// h5wasm's throwing error handler is not used: its throw unwinds the C++ past H5Gclose, the
+// leaked group keeps the file open after `close()`, and a later open of that path shares the
+// stale file. These checks throw only after the binding has returned.
+
+/** h5wasm's group bindings: `Group.keys()` calls `get_names`, `Group.get` calls `get_type`. */
+interface H5GroupBinding {
+  get_names(file_id: bigint, path: string, recursive: boolean): string[];
+  get_type(file_id: bigint, path: string): number;
+}
+
+/** The `FS.write` HDF5's diagnostics pass through. */
+type H5FsWrite = (stream: { nfd?: unknown }, buffer: Uint8Array, offset: number, length: number, ...rest: unknown[]) => number;
+
+const watched = new WeakSet<object>();
+
+/** Whether an HDF5 error stack says a group's index could not be loaded. */
+function indexDidNotLoad(stack: string): boolean {
+  return stack.includes("major: Object cache") && !stack.includes("in H5O_protect()");
+}
+
+/**
+ * Make a listing HDF5 reported an error on, and a lookup through an index that does not read,
+ * throw, for every reader at once. Idempotent per module; a stand-in h5 with no `Module` (the
+ * open tests) has no groups. The error is a plain `Error`, what h5wasm raises for an unreadable
+ * object, so the readers' rules for a stage that does not read (`isH5Error`) apply to it.
+ */
+function checkedGroups(h5: { readonly FS: H5FS | null; readonly Module?: H5GroupBinding | null }): void {
+  const mod = h5.Module;
+  if (mod === undefined || mod === null || watched.has(mod)) return;
+  const fs = h5.FS as unknown as { write?: H5FsWrite };
+  if (typeof mod.get_names !== "function" || typeof mod.get_type !== "function" || typeof fs.write !== "function") {
+    throw new Error("h5wasm has no Module.get_names/get_type/FS.write, so a damaged group index cannot be detected; refusing to open HDF5 files (check the pinned h5wasm version)");
+  }
+  const write = fs.write.bind(fs);
+  const latin1 = new TextDecoder("latin1");
+  let diagnosed = false;
+  let stack: string | null = null;
+  fs.write = (stream, buffer, offset, length, ...rest) => {
+    if (stream.nfd === 2) {
+      diagnosed = true;
+      if (stack !== null) stack += latin1.decode(buffer.subarray(offset, offset + length));
+    }
+    return write(stream, buffer, offset, length, ...rest);
+  };
+  const names = mod.get_names;
+  mod.get_names = (file_id, path, recursive) => {
+    diagnosed = false;
+    const out = names(file_id, path, recursive);
+    if (diagnosed) throw new Error(`${path}: HDF5 could not list this group (its group index does not read)`);
+    return out;
+  };
+  const type = mod.get_type;
+  mod.get_type = (file_id, path) => {
+    stack = "";
+    try {
+      const out = type(file_id, path);
+      if (!indexDidNotLoad(stack)) return out;
+    } finally {
+      stack = null;
+    }
+    // The damaged index may be any group on the path, so the path does not lead the message.
+    throw new Error(`HDF5 could not look up ${path} (the index of a group on this path does not read)`);
+  };
+  watched.add(mod);
 }
 
 /**
@@ -100,8 +224,9 @@ export function openH5<F>(h5: H5Openable<F>, path: string): F {
 
 /** `new File(path, mode)` with exact file ids, the handle tracked by `path` until its own close; `after` runs after that close. */
 function openTracked<F>(h5: H5RuleOpenable<F>, path: string, mode: "r" | "Sr", after?: () => void): F {
-  exactInodes(h5.FS);
+  prepare(h5);
   const f = new h5.File(path, mode);
+  checkedGroups(h5 as unknown as Parameters<typeof checkedGroups>[0]);
   const handle = f as unknown as { close?: () => unknown; file_id?: bigint | number };
   // A failed open (negative id) holds nothing; a handle is tracked until its own close.
   if (typeof handle.close === "function" && !(Number(handle.file_id) < 0)) {
@@ -150,8 +275,11 @@ function openTracked<F>(h5: H5RuleOpenable<F>, path: string, mode: "r" | "Sr", a
 //
 // h5wasm's `Dataset.slice` and `.value` ignore H5Dread's status: when HDF5 cannot follow a
 // damaged chunk index it prints its error stack and h5wasm returns the uninitialised buffer as
-// data. `readRows` calls the same binding (`Module.get_dataset_data`, which returns the status)
-// and throws `H5ReadError` on a refusal, so a damaged dataset is never read as numbers.
+// data. Every one of those reads goes through one binding, `Module.get_dataset_data`, which does
+// return the status. `openH5` and its siblings wrap that binding once per module (`checkedReads`,
+// #3010), so any read of any dataset throws `H5ReadError` on a refusal, and a damaged dataset is
+// never read as numbers. A reader needs nothing more than a file opened here. `readRows` is the
+// typed, allocation-owning read the particle reader uses on the same binding.
 
 /** The h5wasm module export `readRows` reads through (`h5wasm.Module`, after `ready`). */
 export interface H5ReadModule {
@@ -402,7 +530,7 @@ export interface H5Appendable<F> {
  */
 export function appendH5<F extends { file_id: bigint | number }>(h5: H5Appendable<F>, path: string): F {
   if (!path.endsWith(".partial")) throw new Error(`appendH5 opens only a writer's own .partial for writing, never ${path} (HG9 rule 1: the live file is never opened for writing)`);
-  exactInodes(h5.FS);
+  prepare(h5);
   const f = new h5.File(path, "a");
   if (Number(f.file_id) < 0) throw new Error(`HDF5 could not open ${path} for appending`);
   return f;
@@ -416,7 +544,7 @@ export interface H5Creatable<F> {
 
 /** Create `path` for writing, exclusively (`"x"`: refused when the name exists), with HDF5 comparing exact file ids. */
 export function createH5<F extends { file_id: bigint | number }>(h5: H5Creatable<F>, path: string): F {
-  exactInodes(h5.FS);
+  prepare(h5);
   const f = new h5.File(path, "x");
   if (Number(f.file_id) < 0) throw new Error(`HDF5 could not create ${path} (it exists, or its folder refuses a new file)`);
   return f;

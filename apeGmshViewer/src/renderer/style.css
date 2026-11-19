@@ -94,9 +94,10 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
      (--banner-top, --banner-h); never above 168 px, as before. */
   top: max(168px, calc(var(--banner-top, 58px) + var(--banner-h, 0px) + 8px));
 }
-/* VU3b (#2737): where the centred Windows strip reaches the rail's column
-   (the strip is about 550 px wide), the rail ends above it. */
-@media (max-width: 1200px) {
+/* VU3b (#2737): where the Windows strip reaches the left rail's column (the
+   strip is about 550 px wide; #1762 keeps it left of the right rail below
+   1560 px, which brings it here at 1372 px), the rail ends above it. */
+@media (max-width: 1372px) {
   #left-rail { bottom: 72px; }
 }
 #left-rail > * { pointer-events: auto; }
@@ -131,6 +132,11 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 .chip.cracks-ramp { flex: 1; min-width: 60px; }
 .legend-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
 .legend-note { color: var(--muted); font-size: 13px; max-width: 260px; margin: 4px 0 2px; }
+/* A step being read: shown only if the read is slow, and in space nothing else needs, so a quick step changes no pixel. */
+@keyframes step-pending-in { to { opacity: 1; } }
+.step-pending { margin-left: auto; font-weight: 500; letter-spacing: 0; text-transform: none; opacity: 0; animation: step-pending-in 120ms linear 400ms forwards; }
+.step-pending-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); visibility: hidden; }
+.step-pending-dot.on { visibility: visible; }
 .legend-mode { display: flex; gap: 4px; margin: 0 0 8px; }
 .legend-mode button {
   flex: 1; padding: 2px 8px; border-radius: 5px; cursor: pointer;
@@ -337,6 +343,7 @@ code { font-family: var(--mono); }
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center;
   column-gap: 6px; padding: 3px 0; border-top: 1px solid var(--line);
 }
+.sources-more { width: 100%; margin-top: 6px; }
 /* A key wraps only at the <wbr> after each `/`, never inside a segment. */
 .source-key { font: 11px var(--mono); color: var(--text); overflow-wrap: normal; word-break: keep-all; }
 .source-zone, .source-row.synthesised .source-key { color: var(--muted); }
@@ -355,6 +362,11 @@ code { font-family: var(--mono); }
   background: var(--panel); border: 1px solid var(--line);
 }
 #windows-menu[hidden], #windows[hidden] { display: none; }
+/* #1762: centred, the strip runs under the right rail (470 px + its 20 px margin) below
+   about 1560 px, so there it sits against the rail's left edge instead. */
+@media (min-width: 1060px) and (max-width: 1560px) {
+  body:not([data-rail-collapsed="true"]) #windows-menu { left: auto; right: 498px; transform: none; }
+}
 .window-menu-label {
   margin: 0 4px; font-size: 11px; font-weight: 600;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);

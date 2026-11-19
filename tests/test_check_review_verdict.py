@@ -173,6 +173,12 @@ def test_approve_at_current_head_is_success():
     assert got["state"] == "success" and NEW[:12] in got["description"]
 
 
+def test_a_bom_led_approve_is_success():
+    # #3045: a Windows tool's BOM must not hide the verdict from the matcher.
+    got = _status(_pr(), [_c(f"﻿Review-verdict: Opus 5.5 approve {NEW[:12]}\r\n")])
+    assert got["state"] == "success"
+
+
 @pytest.mark.parametrize("assoc", ["NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", None])
 def test_an_approve_from_outside_the_repo_leaves_it_pending(assoc):
     # #2878 card probe: the repo is public; only OWNER/MEMBER/COLLABORATOR count.

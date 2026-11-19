@@ -7,14 +7,17 @@ runs. A patched step parks it at a known point so the kill is not a race.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import re
+import stat
 import subprocess
 import sys
 import textwrap
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 import h5py
@@ -22,10 +25,11 @@ import numpy as np
 import pytest
 
 from apeGmsh.results import user as user_package
-from apeGmsh.results.user import UserFile, write_user_file
+from apeGmsh.results.user import UserFile, UserWriteRefused, write_user_file
 from apeGmsh.results.user import _writer
 
-from tests.results.user._user_helpers import REPO, bucket, elements, nodal
+from tests.results.user._user_helpers import (
+    HOLDERS, ON_WINDOWS, REPO, bucket, elements, held_open, nodal)
 
 SCRIPT = textwrap.dedent(
     """
@@ -546,3 +550,83 @@ def test_a_lock_that_never_clears_raises_and_keeps_the_previous_file(
         write_user_file(target, model, results=[nodal("new")])
     assert _digest(target) == before
     assert _partials(target) == []
+
+
+# --- a target another program holds open (#2886) ----------------------------
+
+
+@ON_WINDOWS
+@pytest.mark.parametrize("holder", sorted(HOLDERS))
+def test_a_held_user_file_refuses_the_write_and_stays_whole(
+    make_model, tmp_path: Path, holder: str,
+) -> None:
+    """A reader's handle on the old file is a typed refusal, not a raw OSError."""
+    model = make_model()
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("kept")])
+    before = _digest(target)
+    with held_open(target, holder), pytest.raises(UserWriteRefused) as caught:
+        write_user_file(target, model, results=[nodal("new")])
+    text = str(caught.value)
+    assert text.startswith("held-open: ") and str(target) in text
+    assert "another program holds" in text and "nothing was replaced" in text
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert _digest(target) == before, "the held file changed"
+    assert _partials(target) == [], "the refused write left its partial behind"
+    write_user_file(target, model, results=[nodal("new")])  # released: it goes
+    assert [e.name for e in UserFile(target).results().entries] == ["kept", "new"]
+
+
+@ON_WINDOWS
+def test_a_holder_that_lets_go_within_the_retries_does_not_refuse(
+    make_model, tmp_path: Path, monkeypatch,
+) -> None:
+    """The refusal comes only after every retry: a holder gone by then is no refusal."""
+    model = make_model()
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("kept")])
+    holder = open(target, "rb")  # this process's own handle blocks the replace too
+    waits: list[float] = []
+
+    def let_go(seconds: float) -> None:
+        waits.append(seconds)
+        holder.close()
+
+    monkeypatch.setattr(_writer, "time", SimpleNamespace(sleep=let_go))
+    try:
+        write_user_file(target, model, results=[nodal("new")])
+    finally:
+        holder.close()
+    assert waits, "the first replace was not blocked: the test proved nothing"
+    assert [e.name for e in UserFile(target).results().entries] == ["kept", "new"]
+
+
+@ON_WINDOWS
+def test_a_read_only_user_file_keeps_its_own_error(make_model, tmp_path: Path) -> None:
+    """A read-only target also answers WinError 5, but nothing holds it: not ``held-open``."""
+    model = make_model()
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("kept")])
+    before = _digest(target)
+    os.chmod(target, stat.S_IREAD)
+    try:
+        with pytest.raises(PermissionError):
+            write_user_file(target, model, results=[nodal("new")])
+    finally:
+        os.chmod(target, stat.S_IREAD | stat.S_IWRITE)
+    assert _digest(target) == before and _partials(target) == []
+
+
+def test_a_posix_permission_error_is_never_held_open(make_model, tmp_path, monkeypatch) -> None:
+    """Off Windows a ``PermissionError`` is a real permission problem: it stays raw,
+    even one carrying a sharing-violation code."""
+    model = make_model()
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("kept")])
+    before = _digest(target)
+
+    def refused(partial: Path, dst: Path) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied", str(dst), 32)
+
+    monkeypatch.setattr(_writer, "_replace", refused)
+    monkeypatch.setattr(_writer, "sys", SimpleNamespace(platform="linux"))
+    with pytest.raises(PermissionError) as caught:
+        write_user_file(target, model, results=[nodal("new")])
+    assert not isinstance(caught.value, UserWriteRefused)
+    assert _digest(target) == before and _partials(target) == []

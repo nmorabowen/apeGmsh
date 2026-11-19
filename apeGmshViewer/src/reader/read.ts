@@ -1210,8 +1210,18 @@ function joinPath(parent: string, name: string): string {
   return parent === "/" ? `/${name}` : `${parent}/${name}`;
 }
 
+/**
+ * The names each open group lists, read once: `group` and `dataset` ask per
+ * child, and listing the group for each is quadratic in its children (#2835).
+ * The file is open read-only, so a group's listing cannot change.
+ */
+const listed = new WeakMap<H5Group, ReadonlySet<string>>();
+
+/** Whether `g` lists `name`. A listing, not `g.get`, which reads a broken link as absent (#424). */
 function has(g: H5Group, name: string): boolean {
-  return g.keys().includes(name);
+  let names = listed.get(g);
+  if (!names) listed.set(g, names = new Set(g.keys()));
+  return names.has(name);
 }
 
 function num(v: Param | Param[] | undefined, where: string): number {

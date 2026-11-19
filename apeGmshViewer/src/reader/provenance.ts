@@ -220,6 +220,11 @@ export function isRecorded(zone: Pick<ProvenanceZone, "files" | "present">, fi: 
 export function sourceOf(zone: ProvenanceZone, declPath: string): SourceOf {
   const i = zone.records.path.indexOf(declPath);
   if (i < 0) return { ok: false, reason: `no provenance record for ${declPath}` };
+  return sourceOfRow(zone, i);
+}
+
+/** `sourceOf` for `records` row `i`: a loop over the records has the row, and a search per record is quadratic (#2837). */
+export function sourceOfRow(zone: ProvenanceZone, i: number): SourceOf {
   const at = (row: number): SourceSite | null => {
     if (row === -1) return null;
     const fi = zone.sites.file[row]!;
@@ -234,6 +239,6 @@ export function sourceOf(zone: ProvenanceZone, declPath: string): SourceOf {
   };
   const site = at(zone.records.site[i]!);
   const script = at(zone.records.script[i]!);
-  if (site === null && script === null) return { ok: false, reason: `${declPath} has no source frame` };
+  if (site === null && script === null) return { ok: false, reason: `${zone.records.path[i]!} has no source frame` };
   return { ok: true, site, script, seq: zone.records.seq[i]!, origin: zone.records.origin[i]! };
 }

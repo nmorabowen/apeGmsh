@@ -8,12 +8,15 @@ confinement after links resolve, the file exists) are tested on their own.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
+import stat
 import sys
 import unicodedata
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,11 +25,12 @@ from apeGmsh.results.user import (
     VariantsRefused,
     VariantsWriteRefused,
     _variants,
+    _writer,
     read_variants,
     write_variants,
 )
 
-from tests.results.user._user_helpers import REPO
+from tests.results.user._user_helpers import ON_WINDOWS, REPO, held_open
 
 SCHEMAS = REPO / "architecture" / "schemas"
 EXAMPLES = SCHEMAS / "examples"
@@ -435,3 +439,78 @@ def test_a_newer_manifest_landing_between_parse_and_signature_is_never_overwritt
         write_variants(target, [VariantDef("A", "slab_new.h5")])
     assert err.value.reason == "revision-moved"
     assert target.read_bytes() == newer
+
+
+# --- a manifest another program holds open (#2886) ---------------------------
+
+
+def _partials(target: Path) -> list[Path]:
+    return sorted(target.parent.glob(target.name + ".*.partial"))
+
+
+@ON_WINDOWS
+def test_a_held_manifest_refuses_the_write_and_stays_whole(tmp_path: Path) -> None:
+    """An editor or a reader holding the manifest is a typed refusal, not a raw OSError."""
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    (tmp_path / "slab_new.h5").write_bytes(b"model")
+    before = target.read_bytes()
+    with held_open(target), pytest.raises(VariantsWriteRefused) as caught:
+        write_variants(target, [VariantDef("A", "slab_new.h5")])
+    assert caught.value.reason == "held-open"
+    assert str(target) in str(caught.value) and "nothing was replaced" in str(caught.value)
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert target.read_bytes() == before, "the held manifest changed"
+    assert _partials(target) == [], "the refused write left its partial behind"
+    write_variants(target, [VariantDef("A", "slab_new.h5")])  # released: it goes
+    assert read_variants(target).by_label("A").path == "slab_new.h5"
+
+
+@ON_WINDOWS
+def test_a_holder_that_lets_go_within_the_retries_does_not_refuse(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    (tmp_path / "slab_new.h5").write_bytes(b"model")
+    holder = open(target, "rb")  # this process's own handle blocks the replace too
+    waits: list[float] = []
+
+    def let_go(seconds: float) -> None:
+        waits.append(seconds)
+        holder.close()
+
+    monkeypatch.setattr(_writer, "time", SimpleNamespace(sleep=let_go))
+    try:
+        write_variants(target, [VariantDef("A", "slab_new.h5")])
+    finally:
+        holder.close()
+    assert waits, "the first replace was not blocked: the test proved nothing"
+    assert read_variants(target).by_label("A").path == "slab_new.h5"
+
+
+@ON_WINDOWS
+def test_a_read_only_manifest_keeps_its_own_error(tmp_path: Path) -> None:
+    """A read-only manifest also answers WinError 5, but nothing holds it: not ``held-open``."""
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    before = target.read_bytes()
+    os.chmod(target, stat.S_IREAD)
+    try:
+        with pytest.raises(PermissionError):
+            write_variants(target, [VariantDef("A", "slab_new.h5")])
+    finally:
+        os.chmod(target, stat.S_IREAD | stat.S_IWRITE)
+    assert target.read_bytes() == before and _partials(target) == []
+
+
+def test_a_posix_permission_error_on_the_manifest_stays_raw(tmp_path: Path, monkeypatch) -> None:
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    before = target.read_bytes()
+
+    def refused(partial: Path, dst: Path) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied", str(dst), 32)
+
+    monkeypatch.setattr(_variants, "_replace", refused)
+    monkeypatch.setattr(_writer, "sys", SimpleNamespace(platform="linux"))
+    with pytest.raises(PermissionError) as caught:
+        write_variants(target, [VariantDef("A", "slab_new.h5")])
+    assert not isinstance(caught.value, VariantsWriteRefused)
+    assert target.read_bytes() == before and _partials(target) == []

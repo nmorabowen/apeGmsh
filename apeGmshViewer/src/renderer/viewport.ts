@@ -778,7 +778,7 @@ export class Viewport {
     const b = particleFitSphere(f);
     if (!b) return false;
     const z = f.ndm === 2 ? [0, 0] : [b.center[2] - b.radius, b.center[2] + b.radius];
-    this.fit(b.center, b.radius, new Float32Array([0, 0, z[0]!, 0, 0, z[1]!]), heading);
+    this.fit(b.center, b.radius, [new Float32Array([0, 0, z[0]!, 0, 0, z[1]!])], heading);
     return true;
   }
 
@@ -1510,23 +1510,25 @@ export class Viewport {
    */
   frame(info: MeshInfo, heading: Heading | null = null, focus: Focus | null = null): void {
     const tri = this.blobs.f32(info.triPositions);
-    this.fit((focus ?? info).center, (focus ?? info).radius, tri.length ? tri : this.blobs.f32(info.linePositions), heading);
+    this.fit((focus ?? info).center, (focus ?? info).radius, [tri, this.blobs.f32(info.linePositions)], heading);
   }
 
   /** Fit the camera to the geometry sibling, the same way (V2f). */
   frameGeometry(g: GeometryInfo, heading: Heading | null = null): void {
     const tri = this.blobs.f32(g.surfacePositions);
-    this.fit(g.center, g.radius, tri.length ? tri : this.blobs.f32(g.curvePositions), heading);
+    this.fit(g.center, g.radius, [tri.length ? tri : this.blobs.f32(g.curvePositions)], heading);
   }
 
   /** Fit a bounding sphere; with no heading, plan view when `pos` is planar, else isometric. */
-  private fit(center: readonly [number, number, number], r: number, pos: Float32Array, heading: Heading | null): void {
+  private fit(center: readonly [number, number, number], r: number, pos: readonly Float32Array[], heading: Heading | null): void {
     const c = new THREE.Vector3(...center);
     if (!heading) {
       let z0 = Infinity, z1 = -Infinity;
-      for (let i = 2; i < pos.length; i += 3) {
-        z0 = Math.min(z0, pos[i]!);
-        z1 = Math.max(z1, pos[i]!);
+      for (const p of pos) {
+        for (let i = 2; i < p.length; i += 3) {
+          z0 = Math.min(z0, p[i]!);
+          z1 = Math.max(z1, p[i]!);
+        }
       }
       const planar = z1 - z0 <= 1e-6 * r;
       // Plan: looking down -Z with +Y up the screen. Isometric: from (1, -1.3, 0.9).

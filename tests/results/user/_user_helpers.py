@@ -6,10 +6,15 @@ package (``tests/test_import_namespacing.py``).
 """
 from __future__ import annotations
 
+import contextlib
 import math
+import subprocess
+import sys
 from pathlib import Path
+from typing import Iterator
 
 import numpy as np
+import pytest
 
 from apeGmsh.results.user import (
     CaseQuantity,
@@ -28,6 +33,34 @@ REPO = Path(__file__).resolve().parents[3]
 LADRUNO = REPO / "tests" / "fixtures" / "ladruno"
 FEM_HASH = "fedcba9876543210fedcba9876543210"
 MODEL_HASH = "0123456789abcdef0123456789abcdef"
+
+#: Another program holding a file open: h5py (as a viewer does) or a plain handle.
+HOLDERS = {
+    "h5py": "import h5py, sys, time; f = h5py.File(sys.argv[1], 'r')",
+    "handle": "import sys, time; f = open(sys.argv[1], 'rb')",
+}
+ON_WINDOWS = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="only Windows blocks replacing or renaming a file another process holds open")
+
+
+@contextlib.contextmanager
+def held_open(path: Path, holder: str = "handle") -> Iterator[None]:
+    """``path`` held open by another process for the ``with`` body (#2857, #2886)."""
+    code = HOLDERS[holder] + "; print('ready', flush=True); time.sleep(60)"
+    proc = subprocess.Popen([sys.executable, "-c", code, str(path)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert proc.stdout is not None
+        line = proc.stdout.readline().strip()
+        assert line == "ready", f"the holder never opened the file: {line!r}"
+        yield
+    finally:
+        proc.kill()  # only the holder this helper started
+        proc.wait(timeout=30)
+        for stream in (proc.stdout, proc.stderr):
+            if stream:
+                stream.close()
 
 
 def nodal(name: str = "Delta_after (L/480)", *, basis: str = "model", **kw) -> UserResult:

@@ -34,7 +34,6 @@ import math
 import os
 import re
 import secrets
-import sys
 import time
 import warnings
 from collections import Counter
@@ -50,7 +49,8 @@ from ...opensees._internal.lineage import read_stored_lineage
 from ._descriptor import StateAddress, address_problem
 from ._errors import UserFileRefused, UserWriteRefused, ZoneRefused
 from ._names import name_problem, text_or_empty
-from ._writer import _create_partial, _fsync, _replace, _sweep_dead_partials
+from ._writer import (
+    _create_partial, _fsync, _held_detail, _held_open, _replace, _sweep_dead_partials)
 
 __all__ = [
     "PLOT_GRAMMAR",
@@ -1152,11 +1152,7 @@ def write_workspace(
         except PermissionError as exc:
             if not _held_open(target, exc):
                 raise
-            raise WorkspaceWriteRefused(
-                "held-open",
-                f"another program holds {target} open, so it cannot be replaced "
-                f"({exc.strerror}); nothing was replaced. Close it there and write again."
-            ) from exc
+            raise WorkspaceWriteRefused("held-open", _held_detail(target, exc)) from exc
     except BaseException:
         with contextlib.suppress(OSError):
             partial.unlink(missing_ok=True)
@@ -1242,26 +1238,12 @@ def _refuse_if_moved(target: Path, digest: Optional[str]) -> None:
             "ran; nothing was replaced. Write again.")
 
 
-#: ``ERROR_ACCESS_DENIED`` and ``ERROR_SHARING_VIOLATION``: what Windows answers a
-#: replace onto a file another process holds open (h5py, h5wasm or a plain handle).
-_HELD_WINERRORS = frozenset({5, 32})
-
-
-def _held_open(target: Path, exc: PermissionError) -> bool:
-    """Whether a replace that still failed after ``_replace``'s retries met a holder.
-
-    Only Windows blocks a replace onto an open file; a POSIX ``PermissionError``
-    is a real permission problem. A read-only target also answers ``WinError 5``
-    and is not a holder, so it keeps its own error.
-    """
-    if sys.platform != "win32":
-        return False
-    return (exc.winerror in _HELD_WINERRORS and target.is_file()
-            and os.access(target, os.W_OK))
-
-
 def _rename_aside(target: Path) -> Path:
-    """Move an unreadable file to ``<name>.unreadable-<UTC>[-n]``, never over a file."""
+    """Move an unreadable file to ``<name>.unreadable-<UTC>[-n]``, never over a file.
+
+    On Windows a file another program holds open cannot be renamed: that refuses
+    (``held-open``) with the file still in place, as a held replace does.
+    """
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     for n in range(1000):
         aside = target.with_name(f"{target.name}.unreadable-{stamp}" + (f"-{n}" if n else ""))
@@ -1273,6 +1255,14 @@ def _rename_aside(target: Path) -> Path:
             return aside
         except FileExistsError:
             continue
+        except PermissionError as exc:
+            if not _held_open(target, exc):
+                raise
+            raise WorkspaceWriteRefused(
+                "held-open",
+                f"another program holds {target} open, so it cannot be renamed aside "
+                f"({exc.strerror}); nothing was renamed or replaced. Close it there and "
+                "write again.") from exc
     raise WorkspaceWriteRefused("not-a-file", f"{target}: no free name to rename it aside")
 
 

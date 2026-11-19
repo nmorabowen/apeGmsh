@@ -64,7 +64,7 @@ const css = (rgb: readonly number[]): string => `rgb(${rgb.map((c) => Math.round
 export function contourLines(
   s: State,
   v: Extract<ContourView, { state: "ready" | "element" | "combination" | "difference" | "user" }>,
-): { title: string; min: string; max: string; ticks: string[]; range: string; units: string; state: string | null; topology: string | null; axes: string | null } {
+): { title: string; min: string; max: string; ticks: string[]; range: string; units: string; state: string | null; loading: boolean; topology: string | null; axes: string | null } {
   const c = v.clim;
   const constant = c.min !== null && c.max !== null && c.min === c.max;
   const stageKind = s.phase.at?.kind === "results" ? s.results?.stages[s.phase.at.stage]?.kind : undefined;
@@ -97,6 +97,7 @@ export function contourLines(
         : !v.stepMeasured
           ? `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading`
           : null,
+    loading: v.state !== "user" && v.state !== "difference" && v.state !== "combination" && !v.stepMeasured,
     topology: v.state === "element" ? v.topologyLabel : null,
     axes: v.state === "element" && v.component.local ? "Axes: local (the component's name says so)." : null,
   };
@@ -134,6 +135,11 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
   let contourUnlisten: (() => void)[] = [];
   // Turning contour off returns to the mode it was turned on from.
   let lastBy: "group" | "role" = "group";
+  let contourHead: HTMLElement | null = null;
+  // The Deformed card too: its state changes without the group rows changing.
+  let deformUnlisten: (() => void)[] = [];
+  let deformHead: HTMLElement | null = null;
+  let lastDeformLoading: string | null = null;
   let lastContour = "";
   let lastDeform = "";
   let lastTheme = "";
@@ -172,7 +178,12 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     ) {
       // (V4d) The cards follow the deformed shape's state in every mode, and the Contour card alone follows
       // the pick, the step and the ranges: a step rebuilds it, never the group rows under the pointer.
-      if (deformSignature(s) === lastDeform) {
+      const resultsOn = (x: State) => x.phase.axis.some((k) => k.kind === "results");
+      if (resultsOn(s) === resultsOn(prev)) {
+        if (deformSignature(s) !== lastDeform) {
+          lastDeform = deformSignature(s);
+          renderDeform(s);
+        } else syncDeformLoading(s);
         if (contour && contourSignature(s) !== lastContour) renderContourCard(s);
         return;
       }
@@ -346,9 +357,14 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
    */
   const renderDeform = (s: State) => {
     if (!s.phase.axis.some((k) => k.kind === "results")) return;
+    for (const u of deformUnlisten) u();
+    deformUnlisten = [];
     const lines = deformLines(s);
     const box = deformCard;
-    box.replaceChildren(el("h3", undefined, "Deformed"));
+    deformHead = el("h3", undefined, "Deformed");
+    box.replaceChildren(deformHead);
+    lastDeformLoading = null;
+    syncDeformLoading(s);
     const modes = el("div", "legend-mode deform-modes");
     const on = el("button", "deform-toggle" + (s.deform.on ? " on" : ""), "deformed");
     on.disabled = !lines.available && !s.deform.on;
@@ -356,7 +372,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     const ghost = el("button", "deform-ghost" + (s.deform.ghost ? " on" : ""), "reference ghost");
     ghost.title = `the undeformed mesh behind the deformed one, at ${GHOST_OPACITY} opacity`;
     ghost.disabled = !s.deform.on;
-    unlisten.push(
+    deformUnlisten.push(
       listen(on, "click", () => store.dispatch({ type: "setDeform", on: !store.get().deform.on })),
       listen(ghost, "click", () => store.dispatch({ type: "setReferenceGhost", on: !store.get().deform.ghost })),
     );
@@ -369,7 +385,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     scale.min = "0";
     scale.value = String(s.deform.scale);
     scale.title = "deformation scale: positions are x + scale · u (1 is true scale)";
-    unlisten.push(
+    deformUnlisten.push(
       listen(scale, "change", () => {
         const v = Number(scale.value);
         if (Number.isFinite(v) && v > 0) store.dispatch({ type: "setDeformScale", scale: v });
@@ -388,6 +404,15 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     }
   };
 
+  /** A step on its way, in the Deformed heading: the card itself, and a scale being typed in it, stay. */
+  const syncDeformLoading = (s: State) => {
+    const text = deformLines(s).loading;
+    if (text === lastDeformLoading) return;
+    lastDeformLoading = text;
+    deformHead?.querySelector?.(".step-pending")?.remove();
+    if (text) deformHead?.append(el("span", "step-pending", text));
+  };
+
   /** The Contour card: its switch, then (while on) the field, its draw mode and what the file refuses; and the viewport scale. */
   const renderContourCard = (s: State) => {
     for (const u of contourUnlisten) u();
@@ -395,7 +420,8 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     const contour = s.visibility.colourBy === "contour";
     viewportScale.hidden = true;
     contourCard.hidden = s.mesh === null;
-    contourCard.replaceChildren(el("h3", undefined, "Contour"));
+    contourHead = el("h3", undefined, "Contour");
+    contourCard.replaceChildren(contourHead);
     const contourRow = el("div", "legend-mode");
     const contourBtn = el("button", "contour-toggle" + (contour ? " on" : ""), "contour");
     contourBtn.title = contour ? `colour ${lastBy === "role" ? "by structural role" : "by physical group"} again` : "colour the model by a result field";
@@ -560,7 +586,9 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     scaleChrome?.clamp();
     if (lines.topology) contourCard.append(el("div", "legend-note contour-topology", lines.topology));
     if (lines.axes) contourCard.append(el("div", "legend-note contour-axes", lines.axes));
-    if (lines.state) contourCard.append(el("div", "legend-note", lines.state));
+    // A step on its way is said in the heading, which every step leaves the same height: a line here would move the cards below.
+    if (lines.state && lines.loading) contourHead?.append(el("span", "step-pending", lines.state));
+    else if (lines.state) contourCard.append(el("div", "legend-note", lines.state));
     contourCard.append(noDataRow());
 
     const modes = el("div", "legend-mode contour-modes");
@@ -624,6 +652,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     unsubTheme?.();
     for (const u of unlistenCards) u();
     for (const u of contourUnlisten) u();
+    for (const u of deformUnlisten) u();
     scaleChrome?.dispose();
     for (const u of unlisten) u();
   };
@@ -652,6 +681,8 @@ export function deformLines(s: State): {
   why: string | null;
   scale: string;
   notes: { text: string; refused: boolean }[];
+  /** the step on its way, said in the card's heading: it comes and goes with every step */
+  loading: string | null;
   partial: string | null;
 } {
   const a = deformOf(s);
@@ -659,12 +690,12 @@ export function deformLines(s: State): {
   const notes: { text: string; refused: boolean }[] = [];
   if (!a.ok) notes.push({ text: `${s.deform.on ? "Not drawn" : "Unavailable"}: ${a.reason}.`, refused: a.state === "refused" });
   else if (a.draw.note) notes.push({ text: a.draw.note, refused: false });
-  if (v.state === "loading") notes.push({ text: `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading`, refused: false });
   return {
     available: a.ok,
     why: a.ok ? null : a.reason,
     scale: scaleLabel(s.deform.scale),
     notes,
+    loading: v.state === "loading" ? `step ${s.phase.at?.kind === "results" ? s.phase.at.step + 1 : "?"} loading` : null,
     partial:
       v.state === "partial"
         ? `${v.missing.toLocaleString()} of ${v.drawn.toLocaleString()} drawn nodes have no displacement: drawn undeformed, marked`
@@ -674,7 +705,7 @@ export function deformLines(s: State): {
 
 /** What the deformed-shape section shows, as one string (the step's keys left out, so a scrub does not rebuild it). */
 function deformSignature(s: State): string {
-  return JSON.stringify([s.phase.axis.some((k) => k.kind === "results"), s.deform.on, s.deform.scale, s.deform.ghost, deformLines(s)]);
+  return JSON.stringify([s.phase.axis.some((k) => k.kind === "results"), s.deform.on, s.deform.scale, s.deform.ghost, { ...deformLines(s), loading: null }]);
 }
 
 const TARGET_WORD: Readonly<Record<UserResult["target"], string>> = { nodes: "nodal", elements: "element", entities: "entity", domain: "whole model" };

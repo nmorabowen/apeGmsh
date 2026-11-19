@@ -38,6 +38,10 @@ export async function captureResults(ctx: HarnessContext, path: string, settle: 
     await bridge.captureResize(1280, window.innerHeight);
     store.dispatch({ type: "setPhase", at: { kind: "results", stage: 0, step: 0 } });
     if (stages[0]!.time.length > 1) store.dispatch({ type: "setResultStep", step: stages[0]!.time.length - 1 });
+    // #1762: at this width the Windows menu stays clear of the right rail's panels.
+    const menu = document.querySelector("#windows-menu:not([hidden])")?.getBoundingClientRect();
+    const rail = document.querySelector("#rail")!.getBoundingClientRect();
+    if (menu && menu.right > rail.left) throw new Error(`capture: at 1280 px the Windows menu reaches ${menu.right} px, over the rail at ${rail.left} px`);
     await still(`results-0-${safe(stages[0]!.name)}.1280`);
   }
 }
