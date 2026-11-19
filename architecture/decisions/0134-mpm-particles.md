@@ -453,3 +453,65 @@ non-conformingly, also seeds instead of being refused, because that face counts 
 sides (for example, A made of two hex blocks that share no node at x = 0.375, with B a sliver inside
 A on that face; a conforming A refuses it). A model in which no two bodies claim a point seeds
 exactly as before.
+
+## Amendment 3 (2026-11-19): `Gridvel` and `GridvelAffine` members; `track` and `Stage` deferred
+
+**Status:** Accepted (ratified by the maintainer on 2026-11-19, on #3064: "as recommended"). This
+amendment adds two members under D8 ("may add members only, named after the fork guide's `mpm`
+sub-commands"). It changes no other decision.
+
+**Why now.** Before `ladruno-v20261118b` (fork #1109, interface D18), the explicit engine (mode F)
+accepted `mpm gridvel` and ignored it. From that release on, mode F applies every gridvel form in
+both projections, so a member can be proven against the fork. `FORK_PIN` names that release
+(cfe478254).
+
+**The members.** Both emit the fork's `gridvel` sub-command (`OPS_LadrunoMPM.cpp::cmdGridVel` at the
+pin), and both are deck-only like every other member (D1, D7):
+
+| Member | Fork line |
+|---|---|
+| `mpm.Gridvel(name, box, v, *, start=None, translate=None, profile=None)`, declared with `ops.mpm.gridvel(...)` | `mpm gridvel <name> box <lo..> <hi..> v <num\|free ×ndm> [start <t0>] [translate <axis>] [profile <t0> <Tr> <t1>]` |
+| `mpm.GridvelAffine(name, box, L, *, ref=None)`, declared with `ops.mpm.gridvelAffine(...)` | `mpm gridvel <name> box <lo..> <hi..> affine <L ndm×ndm, row-major> [ref <x..>]` |
+
+`box` is `(lo, hi)`. Values are in the model's units, and times are domain time; there is no
+timeSeries binding. `L` is given by rows and written row-major.
+
+**Refused by apeGmsh, by name, before the fork sees the deck.** At construction:
+
+- a box whose corners differ in length, or are not 2 or 3 long, or have `lo > hi` on an axis;
+- a `v` of the wrong length, a token other than a number or `"free"`, or every component `"free"`;
+- `profile` together with `start`; a profile with `Tr < 0` or `t1 < t0 + 2 Tr`;
+- a `translate` axis outside the box's dimension, or on a `"free"` component (the box would never
+  move: the fork moves it by that component, which a free component leaves at 0);
+- an `L` that is not ndm × ndm, or a `ref` of the wrong length;
+- a name that is not one word.
+
+At the call, and again when the block is emitted (`mpm_block`): a second gridvel of one name.
+`Gridvel` and `GridvelAffine` share the fork's names. At emit, a box of another dimension than the
+grid's is also refused.
+
+**Left to the fork, documented.** On a B-spline grid, the fork refuses a box that reaches the ghost
+layer behind a `fix` face (WP-232i B10). No apeGmsh deck reaches that case, because `Grid` admits
+only the `gimp` and `linear` bases. A test fails when a B-spline basis is admitted, so the static
+check is added together with the basis. At `mpm analyze`, the fork also refuses a gridvel and a
+`fix` face, or two gridvels, that prescribe different values on one node component.
+
+**Mode F only.** apeGmsh emits the explicit engine and has no `mode` member. Mode A's gridvel rules
+do not apply to an apeGmsh deck: the `constraints` handler that a non-zero value needs under `Plain`,
+and `condForce`.
+
+**Deferred.**
+
+- **`track`.** The fork's fix #1112, queued after WP-232l, may change it, so no member offers it.
+- **`setAffine`.** It changes `L` between `mpm analyze` calls. An apeGmsh deck declares one `L`.
+- **`Stage` (`mpm stage`).** WP-232l (fork #1116) may give it pore-pressure semantics. It is added
+  once that interface freezes. Until then it stays a `NOT_OFFERED` row of the fork-surface gate
+  (`tests/opensees/parity/mpm_fork_surface.py`), with the reason "after WP-232l".
+
+**Oracles.** The parity test (D8) gains the members' fork lines on all five emitters. The fork-surface
+gate moves `gridvel` from a `NOT_OFFERED` row to a member. Each member has a warrant row (D7). The
+fork tests (`tests/opensees/integration_ladruno/test_mpm_gridvel_live.py`) run a mode-F deck on the
+pinned fork and check closed forms. Under `Gridvel`, every particle inside the box moves at `v` and
+is displaced by `v T`, and a body outside the box stays at rest, as both bodies do in a control deck
+without the gridvel. With `translate` and `profile`, the displacement is `v Φ(T)`. Under
+`GridvelAffine`, the particle velocity is `L (x − ref)`.

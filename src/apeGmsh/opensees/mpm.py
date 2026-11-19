@@ -1048,8 +1048,10 @@ class _MPMNS:
         translate: str | None = None,
         profile: Sequence[float] | None = None,
     ) -> Gridvel:
-        """``mpm gridvel ... v``: prescribe ``v`` (a number or ``"free"`` per
-        component) on the grid nodes in ``box = (lo, hi)``; mode F only."""
+        """``mpm gridvel ... v``: a prescribed grid velocity in a box.
+
+        ``box = (lo, hi)``; ``v`` holds a number or ``"free"`` per
+        component. Mode F only; see :class:`Gridvel`."""
         # The member normalises (and refuses) each argument by name.
         prim = Gridvel(name=name, box=cast(Any, box), v=cast(Any, v),
                        start=start, translate=translate,
@@ -1062,8 +1064,10 @@ class _MPMNS:
         self, name: str, box: Sequence[Sequence[float]],
         L: Sequence[Sequence[float]], *, ref: Sequence[float] | None = None,
     ) -> GridvelAffine:
-        """``mpm gridvel ... affine``: prescribe ``v = L (x - ref)`` on the
-        grid nodes in ``box = (lo, hi)``; ``L`` by rows; mode F only."""
+        """``mpm gridvel ... affine``: grid velocity ``L (x - ref)`` in a box.
+
+        ``box = (lo, hi)``; ``L`` by rows. Mode F only; see
+        :class:`GridvelAffine`."""
         prim = GridvelAffine(name=name, box=cast(Any, box), L=cast(Any, L),
                              ref=cast(Any, ref))
         self._refuse_gridvel_name(prim.name)
