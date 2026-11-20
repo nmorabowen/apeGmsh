@@ -17,7 +17,8 @@ import { deformedPositions } from "../state/deform.ts";
 import { gaussBasePositions, gaussDisplacements } from "../state/gaussPoints.ts";
 import { principalPointsOf, type PrincipalPoints } from "../state/principal.ts";
 import { crackFieldOf, shellCrackFieldOf } from "../state/selectors.ts";
-import { shellCrackPointsOf, type ShellCrackPoints } from "../state/shellCrackPoints.ts";
+import { buildCrackLines, buildRibbons, type CrackLines } from "../state/crackLines.ts";
+import { elementCornersOf, lineVertexLayoutOf, shellCrackPointsOf, type ShellCrackPoints } from "../state/shellCrackPoints.ts";
 import { buildShellTicks, type ShellTickGroup } from "../state/shellCracks.ts";
 import type { State } from "../state/types.ts";
 import { toLinear } from "./colormapTexture.ts";
@@ -45,13 +46,22 @@ export class CracksLayer {
   private tickPoints: { deps: unknown[]; gen: number; points: ShellCrackPoints | null; base: Float32Array | null; half: number } | null = null;
   /** what the last shell build drew: ticks, the points with one, the points never drawn for want of a frame, and the largest opening */
   drawnShell = { ticks: 0, points: 0, unframed: 0, maxOpening: 0 };
+  private readonly ribbonGeometry = new THREE.BufferGeometry();
+  private readonly ribbonMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  private readonly ribbons = new THREE.Mesh(this.ribbonGeometry, this.ribbonMaterial);
+  /** The traced lines of the step on screen, kept while only the deformation changes (no re-trace for a scale). */
+  private traced: { key: unknown[]; lines: CrackLines; layout: ReturnType<typeof lineVertexLayoutOf>; base: Float32Array } | null = null;
+  /** what the last line build drew: lines, ribbon segments, panels, and the largest opening on a line */
+  drawnLines = { lines: 0, segments: 0, panels: 0, maxOpening: 0 };
 
   constructor() {
     this.mesh.frustumCulled = false;
     this.ticks.frustumCulled = false;
+    this.ribbons.frustumCulled = false;
     this.mesh.visible = false;
     this.ticks.visible = false;
-    this.root.add(this.mesh, this.ticks);
+    this.ribbons.visible = false;
+    this.root.add(this.mesh, this.ticks, this.ribbons);
     this.root.visible = false;
   }
 
@@ -63,8 +73,11 @@ export class CracksLayer {
   }
 
   private hideTicks(): boolean {
-    const was = this.ticks.visible;
+    const was = this.ticks.visible || this.ribbons.visible;
     this.ticks.visible = false;
+    this.ribbons.visible = false;
+    this.traced = null;
+    this.drawnLines = { lines: 0, segments: 0, panels: 0, maxOpening: 0 };
     this.tickKey = null;
     this.tickStep = null;
     this.tickStage = null;
@@ -76,7 +89,7 @@ export class CracksLayer {
   sync(s: State, blobs: BlobStore, full: FullPositions | null = null, step: StepValues | null = null): boolean {
     const discs = this.syncDiscs(s, blobs, full, step);
     const ticks = this.syncTicks(s, blobs, full, step);
-    this.root.visible = this.mesh.visible || this.ticks.visible;
+    this.root.visible = this.mesh.visible || this.ticks.visible || this.ribbons.visible;
     return discs || ticks;
   }
 
@@ -108,13 +121,14 @@ export class CracksLayer {
     const { points, base, half } = this.tickPoints;
     const disp = full && full.key !== "base" && full.disp?.nodal ? full.disp : null;
     const c = s.cracks;
-    const nextKey = [this.tickPoints.gen, disp ? full!.key : "base", c.minOpening, c.scale, c.face].join("|");
+    const nextKey = [this.tickPoints.gen, disp ? full!.key : "base", s.deform.scale, c.minOpening, c.scale, c.face, c.style].join("|");
     if (this.tickKey === nextKey && here === this.tickStep) return false;
     this.tickKey = nextKey;
     this.tickStep = here;
     this.tickStage = at.stage;
     if (!points || !base) {
       this.ticks.visible = false;
+      this.ribbons.visible = false;
       return true;
     }
     const groups: ShellTickGroup[] = field.groups.map((fg) => {
@@ -130,6 +144,41 @@ export class CracksLayer {
         thickness: g.thickness ? (blobs.get(g.thickness) as Float64Array) : null,
       };
     });
+    const pitch = half / 0.35;
+    if (c.style === "lines") {
+      this.ticks.visible = false;
+      this.drawnShell = { ticks: 0, points: 0, unframed: 0, maxOpening: 0 };
+      // Trace once per step, face and threshold, in the reference geometry; a deformation only moves the vertices.
+      const traceKey = [this.tickPoints.gen, here, c.minOpening, c.face];
+      if (!this.traced || this.traced.key.some((k, i) => k !== traceKey[i])) {
+        const elementIds = field.groups.map((fg) => blobs.get(st.layers!.find((x) => x.id === fg.id)!.elementIds!) as Float64Array);
+        const lines = buildCrackLines(
+          { base, points, groups, elementIds, corners: elementCornersOf(s, blobs) },
+          { face: c.face, minOpening: c.minOpening, pitch, eps: 0.02 * half },
+        );
+        const layout = lineVertexLayoutOf(s, blobs, lines.elementId, lines.xi);
+        const nodes = s.mesh.nodes;
+        const vbase = gaussBasePositions(layout.layout, blobs.get(nodes.ids) as Float64Array, blobs.get(nodes.xyz) as Float64Array);
+        this.traced = { key: traceKey, lines, layout, base: vbase };
+      }
+      const { lines, layout, base: vbase } = this.traced;
+      const placedAt = disp ? deformedPositions(vbase, gaussDisplacements(layout.layout, disp.nodal!.column, disp.nodal!.rows), s.deform.scale) : vbase;
+      const atV = new Float32Array(3 * lines.elementId.length).fill(NaN);
+      layout.placed.forEach((k, v) => {
+        if (k >= 0) atV.set(placedAt.subarray(3 * k, 3 * k + 3), 3 * v);
+      });
+      const rb = buildRibbons(lines, atV, 0.008 * pitch * c.scale, 0.05 * pitch * c.scale, c.minOpening);
+      this.drawnLines = { lines: lines.face.length, segments: rb.segments, panels: lines.panels, maxOpening: lines.maxOpening };
+      for (let i = 0; i < rb.colours.length; i++) rb.colours[i] = toLinear(rb.colours[i]!);
+      this.ribbonGeometry.setAttribute("position", new THREE.BufferAttribute(rb.positions, 3));
+      this.ribbonGeometry.setAttribute("color", new THREE.BufferAttribute(rb.colours, 3));
+      this.ribbonGeometry.computeBoundingSphere();
+      this.ribbons.visible = rb.segments > 0;
+      return true;
+    }
+    this.ribbons.visible = false;
+    this.traced = null;
+    this.drawnLines = { lines: 0, segments: 0, panels: 0, maxOpening: 0 };
     const at3 = disp ? deformedPositions(base, gaussDisplacements(points.layout, disp.nodal!.column, disp.nodal!.rows), s.deform.scale) : base;
     const r = buildShellTicks(at3, points, groups, { face: c.face, minOpening: c.minOpening, halfLength: half * c.scale, eps: 0.02 * half });
     this.drawnShell = { ticks: r.ticks, points: r.points, unframed: r.unframed, maxOpening: r.maxOpening };
@@ -196,6 +245,8 @@ export class CracksLayer {
     this.material.needsUpdate = true;
     this.tickMaterial.clippingPlanes = planes;
     this.tickMaterial.needsUpdate = true;
+    this.ribbonMaterial.clippingPlanes = planes;
+    this.ribbonMaterial.needsUpdate = true;
   }
 
   dispose(): void {
@@ -203,5 +254,7 @@ export class CracksLayer {
     this.material.dispose();
     this.tickGeometry.dispose();
     this.tickMaterial.dispose();
+    this.ribbonGeometry.dispose();
+    this.ribbonMaterial.dispose();
   }
 }
