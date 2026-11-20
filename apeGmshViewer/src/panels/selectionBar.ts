@@ -46,7 +46,7 @@ export function setListLines(s: State): { kind: "element" | "node"; rows: SetRow
 }
 
 /** What the bar shows, as plain values (tested in Node; the DOM below draws them). */
-export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"; label: string; count: number; active: boolean }[]; hint: string; hintDetail: string; canClear: boolean; canUndo: boolean; through: boolean } | null {
+export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"; label: string; count: number; active: boolean }[]; hint: string; canClear: boolean; canUndo: boolean; through: boolean; lasso: boolean } | null {
   if (!s.mesh) return null;
   const elements = selectedElementsOf(s).length, nodes = s.selection.nodes.length;
   const active = s.selection.active;
@@ -55,12 +55,13 @@ export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"
       { kind: "element", label: "Elements", count: elements, active: active === "element" },
       { kind: "node", label: "Nodes", count: nodes, active: active === "node" },
     ],
-    // Short, so the bar fits beside the right rail; the drag rule is in the tooltip, and the box's own count says "inside" or "touching".
-    hint: "Shift adds · Ctrl removes",
-    hintDetail: "Click or drag a box. A box drawn left to right takes what is fully inside it; right to left, what it touches. Shift adds, Ctrl removes, Ctrl+Z undoes.",
+    // On the Select label's tooltip, so the bar fits beside the right rail; the region's own count says "inside" or "touching",
+    // and "+" or "−" while Shift or Ctrl is held.
+    hint: "Click, or drag a box (or a lasso, in Lasso mode). A box drawn left to right takes what is fully inside it; right to left, what it touches. A lasso drawn clockwise takes what is fully inside it; counter-clockwise, what it touches. Shift adds, Ctrl removes, Ctrl+Z undoes.",
     canClear: (active === "node" ? nodes : elements) > 0,
     canUndo: s.selectionUndo.past.length > 0,
     through: s.selection.through,
+    lasso: s.selection.lasso,
   };
 }
 
@@ -112,7 +113,9 @@ export function mountSelectionBar(store: Store): () => void {
     const lines = selectionBarLines(s);
     bar.hidden = lines === null;
     if (lines === null) return bar.replaceChildren();
-    const parts: HTMLElement[] = [el("span", "window-menu-label", "Select")];
+    const label = el("span", "window-menu-label", "Select");
+    label.title = lines.hint;
+    const parts: HTMLElement[] = [label];
     for (const k of lines.kinds) {
       const b = el("button", `window-toggle selection-kind${k.active ? " on" : ""}`, `${k.label} ${k.count.toLocaleString()}`);
       b.type = "button";
@@ -122,9 +125,6 @@ export function mountSelectionBar(store: Store): () => void {
       unlisten.push(listen(b, "click", () => store.dispatch({ type: "setWorkspaceKind", kind: k.kind === "node" ? "nodes" : "elements" })));
       parts.push(b);
     }
-    const hint = el("span", "selection-hint", lines.hint);
-    hint.title = lines.hintDetail;
-    parts.push(hint);
     const undo = el("button", "window-toggle", "Undo");
     undo.type = "button";
     undo.title = "Undo the last selection change (Ctrl+Z); Ctrl+Y redoes it";
@@ -139,6 +139,14 @@ export function mountSelectionBar(store: Store): () => void {
     through.setAttribute("aria-pressed", String(lines.through));
     unlisten.push(listen(through, "click", () => store.dispatch({ type: "setSelectThrough", on: !lines.through })));
     parts.push(through);
+    const lasso = el("button", `window-toggle${lines.lasso ? " on" : ""}`, "Lasso");
+    lasso.type = "button";
+    lasso.title = lines.lasso
+      ? "A left drag draws a lasso: clockwise takes what is fully inside it, counter-clockwise what it touches"
+      : "A left drag draws a box; turn on to draw a lasso";
+    lasso.setAttribute("aria-pressed", String(lines.lasso));
+    unlisten.push(listen(lasso, "click", () => store.dispatch({ type: "setSelectLasso", on: !lines.lasso })));
+    parts.push(lasso);
     const sets = setListLines(s)!;
     const setsBtn = el("button", `window-toggle${listOpen ? " on" : ""}`, `Sets ${sets.rows.length}`);
     setsBtn.type = "button";

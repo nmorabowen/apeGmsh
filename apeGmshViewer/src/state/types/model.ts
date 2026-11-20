@@ -333,6 +333,8 @@ export interface SelectionState {
   nodes: number[];
   /** ADR 0138 D7: a box selects through the model (every drawn target in it), not only what is visible */
   through: boolean;
+  /** ADR 0138 D7: a left drag draws a lasso, not a box (a mode of the selection bar) */
+  lasso: boolean;
 }
 
 /**

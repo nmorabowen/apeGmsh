@@ -28,6 +28,8 @@ export type ModelEvent =
   | { type: "undoSelection" }
   /** ADR 0138 D7: the selection bar's Through toggle */
   | { type: "setSelectThrough"; on: boolean }
+  /** ADR 0138 D7: the selection bar's Lasso mode */
+  | { type: "setSelectLasso"; on: boolean }
   /** ADR 0138 D12: a saved set (by its row) into the selection of its kind, made active: replace, add or remove */
   | { type: "selectSet"; row: number; mode: "replace" | "add" | "remove" }
   | { type: "redoSelection" }

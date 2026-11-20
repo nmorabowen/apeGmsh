@@ -598,6 +598,9 @@ function reduceEvent(s: State, e: Event): State {
     case "setSelectThrough":
       if (typeof (e as { on: unknown }).on !== "boolean") throw new TypeError(`setSelectThrough: ${JSON.stringify((e as { on: unknown }).on)} is not a boolean`);
       return s.selection.through === e.on ? s : { ...s, selection: { ...s.selection, through: e.on } };
+    case "setSelectLasso":
+      if (typeof (e as { on: unknown }).on !== "boolean") throw new TypeError(`setSelectLasso: ${JSON.stringify((e as { on: unknown }).on)} is not a boolean`);
+      return s.selection.lasso === e.on ? s : { ...s, selection: { ...s.selection, lasso: e.on } };
     case "selectSet": {
       if (!["replace", "add", "remove"].includes(e.mode)) throw new RangeError(`selectSet: ${JSON.stringify(e.mode)} is not replace, add or remove`);
       const set = savedSets(s).find((x) => x.row === e.row);

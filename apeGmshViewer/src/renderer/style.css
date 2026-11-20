@@ -387,7 +387,11 @@ code { font-family: var(--mono); }
 @media (min-width: 1060px) and (max-width: 1560px) {
   body:not([data-rail-collapsed="true"]) #selection-bar { left: auto; right: 498px; transform: none; }
 }
-.selection-hint { margin: 0 6px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+/* ADR 0138 D7: the lasso being drawn (dashed: counter-clockwise, touching) and its count. */
+.lasso-select { position: fixed; z-index: 30; pointer-events: none; overflow: visible; }
+.lasso-select polygon { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 1; }
+.lasso-select[data-crossing="true"] polygon { stroke-dasharray: 4 3; fill: color-mix(in srgb, var(--accent) 5%, transparent); }
+.lasso-count { position: fixed; z-index: 31; pointer-events: none; }
 /* ADR 0138 D12: the saved sets of the active kind, over the bar. */
 .selection-sets {
   position: absolute; bottom: calc(100% + 6px); right: 0; min-width: 100%; max-height: 40vh; overflow-y: auto;
@@ -408,6 +412,7 @@ code { font-family: var(--mono); }
   position: absolute; left: -1px; top: -22px; padding: 1px 6px; border-radius: 4px; white-space: nowrap;
   font: 600 12px var(--font); color: var(--accent-ink); background: var(--accent);
 }
+.lasso-count { padding: 1px 6px; border-radius: 4px; white-space: nowrap; font: 600 12px var(--font); color: var(--accent-ink); background: var(--accent); }
 /* ADR 0138 D6: the name of the target under the cursor. */
 .hover-tag {
   position: fixed; z-index: 30; pointer-events: none; padding: 2px 7px; border-radius: 5px; white-space: nowrap;
