@@ -29,9 +29,15 @@
 //   only when every part carries the same both (§7b.1 "Partitioned sets"); an
 //   unstamped part, or parts that disagree, leave the set unpaired, with the part
 //   indices named;
-// - element results (Gauss points, line stations) are not stitched by this slice:
-//   they are listed in `unread`, and the element-id verdict is unverified, so no
-//   element row of a part set leaves main;
+// - Gauss points and line stations are not stitched: they are listed in `unread`.
+//   Layer groups (reader/ladrunoLayers.ts, layered shells) are: elements live on one
+//   rank, so a group is its parts' rows end to end, in part order, from the parts that
+//   hold it (a rank may hold none: a header bucket of one section type on one rank).
+//   The parts that hold a group must agree on its Gauss points, layers, components and
+//   natural coordinates; otherwise, or when one of them refuses it, the stitched group
+//   is refused by name. Its geometry is the parts' end to end, or absent when any part's is;
+// - the set's element-id verdict is verified only when every part's is (each part's
+//   INFO/PROVENANCE@element_index_space = "fem"); otherwise it names the first part that is not;
 // - each element lives on one rank (#2316): an element id that the Gauss buckets of
 //   one result hold in two part files refuses the set, naming both parts. Each part
 //   already refused an id twice in one of its tokens at its own open
@@ -42,7 +48,18 @@
 import { uniqueElementIds, type IdList } from "./ladrunoChecks.ts";
 import type { ElementIndexVerdict } from "./ladrunoElements.ts";
 import { LadrunoError, openLadruno, type LadrunoFile, type LadrunoIndex, type LadrunoLineage, type LadrunoLineStationSlab, type LadrunoLineStationStep, type LadrunoMode, type LineStationComponent } from "./ladruno.ts";
-import type { ElementIds, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
+import type { ElementIds, LayerGroupInfo, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
+
+/** Arrays end to end. */
+function concat(parts: readonly Float64Array[]): Float64Array {
+  const out = new Float64Array(parts.reduce((a, x) => a + x.length, 0));
+  let o = 0;
+  for (const x of parts) {
+    out.set(x, o);
+    o += x.length;
+  }
+  return out;
+}
 
 /** A partitioned run's part file name (schema "File identity", D5); the suffix in any case. */
 const PART_NAME = /^(?<stem>.+?)\.part-(?<idx>\d+)\.ladruno$/i;
@@ -125,6 +142,8 @@ export class LadrunoPartSet {
   private readonly names: string[];
   private readonly maps = new Map<string, StageMap>();
   private readonly stitches = new Map<string, Map<string, Stitch>>();
+  /** per stage, each stitched layer group's parts (indices into `parts`), in part order */
+  private readonly layerParts = new Map<string, Map<string, number[]>>();
 
   constructor(path: string, stem: string, indices: readonly number[], parts: LadrunoFile[]) {
     this.parts = parts;
@@ -227,7 +246,34 @@ export class LadrunoPartSet {
   }
 
   elementIndexVerdict(): ElementIndexVerdict {
-    return { verified: false, reason: PART_SET_ELEMENTS_UNREAD };
+    for (let j = 0; j < this.parts.length; j++) {
+      const v = this.parts[j]!.elementIndexVerdict();
+      if (!v.verified) return { verified: false, reason: `${this.names[j]}: ${v.reason}` };
+    }
+    return { verified: true };
+  }
+
+  /** One step of a stitched layer group: its parts' reads end to end, in part order (reader/ladruno.ts `readLayerStep`). */
+  readLayerStep(stageId: string, groupId: string, components: readonly string[], layers: readonly number[] | null, step: number): Float64Array {
+    return concat(this.layerPartsOf(stageId, groupId).map((j) => this.parts[j]!.readLayerStep(stageId, groupId, components, layers, step)));
+  }
+
+  /** A stitched layer group's element rows, in read order: FEM ids only when every part is stamped "fem". */
+  layerElementIds(stageId: string, groupId: string): ElementIds {
+    const ids = concat(
+      this.layerPartsOf(stageId, groupId).map((j) => {
+        const e = this.parts[j]!.layerElementIds(stageId, groupId);
+        return e.mapping === "fem_eid" ? e.ids : e.rawIndex;
+      }),
+    );
+    const v = this.elementIndexVerdict();
+    return v.verified ? { mapping: "fem_eid", sourceType: "ladruno", ids } : { mapping: "unverified", sourceType: "ladruno", reason: v.reason, rawIndex: ids };
+  }
+
+  private layerPartsOf(stageId: string, groupId: string): number[] {
+    const at = this.layerParts.get(this.stage(stageId).id)?.get(groupId);
+    if (!at) throw new LadrunoError("argument", `stage ${stageId} has no layer group ${JSON.stringify(groupId)}`);
+    return at;
   }
 
   elementIds(stageId: string, groupId: string): ElementIds {
@@ -373,6 +419,13 @@ export class LadrunoPartSet {
           lists.push({ at: `${this.names[j]} ${g.path}/ID`, ids: e.mapping === "fem_eid" ? e.ids : e.rawIndex });
           byToken.set(token, lists);
         }
+        for (const g of p.stage(s.id).layers ?? []) {
+          const token = g.path.slice(0, g.path.lastIndexOf("/"));
+          const e = p.layerElementIds(s.id, g.id);
+          const lists = byToken.get(token) ?? [];
+          lists.push({ at: `${this.names[j]} ${g.path}/ID`, ids: e.mapping === "fem_eid" ? e.ids : e.rawIndex });
+          byToken.set(token, lists);
+        }
       });
       for (const [token, lists] of byToken) {
         uniqueElementIds(
@@ -388,18 +441,19 @@ export class LadrunoPartSet {
   /** The set's stage `id`: the union node index, and each component the parts stitch. */
   private stitchStage(id: string): StageInfo {
     const per = this.parts.map((p) => p.stage(id));
-    // Layer groups are element results too: not stitched, so never carried over from part 0.
+    // Part 0's layer groups are not the set's: the set's are stitched here.
     const { layers: _layers, ...r } = per[0]!;
     const unread = [...new Set(per.flatMap((s) => s.unread))];
     for (const g of [...new Set(per.flatMap((s) => s.gauss.map((x) => x.id)))]) unread.push(`${g} (${PART_SET_ELEMENTS_UNREAD})`);
-    for (const g of [...new Set(per.flatMap((s) => (s.layers ?? []).map((x) => x.id)))]) unread.push(`${g} (${PART_SET_ELEMENTS_UNREAD})`);
+    const layers = this.stitchLayers(id, per);
+    const withLayers = layers.length ? { layers } : {};
     const stations = [...new Set(this.parts.flatMap((p) => p.availableLineStations(id)))];
     if (stations.length) unread.push(`line stations ${stations.join(", ")} (${PART_SET_ELEMENTS_UNREAD})`);
     const stitches = new Map<string, Stitch>();
     this.stitches.set(id, stitches);
     if (per.every((s) => s.nodes === null)) {
       this.maps.set(id, { pos: per.map(() => new Int32Array(0)), first: per.map(() => new Uint8Array(0)), n: 0 });
-      return { ...r, nodes: null, gauss: [], unread };
+      return { ...r, nodes: null, gauss: [], ...withLayers, unread };
     }
     const refused: NodalInfo["refused"] = [];
     per.forEach((s, j) => {
@@ -439,7 +493,43 @@ export class LadrunoPartSet {
     const first = pos.map((p, j) => Uint8Array.from(p, (u, i) => (keepPart[u] === j && keepRow[u] === i ? 1 : 0)));
     this.maps.set(id, { pos, first, n: union.length });
     const nodes: NodalInfo = { path: r.nodes?.path ?? per.find((s) => s.nodes)!.nodes!.path, ids: Float64Array.from(union), components, refused };
-    return { ...r, nodes, gauss: [], unread };
+    return { ...r, nodes, gauss: [], ...withLayers, unread };
+  }
+
+  /** The set's layer groups of stage `id`: each group's parts' groups end to end (see the header). */
+  private stitchLayers(id: string, per: readonly StageInfo[]): LayerGroupInfo[] {
+    const at = new Map<string, number[]>();
+    this.layerParts.set(id, at);
+    const ids = [...new Set(per.flatMap((s) => (s.layers ?? []).map((g) => g.id)))];
+    return ids.map((gid) => {
+      const holders: [number, LayerGroupInfo][] = [];
+      per.forEach((s, j) => {
+        const g = s.layers?.find((x) => x.id === gid);
+        if (g) holders.push([j, g]);
+      });
+      at.set(gid, holders.map(([j]) => j));
+      const [j0, g0] = holders[0]!;
+      const out: LayerGroupInfo = { ...g0, path: `${g0.path} (${holders.length} of ${per.length} parts)`, nElements: holders.reduce((a, [, g]) => a + g.nElements, 0) };
+      const refuse = (reason: string): LayerGroupInfo => ({ ...out, components: [], refused: [{ component: gid.slice(0, gid.indexOf("/")), reason }] });
+      for (const [j, g] of holders) if (g.refused.length) return refuse(`${this.names[j]}: ${g.refused[0]!.reason}`);
+      const shape = (g: LayerGroupInfo) => JSON.stringify([g.nGauss, g.nLayers, g.components, g.naturalCoords]);
+      const odd = holders.find(([, g]) => shape(g) !== shape(g0));
+      if (odd) {
+        const [j, g] = odd;
+        return refuse(
+          `${this.names[j0]} and ${this.names[j]} disagree on the group (Gauss points ${g0.nGauss} and ${g.nGauss}, layers ${g0.nLayers} and ${g.nLayers}, ` +
+            `components ${g0.components.join(",")} and ${g.components.join(",")}): the set does not read it`,
+        );
+      }
+      const geoms = holders.map(([j, g]) => [j, g.geometry] as const);
+      const absent = geoms.find(([, g]) => g.state === "absent");
+      if (absent && absent[1].state === "absent") out.geometry = { state: "absent", reason: `${this.names[absent[0]]}: ${absent[1].reason}` };
+      else {
+        const present = geoms.map(([, g]) => g as Extract<LayerGroupInfo["geometry"], { state: "present" }>);
+        out.geometry = { state: "present", z: concat(present.map((g) => g.z)), t: concat(present.map((g) => g.t)), thickness: concat(present.map((g) => g.thickness)) };
+      }
+      return out;
+    });
   }
 
   /** How the parts' copies of `component` combine, or why they are refused (schema §7.1). */
