@@ -134,7 +134,7 @@ export async function captureLineDiagrams(ctx: HarnessContext, settle: (ms?: num
 }
 
 /**
- * 3-D frame extrusion + rigid joint-offset results stills on models with `hasExtrudableFrames`:
+ * 3-D frame extrusion + rigid joint-offset results stills on models with `hasExtrudableFrames` (or a shell / membrane thickness, `shellThickness`):
  * (1) `extrude-results-1-deform-ghost`: extruded 3-D frame + rigid joint offsets + deformed shape (`scale 25`, reference ghost),
  * (2) `extrude-results-2-deform-contour`: extruded 3-D frame + rigid joint offsets + deformed shape + nodal contour (`|u|`),
  * (3) `extrude-results-3-line-diagram`: extruded 3-D frame (auto-dimmed to 0.25 opacity) + rigid joint offsets + 3-D moment diagram (`My`/`Mz`),
@@ -143,7 +143,7 @@ export async function captureLineDiagrams(ctx: HarnessContext, settle: (ms?: num
 export async function captureExtrudeResults(ctx: HarnessContext, settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
   const { store, viewport, bridge } = ctx;
   const s0 = store.get();
-  if (!s0.mesh?.frameExtrusion?.hasExtrudableFrames || !s0.results || !s0.phase.axis.some((k) => k.kind === "results")) return;
+  if (!(s0.mesh?.frameExtrusion?.hasExtrudableFrames || s0.mesh?.shellThickness) || !s0.results || !s0.phase.axis.some((k) => k.kind === "results")) return;
   const stages = s0.results.stages;
   let stageIdx = stages.findIndex((st) => (st.lineStations?.length ?? 0) > 0);
   if (stageIdx < 0) stageIdx = 0;
@@ -158,7 +158,7 @@ export async function captureExtrudeResults(ctx: HarnessContext, settle: (ms?: n
   store.dispatch({ type: "setColourBy", by: "group" });
   store.dispatch({ type: "setPhase", at: { kind: "results", stage: stageIdx, step: last } });
   if (!store.get().visibility.extrudeFrames) store.dispatch({ type: "toggleExtrudeFrames" });
-  if (s0.mesh.frameExtrusion.hasJointOffsets && !store.get().visibility.showOffsets) {
+  if (s0.mesh?.frameExtrusion?.hasJointOffsets && !store.get().visibility.showOffsets) {
     store.dispatch({ type: "toggleShowOffsets" });
   }
 

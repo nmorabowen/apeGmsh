@@ -236,6 +236,14 @@ export interface MeshInfo {
   nodes?: { ids: BlobRef; xyz: BlobRef };
   /** 3-D cross-section prism extrusion and rigid joint-offset geometry blobs for 1-D frame elements. */
   frameExtrusion?: FrameExtrusionBlobs;
+  /**
+   * The section thickness of each drawn face triangle (f32, `triPositions`
+   * order; 0 where it is not a shell or a membrane), read by
+   * state/shellThickness.ts. Absent when no triangle has one, so a model
+   * without shells pays nothing; the slab itself is built by the renderer only
+   * while the extrude toggle is on.
+   */
+  shellThickness?: { readonly tri: BlobRef; readonly count: number };
 }
 
 /** The render derivation of the geometry artifact (the `/geometry` sibling, V2a spec). */

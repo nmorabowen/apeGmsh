@@ -23,6 +23,7 @@ import { colormapTexture, NO_DATA_U, rampUv } from "./colormapTexture.ts";
 import { combinationColours, contourColours, contourShownKey, differenceColours, elementColours, noDataShades, toLinear, userResultColours, type CombinationColumnOf, type ContourShades, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
+import { slabAttribute, slabEdgePositions, slabPositions, slabTopology, type SlabTopology } from "./shellSlab.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
@@ -147,6 +148,10 @@ export class Viewport {
   private frameEdges: THREE.LineSegments | null = null;
   private frameTriMap: Int32Array | null = null;
   private frameEdgeMap: Int32Array | null = null;
+  /** The thickness slab of the drawn shell and membrane faces (built only while the extrude toggle is on), its rims and topology. */
+  private shellSlab: THREE.Mesh | null = null;
+  private shellSlabEdges: THREE.LineSegments | null = null;
+  private slabTopo: SlabTopology | null = null;
   private offsetLines: LineSegments2 | null = null;
   private offsetLineMap: Int32Array | null = null;
   private offsetJoints: THREE.Points | null = null;
@@ -1130,6 +1135,7 @@ export class Viewport {
         drawnLines,
         this.edges && this.edgeMap ? { object: this.edges, map: this.edgeMap } : null,
       );
+      this.moveShellSlab();
       if (this.frameFaces && this.frameTriMap && next.frameTri) {
         const a = this.frameFaces.geometry.getAttribute("position") as THREE.BufferAttribute;
         gatherInto(next.frameTri, this.frameTriMap, 9, a.array as Float32Array);
@@ -1166,6 +1172,7 @@ export class Viewport {
       this.setMarkers(info);
       if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
       if (this.frameEdges) this.frameEdges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
+      if (this.shellSlabEdges) this.shellSlabEdges.visible = edgesShown(s.visibility.edges, next, s.visibility.opacity);
       if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, next, s.visibility.opacity);
       // The selection outline follows the moved vertices (no pulse: the selection did not change).
       if (selectedElementsOf(s).length || s.selection.nodes.length) this.setHighlight(s, false);
@@ -1177,6 +1184,67 @@ export class Viewport {
       changed = true;
     }
     if (changed) this.requestRender();
+  }
+
+  /**
+   * The thickness slab of the drawn shell and membrane faces, from the faces
+   * as drawn (deformed while the deformed shape shows). Its colours are the
+   * faces' own, copied corner by corner, so a contour, a group or a role
+   * colouring reads the same on the slab. The mid-surface faces stay drawn
+   * inside it, where picking and the selection outline keep reading them.
+   */
+  private buildShellSlab(info: MeshInfo, drawn: Drawn, edgeColour: number): void {
+    const fg = this.faces!.geometry;
+    const pos = fg.getAttribute("position").array as Float32Array;
+    const vn = this.blobs.get(info.vertexNodes.tri) as Float64Array;
+    const thick = this.blobs.f32(info.shellThickness!.tri);
+    const cornerTags = new Float64Array(3 * drawn.triMap.length);
+    const drawnThick = new Float32Array(drawn.triMap.length);
+    drawn.triMap.forEach((t, d) => {
+      drawnThick[d] = thick[t]!;
+      for (let k = 0; k < 3; k++) cornerTags[3 * d + k] = vn[3 * t + k]!;
+    });
+    const topo = slabTopology(pos, cornerTags, drawnThick);
+    if (!topo) return;
+    this.slabTopo = topo;
+    const g = new THREE.BufferGeometry();
+    const slab = slabPositions(topo, pos);
+    g.setAttribute("position", new THREE.BufferAttribute(slab, 3));
+    const uv = fg.getAttribute("uv");
+    const colour = fg.getAttribute("color");
+    if (uv) g.setAttribute("uv", new THREE.BufferAttribute(slabAttribute(topo, uv.array as Float32Array, 2), 2));
+    if (colour) g.setAttribute("color", new THREE.BufferAttribute(slabAttribute(topo, colour.array as Float32Array, 3), 3));
+    g.computeVertexNormals();
+    const fm = this.faces!.material as THREE.MeshStandardMaterial;
+    // No polygon offset: the mid-surface faces (offset back) never show through a face of the slab.
+    const m = new THREE.MeshStandardMaterial({ vertexColors: fm.vertexColors, map: fm.map, side: THREE.DoubleSide, flatShading: true, roughness: 0.75, metalness: 0.0 });
+    this.shellSlab = new THREE.Mesh(g, m);
+    this.content.add(this.shellSlab);
+    if (topo.edge.length) {
+      const eg = new THREE.BufferGeometry();
+      eg.setAttribute("position", new THREE.BufferAttribute(slabEdgePositions(topo, slab), 3));
+      const em = new THREE.LineBasicMaterial({ color: edgeColour, transparent: true, opacity: this.activeTheme === "light" ? 0.72 : 0.45 });
+      this.shellSlabEdges = new THREE.LineSegments(eg, em);
+      this.content.add(this.shellSlabEdges);
+    }
+  }
+
+  /** Move the slab and its rims with the drawn faces (after writePositions moved them in place). */
+  private moveShellSlab(): void {
+    if (!this.shellSlab || !this.slabTopo || !this.faces) return;
+    const pos = this.faces.geometry.getAttribute("position").array as Float32Array;
+    const a = this.shellSlab.geometry.getAttribute("position") as THREE.BufferAttribute;
+    slabPositions(this.slabTopo, pos, a.array as Float32Array);
+    a.needsUpdate = true;
+    this.shellSlab.geometry.computeVertexNormals();
+    this.shellSlab.geometry.computeBoundingBox();
+    this.shellSlab.geometry.computeBoundingSphere();
+    if (this.shellSlabEdges) {
+      const e = this.shellSlabEdges.geometry.getAttribute("position") as THREE.BufferAttribute;
+      slabEdgePositions(this.slabTopo, a.array as Float32Array, e.array as Float32Array);
+      e.needsUpdate = true;
+      this.shellSlabEdges.geometry.computeBoundingSphere();
+    }
   }
 
   /** The markers of drawn nodes with no displacement at the step shown (none when undeformed). */
@@ -1272,6 +1340,7 @@ export class Viewport {
     if (!c || c.key === this.contourApplied) return;
     // VF-a: the surfaces take the ramp coordinates and sample the colormap per fragment.
     if (this.faces) this.setRamp(this.faces, c.triU, c);
+    if (this.shellSlab && this.slabTopo) this.setRamp(this.shellSlab, slabAttribute(this.slabTopo, c.triU, 1), c);
     if (this.frameFaces && this.frameTriMap) this.setRamp(this.frameFaces, this.frameTriContourU(info, this.drawn.lineMap, c.lineU, this.frameTriMap), c);
     if (this.lines) {
       // LineSegmentsGeometry keeps the colours as one interleaved buffer, 6 floats per segment (start rgb, end rgb).
@@ -1481,6 +1550,9 @@ export class Viewport {
     this.frameEdges = null;
     this.frameTriMap = null;
     this.frameEdgeMap = null;
+    this.shellSlab = null;
+    this.shellSlabEdges = null;
+    this.slabTopo = null;
     this.offsetLines = null;
     this.offsetLineMap = null;
     this.offsetJoints = null;
@@ -1515,6 +1587,9 @@ export class Viewport {
     this.frameEdges = null;
     this.frameTriMap = null;
     this.frameEdgeMap = null;
+    this.shellSlab = null;
+    this.shellSlabEdges = null;
+    this.slabTopo = null;
     this.offsetLines = null;
     this.offsetLineMap = null;
     this.offsetJoints = null;
@@ -1576,6 +1651,8 @@ export class Viewport {
         this.content.add(this.edges);
       }
     }
+
+    if (s.visibility.extrudeFrames && info.shellThickness && this.faces) this.buildShellSlab(info, drawn, source.edge);
 
     const fe = info.frameExtrusion;
     const visibleSegSet = new Set<number>(drawn.lineMap);
@@ -1711,11 +1788,13 @@ export class Viewport {
     }
     if (this.edges) this.edges.visible = edgesShown(s.visibility.edges, this.full, s.visibility.opacity);
     if (this.frameEdges) this.frameEdges.visible = edgesShown(s.visibility.edges, this.full, s.visibility.opacity);
+    if (this.shellSlabEdges) this.shellSlabEdges.visible = edgesShown(s.visibility.edges, this.full, s.visibility.opacity);
     if (this.ghost) applyGhostVisibility(this.ghost, s.visibility.edges, this.full, s.visibility.opacity);
-    if (this.faces) {
+    for (const mesh of [this.faces, this.shellSlab]) {
+      if (!mesh) continue;
       const opacity = s.visibility.opacity;
-      this.faces.visible = opacity > 0;
-      const m = this.faces.material as THREE.MeshStandardMaterial;
+      mesh.visible = opacity > 0;
+      const m = mesh.material as THREE.MeshStandardMaterial;
       m.transparent = opacity < 1;
       m.opacity = opacity;
       m.depthWrite = opacity >= 1;
@@ -1739,12 +1818,14 @@ export class Viewport {
     const k = on ? DIM : 1;
     if (this.faces) (this.faces.material as THREE.MeshStandardMaterial).color.setScalar(k);
     if (this.frameFaces) (this.frameFaces.material as THREE.MeshStandardMaterial).color.setScalar(k);
+    if (this.shellSlab) (this.shellSlab.material as THREE.MeshStandardMaterial).color.setScalar(k);
     if (this.lines) (this.lines.material as LineMaterial).color.setScalar(k);
     if (this.offsetLines) (this.offsetLines.material as LineMaterial).color.setScalar(k);
     if (this.offsetJoints) (this.offsetJoints.material as THREE.PointsMaterial).color.setScalar(k);
     const restOpacity = this.activeTheme === "light" ? 0.72 : 0.45;
     if (this.edges) (this.edges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : restOpacity;
     if (this.frameEdges) (this.frameEdges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : restOpacity;
+    if (this.shellSlabEdges) (this.shellSlabEdges.material as THREE.LineBasicMaterial).opacity = on ? 0.2 : restOpacity;
     this.caps.setDim(k);
   }
 

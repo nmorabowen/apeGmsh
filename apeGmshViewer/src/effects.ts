@@ -338,6 +338,7 @@ export function blobRefsOf(s: State): BlobRef[] {
         f.offsetJointSegments,
       );
     }
+    if (m.shellThickness) out.push(m.shellThickness.tri);
   }
   for (const d of Object.values(s.decls)) if (d.group) out.push(d.group.ids);
   for (const b of s.blocks) out.push(b.connectivity);

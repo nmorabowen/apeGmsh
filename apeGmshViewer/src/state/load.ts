@@ -11,6 +11,7 @@ import { sourceOfRow, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
 import { buildFrameExtrusion } from "./frameExtrusion.ts";
+import { shellThicknessOf } from "./shellThickness.ts";
 import { groupAdjacency } from "./adjacency.ts";
 import { assignSlots, NO_GROUP, OPS_ONLY, slotColour } from "./palette.ts";
 import { emptyRecord } from "./reduce.ts";
@@ -284,6 +285,7 @@ export function meshInfoOf(
   });
   const frameTriElement = Int32Array.from(ext.frameTriSegments, (s) => lines.element[s]!);
   const frameTriGroup = Int32Array.from(ext.frameTriSegments, (s) => lines.group[s]!);
+  const shells = shellThicknessOf(model, mesh.triRefs, decls);
 
   return {
     linePositions: blobs.put("model/mesh/linePositions", mesh.linePositions, [mesh.lineRefs.length, 6]),
@@ -322,6 +324,7 @@ export function meshInfoOf(
       hasJointOffsets: ext.hasJointOffsets,
       extrusionSkippedUnoriented: ext.skippedUnorientedCount,
     },
+    ...(shells.count > 0 ? { shellThickness: { tri: blobs.put("model/mesh/shellTriThickness", shells.triThickness), count: shells.count } } : {}),
     elements,
     legend,
     adjacency,
