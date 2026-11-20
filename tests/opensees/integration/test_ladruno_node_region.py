@@ -41,7 +41,7 @@ from tests.opensees.fixtures.fem_stub import (
 )
 from tests.opensees.integration.test_deck_md_static_guard import schema_json
 
-_SHA = "f9864cfec04c92a4a602d202ffe3237e01004858"
+_SHA = "23e0f000283675b935bfd1c00a4533550fa053e0"
 
 
 def _fem() -> FEMStub:

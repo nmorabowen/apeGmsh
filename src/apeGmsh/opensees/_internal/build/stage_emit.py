@@ -817,7 +817,7 @@ MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 
 #: The ``ladrunoSchema`` v1 capability that promises that fix
 #: (``kCapabilities`` in the fork's ``SRC/interpreter/LadrunoSchema.h``,
-#: listed at ``FORK_PIN`` ``f9864cfec``).  The fork defines a capability's
+#: listed at ``FORK_PIN`` ``23e0f0002``).  The fork defines a capability's
 #: absence as "older build, refuse", so a v0 schema, which predates every
 #: name, lacks it.
 MD_STAGE_FLAG_CAPABILITY = "mdStageFlagPreserved"
@@ -960,7 +960,12 @@ C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 #: ``True`` is refused (fail closed).  A ``FORK_PIN`` bump adds its row (a
 #: unit lock fails otherwise).
 FORK_BUILD_HAS_C83: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261119 (f9864cfec): c83ee812e is its ancestor
+    # FORK_PIN ladruno-v20261120 (23e0f0002): c83ee812e is its ancestor
+    # (GitHub compare: ahead 467, behind 0). It is f9864cfec plus
+    # 4 commits: WP-242, ASDShellQ4/T3 answer localAxes so
+    # `recorder ladruno` writes their frames (OpenSees#1133).
+    "23e0f000283675b935bfd1c00a4533550fa053e0": True,
+    # ladruno-v20261119 (f9864cfec): c83ee812e is its ancestor
     # (GitHub compare: ahead 463, behind 0). It is cfe478254 plus
     # 4 commits: WP-235 `hingeStatus` beam response (OpenSees#1113)
     # and the LadrunoBondSlip reversal friction slider (OpenSees#1115).
@@ -1092,7 +1097,12 @@ MEMBRANE_WP208_FORK_COMMIT = "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f"
 FORK_BUILD_HAS_MEMBRANE_WP208: dict[str, bool] = {
     # The floor commit itself.
     MEMBRANE_WP208_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261119 (f9864cfec): b6d3e3d21 is its ancestor
+    # FORK_PIN ladruno-v20261120 (23e0f0002): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 465, behind 0). It is f9864cfec plus
+    # 4 commits: WP-242, ASDShellQ4/T3 answer localAxes so
+    # `recorder ladruno` writes their frames (OpenSees#1133).
+    "23e0f000283675b935bfd1c00a4533550fa053e0": True,
+    # ladruno-v20261119 (f9864cfec): b6d3e3d21 is its ancestor
     # (GitHub compare: ahead 461, behind 0). It is cfe478254 plus
     # 4 commits: WP-235 `hingeStatus` beam response (OpenSees#1113)
     # and the LadrunoBondSlip reversal friction slider (OpenSees#1115).
@@ -1224,7 +1234,12 @@ BEAM3D_PARTIAL_LOAD_FORK_COMMIT = "34df942c75fa8006da7fa930d32645c0fd37b20f"
 FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
     # The floor commit itself.
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261119 (f9864cfec): 34df942c7 is its ancestor
+    # FORK_PIN ladruno-v20261120 (23e0f0002): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 495, behind 0). It is f9864cfec plus
+    # 4 commits: WP-242, ASDShellQ4/T3 answer localAxes so
+    # `recorder ladruno` writes their frames (OpenSees#1133).
+    "23e0f000283675b935bfd1c00a4533550fa053e0": True,
+    # ladruno-v20261119 (f9864cfec): 34df942c7 is its ancestor
     # (GitHub compare: ahead 491, behind 0). It is cfe478254 plus
     # 4 commits: WP-235 `hingeStatus` beam response (OpenSees#1113)
     # and the LadrunoBondSlip reversal friction slider (OpenSees#1115).
@@ -1387,7 +1402,12 @@ FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION: tuple[int, int, int] = (3, 7, 0)
 FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD: dict[str, bool] = {
     # The 3-D partial-load floor commit (compare: ahead 4045, behind 0).
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261119 (f9864cfec): f4c791df6 is its ancestor
+    # FORK_PIN ladruno-v20261120 (23e0f0002): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4540, behind 0). It is f9864cfec plus
+    # 4 commits: WP-242, ASDShellQ4/T3 answer localAxes so
+    # `recorder ladruno` writes their frames (OpenSees#1133).
+    "23e0f000283675b935bfd1c00a4533550fa053e0": True,
+    # ladruno-v20261119 (f9864cfec): f4c791df6 is its ancestor
     # (GitHub compare: ahead 4536, behind 0). It is cfe478254 plus
     # 4 commits: WP-235 `hingeStatus` beam response (OpenSees#1113)
     # and the LadrunoBondSlip reversal friction slider (OpenSees#1115).
