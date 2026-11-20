@@ -12,6 +12,8 @@
 //   by undo (ADR 0138 D6).
 // - `<out>.selection-through-box.png`, `<out>.selection-through-boxed.png`: the
 //   same box through the model (ADR 0138 D7), which takes what is hidden too.
+// - `<out>.selection-lasso.png`, `<out>.selection-lassoed.png`: a lasso drawn
+//   clockwise (fully inside) in Lasso mode, mid-drag and released (ADR 0138 D7).
 // - `<out>.selection-sets.png`, `<out>.selection-set-selected.png`: the bar's
 //   list of saved sets, and a set selected from it (ADR 0138 D12).
 // - `<out>.selection-nodes-box.png`: Nodes active, a box drawn right to left,
@@ -65,6 +67,21 @@ export async function captureSelection(ctx: HarnessContext, settle: (ms?: number
   await shot("selection-through-boxed");
   if (selectedElementsOf(store.get()).length < boxed.length) throw new Error("capture selection-through-boxed: the box through the model took fewer elements than the visible box");
   store.dispatch({ type: "setSelectThrough", on: false });
+  store.dispatch({ type: "undoSelection" });
+  // ADR 0138 D7: a lasso drawn clockwise around the middle of the canvas (a wavy loop, so it is no box), mid-drag and released; undo puts the box back.
+  store.dispatch({ type: "setSelectLasso", on: true });
+  const cx = r.left + r.width * 0.45, cy = r.top + r.height * 0.5, loop: { x: number; y: number }[] = [];
+  for (let i = 0; i <= 48; i++) {
+    const t = (2 * Math.PI * i) / 48, rad = 1 + 0.18 * Math.sin(5 * t);
+    loop.push({ x: cx + r.width * 0.16 * rad * Math.cos(t), y: cy + r.height * 0.22 * rad * Math.sin(t) });
+  }
+  for (const p of loop.slice(1, 40)) viewport.boxAt(loop[0]!.x, loop[0]!.y, p.x, p.y, "replace");
+  await shot("selection-lasso");
+  for (const p of loop.slice(40)) viewport.boxAt(loop[0]!.x, loop[0]!.y, p.x, p.y, "replace");
+  viewport.boxEnd(loop[0]!.x, loop[0]!.y, loop.at(-1)!.x, loop.at(-1)!.y, "replace");
+  if (selectedElementsOf(store.get()).length === 0) throw new Error("capture selection-lassoed: the lasso took nothing");
+  await shot("selection-lassoed");
+  store.dispatch({ type: "setSelectLasso", on: false });
   store.dispatch({ type: "undoSelection" });
   store.dispatch({ type: "setWorkspaceKind", kind: "nodes" });
   store.dispatch({ type: "setNodes", on: true });

@@ -347,6 +347,104 @@ export function pointsThrough(xy: Float32Array, box: Box): number[] {
   return found;
 }
 
+/**
+ * ADR 0138 D7: a lasso's closed path (canvas CSS pixels, x y pairs) filled
+ * into a mask of device pixels over its bounding box, by the even-odd rule
+ * (pixel centres; row 0 at the top).
+ */
+export interface LassoMask {
+  x0: number;
+  y0: number;
+  w: number;
+  h: number;
+  dpr: number;
+  bits: Uint8Array;
+}
+
+export function lassoMask(path: ArrayLike<number>, dpr: number): LassoMask {
+  const n = path.length / 2;
+  let lx = Infinity, ly = Infinity, hx = -Infinity, hy = -Infinity;
+  for (let i = 0; i < n; i++) {
+    lx = Math.min(lx, path[2 * i]!);
+    hx = Math.max(hx, path[2 * i]!);
+    ly = Math.min(ly, path[2 * i + 1]!);
+    hy = Math.max(hy, path[2 * i + 1]!);
+  }
+  const x0 = Math.max(0, Math.floor(lx * dpr)), y0 = Math.max(0, Math.floor(ly * dpr));
+  const w = n < 3 ? 0 : Math.max(0, Math.ceil(hx * dpr) - x0 + 1), h = n < 3 ? 0 : Math.max(0, Math.ceil(hy * dpr) - y0 + 1);
+  const bits = new Uint8Array(w * h), xs: number[] = [];
+  for (let j = 0; j < h; j++) {
+    const yc = (y0 + j + 0.5) / dpr;
+    xs.length = 0;
+    for (let i = 0; i < n; i++) {
+      const ax = path[2 * i]!, ay = path[2 * i + 1]!, k = (i + 1) % n, bx = path[2 * k]!, by = path[2 * k + 1]!;
+      if ((ay <= yc && yc < by) || (by <= yc && yc < ay)) xs.push(ax + ((yc - ay) * (bx - ax)) / (by - ay));
+    }
+    xs.sort((a, b) => a - b);
+    for (let p = 0; p + 1 < xs.length; p += 2) {
+      const from = Math.max(0, Math.ceil(xs[p]! * dpr - 0.5) - x0), to = Math.min(w - 1, Math.floor(xs[p + 1]! * dpr - 0.5) - x0);
+      for (let x = from; x <= to; x++) bits[j * w + x] = 1;
+    }
+  }
+  return { x0, y0, w, h, dpr, bits };
+}
+
+/** Whether a canvas point (CSS pixels) is inside a lasso's mask. */
+export function inLasso(m: LassoMask, x: number, y: number): boolean {
+  const px = Math.floor(x * m.dpr) - m.x0, py = Math.floor(y * m.dpr) - m.y0;
+  return px >= 0 && py >= 0 && px < m.w && py < m.h && m.bits[py * m.w + px] === 1;
+}
+
+/**
+ * Whether a closed path is drawn clockwise on screen (y down): a window lasso,
+ * which takes what is fully inside; counter-clockwise takes what it touches,
+ * as a box drawn right to left does.
+ */
+export function lassoClockwise(path: ArrayLike<number>): boolean {
+  let sum = 0;
+  const n = path.length / 2;
+  for (let i = 0; i < n; i++) {
+    const k = (i + 1) % n;
+    sum += path[2 * i]! * path[2 * k + 1]! - path[2 * k]! * path[2 * i + 1]!;
+  }
+  return sum > 0;
+}
+
+/** The IDs under a lasso's mask in an ID image (`ids` row 0 at the bottom, `w` x `h`), each once. */
+export function idsInLasso(ids: Uint32Array, w: number, h: number, m: LassoMask, seen: Uint32Array, stamp: number, into: number[]): void {
+  for (let j = 0; j < m.h; j++) {
+    const row = h - 1 - (m.y0 + j);
+    if (row < 0 || row >= h) continue;
+    for (let i = 0; i < m.w; i++) {
+      if (!m.bits[j * m.w + i]) continue;
+      const x = m.x0 + i;
+      if (x >= w) break;
+      const id = ids[row * w + x]! & ID_MASK;
+      if (id === 0 || seen[id] === stamp) continue;
+      seen[id] = stamp;
+      into.push(id - 1);
+    }
+  }
+}
+
+/**
+ * Through the model, a lasso (ADR 0138 D7): the elements with every kept
+ * vertex inside (`crossing` false), or with any kept vertex inside. Element
+ * indices, ascending.
+ */
+export function elementsInLasso(xy: Float32Array, element: Int32Array, m: LassoMask, elements: number, crossing: boolean): number[] {
+  const any = new Uint8Array(elements), out = new Uint8Array(elements);
+  for (let v = 0; v < element.length; v++) {
+    const x = xy[2 * v]!;
+    if (Number.isNaN(x)) continue;
+    if (inLasso(m, x, xy[2 * v + 1]!)) any[element[v]!] = 1;
+    else out[element[v]!] = 1;
+  }
+  const found: number[] = [];
+  for (let e = 0; e < elements; e++) if (any[e] && (crossing || !out[e])) found.push(e);
+  return found;
+}
+
 /** One press's ID image and projected vertices; dropped at the release. */
 export class BoxPicker {
   /** the press's ID image; null through the model (D7), which reads projected positions only */
@@ -362,6 +460,8 @@ export class BoxPicker {
   /** through the model, nodes: every drawn node in canvas pixels */
   private readonly points: Float32Array | null;
   private readonly through: boolean;
+  /** device pixels per CSS pixel of the canvas */
+  private readonly dpr: number;
 
   private readonly kind: PickKind;
   private readonly src: PickSource;
@@ -374,6 +474,7 @@ export class BoxPicker {
     this.cssWidth = cssWidth;
     this.cssHeight = cssHeight;
     this.through = through;
+    this.dpr = renderer.getDrawingBufferSize(new THREE.Vector2()).x / cssWidth;
     const count = kind === "element" ? src.elements : (src.nodes?.tags.length ?? 0);
     this.seen = new Uint32Array(count + 1);
     camera.updateMatrixWorld();
@@ -464,6 +565,40 @@ export class BoxPicker {
       if (x < box.x0 || x > box.x1 || y < box.y0 || y > box.y1) out[element[v]!] = stamp;
     }
     return found.filter((e) => out[e] !== stamp);
+  }
+
+  /**
+   * What a lasso takes (ADR 0138 D7): element indices, or node tags. Drawn
+   * clockwise, the elements fully inside; counter-clockwise (`crossing`),
+   * every one it reaches. Visible only, or through the model.
+   */
+  queryLasso(path: Float32Array): { found: number[]; crossing: boolean } {
+    this.stamp++;
+    const crossing = !lassoClockwise(path), m = lassoMask(path, this.dpr);
+    if (m.w === 0) return { found: [], crossing };
+    if (this.through) {
+      if (this.kind === "node") {
+        if (!this.points) return { found: [], crossing };
+        const tags = this.src.nodes!.tags, found: number[] = [];
+        for (let i = 0; i < this.points.length / 2; i++) {
+          const x = this.points[2 * i]!;
+          if (!Number.isNaN(x) && inLasso(m, x, this.points[2 * i + 1]!)) found.push(tags[i]!);
+        }
+        return { found, crossing };
+      }
+      return { found: this.verts ? elementsInLasso(this.verts.xy, this.verts.element, m, this.src.elements, crossing) : [], crossing };
+    }
+    const found: number[] = [];
+    const size = this.target!;
+    idsInLasso(this.ids, size.width, size.height, m, this.seen, this.stamp, found);
+    if (this.kind === "node") return { found: found.map((i) => this.src.nodes!.tags[i]!), crossing };
+    if (crossing || !this.verts || !this.outside) return { found, crossing };
+    const { xy, element } = this.verts, out = this.outside, stamp = this.stamp;
+    for (let v = 0; v < element.length; v++) {
+      const x = xy[2 * v]!;
+      if (!Number.isNaN(x) && !inLasso(m, x, xy[2 * v + 1]!)) out[element[v]!] = stamp;
+    }
+    return { found: found.filter((e) => out[e] !== stamp), crossing };
   }
 
   dispose(): void {
