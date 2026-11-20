@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { selectionBarLines } from "../src/panels/selectionBar.ts";
+import { lassoAround } from "../src/renderer/harness/selection.ts";
 import { elementsInLasso, idsInLasso, inLasso, lassoClockwise, lassoMask } from "../src/renderer/picking.ts";
 import { regionLabel } from "../src/renderer/viewport.ts";
 import { initialState, reduce } from "../src/state/reduce.ts";
@@ -52,6 +53,18 @@ test("through the model: clockwise takes the elements wholly inside, counter-clo
   const m = lassoMask(L, 1);
   assert.deepEqual(elementsInLasso(xy, element, m, 3, false), [0, 2]);
   assert.deepEqual(elementsInLasso(xy, element, m, 3, true), [0, 1, 2]);
+});
+
+test("the capture's lasso holds its whole box, clockwise, so it takes what the box takes on a coarse wall too", () => {
+  // The flat-wall fixture's capture (1584 x 1113 canvas): the box from 30 % to 60 % across and 30 % to 70 % down took the
+  // top-right shell, corners as drawn. The fixed lasso used before held none of the six shells whole and took nothing.
+  const a = { x: 475.2, y: 333.9 }, b = { x: 950.4, y: 779.1 };
+  const loop = lassoAround(a, b), path = Float32Array.from(loop.flatMap((p) => [p.x, p.y]));
+  assert.equal(lassoClockwise(path), true, "a window lasso");
+  const m = lassoMask(path, 1);
+  for (let y = Math.ceil(a.y); y <= b.y; y += 3) for (let x = Math.ceil(a.x); x <= b.x; x += 3) assert.ok(inLasso(m, x, y), `box pixel ${x},${y} outside the lasso`);
+  const shell = [[660, 338], [935, 410], [905, 690], [655, 598]] as const;
+  assert.deepEqual(elementsInLasso(Float32Array.from(shell.flat()), new Int32Array(4), m, 1, false), [0]);
 });
 
 test("the label says what a box or lasso takes, and how", () => {

@@ -13,7 +13,8 @@
 // - `<out>.selection-through-box.png`, `<out>.selection-through-boxed.png`: the
 //   same box through the model (ADR 0138 D7), which takes what is hidden too.
 // - `<out>.selection-lasso.png`, `<out>.selection-lassoed.png`: a lasso drawn
-//   clockwise (fully inside) in Lasso mode, mid-drag and released (ADR 0138 D7).
+//   clockwise (fully inside) around the box in Lasso mode, mid-drag and
+//   released, which must take every element the box took (ADR 0138 D7).
 // - `<out>.selection-sets.png`, `<out>.selection-set-selected.png`: the bar's
 //   list of saved sets, and a set selected from it (ADR 0138 D12).
 // - `<out>.selection-nodes-box.png`: Nodes active, a box drawn right to left,
@@ -68,18 +69,18 @@ export async function captureSelection(ctx: HarnessContext, settle: (ms?: number
   if (selectedElementsOf(store.get()).length < boxed.length) throw new Error("capture selection-through-boxed: the box through the model took fewer elements than the visible box");
   store.dispatch({ type: "setSelectThrough", on: false });
   store.dispatch({ type: "undoSelection" });
-  // ADR 0138 D7: a lasso drawn clockwise around the middle of the canvas (a wavy loop, so it is no box), mid-drag and released; undo puts the box back.
+  // ADR 0138 D7: a lasso drawn clockwise around the box, mid-drag and released; undo puts the box back. It holds the box, so it
+  // takes every element the box took (a fixed loop held none of a coarse wall's elements whole, and took nothing).
   store.dispatch({ type: "setSelectLasso", on: true });
-  const cx = r.left + r.width * 0.45, cy = r.top + r.height * 0.5, loop: { x: number; y: number }[] = [];
-  for (let i = 0; i <= 48; i++) {
-    const t = (2 * Math.PI * i) / 48, rad = 1 + 0.18 * Math.sin(5 * t);
-    loop.push({ x: cx + r.width * 0.16 * rad * Math.cos(t), y: cy + r.height * 0.22 * rad * Math.sin(t) });
-  }
+  const boxedElements = selectedElementsOf(store.get());
+  const loop = lassoAround(a, b);
   for (const p of loop.slice(1, 40)) viewport.boxAt(loop[0]!.x, loop[0]!.y, p.x, p.y, "replace");
   await shot("selection-lasso");
   for (const p of loop.slice(40)) viewport.boxAt(loop[0]!.x, loop[0]!.y, p.x, p.y, "replace");
   viewport.boxEnd(loop[0]!.x, loop[0]!.y, loop.at(-1)!.x, loop.at(-1)!.y, "replace");
-  if (selectedElementsOf(store.get()).length === 0) throw new Error("capture selection-lassoed: the lasso took nothing");
+  const lassoed = new Set(selectedElementsOf(store.get()));
+  const missed = boxedElements.filter((d) => !lassoed.has(d));
+  if (missed.length > 0) throw new Error(`capture selection-lassoed: a lasso around the box missed ${missed.length} of the ${boxedElements.length} elements the box took (${missed[0]})`);
   await shot("selection-lassoed");
   store.dispatch({ type: "setSelectLasso", on: false });
   store.dispatch({ type: "undoSelection" });
@@ -96,6 +97,26 @@ export async function captureSelection(ctx: HarnessContext, settle: (ms?: number
   store.dispatch({ type: "setNodes", on: false });
   store.dispatch({ type: "setWorkspaceKind", kind: "elements" });
   await settle();
+}
+
+/**
+ * The capture's lasso (ADR 0138 D7): a wavy loop (five lobes, so it is no
+ * box), drawn clockwise on screen around the box from `a` to `b`, closed back
+ * to its first point. Its semi-axes are √2 times the box's half-sides, which
+ * reach the corners. The 1.08 factor covers the wobble's low point (0.94) and
+ * the sag of its 48 chords (cos(π/48)). So it holds the whole box, and takes
+ * every element a box drawn left to right takes.
+ */
+export function lassoAround(a: { x: number; y: number }, b: { x: number; y: number }): { x: number; y: number }[] {
+  const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+  const rx = (Math.SQRT2 * 1.08 * Math.abs(b.x - a.x)) / 2, ry = (Math.SQRT2 * 1.08 * Math.abs(b.y - a.y)) / 2;
+  const loop: { x: number; y: number }[] = [];
+  for (let i = 0; i <= 48; i++) {
+    // From the left (t = π), so the count, which sits at the press, stays clear of the right rail.
+    const t = Math.PI + (2 * Math.PI * i) / 48, rad = 1 + 0.06 * Math.sin(5 * t);
+    loop.push({ x: cx + rx * rad * Math.cos(t), y: cy + ry * rad * Math.sin(t) });
+  }
+  return loop;
 }
 
 /**
