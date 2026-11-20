@@ -347,16 +347,25 @@ test("#2297: every component is checked before any part is read; the range check
   }
 });
 
-test("element results of a part set are listed unread, and the element verdict is unverified", () => {
+test("Gauss and line-station results of a part set are listed unread; the element verdict is every part's", () => {
   withSet(PART[1]!, (s) => {
     const st = s.index.stages[0]!;
     assert.deepEqual(st.gauss, []);
     // A one-file truss serves basicForce as the line station N; the set says why it does not.
     assert.ok(st.unread.includes(`line stations N (${PART_SET_ELEMENTS_UNREAD})`), st.unread.join("; "));
-    assert.deepEqual(s.elementIndexVerdict(), { verified: false, reason: PART_SET_ELEMENTS_UNREAD });
+    // Both parts are stamped element_index_space "fem", so the set is (its layer groups' rows are FEM ids).
+    assert.deepEqual(s.elementIndexVerdict(), { verified: true });
     assert.deepEqual(s.availableLineStations(st.id), []);
     assert.throws(() => s.readLineStationStep(st.id, "N"), /not stitched/);
   });
+  // One unstamped part leaves the set unverified, naming that part.
+  const one = scratchSet(PART, { 1: (f) => setAttr(f.get("INFO/PROVENANCE") as unknown as AttrNode, "element_index_space", null) });
+  withSet(one.part(0), (s) => {
+    const v = s.elementIndexVerdict();
+    assert.equal(v.verified, false);
+    assert.match(v.verified ? "" : v.reason, /^run\.part-1\.ladruno: INFO\/PROVENANCE has no @element_index_space = "fem"/);
+  });
+  rmSync(one.dir, { recursive: true });
 });
 
 // -- the open set -----------------------------------------------------------------
@@ -639,8 +648,9 @@ test("ResultsHost opens a part as the set, serves stitched steps, and refuses a 
   assert.equal(opened.meta.path, part(1));
   assert.deepEqual(opened.meta.lineage, { femHash: "fedcba9876543210fedcba9876543210", modelHash: MODEL_HASH, resultsHash: null });
   assert.deepEqual(Array.from(opened.nodeIds["stage_0"]!), [1, 2, 3]);
-  assert.deepEqual(opened.elementIds, {}, "no element row of a part set leaves main");
-  assert.equal(opened.meta.elementIndex.verified, false);
+  // Both parts are stamped "fem", so the set is verified; it has no Gauss group (not stitched), so no Gauss row leaves main.
+  assert.deepEqual(opened.elementIds, { stage_0: {} }, "no Gauss row of a part set leaves main");
+  assert.equal(opened.meta.elementIndex.verified, true);
   const step = host.readStep({ path: part(1), stage: "stage_0", step: 1, seq: 1 });
   assert.ok(step.ok);
   if (!step.ok) return;

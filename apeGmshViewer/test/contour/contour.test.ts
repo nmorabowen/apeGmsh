@@ -847,6 +847,8 @@ const CONTOUR_GOLDEN: Readonly<Record<string, string>> = {
   "ladruno_cracks3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz]",
   "ladruno_shells3d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz]",
   "ladruno_shells3d.noframes.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy z=Uz] ROTATION[x=Rx y=Ry z=Rz]",
+  "ladruno_shellparts.part-0.ladruno": "refused: part 0 of ladruno_shellparts",
+  "ladruno_shellparts.part-1.ladruno": "refused: part 1 of ladruno_shellparts",
   "ladruno_truss2d.badstamp.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "ladruno_truss2d.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",
   "ladruno_truss2d.stamped.ladruno": "DISPLACEMENT[magnitude x=Ux y=Uy]",

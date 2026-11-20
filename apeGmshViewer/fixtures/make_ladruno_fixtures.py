@@ -6,6 +6,7 @@
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --quad2d    # + the Gauss-point fork run
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --springs   # + the zeroLength fork run
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --shells    # + the layered-shell fork run
+    python apeGmshViewer/fixtures/make_ladruno_fixtures.py --shellparts  # + its 2-rank OpenSeesMP run
 
 run from the repository root. The first form needs h5py and numpy only; the
 second also needs a Ladruno fork build of OpenSees behind ``openseespy`` (the
@@ -960,6 +961,89 @@ def shells3d() -> None:
         wall["element_ids"] = np.arange(1, 7, dtype=np.int64)
 
 
+_SHELLPARTS_TCL = r"""
+set out [lindex $argv 0]
+set pid [getPID]
+wipe
+model basic -ndm 3 -ndf 6
+proc tg {i k} { return [expr {1 + $i + $k * 4}] }
+# Rank 0: elements 1 and 4; rank 1: elements 2, 3, 5 and 6.
+set mine [expr {$pid == 0 ? {0} : {1 2}}]
+set nodes {}
+foreach i $mine { foreach k {0 1} { foreach n [list [tg $i $k] [tg [expr {$i+1}] $k] [tg [expr {$i+1}] [expr {$k+1}]] [tg $i [expr {$k+1}]]] { dict set nodes $n 1 } } }
+foreach n [dict keys $nodes] {
+  set i [expr {($n - 1) % 4}]; set k [expr {($n - 1) / 4}]
+  node $n [expr {1000.0 * $i}] 0.0 [expr {1000.0 * $k}]
+  if {$k == 0} { fix $n 1 1 1 1 1 1 }
+}
+nDMaterial ASDConcrete3D 1 30000.0 0.2 -fc 30.0 -ft 3.0
+nDMaterial PlateFromPlaneStress 2 1 12500.0
+uniaxialMaterial Steel01 3 420.0 200000.0 0.01
+nDMaterial PlateRebar 4 3 0.0
+nDMaterial PlateRebar 5 3 90.0
+section LayeredShell 1 10 2 25.0 4 1.0 5 1.0 2 50.0 2 50.0 2 50.0 2 50.0 5 1.0 4 1.0 2 25.0
+section LayeredShell 2 8 2 25.0 4 1.0 5 1.0 2 73.0 2 73.0 5 1.0 4 1.0 2 25.0
+foreach i $mine { foreach k {0 1} {
+  set e [expr {1 + $i + 3 * $k}]
+  element ASDShellQ4 $e [tg $i $k] [tg [expr {$i+1}] $k] [tg [expr {$i+1}] [expr {$k+1}]] [tg $i [expr {$k+1}]] [expr {$i < 2 ? 1 : 2}] -local 1.0 0.0 0.0
+} }
+recorder ladruno $out -N displacement -E section.fiber.crackPattern
+timeSeries Linear 1
+pattern Plain 1 1 {
+  if {$pid == 0} { load [tg 0 2] 1.0 0.01 0.0 0.0 0.0 0.0 }
+  if {$pid == 1} { load [tg 3 2] 1.0 0.01 0.0 0.0 0.0 0.0 }
+}
+constraints Transformation
+numberer ParallelPlain
+system Mumps
+test NormDispIncr 1.0e-6 50
+algorithm Newton
+integrator ParallelDisplacementControl [tg 3 2] 1 0.5
+analysis Static
+set ok [analyze 6]
+wipe
+puts "RANK $pid DONE $ok"
+"""
+
+
+def shellparts() -> None:
+    """Write the 2-rank ``ladruno_shellparts`` set: the shells3d wall split over two OpenSeesMP ranks, stamped.
+
+    Rank 0 holds elements 1 and 4, rank 1 elements 2, 3, 5 and 6, so the 6-layer header bucket
+    ``[201:0:0]`` is in both parts and the 4-layer ``[201:0:1]`` only in part 1, as in the research
+    pushover. Needs ``LADRUNO_MP_BIN`` (a #1133 fork build's ``OpenSeesMP.exe``),
+    ``LADRUNO_MPIEXEC`` and ``TCL_LIBRARY``, as ``parts`` does. Its model is ``ladruno_shells3d.h5``
+    (the same wall, the same stamp).
+    """
+    stem = "ladruno_shellparts"
+    for k in (0, 1):
+        (HERE / f"{stem}.part-{k}.ladruno").unlink(missing_ok=True)
+    mp_bin = Path(os.environ["LADRUNO_MP_BIN"])
+    mpiexec = os.environ["LADRUNO_MPIEXEC"]
+    tcl = HERE / f"{stem}.tcl"
+    tcl.write_text(_SHELLPARTS_TCL)
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
+    try:
+        run = subprocess.run(
+            [mpiexec, "-localonly", "-n", "2", "-genv", "TCL_LIBRARY", env["TCL_LIBRARY"], str(mp_bin / "OpenSeesMP.exe"), tcl.name, f"{stem}.ladruno"],
+            cwd=HERE, env=env, capture_output=True, text=True, check=True,
+        )
+    finally:
+        tcl.unlink()
+    said = run.stdout + run.stderr
+    assert "RANK 0 DONE 0" in said and "RANK 1 DONE 0" in said, said
+    for k, buckets in ((0, {"203-ASDShellQ4[201:0:0]": [1, 4]}), (1, {"203-ASDShellQ4[201:0:0]": [2, 5], "203-ASDShellQ4[201:0:1]": [3, 6]})):
+        with h5py.File(HERE / f"{stem}.part-{k}.ladruno", "r+") as f:
+            st = f["MODEL_STAGE[1]"]
+            crack = st["RESULTS/ON_ELEMENTS/section.fiber.crackPattern"]
+            got = {h: crack[h]["ID"][()].reshape(-1).tolist() for h in crack}
+            assert got == buckets, got
+            assert sorted(st["MODEL/LOCAL_AXES"]) == ["203-ASDShellQ4"], "the fork build does not write shell frames (#1133)"
+            prov = f["INFO/PROVENANCE"]
+            for name, value in STAMP.items():
+                prov.attrs.create(name, data=value, dtype=VLEN_UTF8)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--modes", action="store_true", help="also run the fork to write ladruno_modes.ladruno")
@@ -969,6 +1053,7 @@ def main() -> None:
     ap.add_argument("--springs", action="store_true", help="also run the fork to write ladruno_springs3d.ladruno and its model")
     ap.add_argument("--cracks", action="store_true", help="also stamp the suite's crack_bricks.ladruno as ladruno_cracks3d.ladruno and write its model")
     ap.add_argument("--shells", action="store_true", help="also run the fork (LADRUNO_FORK_BIN) to write the layered-shell ladruno_shells3d set and its model")
+    ap.add_argument("--shellparts", action="store_true", help="also run OpenSeesMP (2 ranks, LADRUNO_MP_BIN) to write the layered-shell ladruno_shellparts set")
     args = ap.parse_args()
     truss2d()
     stamped()
@@ -988,6 +1073,8 @@ def main() -> None:
         cracks3d()
     if args.shells:
         shells3d()
+    if args.shellparts:
+        shellparts()
 
 
 if __name__ == "__main__":

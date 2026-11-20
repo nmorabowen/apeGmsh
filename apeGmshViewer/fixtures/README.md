@@ -424,6 +424,13 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   `section.fiber.damage`. Rebar does not answer either token, so each bucket is
   a layer run per Gauss point, and the two sections land in two header buckets,
   as in the research pushover. `test/results/ladrunoLayers.test.ts` reads it.
+- `ladruno_shellparts.part-0.ladruno` and `ladruno_shellparts.part-1.ladruno`
+  (`--shellparts`) are the same wall over two OpenSeesMP ranks (the #1133 build's
+  `OpenSeesMP.exe`, launched as `--parts` is), pushed under
+  `ParallelDisplacementControl` until both ranks crack, and stamped. Rank 0 holds
+  elements 1 and 4 and rank 1 elements 2, 3, 5 and 6, so the 6-layer bucket
+  `[201:0:0]` is in both parts and the 4-layer `[201:0:1]` in part 1 only. Their
+  model is `ladruno_shells3d.h5`. `test/results/ladrunoLayers.test.ts` stitches them.
 - `ladruno_parts2d.part-0.ladruno`, `ladruno_parts2d.part-1.ladruno` and
   `ladruno_parts2d.h5` (#2188) are a 2-rank OpenSeesMP run (fork build
   `80dd3f13d`, which writes `PARTITION_REDUCTION`, WP-126) and its model,

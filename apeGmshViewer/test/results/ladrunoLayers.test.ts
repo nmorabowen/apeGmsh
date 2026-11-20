@@ -16,7 +16,7 @@
 // (Gauss point, responding layer, component) row-major, `col = ((g * L) + k) * C + c`.
 
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
 import { isLayerRun } from "../../src/reader/ladrunoLayers.ts";
+import { openLadrunoSet, type LadrunoPartSet } from "../../src/reader/ladrunoParts.ts";
 import type { LayerGroupInfo, ResultsH5 } from "../../src/reader/results.ts";
 
 await h5wasm.ready;
@@ -253,4 +254,102 @@ test("mutation: a section that does not cover the run leaves the group's geometr
     assert.match(g.geometry.state === "absent" ? g.geometry.reason : "", /has 8 layers and the column map's run covers 10 \(element 1\)/);
     assert.equal(r.readLayerStep(stageOf(r).id, CRACK6, g.components, null, 0).length, g.nElements * g.nGauss * g.nLayers * 9);
   });
+});
+
+// -- part sets ------------------------------------------------------------------------
+//
+// ladruno_shellparts.part-{0,1}.ladruno (make_ladruno_fixtures.py --shellparts, OpenSeesMP of the
+// same #1133 fork build): the shells3d wall over two ranks, pushed under ParallelDisplacementControl
+// until it cracks. Rank 0 holds elements 1 and 4, rank 1 elements 2, 3, 5 and 6, so [201:0:0] is in
+// both parts and [201:0:1] in part 1 only: the research pushover's shape. Both parts are stamped.
+
+const SHELLPARTS = [fixture("ladruno_shellparts.part-0.ladruno"), fixture("ladruno_shellparts.part-1.ladruno")];
+
+/** A scratch copy of the shell part set, part k edited by `edit[k]`. */
+function scratchShellSet(edit: Record<number, (f: h5wasm.File) => void> = {}): { dir: string; part0: string } {
+  const dir = mkdtempSync(join(tmpdir(), "agv-shellparts-"));
+  SHELLPARTS.forEach((src, k) => {
+    const to = join(dir, `run.part-${k}.ladruno`);
+    copyFileSync(src, to);
+    if (!edit[k]) return;
+    const f = new h5wasm.File(to, "a");
+    try {
+      edit[k]!(f);
+    } finally {
+      f.close();
+    }
+  });
+  return { dir, part0: join(dir, "run.part-0.ladruno") };
+}
+
+function withShellSet<T>(path: string, body: (s: LadrunoPartSet) => T): T {
+  const s = openLadrunoSet(H5, path, (d) => readdirSync(d));
+  try {
+    return body(s);
+  } finally {
+    s.close();
+  }
+}
+
+test("a part set stitches each layer group from the parts that hold it, in part order; the set is verified when every part is", () => {
+  withShellSet(SHELLPARTS[0]!, (s) => {
+    const st = s.index.stages[0]!;
+    assert.deepEqual(s.elementIndexVerdict(), { verified: true });
+    const byId = new Map((st.layers ?? []).map((g) => [g.id, g]));
+    assert.deepEqual([...byId.keys()].sort(), [CRACK6, CRACK4].sort());
+    assert.ok(!st.unread.some((u) => u.includes("section.fiber")), st.unread.join(" | "));
+    assert.deepEqual([byId.get(CRACK6)!.nElements, byId.get(CRACK6)!.nLayers, byId.get(CRACK4)!.nElements, byId.get(CRACK4)!.nLayers], [4, 6, 2, 4]);
+    assert.match(byId.get(CRACK6)!.path, /\(2 of 2 parts\)$/);
+    assert.match(byId.get(CRACK4)!.path, /\(1 of 2 parts\)$/);
+    const ids = (g: string) => {
+      const e = s.layerElementIds(st.id, g);
+      return e.mapping === "fem_eid" ? Array.from(e.ids) : [];
+    };
+    assert.deepEqual(ids(CRACK6), [1, 4, 2, 5]);
+    assert.deepEqual(ids(CRACK4), [3, 6]);
+    const geo = byId.get(CRACK6)!.geometry;
+    assert.deepEqual(geo.state === "present" ? Array.from(geo.thickness) : [], [254, 254, 254, 254]);
+  });
+});
+
+test("oracle: a stitched step is each part's own read end to end, in part order", () => {
+  const own = SHELLPARTS.map((p) => openLadruno(H5, p, { part: true }));
+  try {
+    withShellSet(SHELLPARTS[0]!, (s) => {
+      const st = s.index.stages[0]!;
+      for (const g of st.layers!) {
+        const step = st.nSteps - 1;
+        const got = s.readLayerStep(st.id, g.id, g.components, [0, g.nLayers - 1], step);
+        const want = own.flatMap((f) => (f.index.stages[0]!.layers ?? []).some((x) => x.id === g.id) ? Array.from(f.readLayerStep(st.id, g.id, g.components, [0, g.nLayers - 1], step)) : []);
+        assert.deepEqual(Array.from(got), want, g.id);
+      }
+      assert.ok(Array.from(s.readLayerStep(st.id, CRACK6, ["section.fiber.crackPattern/C1x"], null, st.nSteps - 1)).some((x) => Math.abs(x) > 0.01), "both ranks' walls have cracked");
+    });
+  } finally {
+    for (const f of own) f.close();
+  }
+});
+
+test("#2316 for layers: an element in the layer buckets of two parts refuses the set at open, naming both", () => {
+  const bad = scratchShellSet({ 1: (f) => (f.get(`${STAGE_PATH}/RESULTS/ON_ELEMENTS/${CRACK6}/ID`) as h5wasm.Dataset).write_slice([[0, 1]], new Int32Array([1])) });
+  assert.throws(() => withShellSet(bad.part0, () => null), /lists element id\(s\) more than once \(id 1 at run\.part-0\.ladruno .*and run\.part-1\.ladruno .*\); each element lives on one rank/);
+  rmSync(bad.dir, { recursive: true });
+});
+
+test("a part that refuses its layer group refuses the stitched group, naming the part; the other groups still read", () => {
+  const bad = scratchShellSet({
+    1: (f) => {
+      const b = f.get(`${STAGE_PATH}/RESULTS/ON_ELEMENTS/${CRACK6}`) as unknown as { delete_attribute(n: string): number; create_attribute(n: string, v: number): void };
+      b.delete_attribute("NUM_COLUMNS");
+      b.create_attribute("NUM_COLUMNS", 215);
+    },
+  });
+  withShellSet(bad.part0, (s) => {
+    const st = s.index.stages[0]!;
+    const g = st.layers!.find((x) => x.id === CRACK6)!;
+    assert.deepEqual(g.components, []);
+    assert.match(g.refused[0]?.reason ?? "", /^run\.part-1\.ladruno: .*NUM_COLUMNS = 215/);
+    assert.equal(st.layers!.find((x) => x.id === CRACK4)!.refused.length, 0);
+  });
+  rmSync(bad.dir, { recursive: true });
 });
