@@ -23,7 +23,7 @@ import { colormapTexture, NO_DATA_U, rampUv } from "./colormapTexture.ts";
 import { combinationColours, contourColours, contourShownKey, differenceColours, elementColours, noDataShades, toLinear, userResultColours, type CombinationColumnOf, type ContourShades, type StepValues } from "./contour.ts";
 import { CapLayer, releaseAware } from "./caps.ts";
 import { SectionClip, sliderBox } from "./clip.ts";
-import { slabAttribute, slabEdgePositions, slabPositions, slabTopology, type SlabTopology } from "./shellSlab.ts";
+import { cornerNormals, slabAttribute, slabLinePositions, slabPositions, slabTopology, type SlabTopology } from "./shellSlab.ts";
 import { GizmoInteractor, PlaneGizmos } from "./gizmo.ts";
 import { applyGhostVisibility, basePositions, drawnPositions, edgesShown, frameFocus, gatherInto, ghostObjects, missingMarkerObjects, positionsFor, writePositions, type FullPositions } from "./deform.ts";
 import { LineDiagramLayer } from "./lineDiagram.ts";
@@ -1197,6 +1197,14 @@ export class Viewport {
     const fg = this.faces!.geometry;
     const pos = fg.getAttribute("position").array as Float32Array;
     const vn = this.blobs.get(info.vertexNodes.tri) as Float64Array;
+    // The outline edges drawn on the faces, by their node tags: the slab draws them on its top and bottom faces.
+    const edgeNodes = this.blobs.get(info.vertexNodes.edge) as Float64Array;
+    const edgeMap = this.edgeMap ?? new Int32Array(0);
+    const outlineTags = new Float64Array(2 * edgeMap.length);
+    edgeMap.forEach((e, i) => {
+      outlineTags[2 * i] = edgeNodes[2 * e]!;
+      outlineTags[2 * i + 1] = edgeNodes[2 * e + 1]!;
+    });
     const thick = this.blobs.f32(info.shellThickness!.tri);
     const cornerTags = new Float64Array(3 * drawn.triMap.length);
     const drawnThick = new Float32Array(drawn.triMap.length);
@@ -1204,11 +1212,12 @@ export class Viewport {
       drawnThick[d] = thick[t]!;
       for (let k = 0; k < 3; k++) cornerTags[3 * d + k] = vn[3 * t + k]!;
     });
-    const topo = slabTopology(pos, cornerTags, drawnThick);
+    const topo = slabTopology(pos, cornerTags, drawnThick, outlineTags);
     if (!topo) return;
     this.slabTopo = topo;
     const g = new THREE.BufferGeometry();
-    const slab = slabPositions(topo, pos);
+    const normals = cornerNormals(topo, pos);
+    const slab = slabPositions(topo, pos, undefined, normals);
     g.setAttribute("position", new THREE.BufferAttribute(slab, 3));
     const uv = fg.getAttribute("uv");
     const colour = fg.getAttribute("color");
@@ -1220,9 +1229,9 @@ export class Viewport {
     const m = new THREE.MeshStandardMaterial({ vertexColors: fm.vertexColors, map: fm.map, side: THREE.DoubleSide, flatShading: true, roughness: 0.75, metalness: 0.0 });
     this.shellSlab = new THREE.Mesh(g, m);
     this.content.add(this.shellSlab);
-    if (topo.edge.length) {
+    if (topo.lineSrc.length) {
       const eg = new THREE.BufferGeometry();
-      eg.setAttribute("position", new THREE.BufferAttribute(slabEdgePositions(topo, slab), 3));
+      eg.setAttribute("position", new THREE.BufferAttribute(slabLinePositions(topo, pos, undefined, normals), 3));
       const em = new THREE.LineBasicMaterial({ color: edgeColour, transparent: true, opacity: this.activeTheme === "light" ? 0.72 : 0.45 });
       this.shellSlabEdges = new THREE.LineSegments(eg, em);
       this.content.add(this.shellSlabEdges);
@@ -1234,14 +1243,15 @@ export class Viewport {
     if (!this.shellSlab || !this.slabTopo || !this.faces) return;
     const pos = this.faces.geometry.getAttribute("position").array as Float32Array;
     const a = this.shellSlab.geometry.getAttribute("position") as THREE.BufferAttribute;
-    slabPositions(this.slabTopo, pos, a.array as Float32Array);
+    const normals = cornerNormals(this.slabTopo, pos);
+    slabPositions(this.slabTopo, pos, a.array as Float32Array, normals);
     a.needsUpdate = true;
     this.shellSlab.geometry.computeVertexNormals();
     this.shellSlab.geometry.computeBoundingBox();
     this.shellSlab.geometry.computeBoundingSphere();
     if (this.shellSlabEdges) {
       const e = this.shellSlabEdges.geometry.getAttribute("position") as THREE.BufferAttribute;
-      slabEdgePositions(this.slabTopo, a.array as Float32Array, e.array as Float32Array);
+      slabLinePositions(this.slabTopo, pos, e.array as Float32Array, normals);
       e.needsUpdate = true;
       this.shellSlabEdges.geometry.computeBoundingSphere();
     }

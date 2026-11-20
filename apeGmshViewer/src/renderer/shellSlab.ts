@@ -30,8 +30,14 @@ export interface SlabTopology {
   readonly off: Float32Array;
   /** per slab triangle: the drawn face triangle it belongs to */
   readonly tri: Int32Array;
-  /** per slab outline vertex: the slab vertex it sits on (2 per segment: the top and bottom rims of each wall) */
-  readonly edge: Int32Array;
+  /**
+   * The slab's lines, 2 vertices per segment, each a drawn corner and its
+   * signed offset like a slab vertex: every mesh outline edge on an extruded
+   * triangle at the top and at the bottom face, and the top and bottom rims
+   * of each wall the outline does not already draw.
+   */
+  readonly lineSrc: Int32Array;
+  readonly lineOff: Float32Array;
   /** per drawn corner: its node, as a dense index */
   readonly cornerNode: Int32Array;
   /** CSR from dense node index to the extruded drawn triangles at that node */
@@ -72,7 +78,12 @@ const dot = (n: Float64Array, a: number, b: number): number => n[3 * a]! * n[3 *
  * (3 per triangle) and `thickness` each drawn triangle's thickness (0: not
  * extruded). Null when no drawn triangle has a thickness.
  */
-export function slabTopology(pos: ArrayLike<number>, cornerTags: ArrayLike<number>, thickness: ArrayLike<number>): SlabTopology | null {
+export function slabTopology(
+  pos: ArrayLike<number>,
+  cornerTags: ArrayLike<number>,
+  thickness: ArrayLike<number>,
+  outlineTags: ArrayLike<number> = [],
+): SlabTopology | null {
   const nTri = thickness.length;
   if (cornerTags.length !== 3 * nTri || pos.length !== 9 * nTri) {
     throw new RangeError(`slabTopology: ${pos.length / 9} triangles of positions, ${cornerTags.length / 3} of node tags, ${nTri} thicknesses`);
@@ -133,7 +144,40 @@ export function slabTopology(pos: ArrayLike<number>, cornerTags: ArrayLike<numbe
   const src = new Int32Array(nV);
   const off = new Float32Array(nV);
   const tri = new Int32Array(nV / 3);
-  const edge = new Int32Array(4 * walls);
+  // The outline edges (node-tag pairs) that lie on an extruded triangle, at its corners.
+  const lines: number[] = []; // (corner a, corner b, half-thickness)
+  const outlined = new Set<number>();
+  const pairKey = (a: number, b: number): number => (a < b ? a * nNode + b : b * nNode + a);
+  for (let e = 0; e + 1 < outlineTags.length; e += 2) {
+    const a = nodeOf.get(outlineTags[e]!), b = nodeOf.get(outlineTags[e + 1]!);
+    if (a === undefined || b === undefined) continue;
+    let found = false;
+    for (let i = nodeStart[a]!; i < nodeStart[a + 1]! && !found; i++) {
+      const t = nodeTris[i]!;
+      for (let j = 0; j < 3; j++) {
+        if (cornerNode[3 * t + j] !== b) continue;
+        const ca = [0, 1, 2].find((k) => cornerNode[3 * t + k] === a)!;
+        lines.push(3 * t + ca, 3 * t + j, thickness[t]! / 2);
+        outlined.add(pairKey(a, b));
+        found = true;
+        break;
+      }
+    }
+  }
+  for (let w = 0; w < walls; w++) {
+    const t = wallEdges[2 * w]!, k = wallEdges[2 * w + 1]!;
+    const ca = 3 * t + k, cb = 3 * t + ((k + 1) % 3);
+    if (!outlined.has(pairKey(cornerNode[ca]!, cornerNode[cb]!))) lines.push(ca, cb, thickness[t]! / 2);
+  }
+  const nLines = lines.length / 3;
+  const lineSrc = new Int32Array(4 * nLines);
+  const lineOff = new Float32Array(4 * nLines);
+  for (let l = 0; l < nLines; l++) {
+    const ca = lines[3 * l]!, cb = lines[3 * l + 1]!, h = lines[3 * l + 2]!;
+    lineSrc.set([ca, cb, ca, cb], 4 * l);
+    lineOff.set([h, h, -h, -h], 4 * l);
+  }
+
   let v = 0;
   const put = (corner: number, o: number): number => {
     src[v] = corner;
@@ -155,14 +199,11 @@ export function slabTopology(pos: ArrayLike<number>, cornerTags: ArrayLike<numbe
     const ca = 3 * t + k, cb = 3 * t + ((k + 1) % 3);
     // Two triangles per wall (the geometry is not indexed, so each has its own vertices).
     tri[v / 3] = t;
-    const aTop = put(ca, h), bBot = put(cb, -h), bTop = put(cb, h);
+    put(ca, h), put(cb, -h), put(cb, h);
     tri[v / 3] = t;
-    put(ca, h);
-    const aBot = put(ca, -h);
-    put(cb, -h);
-    edge.set([aTop, bTop, aBot, bBot], 4 * w);
+    put(ca, h), put(ca, -h), put(cb, -h);
   }
-  return { src, off, tri, edge, cornerNode, nodeStart, nodeTris, extruded, faces, walls };
+  return { src, off, tri, lineSrc, lineOff, cornerNode, nodeStart, nodeTris, extruded, faces, walls };
 }
 
 /**
@@ -198,12 +239,11 @@ export function cornerNormals(topo: SlabTopology, pos: ArrayLike<number>): Float
   return out;
 }
 
-/** The slab's vertex positions (3 floats per slab vertex) from the drawn face positions, into `out` when given. */
-export function slabPositions(topo: SlabTopology, pos: ArrayLike<number>, out: Float32Array = new Float32Array(3 * topo.src.length)): Float32Array {
-  if (out.length !== 3 * topo.src.length) throw new RangeError(`slabPositions: ${out.length} floats for ${topo.src.length} slab vertices`);
-  const n = cornerNormals(topo, pos);
-  for (let v = 0; v < topo.src.length; v++) {
-    const c = topo.src[v]!, o = topo.off[v]!;
+/** Each (corner, offset) point moved off the drawn face positions along its corner normal. */
+function offsetPoints(src: Int32Array, off: Float32Array, pos: ArrayLike<number>, n: Float32Array, out: Float32Array, what: string): Float32Array {
+  if (out.length !== 3 * src.length) throw new RangeError(`${what}: ${out.length} floats for ${src.length} vertices`);
+  for (let v = 0; v < src.length; v++) {
+    const c = src[v]!, o = off[v]!;
     out[3 * v] = pos[3 * c]! + o * n[3 * c]!;
     out[3 * v + 1] = pos[3 * c + 1]! + o * n[3 * c + 1]!;
     out[3 * v + 2] = pos[3 * c + 2]! + o * n[3 * c + 2]!;
@@ -211,15 +251,14 @@ export function slabPositions(topo: SlabTopology, pos: ArrayLike<number>, out: F
   return out;
 }
 
-/** The slab rim lines (6 floats per segment) from the slab positions. */
-export function slabEdgePositions(topo: SlabTopology, slab: ArrayLike<number>, out: Float32Array = new Float32Array(3 * topo.edge.length)): Float32Array {
-  for (let i = 0; i < topo.edge.length; i++) {
-    const v = topo.edge[i]!;
-    out[3 * i] = slab[3 * v]!;
-    out[3 * i + 1] = slab[3 * v + 1]!;
-    out[3 * i + 2] = slab[3 * v + 2]!;
-  }
-  return out;
+/** The slab's vertex positions (3 floats per slab vertex) from the drawn face positions, into `out` when given. */
+export function slabPositions(topo: SlabTopology, pos: ArrayLike<number>, out: Float32Array = new Float32Array(3 * topo.src.length), normals: Float32Array = cornerNormals(topo, pos)): Float32Array {
+  return offsetPoints(topo.src, topo.off, pos, normals, out, "slabPositions");
+}
+
+/** The slab's lines (6 floats per segment) from the drawn face positions, into `out` when given. */
+export function slabLinePositions(topo: SlabTopology, pos: ArrayLike<number>, out: Float32Array = new Float32Array(3 * topo.lineSrc.length), normals: Float32Array = cornerNormals(topo, pos)): Float32Array {
+  return offsetPoints(topo.lineSrc, topo.lineOff, pos, normals, out, "slabLinePositions");
 }
 
 /** A per-face-corner attribute (`size` floats per drawn corner: a ramp coordinate, a colour) copied onto the slab vertices. */

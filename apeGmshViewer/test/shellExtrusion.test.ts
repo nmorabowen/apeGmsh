@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildMesh } from "../src/mesh/build.ts";
 import type { DeclTable, Definitions, ElementBlock, ElementMeta, Group, ModelFile, Param } from "../src/model/types.ts";
-import { cornerNormals, slabAttribute, slabEdgePositions, slabPositions, slabTopology } from "../src/renderer/shellSlab.ts";
+import { cornerNormals, slabAttribute, slabLinePositions, slabPositions, slabTopology } from "../src/renderer/shellSlab.ts";
 import { membraneThickness, sectionThickness, shellThicknessOf } from "../src/state/shellThickness.ts";
 import type { Decl, DeclPath } from "../src/state/types.ts";
 
@@ -131,7 +131,21 @@ test("a flat panel becomes a slab centred on its mid-surface, walled on its boun
   assert.equal(slab.length, 3 * (6 * 2 + 6 * 4));
   const [lo, hi] = zRange(slab);
   assert.ok(Math.abs(lo + 0.1) < 1e-6 && Math.abs(hi - 0.1) < 1e-6, `z in [${lo}, ${hi}]`);
-  assert.equal(slabEdgePositions(topo, slab).length, 6 * 2 * 4, "a top and a bottom rim per wall");
+  assert.equal(slabLinePositions(topo, SQUARE).length, 6 * 2 * 4, "with no outline: a top and a bottom rim per wall");
+});
+
+test("the mesh outline is drawn on the slab's top and bottom faces, and a rim never doubles it", () => {
+  // The outline of the square (its four sides) plus a free-standing edge on no extruded triangle.
+  const outline = Float64Array.from([1, 2, 2, 3, 3, 4, 4, 1, 7, 8]);
+  const topo = slabTopology(SQUARE, SQUARE_TAGS, Float32Array.from([0.2, 0.2]), outline)!;
+  const lines = slabLinePositions(topo, SQUARE);
+  assert.equal(lines.length / 6, 2 * 4, "each side once on top and once below; no rim on top of it, and the stray edge is skipped");
+  const zs = new Set<number>();
+  for (let i = 2; i < lines.length; i += 3) zs.add(Math.round(lines[i]! * 1e6) / 1e6);
+  assert.deepEqual([...zs].sort(), [-0.1, 0.1]);
+  // An interior outline edge (the diagonal, as a quad's would be) is drawn too, with no wall under it.
+  const inner = slabTopology(SQUARE, SQUARE_TAGS, Float32Array.from([0.2, 0.2]), Float64Array.from([1, 3]))!;
+  assert.equal(slabLinePositions(inner, SQUARE).length / 6, 2 + 2 * 4, "the diagonal top and bottom, and the four walls' rims");
 });
 
 test("neighbours that wind opposite ways still meet without a wall or a gap", () => {
