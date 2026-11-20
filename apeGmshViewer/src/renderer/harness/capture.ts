@@ -98,7 +98,8 @@ export async function runCapture(ctx: HarnessContext, cfg: HarnessConfig, file: 
   // selected (`selectStage`). The rule is fixed, so no flag is needed and the
   // stills come from committed code.
   store.dispatch({ type: "setColourBy", by: "group" });
-  if (store.get().mesh?.frameExtrusion?.hasExtrudableFrames) {
+  // Frames by their cross-section, shells and membranes by their thickness: one toggle.
+  if (store.get().mesh?.frameExtrusion?.hasExtrudableFrames || store.get().mesh?.shellThickness) {
     store.dispatch({ type: "toggleExtrudeFrames" });
     await settle();
     viewport.renderNow();

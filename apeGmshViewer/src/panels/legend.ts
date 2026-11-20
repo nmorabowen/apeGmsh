@@ -244,8 +244,14 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     const fe = s.mesh?.frameExtrusion;
     const frameRow = el("div", "legend-mode legend-frames");
     const extrudeBtn = el("button", "frame-extrude" + (s.visibility.extrudeFrames ? " on" : ""), "extrude");
-    extrudeBtn.disabled = !fe?.hasExtrudableFrames;
-    extrudeBtn.title = fe?.hasExtrudableFrames ? "toggle 3-D frame cross-section extrusion" : "this model has no frames with a recorded section to extrude";
+    // One toggle for both: frames by their cross-section, shells and membranes by their section thickness.
+    const frames = Boolean(fe?.hasExtrudableFrames), shells = Boolean(s.mesh?.shellThickness);
+    extrudeBtn.disabled = !frames && !shells;
+    extrudeBtn.title =
+      frames && shells ? "toggle 3-D extrusion: frame cross-sections and shell / membrane thickness"
+      : frames ? "toggle 3-D frame cross-section extrusion"
+      : shells ? "toggle shell / membrane thickness extrusion"
+      : "this model has no frames with a recorded section and no shells or membranes with a recorded thickness to extrude";
     unlisten.push(listen(extrudeBtn, "click", () => store.dispatch({ type: "toggleExtrudeFrames" })));
     const offsetsBtn = el("button", "frame-offsets" + (s.visibility.showOffsets ? " on" : ""), "offsets");
     offsetsBtn.disabled = !fe?.hasJointOffsets;
