@@ -5,6 +5,7 @@
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --portal3d  # + the 3-D fork run
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --quad2d    # + the Gauss-point fork run
     python apeGmshViewer/fixtures/make_ladruno_fixtures.py --springs   # + the zeroLength fork run
+    python apeGmshViewer/fixtures/make_ladruno_fixtures.py --shells    # + the layered-shell fork run
 
 run from the repository root. The first form needs h5py and numpy only; the
 second also needs a Ladruno fork build of OpenSees behind ``openseespy`` (the
@@ -847,6 +848,118 @@ def frame3d() -> None:
             sf_map.create_dataset("GAUSS_ID", data=np.array([0, 1, 2], dtype=np.int32))
 
 
+_SHELLS_RUN = r"""
+import os
+import sys
+
+path = sys.argv[1]
+fork_bin = os.environ.get("LADRUNO_FORK_BIN")
+if fork_bin:
+    os.add_dll_directory(fork_bin)
+    sys.path.insert(0, fork_bin)
+    import opensees as ops
+else:
+    import openseespy.opensees as ops
+
+ops.wipe()
+ops.model("basic", "-ndm", 3, "-ndf", 6)
+# A wall in the x-z plane, 3 x 2 ASDShellQ4 of 1000 x 1000 mm, its base fixed.
+nx, nz = 3, 2
+tag = lambda i, k: 1 + i + k * (nx + 1)
+for k in range(nz + 1):
+    for i in range(nx + 1):
+        ops.node(tag(i, k), 1000.0 * i, 0.0, 1000.0 * k)
+for i in range(nx + 1):
+    ops.fix(tag(i, 0), 1, 1, 1, 1, 1, 1)
+ops.nDMaterial("ASDConcrete3D", 1, 30000.0, 0.2, "-fc", 30.0, "-ft", 3.0)
+ops.nDMaterial("PlateFromPlaneStress", 2, 1, 12500.0)
+ops.uniaxialMaterial("Steel01", 3, 420.0, 200000.0, 0.01)
+ops.nDMaterial("PlateRebar", 4, 3, 0.0)
+ops.nDMaterial("PlateRebar", 5, 3, 90.0)
+# Section 1: 6 concrete layers and 4 rebar layers (250 mm); section 2: 4 and 4 (200 mm).
+ops.section("LayeredShell", 1, 10, 2, 25.0, 4, 1.0, 5, 1.0, 2, 50.0, 2, 50.0, 2, 50.0, 2, 50.0, 5, 1.0, 4, 1.0, 2, 25.0)
+ops.section("LayeredShell", 2, 8, 2, 25.0, 4, 1.0, 5, 1.0, 2, 73.0, 2, 73.0, 5, 1.0, 4, 1.0, 2, 25.0)
+e = 0
+for k in range(nz):
+    for i in range(nx):
+        e += 1
+        ops.element("ASDShellQ4", e, tag(i, k), tag(i + 1, k), tag(i + 1, k + 1), tag(i, k + 1),
+                    1 if i < 2 else 2, "-local", 1.0, 0.0, 0.0)
+ops.recorder("ladruno", path, "-N", "displacement", "rotation", "-E", "section.fiber.crackPattern", "section.fiber.damage")
+ops.timeSeries("Linear", 1)
+ops.pattern("Plain", 1, 1)
+# In-plane push at the top, and a little out of plane, so the two faces crack differently.
+for i in (0, nx):
+    ops.load(tag(i, nz), 1.0, 0.01, 0.0, 0.0, 0.0, 0.0)
+ops.system("UmfPack")
+ops.numberer("RCM")
+ops.constraints("Plain")
+ops.test("NormDispIncr", 1e-6, 50)
+ops.algorithm("Newton")
+ops.integrator("DisplacementControl", tag(nx, nz), 1, 0.5)
+ops.analysis("Static")
+for _ in range(6):
+    assert ops.analyze(1) == 0
+ops.wipe()
+"""
+
+#: The shells3d wall, as _SHELLS_RUN builds it: nodes row by row from (0, 0, 0) in the x-z plane.
+SHELLS3D_NODES = np.array([[1000.0 * i, 0.0, 1000.0 * k] for k in range(3) for i in range(4)], dtype=np.float64)
+SHELLS3D_CONN = np.array([[1 + i + 4 * k, 2 + i + 4 * k, 6 + i + 4 * k, 5 + i + 4 * k] for k in range(2) for i in range(3)], dtype=np.int64)
+
+
+def shells3d() -> None:
+    """Write ``ladruno_shells3d.ladruno`` (a fork run of layered ASDShellQ4, stamped), its frameless copy, and its model.
+
+    Needs a fork build whose ASDShellQ4 answers ``localAxes`` (nmorabowen/OpenSees#1133); point
+    ``LADRUNO_FORK_BIN`` at its ``dist/bin`` (``opensees.pyd``), else ``openseespy`` is imported.
+    ``ladruno_shells3d.noframes.ladruno`` is the same file without ``MODEL/LOCAL_AXES``, as an
+    older build writes it.
+    """
+    out = HERE / "ladruno_shells3d.ladruno"
+    if out.exists():
+        out.unlink()
+    env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
+    subprocess.run([sys.executable, "-c", _SHELLS_RUN, str(out)], check=True, env=env)
+    with h5py.File(out, "r+") as f:
+        st = f["MODEL_STAGE[1]"]
+        conn = st["MODEL/ELEMENTS/203-ASDShellQ4[201:0]/CONNECTIVITY"][()]
+        assert (conn[:, 0] == np.arange(1, 7)).all() and (conn[:, 1:] == SHELLS3D_CONN).all(), conn
+        assert np.allclose(st["MODEL/NODES/COORDINATES"][()], SHELLS3D_NODES)
+        assert sorted(st["MODEL/LOCAL_AXES"]) == ["203-ASDShellQ4"], "the fork build does not write shell frames (#1133)"
+        crack = st["RESULTS/ON_ELEMENTS/section.fiber.crackPattern"]
+        assert sorted(crack) == ["203-ASDShellQ4[201:0:0]", "203-ASDShellQ4[201:0:1]"], list(crack)
+        prov = f["INFO/PROVENANCE"]
+        for name, value in STAMP.items():
+            prov.attrs.create(name, data=value, dtype=VLEN_UTF8)
+    frameless = HERE / "ladruno_shells3d.noframes.ladruno"
+    shutil.copyfile(out, frameless)
+    with h5py.File(frameless, "r+") as f:
+        del f["MODEL_STAGE[1]/MODEL/LOCAL_AXES"]
+    with h5py.File(HERE / "ladruno_shells3d.h5", "w") as f:
+        meta = f.create_group("meta")
+        meta.attrs["neutral_schema_version"] = "2.35.0"
+        meta.attrs["opensees_schema_version"] = "2.24.0"
+        meta.attrs["ndm"] = np.int64(3)
+        meta.attrs["ndf"] = np.int64(6)
+        lin = meta.create_group("lineage")
+        lin.attrs["model_hash"] = STAMP["model_hash"]
+        lin.attrs["fem_hash"] = STAMP["fem_hash"]
+        nodes = f.create_group("nodes")
+        nodes["ids"] = np.arange(1, 13, dtype=np.int64)
+        nodes["coords"] = SHELLS3D_NODES
+        quad4 = f.create_group("elements").create_group("quad4")
+        quad4.attrs["code"] = np.int64(3)
+        quad4.attrs["dim"] = np.int64(2)
+        quad4.attrs["npe"] = np.int64(4)
+        quad4["ids"] = np.arange(1, 7, dtype=np.int64)
+        quad4["connectivity"] = SHELLS3D_CONN
+        wall = f.create_group("physical_groups").create_group("element_side").create_group("Wall")
+        wall.attrs["dim"] = np.int64(2)
+        wall.attrs["tag"] = np.int64(1)
+        wall["element_ids"] = np.arange(1, 7, dtype=np.int64)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--modes", action="store_true", help="also run the fork to write ladruno_modes.ladruno")
@@ -855,6 +968,7 @@ def main() -> None:
     ap.add_argument("--parts", action="store_true", help="also run OpenSeesMP (2 ranks) to write the ladruno_parts2d part set and its model")
     ap.add_argument("--springs", action="store_true", help="also run the fork to write ladruno_springs3d.ladruno and its model")
     ap.add_argument("--cracks", action="store_true", help="also stamp the suite's crack_bricks.ladruno as ladruno_cracks3d.ladruno and write its model")
+    ap.add_argument("--shells", action="store_true", help="also run the fork (LADRUNO_FORK_BIN) to write the layered-shell ladruno_shells3d set and its model")
     args = ap.parse_args()
     truss2d()
     stamped()
@@ -872,6 +986,8 @@ def main() -> None:
         springs3d()
     if args.cracks:
         cracks3d()
+    if args.shells:
+        shells3d()
 
 
 if __name__ == "__main__":

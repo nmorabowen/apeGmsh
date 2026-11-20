@@ -388,9 +388,11 @@ export class LadrunoPartSet {
   /** The set's stage `id`: the union node index, and each component the parts stitch. */
   private stitchStage(id: string): StageInfo {
     const per = this.parts.map((p) => p.stage(id));
-    const r = per[0]!;
+    // Layer groups are element results too: not stitched, so never carried over from part 0.
+    const { layers: _layers, ...r } = per[0]!;
     const unread = [...new Set(per.flatMap((s) => s.unread))];
     for (const g of [...new Set(per.flatMap((s) => s.gauss.map((x) => x.id)))]) unread.push(`${g} (${PART_SET_ELEMENTS_UNREAD})`);
+    for (const g of [...new Set(per.flatMap((s) => (s.layers ?? []).map((x) => x.id)))]) unread.push(`${g} (${PART_SET_ELEMENTS_UNREAD})`);
     const stations = [...new Set(this.parts.flatMap((p) => p.availableLineStations(id)))];
     if (stations.length) unread.push(`line stations ${stations.join(", ")} (${PART_SET_ELEMENTS_UNREAD})`);
     const stitches = new Map<string, Stitch>();

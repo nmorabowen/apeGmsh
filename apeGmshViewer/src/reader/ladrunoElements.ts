@@ -106,7 +106,7 @@ export interface EGroup extends ENode {
 export interface EFile extends EGroup {
   filename: string;
 }
-interface EDataset extends ENode {
+export interface EDataset extends ENode {
   shape: number[] | null;
   metadata: { type: number };
   value: unknown;
@@ -175,10 +175,18 @@ export class LadrunoGauss {
 
   /**
    * Index one stage's ON_ELEMENTS: its Gauss groups (read or refused), and the
-   * results this module does not read, as `ON_ELEMENTS/<result>` (none of its
+   * results this module does not read (a `claimed` `<result>/<bucket>` is read by
+   * reader/ladrunoLayers.ts and counts as read), as `ON_ELEMENTS/<result>` (none of its
    * buckets read) or `ON_ELEMENTS/<result>/<bucket>` (some of them read).
    */
-  indexStage(stageId: string, onElements: EGroup, modelElements: EGroup | null, time: Float64Array, warnings: string[]): { gauss: GaussGroupInfo[]; unread: string[] } {
+  indexStage(
+    stageId: string,
+    onElements: EGroup,
+    modelElements: EGroup | null,
+    time: Float64Array,
+    warnings: string[],
+    claimed: ReadonlySet<string> = new Set(),
+  ): { gauss: GaussGroupInfo[]; unread: string[] } {
     const byId = new Map<string, GaussBucket>();
     const unread: string[] = [];
     for (const result of onElements.keys()) {
@@ -198,6 +206,11 @@ export class LadrunoGauss {
         const bg = this.groupOf(rg, key);
         const ids = bg ? this.elementIdsIn(bg) : null;
         if (ids) lists.push({ at: `${bg!.path}/ID`, ids });
+        // A layered-shell bucket reader/ladrunoLayers.ts took: read there, so neither a Gauss group nor unread.
+        if (claimed.has(`${result}/${key}`)) {
+          read++;
+          continue;
+        }
         const b = bg ? this.bucket(result, key, bg, ids, modelElements, time, warnings) : null;
         if (b) {
           byId.set(b.info.id, b);
@@ -442,7 +455,7 @@ export function parseCompNames(cmPath: string, attr: unknown, nBlocks: number, r
   return out;
 }
 
-function sameTime(v: unknown, time: Float64Array): boolean {
+export function sameTime(v: unknown, time: Float64Array): boolean {
   const t = v instanceof Float64Array ? v : v instanceof Float32Array ? Float64Array.from(v) : null;
   return t !== null && t.length === time.length && t.every((x, i) => x === time[i]);
 }
@@ -464,7 +477,7 @@ export function intOf(v: unknown): number | null {
   return null;
 }
 
-function ints(ds: EDataset): number[] {
+export function ints(ds: EDataset): number[] {
   const v = ds.value;
   if (v instanceof BigInt64Array) return Array.from(v, (x) => Number(x));
   if (ArrayBuffer.isView(v) && !(v instanceof DataView)) return Array.from(v as unknown as ArrayLike<number>, Number);
