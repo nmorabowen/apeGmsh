@@ -10,6 +10,8 @@
 // - `<out>.selection-boxed.png`: the same box released: those elements selected.
 // - `<out>.selection-undone.png`: that selection cleared, then brought back
 //   by undo (ADR 0138 D6).
+// - `<out>.selection-sets.png`, `<out>.selection-set-selected.png`: the bar's
+//   list of saved sets, and a set selected from it (ADR 0138 D12).
 // - `<out>.selection-nodes-box.png`: Nodes active, a box drawn right to left,
 //   mid-drag, with the node markers on.
 //
@@ -17,6 +19,7 @@
 // drag makes (renderer/navigation.ts); a scripted pointer cannot take the
 // pointer capture a real press takes.
 
+import { selectedElementsOf } from "../../state/selectors.ts";
 import type { HarnessContext } from "./context.ts";
 
 export async function captureSelection(ctx: HarnessContext, settle: (ms?: number) => Promise<unknown>): Promise<void> {
@@ -59,11 +62,52 @@ export async function captureSelection(ctx: HarnessContext, settle: (ms?: number
   await shot("selection-nodes-box");
   viewport.boxEnd(b.x, b.y, a.x, a.y, "replace");
   await shot("selection-nodes-boxed");
+  await captureSets(ctx, shot);
   store.dispatch({ type: "clearSelection", kind: "node" });
   store.dispatch({ type: "clearSelection", kind: "element" });
   store.dispatch({ type: "setNodes", on: false });
   store.dispatch({ type: "setWorkspaceKind", kind: "elements" });
   await settle();
+}
+
+/**
+ * `<out>.selection-sets.png` and `<out>.selection-set-selected.png` (ADR 0138
+ * D12), after the node box: the boxed elements and nodes as two saved sets,
+ * the bar's list of element sets open, then the element set selected from it.
+ * The sets are a workspace read made in memory (the model's own workspace
+ * file is never written); the read on screen before is put back after.
+ */
+async function captureSets(ctx: HarnessContext, shot: (name: string) => Promise<void>): Promise<void> {
+  const { store } = ctx;
+  const s = store.get();
+  const tags = [...new Set(selectedElementsOf(s).flatMap((d) => (s.decls[d]?.element?.metas ?? []).map((m) => m.tag)))];
+  if (tags.length === 0) return;
+  const before = s.workspace.read;
+  const all = (n: number) => ({ verdict: "current" as const, matched: n, total: n, members: Array<boolean>(n).fill(true), checked: false, maxDistance: null });
+  const sets = [
+    { row: 0, name: "Boxed elements", kind: "elements" as const, ids: tags, verdict: all(tags.length) },
+    { row: 1, name: "Boxed nodes", kind: "nodes" as const, ids: [...s.selection.nodes], verdict: all(s.selection.nodes.length) },
+  ];
+  store.dispatch({ type: "workspaceRead", read: { status: "ready", file: "capture.workspace.h5", token: "capture", version: "1", revision: 1, writer: null, saveId: null, readOnly: null, sets, plots: [], views: [], refused: [], broken: [] } });
+  store.dispatch({ type: "clearSelection", kind: "element" });
+  store.dispatch({ type: "setWorkspaceKind", kind: "elements" });
+  // The node box's markers and selected nodes would bury the element highlight; the node set holds them now.
+  store.dispatch({ type: "setNodes", on: false });
+  store.dispatch({ type: "clearSelection", kind: "node" });
+  const toggle = () => {
+    const b = document.querySelector<HTMLButtonElement>("#selection-bar button[aria-expanded]");
+    if (!b) throw new Error("capture selection-sets: the selection bar has no Sets button");
+    b.click();
+  };
+  toggle();
+  await shot("selection-sets");
+  const select = [...document.querySelectorAll<HTMLButtonElement>(".selection-set button")].find((b) => b.textContent === "Select");
+  if (!select) throw new Error("capture selection-sets: the list has no Select button");
+  select.click();
+  if (selectedElementsOf(store.get()).length === 0) throw new Error("capture selection-set-selected: selecting the set selected nothing");
+  await shot("selection-set-selected");
+  toggle();
+  store.dispatch({ type: "workspaceRead", read: before });
 }
 
 /**

@@ -183,7 +183,7 @@ export {
 export { springCountOf } from "./springs.ts";
 export { HINGE_COLUMN_NAMES, hingeSitesOf, smartHingeSize } from "./hinges.ts";
 // VU9a (ADR 0132): what the sets panel reads of the workspace slice.
-export { pickSummaryOf, setKindOf } from "./workspace.ts";
+export { pickSummaryOf, savedSets, setKindOf, setTargets } from "./workspace.ts";
 export { cannotSave as workspaceCannotSave } from "./reduce/workspace.ts";
 export { vectorComponentOf, vectorFieldOf, vectorFieldsOf, type VectorField } from "./vectors.ts";
 import type {
