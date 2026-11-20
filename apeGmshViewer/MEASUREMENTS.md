@@ -1277,3 +1277,122 @@ thread is late, so fps and p95 frame times above can read better than the truth.
 Scenario times, steps drawn, flicker counts and CPU profiles do not use it. The
 probe now uses the time the callback ran. `src/renderer/harness/measure.ts`
 (`npm run measure`) still uses the timestamp for its orbit.
+
+## Load memory after the load fixes (#3056, ADR 0137)
+
+ADR 0137 states its supported size, about 130k cells with up to 8 light tiles on
+a 24 GB machine, from one load of `yoo_building_SLE_T2`. That load peaked at
+5,289 MB of page private memory over 128,923 cells, about 42 KB per cell. Its
+build predated #3047, #3048 and #3049. This section re-measures load time and
+peak memory with all three on `main`, to check whether 42 KB per cell holds.
+
+### Machine and method
+
+- Commit `e997c10b` (`main` with #3047, #3048 and #3049). Ryzen AI 7 PRO 350,
+  Radeon 860M, 23.6 GB RAM, commit limit 95.6 GB, canvas 1584 x 961 at 1x.
+- `npm run profile -- <model.h5> --scenarios=load,enter-results,contour-on --reps=1`
+  (`--scenarios=load` for the meshes without results). One run per model.
+- A PowerShell sampler beside it, every 1.0 to 1.9 s (slower when the machine
+  is busy). It finds the app by process tree: the root `electron.exe` whose
+  command line holds the checkout's path, and every descendant by parent PID,
+  so other sessions' Electron processes are not counted. Each sample has the
+  private bytes and working set of each process (page = the renderer, main,
+  GPU, the rest), and the machine's available RAM, commit charge, commit limit
+  and CPU.
+- **Gate.** A launch waited until mean CPU over 10 s was at or under 55%, no
+  other apeGmshViewer process was running, and enough memory was free for the
+  model. Other sessions loaded the machine throughout: over about 25 h of
+  polling every 3 min, available RAM never rose above 3.3 GB and was mostly
+  0.5 to 1.7 GB, and commit headroom was 6 to 15 GB. The memory gate was
+  therefore set from the models' measured cost: 2.0 to 3.0 GB available for
+  the two maintainer models, 2.5 GB available and 8 GB commit headroom for the
+  synthetics. The gate holds only at the moment of launch, so each row gives
+  the CPU at the gate and during the run.
+
+### Rows
+
+| model | cells | nodes | load (ms) | page private peak (MB) | whole app private peak (MB) | page KB per cell | CPU at gate / during | available RAM at gate → lowest (MB) |
+|---|---|---|---|---|---|---|---|---|
+| `yoo_slab_N56_75` (shells, `.ladruno` results, 4 steps) | 24,424 | 11,245 | 3,691 | 244 | 817 | 10.2 | 28% / 84 to 100% | 3,319 → 1,298 |
+| `tims_c3b` (Bezier tri6, `.ladruno`, 51 steps) | 26,970 | 54,279 | 913 | 211 | 689 | 8.0 | 43% / 10 to 80% | 2,875 → 2,585 |
+| synthetic quad plate `synth_quad_386` | 151,321 | 150,544 | 1,833 | 342 | 848 | 2.3 | 12% / 13 to 57% | 2,692 → 2,602 |
+| synthetic tet box `synth_tet_0.27` | 268,445 | 44,670 | 2,874 | 334 | 789 | 1.3 | 9% / 15 to 57% | 3,102 → 1,463 |
+| synthetic quad plate `synth_quad_547` | 301,401 | 300,304 | 3,148 | 535 | 1,145 | 1.8 | 12% / 18 to 57% | 2,925 → 1,636 |
+| `yoo_building_SLE_T2` | 128,923 | 76,753 | not measured | not measured | not measured | | the gate never opened | |
+
+- **load** is the profiler's `load` scenario: the file handed to the waiting
+  window, to the first painted frame of the mesh. The slab's 3.7 s ran at 84
+  to 100% CPU; its 2026-11-18 baseline was 2.3 to 2.4 s.
+- **whole app** is the sum over the process tree: page, main (144 to 223 MB),
+  GPU (267 to 419 MB) and the utility processes (12 MB).
+- On the slab and `tims_c3b`, `enter-results` and `contour-on` did not raise
+  the page above its load peak.
+- The synthetics are meshes written by `FEMData.to_h5` from a gmsh box or a
+  transfinite plate, with no `/opensees` zone and no results. They are not
+  committed. The quad plates draw every cell; the tet box draws only its
+  20,164 boundary triangles.
+
+### What the page memory depends on
+
+- **42 KB per cell does not hold on any of these five models.** The page
+  peaked at 1.3 to 10.2 KB per cell, the whole app at 3.0 to 34 KB per cell.
+  The highest per-cell figures are on the smallest models, where the fixed
+  cost dominates.
+- **A fixed cost, then a small cost per drawn cell.** The two quad plates give
+  1.29 KB per added cell (193 MB over 150,080 cells) on a base of about
+  152 MB. Over that base the slab costs 3.9 KB per cell and `tims_c3b`
+  2.2 KB: results, the OpenSees zone and the panels add per-cell cost, in
+  single KB, not tens of KB.
+- **Cells that are not drawn cost little.** The tet box has 1.8 times the
+  151k plate's cells and 0.3 times its nodes, and the same page peak: about
+  0.7 KB per volume cell over the base.
+- **Estimate for warnings (#3057):** page peak ≈ 250 MB + 10 KB per cell,
+  whole app ≈ page + 650 MB. It bounds every measured row with margin (488 MB
+  for the slab, 3.2 GB for the 301k plate). It rests on these five models and
+  on no building with a full OpenSees zone, so it should warn, not refuse.
+- **Error.** One run per model. The peaks are sampled, so a spike shorter
+  than one interval (1 to 2 s) can be missed. The loads took 0.9 to 3.7 s and
+  gave 3 to 8 samples each, so read every peak as a lower bound. The times ran
+  on a busy machine (see the CPU column).
+
+### Electron's `process.getSystemMemoryInfo()` on Windows
+
+It reports commit headroom, under the swap names. These are the values on this
+machine (Electron 44.5.1), read beside the OS counters, in KB:
+
+| `getSystemMemoryInfo()` | value | OS counter | value |
+|---|---|---|---|
+| `total` | 24,794,800 | `Win32_OperatingSystem.TotalVisibleMemorySize` | 24,794,800 |
+| `free` | 425,740 | perf `AvailableBytes` (available RAM, standby included) | 427,292 |
+| `swapTotal` | 100,292,272 | `TotalVirtualMemorySize` (= perf `CommitLimit`) | 100,292,272 |
+| `swapFree` | 9,621,592 | `FreeVirtualMemory` (commit limit minus commit charge) | 9,556,000 |
+
+`free` is available RAM, not free RAM (`FreePhysicalMemory` read 393,288).
+`swapTotal` is the commit limit and `swapFree` the commit still available, not
+the paging file (`SizeStoredInPagingFiles` read 75,497,472). The small gaps
+come from the two reads being taken a moment apart. On Windows, then, ADR 0137 D4's
+commit headroom is `swapFree` and its available RAM is `free`. On Linux and
+macOS the same fields mean swap.
+
+### Not measured
+
+- **`yoo_building_SLE_T2`.** Its first gate was 9 GB available, from the old
+  5.3 GB peak. The coordinator relaxed it to 3 GB available and 10 GB commit
+  headroom, with a watchdog that would stop only this run's processes if the
+  page passed 7 GB, commit headroom fell under 2 GB or available RAM under
+  1 GB. In 5 h of polling under that gate, none of 54 polls met it: available
+  RAM peaked at 2.66 GB and was mostly 0.5 to 1.7 GB, so a load would likely
+  have run into the 1 GB floor.
+  No launch was made.
+- **Building loads under memory pressure, and the hang.** Not run, for the
+  same reason. The slab ran with available RAM falling to 1.3 GB and CPU at 84
+  to 100% and did not hang, which is mild pressure only.
+
+### Reading for ADR 0137
+
+The supported size ADR 0137 states cannot change on this evidence, because the
+model it rests on was not re-measured. What has changed is the per-cell figure
+behind it. Three meshes above 130k cells (151k, 268k and 301k) loaded in 1.8 to
+3.1 s, with at most 535 MB in the page and 1.15 GB in the whole app, against the
+5.3 GB page the building took before the fixes. Once the building is
+re-measured, the stated size can be set from it and from these rows.
