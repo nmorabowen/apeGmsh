@@ -145,6 +145,35 @@ export interface GaussGroupInfo {
   naturalCoords: number[][] | null;
 }
 
+/**
+ * A layered-shell bucket of a `.ladruno` (`section.fiber.<token>` on a LayeredShell
+ * section, reader/ladrunoLayers.ts): per element and Gauss point, one value per
+ * responding layer (the layers whose material answers the token; rebar does not) and
+ * component. Layers are in section order, the first on the shell's -e3 side.
+ */
+export interface LayerGroupInfo {
+  id: string;
+  path: string;
+  classTag: number;
+  intRule: number;
+  nElements: number;
+  nGauss: number;
+  /** responding layers per Gauss point */
+  nLayers: number;
+  /** `<result>/<label>`, the file's own labels */
+  components: string[];
+  /** the whole bucket refused, with the reason; never read */
+  refused: { component: string; reason: string }[];
+  /** GP_PARAM rows on PARAM_DOMAIN "[-1,1]", else null */
+  naturalCoords: number[][] | null;
+  /**
+   * Each responding layer's through-thickness coordinate `z` and thickness `t`
+   * (E * nLayers, element-major, MODEL/SECTION_ASSIGNMENTS FIBER_DATA columns 1 and 2),
+   * and each element's section thickness (E,), every layer counted; or why not.
+   */
+  geometry: { state: "present"; z: Float64Array; t: Float64Array; thickness: Float64Array } | { state: "absent"; reason: string };
+}
+
 export interface LineStationGroupInfo {
   id: string;
   path: string;
@@ -210,6 +239,8 @@ export interface StageInfo {
   nodes: NodalInfo | null;
   gauss: GaussGroupInfo[];
   lineStations?: LineStationGroupInfo[];
+  /** layered-shell buckets (`.ladruno` only, reader/ladrunoLayers.ts) */
+  layers?: LayerGroupInfo[];
   /** Element categories present in the file that this spike does not read. */
   unread: string[];
 }

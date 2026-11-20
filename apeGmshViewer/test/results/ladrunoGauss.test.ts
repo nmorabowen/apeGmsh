@@ -646,7 +646,11 @@ test("fibers, element-level rows and buckets with no structured column map stay 
   withFile(p, (r) => {
     const s = r.index.stages[0]!;
     assert.deepEqual(s.gauss.map((g) => g.id), [STRESS, STRAIN]);
-    assert.deepEqual(s.unread, ["ON_ELEMENTS/fiber_mult", "ON_ELEMENTS/fiber_id", "ON_ELEMENTS/element_level"]);
+    assert.deepEqual(s.unread, ["ON_ELEMENTS/fiber_id", "ON_ELEMENTS/element_level"]);
+    // A repeated block on a surface element is a layer run (reader/ladrunoLayers.ts): a layer group,
+    // here refused by name (its DATA is 12 columns wide, not the 48 the column map sums to), never a Gauss group.
+    const layer = s.layers?.find((g) => g.id === `fiber_mult/${KEY}`);
+    assert.match(layer?.refused[0]?.reason ?? "", /NUM_COLUMNS = 48.*DATA has 12 columns/);
   });
   // One result, two buckets: the read one leaves the result; the other stays, by its bucket name.
   const q = edited(QUAD, (f) => addBucket(f, "stress", { gaussId: [-1, -1, -1, -1], ids: [7, 8, 9, 10, 11, 12] }, "31-FourNodeQuad[201:0:1]"));

@@ -60,6 +60,7 @@
 import { PARTICLES_UNREAD } from "../state/results.ts";
 import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
+import { LadrunoLayers } from "./ladrunoLayers.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
 import { evenlySpacedXi, lineGpParamXi, sectionStationXi } from "./ladrunoGauss.ts";
 import { uniqueNodeIds } from "./ladrunoChecks.ts";
@@ -470,6 +471,7 @@ export class LadrunoFile {
   private readonly columns = new Map<string, Map<string, Column>>();
   private readonly nodeColumn = new Map<string, Map<number, number>>();
   private readonly gauss: LadrunoGauss;
+  private readonly layers: LadrunoLayers;
   /** Each stage's spring buckets, found once (`springBuckets`). */
   private readonly springs = new Map<string, SpringBucket[]>();
   private readonly hinges = new Map<string, HingeBucket[]>();
@@ -495,6 +497,7 @@ export class LadrunoFile {
     this.opened = { step: opened.step, repaired: opened.repaired, flags: opened.flags ?? null };
     this.killed = this.opened.flags !== null && this.opened.flags !== 0x00;
     this.gauss = new LadrunoGauss(h5, f, (kind, message) => new LadrunoError(kind, message));
+    this.layers = new LadrunoLayers(h5, f, (kind, message) => new LadrunoError(kind, message));
     const warnings: string[] = [];
     if (opened.step === 2) {
       warnings.push(`${path}: a killed run (a plain open refuses it: superblock flags 0x05, or a stored end-of-allocation past the file's end), opened ${opened.repaired ? "through a repaired copy because SWMR-read refused it" : "SWMR-read"} (the reader rule's step 2, 232a §2.5); the file is not changed`);
@@ -727,6 +730,23 @@ export class LadrunoFile {
   /** Steps `k0` to `k1` (exclusive) of one Gauss-group component: ((k1 - k0) * E * G,), step-major then element-major. */
   readGaussRows(stageId: string, groupId: string, component: string, k0: number, k1: number): Float64Array {
     return this.gauss.read(this.stage(stageId), groupId, component, k0, k1);
+  }
+
+  /**
+   * One step of a layer group (reader/ladrunoLayers.ts): `components` at the responding
+   * layers `layers` (all when null), (E * G * nLayers * nComponents,), element-major, then
+   * Gauss point, layer and component in the order asked.
+   */
+  readLayerStep(stageId: string, groupId: string, components: readonly string[], layers: readonly number[] | null, step: number): Float64Array {
+    checkStep(this.stage(stageId), step);
+    return this.layers.read(this.stage(stageId), groupId, components, layers, step, step + 1);
+  }
+
+  /** A layer group's element rows: FEM ids only under a well-formed element_index_space = "fem" (#2079 Q6). */
+  layerElementIds(stageId: string, groupId: string): ElementIds {
+    const ids = this.layers.elementRows(this.stage(stageId).id, groupId);
+    const v = this.elementIndexVerdict();
+    return v.verified ? { mapping: "fem_eid", sourceType: "ladruno", ids } : { mapping: "unverified", sourceType: "ladruno", reason: v.reason, rawIndex: ids };
   }
 
   /** A Gauss group's element rows: FEM ids only under a well-formed element_index_space = "fem" (#2079 Q6). */
@@ -1465,7 +1485,9 @@ export class LadrunoFile {
         cols.set(comp, { path: `${a.group.path}/DATA`, col: c, modal: false });
       });
     }
-    const elements = onElements ? this.gauss.indexStage(id, onElements, this.optionalSubgroup(g, ["MODEL", "ELEMENTS"]), time, warnings) : null;
+    const model = this.optionalSubgroup(g, ["MODEL"]);
+    const layered = onElements ? this.layers.indexStage(id, onElements, model, time, warnings) : null;
+    const elements = onElements ? this.gauss.indexStage(id, onElements, this.optionalSubgroup(g, ["MODEL", "ELEMENTS"]), time, warnings, layered?.claimed) : null;
     unread.splice(elementsAt, 0, ...(elements?.unread ?? []));
     const hasNodal = onNodes !== null && onNodes.keys().some((k) => !MODAL_GROUPS.includes(k));
     const nodes: NodalInfo | null = hasNodal ? { path: onNodes!.path, ids, components, refused } : null;
@@ -1479,6 +1501,7 @@ export class LadrunoFile {
       partition: "partition_0",
       nodes,
       gauss: elements?.gauss ?? [],
+      ...(layered?.layers.length ? { layers: layered.layers } : {}),
       unread,
     };
     return { stage, fileKind: kind, onNodes };

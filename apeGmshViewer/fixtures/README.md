@@ -412,6 +412,18 @@ Fork-written `.ladruno` files for `src/reader/ladruno.ts`, made by
   elements pulled along x. The third has cracked from step 0, and the first two
   never crack. It records `material.crackPattern` (9 columns per Gauss point)
   and `material.crackWidth`. `test/cracks.test.ts` draws its crack discs.
+- `ladruno_shells3d.ladruno`, `ladruno_shells3d.noframes.ladruno` and
+  `ladruno_shells3d.h5` (`--shells`) are a fork run, its copy without
+  `MODEL/LOCAL_AXES`, and its model, written by hand. The run needs a fork build
+  whose ASDShellQ4 answers `localAxes` (nmorabowen/OpenSees#1133, build
+  `2b2116b9`), passed as `LADRUNO_FORK_BIN`. It is a wall in the x-z plane of
+  3 x 2 ASDShellQ4 (1000 mm, `-local 1 0 0`) with two LayeredShell sections of
+  ASDConcrete3D and PlateRebar layers: 6 concrete and 4 rebar layers (elements
+  1, 2, 4, 5) and 4 and 4 (elements 3, 6). It is pushed in plane, and a little
+  out of plane, until it cracks, and records `section.fiber.crackPattern` and
+  `section.fiber.damage`. Rebar does not answer either token, so each bucket is
+  a layer run per Gauss point, and the two sections land in two header buckets,
+  as in the research pushover. `test/results/ladrunoLayers.test.ts` reads it.
 - `ladruno_parts2d.part-0.ladruno`, `ladruno_parts2d.part-1.ladruno` and
   `ladruno_parts2d.h5` (#2188) are a 2-rank OpenSeesMP run (fork build
   `80dd3f13d`, which writes `PARTITION_REDUCTION`, WP-126) and its model,
