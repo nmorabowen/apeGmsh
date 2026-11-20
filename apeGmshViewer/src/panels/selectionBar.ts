@@ -46,7 +46,7 @@ export function setListLines(s: State): { kind: "element" | "node"; rows: SetRow
 }
 
 /** What the bar shows, as plain values (tested in Node; the DOM below draws them). */
-export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"; label: string; count: number; active: boolean }[]; hint: string; hintDetail: string; canClear: boolean; canUndo: boolean } | null {
+export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"; label: string; count: number; active: boolean }[]; hint: string; hintDetail: string; canClear: boolean; canUndo: boolean; through: boolean } | null {
   if (!s.mesh) return null;
   const elements = selectedElementsOf(s).length, nodes = s.selection.nodes.length;
   const active = s.selection.active;
@@ -60,6 +60,7 @@ export function selectionBarLines(s: State): { kinds: { kind: "element" | "node"
     hintDetail: "Click or drag a box. A box drawn left to right takes what is fully inside it; right to left, what it touches. Shift adds, Ctrl removes, Ctrl+Z undoes.",
     canClear: (active === "node" ? nodes : elements) > 0,
     canUndo: s.selectionUndo.past.length > 0,
+    through: s.selection.through,
   };
 }
 
@@ -130,6 +131,14 @@ export function mountSelectionBar(store: Store): () => void {
     undo.disabled = !lines.canUndo;
     unlisten.push(listen(undo, "click", () => store.dispatch({ type: "undoSelection" })));
     parts.push(undo);
+    const through = el("button", `window-toggle${lines.through ? " on" : ""}`, "Through");
+    through.type = "button";
+    through.title = lines.through
+      ? "A box selects through the model: every drawn target in it, hidden behind others or not (section planes and hidden elements still leave theirs out)"
+      : "A box selects what is visible; turn on to select through the model";
+    through.setAttribute("aria-pressed", String(lines.through));
+    unlisten.push(listen(through, "click", () => store.dispatch({ type: "setSelectThrough", on: !lines.through })));
+    parts.push(through);
     const sets = setListLines(s)!;
     const setsBtn = el("button", `window-toggle${listOpen ? " on" : ""}`, `Sets ${sets.rows.length}`);
     setsBtn.type = "button";

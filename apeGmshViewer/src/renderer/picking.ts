@@ -303,77 +303,139 @@ export class ClickPicker {
   }
 }
 
+/** Which sides of a box a canvas point is beyond: 1 left, 2 right, 4 above, 8 below; 0 inside. */
+function outcode(x: number, y: number, box: Box): number {
+  return (x < box.x0 ? 1 : 0) | (x > box.x1 ? 2 : 0) | (y < box.y0 ? 4 : 0) | (y > box.y1 ? 8 : 0);
+}
+
+/**
+ * ADR 0138 D7, through the model: the elements a box takes from their
+ * projected vertices (`xy`, canvas pixels; NaN for one a section plane cuts
+ * away), each vertex with its element and its primitive (a primitive's
+ * vertices are consecutive). Left to right (`crossing` false): the elements
+ * with every kept vertex inside. Right to left: the elements with a primitive
+ * not wholly beyond one side of the box (a bounding test, ADR 0138 "Not
+ * established"). Element indices, ascending.
+ */
+export function elementsThrough(xy: Float32Array, element: Int32Array, prim: Int32Array, box: Box, elements: number): number[] {
+  const taken = new Uint8Array(elements), out = new Uint8Array(elements);
+  for (let v = 0; v < element.length; ) {
+    const p = prim[v]!, e = element[v]!;
+    let and = 15, kept = 0;
+    for (; v < element.length && prim[v] === p; v++) {
+      const x = xy[2 * v]!;
+      if (Number.isNaN(x)) continue;
+      const c = outcode(x, xy[2 * v + 1]!, box);
+      kept++;
+      and &= c;
+      if (c !== 0) out[e] = 1;
+    }
+    if (kept > 0 && (box.crossing ? and === 0 : true)) taken[e] = 1;
+  }
+  const found: number[] = [];
+  for (let e = 0; e < elements; e++) if (taken[e] && (box.crossing || !out[e])) found.push(e);
+  return found;
+}
+
+/** ADR 0138 D7, through the model: the indices of the points (`xy`, NaN when cut away) inside a box. */
+export function pointsThrough(xy: Float32Array, box: Box): number[] {
+  const found: number[] = [];
+  for (let i = 0; i < xy.length / 2; i++) {
+    const x = xy[2 * i]!;
+    if (!Number.isNaN(x) && outcode(x, xy[2 * i + 1]!, box) === 0) found.push(i);
+  }
+  return found;
+}
+
 /** One press's ID image and projected vertices; dropped at the release. */
 export class BoxPicker {
-  private readonly target: THREE.WebGLRenderTarget;
-  private readonly bytes: Uint8Array;
+  /** the press's ID image; null through the model (D7), which reads projected positions only */
+  private readonly target: THREE.WebGLRenderTarget | null;
   private readonly ids: Uint32Array;
   private readonly seen: Uint32Array;
   private stamp = 0;
   private readonly disposables: { dispose(): void }[] = [];
   /** per element: the stamp of the last box that found one of its drawn vertices outside */
   private readonly outside: Uint32Array | null;
-  /** canvas-pixel position of every drawn vertex (x, y) and its element, for "fully inside" */
-  private readonly verts: { xy: Float32Array; element: Int32Array } | null;
+  /** canvas-pixel position of every drawn vertex (x, y), its element and its primitive, for "fully inside" and through */
+  private readonly verts: { xy: Float32Array; element: Int32Array; prim: Int32Array } | null;
+  /** through the model, nodes: every drawn node in canvas pixels */
+  private readonly points: Float32Array | null;
+  private readonly through: boolean;
 
   private readonly kind: PickKind;
   private readonly src: PickSource;
   private readonly cssWidth: number;
   private readonly cssHeight: number;
 
-  constructor(renderer: THREE.WebGLRenderer, camera: THREE.Camera, kind: PickKind, src: PickSource, cssWidth: number, cssHeight: number) {
+  constructor(renderer: THREE.WebGLRenderer, camera: THREE.Camera, kind: PickKind, src: PickSource, cssWidth: number, cssHeight: number, through = false) {
     this.kind = kind;
     this.src = src;
     this.cssWidth = cssWidth;
     this.cssHeight = cssHeight;
-    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
-    this.target = new THREE.WebGLRenderTarget(size.x, size.y, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true, stencilBuffer: false });
-    this.bytes = new Uint8Array(size.x * size.y * 4);
-    this.ids = new Uint32Array(this.bytes.buffer);
+    this.through = through;
     const count = kind === "element" ? src.elements : (src.nodes?.tags.length ?? 0);
     this.seen = new Uint32Array(count + 1);
-    drawIds(renderer, this.target, pickScene(kind, src, renderer.getPixelRatio(), this.disposables), camera);
-    renderer.readRenderTargetPixels(this.target, 0, 0, size.x, size.y, this.bytes);
-    if (kind === "element") {
-      this.outside = new Uint32Array(src.elements);
-      this.verts = this.project(camera);
+    camera.updateMatrixWorld();
+    if (through) {
+      this.target = null;
+      this.ids = new Uint32Array(0);
     } else {
-      this.outside = null;
-      this.verts = null;
+      const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+      this.target = new THREE.WebGLRenderTarget(size.x, size.y, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true, stencilBuffer: false });
+      const bytes = new Uint8Array(size.x * size.y * 4);
+      this.ids = new Uint32Array(bytes.buffer);
+      drawIds(renderer, this.target, pickScene(kind, src, renderer.getPixelRatio(), this.disposables), camera);
+      renderer.readRenderTargetPixels(this.target, 0, 0, size.x, size.y, bytes);
     }
+    this.outside = kind === "element" ? new Uint32Array(src.elements) : null;
+    this.verts = kind === "element" ? this.project(camera) : null;
+    this.points = kind === "node" && through && src.nodes ? this.projectPoints(camera, src.nodes.positions) : null;
   }
 
-  /** Every drawn vertex in canvas pixels, with its element; a vertex behind the eye is placed far outside. */
-  private project(camera: THREE.Camera): { xy: Float32Array; element: Int32Array } {
+  /** Points in canvas pixels; NaN where a section plane cuts one away, far outside when behind the eye. */
+  private projectPoints(camera: THREE.Camera, pos: ArrayLike<number>): Float32Array {
+    const m = new THREE.Matrix4().multiplyMatrices((camera as THREE.PerspectiveCamera).projectionMatrix, camera.matrixWorldInverse).elements;
+    const xy = new Float32Array((2 * pos.length) / 3);
+    for (let i = 0; i < pos.length / 3; i++) this.place(m, pos[3 * i]!, pos[3 * i + 1]!, pos[3 * i + 2]!, xy, i);
+    return xy;
+  }
+
+  private place(m: number[], x: number, y: number, z: number, xy: Float32Array, o: number): void {
+    // A vertex a section plane cuts away is not drawn, so it never counts as outside.
+    if (!this.src.planes.every((p) => p.normal.x * x + p.normal.y * y + p.normal.z * z + p.constant >= 0)) {
+      xy[2 * o] = NaN;
+      return;
+    }
+    const w = m[3]! * x + m[7]! * y + m[11]! * z + m[15]!;
+    if (w <= 0) {
+      xy[2 * o] = -1e9;
+      xy[2 * o + 1] = -1e9;
+      return;
+    }
+    xy[2 * o] = (((m[0]! * x + m[4]! * y + m[8]! * z + m[12]!) / w) * 0.5 + 0.5) * this.cssWidth;
+    xy[2 * o + 1] = (0.5 - ((m[1]! * x + m[5]! * y + m[9]! * z + m[13]!) / w) * 0.5) * this.cssHeight;
+  }
+
+  /** Every drawn vertex in canvas pixels, with its element and primitive; a vertex behind the eye is placed far outside. */
+  private project(camera: THREE.Camera): { xy: Float32Array; element: Int32Array; prim: Int32Array } {
     const parts: { pos: ArrayLike<number>; element: Int32Array; per: number }[] = [];
     if (this.src.faces) parts.push({ pos: this.src.faces.positions.array, element: this.src.faces.element, per: 3 });
     if (this.src.frameFaces) parts.push({ pos: this.src.frameFaces.positions.array, element: this.src.frameFaces.element, per: 3 });
     if (this.src.lines) parts.push({ pos: this.src.lines.positions, element: this.src.lines.element, per: 2 });
     const n = parts.reduce((a, p) => a + p.pos.length / 3, 0);
-    const xy = new Float32Array(2 * n), element = new Int32Array(n);
+    const xy = new Float32Array(2 * n), element = new Int32Array(n), prim = new Int32Array(n);
     const m = new THREE.Matrix4().multiplyMatrices((camera as THREE.PerspectiveCamera).projectionMatrix, camera.matrixWorldInverse).elements;
-    const kept = (x: number, y: number, z: number) => this.src.planes.every((p) => p.normal.x * x + p.normal.y * y + p.normal.z * z + p.constant >= 0);
-    let o = 0;
+    let o = 0, primBase = 0;
     for (const p of parts) {
       for (let i = 0, nv = p.pos.length / 3; i < nv; i++, o++) {
-        const x = p.pos[3 * i]!, y = p.pos[3 * i + 1]!, z = p.pos[3 * i + 2]!;
         element[o] = p.element[Math.floor(i / p.per)]!;
-        const w = m[3]! * x + m[7]! * y + m[11]! * z + m[15]!;
-        // A vertex a section plane cuts away is not drawn, so it never counts as outside.
-        if (!kept(x, y, z)) {
-          xy[2 * o] = NaN;
-          continue;
-        }
-        if (w <= 0) {
-          xy[2 * o] = -1e9;
-          xy[2 * o + 1] = -1e9;
-          continue;
-        }
-        xy[2 * o] = (((m[0]! * x + m[4]! * y + m[8]! * z + m[12]!) / w) * 0.5 + 0.5) * this.cssWidth;
-        xy[2 * o + 1] = (0.5 - ((m[1]! * x + m[5]! * y + m[9]! * z + m[13]!) / w) * 0.5) * this.cssHeight;
+        prim[o] = primBase + Math.floor(i / p.per);
+        this.place(m, p.pos[3 * i]!, p.pos[3 * i + 1]!, p.pos[3 * i + 2]!, xy, o);
       }
+      primBase += p.pos.length / 3 / p.per;
     }
-    return { xy, element };
+    return { xy, element, prim };
   }
 
   /**
@@ -382,8 +444,12 @@ export class BoxPicker {
    */
   query(box: Box): number[] {
     this.stamp++;
+    if (this.through) {
+      if (this.kind === "node") return this.points ? pointsThrough(this.points, box).map((i) => this.src.nodes!.tags[i]!) : [];
+      return this.verts ? elementsThrough(this.verts.xy, this.verts.element, this.verts.prim, box, this.src.elements) : [];
+    }
     const found: number[] = [];
-    const size = this.target;
+    const size = this.target!;
     idsInBox(this.ids, size.width, size.height, box, size.width / this.cssWidth, this.seen, this.stamp, found);
     if (this.kind === "node") {
       const tags = this.src.nodes!.tags;
@@ -401,7 +467,7 @@ export class BoxPicker {
   }
 
   dispose(): void {
-    this.target.dispose();
+    this.target?.dispose();
     for (const d of this.disposables.splice(0)) d.dispose();
   }
 }
