@@ -138,7 +138,7 @@ test("the stage's shell crack field is both header buckets; the step reads their
 });
 
 test("the ticks: in the wall's plane, along a trace normal to e3 = -y; red on the +y face, blue on the -y face; one face at a time", async () => {
-  h.store.dispatch({ type: "setCracks", on: true, minOpening: 0.01 });
+  h.store.dispatch({ type: "setCracks", on: true, minOpening: 0.01, style: "ticks" });
   const d = await atStep(LAST, true);
   const layer = new CracksLayer();
   try {
@@ -171,7 +171,7 @@ test("the ticks: in the wall's plane, along a trace normal to e3 = -y; red on th
     assert.equal(layer.root.visible, false);
   } finally {
     layer.dispose();
-    h.store.dispatch({ type: "setCracks", on: false, minOpening: 0, face: "both" });
+    h.store.dispatch({ type: "setCracks", on: false, minOpening: 0, face: "both", style: "lines" });
   }
 });
 

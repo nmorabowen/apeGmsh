@@ -87,7 +87,19 @@ export function renderCracks(s: State, dispatch: (e: Event) => void = () => {}, 
     red.style.background = CRACK_FACE.plus;
     const blue = el("span", "chip cracks-face-minus");
     blue.style.background = CRACK_FACE.minus;
-    faceRow.append(el("span", undefined, "shells"), faceSelect, red, el("span", undefined, "+"), blue, el("span", undefined, "-"));
+    const styleSelect = el("select", "cracks-style");
+    styleSelect.title = "lines: continuous crack lines traced through the crack field; ticks: one tick per crack at each Gauss point";
+    for (const [value, label] of [
+      ["lines", "lines"],
+      ["ticks", "ticks"],
+    ] as const) {
+      const o = el("option", undefined, label);
+      o.value = value;
+      o.selected = c.style === value;
+      styleSelect.append(o);
+    }
+    unlisten.push(listen(styleSelect, "change", () => dispatch({ type: "setCracks", style: styleSelect.value as "lines" | "ticks" })));
+    faceRow.append(el("span", undefined, "shells"), styleSelect, faceSelect, red, el("span", undefined, "+"), blue, el("span", undefined, "-"));
     box.append(faceRow);
   }
 
@@ -133,7 +145,13 @@ export function renderCracks(s: State, dispatch: (e: Event) => void = () => {}, 
   }
   if (shells) {
     box.append(
-      el("div", "legend-note cracks-note", "shells: one tick per crack at each Gauss point, on the outer concrete layer of each face; the tick length is a drawing choice, the direction and the cracked extent are the model's"),
+      el(
+        "div",
+        "legend-note cracks-note",
+        c.style === "lines"
+          ? "shells: crack lines traced through the outer concrete layer of each face, wider where the crack opens more (log scale); the line spacing is a drawing choice, the direction and the cracked extent are the model's"
+          : "shells: one tick per crack at each Gauss point, on the outer concrete layer of each face; the tick length is a drawing choice, the direction and the cracked extent are the model's",
+      ),
     );
     for (const why of shells.refused) box.append(el("div", "legend-note cracks-note", `not drawn: ${why}`));
   }

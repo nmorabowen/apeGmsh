@@ -67,6 +67,11 @@ export interface CracksState {
    * toward the positive global axis the shell's normal is most along (`plus`, red), or only the other (`minus`, blue)
    */
   readonly face: "both" | "plus" | "minus";
+  /**
+   * Layered shells: continuous crack lines traced through the crack field (`lines`, default; state/crackLines.ts,
+   * CRACK_PLOTS_SPEC.md §3.3) or one tick per crack at each Gauss point (`ticks`, §3.2)
+   */
+  readonly style: "lines" | "ticks";
 }
 
 /** `axis`: two heads, one each way from the point (a direction is an axis); `arrow`: one along the sign-canonical direction (Qt). */
