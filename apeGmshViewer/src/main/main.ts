@@ -569,7 +569,15 @@ ipcMain.handle("results:readStep", (_e, req: unknown) => {
     typeof r.seq !== "number" ||
     (r.element !== undefined && typeof r.element !== "string") ||
     (r.lineDiagram !== undefined && typeof r.lineDiagram !== "string") ||
-    (r.tensor !== undefined && !(Array.isArray(r.tensor) && r.tensor.every((c) => typeof c === "string")))
+    (r.tensor !== undefined && !(Array.isArray(r.tensor) && r.tensor.every((c) => typeof c === "string"))) ||
+    (r.layers !== undefined &&
+      !(
+        typeof r.layers === "object" &&
+        r.layers !== null &&
+        Array.isArray(r.layers.components) &&
+        r.layers.components.every((c) => typeof c === "string") &&
+        (r.layers.pick === "faces" || r.layers.pick === "all")
+      ))
   ) {
     return { ok: false, seq: -1, error: `results:readStep: malformed request ${shown(req)}` };
   }

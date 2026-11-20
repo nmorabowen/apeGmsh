@@ -742,6 +742,17 @@ export class LadrunoFile {
     return this.layers.read(this.stage(stageId), groupId, components, layers, step, step + 1);
   }
 
+  /**
+   * A layer group's shell frames, one per element in read order (`MODEL/LOCAL_AXES`, which the fork writes for
+   * ASDShellQ4 / ASDShellT3 from nmorabowen/OpenSees#1133): the scalar-first quaternion taking global to element-local
+   * (its rotation's rows are e1, e2, e3), and 1 where the file recorded one. An element with none keeps [1, 0, 0, 0]
+   * and 0: never a frame to draw with.
+   */
+  layerFrames(stageId: string, groupId: string): { quaternions: Float64Array; recorded: Uint8Array } {
+    const la = this.readLocalAxes(stageId, { elementIds: this.layers.elementRows(this.stage(stageId).id, groupId) });
+    return { quaternions: la.quaternions, recorded: la.hasRecorded };
+  }
+
   /** A layer group's element rows: FEM ids only under a well-formed element_index_space = "fem" (#2079 Q6). */
   layerElementIds(stageId: string, groupId: string): ElementIds {
     const ids = this.layers.elementRows(this.stage(stageId).id, groupId);

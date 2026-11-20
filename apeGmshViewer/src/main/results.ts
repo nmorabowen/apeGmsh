@@ -45,7 +45,7 @@ import {
 } from "../reader/ladruno.ts";
 import { LadrunoPartSet, openLadrunoSet, partOf, partSiblings } from "../reader/ladrunoParts.ts";
 import { unopenedSibling } from "./pairing.ts";
-import { openResults, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
+import { openResults, type LayerGroupInfo, type ResultsFile, type ResultsH5, type StageInfo } from "../reader/results.ts";
 import { gaussCellValues } from "../state/contour.ts";
 import { applyPlan, planRange, type ExtrapPlan } from "../state/extrapolation.ts";
 import type { CompareStageIn, ModeFacts, ParticleStageInfo, UnitSystemId } from "../state/types.ts";
@@ -91,6 +91,8 @@ export interface ResultsStageMeta {
    * it carries shell local axes.
    */
   gauss: GaussGroupMeta[];
+  /** layered-shell groups (`.ladruno`, reader/ladrunoLayers.ts); absent when the stage has none */
+  layers?: LayerGroupMeta[];
   unread: string[];
   /** .ladruno INFO/PROVENANCE@element_index_space ("fem" or "ops_tag"), or null */
   elementIndexSpace?: string | null;
@@ -115,6 +117,35 @@ export interface GaussGroupMeta {
   localAxes: boolean;
   /** V4c2b: `_natural_coords` (G rows), null when not floating point (reader/results.ts) */
   naturalCoords: number[][] | null;
+}
+
+/**
+ * One layered-shell group as the store keeps it (reader/results.ts `LayerGroupInfo`): its components, size, the
+ * through-thickness position of each responding layer at the group's first element (`layerZ`, for labels), and why
+ * its geometry is absent (null when it is present). Per-element arrays travel in the open answer's `layers`.
+ */
+export interface LayerGroupMeta {
+  id: string;
+  components: string[];
+  refused: { component: string; reason: string }[];
+  nElements: number;
+  nGauss: number;
+  nLayers: number;
+  naturalCoords: number[][] | null;
+  layerZ: number[];
+  geometryReason: string | null;
+}
+
+/**
+ * A layer group's per-element arrays, sent at open for a verified file only: the element rows, each element's shell
+ * frame (scalar-first quaternion, global to local, and 1 where the file recorded one) and its section thickness (null
+ * when the group's geometry is absent).
+ */
+export interface LayerGroupArrays {
+  elementIds: Float64Array;
+  quaternions: Float64Array;
+  recorded: Uint8Array;
+  thickness: Float64Array | null;
 }
 
 /** Whether a file's `_element_index` rows are FEM element ids: only the root stamp says so (#1768). */
@@ -156,6 +187,8 @@ export type ResultsOpenAnswer =
       meta: ResultsMeta;
       nodeIds: Record<string, Float64Array>;
       elementIds: Record<string, Record<string, Float64Array>>;
+      /** each layer group's arrays by stage and group id, a verified `.ladruno` only; absent when no stage has a layer group */
+      layers?: Record<string, Record<string, LayerGroupArrays>>;
       warnings: string[];
       sizeBytes: number;
       readMs: number;
@@ -174,6 +207,12 @@ export interface StepRequest {
   lineDiagram?: LineStationComponent;
   /** the components of one tensor field (state/principal.ts), each read from every group that has it; verified files only */
   tensor?: string[];
+  /**
+   * .ladruno: these layer-group components at this step too, from every layer group that has them; `pick` "faces"
+   * reads each group's first and last responding layer (its -e3 and +e3 outer layers), "all" every layer. Verified
+   * files only.
+   */
+  layers?: { components: string[]; pick: "faces" | "all" };
   /** .ladruno: the zero-length springs' force at this step too */
   springs?: boolean;
   /** .ladruno: the beams' `hingeSummary` at this step too */
@@ -201,6 +240,8 @@ export type StepAnswer =
       gauss: Record<string, Float64Array>;
       /** `tensor`: each requested component by group id, (E * G,) element-major; absent with no `tensor` */
       tensor?: Record<string, Record<string, Float64Array>>;
+      /** `layers`: by group id, (E, G, layers, components) in the order asked, and the responding layers read; absent with no `layers` */
+      layers?: Record<string, { values: Float64Array; layers: number[] }>;
       lineDiagram?: LadrunoLineStationStep | null;
       lineDiagramError?: string;
       /** the springs' step when asked for (null: the read failed, `springsError` says why) */
@@ -450,6 +491,21 @@ function ladrunoStageNames(rf: AnyLadruno, warningsOut?: string[]): { program: s
   return { program, display: shown ? rename(program, shown) : program };
 }
 
+/** One layer group as the store keeps it (reader/ladrunoLayers.ts). */
+function layerMeta(g: LayerGroupInfo): LayerGroupMeta {
+  return {
+    id: g.id,
+    components: [...g.components],
+    refused: g.refused.map((r) => ({ ...r })),
+    nElements: g.nElements,
+    nGauss: g.nGauss,
+    nLayers: g.nLayers,
+    naturalCoords: g.naturalCoords ? g.naturalCoords.map((r) => [...r]) : null,
+    layerZ: g.geometry.state === "present" ? Array.from(g.geometry.z.subarray(0, g.nLayers)) : [],
+    geometryReason: g.geometry.state === "present" ? null : g.geometry.reason,
+  };
+}
+
 /** One gauss group as the store keeps it, from either reader (a `.ladruno`'s since #2187). */
 function gaussMeta(g: StageInfo["gauss"][number]): GaussGroupMeta {
   return {
@@ -500,6 +556,7 @@ export function metaOf(rf: AnyResultsFile, warningsOut?: string[]): ResultsMeta 
         nodal: s.nodes ? [...s.nodes.components] : [],
         refusedNodal: s.nodes ? s.nodes.refused.map((r) => ({ ...r })) : [],
         gauss: s.gauss.map(gaussMeta),
+        ...(s.layers?.length ? { layers: s.layers.map(layerMeta) } : {}),
         unread: hingeCountOf(rf, s.id, warningsOut) > 0 ? s.unread.filter((u) => u !== `ON_ELEMENTS/${HINGE_TOKEN}`) : [...s.unread],
         elementIndexSpace,
         lineStations: rf.availableLineStations(s.id, warningsOut),
@@ -603,6 +660,25 @@ export class ResultsHost {
           elementIds[st.id] = byGroup;
         }
       }
+      // A layer group's element rows, shell frames and section thickness: a verified .ladruno only, as for Gauss groups.
+      let layers: Record<string, Record<string, LayerGroupArrays>> | undefined;
+      if (isLadruno(rf) && rf.elementIndexVerdict().verified) {
+        for (const st of rf.index.stages) {
+          for (const g of st.layers ?? []) {
+            if (g.refused.length) continue;
+            const e = rf.layerElementIds(st.id, g.id);
+            if (e.mapping !== "fem_eid") throw new Error(`${g.path}: the file is verified but its rows read as ${e.mapping}`);
+            const f = rf.layerFrames(st.id, g.id);
+            layers ??= {};
+            (layers[st.id] ??= {})[g.id] = {
+              elementIds: e.ids,
+              quaternions: f.quaternions,
+              recorded: f.recorded,
+              thickness: g.geometry.state === "present" ? g.geometry.thickness : null,
+            };
+          }
+        }
+      }
       const warnings = [...rf.index.warnings];
       // One results slot per set (pairing.ts): the stem's other results file is never read; say so.
       const other = unopenedSibling(path, existsSync);
@@ -613,7 +689,7 @@ export class ResultsHost {
         );
       }
       const meta = metaOf(rf, warnings);
-      return { ok: true, meta, nodeIds, elementIds, warnings, sizeBytes: sizeOf(path), readMs: performance.now() - t };
+      return { ok: true, meta, nodeIds, elementIds, ...(layers ? { layers } : {}), warnings, sizeBytes: sizeOf(path), readMs: performance.now() - t };
     } catch (err) {
       this.close();
       return { ok: false, error: message(err) };
@@ -689,6 +765,20 @@ export class ResultsHost {
           tensor[c] = byGroup;
         }
       }
+      let layers: Record<string, { values: Float64Array; layers: number[] }> | undefined;
+      if (req.layers !== undefined) {
+        if (!isLadruno(rf)) throw new Error(`${req.path} is not a .ladruno: only it records layered-shell results the viewer reads`);
+        const v = rf.elementIndexVerdict();
+        if (!v.verified) throw new Error(`element results of ${req.path} are refused: ${v.reason}`);
+        layers = {};
+        const { components, pick } = req.layers;
+        for (const g of (s as StageInfo).layers ?? []) {
+          if (g.refused.length || !components.every((c) => g.components.includes(c))) continue;
+          const which = pick === "all" ? Array.from({ length: g.nLayers }, (_, k) => k) : g.nLayers > 1 ? [0, g.nLayers - 1] : [0];
+          layers[g.id] = { values: rf.readLayerStep(s.id, g.id, components, which, req.step), layers: which };
+        }
+        if (!Object.keys(layers).length) throw new Error(`stage ${s.id} has no layer group with components ${components.join(", ")}`);
+      }
       let lineDiagram: LadrunoLineStationStep | null | undefined;
       let lineDiagramError: string | undefined;
       if (req.lineDiagram !== undefined) {
@@ -738,6 +828,7 @@ export class ResultsHost {
         nodal,
         gauss,
         ...(tensor !== undefined ? { tensor } : {}),
+        ...(layers !== undefined ? { layers } : {}),
         ...(lineDiagram !== undefined ? { lineDiagram } : {}),
         ...(lineDiagramError !== undefined ? { lineDiagramError } : {}),
         ...(springs !== undefined ? { springs } : {}),

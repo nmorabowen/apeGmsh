@@ -95,11 +95,11 @@ test("buildCracks3D: a disc per opening > 0 and >= the threshold, in its crack p
 
 test("setCracks: defaults, a change, and refusals of a bad value", () => {
   assert.deepEqual(initialState.cracks, initialCracks);
-  assert.deepEqual(initialCracks, { on: false, minOpening: 0, cmap: "turbo", scale: 1 });
+  assert.deepEqual(initialCracks, { on: false, minOpening: 0, cmap: "turbo", scale: 1, face: "both" });
   const s = reduce(initialState, { type: "setCracks", on: true, minOpening: 1e-3 });
   assert.deepEqual([s.cracks.on, s.cracks.minOpening], [true, 1e-3]);
   assert.equal(reduce(s, { type: "setCracks", minOpening: 1e-3 }), s, "the same value: no change");
-  for (const bad of [{ minOpening: -1 }, { minOpening: NaN }, { scale: 0 }, { cmap: "rainbow" }, { on: "yes" }]) {
+  for (const bad of [{ minOpening: -1 }, { minOpening: NaN }, { scale: 0 }, { cmap: "rainbow" }, { on: "yes" }, { face: "top" }]) {
     assert.throws(() => reduce(initialState, { type: "setCracks", ...(bad as object) } as never), RangeError, JSON.stringify(bad));
   }
 });

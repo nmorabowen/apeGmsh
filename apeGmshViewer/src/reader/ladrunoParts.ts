@@ -270,6 +270,18 @@ export class LadrunoPartSet {
     return v.verified ? { mapping: "fem_eid", sourceType: "ladruno", ids } : { mapping: "unverified", sourceType: "ladruno", reason: v.reason, rawIndex: ids };
   }
 
+  /** A stitched layer group's shell frames: its parts' (reader/ladruno.ts `layerFrames`) end to end, in part order. */
+  layerFrames(stageId: string, groupId: string): { quaternions: Float64Array; recorded: Uint8Array } {
+    const per = this.layerPartsOf(stageId, groupId).map((j) => this.parts[j]!.layerFrames(stageId, groupId));
+    const recorded = new Uint8Array(per.reduce((a, f) => a + f.recorded.length, 0));
+    let o = 0;
+    for (const f of per) {
+      recorded.set(f.recorded, o);
+      o += f.recorded.length;
+    }
+    return { quaternions: concat(per.map((f) => f.quaternions)), recorded };
+  }
+
   private layerPartsOf(stageId: string, groupId: string): number[] {
     const at = this.layerParts.get(this.stage(stageId).id)?.get(groupId);
     if (!at) throw new LadrunoError("argument", `stage ${stageId} has no layer group ${JSON.stringify(groupId)}`);

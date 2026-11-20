@@ -13,7 +13,7 @@ export type Overlays = Pick<State, "supports" | "principal" | "cracks" | "reacti
 export const initialSupports: SupportsState = { on: false, scale: 1 };
 
 export const initialPrincipal: PrincipalState = { on: false, field: null, show: [true, true, true], head: "axis", cmap: "RdBu_r", scale: 1, headSize: 10, thin: true };
-export const initialCracks: CracksState = { on: false, minOpening: 0, cmap: "turbo", scale: 1 };
+export const initialCracks: CracksState = { on: false, minOpening: 0, cmap: "turbo", scale: 1, face: "both" };
 export const initialReactions: ReactionsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", allNodes: false, forces: true, moments: true };
 export const initialHinges: HingesState = { on: false, colorBy: "rotation", size: null, auto: true, element: null, end: "i", axis: "z", history: null, notice: null };
 export const initialSprings: SpringsState = { on: false, scale: 1, headSize: 12, colorBy: "mono", thin: true, component: "resultant", notice: null };
@@ -85,8 +85,9 @@ export function reduceOverlays(o: Overlays, e: OverlaysEvent): Overlays {
         throw new RangeError(`setCracks: the scale must be a finite number above 0; got ${JSON.stringify(e.scale)}`);
       }
       if (e.cmap !== undefined && !(CMAP_NAMES as readonly string[]).includes(e.cmap)) throw new RangeError(`setCracks: cmap ${JSON.stringify(e.cmap)}`);
+      if (e.face !== undefined && !["both", "plus", "minus"].includes(e.face)) throw new RangeError(`setCracks: face ${JSON.stringify(e.face)}`);
       const cur = o.cracks;
-      const next: CracksState = { on: e.on ?? cur.on, minOpening: e.minOpening ?? cur.minOpening, cmap: e.cmap ?? cur.cmap, scale: e.scale ?? cur.scale };
+      const next: CracksState = { on: e.on ?? cur.on, minOpening: e.minOpening ?? cur.minOpening, cmap: e.cmap ?? cur.cmap, scale: e.scale ?? cur.scale, face: e.face ?? cur.face };
       return (Object.keys(next) as (keyof CracksState)[]).every((k) => next[k] === cur[k]) ? o : { ...o, cracks: next };
     }
     case "setReactions": {

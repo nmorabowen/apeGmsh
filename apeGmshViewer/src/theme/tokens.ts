@@ -56,6 +56,12 @@ export const OFFICE = {
 export const OFFICE_BANDS: readonly Hex[] = ["#ECEFF1", "#CFD8DC", "#B0BEC5", "#90A4AE", "#78909C"];
 
 /** Structural roles the colour-by-role mode knows, with the office colour of each. */
+/**
+ * The Cracks card's shell faces (state/shellCracks.ts): the face toward the positive global axis (red) and the other
+ * (blue), the ColorBrewer RdBu ends CRACK_PLOTS_SPEC.md §3.4 draws them with. Theme-independent: they mean a side.
+ */
+export const CRACK_FACE: Readonly<{ plus: Hex; minus: Hex }> = { plus: "#B2182B", minus: "#2166AC" };
+
 export const ROLES = ["column", "wall", "beam", "concrete", "void"] as const;
 export type Role = (typeof ROLES)[number];
 
