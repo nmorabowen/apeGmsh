@@ -10,7 +10,8 @@ The checks run in order and the first failure refuses, naming the check and
 the lesson. Check 6 requires the five required checks green on the head, and
 ``app-tests`` too when the PR changes a path that lane's filter names (APP_PATHS:
 ``apeGmshViewer/`` and the pairing oracle's inputs, #2864); it is not in the ruleset. Checks 7 and 8 are ADR 0121 D4 (invariant 8): a diff that sets an
-ADR's Status to Accepted is refused outright, and an edit to a baseline file
+ADR's Status to Accepted, in its header or in an amendment note's own Status
+line, is refused outright, and an edit to a baseline file
 (the freeze census, the retirement ledger) needs the ``human-gate`` label. The maintainer's web merge is the
 exception path for both, by design. Check 9 (lesson #1788) refuses a ``program``
 PR whose changed files fall outside its slice card's Owned list; the ``scope-ok``
@@ -323,25 +324,37 @@ def _accepted(line: str) -> bool:
 
 
 def _sets_accepted(patch: str) -> bool:
-    """Whether one ADR's unified-diff patch sets its Status to Accepted: an added
-    header Status line reads Accepted and no removed header Status line did."""
+    """Whether one ADR's unified-diff patch sets a Status to Accepted: an added
+    header Status line reads Accepted and no removed header Status line did, or the
+    body gains more Accepted Status lines than it loses. The body clause is an
+    amendment's own `**Status:** Accepted`, below the header `parse_adr` reads
+    (#3078's D5 note on ADR 0138); counting keeps a moved or re-wrapped one passing."""
     old = new = 0
     removed = added = False
+    body = 0  # body Accepted Status lines added minus removed
     for line in patch.splitlines():
         hunk = _HUNK.match(line)
         if hunk:
             old, new = int(hunk.group(1)), int(hunk.group(2))
             continue
         if line.startswith("-"):
-            removed |= old <= ADR_HEADER_LINES and _accepted(line[1:])
+            if _accepted(line[1:]):
+                if old <= ADR_HEADER_LINES:
+                    removed = True
+                else:
+                    body -= 1
             old += 1
         elif line.startswith("+"):
-            added |= new <= ADR_HEADER_LINES and _accepted(line[1:])
+            if _accepted(line[1:]):
+                if new <= ADR_HEADER_LINES:
+                    added = True
+                else:
+                    body += 1
             new += 1
         elif not line.startswith("\\"):  # "\ No newline at end of file" is not a line
             old += 1
             new += 1
-    return added and not removed
+    return (added and not removed) or body > 0
 
 
 def _text(body: str | None) -> str:
