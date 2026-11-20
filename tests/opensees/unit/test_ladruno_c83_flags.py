@@ -91,7 +91,7 @@ def test_ns_wrapper_threads_p_delta() -> None:
     assert ops.element.ASDShellT3(pg="Cols", section=sec, p_delta=True).p_delta
 
 
-_PIN = "f9864cfec04c92a4a602d202ffe3237e01004858"
+_PIN = "23e0f000283675b935bfd1c00a4533550fa053e0"
 #: The maintainer's venv build, which predates c83ee812e.
 _STALE_FORK = "79e0623670c61c768357a01dff1477a4a0ef7e06"
 

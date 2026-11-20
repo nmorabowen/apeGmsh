@@ -59,7 +59,7 @@ from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from tests.opensees.unit.test_beam_uniform_load import _beam_fem_data
 
-_PIN = "f9864cfec04c92a4a602d202ffe3237e01004858"
+_PIN = "23e0f000283675b935bfd1c00a4533550fa053e0"
 #: The maintainer's venv build: an ancestor of fork WP-098, a descendant
 #: of upstream f4c791df6.
 _STALE_FORK = "79e0623670c61c768357a01dff1477a4a0ef7e06"
