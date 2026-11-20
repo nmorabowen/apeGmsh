@@ -31,7 +31,7 @@ import { smartNodeSize } from "./state/nodes.ts";
 import { componentOf, particleRange, type ParticleFrame } from "./renderer/particles.ts";
 import { materialTestJobOf } from "./state/materialTest.ts";
 import type { MaterialTestJob, MaterialTestRun } from "./state/types.ts";
-import { contourView, crackFieldOf, deformView, draftJudgedOf, elementJoinKey, hingeHistoryWanted, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
+import { contourView, crackFieldOf, shellCrackFieldOf, deformView, draftJudgedOf, elementJoinKey, hingeHistoryWanted, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
 import { elementMaskOf, visibleMaps } from "./renderer/visible.ts";
@@ -112,6 +112,8 @@ export interface Bridge {
         nodeIds?: Record<string, Float64Array>;
         /** V4c2a: each gauss group's `_element_index` by stage and group id, a verified file only */
         elementIds?: Record<string, Record<string, Float64Array>>;
+        /** each layer group's element rows, frames and thickness by stage and group id, a verified `.ladruno` only */
+        layers?: Record<string, Record<string, { elementIds: Float64Array; quaternions: Float64Array; recorded: Uint8Array; thickness: Float64Array | null }>>;
         warnings: string[];
         sizeBytes: number;
         readMs: number;
@@ -131,7 +133,18 @@ export interface Bridge {
   /** V4c1: the progress of the running scans; returns the unsubscribe. */
   onScanProgress?(cb: (p: { scanId: number; done: number; total: number }) => void): (() => void) | void;
   /** V4b: one step of the open results file; the reply echoes `seq`. V4c2a: `element` reads one Gauss component too (`gauss`, by group); `tensor` several (by component, then group). */
-  readResultsStep?(req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: LineStationComponent; tensor?: string[]; springs?: boolean; hinges?: boolean }): Promise<
+  readResultsStep?(req: {
+    path: string;
+    stage: string;
+    step: number;
+    seq: number;
+    element?: string;
+    lineDiagram?: LineStationComponent;
+    tensor?: string[];
+    layers?: { components: string[]; pick: "faces" | "all" };
+    springs?: boolean;
+    hinges?: boolean;
+  }): Promise<
     | {
         ok: true;
         seq: number;
@@ -140,6 +153,7 @@ export interface Bridge {
         nodal: Record<string, Float64Array>;
         gauss?: Record<string, Float64Array>;
         tensor?: Record<string, Record<string, Float64Array>>;
+        layers?: Record<string, { values: Float64Array; layers: number[] }>;
         lineDiagram?: LadrunoLineStationStep | null;
         lineDiagramError?: string;
         springs?: LadrunoSpringStep | null;
@@ -348,6 +362,7 @@ export function blobRefsOf(s: State): BlobRef[] {
   for (const st of s.results?.stages ?? []) if (st.nodeIds) out.push(st.nodeIds);
   // V4c2a: each gauss group's element ids (a verified file only).
   for (const st of s.results?.stages ?? []) for (const g of st.gauss) if (g.elementIds) out.push(g.elementIds);
+  for (const st of s.results?.stages ?? []) for (const g of st.layers ?? []) for (const r of [g.elementIds, g.quaternions, g.recorded, g.thickness]) if (r) out.push(r);
   // V4e3: every node, interior ones too (the cut face's points).
   if (s.mesh?.nodes) out.push(s.mesh.nodes.ids, s.mesh.nodes.xyz);
   return out;
@@ -435,6 +450,8 @@ export interface StepData {
   gauss: Record<string, Float64Array>;
   /** The Principal card's tensor components fetched with the step, by component then group; absent with none asked */
   tensor?: Record<string, Record<string, Float64Array>>;
+  /** The Cracks card's layered-shell values fetched with the step, by group (main/results.ts `StepAnswer.layers`) */
+  layers?: Record<string, { values: Float64Array; layers: number[] }>;
   /** Line diagram component fetched with the step, or null */
   lineDiagram?: LadrunoLineStationStep | null;
   /** Refusal message when the step's line-station read failed while nodal/gauss succeeded */
@@ -1275,7 +1292,23 @@ export class Effects {
           const e = eids?.[g.id];
           return e ? { ...g, elementIds: this.blobs.put(`results/${st.id}/gauss/${g.id}/elementIds`, e) } : g;
         });
-        return ids ? { ...st, gauss, nodeIds: this.blobs.put(`results/${st.id}/nodeIds`, ids) } : { ...st, gauss };
+        // Layer groups: their element rows, frames and thickness (a verified .ladruno's only).
+        const larr = res.layers?.[st.id];
+        const layers = st.layers?.map((g) => {
+          const a = larr?.[g.id];
+          if (!a) return g;
+          const at = `results/${st.id}/layers/${g.id}`;
+          return {
+            ...g,
+            elementIds: this.blobs.put(`${at}/elementIds`, a.elementIds),
+            quaternions: this.blobs.put(`${at}/quaternions`, a.quaternions),
+            recorded: this.blobs.put(`${at}/recorded`, a.recorded),
+            unframed: a.recorded.reduce((n, r) => n + (r ? 0 : 1), 0),
+            ...(a.thickness ? { thickness: this.blobs.put(`${at}/thickness`, a.thickness) } : {}),
+          };
+        });
+        const withLayers = layers ? { gauss, layers } : { gauss };
+        return ids ? { ...st, ...withLayers, nodeIds: this.blobs.put(`results/${st.id}/nodeIds`, ids) } : { ...st, ...withLayers };
       });
       this.store.dispatch({ type: "resultsLoaded", info: { ...res.meta, stages }, sizeBytes: res.sizeBytes, readMs: res.readMs, warnings: res.warnings });
       this.blobs.retain(blobRefsOf(this.store.get()));
@@ -1324,10 +1357,13 @@ export class Effects {
       ...new Set([...((s.principal.on ? principalFieldOf(s)?.components : undefined) ?? []), ...((s.cracks.on ? crackFieldOf(s)?.components : undefined) ?? []), ...(derived?.components ?? [])]),
     ];
     const tensor = components.length ? components : null;
+    // The Cracks card's layered shells: their crack-vector components at the two outer layers.
+    const shellField = s.cracks.on ? shellCrackFieldOf(s) : null;
+    const layers = shellField && shellField.groups.length ? { components: shellField.components, pick: "faces" as const } : null;
     const springs = s.springs.on && (st.springs ?? 0) > 0;
     // VA6d: a derived scalar's step also names the model's plane map, so a model re-read that changes it is fetched again.
     const plane = derived !== null ? `|plane:${planeDigestOf(s.decls)}` : "";
-    const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}${plane}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}`;
+    const base = `${info.path}|${st.id}|${at.step}|${element ?? ""}${plane}|${lineDiagram ?? ""}|${tensor?.join(",") ?? ""}|${layers ? `layers:${layers.components.join(",")}` : ""}`;
     const hinges = s.hinges.on && (st.hinges ?? 0) > 0;
     const key = `${base}|${springs ? "springs" : ""}|${hinges ? "hinges" : ""}`;
     // A card turned off keeps the step fetched with its data: it is only not drawn, and nothing is re-read.
@@ -1337,7 +1373,7 @@ export class Effects {
     const seq = ++this.stepSeq;
     this.step = null;
     // Not from inside this listener: the other listeners have not seen `s` yet.
-    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor, springs, derived, hinges));
+    queueMicrotask(() => void this.fetchStep(info.path, at.stage, st.id, at.step, seq, element, lineDiagram, tensor, springs, derived, hinges, layers));
   }
 
   private async fetchStep(
@@ -1352,6 +1388,7 @@ export class Effects {
     springs = false,
     derived: DerivedRead | null = null,
     hinges = false,
+    layers: { components: string[]; pick: "faces" | "all" } | null = null,
   ): Promise<void> {
     if (seq !== this.stepSeq) return;
     this.store.dispatch({ type: "resultStep", status: { stage, step, status: "loading", error: null } });
@@ -1369,6 +1406,7 @@ export class Effects {
         ...(element !== null && derived === null ? { element } : {}),
         ...(lineDiagram !== null ? { lineDiagram } : {}),
         ...(tensor !== null ? { tensor } : {}),
+        ...(layers !== null ? { layers } : {}),
         ...(springs ? { springs } : {}),
         ...(hinges ? { hinges } : {}),
       })
@@ -1398,6 +1436,7 @@ export class Effects {
       element,
       gauss,
       ...(res.tensor ? { tensor: res.tensor } : {}),
+      ...(res.layers ? { layers: res.layers } : {}),
       lineDiagram: res.lineDiagram ?? null,
       lineDiagramError: res.lineDiagramError ?? null,
       ...(springs ? { springs: res.springs ?? null, springsError: res.springsError ?? null } : {}),

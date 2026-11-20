@@ -32,6 +32,8 @@ export interface StepValues {
   gauss?: Record<string, Float64Array>;
   /** the Principal card's tensor components, by component then group */
   tensor?: Record<string, Record<string, Float64Array>>;
+  /** the Cracks card's layered-shell values, by group: (E, G, layers, components) and the responding layers read */
+  layers?: Record<string, { values: Float64Array; layers: number[] }>;
   /** The zero-length springs' force, fetched while the Springs card is on; null when its read failed */
   springs?: SpringStepData | null;
   /** The beams' `hingeSummary`, fetched while the Hinges card is on; null when its read failed */

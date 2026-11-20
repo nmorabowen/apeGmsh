@@ -1,7 +1,8 @@
 // The Cracks card's stills (`npm run capture`), only on a results stage that records
-// a crack pattern (state/cracks.ts): `<out>.cracks-<n>-<what>.png`.
+// a crack pattern (state/cracks.ts): `<out>.cracks-<n>-<what>.png`; on layered
+// shells (state/shellCracks.ts): `<out>.shellcracks-<n>-<what>.png`.
 
-import { crackFieldOf } from "../../state/selectors.ts";
+import { crackFieldOf, shellCrackFieldOf } from "../../state/selectors.ts";
 import { painted, until, type HarnessContext } from "./context.ts";
 
 /**
@@ -20,7 +21,7 @@ export async function captureCracks(ctx: HarnessContext, settle: (ms?: number) =
   const s0 = store.get();
   if (!s0.results || !s0.phase.axis.some((k) => k.kind === "results")) return;
   const stageIdx = s0.results.stages.findIndex((_, i) => crackFieldOf({ ...s0, phase: { ...s0.phase, at: { kind: "results", stage: i, step: 0 } } })?.groups.length);
-  if (stageIdx < 0) return;
+  if (stageIdx < 0) return captureShellCracks(ctx, settle, width, height);
   if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
   const last = Math.max(0, s0.results.stages[stageIdx]!.time.length - 1);
   const still = async (name: string) => {
@@ -56,6 +57,63 @@ export async function captureCracks(ctx: HarnessContext, settle: (ms?: number) =
   store.dispatch({ type: "setDeformScale", scale: 1 });
   store.dispatch({ type: "setCracks", on: false, minOpening: 0 });
   store.dispatch({ type: "setOpacity", value: 1 });
+  if (opened && card.dataset["collapsed"] !== "true") card.querySelector("h3")?.click();
+  await settle();
+  viewport.renderNow();
+}
+
+/**
+ * At the last step of the first stage with a layered-shell crack pattern, opaque faces, the card open:
+ * (1) `shellcracks-1-iso`: both faces' ticks (red toward the positive axis, blue the other), iso view;
+ * (2) `shellcracks-2-plus-y`: from +y, the red face alone (a wall's +y side, a slab's top);
+ * (3) `shellcracks-3-minus-y`: from -y, the blue face alone;
+ * (4) `shellcracks-4-deformed`: (1) on the deformed shape at scale 10;
+ * (5) `shellcracks-5-extruded`: (1) on the shells drawn by their thickness, when the model gives one.
+ * The state is put back afterwards.
+ */
+async function captureShellCracks(ctx: HarnessContext, settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
+  const { store, viewport, bridge } = ctx;
+  const s0 = store.get();
+  const stageIdx = s0.results!.stages.findIndex((_, i) => shellCrackFieldOf({ ...s0, phase: { ...s0.phase, at: { kind: "results", stage: i, step: 0 } } })?.groups.length);
+  if (stageIdx < 0) return;
+  if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
+  const last = Math.max(0, s0.results!.stages[stageIdx]!.time.length - 1);
+  const still = async (name: string) => {
+    await until(() => store.get().resultStep?.status === "ready" && viewport.cracks.drawnShell.ticks > 0, 15000);
+    await settle(150);
+    viewport.renderNow();
+    await painted();
+    await painted();
+    await bridge.captureStill(name);
+  };
+  store.dispatch({ type: "clearSelection" });
+  store.dispatch({ type: "setColourBy", by: "group" });
+  store.dispatch({ type: "setPhase", at: { kind: "results", stage: stageIdx, step: last } });
+  store.dispatch({ type: "setCracks", on: true, minOpening: 0, face: "both" });
+  store.dispatch({ type: "setCamera", to: "iso" });
+  const card = document.getElementById("cracks");
+  const opened = !!card && !card.hidden && card.dataset["collapsed"] === "true";
+  if (opened) card.querySelector("h3")?.click();
+  await still("shellcracks-1-iso");
+  store.dispatch({ type: "setCracks", face: "plus" });
+  store.dispatch({ type: "setCamera", to: "+y" });
+  await still("shellcracks-2-plus-y");
+  store.dispatch({ type: "setCracks", face: "minus" });
+  store.dispatch({ type: "setCamera", to: "-y" });
+  await still("shellcracks-3-minus-y");
+  store.dispatch({ type: "setCracks", face: "both" });
+  store.dispatch({ type: "setCamera", to: "iso" });
+  store.dispatch({ type: "setDeform", on: true });
+  store.dispatch({ type: "setDeformScale", scale: 10 });
+  await still("shellcracks-4-deformed");
+  store.dispatch({ type: "setDeform", on: false });
+  store.dispatch({ type: "setDeformScale", scale: 1 });
+  if (store.get().mesh?.shellThickness) {
+    store.dispatch({ type: "toggleExtrudeFrames", on: true });
+    await still("shellcracks-5-extruded");
+    store.dispatch({ type: "toggleExtrudeFrames", on: false });
+  }
+  store.dispatch({ type: "setCracks", on: false, minOpening: 0, face: "both" });
   if (opened && card.dataset["collapsed"] !== "true") card.querySelector("h3")?.click();
   await settle();
   viewport.renderNow();

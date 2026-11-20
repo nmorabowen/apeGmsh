@@ -62,6 +62,11 @@ export interface CracksState {
   readonly cmap: ContourCmap;
   /** the disc size multiplier on 0.4 x the Gauss spacing (default 1, > 0) */
   readonly scale: number;
+  /**
+   * Layered shells (state/shellCracks.ts): the faces the crack ticks are drawn on: both (default), only the face
+   * toward the positive global axis the shell's normal is most along (`plus`, red), or only the other (`minus`, blue)
+   */
+  readonly face: "both" | "plus" | "minus";
 }
 
 /** `axis`: two heads, one each way from the point (a direction is an axis); `arrow`: one along the sign-canonical direction (Qt). */

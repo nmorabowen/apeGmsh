@@ -34,6 +34,8 @@ export interface ResultsStage {
   nodeIds?: BlobRef;
   /** gauss groups and their components (V4c2a: element contours read them) */
   gauss: GaussGroup[];
+  /** layered-shell groups (`.ladruno`, reader/ladrunoLayers.ts); absent when the stage has none */
+  layers?: LayerGroup[];
   /** element categories the reader does not read */
   unread: string[];
   /** .ladruno INFO/PROVENANCE@element_index_space ("fem" or "ops_tag"), or null */
@@ -77,6 +79,35 @@ export interface GaussGroup {
   elementIds?: BlobRef;
   /** V4c2b: `_natural_coords`, one parent-space row per Gauss point; null when the file's dataset is not floating point */
   naturalCoords: number[][] | null;
+}
+
+/**
+ * One layered-shell group of a results stage (`section.fiber.<token>` on a LayeredShell section): per element and
+ * Gauss point, one value per responding layer (the layers whose material answers; rebar does not) and component.
+ * Layers are in section order, the first on the shell's -e3 side. The blob refs are present only for a verified file.
+ */
+export interface LayerGroup {
+  id: string;
+  components: string[];
+  refused: { component: string; reason: string }[];
+  nElements: number;
+  nGauss: number;
+  nLayers: number;
+  naturalCoords: number[][] | null;
+  /** each responding layer's through-thickness coordinate at the group's first element; [] when not placed */
+  layerZ: number[];
+  /** why the layers are not placed through the thickness; null when they are */
+  geometryReason: string | null;
+  /** the element rows (f64) */
+  elementIds?: BlobRef;
+  /** each element's frame: scalar-first quaternion, global to local (f64, 4 per element) */
+  quaternions?: BlobRef;
+  /** 1 where the file recorded the element's frame (u8) */
+  recorded?: BlobRef;
+  /** how many elements have no recorded frame (counted by the effects at open, with `recorded`) */
+  unframed?: number;
+  /** each element's section thickness (f64); absent when the layers are not placed */
+  thickness?: BlobRef;
 }
 
 /** Whether a results file's `_element_index` rows are FEM element ids: only its root stamp says so (#1768). */
