@@ -92,8 +92,9 @@ test("a fork-written layered-shell .ladruno indexes each header bucket as a laye
     const st = stageOf(r);
     const ids = (st.layers ?? []).map((g) => g.id).sort();
     assert.deepEqual(ids, [CRACK6, CRACK4, DAMAGE6, "section.fiber.damage/203-ASDShellQ4[201:0:1]"].sort());
-    // Read here, so neither a Gauss group nor unread.
-    assert.deepEqual(st.gauss, []);
+    // Read here, so not unread; the only Gauss groups are the layer groups' contour variants (reader/layerVariants.ts).
+    assert.ok(st.gauss.every((g) => g.layerVariant), st.gauss.map((g) => g.id).join(", "));
+    assert.equal(st.gauss.length, 4 * 3, "four layer groups, three variants each");
     assert.ok(!st.unread.some((u) => u.includes("section.fiber")), st.unread.join(" | "));
     const c6 = groupOf(r, CRACK6);
     assert.deepEqual([c6.nElements, c6.nGauss, c6.nLayers, c6.classTag, c6.refused.length], [4, 4, 6, 203, 0]);

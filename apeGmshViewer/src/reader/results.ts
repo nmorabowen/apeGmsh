@@ -143,6 +143,11 @@ export interface GaussGroupInfo {
    * the open warns, naming the group, VF2 #2950).
    */
   naturalCoords: number[][] | null;
+  /**
+   * A `.ladruno` layer group offered as an element field (reader/layerVariants.ts): this group is a view of layer
+   * group `layerGroupId` (its + face, - face or max over layers), with its elements; absent on every other group.
+   */
+  layerVariant?: { layerGroupId: string; variant: "+face" | "-face" | "max" };
 }
 
 /**

@@ -4,9 +4,8 @@
 // (effects), the ticks (renderer/cracks.ts) and the card (panels/cracks.ts). The pure tick builder is checked on
 // hand-made frames and openings, where the right answer is known without the app.
 //
-// The wall's frame, from its nodes (ASDShellQ4: e3 from the diagonals, e1 the `-local` vector): e1 = +x,
-// e3 = (P3 - P1) x (P4 - P2) = -y, e2 = e3 x e1 = +z. Its normal is most along y, and e3 points to -y, so the face
-// toward +y (red) is the first concrete layer (the -e3 side) and the face toward -y (blue) the last.
+// The wall's frame, as the file's MODEL/LOCAL_AXES records it: e1 = +x, e3 = +y (the normal, most along y), so the
+// face toward +y (red) is the last concrete layer (the +e3 side) and the face toward -y (blue) the first.
 
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
@@ -137,7 +136,7 @@ test("the stage's shell crack field is both header buckets; the step reads their
   h.store.dispatch({ type: "setCracks", on: false });
 });
 
-test("the ticks: in the wall's plane, along a trace normal to e3 = -y; red on the +y face, blue on the -y face; one face at a time", async () => {
+test("the ticks: in the wall's plane, along a trace normal to e3 = +y; red on the +y face, blue on the -y face; one face at a time", async () => {
   h.store.dispatch({ type: "setCracks", on: true, minOpening: 0.01, style: "ticks" });
   const d = await atStep(LAST, true);
   const layer = new CracksLayer();
@@ -150,7 +149,7 @@ test("the ticks: in the wall's plane, along a trace normal to e3 = -y; red on th
     let red = 0, blue = 0;
     for (let v = 0; v < pos.length / 3; v += 2) {
       const ya = pos[3 * v + 1]!, yb = pos[3 * (v + 1) + 1]!;
-      assert.ok(Math.abs(ya - yb) < 1e-4, "a tick lies in its face: no extent along e3 = -y");
+      assert.ok(Math.abs(ya - yb) < 1e-4, "a tick lies in its face: no extent along e3 = +y");
       if (isColour(col, v, RED)) {
         red++;
         assert.ok(ya > 0, `red on the +y face, y = ${ya}`);
