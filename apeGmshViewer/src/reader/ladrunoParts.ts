@@ -46,6 +46,7 @@
 // Browser-safe: no Node import. The directory listing is the caller's (`list`).
 
 import { uniqueElementIds, type IdList } from "./ladrunoChecks.ts";
+import { parseVariantGroup, variantGroupsOf } from "./layerVariants.ts";
 import type { ElementIndexVerdict } from "./ladrunoElements.ts";
 import { LadrunoError, openLadruno, type LadrunoFile, type LadrunoIndex, type LadrunoLineage, type LadrunoLineStationSlab, type LadrunoLineStationStep, type LadrunoMode, type LineStationComponent } from "./ladruno.ts";
 import type { ElementIds, LayerGroupInfo, NodalInfo, ResultsH5, StageInfo } from "./results.ts";
@@ -289,18 +290,37 @@ export class LadrunoPartSet {
   }
 
   elementIds(stageId: string, groupId: string): ElementIds {
+    // A layer group's variant is read as its stitched layer group (reader/layerVariants.ts); other Gauss groups are not stitched.
+    const v = parseVariantGroup(groupId);
+    if (v) return this.layerElementIds(stageId, v.layerGroupId);
     // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
     throw new LadrunoError("unsupported", `stage ${stageId}, group ${groupId}: ${PART_SET_ELEMENTS_UNREAD}`);
   }
 
-  readGaussStep(stageId: string, groupId: string): Float64Array {
-    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
-    throw new LadrunoError("unsupported", `stage ${stageId}, group ${groupId}: ${PART_SET_ELEMENTS_UNREAD}`);
+  readGaussStep(stageId: string, groupId: string, component = "", step = 0): Float64Array {
+    return this.readGaussRows(stageId, groupId, component, step, step + 1);
   }
 
-  readGaussRows(stageId: string, groupId: string): Float64Array {
-    // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
-    throw new LadrunoError("unsupported", `stage ${stageId}, group ${groupId}: ${PART_SET_ELEMENTS_UNREAD}`);
+  /** A layer group's variant over steps k0..k1: each part's own reduction, the parts end to end within each step. */
+  readGaussRows(stageId: string, groupId: string, component = "", k0 = 0, k1 = 0): Float64Array {
+    const v = parseVariantGroup(groupId);
+    if (!v) {
+      // Precondition: a slice that adds line-station, fiber (or any element-result) stitching for part sets must extend checkElementIds to those buckets (#2316 review); today only Gauss buckets are cross-checked.
+      throw new LadrunoError("unsupported", `stage ${stageId}, group ${groupId}: ${PART_SET_ELEMENTS_UNREAD}`);
+    }
+    const reads = this.layerPartsOf(stageId, v.layerGroupId).map((j) => this.parts[j]!.readGaussRows(stageId, groupId, component, k0, k1));
+    const T = k1 - k0;
+    const per = reads.map((r) => r.length / T);
+    const total = per.reduce((a, n) => a + n, 0);
+    const out = new Float64Array(T * total);
+    for (let t = 0; t < T; t++) {
+      let o = t * total;
+      reads.forEach((r, j) => {
+        out.set(r.subarray(t * per[j]!, (t + 1) * per[j]!), o);
+        o += per[j]!;
+      });
+    }
+    return out;
   }
 
   availableLineStations(stageId: string): LineStationComponent[] {
@@ -425,6 +445,8 @@ export class LadrunoPartSet {
       const byToken = new Map<string, IdList[]>();
       this.parts.forEach((p, j) => {
         for (const g of p.stage(s.id).gauss) {
+          // A layer group's variant lists its layer group's elements, checked below with the layer groups.
+          if (g.layerVariant) continue;
           const token = g.path.slice(0, g.path.lastIndexOf("/"));
           const e = p.elementIds(s.id, g.id);
           const lists = byToken.get(token) ?? [];
@@ -456,8 +478,12 @@ export class LadrunoPartSet {
     // Part 0's layer groups are not the set's: the set's are stitched here.
     const { layers: _layers, ...r } = per[0]!;
     const unread = [...new Set(per.flatMap((s) => s.unread))];
-    for (const g of [...new Set(per.flatMap((s) => s.gauss.map((x) => x.id)))]) unread.push(`${g} (${PART_SET_ELEMENTS_UNREAD})`);
+    for (const g of [...new Set(per.flatMap((s) => s.gauss.filter((x) => !x.layerVariant).map((x) => x.id)))]) unread.push(`${g} (${PART_SET_ELEMENTS_UNREAD})`);
     const layers = this.stitchLayers(id, per);
+    // The stitched layer groups' variants; the face ones only when every part that holds the group offers them.
+    const variants = variantGroupsOf(layers, (lg) =>
+      per.every((s) => !s.layers?.some((x) => x.id === lg.id) || s.gauss.some((x) => x.id === `${lg.id}@+face` && x.components.length > 0)),
+    );
     const withLayers = layers.length ? { layers } : {};
     const stations = [...new Set(this.parts.flatMap((p) => p.availableLineStations(id)))];
     if (stations.length) unread.push(`line stations ${stations.join(", ")} (${PART_SET_ELEMENTS_UNREAD})`);
@@ -465,7 +491,7 @@ export class LadrunoPartSet {
     this.stitches.set(id, stitches);
     if (per.every((s) => s.nodes === null)) {
       this.maps.set(id, { pos: per.map(() => new Int32Array(0)), first: per.map(() => new Uint8Array(0)), n: 0 });
-      return { ...r, nodes: null, gauss: [], ...withLayers, unread };
+      return { ...r, nodes: null, gauss: variants, ...withLayers, unread };
     }
     const refused: NodalInfo["refused"] = [];
     per.forEach((s, j) => {
@@ -505,7 +531,7 @@ export class LadrunoPartSet {
     const first = pos.map((p, j) => Uint8Array.from(p, (u, i) => (keepPart[u] === j && keepRow[u] === i ? 1 : 0)));
     this.maps.set(id, { pos, first, n: union.length });
     const nodes: NodalInfo = { path: r.nodes?.path ?? per.find((s) => s.nodes)!.nodes!.path, ids: Float64Array.from(union), components, refused };
-    return { ...r, nodes, gauss: [], ...withLayers, unread };
+    return { ...r, nodes, gauss: variants, ...withLayers, unread };
   }
 
   /** The set's layer groups of stage `id`: each group's parts' groups end to end (see the header). */

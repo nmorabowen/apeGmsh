@@ -2,7 +2,8 @@
 // a crack pattern (state/cracks.ts): `<out>.cracks-<n>-<what>.png`; on layered
 // shells (state/shellCracks.ts): `<out>.shellcracks-<n>-<what>.png`.
 
-import { crackFieldOf, shellCrackFieldOf } from "../../state/selectors.ts";
+import { gaussFields } from "../../state/contour.ts";
+import { contourView, crackFieldOf, shellCrackFieldOf } from "../../state/selectors.ts";
 import { painted, until, type HarnessContext } from "./context.ts";
 
 /**
@@ -70,7 +71,10 @@ export async function captureCracks(ctx: HarnessContext, settle: (ms?: number) =
  * (3) `shellcracks-3-minus-y`: from -y, the blue face alone;
  * (4) `shellcracks-4-deformed`: (1) on the deformed shape at scale 10;
  * (5) `shellcracks-5-extruded`: (1) on the shells drawn by their thickness, when the model gives one;
- * (6) `shellcracks-6-ticks`: (2) as ticks, one per crack at each Gauss point.
+ * (6) `shellcracks-6-ticks`: (2) as ticks, one per crack at each Gauss point;
+ * then, with the cracks off, the damage contours of the layered shells (reader/layerVariants.ts), when recorded:
+ * (7) `shelldamage-7-max`: d+ as the largest over the layers, iso;
+ * (8) `shelldamage-8-plus-y`: d+ of the + face, from +y; (9) `shelldamage-9-minus-y`: d+ of the - face, from -y.
  * The state is put back afterwards.
  */
 async function captureShellCracks(ctx: HarnessContext, settle: (ms?: number) => Promise<unknown>, width: number, height: number) {
@@ -120,6 +124,32 @@ async function captureShellCracks(ctx: HarnessContext, settle: (ms?: number) => 
   await still("shellcracks-6-ticks");
   store.dispatch({ type: "setCracks", on: false, minOpening: 0, face: "both", style: "lines" });
   if (opened && card.dataset["collapsed"] !== "true") card.querySelector("h3")?.click();
+  const fields = gaussFields(store.get().results!.stages[stageIdx]!.gauss);
+  const damage = (v: string) => fields.find((f) => f.name === `section.fiber.damage@${v}` && f.refused === null);
+  if (damage("max")) {
+    const contour = async (v: string, camera: "iso" | "+y" | "-y", name: string) => {
+      const f = damage(v);
+      if (!f) return;
+      store.dispatch({ type: "setCamera", to: camera });
+      store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: "element" });
+      await until(() => {
+        const cv = contourView(store.get());
+        return cv.state === "element" && cv.stepMeasured;
+      }, 15000);
+      await settle(150);
+      viewport.renderNow();
+      await painted();
+      await painted();
+      await bridge.captureStill(name);
+    };
+    store.dispatch({ type: "setColourBy", by: "contour" });
+    store.dispatch({ type: "setContourRange", range: "step" });
+    await contour("max", "iso", "shelldamage-7-max");
+    await contour("+face", "+y", "shelldamage-8-plus-y");
+    await contour("-face", "-y", "shelldamage-9-minus-y");
+    store.dispatch({ type: "setColourBy", by: "group" });
+    store.dispatch({ type: "setCamera", to: "iso" });
+  }
   await settle();
   viewport.renderNow();
 }

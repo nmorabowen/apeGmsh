@@ -61,6 +61,7 @@ import { PARTICLES_UNREAD } from "../state/results.ts";
 import type { UnitSystemId } from "../state/types.ts";
 import { parseDeclaredUnits, UNIT_SYSTEM_IDS } from "../state/units.ts";
 import { LadrunoLayers } from "./ladrunoLayers.ts";
+import { layerComponentOf, parseVariantGroup, plusLayersOf, reduceLayers, variantGroupsOf } from "./layerVariants.ts";
 import { elementIndexVerdictOf, intOf, LadrunoGauss, modelGroupFor, oneValue, parseCompNames, type ElementIndexVerdict } from "./ladrunoElements.ts";
 import { evenlySpacedXi, lineGpParamXi, sectionStationXi } from "./ladrunoGauss.ts";
 import { uniqueNodeIds } from "./ladrunoChecks.ts";
@@ -472,6 +473,7 @@ export class LadrunoFile {
   private readonly nodeColumn = new Map<string, Map<number, number>>();
   private readonly gauss: LadrunoGauss;
   private readonly layers: LadrunoLayers;
+  private readonly plusLayerCache = new Map<string, Int32Array>();
   /** Each stage's spring buckets, found once (`springBuckets`). */
   private readonly springs = new Map<string, SpringBucket[]>();
   private readonly hinges = new Map<string, HingeBucket[]>();
@@ -724,12 +726,31 @@ export class LadrunoFile {
   /** One Gauss-group component at `step`: (E * G,), element-major (reader/results.ts `readGaussStep`). */
   readGaussStep(stageId: string, groupId: string, component: string, step: number): Float64Array {
     checkStep(this.stage(stageId), step);
-    return this.gauss.read(this.stage(stageId), groupId, component, step, step + 1);
+    return this.readGaussRows(stageId, groupId, component, step, step + 1);
   }
 
   /** Steps `k0` to `k1` (exclusive) of one Gauss-group component: ((k1 - k0) * E * G,), step-major then element-major. */
   readGaussRows(stageId: string, groupId: string, component: string, k0: number, k1: number): Float64Array {
-    return this.gauss.read(this.stage(stageId), groupId, component, k0, k1);
+    const v = parseVariantGroup(groupId);
+    if (!v) return this.gauss.read(this.stage(stageId), groupId, component, k0, k1);
+    // A layer group's variant (reader/layerVariants.ts): every layer of the component, reduced.
+    const st = this.stage(stageId);
+    const lg = st.layers?.find((g) => g.id === v.layerGroupId);
+    if (!lg) throw new LadrunoError("argument", `stage ${stageId} has no layer group ${JSON.stringify(v.layerGroupId)}`);
+    const raw = this.layers.read(st, lg.id, [layerComponentOf(component)], null, k0, k1);
+    return reduceLayers(raw, k1 - k0, lg.nElements, lg.nGauss, lg.nLayers, v.variant, v.variant === "max" ? null : this.plusLayers(stageId, lg.id, lg.nLayers));
+  }
+
+  /** Each element's + face layer of a layer group (reader/layerVariants.ts `plusLayersOf`), read once. */
+  plusLayers(stageId: string, groupId: string, nLayers: number): Int32Array {
+    const key = `${stageId}|${groupId}`;
+    let p = this.plusLayerCache.get(key);
+    if (!p) {
+      const f = this.layerFrames(stageId, groupId);
+      p = plusLayersOf(f.quaternions, f.recorded, nLayers);
+      this.plusLayerCache.set(key, p);
+    }
+    return p;
   }
 
   /**
@@ -762,6 +783,8 @@ export class LadrunoFile {
 
   /** A Gauss group's element rows: FEM ids only under a well-formed element_index_space = "fem" (#2079 Q6). */
   elementIds(stageId: string, groupId: string): ElementIds {
+    const v = parseVariantGroup(groupId);
+    if (v) return this.layerElementIds(stageId, v.layerGroupId);
     return this.gauss.elementIds(this.stage(stageId).id, groupId, this.elementIndexVerdict());
   }
 
@@ -1511,7 +1534,15 @@ export class LadrunoFile {
       nSteps: time.length,
       partition: "partition_0",
       nodes,
-      gauss: elements?.gauss ?? [],
+      // Layer groups also as element fields (+ face, - face, max over layers; reader/layerVariants.ts). The face
+      // variants need the shells' frames: offered when MODEL/LOCAL_AXES has a group of the element class.
+      gauss: [
+        ...(elements?.gauss ?? []),
+        ...variantGroupsOf(layered?.layers ?? [], (lg) => {
+          const la = model ? this.optionalSubgroup(model, ["LOCAL_AXES"]) : null;
+          return !!la && la.keys().some((k) => k.startsWith(`${lg.classTag}-`));
+        }),
+      ],
       ...(layered?.layers.length ? { layers: layered.layers } : {}),
       unread,
     };
