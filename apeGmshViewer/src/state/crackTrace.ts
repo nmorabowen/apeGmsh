@@ -19,8 +19,10 @@ export interface TraceParams {
   dsep: number;
   /** the integration step */
   step: number;
-  /** the neighbourhood of the field and of the "inside" test */
+  /** the neighbourhood of the "inside" test (the nearest Gauss point must be this close and cracked), and of the field unless `rField` says otherwise */
   rmax: number;
+  /** the neighbourhood the field averages over (default rmax): wider blends the directions across element edges */
+  rField?: number;
   /** the largest turn in one step, radians */
   maxTurn: number;
   /** lines shorter than this are discarded */
@@ -33,9 +35,16 @@ export interface TraceParams {
   maxSteps?: number;
 }
 
-/** The reference's parameters (0.40 / 0.05 / 0.60 / 0.25 m on ~1 m elements) in units of the Gauss pitch `h`. */
-export function traceParamsFor(h: number, wMin: number): TraceParams {
-  return { dsep: 0.8 * h, step: 0.1 * h, rmax: 1.2 * h, maxTurn: (40 * Math.PI) / 180, minLen: 0.5 * h, wMin, soft: 0.1 * h };
+/**
+ * The reference's parameters (0.40 / 0.05 / 0.60 / 0.25 m on ~1 m elements) in units of the Gauss pitch `h`.
+ * `continuous`: the field averages over 2.5 pitches (so it blends the directions of neighbouring elements instead of
+ * jumping at their shared edge) and a line bends through any turn short of a reversal instead of stopping at 40 deg;
+ * the "inside" test, the spacing and the step are the reference's. Smoother, longer lines; a sharp change of direction
+ * within an element is averaged out.
+ */
+export function traceParamsFor(h: number, wMin: number, continuous = false): TraceParams {
+  const base = { dsep: 0.8 * h, step: 0.1 * h, rmax: 1.2 * h, maxTurn: (40 * Math.PI) / 180, minLen: 0.5 * h, wMin, soft: 0.1 * h };
+  return continuous ? { ...base, rField: 2.5 * h, maxTurn: (100 * Math.PI) / 180, soft: 0.25 * h } : base;
 }
 
 /** One traced line: its points (x, y, x, y, ...) and the opening at each (the nearest Gauss point's). */
@@ -130,12 +139,14 @@ export class Grid {
  */
 export function traceCracks(P: ArrayLike<number>, T: ArrayLike<number>, W: ArrayLike<number>, p: TraceParams): Polyline[] {
   const n = W.length;
-  const pts = new PointGrid(P, n, p.rmax);
+  const rf = p.rField ?? p.rmax;
+  const pts = new PointGrid(P, n, Math.max(p.rmax, rf));
   const occ = new Grid(Math.max(p.dsep, 1e-12));
   const occXY: number[] = [];
   const buf2: number[] = [];
   const cosTurn = Math.cos(p.maxTurn);
   const r2 = p.rmax * p.rmax;
+  const rf2 = rf * rf;
   const maxSteps = p.maxSteps ?? Math.ceil((1e4 * p.dsep) / p.step);
 
   // One pass over the neighbours: the nearest point, and the opening-weighted sum of the cracked ones' axes.
@@ -144,7 +155,7 @@ export function traceCracks(P: ArrayLike<number>, T: ArrayLike<number>, W: Array
     const ex = P[2 * j]! - qx, ey = P[2 * j + 1]! - qy;
     const d2 = ex * ex + ey * ey;
     if (d2 < best) [best, i0] = [d2, j];
-    if (d2 > r2 || !(W[j]! >= p.wMin)) return;
+    if (d2 > rf2 || !(W[j]! >= p.wMin)) return;
     const tx = T[2 * j]!, ty = T[2 * j + 1]!;
     const k = ((tx * ppx + ty * ppy < 0 ? -1 : 1) * W[j]!) / (Math.sqrt(d2) + p.soft);
     sx += k * tx;

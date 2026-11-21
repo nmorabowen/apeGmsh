@@ -68,10 +68,12 @@ export interface CracksState {
    */
   readonly face: "both" | "plus" | "minus";
   /**
-   * Layered shells: continuous crack lines traced through the crack field (`lines`, default; state/crackLines.ts,
-   * CRACK_PLOTS_SPEC.md §3.3) or one tick per crack at each Gauss point (`ticks`, §3.2)
+   * Layered shells: crack lines traced through the crack field (`lines`, default; state/crackLines.ts,
+   * CRACK_PLOTS_SPEC.md §3.3), the same traced with the directions blended across element edges and bending instead
+   * of stopping at a sharp turn (`continuous`, state/crackTrace.ts `traceParamsFor`), or one tick per crack at each
+   * Gauss point (`ticks`, §3.2)
    */
-  readonly style: "lines" | "ticks";
+  readonly style: "lines" | "continuous" | "ticks";
 }
 
 /** `axis`: two heads, one each way from the point (a direction is an axis); `arrow`: one along the sign-canonical direction (Qt). */

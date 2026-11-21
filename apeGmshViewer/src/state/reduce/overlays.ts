@@ -86,7 +86,7 @@ export function reduceOverlays(o: Overlays, e: OverlaysEvent): Overlays {
       }
       if (e.cmap !== undefined && !(CMAP_NAMES as readonly string[]).includes(e.cmap)) throw new RangeError(`setCracks: cmap ${JSON.stringify(e.cmap)}`);
       if (e.face !== undefined && !["both", "plus", "minus"].includes(e.face)) throw new RangeError(`setCracks: face ${JSON.stringify(e.face)}`);
-      if (e.style !== undefined && !["lines", "ticks"].includes(e.style)) throw new RangeError(`setCracks: style ${JSON.stringify(e.style)}`);
+      if (e.style !== undefined && !["lines", "continuous", "ticks"].includes(e.style)) throw new RangeError(`setCracks: style ${JSON.stringify(e.style)}`);
       const cur = o.cracks;
       const next: CracksState = { on: e.on ?? cur.on, minOpening: e.minOpening ?? cur.minOpening, cmap: e.cmap ?? cur.cmap, scale: e.scale ?? cur.scale, face: e.face ?? cur.face, style: e.style ?? cur.style };
       return (Object.keys(next) as (keyof CracksState)[]).every((k) => next[k] === cur[k]) ? o : { ...o, cracks: next };

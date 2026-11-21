@@ -10,7 +10,7 @@ export type OverlaysEvent =
   /** The Principal card's controls */
   | { type: "setPrincipal"; on?: boolean; field?: string | null; show?: readonly [boolean, boolean, boolean]; head?: PrincipalHead; cmap?: ContourCmap; scale?: number; headSize?: number; thin?: boolean }
   /** The Cracks card's controls */
-  | { type: "setCracks"; on?: boolean; minOpening?: number; cmap?: ContourCmap; scale?: number; face?: "both" | "plus" | "minus"; style?: "lines" | "ticks" }
+  | { type: "setCracks"; on?: boolean; minOpening?: number; cmap?: ContourCmap; scale?: number; face?: "both" | "plus" | "minus"; style?: "lines" | "continuous" | "ticks" }
   /** The Reactions card's controls */
   | { type: "setReactions"; on?: boolean; scale?: number; headSize?: number; colorBy?: LoadsColorBy; thin?: boolean; component?: ReactionComponent; allNodes?: boolean; forces?: boolean; moments?: boolean }
   /** The Hinges card's controls; `history` and `notice` are set by the effects */

@@ -68,7 +68,8 @@ export async function captureCracks(ctx: HarnessContext, settle: (ms?: number) =
  * crack lines (the card's default style):
  * (1) `shellcracks-1-iso`: both faces' lines (red toward the positive axis, blue the other), iso view;
  * (2) `shellcracks-2-plus-y`: from +y, the red face alone (a wall's +y side, a slab's top);
- * (3) `shellcracks-3-minus-y`: from -y, the blue face alone;
+ * (3) `shellcracks-3-minus-y`: from -y, the blue face alone; then (3c), (2c) and (1c) the same views with the
+ *     continuous lines (`style: "continuous"`);
  * (4) `shellcracks-4-deformed`: (1) on the deformed shape at scale 10;
  * (5) `shellcracks-5-extruded`: (1) on the shells drawn by their thickness, when the model gives one;
  * (6) `shellcracks-6-ticks`: (2) as ticks, one per crack at each Gauss point;
@@ -107,6 +108,16 @@ async function captureShellCracks(ctx: HarnessContext, settle: (ms?: number) => 
   store.dispatch({ type: "setCracks", face: "minus" });
   store.dispatch({ type: "setCamera", to: "-y" });
   await still("shellcracks-3-minus-y");
+  // The same three views with the continuous lines (directions blended across element edges).
+  store.dispatch({ type: "setCracks", face: "minus", style: "continuous" });
+  await still("shellcracks-3c-minus-y-continuous");
+  store.dispatch({ type: "setCracks", face: "plus" });
+  store.dispatch({ type: "setCamera", to: "+y" });
+  await still("shellcracks-2c-plus-y-continuous");
+  store.dispatch({ type: "setCracks", face: "both" });
+  store.dispatch({ type: "setCamera", to: "iso" });
+  await still("shellcracks-1c-iso-continuous");
+  store.dispatch({ type: "setCracks", style: "lines" });
   store.dispatch({ type: "setCracks", face: "both" });
   store.dispatch({ type: "setCamera", to: "iso" });
   store.dispatch({ type: "setDeform", on: true });

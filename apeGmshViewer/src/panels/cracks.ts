@@ -88,9 +88,11 @@ export function renderCracks(s: State, dispatch: (e: Event) => void = () => {}, 
     const blue = el("span", "chip cracks-face-minus");
     blue.style.background = CRACK_FACE.minus;
     const styleSelect = el("select", "cracks-style");
-    styleSelect.title = "lines: continuous crack lines traced through the crack field; ticks: one tick per crack at each Gauss point";
+    styleSelect.title =
+      "lines: crack lines traced through the crack field; continuous: the same with the directions blended across element edges, bending instead of stopping at a sharp turn; ticks: one tick per crack at each Gauss point";
     for (const [value, label] of [
       ["lines", "lines"],
+      ["continuous", "continuous"],
       ["ticks", "ticks"],
     ] as const) {
       const o = el("option", undefined, label);
@@ -98,7 +100,7 @@ export function renderCracks(s: State, dispatch: (e: Event) => void = () => {}, 
       o.selected = c.style === value;
       styleSelect.append(o);
     }
-    unlisten.push(listen(styleSelect, "change", () => dispatch({ type: "setCracks", style: styleSelect.value as "lines" | "ticks" })));
+    unlisten.push(listen(styleSelect, "change", () => dispatch({ type: "setCracks", style: styleSelect.value as "lines" | "continuous" | "ticks" })));
     faceRow.append(el("span", undefined, "shells"), styleSelect, faceSelect, red, el("span", undefined, "+"), blue, el("span", undefined, "-"));
     box.append(faceRow);
   }
@@ -148,7 +150,9 @@ export function renderCracks(s: State, dispatch: (e: Event) => void = () => {}, 
       el(
         "div",
         "legend-note cracks-note",
-        c.style === "lines"
+        c.style === "continuous"
+          ? "shells: crack lines traced through the outer concrete layer of each face, their directions blended over neighbouring elements so they run on across element edges; wider where the crack opens more (log scale); the spacing and the smoothing are drawing choices, the cracked extent is the model's"
+          : c.style === "lines"
           ? "shells: crack lines traced through the outer concrete layer of each face, wider where the crack opens more (log scale); the line spacing is a drawing choice, the direction and the cracked extent are the model's"
           : "shells: one tick per crack at each Gauss point, on the outer concrete layer of each face; the tick length is a drawing choice, the direction and the cracked extent are the model's",
       ),

@@ -30,6 +30,8 @@ export interface CrackLineOptions {
   pitch: number;
   /** the hair a line sits off its face */
   eps: number;
+  /** trace with the continuous parameters (state/crackTrace.ts `traceParamsFor`) */
+  continuous?: boolean;
 }
 
 /** The traced lines of one step, as vertices located in their elements. */
@@ -150,7 +152,7 @@ export function buildCrackLines(input: CrackLineInput, opts: CrackLineOptions): 
   const elementId: number[] = [], xi: number[] = [], lift: number[] = [], wv: number[] = [], lineStart: number[] = [];
   const lineFace: LineFace[] = [];
   let maxOpening = 0;
-  const params = traceParamsFor(h, Math.max(opts.minOpening, 1e-12));
+  const params = traceParamsFor(h, Math.max(opts.minOpening, 1e-12), opts.continuous ?? false);
   for (const p of panels.values()) {
     const m = p.pts.length;
     const P2 = new Float64Array(2 * m);

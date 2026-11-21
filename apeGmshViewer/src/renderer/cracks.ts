@@ -145,16 +145,16 @@ export class CracksLayer {
       };
     });
     const pitch = half / 0.35;
-    if (c.style === "lines") {
+    if (c.style === "lines" || c.style === "continuous") {
       this.ticks.visible = false;
       this.drawnShell = { ticks: 0, points: 0, unframed: 0, maxOpening: 0 };
       // Trace once per step, face and threshold, in the reference geometry; a deformation only moves the vertices.
-      const traceKey = [this.tickPoints.gen, here, c.minOpening, c.face];
+      const traceKey = [this.tickPoints.gen, here, c.minOpening, c.face, c.style];
       if (!this.traced || this.traced.key.some((k, i) => k !== traceKey[i])) {
         const elementIds = field.groups.map((fg) => blobs.get(st.layers!.find((x) => x.id === fg.id)!.elementIds!) as Float64Array);
         const lines = buildCrackLines(
           { base, points, groups, elementIds, corners: elementCornersOf(s, blobs) },
-          { face: c.face, minOpening: c.minOpening, pitch, eps: 0.02 * half },
+          { face: c.face, minOpening: c.minOpening, pitch, eps: 0.02 * half, continuous: c.style === "continuous" },
         );
         const layout = lineVertexLayoutOf(s, blobs, lines.elementId, lines.xi);
         const nodes = s.mesh.nodes;
