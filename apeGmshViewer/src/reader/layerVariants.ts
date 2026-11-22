@@ -11,6 +11,7 @@
 //
 // Browser-safe: no Node import.
 
+import { quaternionToZRec } from "./ladrunoLocalAxes.ts";
 import type { GaussGroupInfo, LayerGroupInfo } from "./results.ts";
 
 export const LAYER_VARIANTS = ["+face", "-face", "max"] as const;
@@ -101,7 +102,7 @@ export function plusLayersOf(quaternions: ArrayLike<number>, recorded: ArrayLike
   for (let e = 0; e < E; e++) {
     if (!recorded[e]) continue;
     const w = quaternions[4 * e]!, x = quaternions[4 * e + 1]!, y = quaternions[4 * e + 2]!, z = quaternions[4 * e + 3]!;
-    const e3 = [2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)];
+    const e3 = quaternionToZRec(w, x, y, z);
     const k = [0, 1, 2].reduce((a, b) => (Math.abs(e3[b]!) > Math.abs(e3[a]!) ? b : a), 0);
     out[e] = e3[k]! > 0 ? L - 1 : 0;
   }

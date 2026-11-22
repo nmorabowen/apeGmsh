@@ -73,10 +73,11 @@ export function shellCrackFieldOf(layers: readonly LayerGroup[]): ShellCrackFiel
 
 /** The rows of the rotation a scalar-first unit quaternion (global to local) stands for: e1, e2, e3 in world axes. */
 export function frameRows(w: number, x: number, y: number, z: number): [number[], number[], number[]] {
+  // The rotation matrix of the quaternion, row by row (row 2 is reader/ladrunoLocalAxes.ts `quaternionToZRec`).
   return [
-    [1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y)],
-    [2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x)],
-    [2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)],
+    [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+    [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+    [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
   ];
 }
 

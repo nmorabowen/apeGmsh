@@ -6,8 +6,31 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { CracksLayer } from "../src/renderer/cracks.ts";
 import { buildCrackLines, buildRibbons, invertQuad } from "../src/state/crackLines.ts";
+import { crackHalfSize } from "../src/state/cracks.ts";
+import { shellPitchOf } from "../src/state/shellCrackPoints.ts";
 import { FACE_RGB, type ShellTickGroup } from "../src/state/shellCracks.ts";
 import { opened, until } from "./contour/harness.ts";
+
+test("shellPitchOf: half the shells' size, where the points' bounding box overstates it for a building", () => {
+  // A 10 x 10 x 10 m box of 1 m wall panels: four walls, 400 elements of 1 m2, 2 x 2 Gauss points each.
+  const corners = new Map<number, Float64Array>();
+  const gauss: number[] = [];
+  const g = 0.5 - 0.5 / Math.sqrt(3);
+  let id = 0;
+  for (const [ax, at] of [[0, 0], [0, 10], [1, 0], [1, 10]] as const)
+    for (let a = 0; a < 10; a++)
+      for (let z = 0; z < 10; z++) {
+        const p = (u: number, w: number) => (ax === 0 ? [at, a + u, z + w] : [a + u, at, z + w]);
+        corners.set(++id, Float64Array.from([...p(0, 0), ...p(1, 0), ...p(1, 1), ...p(0, 1)]));
+        for (const [u, w] of [[g, g], [1 - g, g], [1 - g, 1 - g], [g, 1 - g]]) gauss.push(...p(u!, w!));
+      }
+  const pitch = shellPitchOf([Float64Array.from(corners.keys())], (e) => corners.get(e) ?? null)!;
+  assert.ok(Math.abs(pitch - 0.5) < 1e-12, `${pitch}`);
+  // The bounding-box estimate the lines used before: the points fill 4 planes of the box, not its volume.
+  const old = crackHalfSize(Float32Array.from(gauss)) / 0.4;
+  assert.ok(old > 1.5 * pitch, `the box estimate ${old} against ${pitch}`);
+  assert.equal(shellPitchOf([Float64Array.of(1)], () => null), null);
+});
 
 // -- a hand-made slab ------------------------------------------------------------------------
 

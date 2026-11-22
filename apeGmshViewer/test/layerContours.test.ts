@@ -3,8 +3,9 @@
 // The oracle is the raw layer read (S1's, itself checked against DATA by the spec's column rule) and the face rule
 // (the + face is the outer layer facing the positive global axis the normal is most along).
 //
-// ladruno_shells3d: a wall in the x-z plane whose MODEL/LOCAL_AXES gives e3 = +y, so its + face (+y) is the last
-// layer (the +e3 side) and its - face the first.
+// ladruno_shells3d: a wall in the x-z plane whose MODEL/LOCAL_AXES gives e3 = -y (its diagonals' cross product;
+// test/shellCracks.test.ts checks the frame against the geometry), so its + face (+y) is the first layer (the -e3
+// side) and its - face the last.
 
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
@@ -45,9 +46,10 @@ test("reduceLayers: + face, - face and max over layers, per element; NaN for an 
 
 test("plusLayersOf: the last layer when e3 points to the positive axis it is most along, the first when it points away", () => {
   const s = Math.SQRT1_2;
-  // identity (e3 = +z) -> last; a half turn about x (e3 = -z) -> first; a quarter turn about x (e3 = -y) -> first; unrecorded -> -1.
-  const q = [1, 0, 0, 0, 0, 1, 0, 0, s, s, 0, 0, 1, 0, 0, 0];
-  assert.deepEqual(Array.from(plusLayersOf(q, [1, 1, 1, 0], 6)), [5, 0, 0, -1]);
+  // e3 is row 3 of R(q): identity (e3 = +z) -> last; a half turn about x (e3 = -z) -> first; a +90 deg turn about x
+  // (e3 = +y) -> last; a -90 deg turn about x (e3 = -y) -> first; unrecorded -> -1.
+  const q = [1, 0, 0, 0, 0, 1, 0, 0, s, s, 0, 0, s, -s, 0, 0, 1, 0, 0, 0];
+  assert.deepEqual(Array.from(plusLayersOf(q, [1, 1, 1, 1, 0], 6)), [5, 0, 5, 0, -1]);
 });
 
 test("each layer group is offered as three element fields, read as the raw layers reduced", () => {
@@ -71,9 +73,9 @@ test("each layer group is offered as three element fields, read as the raw layer
       for (let p = 0; p < G; p++) {
         const layers = Array.from({ length: L }, (_, k) => raw[(e * G + p) * L + k]!);
         assert.equal(max[e * G + p], Math.max(...layers));
-        // The wall's e3 is +y: its + face (+y) is the last layer, its - face the first.
-        assert.equal(plus[e * G + p], layers[L - 1]);
-        assert.equal(minus[e * G + p], layers[0]);
+        // The wall's e3 is -y: its + face (+y) is the first layer, its - face the last.
+        assert.equal(plus[e * G + p], layers[0]);
+        assert.equal(minus[e * G + p], layers[L - 1]);
       }
     assert.ok(Array.from(max).some((x) => x > 0), "the wall has damage at the last step");
     // The rows are the layer group's.
