@@ -8,6 +8,7 @@ same way before its replace.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import stat
@@ -30,13 +31,15 @@ from apeGmsh.results.user import (
     WorkspaceFile,
     WorkspaceRenamedAside,
     WorkspaceWriteRefused,
+    _workspace,
     _writer,
     read_variants,
     write_variants,
     write_workspace,
 )
 
-from tests.results.user._user_helpers import HOLDERS, ON_WINDOWS, REPO, held_open
+from tests.results.user._user_helpers import (
+    ACL_ON_WINDOWS, HOLDERS, ON_WINDOWS, REPO, acl_denied, held_open)
 from tests.results.user._workspace_helpers import frame
 
 SCRIPT = textwrap.dedent(
@@ -236,3 +239,71 @@ def test_a_killed_manifest_writer_leaves_the_previous_manifest_whole(saved: Path
     assert _digest(manifest) == before
     assert read_variants(manifest).variants[0].params == {"pass": 1}
     assert _partials(manifest)
+
+
+# --- an ACL denial is not a holder; a holder that shares nothing (#3080) -----
+
+
+@ACL_ON_WINDOWS
+@pytest.mark.parametrize("file, folder", [("DE", "DC"), ("RD", "")], ids=["replace", "read"])
+def test_an_acl_denial_refuses_as_access_denied_not_held_open(
+    saved: Path, file: str, folder: str,
+) -> None:
+    """Nothing holds the workspace: the refusal names its permissions."""
+    before = _digest(saved)
+    with acl_denied(saved, file, folder), pytest.raises(WorkspaceWriteRefused) as caught:
+        write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
+    assert caught.value.reason == "access-denied", str(caught.value)
+    assert str(saved) in str(caught.value) and "another program" not in str(caught.value)
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert _digest(saved) == before
+    assert sorted(p.name for p in saved.parent.iterdir()) == ["frame.h5", saved.name]
+
+
+@ACL_ON_WINDOWS
+def test_an_acl_denial_refuses_the_rename_aside_as_access_denied(saved: Path) -> None:
+    saved.write_bytes(b"not an HDF5 file")
+    with acl_denied(saved), warnings.catch_warnings():
+        warnings.simplefilter("error", WorkspaceRenamedAside)  # no rename may be announced
+        with pytest.raises(WorkspaceWriteRefused) as caught:
+            write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
+    assert caught.value.reason == "access-denied", str(caught.value)
+    assert str(saved) in str(caught.value) and "renamed aside" in str(caught.value)
+    assert saved.read_bytes() == b"not an HDF5 file"
+    assert sorted(p.name for p in saved.parent.iterdir()) == ["frame.h5", saved.name]
+
+
+@ON_WINDOWS
+def test_a_holder_that_shares_nothing_refuses_the_first_read(saved: Path) -> None:
+    """``CreateFileW(share=0)``: ``_read_previous`` cannot read the old file; ``held-open``."""
+    before = _digest(saved)
+    with held_open(saved, "exclusive"), pytest.raises(WorkspaceWriteRefused) as caught:
+        write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
+    assert caught.value.reason == "held-open", str(caught.value)
+    assert str(saved) in str(caught.value) and "nothing was replaced" in str(caught.value)
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert _digest(saved) == before
+    assert sorted(p.name for p in saved.parent.iterdir()) == ["frame.h5", saved.name]
+
+
+@ON_WINDOWS
+def test_a_holder_that_shares_nothing_refuses_the_read_before_the_replace(
+    saved: Path, monkeypatch,
+) -> None:
+    """The holder arrives after the partial is written: the digest read before the
+    replace is ``held-open``, not a lost race, and the partial is removed."""
+    before = _digest(saved)
+    real_fsync = _workspace._fsync
+    with contextlib.ExitStack() as stack:
+
+        def fsync_then_hold(path: Path) -> None:
+            real_fsync(path)
+            stack.enter_context(held_open(saved, "exclusive"))
+
+        monkeypatch.setattr(_workspace, "_fsync", fsync_then_hold)
+        with pytest.raises(WorkspaceWriteRefused) as caught:
+            write_workspace(saved, views=[ViewDef("later", {"camera": "top"})])
+        assert not _partials(saved), "the refused write left its partial behind"
+    assert caught.value.reason == "held-open", str(caught.value)
+    assert str(saved) in str(caught.value)
+    assert _digest(saved) == before

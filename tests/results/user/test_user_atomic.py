@@ -29,7 +29,7 @@ from apeGmsh.results.user import UserFile, UserWriteRefused, write_user_file
 from apeGmsh.results.user import _writer
 
 from tests.results.user._user_helpers import (
-    HOLDERS, ON_WINDOWS, REPO, bucket, elements, held_open, nodal)
+    ACL_ON_WINDOWS, HOLDERS, ON_WINDOWS, REPO, acl_denied, bucket, elements, held_open, nodal)
 
 SCRIPT = textwrap.dedent(
     """
@@ -630,3 +630,85 @@ def test_a_posix_permission_error_is_never_held_open(make_model, tmp_path, monke
         write_user_file(target, model, results=[nodal("new")])
     assert not isinstance(caught.value, UserWriteRefused)
     assert _digest(target) == before and _partials(target) == []
+
+
+# --- an ACL denial is not a holder (#3080) -----------------------------------
+
+
+@ACL_ON_WINDOWS
+def test_an_acl_that_denies_the_replace_refuses_as_access_denied(
+    make_model, tmp_path: Path,
+) -> None:
+    """Windows answers WinError 5 for a holder and for an ACL alike; nothing holds
+    this file, so the refusal names the permissions, not another program."""
+    model = make_model()
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("kept")])
+    before = _digest(target)
+    with acl_denied(target), pytest.raises(UserWriteRefused) as caught:
+        write_user_file(target, model, results=[nodal("new")])
+    text = str(caught.value)
+    assert text.startswith("access-denied: ") and str(target) in text, text
+    assert "another program" not in text and "nothing was replaced" in text
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert _digest(target) == before and _partials(target) == []
+
+
+@ACL_ON_WINDOWS
+def test_an_acl_that_denies_the_read_refuses_as_access_denied(
+    make_model, tmp_path: Path,
+) -> None:
+    model = make_model()
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("kept")])
+    before = _digest(target)
+    with acl_denied(target, file="RD", folder=""), pytest.raises(UserWriteRefused) as caught:
+        write_user_file(target, model, results=[nodal("new")])
+    assert str(caught.value).startswith("access-denied: ") and str(target) in str(caught.value)
+    assert _digest(target) == before and _partials(target) == []
+
+
+@ON_WINDOWS
+def test_a_holder_that_shares_nothing_refuses_as_held_open(make_model, tmp_path: Path) -> None:
+    """``CreateFileW(share=0)``: the file cannot even be read; that is a holder too."""
+    model = make_model()
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("kept")])
+    before = _digest(target)
+    with held_open(target, "exclusive"), pytest.raises(UserWriteRefused) as caught:
+        write_user_file(target, model, results=[nodal("new")])
+    text = str(caught.value)
+    assert text.startswith("held-open: ") and str(target) in text, text
+    assert "another program holds" in text and "nothing was replaced" in text
+    assert _digest(target) == before and _partials(target) == []
+
+
+@ON_WINDOWS
+def test_a_holder_that_shares_delete_still_refuses_as_held_open(
+    make_model, tmp_path: Path,
+) -> None:
+    """A holder sharing delete lets the probe open the file, yet still blocks the
+    replace: DELETE is granted, so only the open handle refuses it."""
+    model = make_model()
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("kept")])
+    before = _digest(target)
+    with held_open(target, "shares-delete"), pytest.raises(UserWriteRefused) as caught:
+        write_user_file(target, model, results=[nodal("new")])
+    assert str(caught.value).startswith("held-open: "), str(caught.value)
+    assert _digest(target) == before and _partials(target) == []
+
+
+@ON_WINDOWS
+def test_a_probe_that_explains_nothing_leaves_the_error_raw(
+    make_model, tmp_path: Path, monkeypatch,
+) -> None:
+    """Fail closed: a probe error that is neither a permission nor a holder is not told."""
+    model = make_model()
+    target = write_user_file(tmp_path / "s.user.h5", model, results=[nodal("kept")])
+
+    def refused(partial: Path, dst: Path) -> None:
+        raise PermissionError(errno.EACCES, "Access is denied", str(dst), 5)
+
+    monkeypatch.setattr(_writer, "_replace", refused)
+    monkeypatch.setattr(_writer, "_probe_open", lambda target, access: 2)
+    with pytest.raises(PermissionError) as caught:
+        write_user_file(target, model, results=[nodal("new")])
+    assert not isinstance(caught.value, UserWriteRefused)
+    assert _partials(target) == []
