@@ -355,7 +355,7 @@ test("a refused shot's entry: the reason, no still, and no view it never drew", 
 test("VF #2940 (#2924 item 2): a gauss_node shot on a group with no natural coordinates draws that group cell_averaged and says so in the manifest (groups, reason) and the banner", async () => {
   const h = await opened(fx("extrap_solid.h5"), fx("extrap_solid.results.h5"));
   try {
-    // What the reader gives a BezierTet10's barycentric Gauss group: no natural coordinates.
+    // What the reader gives a .ladruno group with no QUADRATURE/GP_PARAM (or a domain or "bary" frame it cannot convert): no natural coordinates.
     h.store.get().results!.stages[0]!.gauss.find((x) => x.id === "hex_G8")!.naturalCoords = null;
     const { entry } = await entryOf(h, shotOf({ stage: "load", step: 2, contour: { field: "stress", component: "stress_xx", gauss: "node" } }));
     const k = entry.contour;

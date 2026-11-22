@@ -856,7 +856,8 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
   if (!j.ok) return { state: "refused", code: j.code, reason: `element field ${c.field}: ${j.reason}` };
   // V4c2b: a node-located topology the field's types or natural coordinates cannot carry reads "unsupported", never a guess.
   // VF (#2940, the owner's rulings on #2924 item 2): the groups of a gauss_node field refused only because they have no
-  // natural coordinates (a BezierTet10's barycentric points) draw their element means (cell_averaged), per group; every
+  // natural coordinates (a .ladruno group with no GP_PARAM, or a domain or "bary" frame the reader cannot convert) draw
+  // their element means (cell_averaged), per group; every
   // other group is still extrapolated, and the banner and the manifest name the groups that were not.
   const meanGroups = topology === "gauss_node" ? meanFallbackGroups(groups, j.extrapolation) : null;
   const fallback = meanGroups ? { asked: "gauss_node" as const, drawn: "cell_averaged" as const, groups: meanGroups, reason: j.extrapolation.matrix! } : null;
