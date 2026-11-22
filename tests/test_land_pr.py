@@ -1406,7 +1406,7 @@ def test_a_bom_and_crlf_body_is_read_1891(bom):
     without `_text`, the PR case finds no Slice line, the card case no Owned section, and the
     amendment case does not add `src/c.py`."""
     def mark(text, where):
-        return ("﻿" if bom == where else "") + text.replace("\n", "\r\n")
+        return ("\ufeff" if bom == where else "") + text.replace("\n", "\r\n")
     pr = {**PROGRAM_PR, "body": mark("Slice: #1801\nClass: semantic\n", "pr")}
     card = mark("### Owned files\n- `src/a.py`\n", "card")
     amendment = mark("**Card amendment (T):** add:\n- `src/c.py`\n", "amendment")
@@ -1427,7 +1427,7 @@ def test_a_lone_cr_still_ends_a_line_1891():
     _b_not_owned("### Owned files\n- `src/a.py`\r**Read-only:** `src/b.py`\n")
 
 
-@pytest.mark.parametrize("mark", [pytest.param("﻿", id="bom"), pytest.param("​", id="zero-width-space")])
+@pytest.mark.parametrize("mark", [pytest.param("\ufeff", id="bom"), pytest.param("\u200b", id="zero-width-space")])
 @pytest.mark.parametrize("end", [pytest.param("### Read-only\n- `src/b.py`\n", id="heading"),
                                  pytest.param("**Read-only:** `src/b.py`\n", id="bold-label")])
 def test_an_invisible_mark_does_not_hide_the_end_of_an_owned_section_1891(mark, end):
@@ -1438,9 +1438,9 @@ def test_an_invisible_mark_does_not_hide_the_end_of_an_owned_section_1891(mark, 
 
 
 @pytest.mark.parametrize("line", [
-    pytest.param("- `src/c.py`; Do​not touch `src/b.py`", id="zwsp-glued-not"),
-    pytest.param("`do​not` `src/b.py`", id="zwsp-in-a-ticked-phrase"),
-    pytest.param("- `src/c.py` x﻿never `src/b.py`", id="bom-glued-never"),
+    pytest.param("- `src/c.py`; Do\u200bnot touch `src/b.py`", id="zwsp-glued-not"),
+    pytest.param("`do\u200bnot` `src/b.py`", id="zwsp-in-a-ticked-phrase"),
+    pytest.param("- `src/c.py` x\ufeffnever `src/b.py`", id="bom-glued-never"),
 ])
 def test_a_mid_line_invisible_mark_does_not_hide_an_owned_negation_1891(line):
     """Delta review of #1917: deleting a mid-line mark glued "Do" and "not" into "Donot",
@@ -1452,8 +1452,8 @@ def test_a_mid_line_invisible_mark_does_not_hide_an_owned_negation_1891(line):
 
 
 @pytest.mark.parametrize("line", [
-    pytest.param("Do​not touch `src/b.py`.", id="zwsp-glued-not"),
-    pytest.param("- all​except `src/b.py`", id="zwsp-glued-except"),
+    pytest.param("Do\u200bnot touch `src/b.py`.", id="zwsp-glued-not"),
+    pytest.param("- all\u200bexcept `src/b.py`", id="zwsp-glued-except"),
 ])
 def test_a_mid_line_invisible_mark_does_not_hide_an_amendment_negation_1891(line):
     """Delta review of #1917, as above for a card amendment. Fails on 91c91fe9."""
@@ -1463,7 +1463,7 @@ def test_a_mid_line_invisible_mark_does_not_hide_an_amendment_negation_1891(line
 def test_a_bom_prefixed_body_still_holds_a_freeze_1891():
     """Review of #1917, finding 2: check 5 reads `Slice:` too. Revert-proof: without `_text`
     in `_check_freeze`, the BOM hides the line and the freeze refuses."""
-    pr = {**PR_1218, "body": "﻿" + BODY_1702.replace("\n", "\r\n"), "labels": [{"name": "program"}]}
+    pr = {**PR_1218, "body": "\ufeff" + BODY_1702.replace("\n", "\r\n"), "labels": [{"name": "program"}]}
     gh, git = _recording(1218, pr, SQUASH_1218, [BUILD], labels=FREEZE_BUILD,
                          issues={1696: ["program", "slice", f"freeze:{BUILD}"]},
                          cards={1696: {"body": f"### Owned files\n- `{BUILD}`\n", "comments": []}})
