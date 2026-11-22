@@ -65,7 +65,7 @@ from ...opensees._internal.schema_version import (
 )
 from ._descriptor import Combination, resolve, write_generation
 from ._entities import Entities, entities_problem, write_entities
-from ._errors import UserWriteRefused
+from ._errors import UserFileRefused, UserWriteRefused
 from ._fields import EntryRefused, UserResult, write_entry
 from ._fingerprint import results_fingerprint
 from ._modes import ModeTable, table_problem, write_modes
@@ -142,15 +142,17 @@ def write_user_file(
     zone whole, and ``None`` leaves it untouched; so does ``entities`` (an
     :class:`~apeGmsh.results.user.Entities`). A ``target="entities"`` result
     must name rows of the ``/entities`` the file holds after this write.
-    On Windows, a file another program still holds open after the retries
-    refuses the write (:class:`~apeGmsh.results.user.UserWriteRefused`,
-    ``held-open``); the old file stays whole and the partial is removed.
+    On Windows, a file another program still holds open after the retries, or
+    holds so that it cannot even be read, refuses the write
+    (:class:`~apeGmsh.results.user.UserWriteRefused`, ``held-open``); one whose
+    permissions deny this user refuses as ``access-denied``. Either way the old
+    file stays whole and the partial is removed.
     """
     target = Path(path)
     if not target.name.endswith(SUFFIX) or target.name == SUFFIX:
         raise UserWriteRefused(f"{target}: a user file is named <stem>{SUFFIX}")
     fem_hash, model_hash = model_hashes(model_h5)
-    previous = UserFile(target) if target.exists() else None
+    previous = _open_previous(target) if target.exists() else None
     results_hash = (
         results_fingerprint(results_file) if results_file is not None
         else (previous.results_hash if previous is not None else None)
@@ -199,9 +201,10 @@ def write_user_file(
         try:
             _replace(partial, target)
         except PermissionError as exc:
-            if not _held_open(target, exc):
+            why = _refusal(target, exc)
+            if why is None:
                 raise
-            raise UserWriteRefused(f"held-open: {_held_detail(target, exc)}") from exc
+            raise UserWriteRefused(f"{why[0]}: {why[1]}") from exc
     except BaseException:
         with contextlib.suppress(OSError):  # the first failure is the one to report
             partial.unlink(missing_ok=True)
@@ -216,7 +219,7 @@ def _refuse_if_moved(target: Path, previous: Optional[UserFile]) -> None:
             raise UserWriteRefused(
                 f"{target} was created while this write ran; nothing was replaced. "
                 "Write again.")
-    elif UserFile(target).revision != previous.revision:
+    elif _open_previous(target).revision != previous.revision:
         raise UserWriteRefused(
             f"{target} changed while this write ran (revision "
             f"{previous.revision} moved); nothing was replaced. Write again.")
@@ -618,25 +621,101 @@ def _replace(partial: Path, target: Path) -> None:
             time.sleep(_REPLACE_WAIT_S)
 
 
-#: ``ERROR_ACCESS_DENIED`` and ``ERROR_SHARING_VIOLATION``: what Windows answers a
-#: replace onto a file another process holds open (h5py, h5wasm or a plain handle).
-_HELD_WINERRORS = frozenset({5, 32})
+_ERROR_SHARING_VIOLATION = 32
+#: What Windows answers a replace or a rename onto a file another process holds
+#: open (h5py, h5wasm or a plain handle), and, for ``5``, also one the file's
+#: permissions deny. A read gets the C runtime's ``EACCES`` for both.
+_HELD_WINERRORS = frozenset({_ERROR_ACCESS_DENIED, _ERROR_SHARING_VIOLATION})
+_EACCES = 13
+#: What a probe open asks for: what a replace or a rename needs of the old file,
+#: and what a read needs. It shares everything, so its own handle blocks no one.
+_DELETE = 0x00010000
+_GENERIC_READ = 0x80000000
+_FILE_SHARE_ALL = 0x7
+_OPEN_EXISTING = 3
 
 
-def _held_open(target: Path, exc: PermissionError) -> bool:
-    """Whether a replace that still failed after ``_replace``'s retries met a holder.
+def _probe_open(target: Path, access: int) -> int:
+    """Open ``target`` for ``access``, close it at once, and return the Win32 error (0: it opened).
 
-    Only Windows blocks a replace onto an open file; a POSIX ``PermissionError``
-    is a real permission problem. A read-only target also answers ``WinError 5``
-    and is not a holder, so it keeps its own error.
+    ``CreateFileW`` checks the permissions before the share modes of the handles
+    already open: ``ERROR_ACCESS_DENIED`` is the permissions, whether or not a
+    holder exists, and ``ERROR_SHARING_VIOLATION`` is a holder whose share mode
+    excludes ``access``.
     """
-    if sys.platform != "win32":
-        return False
-    return (exc.winerror in _HELD_WINERRORS and target.is_file()
-            and os.access(target, os.W_OK))
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+    kernel32.CreateFileW.argtypes = (
+        ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+        ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p)
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    handle = kernel32.CreateFileW(
+        str(target), access, _FILE_SHARE_ALL, None, _OPEN_EXISTING, 0, None)
+    if handle is None or handle == ctypes.c_void_p(-1).value:
+        return ctypes.get_last_error()
+    kernel32.CloseHandle(handle)
+    return 0
 
 
-def _held_detail(target: Path, exc: PermissionError) -> str:
-    """What a ``held-open`` refusal says: the file, the OS error, and that nothing changed."""
-    return (f"another program holds {target} open, so it cannot be replaced "
-            f"({exc.strerror}); nothing was replaced. Close it there and write again.")
+def _os_refusal(
+    target: Path, action: str, *, reading: bool = False, nothing: str = "nothing was replaced",
+    said: str = "",
+) -> Optional[tuple[str, str]]:
+    """``(reason, detail)`` for a file Windows refused to replace, rename or read.
+
+    ``held-open``: another program holds the file open. ``access-denied``: the
+    file's or its folder's permissions deny this user. Windows answers both with
+    the same error (``WinError 5`` for a replace or a rename, ``EACCES`` for a
+    read), so a probe open for the same access tells them apart
+    (:func:`_probe_open`). A replace whose probe opens cleanly met a holder that
+    shares delete: ``DELETE`` is granted and the read-only attribute is clear,
+    and only an open handle still refuses the supersede. A read whose probe opens
+    cleanly is not explained. ``None`` when nothing is told: off Windows (a
+    ``PermissionError`` there is a real permission problem), a read-only target
+    (it keeps its own error), or an unexplained probe.
+    """
+    if sys.platform != "win32" or not target.is_file():
+        return None
+    if not reading and not os.access(target, os.W_OK):  # the read-only attribute
+        return None
+    code = _probe_open(target, _GENERIC_READ if reading else _DELETE)
+    if code == _ERROR_ACCESS_DENIED:
+        return "access-denied", (
+            f"the permissions on {target} or its folder deny this user, so it cannot be "
+            f"{action}{said}; {nothing}. Change them there and write again.")
+    if code == _ERROR_SHARING_VIOLATION or (code == 0 and not reading):
+        return "held-open", (
+            f"another program holds {target} open, so it cannot be {action}{said}; "
+            f"{nothing}. Close it there and write again.")
+    return None
+
+
+def _refusal(
+    target: Path, exc: PermissionError, action: str = "replaced", *,
+    reading: bool = False, nothing: str = "nothing was replaced",
+) -> Optional[tuple[str, str]]:
+    """:func:`_os_refusal` for a ``PermissionError``, quoting the OS's words.
+
+    Only the errors a holder or a permission produce are told: ``WinError 5`` or
+    ``32``, or the C runtime's ``EACCES`` (no ``winerror``) from a read. Any
+    other error stands raw.
+    """
+    told = (exc.winerror in _HELD_WINERRORS if exc.winerror is not None
+            else exc.errno == _EACCES)
+    if not told:
+        return None
+    return _os_refusal(target, action, reading=reading, nothing=nothing,
+                       said=f" ({exc.strerror})")
+
+
+def _open_previous(target: Path) -> UserFile:
+    """``UserFile(target)``; a file Windows will not let this process read refuses the
+    write (``held-open`` or ``access-denied``) instead of reading as unreadable."""
+    try:
+        return UserFile(target)
+    except UserFileRefused as exc:
+        if isinstance(exc.__cause__, OSError):
+            why = _os_refusal(target, "read", reading=True)
+            if why is not None:
+                raise UserWriteRefused(f"{why[0]}: {why[1]}") from exc
+        raise

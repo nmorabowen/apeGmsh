@@ -50,7 +50,7 @@ from ._descriptor import StateAddress, address_problem
 from ._errors import UserFileRefused, UserWriteRefused, ZoneRefused
 from ._names import name_problem, text_or_empty
 from ._writer import (
-    _create_partial, _fsync, _held_detail, _held_open, _replace, _sweep_dead_partials)
+    _create_partial, _fsync, _refusal, _replace, _sweep_dead_partials)
 
 __all__ = [
     "PLOT_GRAMMAR",
@@ -1026,13 +1026,30 @@ def _merge(
     return out
 
 
+#: What Windows answers a read of a file another program holds open with no
+#: read sharing, or one whose permissions deny it: never a lost race.
+_OS_REFUSALS = ("held-open", "access-denied")
+
+
+def _read_old(target: Path) -> bytes:
+    """The old file's bytes; on Windows a holder that shares no read, or a
+    permission, refuses the write (``held-open``, ``access-denied``)."""
+    try:
+        return target.read_bytes()
+    except PermissionError as exc:
+        why = _refusal(target, exc, "read", reading=True)
+        if why is None:
+            raise
+        raise WorkspaceWriteRefused(*why) from exc
+
+
 def _digest(target: Path) -> Optional[str]:
     """The file's bytes as one sha256, or ``None`` when no file is there."""
     if not target.exists():
         return None
     if not target.is_file():
         raise WorkspaceWriteRefused("not-a-file", f"{target} is not a file")
-    return hashlib.sha256(target.read_bytes()).hexdigest()
+    return hashlib.sha256(_read_old(target)).hexdigest()
 
 
 def _read_previous(target: Path) -> "tuple[Optional[WorkspaceFile], Optional[str]]":
@@ -1045,7 +1062,7 @@ def _read_previous(target: Path) -> "tuple[Optional[WorkspaceFile], Optional[str
         return None, None
     if not target.is_file():
         raise WorkspaceWriteRefused("not-a-file", f"{target} is not a file")
-    raw = target.read_bytes()
+    raw = _read_old(target)
     digest = hashlib.sha256(raw).hexdigest()
     try:
         previous = WorkspaceFile(target, data=raw)
@@ -1079,9 +1096,11 @@ def write_workspace(
     refused rows included, except a set that now reads ``moved``, whose row
     takes the model's hashes. Refuses (:class:`WorkspaceWriteRefused`) a row that
     would refuse, a tag the model lacks, an old file newer than this writer, and
-    a write that lost a race (``revision-moved``), and, on Windows, a replace
-    that another program holding the old file open still blocks after the
-    retries (``held-open``; the old file stays whole and the partial is removed).
+    a write that lost a race (``revision-moved``), and, on Windows, an old file
+    another program holds open so that it cannot be read, or that still blocks
+    the replace after the retries (``held-open``), or whose permissions deny
+    this user (``access-denied``); the old file stays whole and the partial is
+    removed.
     An unreadable old file is renamed aside, with a
     :class:`WorkspaceRenamedAside` warning.
     """
@@ -1150,9 +1169,10 @@ def write_workspace(
         try:
             _replace(partial, target)
         except PermissionError as exc:
-            if not _held_open(target, exc):
+            why = _refusal(target, exc)
+            if why is None:
                 raise
-            raise WorkspaceWriteRefused("held-open", _held_detail(target, exc)) from exc
+            raise WorkspaceWriteRefused(*why) from exc
     except BaseException:
         with contextlib.suppress(OSError):
             partial.unlink(missing_ok=True)
@@ -1229,7 +1249,11 @@ def _refuse_if_moved(target: Path, digest: Optional[str]) -> None:
     """
     try:
         now = _digest(target)
-    except (OSError, WorkspaceWriteRefused):
+    except WorkspaceWriteRefused as exc:
+        if exc.reason in _OS_REFUSALS:
+            raise
+        now = "unreadable now"
+    except OSError:
         now = "unreadable now"
     if now != digest:
         raise WorkspaceWriteRefused(
@@ -1242,7 +1266,8 @@ def _rename_aside(target: Path) -> Path:
     """Move an unreadable file to ``<name>.unreadable-<UTC>[-n]``, never over a file.
 
     On Windows a file another program holds open cannot be renamed: that refuses
-    (``held-open``) with the file still in place, as a held replace does.
+    (``held-open``) with the file still in place, as a held replace does, and so
+    does one whose permissions deny it (``access-denied``).
     """
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     for n in range(1000):
@@ -1256,13 +1281,10 @@ def _rename_aside(target: Path) -> Path:
         except FileExistsError:
             continue
         except PermissionError as exc:
-            if not _held_open(target, exc):
+            why = _refusal(target, exc, "renamed aside", nothing="nothing was renamed or replaced")
+            if why is None:
                 raise
-            raise WorkspaceWriteRefused(
-                "held-open",
-                f"another program holds {target} open, so it cannot be renamed aside "
-                f"({exc.strerror}); nothing was renamed or replaced. Close it there and "
-                "write again.") from exc
+            raise WorkspaceWriteRefused(*why) from exc
     raise WorkspaceWriteRefused("not-a-file", f"{target}: no free name to rename it aside")
 
 
