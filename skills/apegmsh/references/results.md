@@ -439,7 +439,8 @@ UserFile("run.user.h5").results().entries                   # what the file hold
   replaces entries by name; `None` leaves a zone untouched. On Windows, a
   `.user.h5` another program holds open (the app, h5py, a viewer) refuses
   the write too: `UserWriteRefused`, its message starting `held-open:`.
-  Close it there and write again; the old file stays whole.
+  Close it there and write again; the old file stays whole. A file whose
+  permissions deny you refuses as `access-denied:` instead.
 - **Staleness.** `staleness("run.user.h5", model_h5=..., results_file=...)`
   reports each zone. `/modes`, `/spectra` and `/entities` go stale when
   the model hashes change; a `/results` entry follows its `basis`
@@ -502,7 +503,8 @@ write_workspace("frame.workspace.h5", remove={"views": ["roof iso"]})
   another writer got there first. A tag the model lacks refuses the
   write (`WorkspaceWriteRefused`). On Windows, a workspace another
   program holds open (the app, h5py, a viewer) refuses the write too,
-  with reason `held-open`: close it there and write again. The old file
+  with reason `held-open`: close it there and write again. Permissions
+  that deny you refuse with reason `access-denied`. The old file
   stays whole. An unreadable old file is renamed aside with a
   `WorkspaceRenamedAside` warning, never overwritten; if it is held open,
   that refuses as `held-open` too, before anything is renamed.
@@ -535,7 +537,8 @@ sibling such as `.ladruno` or `.user.h5`. A row may name a file that a
 later run will write: the write accepts it, and each read refuses that
 row with reason `missing` until the file is there. On Windows, a manifest
 another program holds open refuses the write (`VariantsWriteRefused`,
-reason `held-open`); the old manifest stays whole. A combination
+reason `held-open`), and one whose permissions deny you refuses with
+reason `access-denied`; the old manifest stays whole. A combination
 never crosses variants (a term holds no path).
 (`tests/results/user/test_workspace_file.py`, `test_variants_manifest.py`)
 

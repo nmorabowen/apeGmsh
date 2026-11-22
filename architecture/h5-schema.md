@@ -2988,11 +2988,17 @@ other writer's data. A writer verifies its partial, bit-comparing the `DATA` it
 wrote, and compares `/meta@revision` immediately before the replace: if it moved, the
 write refuses, so the second of two writers refuses rather than overwriting. A small
 window remains between that comparison and the replace. A writer deletes only its
-own partial on failure. On Windows, a replace that another program holding the file
-open (the app, h5py, a plain handle) still blocks after the writer's retries refuses
-the write, `held-open` (Python: `UserWriteRefused`, its message starting
-`held-open:`); the old file stays whole and the partial is deleted. A read-only file
-is not held and keeps its own error. It sweeps a leftover only if the leftover names this host and
+own partial on failure. On Windows, a file another program holds open (the app,
+h5py, a plain handle) refuses the write, `held-open` (Python: `UserWriteRefused`, its
+message starting `held-open:`), when it still blocks the replace after the writer's
+retries, or when the holder shares no read and the old file cannot be read at all. A
+file whose permissions (its ACL, or its folder's) deny this user refuses as
+`access-denied` instead. Windows gives both the same error, so the writer tells them
+apart by opening the file for the same access with every share mode: Windows checks
+the permissions before the share modes, so access denied is the permissions and a
+sharing violation is a holder; a replace whose probe opens cleanly met a holder that
+shares delete. Either way the old file stays whole and the partial is deleted. A
+read-only file is not held and keeps its own error. A writer sweeps a leftover only if the leftover names this host and
 its PID is not alive, because a set may live in a synced folder, where another
 machine's live writer has a PID this host cannot see. `<host>` is the machine name in
 lower case, with each run of characters other than `a-z0-9` replaced by `_`; a writer
@@ -3213,8 +3219,10 @@ reads. VU9a probes it before building on it.
    Otherwise replace the target with the partial in one rename. On Windows, a file
    another program holds open (the app, h5py, a plain handle) blocks both: a rename
    aside, or a replace still blocked after the writer's retries, refuses the write,
-   `held-open`. Nothing is renamed or replaced, and the partial is deleted. A
-   read-only file is not held and keeps its own error.
+   `held-open`, as does an old file a holder that shares no read keeps from being
+   read at all. Permissions that deny this user refuse as `access-denied`, told
+   apart as in `.user.h5`. Nothing is renamed or replaced, and the partial is
+   deleted. A read-only file is not held and keeps its own error.
 7. Sweep leftover partials by the `.user.h5` rule. A failed sweep does not fail the
    write.
 
@@ -3239,17 +3247,18 @@ erratum, #2806). **Row refusals:**
 `empty-name`, `duplicate`, `bad-members`, `bad-param`, `no-tag-map`,
 `unknown-grammar`, `bad-json`, `bad-plot`, `bad-shot`. **Write refusals** (Python,
 `WorkspaceWriteRefused`, see Writing) include `newer`, `unpaired`, `bad-row`,
-`partial-mismatch`, `revision-moved` and `held-open`.
+`partial-mismatch`, `revision-moved`, `held-open` and `access-denied`.
 
 ## `<study>.variants.json`: the variants manifest (ADR 0132)
 
 Decided in ADR 0132 (D8, D9; Accepted 2026-11-03), completing ADR 0130 A7. It lists the sets of one
 study that differ in stiffness or another parameter. `<study>` is any name that is
 also a file name. The app reads it and never writes it; Python, a pipeline or a
-human writes it, Python through a partial and a replace. On Windows, a replace that
-another program holding the manifest open still blocks after the retries refuses
-the write (`VariantsWriteRefused`, `held-open`); the old manifest stays whole and the
-partial is deleted. The JSON Schema is
+human writes it, Python through a partial and a replace. On Windows, a manifest
+another program holds open refuses the write (`VariantsWriteRefused`, `held-open`)
+when it still blocks the replace after the retries, or when the holder shares no read;
+permissions that deny this user refuse as `access-denied`, told apart as in
+`.user.h5`. The old manifest stays whole and the partial is deleted. The JSON Schema is
 [`schemas/variants.schema.json`](schemas/variants.schema.json), with examples in
 `schemas/examples/`.
 

@@ -8,6 +8,7 @@ confinement after links resolve, the file exists) are tested on their own.
 """
 from __future__ import annotations
 
+import contextlib
 import errno
 import json
 import os
@@ -30,7 +31,8 @@ from apeGmsh.results.user import (
     write_variants,
 )
 
-from tests.results.user._user_helpers import ON_WINDOWS, REPO, held_open
+from tests.results.user._user_helpers import (
+    ACL_ON_WINDOWS, ON_WINDOWS, REPO, acl_denied, held_open)
 
 SCHEMAS = REPO / "architecture" / "schemas"
 EXAMPLES = SCHEMAS / "examples"
@@ -514,3 +516,125 @@ def test_a_posix_permission_error_on_the_manifest_stays_raw(tmp_path: Path, monk
         write_variants(target, [VariantDef("A", "slab_new.h5")])
     assert not isinstance(caught.value, VariantsWriteRefused)
     assert target.read_bytes() == before and _partials(target) == []
+
+
+def test_a_posix_permission_error_reading_the_manifest_stays_raw(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    real = Path.read_bytes
+
+    def read_bytes(self: Path) -> bytes:
+        if self == target:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(_writer, "sys", SimpleNamespace(platform="linux"))
+    with pytest.raises(PermissionError) as caught:
+        write_variants(target, [VariantDef("A", "slab_new.h5")])
+    assert not isinstance(caught.value, VariantsWriteRefused)
+
+
+def _refused_reads(monkeypatch, target: Path, times: int) -> list[int]:
+    """The first ``times`` reads of ``target`` raise the C runtime's ``EACCES``, as
+    Windows does for a holder or a permission; the read probe then opens cleanly."""
+    real = Path.read_bytes
+    reads: list[int] = []
+
+    def read_bytes(self: Path) -> bytes:
+        if self == target:
+            reads.append(len(reads))
+            if len(reads) <= times:
+                raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(_writer, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(_writer, "_probe_open", lambda path, access: 0)
+    return reads
+
+
+def test_a_holder_that_lets_go_before_the_probe_gets_one_more_read(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A refused read whose probe opens cleanly met a holder that let go: read again."""
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    (tmp_path / "slab_new.h5").write_bytes(b"model")
+    reads = _refused_reads(monkeypatch, target, times=1)
+    write_variants(target, [VariantDef("A", "slab_new.h5")])
+    assert len(reads) >= 2, "the refused read was not read again"
+    assert read_variants(target).by_label("A").path == "slab_new.h5"
+
+
+def test_a_read_refused_twice_with_a_clean_probe_stays_raw(tmp_path: Path, monkeypatch) -> None:
+    """Fail closed: a clean probe explains nothing, so a second refusal is not told."""
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    before = target.read_bytes()
+    reads = _refused_reads(monkeypatch, target, times=2)
+    with pytest.raises(PermissionError) as caught:
+        write_variants(target, [VariantDef("A", "slab_new.h5")])
+    assert not isinstance(caught.value, VariantsWriteRefused)
+    assert len(reads) == 2, "a refused read is read again once, not more"
+    monkeypatch.undo()
+    assert target.read_bytes() == before and _partials(target) == []
+
+
+# --- an ACL denial is not a holder; a holder that shares nothing (#3080) -----
+
+
+@ACL_ON_WINDOWS
+@pytest.mark.parametrize("file, folder", [("DE", "DC"), ("RD", "")], ids=["replace", "read"])
+def test_an_acl_denial_refuses_as_access_denied_not_held_open(
+    tmp_path: Path, file: str, folder: str,
+) -> None:
+    """Nothing holds the manifest: the refusal names its permissions."""
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    (tmp_path / "slab_new.h5").write_bytes(b"model")
+    before = target.read_bytes()
+    with acl_denied(target, file, folder), pytest.raises(VariantsWriteRefused) as caught:
+        write_variants(target, [VariantDef("A", "slab_new.h5")])
+    assert caught.value.reason == "access-denied", str(caught.value)
+    assert str(target) in str(caught.value) and "another program" not in str(caught.value)
+    assert "nothing was replaced" in str(caught.value)
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert target.read_bytes() == before and _partials(target) == []
+
+
+@ON_WINDOWS
+def test_a_holder_that_shares_nothing_refuses_the_first_read(tmp_path: Path) -> None:
+    """``CreateFileW(share=0)``: the read before anything is written is ``held-open``."""
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    (tmp_path / "slab_new.h5").write_bytes(b"model")
+    before = target.read_bytes()
+    with held_open(target, "exclusive"), pytest.raises(VariantsWriteRefused) as caught:
+        write_variants(target, [VariantDef("A", "slab_new.h5")])
+    assert caught.value.reason == "held-open", str(caught.value)
+    assert str(target) in str(caught.value) and "nothing was replaced" in str(caught.value)
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert target.read_bytes() == before and _partials(target) == []
+
+
+@ON_WINDOWS
+def test_a_holder_that_shares_nothing_refuses_the_read_before_the_replace(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The holder arrives after the partial is written: the digest read before the
+    replace is ``held-open`` too, and the partial is removed."""
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    (tmp_path / "slab_new.h5").write_bytes(b"model")
+    before = target.read_bytes()
+    real_fsync = _variants._fsync
+    with contextlib.ExitStack() as stack:
+
+        def fsync_then_hold(path: Path) -> None:
+            real_fsync(path)
+            stack.enter_context(held_open(target, "exclusive"))
+
+        monkeypatch.setattr(_variants, "_fsync", fsync_then_hold)
+        with pytest.raises(VariantsWriteRefused) as caught:
+            write_variants(target, [VariantDef("A", "slab_new.h5")])
+        assert _partials(target) == [], "the refused write left its partial behind"
+    assert caught.value.reason == "held-open", str(caught.value)
+    assert str(target) in str(caught.value)
+    assert target.read_bytes() == before

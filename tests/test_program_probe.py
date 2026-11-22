@@ -106,7 +106,7 @@ def test_verdict_from_an_outsider_does_not_count():
     assert pp.approval_at_head(_pr(comments=[unlabelled])) is None
 
 
-@pytest.mark.parametrize("prefix", ["﻿", "​", "﻿​"])
+@pytest.mark.parametrize("prefix", ["\ufeff", "\u200b", "\ufeff\u200b"])
 def test_verdict_led_by_an_invisible_mark_counts(prefix):
     c = _verdict(5)
     c["body"] = prefix + c["body"]
@@ -115,21 +115,41 @@ def test_verdict_led_by_an_invisible_mark_counts(prefix):
 
 def test_verdict_with_crlf_line_ends_counts():
     c = _verdict(5)
-    c["body"] = "notes\r\n﻿Review-verdict: Opus 5.5 approve " + HEAD + "\r\n"
+    c["body"] = "notes\r\n\ufeffReview-verdict: Opus 5.5 approve " + HEAD + "\r\n"
     assert pp.approval_at_head(_pr(comments=[c])) is not None
 
 
 def test_verdict_after_other_text_on_the_line_still_does_not_count():
     # #1917: only a leading mark is dropped; a mid-line mark cannot forge one.
-    for body in (f"see ﻿Review-verdict: Opus approve {HEAD}",
+    for body in (f"see \ufeffReview-verdict: Opus approve {HEAD}",
                  f"x Review-verdict: Opus approve {HEAD}"):
         c = {**_verdict(5), "body": body}
         assert pp.verdicts(_pr(comments=[c])) == []
 
 
+def test_verdict_after_a_bare_cr_starts_a_line():
+    # A bare \r is a line start (_CR), so a verdict after it counts; text
+    # before the verdict on the same line still does not.
+    c = {**_verdict(5), "body": f"notes \rReview-verdict: Opus 5.5 approve {HEAD}"}
+    assert [v["sha"] for v in pp.verdicts(_pr(comments=[c]))] == [HEAD]
+    c = {**_verdict(5), "body": f"notes \r x Review-verdict: Opus 5.5 approve {HEAD}"}
+    assert pp.verdicts(_pr(comments=[c])) == []
+
+
+@pytest.mark.parametrize("name", ["test_program_probe.py", "test_check_review_verdict.py",
+                                  "test_land_pr.py"])
+def test_no_raw_invisible_characters_in_the_verdict_tests(name):
+    # An editor that strips a raw mark turns a parametrize into "" and the
+    # test passes with the fix reverted; write the escapes instead.
+    text = (Path(__file__).parent / name).read_text(encoding="utf-8")
+    bad = [i for i, line in enumerate(text.splitlines(), 1)
+           if "\ufeff" in line or "\u200b" in line]
+    assert bad == [], f"{name}: raw U+FEFF/U+200B on lines {bad}"
+
+
 def test_bom_verdict_from_an_outsider_still_does_not_count():
     c = _verdict(5, association="NONE")
-    c["body"] = "﻿" + c["body"]
+    c["body"] = "\ufeff" + c["body"]
     assert pp.verdicts(_pr(comments=[c])) == []
 
 

@@ -54,6 +54,11 @@ the quoted heading. Paths are from the repo root; `architecture/` is
       carries is silently discarded, so refuse it on the live route and
       warn on decks until then. #1184 shipped `-betaC`/`-crackedNu` from the
       closed fork #873; the gate is `opensees/_rc_c2_flags.py`.
+- [ ] A `FORK_PIN` bump runs `python scripts/refresh_mpm_fork_surface.py` in
+      the same PR, which refreshes `tests/fixtures/mpm_fork_surface/surface.json`.
+      A new fork `mpm` subcommand must then be classified: a member, or a
+      not-offered row, in `tests/opensees/parity/mpm_fork_surface.py`. Without
+      it `suite` fails on the bump (#3065).
 
 ## Shared literals and streams
 
