@@ -32,3 +32,22 @@ export async function until(ok: () => boolean, ms = 15000): Promise<boolean> {
   }
   return ok();
 }
+
+/**
+ * Poll (every 20 ms) until `ok` holds, for as long as `progress` keeps changing: false once it has not changed for
+ * `stallMs`, or after `maxMs` in all. For work whose length grows with the model (a history scan reads every step),
+ * where a fixed total wait passes on a small fixture and fails on a real building that is still making progress.
+ */
+export async function untilSteady(ok: () => boolean, progress: () => unknown, stallMs = 30000, maxMs = 600000): Promise<boolean> {
+  let last = progress(), since = 0;
+  for (let t = 0; t < maxMs && since < stallMs; t += 20, since += 20) {
+    if (ok()) return true;
+    await new Promise((r) => setTimeout(r, 20));
+    const now = progress();
+    if (now !== last) {
+      last = now;
+      since = 0;
+    }
+  }
+  return ok();
+}
