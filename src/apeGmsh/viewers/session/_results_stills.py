@@ -637,79 +637,14 @@ def _app_contour(results: Any, stage_id: str, component: str) -> dict[str, str]:
                            "Gauss component (e.g. stress_xx) or von_mises_stress / von_mises_strain of a Gauss tensor. For another one, write a spec and call apeGmsh.agent_view.render_stills.")
 
 
-#: Free barycentric columns per simplex TOPOLOGY the app's ``"bary"`` reader converts (``reader/ladrunoElements.ts`` ``BARY_NDIR``).
-_APP_BARY_NDIR = {"tri": 2, "tet": 3}
-#: How far a ``"bary"`` weight may fall outside [0, 1] before the app refuses the row (``BARY_TOL``).
-_APP_BARY_TOL = 1e-9
-
-
-def _attr_text(grp: Any, name: str) -> Optional[str]:
-    """A one-value string attribute as text, or None when it is absent or not one string (the app's ``oneValue``)."""
-    import numpy as np
-
-    if name not in grp.attrs:
-        return None
-    value = grp.attrs[name]
-    if isinstance(value, np.ndarray):
-        if value.size != 1:
-            return None
-        value = value.flat[0]
-    if isinstance(value, bytes):
-        return value.decode("utf-8", "replace")
-    return value if isinstance(value, str) else None
-
-
-def _app_has_natural_coords(stage: Any, bucket_key: str) -> bool:
-    """Whether the app offers natural coordinates for the Gauss bucket ``bucket_key`` of ``stage``, so a
-    ``gauss_node`` contour extrapolates its group (``reader/ladrunoElements.ts`` ``bucket``, restated):
-    its MODEL/ELEMENTS group (``modelGroupFor``: same class, the group's bracket fields a prefix of the
-    bucket's) carries a floating-point (points, directions) ``QUADRATURE/GP_PARAM`` whose ``PARAM_DOMAIN`` is
-    ``"[-1,1]"``, or ``"bary"`` on a frame ``baryToGmsh`` converts (TOPOLOGY tri/tet, FAMILY lagrange/bernstein,
-    the topology's width, every row a point of the simplex). A group without them (no GP_PARAM, or a domain or
-    frame the app cannot read) is the one the app draws as its element mean (the owner's 2026-11-13 rulings on
-    #2924 item 2, which #3085 keeps for exactly these groups)."""
-    import numpy as np
-
-    elements = stage["MODEL/ELEMENTS"] if "MODEL/ELEMENTS" in stage else None
-    cls, _, fields = bucket_key.partition("[")
-    if elements is None or (fields and not fields.endswith("]")):
-        return False
-    want = fields[:-1].split(":") if fields else [""]
-    grp = None
-    for name in elements:
-        mcls, _, mfields = name.partition("[")
-        have = mfields[:-1].split(":") if mfields else [""]
-        if mcls == cls and len(have) <= len(want) and have == want[: len(have)]:
-            grp = elements[name]
-            break
-    if grp is None or "QUADRATURE" not in grp or "GP_PARAM" not in grp["QUADRATURE"]:
-        return False
-    gp = grp["QUADRATURE"]["GP_PARAM"]
-    if gp.dtype.kind != "f" or gp.ndim != 2:
-        return False
-    domain = _attr_text(grp, "PARAM_DOMAIN")
-    if domain == "[-1,1]":
-        return True
-    if domain != "bary":
-        return False
-    ndir = _APP_BARY_NDIR.get(_attr_text(grp, "TOPOLOGY") or "")
-    if ndir is None or _attr_text(grp, "FAMILY") not in ("lagrange", "bernstein") or gp.shape[1] != ndir:
-        return False
-    rows = np.asarray(gp[...], dtype=np.float64)
-    return bool(np.isfinite(rows).all() and (rows >= -_APP_BARY_TOL).all() and (rows.sum(axis=1) <= 1.0 + _APP_BARY_TOL).all())
-
-
 def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
     """R16b: the app names a ``.ladruno`` Gauss column ``<token>/<label>`` (the file's own
     COMP_NAMES label) in the element field ``<token>`` (``reader/ladrunoElements.ts``):
     the column this reader reads as ``component`` (``_block_canonicals``), one in every
     part of the set the app opens, or refused. A block renamed in place (the shell
     families, ``_name_shell_blocks``) keeps the file's label at the same position. The
-    mode is v1's averaged still: ``gauss_node`` when a group the app has natural
-    coordinates for (:func:`_app_has_natural_coords`) has several Gauss points, else
-    ``gauss_cell_averaged``; in a ``node`` field the app draws each group without them
-    as its element mean, per group, and names it. Any other source is drawn nothing,
-    so it passes only under the skip."""
+    mode is v1's averaged still: ``gauss_cell_averaged`` at one Gauss point, else
+    ``gauss_node`` (the app labels its per-group fallback). Any other source is drawn nothing, so it passes only under the skip."""
     import h5py
 
     if results.path is None or Path(results.path).suffix.lower() != ".ladruno":
@@ -734,8 +669,7 @@ def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
                         own = own if own is not None and len(own) == len(b.comp_names) else None
                         for i in (i for i, c in enumerate(_block_canonicals(token, b)) if c == component):
                             hits.add((token, own[i] if own else b.comp_names[i], own is None))
-                            # Only a group the app extrapolates votes for `node`; a set whose groups have no natural coordinates asks cell_averaged
-                            n_gauss = max(n_gauss, len(gauss)) if _app_has_natural_coords(stage, key) else n_gauss
+                            n_gauss = max(n_gauss, len(gauss))
     if len(hits) != 1 or next(iter(hits))[2]:
         raise ContourDataError(f"stored Gauss component {component!r} is not one column the app names in {Path(results.path).name}: {sorted(h[:2] for h in hits) or 'none'}"
                                f"{' (named by the response catalog, not by the file)' if any(h[2] for h in hits) else ''} (R16b).")

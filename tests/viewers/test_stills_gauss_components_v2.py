@@ -5,12 +5,12 @@ component, e.g. ``stress_xx``, as ``contour: {field, component, source: "element
 gauss}``. The app names a ``.ladruno`` Gauss column ``<token>/<label>``: the
 ON_ELEMENTS token and the file's own COMP_NAMES label
 (``apeGmshViewer/src/reader/ladrunoElements.ts``, ``state/contour.ts``
-``gaussFields``). The still keeps v1's averaged picture: ``gauss_node`` (extrapolated
-to the corners, averaged) when a group the app has natural coordinates for has several
-Gauss points, ``gauss_cell_averaged`` otherwise. Since #2706 the app reads a ``"bary"``
-GP_PARAM, so BezierTet10 and BezierTri6 ask ``node`` (#3085, retiring #2942 and #2950's
-class-name exclusion); a group with no GP_PARAM still draws its element mean, per group,
-as the owner ruled on #2924 item 2. Row R16c names
+``gaussFields``). The still keeps v1's averaged picture: ``gauss_cell_averaged`` at
+one Gauss point, ``gauss_node`` (extrapolated to the corners, averaged) otherwise.
+Since #2706 the app reads a ``"bary"`` GP_PARAM, so BezierTet10 and BezierTri6 ask
+``node`` like any group (#3085 retired #2942 and #2950's class-name exclusion). The app
+draws a group with no natural coordinates (no GP_PARAM) as its element mean, per group,
+and labels it (``topology_fallback``), as the owner ruled on #2924 item 2. Row R16c names
 ``von_mises_stress`` / ``von_mises_strain`` as a component of the element field
 that holds the tensor.
 
@@ -245,18 +245,14 @@ def _drop_gp_param(path: Path, bucket_key: str) -> None:
 
 
 @pytest.mark.parametrize("fixture", [_TET10, _TRI6], ids=["BezierTet10", "BezierTri6"])
-@pytest.mark.parametrize("gp_param, mixed, mode", [
-    (True, False, "node"),
-    (True, True, "node"),
-    (False, False, "cell_averaged"),
-    (False, True, "node"),
-], ids=["coords", "coords+quad", "none", "none+quad"])
-def test_the_gauss_mode_vote_follows_natural_coordinates(tmp_path, fixture, gp_param, mixed, mode):
-    """#3085: a group votes for ``node`` when the app has natural coordinates for it, whatever
-    its class. A Bezier group with its "bary" GP_PARAM asks ``node``, alone or beside a quad.
-    Without GP_PARAM (the 2026-11-13 rulings on #2924 item 2, unchanged): alone it asks
-    ``cell_averaged``; beside a four-point quad group it asks ``node``, and the app's per-group
-    fallback draws the Bezier group's element mean. The scan reads only ``path``."""
+@pytest.mark.parametrize("gp_param", [True, False], ids=["gp_param", "no_gp_param"])
+@pytest.mark.parametrize("mixed", [False, True], ids=["alone", "with_quad"])
+def test_every_multi_point_group_votes_node(tmp_path, fixture, gp_param, mixed):
+    """#3085 (owner ruling 2026-11-22): every group with several Gauss points votes for
+    ``node``, whatever its class and whether it has a GP_PARAM. The app then draws a group it
+    has no natural coordinates for as its element mean and names it in ``topology_fallback``
+    (ruling 1 on #2924 item 2), so the still never picks the fallback itself. The scan reads
+    only ``path``."""
     from types import SimpleNamespace
 
     from apeGmsh.viewers.session._results_stills import _app_gauss_contour
@@ -272,68 +268,41 @@ def test_the_gauss_mode_vote_follows_natural_coordinates(tmp_path, fixture, gp_p
             ["31-FourNodeQuad[201:0:0]", _BEZIER[fixture]] if mixed else [_BEZIER[fixture]]
         )
     shot = _app_gauss_contour(SimpleNamespace(path=src), "stress_xx")
-    assert shot == {"field": "stress", "component": "stress/sigma_xx", "source": "element", "gauss": mode}
+    assert shot == {"field": "stress", "component": "stress/sigma_xx", "source": "element", "gauss": "node"}
 
 
 _SIMPLEX = Path(__file__).resolve().parents[1] / "fixtures" / "simplex_gp"
+_SIXNODE = "209-SixNodeTri[0:0:0]"
 
 
-@pytest.mark.parametrize("name, without", [
-    # The app's own reading of these files: test/contour/extrapolation.test.ts "VF2 #2950 / #3071"
-    # (tri: the SixNodeTri's naturalCoords null, the BezierTri6's and the quad's offered) and
-    # test/results/ladrunoGauss.test.ts "Python and the viewer agree" (#2706: every "bary" group of both files).
-    ("tri.ladruno", {"209-SixNodeTri[0:0:0]", "33016-LadrunoLST[0:0:0]"}),
-    ("tet.ladruno", set()),
-])
-def test_natural_coords_are_the_apps_on_the_fork_fixtures(name, without):
-    """#3085: the groups the stills find without natural coordinates are the ones the app's
-    reader gives none, on the fork's simplex solves (``tests/fixtures/simplex_gp``): only the
-    classes that write no GP_PARAM; every "bary" group (Tri31, BezierTri6, the three tets) has them."""
-    from apeGmsh.viewers.session._results_stills import _app_has_natural_coords
-
-    with h5py.File(_SIMPLEX / name, "r") as f:
-        stage = f["MODEL_STAGE[1]"]
-        keys = {k for t in stage["RESULTS/ON_ELEMENTS"] for k in stage["RESULTS/ON_ELEMENTS"][t]}
-        assert len(keys) >= 4
-        assert {k for k in keys if not _app_has_natural_coords(stage, k)} == without
-
-
-@pytest.mark.parametrize("attr, value, expected", [
-    (None, None, True),
-    ("PARAM_DOMAIN", "[-1,1]", True),
-    ("PARAM_DOMAIN", "natural", False),
-    ("TOPOLOGY", "triangle", False),
-    ("FAMILY", "serendipity", False),
-    ("GP_PARAM", [[0.5, 0.5, 0.0]] * 3, False),
-    ("GP_PARAM", [[1 / 6, 1 / 6], [2 / 3, 1 / 6], [0.7, 0.4]], False),
-    ("GP_PARAM", [[1 / 6, 1 / 6], [2 / 3, 1 / 6], [-0.1, 2 / 3]], False),
-    ("GP_PARAM", [[1, 0], [0, 1], [0, 0]], False),
-    ("model", None, False),
-], ids=["bary", "[-1,1]", "unknown-domain", "tims-triangle", "unknown-family", "wrong-width",
-        "sum-above-1", "negative-weight", "integer-rows", "no-model-group"])
-def test_natural_coords_refuse_what_the_app_refuses(tmp_path, attr, value, expected):
-    """#3085: the reader's rule, restated (``reader/ladrunoElements.ts`` ``bucket`` and
-    ``baryToGmsh``): a group has natural coordinates for a ``"[-1,1]"`` or a convertible
-    ``"bary"`` GP_PARAM of floats, and none for an unknown domain, TOPOLOGY or FAMILY, the
-    wrong width, a row outside the simplex, or no MODEL/ELEMENTS group. Each of those draws
-    its element mean in a ``node`` field, as the app does."""
-    from apeGmsh.viewers.session._results_stills import _app_has_natural_coords
-
-    key = _BEZIER[_TRI6]
-    src = tmp_path / "tri6.ladruno"
-    shutil.copy(_TRI6, src)
+@pytest.fixture
+def sixnode_only_set(tmp_path: Path) -> Path:
+    """``tri.ladruno`` (the fork's simplex solve) cut to its SixNodeTri: one element, one Gauss
+    bucket (``strains``, three points) and no QUADRATURE/GP_PARAM (the fork writes none for the class)."""
+    src = tmp_path / "tri.ladruno"
+    shutil.copy(_SIMPLEX / "tri.ladruno", src)
     with h5py.File(src, "r+") as f:
+        on = f["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
+        del on["stresses"]
+        for key in [k for k in on["strains"] if k != _SIXNODE]:
+            del on["strains"][key]
         elements = f["MODEL_STAGE[1]/MODEL/ELEMENTS"]
-        grp = elements[key[:-3] + "]"]
-        if attr == "GP_PARAM":
-            del grp["QUADRATURE/GP_PARAM"]
-            grp["QUADRATURE"]["GP_PARAM"] = np.asarray(value)
-        elif attr == "model":
-            elements.move(grp.name, f"{elements.name}/33000-BezierTri6[1001:1]")
-        elif attr is not None:
-            grp.attrs[attr] = np.array([value.encode()])
-    with h5py.File(src, "r") as f:
-        assert _app_has_natural_coords(f["MODEL_STAGE[1]"], key) is expected
+        for name in [n for n in elements if n != f"{_SIXNODE[:-3]}]"]:
+            del elements[name]
+        assert "QUADRATURE" not in elements[f"{_SIXNODE[:-3]}]"]
+    return src
+
+
+def test_a_field_with_no_natural_coordinates_asks_node(sixnode_only_set):
+    """Review F2 on #3085: a field whose only Gauss group has no GP_PARAM still asks ``node``,
+    so the app labels its fallback (``topology_fallback``) instead of the still asking
+    ``cell_averaged`` unlabelled."""
+    from types import SimpleNamespace
+
+    from apeGmsh.viewers.session._results_stills import _app_gauss_contour
+
+    shot = _app_gauss_contour(SimpleNamespace(path=sixnode_only_set), "strain_xx")
+    assert shot == {"field": "strains", "component": "strains/eta11", "source": "element", "gauss": "node"}
 
 
 def test_a_column_in_two_tokens_is_refused(app_backend, quad_set, tmp_path):
@@ -642,52 +611,83 @@ def mixed_tri_set(tmp_path: Path) -> Path:
     return _pair(src)
 
 
-def test_python_and_the_app_agree_on_the_groups_that_fall_back(mixed_tri_set, tmp_path, monkeypatch):
-    """#3085, damage case "one group has no GP_PARAM": the still asks ``node``, and the app
-    draws the SixNodeTri alone as its element mean and names it in ``topology_fallback``:
-    exactly the group ``_app_has_natural_coords`` finds without coordinates in the same file.
-    The BezierTri6 is extrapolated: its corner at the field's minimum reads its own x
-    (closed form)."""
-    from apeGmsh.viewers.session._results_stills import _app_has_natural_coords
-
-    with h5py.File(mixed_tri_set, "r") as f:
+def _without_gp_param(path: Path, token: str) -> list[str]:
+    """The app ids (``<token>/<bucket key>``) of the field's groups whose MODEL/ELEMENTS group has
+    no QUADRATURE/GP_PARAM: the groups the app gives no natural coordinates."""
+    with h5py.File(path, "r") as f:
         stage = f["MODEL_STAGE[1]"]
-        strains = stage["RESULTS/ON_ELEMENTS/strains"]
-        python = sorted(f"strains/{k}" for k in strains if not _app_has_natural_coords(stage, k))
-        bezier = [int(n) for n in stage["MODEL/ELEMENTS/33000-BezierTri6[1000:1]/CONNECTIVITY"][0, 1:4]]
-    assert python == ["strains/209-SixNodeTri[0:0:0]"]
+        elements = stage["MODEL/ELEMENTS"]
+        return sorted(f"{token}/{k}" for k in stage[f"RESULTS/ON_ELEMENTS/{token}"]
+                      if "QUADRATURE/GP_PARAM" not in elements[f"{k[:-3]}]"])
+
+
+def _labelled_fallback(manifests: list[dict], component: str) -> dict:
+    """The one shot's contour, drawn ``gauss_node`` with a labelled ``cell_averaged`` fallback."""
+    (entry,) = manifests[0]["shots"]
+    assert entry["status"] == "ok", entry.get("reason")
+    contour = entry["contour"]
+    assert (contour["component"], contour["topology"]) == (component, "gauss_node")
+    fallback = contour["topology_fallback"]
+    assert (fallback["asked"], fallback["drawn"]) == ("gauss_node", "cell_averaged")
+    assert "has no natural coordinates" in fallback["reason"]
+    return contour
+
+
+def test_a_mixed_field_labels_only_the_group_without_gp_param(mixed_tri_set, tmp_path, monkeypatch):
+    """#3085, damage case "one group has no GP_PARAM" (ruling 2 on #2924 item 2): the still
+    asks ``node``; the app draws the SixNodeTri alone as its element mean and names exactly
+    the group of the file that has no GP_PARAM. The BezierTri6 is extrapolated: its corner at
+    the field's minimum reads its own x (closed form)."""
+    groups = _without_gp_param(mixed_tri_set, "strains")
+    assert groups == [f"strains/{_SIXNODE}"]
+    with h5py.File(mixed_tri_set, "r") as f:
+        bezier = [int(n) for n in f["MODEL_STAGE[1]/MODEL/ELEMENTS/33000-BezierTri6[1000:1]/CONNECTIVITY"][0, 1:4]]
     manifests = _app_manifests(monkeypatch)
     with Results.from_ladruno(mixed_tri_set) as r:
         out = r.render(tmp_path / "mixed.png", view="contour", component="strain_xx")
         x = dict(zip(np.asarray(r.fem.nodes.ids).tolist(), np.asarray(r.fem.nodes.coords, dtype=float)[:, 0].tolist()))
     assert out.is_file() and out.stat().st_size > 0
-    (entry,) = manifests[0]["shots"]
-    assert entry["status"] == "ok", entry.get("reason")
-    contour = entry["contour"]
-    assert (contour["field"], contour["component"], contour["topology"]) == ("strains", "strains/eps_xx", "gauss_node")
-    fallback = contour["topology_fallback"]
-    assert (fallback["asked"], fallback["drawn"], sorted(fallback["groups"])) == ("gauss_node", "cell_averaged", python)
+    contour = _labelled_fallback(manifests, "strains/eps_xx")
+    assert sorted(contour["topology_fallback"]["groups"]) == groups
     rec = contour["extrema"]["recorded"]
     assert rec["min"]["node"] in bezier
     assert rec["min"]["value"] == pytest.approx(x[rec["min"]["node"]], abs=1e-9)
 
 
-def test_bezier_still_without_gp_param_draws_its_mean_through_the_app(bezier_set, tmp_path, monkeypatch):
-    """The 2026-11-13 rulings on #2924 item 2, kept by #3085 for a group with no GP_PARAM:
-    the still asks cell_averaged and the app draws the element mean averaged at the nodes.
-    One element, so every node holds the mean of the Gauss values Python reads: min = max =
-    that mean."""
-    _drop_gp_param(bezier_set, _BEZIER[_TET10 if bezier_set.name == _TET10.name else _TRI6])
+def _mean_still(src: Path, component: str, tmp_path: Path, monkeypatch) -> tuple[dict, float]:
+    """The app's contour of ``component`` on a one-element ``src``, and the mean of its Gauss values."""
     manifests = _app_manifests(monkeypatch)
-    with Results.from_ladruno(bezier_set) as r:
-        out = r.render(tmp_path / f"{bezier_set.stem}.png", view="contour", component="stress_xx")
+    with Results.from_ladruno(src) as r:
+        out = r.render(tmp_path / f"{src.stem}.png", view="contour", component=component)
         stage = r.stage(r.stages[0].id)
-        mean = float(np.mean(np.asarray(stage.elements.gauss.get(component="stress_xx", time=0).values)[0]))
+        mean = float(np.mean(np.asarray(stage.elements.gauss.get(component=component, time=0).values)[0]))
     assert out.is_file() and out.stat().st_size > 0
     (entry,) = manifests[0]["shots"]
     assert entry["status"] == "ok", entry.get("reason")
-    contour = entry["contour"]
-    assert (contour["field"], contour["component"]) == ("stress", "stress/sigma_xx")
-    assert contour["topology"] == "element_mean_averaged"
+    return entry["contour"], mean
+
+
+def test_a_field_with_no_natural_coordinates_is_labelled_through_the_app(sixnode_only_set, tmp_path, monkeypatch):
+    """Review F2 on #3085 (ruling 1 on #2924 item 2): a SixNodeTri-only field asks ``node``,
+    and the app draws its element mean labelled as the fallback, naming the group. One
+    element, so every node holds the mean of the Gauss values: min = max = that mean."""
+    src = _pair(sixnode_only_set)
+    contour, mean = _mean_still(src, "strain_xx", tmp_path, monkeypatch)
+    contour = _labelled_fallback([{"shots": [{"status": "ok", "contour": contour}]}], "strains/eta11")
+    assert contour["topology_fallback"]["groups"] == _without_gp_param(src, "strains") == [f"strains/{_SIXNODE}"]
+    rec = contour["extrema"]["recorded"]
+    assert (rec["min"]["value"], rec["max"]["value"]) == pytest.approx((mean, mean), rel=1e-9)
+
+
+def test_bezier_still_without_gp_param_is_labelled_through_the_app(bezier_set, tmp_path, monkeypatch):
+    """A Bezier group with no GP_PARAM keeps its element mean (the 2026-11-13 rulings), now
+    asked as ``node`` and labelled by the app's fallback; from #2942/#2950 until #3085 it was
+    asked as ``cell_averaged`` and drawn ``element_mean_averaged`` with no label. Same values:
+    min = max = the mean of the Gauss values."""
+    key = _BEZIER[_TET10 if bezier_set.name == _TET10.name else _TRI6]
+    _drop_gp_param(bezier_set, key)
+    contour, mean = _mean_still(bezier_set, "stress_xx", tmp_path, monkeypatch)
+    contour = _labelled_fallback([{"shots": [{"status": "ok", "contour": contour}]}], "stress/sigma_xx")
+    assert contour["topology_fallback"]["groups"] == [f"stress/{key}"]
     rec = contour["extrema"]["recorded"]
     assert (rec["min"]["value"], rec["max"]["value"]) == pytest.approx((mean, mean), rel=1e-9)

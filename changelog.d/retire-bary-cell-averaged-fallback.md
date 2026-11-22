@@ -2,19 +2,21 @@
 
 From #2942 and #2950, `results.render` on Windows asked apeGmshViewer for the
 element mean (`cell_averaged`) whenever a Gauss contour held only BezierTet10
-or BezierTri6 groups. The reason was that the app had no natural coordinates
-for their barycentric (`"bary"`) Gauss points. Since #2706 the app converts
-those points, so the still now picks its mode by whether the app has natural
-coordinates for each group, not by the element class. A field of BezierTet10
-or BezierTri6 groups now asks for `node` and is drawn extrapolated to the
-corners, like any other multi-point field.
+or BezierTri6 groups, because the app had no natural coordinates for their
+barycentric (`"bary"`) Gauss points. Since #2706 the app converts those
+points. The still now asks for `node` whenever any group of the field has
+several Gauss points, whatever its element class. A BezierTet10 or BezierTri6
+field is drawn extrapolated to the corners, like any other multi-point field.
 
-A group with no natural coordinates is handled as the owner ruled on #2924
-item 2 (2026-11-13). Such a group has no `QUADRATURE/GP_PARAM`, or a
-`PARAM_DOMAIN` or `"bary"` frame the app cannot convert; SixNodeTri and
-LadrunoLST write no `GP_PARAM`, for example. In a mixed field the app still
-draws only that group as its element mean and names it in the manifest's
-`topology_fallback`. A field made only of such groups asks for
-`cell_averaged`, as BezierTet10 and BezierTri6 fields did before. For a
-SixNodeTri-only field, the still asked for `node` and the app fell back,
-so the picture is the same and the manifest no longer reports a fallback.
+The app decides the fallback of a group it has no natural coordinates for:
+a group with no `QUADRATURE/GP_PARAM`, or a `PARAM_DOMAIN` or `"bary"` frame
+it cannot convert. It draws that group as its element mean and names it in
+the manifest's `topology_fallback` and in the banner, as the owner ruled on
+#2924 item 2 (2026-11-13). This holds in a mixed field and in a field made
+only of such groups.
+
+One picture keeps its values but gains the label. A BezierTet10 or
+BezierTri6 field whose file has no `GP_PARAM` used to be asked as
+`cell_averaged` and drawn `element_mean_averaged` with no label. It is now
+asked as `node` and drawn as the same element means, labelled as the
+fallback.
