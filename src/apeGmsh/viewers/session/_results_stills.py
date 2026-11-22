@@ -734,7 +734,7 @@ def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
                         own = own if own is not None and len(own) == len(b.comp_names) else None
                         for i in (i for i, c in enumerate(_block_canonicals(token, b)) if c == component):
                             hits.add((token, own[i] if own else b.comp_names[i], own is None))
-                            # #3085: only a group the app extrapolates votes for `node`; a set whose groups have no natural coordinates asks cell_averaged
+                            # Only a group the app extrapolates votes for `node`; a set whose groups have no natural coordinates asks cell_averaged
                             n_gauss = max(n_gauss, len(gauss)) if _app_has_natural_coords(stage, key) else n_gauss
     if len(hits) != 1 or next(iter(hits))[2]:
         raise ContourDataError(f"stored Gauss component {component!r} is not one column the app names in {Path(results.path).name}: {sorted(h[:2] for h in hits) or 'none'}"
