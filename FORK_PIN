@@ -1,6 +1,8 @@
 # The Ladruno fork build apeGmsh's nightly `live-fork` lane tests against.
 # Read by .github/workflows/live-fork.yml and by
-# tests/opensees/integration_ladruno/conftest.py. Bump all four keys together.
+# tests/conftest.py. Bump all four keys together, then run
+# `python scripts/refresh_mpm_fork_surface.py`: a new fork `mpm` subcommand must be
+# classified (member or not-offered row in tests/opensees/parity/mpm_fork_surface.py).
 tag=ladruno-v20261120
 sha=23e0f000283675b935bfd1c00a4533550fa053e0
 repo=nmorabowen/OpenSees
