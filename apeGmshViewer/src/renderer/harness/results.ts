@@ -3,7 +3,7 @@
 
 import { gaussFields } from "../../state/contour.ts";
 import { contourFieldsOf, contourView, deformOf, deformView } from "../../state/selectors.ts";
-import { painted, until, type HarnessContext } from "./context.ts";
+import { painted, until, untilSteady, type HarnessContext } from "./context.ts";
 import { contourShown, deformShown, refusalShown } from "./shown.ts";
 
 /** The results stills of a capture (see the call site); each waits for its step fetch to settle. */
@@ -182,7 +182,7 @@ export async function captureExtrudeResults(ctx: HarnessContext, settle: (ms?: n
   if (nf && nf.components[0]) {
     store.dispatch({ type: "setContourField", source: "nodal", field: nf.name, component: nf.components[0].key });
   }
-  await until(() => contourShown(ctx) && store.get().contour.scan?.status === "done" && deformShown(ctx), 30000);
+  await untilSteady(() => contourShown(ctx) && store.get().contour.scan?.status === "done" && deformShown(ctx), () => `${store.get().contour.scan?.key}|${store.get().contour.scan?.done}`);
   await settle(150);
   viewport.renderNow();
   await painted();
@@ -312,7 +312,9 @@ export async function captureElements(ctx: HarnessContext, settle: (ms?: number)
     return refusalShown(ctx);
   };
   const still = async (name: string) => {
-    if (!(await until(ready, 30000))) throw new Error(`capture ${name}: the element contour did not show (${contourView(store.get()).state})`);
+    // The history range scans every step (its length grows with the model): wait while the scan advances.
+    const scanned = () => `${store.get().contour.scan?.key}|${store.get().contour.scan?.done}`;
+    if (!(await untilSteady(ready, scanned))) throw new Error(`capture ${name}: the element contour did not show (${contourView(store.get()).state})`);
     await settle(100);
     viewport.renderNow();
     await painted();
@@ -381,7 +383,9 @@ export async function captureContours(ctx: HarnessContext, settle: (ms?: number)
   await still("contour-1-scan-running");
   // The still must show a scan in progress: one that finished first would show "whole history" under this name.
   if (scan()?.status !== "running") throw new Error(`capture: the history scan finished before its still was taken (${JSON.stringify(scan())})`);
-  if (!(await until(() => scan()?.status === "done", 30000))) throw new Error(`capture: the history scan did not finish (${JSON.stringify(scan())})`);
+  // The scan reads every step, so its length grows with the model: wait while it advances (a stall of 30 s fails).
+  const scanned = () => `${scan()?.key}|${scan()?.done}`;
+  if (!(await untilSteady(() => scan()?.status === "done", scanned))) throw new Error(`capture: the history scan did not finish (${JSON.stringify(scan())})`);
   await still("contour-2-history-first-step");
   const last = stages[best]!.time.length - 1;
   store.dispatch({ type: "setResultStep", step: last });
@@ -390,7 +394,7 @@ export async function captureContours(ctx: HarnessContext, settle: (ms?: number)
   const axis = v.state === "ready" ? contourFieldsOf(store.get())?.fields.find((f) => f.name === v.field)?.components.find((c) => !c.magnitude) : undefined;
   if (axis && v.state === "ready") {
     store.dispatch({ type: "setContourField", field: v.field, component: axis.key });
-    await until(() => scan()?.status === "done" && scan()!.key.endsWith(`|${axis.key}`), 30000);
+    await untilSteady(() => scan()?.status === "done" && scan()!.key.endsWith(`|${axis.key}`), scanned);
     await still(`contour-4-component-${axis.label}`);
   }
   if (typeof bridge.captureResize === "function") {
