@@ -30,7 +30,7 @@ from ._errors import UserFileRefused, UserWriteRefused
 from ._names import name_problem
 from ._workspace import RowRefusal, finite_number, strict_json
 from ._writer import (
-    _fsync, _held_detail, _held_open, _host_token, _replace, _sweep_dead_partials)
+    _fsync, _host_token, _read_or_refuse, _refusal, _replace, _sweep_dead_partials)
 
 __all__ = [
     "VARIANTS_FORMAT",
@@ -343,10 +343,16 @@ def read_variants(path: "str | Path") -> VariantsManifest:
     return VariantsManifest(path=where, version=version, variants=variants, refused=refused)
 
 
+def _read_old(target: Path) -> bytes:
+    """The old file's bytes; on Windows a holder that shares no read, or a
+    permission, refuses the write (``held-open``, ``access-denied``)."""
+    return _read_or_refuse(target, Path.read_bytes, VariantsWriteRefused)
+
+
 def _digest(path: Path) -> Optional[str]:
     if not path.exists():
         return None
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(_read_old(path)).hexdigest()
 
 
 def _old_rows(target: Path) -> tuple[list, Optional[str]]:
@@ -355,7 +361,7 @@ def _old_rows(target: Path) -> tuple[list, Optional[str]]:
         return [], None
     if not target.is_file():
         raise VariantsWriteRefused("not-a-file", f"{target} is not a file")
-    raw = target.read_bytes()
+    raw = _read_old(target)
     try:
         _, rows = _envelope(_load(raw, target), target)
     except VariantsRefused as exc:
@@ -381,8 +387,10 @@ def write_variants(
     every rule but existence, which a reader checks per row: a pipeline may list
     its variants before it runs them. An existing manifest that is newer than this
     writer, or that does not read, is never overwritten. On Windows, a manifest
-    another program still holds open after the retries refuses the write
-    (``held-open``); the old file stays whole and the partial is removed.
+    another program still holds open after the retries, or holds so that it
+    cannot be read, refuses the write (``held-open``); one whose permissions deny
+    this user refuses as ``access-denied``. The old file stays whole and the
+    partial is removed.
     """
     target = Path(path)
     if not target.name.lower().endswith(SUFFIX) or len(target.name) == len(SUFFIX):
@@ -454,9 +462,10 @@ def write_variants(
         try:
             _replace(partial, target)
         except PermissionError as exc:
-            if not _held_open(target, exc):
+            why = _refusal(target, exc)
+            if why is None:
                 raise
-            raise VariantsWriteRefused("held-open", _held_detail(target, exc)) from exc
+            raise VariantsWriteRefused(*why) from exc
     except FileExistsError as exc:
         raise VariantsWriteRefused("partial-mismatch", f"{partial} exists: {exc}") from exc
     except BaseException:

@@ -39,16 +39,39 @@ HOLDERS = {
     "h5py": "import h5py, sys, time; f = h5py.File(sys.argv[1], 'r')",
     "handle": "import sys, time; f = open(sys.argv[1], 'rb')",
 }
+#: A ``CreateFileW`` read handle with the share mode ``{share}``: ``0`` lets no
+#: one else open the file at all, ``7`` shares read, write and delete (#3080).
+_CREATE_FILE = (
+    "import ctypes, sys; k = ctypes.WinDLL('kernel32', use_last_error=True); "
+    "k.CreateFileW.restype = ctypes.c_void_p; "
+    "k.CreateFileW.argtypes = (ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, "
+    "ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p); "
+    "h = k.CreateFileW(sys.argv[1], 0x80000000, {share}, None, 3, 0, None); "
+    "assert h not in (None, ctypes.c_void_p(-1).value), ctypes.get_last_error()")
+#: Holders beyond :data:`HOLDERS`: one that shares nothing, one that shares delete.
+_MORE_HOLDERS = {
+    "exclusive": _CREATE_FILE.format(share=0),
+    "shares-delete": _CREATE_FILE.format(share=7),
+}
 ON_WINDOWS = pytest.mark.skipif(
     sys.platform != "win32",
     reason="only Windows blocks replacing or renaming a file another process holds open")
+ACL_ON_WINDOWS = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="the access-denied refusal tells a Windows ACL from a holder, through icacls")
 
 
 @contextlib.contextmanager
 def held_open(path: Path, holder: str = "handle") -> Iterator[None]:
-    """``path`` held open by another process for the ``with`` body (#2857, #2886)."""
-    code = HOLDERS[holder] + "; print('ready', flush=True); time.sleep(60)"
-    proc = subprocess.Popen([sys.executable, "-c", code, str(path)],
+    """``path`` held open by another process for the ``with`` body (#2857, #2886).
+
+    The holder lets go when its stdin closes and then exits, so the handle is
+    gone when the body ends: killing it would kill only the venv launcher, and
+    the real holder would outlive the body for a moment (#3044 review).
+    """
+    code = ({**HOLDERS, **_MORE_HOLDERS}[holder]
+            + "; print('ready', flush=True); sys.stdin.readline()")
+    proc = subprocess.Popen([sys.executable, "-c", code, str(path)], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         assert proc.stdout is not None
@@ -56,11 +79,45 @@ def held_open(path: Path, holder: str = "handle") -> Iterator[None]:
         assert line == "ready", f"the holder never opened the file: {line!r}"
         yield
     finally:
-        proc.kill()  # only the holder this helper started
-        proc.wait(timeout=30)
+        assert proc.stdin is not None
+        proc.stdin.close()  # the holder reads EOF, lets go and exits
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()  # only the holder this helper started
+            proc.wait(timeout=30)
         for stream in (proc.stdout, proc.stderr):
             if stream:
                 stream.close()
+
+
+def _my_sid() -> str:
+    out = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"],
+                         check=True, capture_output=True, text=True).stdout
+    return out.strip().split(",")[-1].strip('"')
+
+
+@contextlib.contextmanager
+def acl_denied(path: Path, file: str = "DE", folder: str = "DC") -> Iterator[None]:
+    """``path``'s ACL denies this user ``file``, and its folder's ``folder``, for the
+    ``with`` body; nothing holds the file. Every deny is removed afterwards.
+
+    ``DE`` (delete) on the file and ``DC`` (delete child) on the folder together
+    refuse a replace; ``RD`` (read data) on the file refuses a read. ``""`` adds nothing.
+    """
+    me = "*" + _my_sid()
+    denied: list[Path] = []
+    try:
+        for where, rights in ((path, file), (path.parent, folder)):
+            if rights:
+                denied.append(where)
+                subprocess.run(["icacls", str(where), "/deny", f"{me}:({rights})"],
+                               check=True, capture_output=True)
+        yield
+    finally:
+        for where in reversed(denied):
+            subprocess.run(["icacls", str(where), "/remove:d", me],
+                           check=True, capture_output=True)
 
 
 def nodal(name: str = "Delta_after (L/480)", *, basis: str = "model", **kw) -> UserResult:
