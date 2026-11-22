@@ -267,6 +267,13 @@ export interface CrackRibbons {
   /** sRGB 0..1, 3 per vertex */
   colours: Float32Array;
   segments: number;
+  /**
+   * The same segments as a hairline along the ribbons' centre, 2 vertices each (3 floats per vertex), and their
+   * colours: drawn as screen lines, at least a pixel wide at any zoom, so a ribbon narrower than a pixel (a whole
+   * building in view) still reads as a solid line instead of breaking into dashes.
+   */
+  core: Float32Array;
+  coreColours: Float32Array;
 }
 
 /**
@@ -275,7 +282,7 @@ export interface CrackRibbons {
  * from the opening on a log scale, `halfMin` at the smallest drawn to `halfMax` at the largest.
  */
 export function buildRibbons(lines: CrackLines, at: Float32Array, halfMin: number, halfMax: number, wMin: number): CrackRibbons {
-  const pos: number[] = [], col: number[] = [];
+  const pos: number[] = [], col: number[] = [], core: number[] = [], coreCol: number[] = [];
   const lo = Math.max(wMin, lines.maxOpening / 400, 1e-30);
   const span = Math.log(Math.max(lines.maxOpening, lo * 1.0001) / lo);
   const halfOf = (w: number) => halfMin + (halfMax - halfMin) * Math.min(1, Math.max(0, Math.log(Math.max(w, lo) / lo) / span));
@@ -296,7 +303,15 @@ export function buildRibbons(lines: CrackLines, at: Float32Array, halfMin: numbe
       const b0 = b.map((x, k) => x - hb * s[k]!), b1 = b.map((x, k) => x + hb * s[k]!);
       pos.push(...a0, ...b0, ...b1, ...a0, ...b1, ...a1);
       for (let k = 0; k < 6; k++) col.push(...rgb);
+      core.push(...a, ...b);
+      coreCol.push(...rgb, ...rgb);
     }
   }
-  return { positions: Float32Array.from(pos), colours: Float32Array.from(col), segments: pos.length / 18 };
+  return {
+    positions: Float32Array.from(pos),
+    colours: Float32Array.from(col),
+    segments: pos.length / 18,
+    core: Float32Array.from(core),
+    coreColours: Float32Array.from(coreCol),
+  };
 }

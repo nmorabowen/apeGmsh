@@ -138,6 +138,18 @@ test("ribbons: two triangles per segment, lying in the face, wider where the cra
   const widths = Array.from({ length: r.segments }, (_, s) => ({ x: r.positions[18 * s]!, w: Math.abs(r.positions[18 * s + 1]! - r.positions[18 * s + 16]!) }));
   const lo = widths.filter((s) => s.x < 2).map((s) => s.w), hi = widths.filter((s) => s.x > 8).map((s) => s.w);
   assert.ok(lo.length && hi.length && Math.max(...lo) < Math.min(...hi), "wider where the opening is larger");
+  // The hairline: one screen segment per ribbon segment, along its centre (the mid-point of its two long edges), same colour.
+  assert.equal(r.core.length, r.segments * 6);
+  assert.equal(r.coreColours.length, r.core.length);
+  for (let s = 0; s < r.segments; s++) {
+    const p = r.positions.subarray(18 * s, 18 * s + 18);
+    // a0 = p[0..2], b0 = p[3..5], b1 = p[6..8], a1 = p[15..17]
+    for (let k = 0; k < 3; k++) {
+      assert.ok(Math.abs(r.core[6 * s + k]! - 0.5 * (p[k]! + p[15 + k]!)) < 1e-6, "starts at the ribbon's centre");
+      assert.ok(Math.abs(r.core[6 * s + 3 + k]! - 0.5 * (p[3 + k]! + p[6 + k]!)) < 1e-6, "ends at the ribbon's centre");
+    }
+  }
+  assert.deepEqual(Array.from(r.coreColours.subarray(0, 3)), Array.from(r.colours.subarray(0, 3)));
 });
 
 test("scale: a 24 000-point fully cracked slab (6 000 elements) traces both faces; a runaway guard, the time is logged", () => {

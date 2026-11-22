@@ -49,6 +49,10 @@ export class CracksLayer {
   private readonly ribbonGeometry = new THREE.BufferGeometry();
   private readonly ribbonMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
   private readonly ribbons = new THREE.Mesh(this.ribbonGeometry, this.ribbonMaterial);
+  // The ribbons' centre as screen lines (state/crackLines.ts `buildRibbons` `core`): a pixel at least, at any zoom.
+  private readonly coreGeometry = new THREE.BufferGeometry();
+  private readonly coreMaterial = new THREE.LineBasicMaterial({ vertexColors: true });
+  private readonly core = new THREE.LineSegments(this.coreGeometry, this.coreMaterial);
   /** The traced lines of the step on screen, kept while only the deformation changes (no re-trace for a scale). */
   private traced: { key: unknown[]; lines: CrackLines; layout: ReturnType<typeof lineVertexLayoutOf>; base: Float32Array } | null = null;
   /** what the last line build drew: lines, ribbon segments, panels, and the largest opening on a line */
@@ -58,9 +62,12 @@ export class CracksLayer {
     this.mesh.frustumCulled = false;
     this.ticks.frustumCulled = false;
     this.ribbons.frustumCulled = false;
+    this.core.frustumCulled = false;
     this.mesh.visible = false;
     this.ticks.visible = false;
     this.ribbons.visible = false;
+    this.core.visible = false;
+    this.ribbons.add(this.core);
     this.root.add(this.mesh, this.ticks, this.ribbons);
     this.root.visible = false;
   }
@@ -176,6 +183,10 @@ export class CracksLayer {
       this.ribbonGeometry.setAttribute("position", new THREE.BufferAttribute(rb.positions, 3));
       this.ribbonGeometry.setAttribute("color", new THREE.BufferAttribute(rb.colours, 3));
       this.ribbonGeometry.computeBoundingSphere();
+      for (let i = 0; i < rb.coreColours.length; i++) rb.coreColours[i] = toLinear(rb.coreColours[i]!);
+      this.coreGeometry.setAttribute("position", new THREE.BufferAttribute(rb.core, 3));
+      this.coreGeometry.setAttribute("color", new THREE.BufferAttribute(rb.coreColours, 3));
+      this.core.visible = rb.segments > 0;
       this.ribbons.visible = rb.segments > 0;
       return true;
     }
@@ -250,6 +261,8 @@ export class CracksLayer {
     this.tickMaterial.needsUpdate = true;
     this.ribbonMaterial.clippingPlanes = planes;
     this.ribbonMaterial.needsUpdate = true;
+    this.coreMaterial.clippingPlanes = planes;
+    this.coreMaterial.needsUpdate = true;
   }
 
   dispose(): void {
@@ -259,5 +272,7 @@ export class CracksLayer {
     this.tickMaterial.dispose();
     this.ribbonGeometry.dispose();
     this.ribbonMaterial.dispose();
+    this.coreGeometry.dispose();
+    this.coreMaterial.dispose();
   }
 }
