@@ -30,7 +30,7 @@ from ._errors import UserFileRefused, UserWriteRefused
 from ._names import name_problem
 from ._workspace import RowRefusal, finite_number, strict_json
 from ._writer import (
-    _fsync, _host_token, _refusal, _replace, _sweep_dead_partials)
+    _fsync, _host_token, _read_or_refuse, _refusal, _replace, _sweep_dead_partials)
 
 __all__ = [
     "VARIANTS_FORMAT",
@@ -344,15 +344,9 @@ def read_variants(path: "str | Path") -> VariantsManifest:
 
 
 def _read_old(target: Path) -> bytes:
-    """The manifest's bytes; on Windows a holder that shares no read, or a
+    """The old file's bytes; on Windows a holder that shares no read, or a
     permission, refuses the write (``held-open``, ``access-denied``)."""
-    try:
-        return target.read_bytes()
-    except PermissionError as exc:
-        why = _refusal(target, exc, "read", reading=True)
-        if why is None:
-            raise
-        raise VariantsWriteRefused(*why) from exc
+    return _read_or_refuse(target, Path.read_bytes, VariantsWriteRefused)
 
 
 def _digest(path: Path) -> Optional[str]:

@@ -34,7 +34,7 @@ import socket
 import sys
 import time
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence, TypeVar
 
 import h5py
 import numpy as np
@@ -626,7 +626,6 @@ _ERROR_SHARING_VIOLATION = 32
 #: open (h5py, h5wasm or a plain handle), and, for ``5``, also one the file's
 #: permissions deny. A read gets the C runtime's ``EACCES`` for both.
 _HELD_WINERRORS = frozenset({_ERROR_ACCESS_DENIED, _ERROR_SHARING_VIOLATION})
-_EACCES = 13
 #: What a probe open asks for: what a replace or a rename needs of the old file,
 #: and what a read needs. It shares everything, so its own handle blocks no one.
 _DELETE = 0x00010000
@@ -641,7 +640,10 @@ def _probe_open(target: Path, access: int) -> int:
     ``CreateFileW`` checks the permissions before the share modes of the handles
     already open: ``ERROR_ACCESS_DENIED`` is the permissions, whether or not a
     holder exists, and ``ERROR_SHARING_VIOLATION`` is a holder whose share mode
-    excludes ``access``.
+    excludes ``access``. So the permissions win over a holder only where the
+    probe runs: a holder that shares no read stops the read before any replace,
+    and a read probe meets the holder first unless the permissions deny reading,
+    so a file with a ``DELETE`` denial and such a holder refuses as ``held-open``.
     """
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateFileW.restype = ctypes.c_void_p
@@ -657,33 +659,15 @@ def _probe_open(target: Path, access: int) -> int:
     return 0
 
 
-def _os_refusal(
-    target: Path, action: str, *, reading: bool = False, nothing: str = "nothing was replaced",
-    said: str = "",
+def _told(
+    code: int, target: Path, action: str, nothing: str, said: str,
 ) -> Optional[tuple[str, str]]:
-    """``(reason, detail)`` for a file Windows refused to replace, rename or read.
-
-    ``held-open``: another program holds the file open. ``access-denied``: the
-    file's or its folder's permissions deny this user. Windows answers both with
-    the same error (``WinError 5`` for a replace or a rename, ``EACCES`` for a
-    read), so a probe open for the same access tells them apart
-    (:func:`_probe_open`). A replace whose probe opens cleanly met a holder that
-    shares delete: ``DELETE`` is granted and the read-only attribute is clear,
-    and only an open handle still refuses the supersede. A read whose probe opens
-    cleanly is not explained. ``None`` when nothing is told: off Windows (a
-    ``PermissionError`` there is a real permission problem), a read-only target
-    (it keeps its own error), or an unexplained probe.
-    """
-    if sys.platform != "win32" or not target.is_file():
-        return None
-    if not reading and not os.access(target, os.W_OK):  # the read-only attribute
-        return None
-    code = _probe_open(target, _GENERIC_READ if reading else _DELETE)
+    """``(reason, detail)`` for a probe's error, or ``None`` when it explains nothing."""
     if code == _ERROR_ACCESS_DENIED:
         return "access-denied", (
             f"the permissions on {target} or its folder deny this user, so it cannot be "
             f"{action}{said}; {nothing}. Change them there and write again.")
-    if code == _ERROR_SHARING_VIOLATION or (code == 0 and not reading):
+    if code == _ERROR_SHARING_VIOLATION:
         return "held-open", (
             f"another program holds {target} open, so it cannot be {action}{said}; "
             f"{nothing}. Close it there and write again.")
@@ -692,30 +676,71 @@ def _os_refusal(
 
 def _refusal(
     target: Path, exc: PermissionError, action: str = "replaced", *,
-    reading: bool = False, nothing: str = "nothing was replaced",
+    nothing: str = "nothing was replaced",
 ) -> Optional[tuple[str, str]]:
-    """:func:`_os_refusal` for a ``PermissionError``, quoting the OS's words.
+    """``(reason, detail)`` for a replace or a rename of ``target`` Windows refused.
 
-    Only the errors a holder or a permission produce are told: ``WinError 5`` or
-    ``32``, or the C runtime's ``EACCES`` (no ``winerror``) from a read. Any
-    other error stands raw.
+    ``held-open``: another program holds the file open. ``access-denied``: the
+    file's or its folder's permissions deny this user. Windows answers both with
+    ``WinError 5``, so a probe open for ``DELETE`` tells them apart
+    (:func:`_probe_open`). A probe that opens cleanly met a holder that shares
+    delete: ``DELETE`` is granted and the read-only attribute is clear, and only
+    an open handle still refuses the supersede. ``None`` (the raw error stands)
+    off Windows, where a ``PermissionError`` is a real permission problem, for a
+    read-only target, which keeps its own error, for any other ``winerror``, and
+    for a probe that explains nothing.
     """
-    told = (exc.winerror in _HELD_WINERRORS if exc.winerror is not None
-            else exc.errno == _EACCES)
-    if not told:
+    if sys.platform != "win32":  # before winerror, which only Windows errors carry
         return None
-    return _os_refusal(target, action, reading=reading, nothing=nothing,
-                       said=f" ({exc.strerror})")
+    if (exc.winerror not in _HELD_WINERRORS or not target.is_file()
+            or not os.access(target, os.W_OK)):  # the read-only attribute
+        return None
+    code = _probe_open(target, _DELETE)
+    if code == 0:  # a holder that shares delete
+        code = _ERROR_SHARING_VIOLATION
+    return _told(code, target, action, nothing, f" ({exc.strerror})")
+
+
+_Read = TypeVar("_Read")
+
+
+def _read_or_refuse(
+    target: Path, read: Callable[[Path], _Read], refuse: Callable[[str, str], Exception],
+) -> _Read:
+    """``read(target)``; on Windows a read a holder or a permission refuses raises
+    ``refuse(reason, detail)`` (``held-open``, ``access-denied``).
+
+    The refused read is a ``PermissionError`` (the C runtime's ``EACCES`` for
+    both causes), or a :class:`UserFileRefused` over the ``OSError`` h5py
+    raised. A probe open for ``GENERIC_READ`` tells the causes apart
+    (:func:`_probe_open`). A probe that opens cleanly met a holder that let go
+    in between: the file is read once more, and a second failure stands raw, as
+    does any failure off Windows.
+    """
+    for last in (False, True):
+        try:
+            return read(target)
+        except (PermissionError, UserFileRefused) as exc:
+            if isinstance(exc, UserFileRefused) and not isinstance(exc.__cause__, OSError):
+                raise
+            if sys.platform != "win32" or not target.is_file():
+                raise
+            code = _probe_open(target, _GENERIC_READ)
+            if code == 0 and not last:
+                continue
+            said = f" ({exc.strerror})" if isinstance(exc, PermissionError) else ""
+            why = _told(code, target, "read", "nothing was replaced", said)
+            if why is None:
+                raise
+            raise refuse(*why) from exc
+    raise AssertionError("unreachable: the second read returns or raises")
+
+
+def _write_refused(reason: str, detail: str) -> UserWriteRefused:
+    return UserWriteRefused(f"{reason}: {detail}")
 
 
 def _open_previous(target: Path) -> UserFile:
     """``UserFile(target)``; a file Windows will not let this process read refuses the
     write (``held-open`` or ``access-denied``) instead of reading as unreadable."""
-    try:
-        return UserFile(target)
-    except UserFileRefused as exc:
-        if isinstance(exc.__cause__, OSError):
-            why = _os_refusal(target, "read", reading=True)
-            if why is not None:
-                raise UserWriteRefused(f"{why[0]}: {why[1]}") from exc
-        raise
+    return _read_or_refuse(target, UserFile, _write_refused)

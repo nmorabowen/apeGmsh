@@ -50,7 +50,7 @@ from ._descriptor import StateAddress, address_problem
 from ._errors import UserFileRefused, UserWriteRefused, ZoneRefused
 from ._names import name_problem, text_or_empty
 from ._writer import (
-    _create_partial, _fsync, _refusal, _replace, _sweep_dead_partials)
+    _create_partial, _fsync, _read_or_refuse, _refusal, _replace, _sweep_dead_partials)
 
 __all__ = [
     "PLOT_GRAMMAR",
@@ -1034,13 +1034,7 @@ _OS_REFUSALS = ("held-open", "access-denied")
 def _read_old(target: Path) -> bytes:
     """The old file's bytes; on Windows a holder that shares no read, or a
     permission, refuses the write (``held-open``, ``access-denied``)."""
-    try:
-        return target.read_bytes()
-    except PermissionError as exc:
-        why = _refusal(target, exc, "read", reading=True)
-        if why is None:
-            raise
-        raise WorkspaceWriteRefused(*why) from exc
+    return _read_or_refuse(target, Path.read_bytes, WorkspaceWriteRefused)
 
 
 def _digest(target: Path) -> Optional[str]:

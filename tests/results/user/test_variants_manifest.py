@@ -536,6 +536,50 @@ def test_a_posix_permission_error_reading_the_manifest_stays_raw(
     assert not isinstance(caught.value, VariantsWriteRefused)
 
 
+def _refused_reads(monkeypatch, target: Path, times: int) -> list[int]:
+    """The first ``times`` reads of ``target`` raise the C runtime's ``EACCES``, as
+    Windows does for a holder or a permission; the read probe then opens cleanly."""
+    real = Path.read_bytes
+    reads: list[int] = []
+
+    def read_bytes(self: Path) -> bytes:
+        if self == target:
+            reads.append(len(reads))
+            if len(reads) <= times:
+                raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(_writer, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(_writer, "_probe_open", lambda path, access: 0)
+    return reads
+
+
+def test_a_holder_that_lets_go_before_the_probe_gets_one_more_read(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """A refused read whose probe opens cleanly met a holder that let go: read again."""
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    (tmp_path / "slab_new.h5").write_bytes(b"model")
+    reads = _refused_reads(monkeypatch, target, times=1)
+    write_variants(target, [VariantDef("A", "slab_new.h5")])
+    assert len(reads) >= 2, "the refused read was not read again"
+    assert read_variants(target).by_label("A").path == "slab_new.h5"
+
+
+def test_a_read_refused_twice_with_a_clean_probe_stays_raw(tmp_path: Path, monkeypatch) -> None:
+    """Fail closed: a clean probe explains nothing, so a second refusal is not told."""
+    target = _study(tmp_path, EXAMPLES / "variants.valid.json")
+    before = target.read_bytes()
+    reads = _refused_reads(monkeypatch, target, times=2)
+    with pytest.raises(PermissionError) as caught:
+        write_variants(target, [VariantDef("A", "slab_new.h5")])
+    assert not isinstance(caught.value, VariantsWriteRefused)
+    assert len(reads) == 2, "a refused read is read again once, not more"
+    monkeypatch.undo()
+    assert target.read_bytes() == before and _partials(target) == []
+
+
 # --- an ACL denial is not a holder; a holder that shares nothing (#3080) -----
 
 
