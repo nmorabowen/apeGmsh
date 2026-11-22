@@ -4,14 +4,17 @@
 // (effects), the ticks (renderer/cracks.ts) and the card (panels/cracks.ts). The pure tick builder is checked on
 // hand-made frames and openings, where the right answer is known without the app.
 //
-// The wall's frame, as the file's MODEL/LOCAL_AXES records it: e1 = +x, e3 = +y (the normal, most along y), so the
-// face toward +y (red) is the last concrete layer (the +e3 side) and the face toward -y (blue) the first.
+// The wall's frame, as the file's MODEL/LOCAL_AXES records it: e1 = +x, e3 = -y (the normal, most along y; checked
+// against the element's geometry below), so the face toward +y (red) is the first concrete layer (the -e3 side) and
+// the face toward -y (blue) the last.
 
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { renderCracks } from "../src/panels/cracks.ts";
 import { CracksLayer } from "../src/renderer/cracks.ts";
+import * as h5wasm from "h5wasm/node";
+import { quaternionToZRec } from "../src/reader/ladrunoLocalAxes.ts";
 import { buildShellTicks, FACE_RGB, frameRows, shellCrackFieldOf, type ShellTickGroup } from "../src/state/shellCracks.ts";
 import { shellCrackFieldOf as selectShellField } from "../src/state/selectors.ts";
 import type { LayerGroup } from "../src/state/types.ts";
@@ -66,12 +69,49 @@ const ONE = { group: Int32Array.of(0), element: Int32Array.of(0), gauss: Int32Ar
 const crack = (x: number, y: number, z: number) => [x, y, z, 0, 0, 0, 0, 0, 0];
 const OPTS = { face: "both" as const, minOpening: 0, halfLength: 10, eps: 1 };
 
-test("frameRows: the rotation's rows are e1, e2, e3 (identity, and a quarter turn about z)", () => {
+test("frameRows: the rows of the quaternion's rotation matrix (identity, a quarter turn about z); row 3 is quaternionToZRec", () => {
   assert.deepEqual(frameRows(1, 0, 0, 0), [[1, 0, 0], [0, 1, 0], [0, 0, 1]]);
   const s = Math.SQRT1_2;
-  // A quarter turn of the axes about z: e1 = +y, e2 = -x, e3 = +z.
+  // R(q) of a +90 deg turn about z is [[0, -1, 0], [1, 0, 0], [0, 0, 1]]: e1 = -y, e2 = +x, e3 = +z.
   const r = frameRows(s, 0, 0, s).map((row) => row.map((v) => Math.round(v * 1e12) / 1e12 + 0));
-  assert.deepEqual(r, [[0, 1, 0], [-1, 0, 0], [0, 0, 1]]);
+  assert.deepEqual(r, [[0, -1, 0], [1, 0, 0], [0, 0, 1]]);
+  // The same matrix the reader decodes (reader/ladrunoLocalAxes.ts, as Python LocalAxes.matrices), for a generic q.
+  const q = [0.3, -0.5, 0.7, 0.4].map((v, _, a) => v / Math.hypot(...a)) as [number, number, number, number];
+  frameRows(...q)[2]!.forEach((v, k) => assert.ok(Math.abs(v - quaternionToZRec(...q)[k]!) < 1e-12));
+});
+
+test("frameRows on the recorded frames is each shell's own frame: e1 along its first edge, e3 along its diagonals' cross product", () => {
+  // The independent oracle: ASDShellQ4 with no -local takes e1 along node 1 -> 2 and e3 = (x3 - x1) x (x4 - x2),
+  // here from the fixture's own MODEL; the wall in the x-z plane gives e1 = +x, e2 = +z, e3 = -y.
+  const f = new h5wasm.File(fixture("ladruno_shells3d.ladruno"), "r");
+  try {
+    const stage = f.keys().filter((k) => k.startsWith("MODEL_STAGE")).pop()!;
+    const ids = Array.from((f.get(`${stage}/MODEL/NODES/ID`) as h5wasm.Dataset).value as Int32Array);
+    const xyz = (f.get(`${stage}/MODEL/NODES/COORDINATES`) as h5wasm.Dataset).value as Float64Array;
+    const at = (n: number) => Array.from(xyz.subarray(3 * ids.indexOf(n), 3 * ids.indexOf(n) + 3));
+    const conn = (f.get(`${stage}/MODEL/ELEMENTS/203-ASDShellQ4[201:0]/CONNECTIVITY`) as h5wasm.Dataset).value as Int32Array;
+    const la = `${stage}/MODEL/LOCAL_AXES/203-ASDShellQ4`;
+    const eid = Array.from((f.get(`${la}/ID`) as h5wasm.Dataset).value as Int32Array);
+    const q = (f.get(`${la}/FRAME`) as h5wasm.Dataset).value as Float64Array;
+    const unit = (v: number[]) => v.map((x) => x / Math.hypot(...v));
+    const sub = (a: number[], b: number[]) => a.map((x, k) => x - b[k]!);
+    const cross = (a: number[], b: number[]) => [a[1]! * b[2]! - a[2]! * b[1]!, a[2]! * b[0]! - a[0]! * b[2]!, a[0]! * b[1]! - a[1]! * b[0]!];
+    let checked = 0;
+    for (let e = 0; e < conn.length / 5; e++) {
+      const [id, n1, n2, n3, n4] = Array.from(conn.subarray(5 * e, 5 * e + 5));
+      const row = eid.indexOf(id!);
+      if (row < 0) continue;
+      const e3 = unit(cross(sub(at(n3!), at(n1!)), sub(at(n4!), at(n2!))));
+      const e1 = unit(sub(at(n2!), at(n1!)));
+      const [r1, , r3] = frameRows(q[4 * row]!, q[4 * row + 1]!, q[4 * row + 2]!, q[4 * row + 3]!);
+      for (const [got, want] of [[r1!, e1], [r3!, e3]] as const) got.forEach((v, k) => assert.ok(Math.abs(v - want[k]!) < 1e-9, `element ${id}: ${got} vs ${want}`));
+      assert.deepEqual(e3.map((v) => Math.round(v) + 0), [0, -1, 0]);
+      checked++;
+    }
+    assert.ok(checked > 0);
+  } finally {
+    f.close();
+  }
 });
 
 test("a tick lies along the crack's trace e3 x n, centred on its Gauss point, a hair off its face along e3", () => {
@@ -136,7 +176,7 @@ test("the stage's shell crack field is both header buckets; the step reads their
   h.store.dispatch({ type: "setCracks", on: false });
 });
 
-test("the ticks: in the wall's plane, along a trace normal to e3 = +y; red on the +y face, blue on the -y face; one face at a time", async () => {
+test("the ticks: in the wall's plane, along a trace normal to the wall's normal (y); red on the +y face, blue on the -y face; one face at a time", async () => {
   h.store.dispatch({ type: "setCracks", on: true, minOpening: 0.01, style: "ticks" });
   const d = await atStep(LAST, true);
   const layer = new CracksLayer();
@@ -149,7 +189,7 @@ test("the ticks: in the wall's plane, along a trace normal to e3 = +y; red on th
     let red = 0, blue = 0;
     for (let v = 0; v < pos.length / 3; v += 2) {
       const ya = pos[3 * v + 1]!, yb = pos[3 * (v + 1) + 1]!;
-      assert.ok(Math.abs(ya - yb) < 1e-4, "a tick lies in its face: no extent along e3 = +y");
+      assert.ok(Math.abs(ya - yb) < 1e-4, "a tick lies in its face: no extent along the normal (y)");
       if (isColour(col, v, RED)) {
         red++;
         assert.ok(ya > 0, `red on the +y face, y = ${ya}`);

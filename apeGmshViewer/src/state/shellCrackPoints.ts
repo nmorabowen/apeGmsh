@@ -64,6 +64,28 @@ export function elementCornersOf(s: State, blobs: BlobStore): (elementId: number
 }
 
 /**
+ * The Gauss pitch of layered shells: the median over `elementIds` of half the element's size (the square root of its
+ * area), so a 2 x 2 Gauss element of 1 m gives 0.5 m, the reference's unit (CRACK_PLOTS_SPEC.md §3.3: 0.40 m spacing on
+ * ~1 m elements). Null when no element has four corners. The points' bounding box (state/cracks.ts `crackHalfSize`)
+ * cannot stand in for it: a building's shells fill a few planes of its box, not the box.
+ */
+export function shellPitchOf(elementIds: Iterable<ArrayLike<number>>, corners: (elementId: number) => Float64Array | null): number | null {
+  const half: number[] = [];
+  for (const ids of elementIds)
+    for (let i = 0; i < ids.length; i++) {
+      const c = corners(ids[i]!);
+      if (!c) continue;
+      // A quad's area: half the cross product of its diagonals.
+      const a = [c[6]! - c[0]!, c[7]! - c[1]!, c[8]! - c[2]!], b = [c[9]! - c[3]!, c[10]! - c[4]!, c[11]! - c[5]!];
+      const area = 0.5 * Math.hypot(a[1]! * b[2]! - a[2]! * b[1]!, a[2]! * b[0]! - a[0]! * b[2]!, a[0]! * b[1]! - a[1]! * b[0]!);
+      if (area > 0) half.push(0.5 * Math.sqrt(area));
+    }
+  if (!half.length) return null;
+  half.sort((p, q) => p - q);
+  return half[half.length >> 1]!;
+}
+
+/**
  * The traced lines' vertices as Gauss-style points (one per vertex, at its element's natural coordinates), so the
  * renderer places them, deformed or not, as it places Gauss points. `placed[v]` is vertex v's point, or -1 when its
  * element could not be placed (it is then not drawn).

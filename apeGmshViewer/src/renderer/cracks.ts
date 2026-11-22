@@ -18,7 +18,7 @@ import { gaussBasePositions, gaussDisplacements } from "../state/gaussPoints.ts"
 import { principalPointsOf, type PrincipalPoints } from "../state/principal.ts";
 import { crackFieldOf, shellCrackFieldOf } from "../state/selectors.ts";
 import { buildCrackLines, buildRibbons, type CrackLines } from "../state/crackLines.ts";
-import { elementCornersOf, lineVertexLayoutOf, shellCrackPointsOf, type ShellCrackPoints } from "../state/shellCrackPoints.ts";
+import { elementCornersOf, lineVertexLayoutOf, shellCrackPointsOf, shellPitchOf, type ShellCrackPoints } from "../state/shellCrackPoints.ts";
 import { buildShellTicks, type ShellTickGroup } from "../state/shellCracks.ts";
 import type { State } from "../state/types.ts";
 import { toLinear } from "./colormapTexture.ts";
@@ -115,8 +115,11 @@ export class CracksLayer {
       const points = shellCrackPointsOf(s, blobs, field);
       const nodes = s.mesh.nodes;
       const base = points ? gaussBasePositions(points.layout, blobs.get(nodes.ids) as Float64Array, blobs.get(nodes.xyz) as Float64Array) : null;
+      // The Gauss pitch from the shells' size (state/shellCrackPoints.ts `shellPitchOf`), else from the points' spread.
+      const ids = field.groups.map((fg) => blobs.get(st.layers!.find((x) => x.id === fg.id)!.elementIds!) as Float64Array);
+      const pitch = base ? (shellPitchOf(ids, elementCornersOf(s, blobs)) ?? crackHalfSize(base) / 0.4) : 1 / 0.35;
       // A tick is 0.35 x the element across (CRACK_PLOTS_SPEC.md §3.2): 0.7 x the Gauss pitch, half of it each way.
-      this.tickPoints = { deps, gen: (this.tickPoints?.gen ?? 0) + 1, points, base, half: base ? (0.35 * crackHalfSize(base)) / 0.4 : 1 };
+      this.tickPoints = { deps, gen: (this.tickPoints?.gen ?? 0) + 1, points, base, half: 0.35 * pitch };
     }
     const { points, base, half } = this.tickPoints;
     const disp = full && full.key !== "base" && full.disp?.nodal ? full.disp : null;
