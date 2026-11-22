@@ -1,0 +1,3 @@
+### FIXED — apeGmshViewer shell crack lines stay solid when a whole building is in view
+
+The crack lines on layered shells are ribbons in the shell's face, sized from the opening and the element (8 to 50 mm on the Case 1D pushover's 1 m shells). With a 35 m building in view, a pixel is about 40 mm, so a ribbon was narrower than a pixel. Its triangles dropped out of the rasterisation in places, and each line drew as faint dashes. Each ribbon now carries a hairline along its centre, drawn as a screen line (at least a pixel wide at any zoom) in the face's colour. Zoomed out, the cracks read as solid lines; zoomed in, the ribbon's width shows the opening as before.
