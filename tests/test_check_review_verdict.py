@@ -175,7 +175,7 @@ def test_approve_at_current_head_is_success():
 
 def test_a_bom_led_approve_is_success():
     # #3045: a Windows tool's BOM must not hide the verdict from the matcher.
-    got = _status(_pr(), [_c(f"﻿Review-verdict: Opus 5.5 approve {NEW[:12]}\r\n")])
+    got = _status(_pr(), [_c(f"\ufeffReview-verdict: Opus 5.5 approve {NEW[:12]}\r\n")])
     assert got["state"] == "success"
 
 
