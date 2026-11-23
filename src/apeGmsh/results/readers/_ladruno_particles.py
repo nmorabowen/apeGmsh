@@ -90,10 +90,10 @@ C2_BASES = ("gimp", "linear", "bspline2", "bspline3")
 #: reader that does not know a new field "skips it rather than refusing
 #: it"). The fork checker's ``PARTICLE_FIELDS`` (``ladruno_format.py`` at
 #: ``ladruno-v20261123b``, vendored in ``tests/fixtures/mpm/fork_3eb195bbc/``):
-#: WP-232l (#3121) added ``PORE_PRESSURE``, the excess pore pressure of a
-#: two-phase particle, compression positive (0 on a single-phase particle),
-#: with no minor bump. ``ACCELERATION`` is reserved (mode A only) though the
-#: writer at that pin does not write it.
+#: ``PORE_PRESSURE`` is the excess pore pressure of a two-phase particle,
+#: compression positive (0 on a single-phase particle), whose ``STRESS`` is
+#: then σ′; it is additive, at minor 2. ``ACCELERATION`` is reserved (mode A
+#: only) though the writer at that pin does not write it.
 PARTICLE_FIELDS: "dict[str, tuple[str, Optional[str]]]" = {
     "POSITION": ("x,y", "x,y,z"),
     "VELOCITY": ("Vx,Vy", "Vx,Vy,Vz"),
