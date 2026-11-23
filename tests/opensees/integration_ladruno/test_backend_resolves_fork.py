@@ -79,8 +79,9 @@ def test_backend_info_parses_the_ladruno_schema() -> None:
         pytest.skip("fork build predates ops.ladrunoSchema (fork PR #972)")
     info = get_backend_info()
     assert info.schema is not None, "ladrunoSchema read as unknown"
-    # FORK_PIN ladruno-v20261120 (23e0f0002, f9864cfec plus the ASDShell
-    # localAxes answer, which keep kSchemaVersion 1) answers v1 (fork
+    # FORK_PIN ladruno-v20261122 (c45af1407, 23e0f0002 plus WP-232l
+    # two-phase MPM and the RC add-ons, which keep kSchemaVersion 1;
+    # LadrunoSchema.h is unchanged) answers v1 (fork
     # WP-185, apeGmsh#2517): v0 plus ``capabilities``.
     assert info.schema.schema_version == 1
     assert "mdStageFlagPreserved" in info.schema.capabilities

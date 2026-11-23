@@ -39,6 +39,8 @@ _MODE_A = ("mode A (implicit / quasiStatic, fork WP-232f) only; apeGmsh emits "
 _QUERY = ("a query that answers a value inside a running deck; apeGmsh "
           "declares the run and reads results from the .ladruno file "
           "(Results.particles, ADR 0134 D3)")
+_TWO_PHASE = ("two-phase (u-p) MPM, fork WP-232l (#1116); apeGmsh has no "
+              "two-phase member yet, wrapping it is a later slice")
 
 #: Fork ``mpm`` subcommands with no :mod:`apeGmsh.opensees.mpm` member, each
 #: with the reason. A new fork subcommand gets a member or a row here.
@@ -79,6 +81,16 @@ NOT_OFFERED: dict[str, str] = {
     "particleResponse": f"a material response per particle (WP-232k): {_QUERY}",
     "info": f"run counters and summaries: {_QUERY}",
     "debug": "the fork's unit-test hooks (shape functions, refusal injection)",
+    "twoPhase": f"turns a body into two-phase (u-p) particles: {_TWO_PHASE}",
+    "pfix": f"a pore-pressure boundary on a grid face (p0 = 0 drains it): {_TWO_PHASE}",
+    "plate": f"a rigid loading plate on a grid face: {_TWO_PHASE}",
+    "traction": f"a named surface traction on a grid face: {_TWO_PHASE}",
+    "kinematics": f"small or hypo kinematics for two-phase particles: {_TWO_PHASE}",
+    "pressureCutoff": f"route S's pore-pressure mass cutoff: {_TWO_PHASE}",
+    "pressureBlend": f"the particle-pressure FLIP/PIC blend: {_TWO_PHASE}",
+    "porePressure": f"a body's initial uniform pore pressure: {_TWO_PHASE}",
+    "particlePressure": f"every particle's initial pore pressure as one flat list (fork WP-232l): {_SET}",
+    "particleAcceleration": f"every particle's initial acceleration as one flat list (fork WP-232l): {_SET}",
 }
 
 

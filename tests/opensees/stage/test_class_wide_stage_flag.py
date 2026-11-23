@@ -754,7 +754,12 @@ _MD_STATIC_FIX = MD_STATIC_FIX_COMMIT
 #: capability.  It stays the live reset test's record of what each build
 #: does, for the v0 builds that carry the fix but cannot say so.
 _FORK_BUILD_HAS_MD_STATIC_FIX: "dict[str, bool]" = {
-    # FORK_PIN ladruno-v20261120 (23e0f0002): 43b235bbb is its ancestor
+    # FORK_PIN ladruno-v20261122 (c45af1407): 43b235bbb is its ancestor
+    # (GitHub compare: ahead 598, behind 0). It is 23e0f0002 plus
+    # 116 commits: WP-232l two-phase MPM (OpenSees#1116), WP-244
+    # (no C++ change) and the WP-241/243/245 RC add-ons.
+    "c45af140716bac8e5a6adb9db79c43f284dc9133": True,
+    # ladruno-v20261120 (23e0f0002): 43b235bbb is its ancestor
     # (GitHub compare: ahead 482, behind 0). It is f9864cfec plus
     # 4 commits: WP-242, ASDShellQ4/T3 answer localAxes so
     # `recorder ladruno` writes their frames (OpenSees#1133).

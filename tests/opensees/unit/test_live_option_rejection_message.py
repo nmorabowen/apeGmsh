@@ -291,7 +291,7 @@ def test_a_clean_success_is_still_verified_once() -> None:
 
 
 def test_the_refusal_names_the_build() -> None:
-    sha = "23e0f000283675b935bfd1c00a4533550fa053e0"
+    sha = "c45af140716bac8e5a6adb9db79c43f284dc9133"
     le = _bare_emitter(_CreatesAnyway(PIN_IGNORED[0][1], build=sha))
     with pytest.raises(RuntimeError, match=f"Ladruno build {sha}"):
         le.element("LadrunoQuad", 5, 1, 2, 3, 4, 1, "-bogus")
@@ -393,7 +393,7 @@ def test_a_refused_element_that_cannot_be_removed_says_so() -> None:
     assert ops.tags == [1]
 
 
-_PIN_SHA = "23e0f000283675b935bfd1c00a4533550fa053e0"
+_PIN_SHA = "c45af140716bac8e5a6adb9db79c43f284dc9133"
 
 
 def test_a_taken_tag_is_not_called_a_missing_fork() -> None:
