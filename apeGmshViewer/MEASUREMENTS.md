@@ -1443,3 +1443,49 @@ particles and the `.user.h5` reads stay in main until the second slice.
 - **Error.** One to three runs per row on a shared machine; read the load column as equal within
   noise, not as a speed-up or a slow-down. The stall is a lower bound when a stall overlaps the
   timer's 20 ms period.
+
+## The loader process, results reads (#3058, second slice, ADR 0137 D2 and D3)
+
+The second slice moves both results hosts (the window set's and the compare set's) into the
+loader process: `results:open`, `results:scan` and `results:scanCancel`, `results:readStep`,
+`results:hingeHistory`, `particles:*` and `compare:readStep`. ADR 0137 D3 kept step reads in main
+until this slice measured the hop. The `.user.h5` reads and the measure mode's own read row stay
+in main.
+
+### Machine and method
+
+- Same machine as above. Before: `main` at `5c0f5b5a` (#3123). After: that commit plus this slice.
+  Each launch waited for 10 s of mean CPU at or under 55% and 2.0 GB available RAM; the slab's
+  3.0 GB gate never opened, so these rows are `tims_c3b` only.
+- **The hop.** A Node script (not committed) opened `tims_c3b.ladruno` in a `ResultsHost` in its
+  own process, read every step of its 51-step stage three times, then did the same through
+  `Loader.results("window")` over a forked loader (`serialization: "advanced"`, the structured
+  clone Electron's port also uses). One step is 1.74 MB of nodal arrays.
+- **The app.** `npm run profile -- tims_c3b.h5 --scenarios=load,enter-results,contour-on,scrub,play --reps=1`
+  on each build, and the main stall wrapper of the first slice (`--mode=describe`, three runs).
+
+### Rows
+
+| measure (`tims_c3b`) | before | after |
+|---|---|---|
+| step read, in-process vs through the loader, median / p95 (ms) | 9.1 / 12.9 | 12.3 / 15.4 |
+| scrub, per step change, click to drawn (ms) | 48.1 | 51.6 |
+| scrub, main busy (ms) | 119 | 48 |
+| play at x1: steps drawn, steps/s | 51 of 51, 9.6 | 51 of 51, 9.5 |
+| play, main busy (ms) | 673 | 177 |
+| contour-on (opens the scan), per op (ms) / main busy (ms) | 403 / 337 | 267 / 37 |
+| enter-results, per op (ms) / main busy (ms) | 142 / 80 | 99 / 29 |
+| load, per op (ms) / main busy (ms) | 853 / 174 | 871 / 66 |
+
+- **Step reads stay in the loader (D3).** The hop costs about 3 ms on a 1.7 MB step (1.8 ms per
+  MB, the copy ADR 0137 D10 measured), and a step change costs 3.5 ms more end to end, inside one
+  run's noise. Playback still draws every step at the same rate. In exchange the main process no
+  longer reads HDF5 for a step: its busy time while scrubbing or playing falls by 60 to 75%.
+- **Scans leave main.** Turning the contour on runs the history scan; main's busy time in it falls
+  from 337 to 37 ms.
+- **The describe stall rows did not separate the builds this time.** On `tims_c3b` both builds now
+  stall only in Electron's first 250 ms, besides one 146 ms and one 65 ms stall in two of the three
+  before runs. The results open of a 51-step file is short here; a model with a larger index is
+  where the difference shows, and none was measured.
+- **Error.** One profile run per build, three stall runs; read the per-op times as equal within
+  noise, and the main-busy column as the effect.
