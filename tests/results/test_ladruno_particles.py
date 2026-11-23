@@ -1134,3 +1134,267 @@ def test_a_basis_outside_contract_2_refuses_the_stage_by_name(copy_of, opened, b
     for access in (r.particles.grid, lambda: r.particles.get(component="POSITION")):
         with pytest.raises(ParticleFormatError, match=match):
             access()
+
+
+# --- the §2.6 field catalogue, and PORE_PRESSURE (fork WP-232l, P12; #3121) --------------
+#
+# The oracle is the fork's checker at the pin ``ladruno-v20261123b`` (``3eb195bbc``),
+# vendored in ``tests/fixtures/mpm/fork_3eb195bbc/``: its ``PARTICLE_FIELDS`` refuses a
+# reserved field whose COMPONENTS differ from the catalogue's (C2-CAT, an empty one too),
+# and checks no other name. ``particles_pore_pressure_v1m2.ladruno`` is
+# ``particles_v1m2.ladruno`` with a PORE_PRESSURE group added in the writer's encoding
+# (``make_pore_pressure_fixture.py``); its values are ``GAMMA_W * (Y_TOP - y)`` of each
+# row's position. The viewer's ``ladrunoParticles.test.ts`` makes the same cases.
+
+PORE = MPM / "particles_pore_pressure_v1m2.ladruno"
+PIN = MPM / "fork_3eb195bbc"
+
+
+def _module(path: Path, name: str):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def pin_format():
+    """The fork's ``ladruno_format`` at the pin, with ``sys.path`` / ``sys.modules`` restored."""
+    import importlib
+    import sys
+
+    names = ("ladruno_format", "ladruno_basis")
+    saved_path = list(sys.path)
+    saved = {n: sys.modules.get(n) for n in names}
+    for n in names:
+        sys.modules.pop(n, None)
+    sys.path.insert(0, str(PIN))
+    try:
+        yield importlib.import_module("ladruno_format")
+    finally:
+        sys.path[:] = saved_path
+        for n, m in saved.items():
+            if m is None:
+                sys.modules.pop(n, None)
+            else:
+                sys.modules[n] = m
+
+
+def _put_field(f: h5py.File, name: str, components: str, data: np.ndarray) -> None:
+    """Write ``ON_PARTICLES/<name>`` (replacing one there) with ``components`` and ``data``."""
+    on = f[ON_P]
+    if name in on:
+        del on[name]
+    g = on.create_group(name)
+    g.attrs["DISPLAY_NAME"] = name
+    g.attrs["COMPONENTS"] = components          # variable-length: "" is writable
+    g.attrs["TYPE"] = np.array([0], dtype="<i4")
+    g.attrs["DATA_TYPE"] = np.array([0], dtype="<i4")
+    g.attrs["PARTITION_REDUCTION"] = "NONE"
+    g.create_dataset("DATA", data=data)
+
+
+def _rows(f: h5py.File) -> int:
+    return int(f[f"{ON_P}/ID"].shape[0])
+
+
+def _as_3d(f: h5py.File) -> None:
+    """The stage made 3-D: SPATIAL_DIM 3, a 3-D grid, no thickness, POSITION alone
+    (``x, y, 0.25``): only what a 3-D stage must hold for both readers."""
+    f["INFO"].attrs["SPATIAL_DIM"] = np.array([3], dtype="<i4")
+    grid = f[f"{REG}/GRID"].attrs
+    grid["ORIGIN"] = np.zeros(3, dtype="<f8")
+    grid["CELL_SIZE"] = np.full(3, 0.5, dtype="<f8")
+    grid["NUM_CELLS"] = np.full(3, 4, dtype="<i4")
+    del f[REG].attrs["PLANE_STRAIN_THICKNESS"]
+    pos = f[f"{ON_P}/POSITION/DATA"][...]
+    for name in [n for n in f[ON_P] if isinstance(f[ON_P][n], h5py.Group)]:
+        del f[ON_P][name]
+    _put_field(f, "POSITION", "x,y,z",
+               np.column_stack([pos, np.full(len(pos), 0.25)]).astype("<f8"))
+
+
+def test_the_catalogue_is_the_pins(pin_format) -> None:
+    from apeGmsh.results.readers._ladruno_particles import PARTICLE_FIELDS
+
+    assert PARTICLE_FIELDS == pin_format.PARTICLE_FIELDS
+    assert PARTICLE_FIELDS["PORE_PRESSURE"] == ("p", "p")
+    assert set(_RESERVED) == set(PARTICLE_FIELDS), "the C2-CAT sweep below covers every name"
+
+
+def test_the_pins_validator_passes_the_pore_pressure_fixture(pin_format) -> None:
+    assert pin_format.validate(str(PORE)) == []
+
+
+def test_the_fixture_is_the_generators_closed_form() -> None:
+    gen = _module(MPM / "make_pore_pressure_fixture.py", "_make_pore_pressure_fixture")
+    with h5py.File(PORE, "r") as f:
+        g = f[f"{ON_P}/PORE_PRESSURE"]
+        for k, v in gen.TEXT.items():
+            assert g.attrs[k].tolist() == [v.encode()], k
+        assert "DESCRIPTION" not in g.attrs
+        for k, v in gen.INTS.items():
+            assert g.attrs[k].dtype == np.dtype("<i4") and g.attrs[k].tolist() == [v], k
+        np.testing.assert_array_equal(
+            g["DATA"][...], gen.pressure(f[f"{ON_P}/POSITION/DATA"][...]))
+
+
+def test_pore_pressure_reads_the_stored_values(opened) -> None:
+    with h5py.File(PORE, "r") as f:
+        raw = f[f"{ON_P}/PORE_PRESSURE/DATA"][...]
+        y = f[f"{ON_P}/POSITION/DATA"][:, 1]
+    r = opened(PORE)
+    assert "PORE_PRESSURE/p" in r.particles.components()
+    s = r.particles.get(component="PORE_PRESSURE/p")
+    np.testing.assert_array_equal(np.asarray(s.values).reshape(-1), raw.reshape(-1))
+    whole = r.particles.get(component="PORE_PRESSURE")
+    np.testing.assert_array_equal(whole.values, raw)
+    # compression positive, growing with depth: the base reads more than the top
+    v = raw.reshape(-1)
+    assert v[np.argmin(y)] > v[np.argmax(y)] > 0
+
+
+@pytest.mark.parametrize("dim", [2, 3])
+@pytest.mark.parametrize("dtype", ["<f8", "<f4"])
+def test_pore_pressure_p_reads_in_2d_and_3d(copy_of, opened, dim, dtype) -> None:
+    p = copy_of(PARTICLES, f"pore_{dim}d_{dtype[1:]}.ladruno")
+    with h5py.File(p, "r+") as f:
+        if dim == 3:
+            _as_3d(f)
+        values = np.linspace(0.0, 1.0, _rows(f)).reshape(-1, 1).astype(dtype)
+        _put_field(f, "PORE_PRESSURE", "p", values)
+    s = opened(p).particles.get(component="PORE_PRESSURE/p")
+    np.testing.assert_array_equal(np.asarray(s.values).reshape(-1), values.reshape(-1))
+
+
+@pytest.mark.parametrize("dim", [2, 3])
+@pytest.mark.parametrize("comps", ["pw", "p,q", ""], ids=["pw", "p,q", "empty"])
+def test_pore_pressure_with_other_components_is_c2_cat(copy_of, opened, dim, comps) -> None:
+    p = copy_of(PARTICLES, f"pore_bad_{dim}d.ladruno")
+    with h5py.File(p, "r+") as f:
+        if dim == 3:
+            _as_3d(f)
+        ncol = max(1, len(comps.split(",")))
+        _put_field(f, "PORE_PRESSURE", comps, np.zeros((_rows(f), ncol)))
+    r = opened(p)
+    match = (rf"ON_PARTICLES/PORE_PRESSURE: COMPONENTS is '{comps}'; the reserved "
+             r"PORE_PRESSURE is 'p' \(C2-CAT")
+    for access in (r.particles.components, lambda: r.particles.get(component="POSITION")):
+        with pytest.raises(ParticleFormatError, match=match):
+            access()
+
+
+def test_p_over_two_columns_is_c2_comp(copy_of, opened) -> None:
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        _put_field(f, "PORE_PRESSURE", "p", np.zeros((_rows(f), 2)))
+    with pytest.raises(ParticleFormatError,
+                       match=r"PORE_PRESSURE/DATA has 2 columns but COMPONENTS names 1 \(C2-COMP\)"):
+        opened(p).particles.components()
+
+
+def test_nan_in_pore_pressure_reads_as_stored(copy_of, opened) -> None:
+    """C2-FINITE stays the validator's check: the reader reads what is stored."""
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        values = np.arange(_rows(f), dtype="<f8").reshape(-1, 1)
+        values[3, 0] = np.nan
+        _put_field(f, "PORE_PRESSURE", "p", values)
+    s = opened(p).particles.get(component="PORE_PRESSURE/p")
+    np.testing.assert_array_equal(np.asarray(s.values).reshape(-1), values.reshape(-1))
+
+
+def test_a_file_without_pore_pressure_reads(opened) -> None:
+    r = opened(PARTICLES)
+    assert not any(c.startswith("PORE_PRESSURE/") for c in r.particles.components())
+    assert r.particles.get(component="POSITION").n_outputs == 3
+
+
+@pytest.mark.parametrize("dim, comps, ok", [
+    (2, "Ax,Ay", True), (3, "Ax,Ay,Az", True),
+    (2, "Ax,Ay,Az", False), (3, "Ax,Ay", False), (2, "ax,ay", False),
+])
+def test_acceleration_is_reserved(copy_of, opened, dim, comps, ok) -> None:
+    p = copy_of(PARTICLES, f"acc_{dim}d.ladruno")
+    with h5py.File(p, "r+") as f:
+        if dim == 3:
+            _as_3d(f)
+        _put_field(f, "ACCELERATION", comps,
+                   np.ones((_rows(f), len(comps.split(","))), dtype="<f8"))
+    r = opened(p)
+    if ok:
+        assert r.particles.get(component="ACCELERATION").values.shape[1] == dim
+    else:
+        with pytest.raises(ParticleFormatError,
+                           match=r"ON_PARTICLES/ACCELERATION: COMPONENTS is .*\(C2-CAT"):
+            r.particles.components()
+
+
+def test_stress33_in_3d_is_c2_cat(copy_of, opened) -> None:
+    p = copy_of(PARTICLES, "stress33_3d.ladruno")
+    with h5py.File(p, "r+") as f:
+        _as_3d(f)
+        _put_field(f, "STRESS33", "sigma33", np.zeros((_rows(f), 1)))
+    with pytest.raises(ParticleFormatError,
+                       match=r"the reserved STRESS33 is refused in 3-D \(C2-CAT"):
+        opened(p).particles.components()
+
+
+def test_a_3d_stage_reads_its_3d_position(copy_of, opened) -> None:
+    p = copy_of(PARTICLES, "plain_3d.ladruno")
+    with h5py.File(p, "r+") as f:
+        _as_3d(f)
+    assert opened(p).particles.get(component="POSITION").values.shape[1] == 3
+
+
+_RESERVED = ("POSITION", "VELOCITY", "ACCELERATION", "STRESS", "STRESS33", "STRAIN",
+             "VOLUME", "GIMP_HALF_LENGTH", "DEFORMATION_GRADIENT", "PORE_PRESSURE")
+
+
+@pytest.mark.parametrize("name", _RESERVED)
+def test_every_reserved_field_with_other_components_is_c2_cat(copy_of, opened, name) -> None:
+    p = copy_of(PARTICLES, f"cat_{name}.ladruno")
+    with h5py.File(p, "r+") as f:
+        _put_field(f, name, "q", np.zeros((_rows(f), 1)))
+    with pytest.raises(ParticleFormatError,
+                       match=rf"ON_PARTICLES/{name}: COMPONENTS is 'q'; the reserved {name} .*\(C2-CAT"):
+        opened(p).particles.components()
+
+
+@pytest.mark.parametrize("name, comps", [
+    ("PORE_PRESSURE_X", "pw"), ("PORE_PRESSURE_X", "p,q"), ("HEAT", "T"),
+])
+def test_an_unreserved_name_reads_as_the_file_spells_it(copy_of, opened, name, comps) -> None:
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        ncol = len(comps.split(","))
+        values = np.arange(_rows(f) * ncol, dtype="<f8").reshape(-1, ncol)
+        _put_field(f, name, comps, values)
+    r = opened(p)
+    assert [c for c in r.particles.components() if c.startswith(f"{name}/")] == [
+        f"{name}/{c}" for c in comps.split(",")]
+    np.testing.assert_array_equal(r.particles.get(component=name).values, values)
+
+
+@pytest.mark.parametrize("value, ok", [(None, False), (1, False), (b"2", True)],
+                         ids=["absent", "1", "ascii-2"])
+def test_spatial_dim_must_be_2_or_3_for_a_reserved_field(copy_of, opened, value, ok) -> None:
+    """The catalogue is read at INFO/SPATIAL_DIM, as the fork's checker and the viewer
+    read it: absent or 1 is C2-NDM (never guessed from the node coordinates); a value
+    reads by the file-level rule (an ASCII "2" is 2, #2244). A value that rule refuses
+    (4) refuses the file at open, before any particle read."""
+    p = copy_of(PARTICLES)
+    with h5py.File(p, "r+") as f:
+        del f["INFO"].attrs["SPATIAL_DIM"]
+        if value is not None:
+            f["INFO"].attrs["SPATIAL_DIM"] = (
+                np.array([value]) if isinstance(value, bytes)
+                else np.array([value], dtype="<i4"))
+    r = opened(p)
+    if ok:
+        assert "POSITION/x" in r.particles.components()
+    else:
+        with pytest.raises(ParticleFormatError, match=r"INFO: SPATIAL_DIM .*\(C2-NDM\)"):
+            r.particles.components()

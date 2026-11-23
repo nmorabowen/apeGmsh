@@ -10,6 +10,11 @@ restart inside a stage, contract 232a §2.5).
 Only a ``.ladruno`` with a particle group answers it (ADR 0134 D3); any
 other results file, a partitioned set, or a unit-converted view refuses
 by name rather than reading nothing.
+
+Two-phase particles (fork WP-232l, 232a §2.6): ``PORE_PRESSURE/p`` is the
+excess pore pressure, compression positive, and 0 on a single-phase
+particle. A two-phase particle's ``STRESS`` is the effective stress σ′,
+not the total stress.
 """
 from __future__ import annotations
 

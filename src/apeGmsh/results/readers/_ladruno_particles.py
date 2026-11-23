@@ -34,6 +34,10 @@ What this module accepts and refuses, by the contract:
   (C2-UNIT), so nothing converts from the wrong base (#2991).
 * ``GRID/BASIS`` is one of :data:`C2_BASES` (232a §2.4, amendment 232i);
   any other value refuses the stage by name (C2-GRID, #3013).
+* a reserved field of §2.6 (:data:`PARTICLE_FIELDS`) whose ``COMPONENTS``
+  differ from the catalogue's for ``INFO/SPATIAL_DIM`` refuses the stage
+  by name (C2-CAT, #3121); a name the catalogue does not list reads as the
+  file spells it.
 
 A killed run (M2-S7 #2991): :class:`ParticleFile` opens the file by the
 reader rule's three open steps (``_ladruno_open.py``), then applies the
@@ -59,6 +63,7 @@ from numpy import ndarray
 
 from ...units import UNIT_SYSTEMS
 from .._slabs import ParticleSlab
+from ._ladruno_element_io import SpatialDimInvalid, _spatial_dim_attr
 from ._ladruno_open import STEP_SWMR, open_ladruno
 
 if TYPE_CHECKING:
@@ -77,6 +82,33 @@ SAFE_INTEGER = 2 ** 53 - 1
 #: refused by name. The fork checker's ``C2_BASES`` (``ladruno_format.py``).
 #: Contract 1 (the particle-set file) keeps ``gimp | linear`` (C1-BASIS).
 C2_BASES = ("gimp", "linear", "bspline2", "bspline3")
+
+#: Contract 2's reserved particle fields (232a §2.6) and their ``COMPONENTS``
+#: in 2-D and in 3-D; ``None`` is a field refused in that dimension. A
+#: reserved field with any other ``COMPONENTS`` refuses the stage by name
+#: (C2-CAT); a name not listed here reads as the file spells it (§2.6: a
+#: reader that does not know a new field "skips it rather than refusing
+#: it"). The fork checker's ``PARTICLE_FIELDS`` (``ladruno_format.py`` at
+#: ``ladruno-v20261123b``, vendored in ``tests/fixtures/mpm/fork_3eb195bbc/``):
+#: WP-232l (#3121) added ``PORE_PRESSURE``, the excess pore pressure of a
+#: two-phase particle, compression positive (0 on a single-phase particle),
+#: with no minor bump. ``ACCELERATION`` is reserved (mode A only) though the
+#: writer at that pin does not write it.
+PARTICLE_FIELDS: "dict[str, tuple[str, Optional[str]]]" = {
+    "POSITION": ("x,y", "x,y,z"),
+    "VELOCITY": ("Vx,Vy", "Vx,Vy,Vz"),
+    "ACCELERATION": ("Ax,Ay", "Ax,Ay,Az"),
+    "STRESS": ("sigma11,sigma22,sigma12",
+               "sigma11,sigma22,sigma33,sigma12,sigma23,sigma13"),
+    "STRESS33": ("sigma33", None),
+    "STRAIN": ("eps11,eps22,gamma12",
+               "eps11,eps22,eps33,gamma12,gamma23,gamma13"),
+    "VOLUME": ("V", "V"),
+    "GIMP_HALF_LENGTH": ("lx,ly", "lx,ly,lz"),
+    "DEFORMATION_GRADIENT": ("F11,F12,F21,F22",
+                             "F11,F12,F13,F21,F22,F23,F31,F32,F33"),
+    "PORE_PRESSURE": ("p", "p"),
+}
 
 _STAGE_PREFIX = "MODEL_STAGE["
 _PART_FILE_RE = re.compile(r"\.part-\d+\.ladruno$", re.IGNORECASE)
@@ -576,6 +608,34 @@ class ParticleStage:
         )
         return self._registry
 
+    def _spatial_dim(self) -> int:
+        """``INFO/SPATIAL_DIM``, which a file with particles states as 2 or 3
+        (C2-NDM): the dimension a reserved field's ``COMPONENTS`` follow.
+        A value reads by the file-level rule (``_spatial_dim_attr``, the
+        viewer's ``spatialDimOf``); an absent one is refused, as the viewer
+        refuses it, never guessed from the node coordinates."""
+        f = self._stage.file
+        where = f"{Path(f.filename).name} INFO"
+        if "INFO" not in f or "SPATIAL_DIM" not in f["INFO"].attrs:
+            raise ParticleFormatError(
+                f"{where}: SPATIAL_DIM is missing; a file with particles "
+                "says 2 or 3 (C2-NDM)."
+            )
+        raw = np.asarray(f["INFO"].attrs["SPATIAL_DIM"])
+        try:
+            ndm = _spatial_dim_attr(raw, f.filename)
+        except SpatialDimInvalid as e:
+            raise ParticleFormatError(
+                f"{where}: SPATIAL_DIM is {raw.tolist()!r}; a file with "
+                "particles says 2 or 3 (C2-NDM)."
+            ) from e
+        if ndm not in (2, 3):
+            raise ParticleFormatError(
+                f"{where}: SPATIAL_DIM is {ndm}; a file with particles "
+                "says 2 or 3 (C2-NDM)."
+            )
+        return ndm
+
     def fields(self) -> "dict[str, ParticleField]":
         """Every ``ON_PARTICLES/<FIELD>`` group, by field name."""
         if self._fields is not None:
@@ -594,10 +654,22 @@ class ParticleStage:
                     f"{_INDEX_DATASETS} (C2-UNKNOWN)."
                 )
             where = f"{self._where} RESULTS/ON_PARTICLES/{name}"
-            labels = tuple(
-                _attr_text(item.attrs, "COMPONENTS", where,
-                           required=True).split(",")
-            )
+            text = _attr_text(item.attrs, "COMPONENTS", where, required=True)
+            labels = tuple(text.split(","))
+            # A reserved field's COMPONENTS is exactly the catalogue's (which
+            # has no empty or repeated label), so C2-CAT is checked first:
+            # the fork's checker reports an empty one as C2-CAT too.
+            if name in PARTICLE_FIELDS:
+                ndm = self._spatial_dim()
+                expect = PARTICLE_FIELDS[name][ndm - 2]
+                if text != expect:
+                    raise ParticleFormatError(
+                        f"{where}: COMPONENTS is {text!r}; the reserved "
+                        f"{name} is "
+                        + (f"refused in {ndm}-D" if expect is None
+                           else repr(expect))
+                        + " (C2-CAT, contract §2.6)."
+                    )
             if any(not c for c in labels) or len(set(labels)) != len(labels):
                 raise ParticleFormatError(
                     f"{where}: COMPONENTS {labels} has an empty or a "
