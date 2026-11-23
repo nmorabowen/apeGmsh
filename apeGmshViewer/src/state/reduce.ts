@@ -999,7 +999,8 @@ function reduceEvent(s: State, e: Event): State {
     }
     case "materialTestRequested":
     case "materialTestFinished":
-    case "materialTestCleared": {
+    case "materialTestCleared":
+    case "materialTestFormSet": {
       const materialTest = reduceMaterialTest(s, e);
       return materialTest === s.materialTest ? s : { ...s, materialTest };
     }

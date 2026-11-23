@@ -24,6 +24,7 @@ import { WINDOWS } from "../../src/panels/windows/registry.ts";
 import { openModel } from "../../src/reader/node.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
 import { loadModel } from "../../src/state/load.ts";
+import { materialTestFormFor } from "../../src/state/materialTestForm.ts";
 import { initialState, reduce } from "../../src/state/reduce.ts";
 import type { Event, State } from "../../src/state/types.ts";
 
@@ -452,4 +453,60 @@ test("V4m: a uniaxial material with no tag, in a file with bonded ties, is 'user
   ]);
   assert.match(detailOf(s, B1), /^users unknown: referenced by embeddedRebar ties/);
   assert.doesNotMatch(detailOf(s, B1), /used by nothing/);
+});
+
+// ---- ADR 0135 Amendment 1: the material tester under a uniaxial row ----------
+
+const testButtonOf = (row: FakeNode) => row.all((n) => n.className.split(" ").includes("window-test") && n.textContent === "Test")[0];
+const testerOf = (root: FakeNode) => root.all((n) => n.className === "mt")[0];
+const withForm = (patch: Record<string, string> = {}): State => reduce(state, { type: "materialTestFormSet", form: { ...materialTestFormFor(M), ...patch } });
+
+test("a uniaxial row has a Test button, and only a uniaxial row; it opens the form without selecting the row", () => {
+  const { root, events } = render(state);
+  const [mat, sec, bi] = rowsOf(root);
+  assert.ok(testButtonOf(mat!), "the material row has Test");
+  assert.equal(testButtonOf(sec!), undefined);
+  assert.equal(testButtonOf(bi!), undefined);
+  assert.equal(testerOf(root), undefined, "no form is open");
+  assert.equal(testButtonOf(mat!)!.click(), true, "the click stops at the button");
+  assert.deepEqual(events, [{ type: "materialTestFormSet", form: materialTestFormFor(M) }]);
+});
+
+test("the open form: the protocol, its step count, and Run dispatching the protocol for this material", () => {
+  const { root, events } = render(withForm());
+  const tester = testerOf(root)!;
+  assert.equal(tester.dataset["materialTest"], M);
+  assert.match(tester.textContent, /amplitudes \(strain\)/);
+  assert.match(tester.textContent, /600 steps · values in the model's units/);
+  assert.ok(testButtonOf(rowsOf(root)[0]!)!.className.includes("on"), "Test shows the form is open");
+  const run = tester.all((n) => n.textContent === "Run")[0]! as FakeNode & { disabled?: boolean };
+  assert.equal(run.disabled, false);
+  assert.equal(run.click(), true);
+  assert.deepEqual(events, [{ type: "materialTestRequested", decl: M, protocol: { kind: "cyclic", amplitudes: [0.002, 0.005, 0.01], stepsPerRamp: 50 } }]);
+  assert.equal(tester.click(), true, "a click in the form does not select the row");
+});
+
+test("a field that does not parse disables Run and says why", () => {
+  const { root, events } = render(withForm({ kind: "monotonic", peak: "x" }));
+  const tester = testerOf(root)!;
+  const run = tester.all((n) => n.textContent === "Run")[0]! as FakeNode & { disabled?: boolean };
+  assert.equal(run.disabled, true);
+  assert.match(tester.textContent, /the peak strain must be a number/);
+  run.click();
+  assert.deepEqual(events, [], "a disabled Run dispatches nothing");
+});
+
+test("a run of this material: running, then its curve and the fork build, or the solver's message", () => {
+  const s = withForm();
+  const run = { id: 1, decl: M, type: "ASDSteel1D", protocol: { kind: "monotonic", peak: 0.01, steps: 2 }, error: null, curves: null, points: null } as const;
+  const at = (r: object): State => ({ ...s, materialTest: { ...s.materialTest, run: { ...run, ...r } as State["materialTest"]["run"] } });
+  assert.match(testerOf(render(at({ status: "running", build: null })).root)!.textContent, /running on the fork/);
+  const ready = testerOf(render(at({ status: "ready", build: "8b5e0593f8de", points: { strain: [0, 0.005, 0.01], stress: [0, 300, 380] } })).root)!;
+  assert.equal(ready.all((n) => n.tagName === "SVG").length, 1, "one plot");
+  assert.match(ready.textContent, /fork build 8b5e0593 · 2 steps · peak stress 380/);
+  const failed = testerOf(render(at({ status: "failed", build: "8b5e0593", error: "the run stopped after 0 of 3 steps. The solver said: unknown material" })).root)!;
+  assert.match(failed.textContent, /The solver said: unknown material/);
+  assert.equal(failed.all((n) => n.tagName === "SVG").length, 0, "no curve");
+  const other = testerOf(render(at({ status: "ready", decl: S, build: "b", points: { strain: [0], stress: [0] } })).root)!;
+  assert.equal(other.all((n) => n.tagName === "SVG").length, 0, "another material's run is not drawn here");
 });

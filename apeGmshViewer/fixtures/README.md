@@ -580,3 +580,45 @@ $env:LADRUNO_OPENSEES_QUIET = "1"
 & C:\Users\nmora\venv\opensees_venv\Scripts\python.exe tests/fixtures/ladruno/make_line_diagram_oracle.py --check
 ```
 
+## `materials_tester.h5` (ADR 0135 Amendment 1)
+
+A `model.h5` written by the bridge (`apeSees.h5`) that declares the material
+tester's six first materials: Steel02 (tag 1), `LadrunoRebarBuckling` over it
+(2), Concrete02 (3), `LadrunoUniaxialJ2` (4), `LadrunoRebarBuckling` over the
+J2 (5), `LadrunoBondSlip` (6) and `LadrunoCohesiveHinge` (7). The tetrahedral
+box and its elastic solid are only there because the bridge needs a mesh; the
+uniaxial materials are unused, and the file still records them. The generator
+below is the whole script, run as `materials_tester.py` from an empty directory
+with `PYTHONPATH` set to the repository's `src` and the opensees venv
+interpreter. It writes `model.h5`, which is copied here. As with
+`bridge_provenance.h5`, it imports apeGmsh, so it is kept as text and never as
+a `.py` file of the app (ADR 0112 D4).
+
+```python
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+
+with apeGmsh(model_name="materials_tester", verbose=False) as g:
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="block")
+    g.physical.add_volume("block", name="Block")
+    g.mesh.sizing.set_global_size(1.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+solid = ops.nDMaterial.ElasticIsotropic(E=30e3, nu=0.2, rho=0.0, name="solid")
+ops.element.FourNodeTetrahedron(pg="Block", material=solid)
+steel = ops.uniaxialMaterial.Steel02(fy=420.0, E=200000.0, b=0.01, R0=18.0, name="steel")
+ops.uniaxialMaterial.LadrunoRebarBuckling(material=steel, lsr=8.0, fy=420.0, E=200000.0, name="buckled_steel")
+ops.uniaxialMaterial.Concrete02(fpc=-30.0, epsc0=-0.002, fpcu=-6.0, epsU=-0.006, lambda_val=0.1, ft=3.0, Ets=300.0, name="concrete")
+j2 = ops.uniaxialMaterial.LadrunoUniaxialJ2(E=200000.0, sig0=420.0, Qinf=100.0, b=10.0, backstresses=[(5000.0, 50.0)], name="j2")
+ops.uniaxialMaterial.LadrunoRebarBuckling(material=j2, lsr=8.0, fy=420.0, E=200000.0, name="buckled_j2")
+ops.uniaxialMaterial.LadrunoBondSlip(tau_max=10.0, s1=1.0, s2=2.0, s3=5.0, tau_f=2.0, alpha=0.4, name="bond")
+ops.uniaxialMaterial.LadrunoCohesiveHinge(Mc=100.0, Gf=1.0, name="hinge")
+ops.h5("model.h5")
+```
+
+`test/materialTest/fixture.test.ts` checks every material's job against the
+script's arguments and, where `$APEGMSH_OPENSEES` names the fork, runs all
+seven.

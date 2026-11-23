@@ -7,6 +7,7 @@ import { captureContours, captureDeform, captureElements, captureExtrudeResults,
 import { captureCaps, captureClip, captureGizmo } from "./sections.ts";
 import { captureCracks } from "./cracks.ts";
 import { captureHinges } from "./hinges.ts";
+import { captureMaterialTest } from "./materialTest.ts";
 import { captureSelection } from "./selection.ts";
 import { captureWorkspace } from "./workspace.ts";
 import { captureCombine } from "./combine.ts";
@@ -134,6 +135,8 @@ export async function runCapture(ctx: HarnessContext, cfg: HarnessConfig, file: 
     }
     store.dispatch({ type: "closeWindow", window: kind });
   }
+  // ADR 0135 Amendment 1 (D7): the material tester in the materials window, only on a model with a uniaxial material (./materialTest.ts).
+  await captureMaterialTest(ctx, settle);
   // V4b (D7): with a results sibling (`<stem>.results.h5`, which main names
   // in `config().results`), one still per results stage,
   // `<out>.results-<i>-<stage name>.png`, at its last step: the scrubber, the

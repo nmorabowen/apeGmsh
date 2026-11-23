@@ -454,6 +454,24 @@ code { font-family: var(--mono); }
   background: var(--hover); border: 1px solid var(--line);
 }
 .window-pattern-3d.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+/* The material tester in the materials window (ADR 0135 Amendment 1). */
+.window-test {
+  margin-left: auto; padding: 1px 6px; border-radius: 4px; cursor: pointer;
+  font: 600 10.5px var(--font); color: var(--text);
+  background: var(--hover); border: 1px solid var(--line);
+}
+.window-test.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.window-test:disabled { cursor: default; opacity: 0.45; }
+.mt { margin: 4px 0 2px; padding: 6px 8px; border-radius: 6px; background: var(--hover); cursor: default; }
+.mt-fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 8px; }
+.mt-field { display: flex; flex-direction: column; gap: 2px; flex: 1 1 90px; min-width: 0; }
+.mt-label { font-size: 11px; color: var(--muted); }
+.mt-input { font: 12px var(--mono); color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; min-width: 0; }
+textarea.mt-input { min-height: 3.5em; resize: vertical; }
+.mt-bar { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; }
+.mt-bar .window-test { margin-left: 0; }
+.mt-error { color: var(--text); font-size: 12px; font-style: italic; overflow-wrap: anywhere; }
+.mt-run { margin-top: 4px; }
 
 /* V4e1: the section planes panel (ADR 0083 Part 4), at the top of the rail,
    above the inspector; it scrolls past 45 % of the rail. */
@@ -830,9 +848,11 @@ body[data-still-chrome="model"] > :not(#viewport) { display: none !important; }
 .hinges-pick { display: flex; gap: 4px; margin: 4px 0; }
 .hinges-pick select { flex: 0 0 auto; }
 .hinges-pick .hinges-element { flex: 1 1 0; min-width: 0; }
-.hinges-plot { display: block; width: 100%; height: auto; margin-top: 4px; }
-.hinges-axis { stroke: var(--line); stroke-width: 1; }
-.hinges-capacity { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 3 3; }
-.hinges-curve { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
-.hinges-now { fill: var(--accent); stroke: var(--panel, #000); stroke-width: 1; }
-.hinges-label { fill: var(--muted); font-size: 10px; font-family: var(--font); }
+
+/* The small x-y plot (ui/xyPlot.ts): the Hinges card and the material tester. */
+.xy-plot { display: block; width: 100%; height: auto; margin-top: 4px; }
+.xy-axis { stroke: var(--line); stroke-width: 1; }
+.xy-capacity { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.xy-curve { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
+.xy-now { fill: var(--accent); stroke: var(--panel, #000); stroke-width: 1; }
+.xy-label { fill: var(--muted); font-size: 10px; font-family: var(--font); }

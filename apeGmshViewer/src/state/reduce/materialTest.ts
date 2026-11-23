@@ -5,10 +5,10 @@ import { materialTestJobOf } from "../materialTest.ts";
 import type { MaterialTestEvent } from "../types/events/materialTest.ts";
 import type { MaterialTestState, State } from "../types.ts";
 
-export const initialMaterialTest: MaterialTestState = { run: null, nextId: 1 };
+export const initialMaterialTest: MaterialTestState = { run: null, form: null, nextId: 1 };
 
-/** Another model: its run leaves, and the ids go on. */
-export const materialTestForAnotherModel = (m: MaterialTestState): MaterialTestState => (m.run ? { ...m, run: null } : m);
+/** Another model: its run and form leave, and the ids go on. */
+export const materialTestForAnotherModel = (m: MaterialTestState): MaterialTestState => (m.run || m.form ? { ...m, run: null, form: null } : m);
 
 export function reduceMaterialTest(s: State, e: MaterialTestEvent): MaterialTestState {
   const m = s.materialTest;
@@ -17,6 +17,7 @@ export function reduceMaterialTest(s: State, e: MaterialTestEvent): MaterialTest
       const answer = materialTestJobOf(s, e.decl, e.protocol);
       const error = "error" in answer ? answer.error : null;
       return {
+        ...m,
         nextId: m.nextId + 1,
         run: {
           id: m.nextId,
@@ -27,6 +28,7 @@ export function reduceMaterialTest(s: State, e: MaterialTestEvent): MaterialTest
           error,
           build: null,
           curves: null,
+          points: null,
         },
       };
     }
@@ -36,10 +38,12 @@ export function reduceMaterialTest(s: State, e: MaterialTestEvent): MaterialTest
       const ok = e.curves !== null && e.error === null;
       return {
         ...m,
-        run: { ...run, status: ok ? "ready" : "failed", error: ok ? null : (e.error ?? "the run returned no curve"), build: e.build, curves: ok ? e.curves : null },
+        run: { ...run, status: ok ? "ready" : "failed", error: ok ? null : (e.error ?? "the run returned no curve"), build: e.build, curves: ok ? e.curves : null, points: ok ? e.points : null },
       };
     }
     case "materialTestCleared":
-      return materialTestForAnotherModel(m);
+      return m.run ? { ...m, run: null } : m;
+    case "materialTestFormSet":
+      return e.form === m.form ? m : { ...m, form: e.form };
   }
 }

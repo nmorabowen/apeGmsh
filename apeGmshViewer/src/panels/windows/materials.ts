@@ -22,12 +22,17 @@
 // positional argv is never re-read here as names. Names are handles, tags
 // evidence (D2c); an unnamed declaration shows its `#k` key.
 //
+// A uniaxial row's Test button opens the material tester under it (ADR 0135
+// Amendment 1, panels/windows/materialTest.ts): the fork runs the declared
+// material and the curve is drawn here until ADR 0137's tool host exists.
+//
 // `materialsOf` is the pure (state) -> data half; `view` turns it into DOM.
 
 import type { Event, State } from "../../state/store.ts";
 import { declOfTag } from "../../state/selectors.ts";
 import type { Decl, DeclPath, DeclRecord, DeclValue, Definitions } from "../../state/types.ts";
 import { el, isSelectAdd } from "../../ui/dom.ts";
+import { testButton, testerEl } from "./materialTest.ts";
 import type { WindowView } from "./view.ts";
 
 /** The families the window lists, in display order, with each group's heading. */
@@ -408,7 +413,7 @@ function usedByEl(r: MaterialRow, act: (e: Event) => void): HTMLElement {
   return e;
 }
 
-function rowEl(r: MaterialRow, act: (e: Event) => void): HTMLElement {
+function rowEl(s: State, r: MaterialRow, act: (e: Event) => void): HTMLElement {
   const row = el("div", "window-row clickable");
   row.dataset["decl"] = r.path;
   row.title = `select ${r.path}`;
@@ -417,7 +422,10 @@ function rowEl(r: MaterialRow, act: (e: Event) => void): HTMLElement {
   head.append(el("span", "window-row-title", r.handle), el("span", "node-type", r.type));
   if (r.tag !== null) head.append(el("span", "window-row-decl", `@${r.tag}`));
   if (r.declKey) head.append(el("span", "window-row-decl", r.declKey));
+  if (r.kind === "uniaxialMaterial") head.append(testButton(s, r.path, act));
   row.append(head);
+  const tester = r.kind === "uniaxialMaterial" ? testerEl(s, r.path, r.type, act) : null;
+  if (tester) row.append(tester);
   for (const [i, o] of r.owners.entries()) {
     if (r.owners.length > 1 || o.type !== r.type) row.append(el("div", "window-row-detail", r.owners.length > 1 ? `owner ${i + 1} · ${o.type}` : o.type));
     if (o.fields.length === 0) {
@@ -445,7 +453,7 @@ export const view: WindowView = (s, act) => {
   if (data.note) body.append(el("div", "window-note", data.note));
   for (const g of data.groups) {
     body.append(el("div", "window-section", `${g.title} (${g.rows.length})`));
-    for (const r of g.rows) body.append(rowEl(r, act));
+    for (const r of g.rows) body.append(rowEl(s, r, act));
   }
   return body;
 };

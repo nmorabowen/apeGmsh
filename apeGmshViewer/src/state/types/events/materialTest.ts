@@ -1,7 +1,7 @@
 // The material tester's events: its part of the store's Event union (types/event.ts).
 // Not re-exported by src/state/types.ts, which exports only the whole union.
 
-import type { MaterialTestProtocol, MaterialTestRun } from "../materialTest.ts";
+import type { MaterialTestForm, MaterialTestProtocol, MaterialTestRun } from "../materialTest.ts";
 import type { DeclPath } from "../model.ts";
 
 export type MaterialTestEvent =
@@ -13,7 +13,10 @@ export type MaterialTestEvent =
       id: number;
       build: string | null;
       curves: MaterialTestRun["curves"];
+      points: MaterialTestRun["points"];
       error: string | null;
     }
+  /** Open, edit or (null) close the tester's form in the materials window. */
+  | { type: "materialTestFormSet"; form: MaterialTestForm | null }
   /** Forget the run; one still going is cancelled. */
   | { type: "materialTestCleared" };

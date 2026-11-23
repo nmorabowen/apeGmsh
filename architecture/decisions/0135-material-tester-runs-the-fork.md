@@ -210,3 +210,31 @@ executable. A run against the real fork belongs in the nightly `live-fork` lane.
 - Better names for unnamed argument slots, written by the bridge into the file.
   This is a schema change with its own decision, and D6 does not wait for it.
 - The nD stress-control and confinement design (S4, S5).
+
+## Amendment 1 (2026-11-22): an interim surface in the materials window
+
+**Ruling:** the owner, in the assessment session of 2026-11-22. ADR 0137 orders the tool host
+(H1) after #3056, #3057 and #3058, so S1b would wait behind work unrelated to the tester. The
+owner chose a screen now over waiting, and chose the materials window over a card in the
+right rail.
+
+**Amends D5.** Until the tool host of ADR 0137 exists, the tester's surface is mounted in the
+materials and sections window (ADR 0112 D7): each uniaxial row has a **Test** button that opens
+a form under the row. Where D5 says "No host, layout or plot component is built for the tester
+alone", read: none is built *for the tester*. The surface lives in a window that already
+exists, and the curve is drawn by the Hinges card's x-y plot, moved unchanged into
+`src/ui/xyPlot.ts` so both use it until ADR 0137 H2's shared chart replaces it.
+
+The rest of D5 stands. The surface dispatches events and draws the state (ADR 0112 D6); what
+is typed lives in the store, because the window rebuilds on every state change. When H1
+lands, the surface moves onto the host as a remount, not a rewrite, in a slice of its own.
+
+**What the window draws.** A run's curve reaches the state twice. The full arrays stay in the
+BlobStore as S1 put them, for S2's export. A thinned copy (every stride-th point, the last
+point, and every strain reversal; at most 4,000 points besides the reversals) goes into the run
+for drawing, because a panel may not read the BlobStore. This is the exception ADR 0137 D6
+allows: the reduced values a tool draws.
+
+**What this changes in the slices.** S1b is delivered by this amendment's slice, A1. It also
+adds `fixtures/materials_tester.h5`, written by the bridge, which turns S1's "from a real
+`model.h5`" into a test. S2 to S5 stand unchanged, now mounted in the window until H1.

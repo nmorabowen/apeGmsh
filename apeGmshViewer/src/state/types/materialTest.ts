@@ -40,10 +40,37 @@ export interface MaterialTestRun {
   build: string | null;
   /** the three arrays, of one length; null unless ready */
   curves: { strain: BlobRef; stress: BlobRef; tangent: BlobRef } | null;
+  /** the stress-strain curve thinned for drawing (every reversal kept); null unless ready. The full arrays stay in `curves` (ADR 0137 D6: the reduced values a tool draws) */
+  points: MaterialTestPoints | null;
+}
+
+/** A curve to draw: strain and stress, of one length. */
+export interface MaterialTestPoints {
+  strain: readonly number[];
+  stress: readonly number[];
+}
+
+/**
+ * The tester's form in the materials window (ADR 0135 Amendment 1), as typed: the
+ * fields are strings, so a half-typed number survives the window's redraw. One form
+ * is open at a time, under the row of `decl`.
+ */
+export interface MaterialTestForm {
+  decl: DeclPath;
+  kind: MaterialTestProtocol["kind"];
+  peak: string;
+  steps: string;
+  /** comma- or space-separated */
+  amplitudes: string;
+  stepsPerRamp: string;
+  /** comma-, space- or newline-separated */
+  values: string;
 }
 
 export interface MaterialTestState {
   run: MaterialTestRun | null;
+  /** the open form; null when none is */
+  form: MaterialTestForm | null;
   /** the next run's id: never reused, so a late answer cannot match a newer run */
   nextId: number;
 }

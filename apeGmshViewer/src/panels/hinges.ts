@@ -3,8 +3,8 @@
 // coloured on a results step by rotation, moment or moment/capacity from the
 // `.ladruno` `hingeSummary`. For the element picked in the viewport (or chosen
 // here) it plots the hinge's moment-rotation curve with the step on screen marked.
-// The curve's data is prepared in state/ (`hingeViewOf`); `plot` here only draws it,
-// so it can move to a shared chart. What the files do not hold is named.
+// The curve's data is prepared in state/ (`hingeViewOf`); `ui/xyPlot.ts` draws it,
+// until it moves to a shared chart. What the files do not hold is named.
 //
 // Follows ADR 0112 D6 (`panel-allow-list`): imports only `store`, `selectors`,
 // `types`, and `ui/dom`.
@@ -13,60 +13,7 @@ import { hingeViewOf, NODE_SIZE_MAX, NODE_SIZE_MIN, type HingeChart } from "../s
 import type { State, Store } from "../state/store.ts";
 import type { Event, HingeAxis, HingeEnd, HingesState } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-const W = 260, H = 150, L = 50, R = 10, T = 10, B = 24;
-
-function svgEl(tag: string, attrs: Record<string, string | number>, text?: string): HTMLElement {
-  const doc = document as Document & { createElementNS?: (ns: string, q: string) => Element };
-  const node = (typeof doc.createElementNS === "function" ? doc.createElementNS(SVG_NS, tag) : doc.createElement(tag)) as HTMLElement;
-  for (const [k, v] of Object.entries(attrs)) node.setAttribute?.(k, String(v));
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-const fmt = (v: number): string => (v === 0 ? "0" : Math.abs(v) >= 1e4 || Math.abs(v) < 1e-2 ? v.toExponential(2) : Number(v.toPrecision(3)).toString());
-
-function finiteRange(values: readonly number[], extra: readonly number[]): [number, number] {
-  let lo = 0, hi = 0;
-  for (const list of [values, extra]) {
-    for (const v of list) {
-      if (!Number.isFinite(v)) continue;
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
-    }
-  }
-  return lo === hi ? [lo - 1, hi + 1] : [lo, hi];
-}
-
-/** One small plot: the curve, the zero lines, optional capacity lines, and the step on screen. */
-function plot(xs: readonly number[], ys: readonly number[], xName: string, yName: string, step: number, caps: readonly number[], title: string): HTMLElement {
-  const [x0, x1] = finiteRange(xs, []);
-  const [y0, y1] = finiteRange(ys, caps);
-  const px = (v: number) => L + ((v - x0) / (x1 - x0)) * (W - L - R);
-  const py = (v: number) => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
-  const root = svgEl("svg", { class: "hinges-plot", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": title });
-  const axis = { class: "hinges-axis" };
-  root.append(svgEl("line", { ...axis, x1: L, y1: py(0), x2: W - R, y2: py(0) }), svgEl("line", { ...axis, x1: px(0), y1: T, x2: px(0), y2: H - B }));
-  for (const c of caps) root.append(svgEl("line", { class: "hinges-capacity", x1: L, y1: py(c), x2: W - R, y2: py(c) }));
-  const points: string[] = [];
-  xs.forEach((x, i) => {
-    const y = ys[i]!;
-    if (Number.isFinite(x) && Number.isFinite(y)) points.push(`${px(x).toFixed(1)},${py(y).toFixed(1)}`);
-  });
-  root.append(svgEl("polyline", { class: "hinges-curve", points: points.join(" ") }));
-  if (Number.isFinite(xs[step]) && Number.isFinite(ys[step])) root.append(svgEl("circle", { class: "hinges-now", cx: px(xs[step]!), cy: py(ys[step]!), r: 3.5 }));
-  const label = { class: "hinges-label" };
-  root.append(
-    svgEl("text", { ...label, x: L - 4, y: T + 8, "text-anchor": "end" }, fmt(y1)),
-    svgEl("text", { ...label, x: L - 4, y: H - B, "text-anchor": "end" }, fmt(y0)),
-    svgEl("text", { ...label, x: L, y: H - 8 }, fmt(x0)),
-    svgEl("text", { ...label, x: W - R, y: H - 8, "text-anchor": "end" }, fmt(x1)),
-    svgEl("text", { ...label, x: (L + W - R) / 2, y: H - 8, "text-anchor": "middle" }, xName),
-    svgEl("text", { ...label, x: L + 4, y: T + 8 }, yName),
-  );
-  return root;
-}
+import { fmt, xyPlot } from "../ui/xyPlot.ts";
 
 function charts(c: HingeChart): HTMLElement {
   const box = el("div", "hinges-charts");
@@ -74,7 +21,7 @@ function charts(c: HingeChart): HTMLElement {
   const k = c.step;
   const { rotationName: rot, momentName: mom, rotation, moment } = c.curve;
   box.append(
-    plot(rotation, moment, rot, mom, k, caps, `${mom} against ${rot}`),
+    xyPlot({ xs: rotation, ys: moment, xName: rot, yName: mom, title: `${mom} against ${rot}`, caps, mark: k }),
     el("div", "hinges-now-line", `step ${k + 1}: ${mom} ${fmt(moment[k]!)}, ${rot} ${fmt(rotation[k]!)}`),
   );
   return box;

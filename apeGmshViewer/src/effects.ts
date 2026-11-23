@@ -30,6 +30,7 @@ import { buildHinges3D, smartHingeSize } from "./state/hinges.ts";
 import { smartNodeSize } from "./state/nodes.ts";
 import { componentOf, particleRange, type ParticleFrame } from "./renderer/particles.ts";
 import { materialTestJobOf } from "./state/materialTest.ts";
+import { materialTestPointsOf } from "./state/materialTestForm.ts";
 import type { MaterialTestJob, MaterialTestRun } from "./state/types.ts";
 import { contourView, crackFieldOf, shellCrackFieldOf, deformView, draftJudgedOf, elementJoinKey, hingeHistoryWanted, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
@@ -1694,8 +1695,8 @@ export class Effects {
       return;
     }
     const id = going;
-    const finish = (build: string | null, curves: MaterialTestRun["curves"], error: string | null): void => {
-      this.store.dispatch({ type: "materialTestFinished", id, build, curves, error });
+    const finish = (build: string | null, curves: MaterialTestRun["curves"], error: string | null, points: MaterialTestRun["points"] = null): void => {
+      this.store.dispatch({ type: "materialTestFinished", id, build, curves, points, error });
       this.blobs.retain(blobRefsOf(this.store.get()));
     };
     const answer = materialTestJobOf(s, run!.decl, run!.protocol);
@@ -1707,7 +1708,7 @@ export class Effects {
         if (this.store.get().materialTest.run?.id !== id) return;
         if (!a.ok) return finish(a.build, null, a.error);
         const at = `materialTest/${id}`;
-        finish(a.build, { strain: this.blobs.put(`${at}/strain`, a.strain), stress: this.blobs.put(`${at}/stress`, a.stress), tangent: this.blobs.put(`${at}/tangent`, a.tangent) }, null);
+        finish(a.build, { strain: this.blobs.put(`${at}/strain`, a.strain), stress: this.blobs.put(`${at}/stress`, a.stress), tangent: this.blobs.put(`${at}/tangent`, a.tangent) }, null, materialTestPointsOf(a.strain, a.stress));
       },
       (e: unknown) => finish(null, null, e instanceof Error ? e.message : String(e)),
     );
