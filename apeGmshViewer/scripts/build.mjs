@@ -1,5 +1,6 @@
-// Bundle the app into dist/: main (ESM, Node), preload (CJS, sandboxed),
-// renderer (browser IIFE with three.js), plus the static page.
+// Bundle the app into dist/: main (ESM, Node), the loader process main forks
+// (ESM, Node; ADR 0137 D2), preload (CJS, sandboxed), renderer (browser IIFE
+// with three.js), plus the static page.
 
 import { build } from "esbuild";
 import { copyFileSync, cpSync, mkdirSync } from "node:fs";
@@ -21,6 +22,15 @@ await Promise.all([
     format: "esm",
     target: "node22",
     external: ["electron", "h5wasm"],
+  }),
+  build({
+    ...common,
+    entryPoints: ["src/main/loader/process.ts"],
+    outfile: "dist/loader.mjs",
+    platform: "node",
+    format: "esm",
+    target: "node22",
+    external: ["h5wasm"],
   }),
   build({
     ...common,

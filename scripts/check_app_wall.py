@@ -47,7 +47,8 @@ output are never read; comment-only lines are skipped):
 - W6 process-module:    ADR 0135 D1. Under `apeGmshViewer/src/`, only
                         `src/main/source.ts` (the editor) and
                         `src/main/materialTest.ts` (the fork's OpenSees) import
-                        `child_process`, and nothing uses Electron's
+                        `child_process`, and only `src/main/loader/fork.ts` (the
+                        loader process, ADR 0137 D2) takes Electron's
                         `utilityProcess`, so a new kind of process needs a decision.
 
 Specifiers are read from the source with comments stripped by a scanner that
@@ -107,6 +108,8 @@ H5_REFLECT = re.compile(r"\bReflect\s*\.\s*construct\b")
 # W6: the modules that may start a process, and what starting one needs.
 APP_SRC = f"{APP}/src/"
 PROCESS_MODULES = {f"{APP}/src/main/source.ts", f"{APP}/src/main/materialTest.ts"}
+# ADR 0137 D2 (#3058): the one module that may take Electron's `utilityProcess` (it forks the loader).
+UTILITY_PROCESS_MODULES = {f"{APP}/src/main/loader/fork.ts"}
 # Taking `utilityProcess` from Electron: an import, a destructuring or a member read.
 UTILITY_PROCESS = re.compile(r"\b(?:import|const|let|var)\b[^;=]*\butilityProcess\b|\.\s*utilityProcess\b")
 # Words after which `X.File` is a type, not a value read.
@@ -399,7 +402,7 @@ def scan(root: Path) -> list[str]:
                         add(n, "W4", "panel-import", f"{why}: '{spec}'")
                     if low.removeprefix("node:") == "child_process" and rel.startswith(APP_SRC) and rel not in PROCESS_MODULES:
                         add(n, "W6", "process-module", f"'{spec}' is for the editor and solver modules only (ADR 0135 D1)")
-            if rel.startswith(APP_SRC):
+            if rel.startswith(APP_SRC) and rel not in UTILITY_PROCESS_MODULES:
                 for m in UTILITY_PROCESS.finditer(body):
                     add(body.count("\n", 0, m.start()) + 1, "W6", "process-module", m.group(0))
             if rel.startswith(H5_SCOPE) and rel != H5_OPENER:

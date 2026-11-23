@@ -99,6 +99,23 @@ def test_w6_flags_a_process_module_outside_the_two(repo, src):
     assert _rules(repo) == ["W6"]
 
 
+@pytest.mark.parametrize("rel", ["src/main/main.ts", "src/main/loader/client.ts", "src/main/loader/process.ts"])
+def test_w6_flags_utility_process_beside_the_loader_fork(repo, rel):
+    # ADR 0137 D2: only src/main/loader/fork.ts may take it; its neighbours and main may not.
+    _put(repo, f"apeGmshViewer/{rel}", "import { utilityProcess } from 'electron';\n")
+    assert _rules(repo) == ["W6"]
+
+
+def test_w6_allows_utility_process_in_the_loader_fork_only(repo):
+    _put(repo, "apeGmshViewer/src/main/loader/fork.ts", "import { utilityProcess } from 'electron';\nutilityProcess.fork(entry);\n")
+    assert _rules(repo) == []
+
+
+def test_w6_loader_fork_still_may_not_import_child_process(repo):
+    _put(repo, "apeGmshViewer/src/main/loader/fork.ts", "import { fork } from 'node:child_process';\n")
+    assert _rules(repo) == ["W6"]
+
+
 @pytest.mark.parametrize("rel", ["src/main/source.ts", "src/main/materialTest.ts", "scripts/launch.ts"])
 def test_w6_allows_the_two_modules_and_the_build_scripts(repo, rel):
     _put(repo, f"apeGmshViewer/{rel}", "import { spawn } from 'node:child_process';\n")

@@ -78,3 +78,17 @@ test("dependency-cruiser fails on a ui/ module that re-exports what a panel may 
   assert.doesNotMatch(r.out, /leak\.ts → src\/state\/types\.ts|leak\.ts → src\/ui\/dom\.ts/);
   assert.match(r.out, /2 dependency violations/);
 });
+
+test("dependency-cruiser fails when main reads a model outside the loader process (ADR 0137 D2, #3058)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agv-lint-loader-"));
+  cpSync(join(app, "src"), join(dir, "src"), { recursive: true });
+  cpSync(join(app, "tsconfig.json"), join(dir, "tsconfig.json"));
+  writeFileSync(join(dir, "src", "main", "planted.ts"), 'import { openModel } from "../reader/node.ts";\nexport const x = openModel;\n');
+  writeFileSync(join(dir, "src", "main", "modes", "planted.ts"), 'import { openModel } from "../../reader/node.ts";\nexport const x = openModel;\n');
+  const r = cruise(dir);
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /model-read-in-loader: src\/main\/planted\.ts → src\/reader\/node\.ts/);
+  assert.match(r.out, /model-read-in-loader: src\/main\/modes\/planted\.ts → src\/reader\/node\.ts/);
+  assert.doesNotMatch(r.out, /src\/main\/loader\/process\.ts → src\/reader\/node\.ts/, "the loader process may read a model");
+  assert.match(r.out, /2 dependency violations/);
+});
