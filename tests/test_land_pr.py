@@ -1452,11 +1452,15 @@ def test_a_mid_line_invisible_mark_does_not_hide_an_owned_negation_1891(line):
 
 
 @pytest.mark.parametrize("line", [
-    pytest.param("Do\u200bnot touch `src/b.py`.", id="zwsp-glued-not"),
-    pytest.param("- all\u200bexcept `src/b.py`", id="zwsp-glued-except"),
+    pytest.param("Do\u200bnot touch these:\n- `src/b.py`", id="zwsp-glued-not"),
+    pytest.param("- all\u200bexcept these:\n- `src/b.py`", id="zwsp-glued-except"),
 ])
 def test_a_mid_line_invisible_mark_does_not_hide_an_amendment_negation_1891(line):
-    """Delta review of #1917, as above for a card amendment. Fails on 91c91fe9."""
+    """Delta review of #1917, as above for a card amendment. Fails on 91c91fe9. The negated
+    lead-in drops the bullet after it, so `src/b.py` is refused only while `_text` turns a
+    mid-line mark into a space. Revert-proof: `_INVISIBLE.sub("", text)` glues "Donot" and
+    "allexcept", the lead-in goes unseen, and `b.py` is owned. (An amendment never adds a
+    mid-bullet path, so the old same-line shapes passed under that mutation, #3106.)"""
     _refused_b(f"**Card amendment (T):** also edit:\n- `src/a.py`\n{line}\n")
 
 
