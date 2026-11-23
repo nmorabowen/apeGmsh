@@ -7,7 +7,7 @@
 // (main/materialTestScript.ts), including the step limit, so nothing here guards
 // the solver.
 
-import type { DeclPath, MaterialTestForm, MaterialTestPoints, MaterialTestProtocol } from "./types.ts";
+import type { DeclPath, MaterialTestForm, MaterialTestOverride, MaterialTestPoints, MaterialTestProtocol, MaterialTestSlot } from "./types.ts";
 
 /** The most points a drawn curve keeps, besides its reversals. */
 export const MAX_DRAWN = 4000;
@@ -22,6 +22,7 @@ export const materialTestFormFor = (decl: DeclPath): MaterialTestForm => ({
   stepsPerRamp: "50",
   values: "",
   second: "history",
+  overrides: {},
 });
 
 /** ADR 0135 D6: the axes of a material's curve. Values are in the model's units. */
@@ -163,3 +164,28 @@ export function materialTestCsvOf(head: MaterialTestCsvHead, strain: ArrayLike<n
 
 /** A file name to suggest for a run: the declaration's handle and the run id, in plain characters. */
 export const materialTestCsvName = (decl: DeclPath, id: number): string => `${(decl.split("/").pop() || "material").replace(/[^A-Za-z0-9_-]/g, "_")}-run${id}.csv`;
+
+/**
+ * The overrides the form describes (D6), against the material's slots: a slot whose
+ * field is blank, or reads its declared value, is not overridden. The first field
+ * that is not a number, or names a locked slot, is the error.
+ */
+export function materialTestOverridesOf(f: MaterialTestForm, slots: readonly MaterialTestSlot[]): { overrides: MaterialTestOverride[] } | { error: string } {
+  const out: MaterialTestOverride[] = [];
+  for (const sl of slots) {
+    const typed = (f.overrides[String(sl.slot)] ?? "").trim();
+    if (typed === "") continue;
+    const v = Number(typed);
+    if (!Number.isFinite(v)) return { error: `${sl.label} must be a number` };
+    if (v === sl.value) continue;
+    if (sl.locked) return { error: `${sl.label} is locked: ${sl.locked}` };
+    out.push({ slot: sl.slot, label: sl.label, declared: sl.value, value: v });
+  }
+  return { overrides: out };
+}
+
+/** The changed values as text, to copy back into the script by hand (D8: the script stays the source of truth). */
+export function materialTestOverrideText(decl: DeclPath, type: string, overrides: readonly MaterialTestOverride[]): string {
+  const handle = decl.split("/").pop() || decl;
+  return `${handle} (${type}): ${overrides.map((o) => `${o.label} ${o.declared} -> ${o.value}`).join("; ")}`;
+}

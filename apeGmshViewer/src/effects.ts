@@ -1702,7 +1702,7 @@ export class Effects {
       this.store.dispatch({ type: "materialTestFinished", id, build, curves, points, error });
       this.blobs.retain(blobRefsOf(this.store.get()));
     };
-    const answer = materialTestJobOf(s, run!.decl, run!.protocol);
+    const answer = materialTestJobOf(s, run!.decl, run!.protocol, run!.overrides);
     const asked = "error" in answer
       ? Promise.reject(new Error(answer.error))
       : (this.bridge.materialTestRun?.(answer.job, id) ?? Promise.reject(new Error("this window cannot run the material tester")));

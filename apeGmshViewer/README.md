@@ -69,7 +69,10 @@ Then:
   kept: a material's runs overlay (the newest in the accent, older ones dashed),
   a second plot shows the imposed history, the tangent or the work done (the
   app's trapezoidal integral, labelled so) against the step, and **CSV** saves
-  a run's full arrays where you choose in a save dialog. The executable comes
+  a run's full arrays where you choose in a save dialog. Under the protocol,
+  each numeric argument of the material can be changed for the test only (a
+  slot holding a dependency's tag is locked); the model is never changed, and
+  the changed values show as text to copy into the script. The executable comes
   from `$APEGMSH_OPENSEES` (a full path), or else from the default install,
   never from a model; without one, a run says so and the rest of the app is
   unaffected.
