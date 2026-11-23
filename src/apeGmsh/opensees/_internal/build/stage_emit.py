@@ -960,7 +960,14 @@ C83_FORK_COMMIT = "c83ee812e1fa53d870004687e6b2a26e24e89d1d"
 #: ``True`` is refused (fail closed).  A ``FORK_PIN`` bump adds its row (a
 #: unit lock fails otherwise).
 FORK_BUILD_HAS_C83: dict[str, bool] = {
-    # FORK_PIN ladruno-v20261120 (23e0f0002): c83ee812e is its ancestor
+    # FORK_PIN ladruno-v20261123b (3eb195bbc): c83ee812e is its ancestor
+    # (GitHub compare: ahead 588, behind 0). It is 23e0f0002 plus 121 commits: MPM two-phase particles (WP-232l,
+    # OpenSees#1116), LadrunoRCConcrete add-ons (WP-241, WP-243), the
+    # LadrunoNDFiber section (WP-245), the MPM footing track (WP-244),
+    # `model testNDMaterial` (WP-248, OpenSees#1142) and the mpm usage
+    # line naming every subcommand (OpenSees#1144).
+    "3eb195bbccb8b78a8982267179a8a0b2b7e03977": True,
+    # ladruno-v20261120 (23e0f0002): c83ee812e is its ancestor
     # (GitHub compare: ahead 467, behind 0). It is f9864cfec plus
     # 4 commits: WP-242, ASDShellQ4/T3 answer localAxes so
     # `recorder ladruno` writes their frames (OpenSees#1133).
@@ -1097,7 +1104,14 @@ MEMBRANE_WP208_FORK_COMMIT = "b6d3e3d212430c85760ec8f8e344c8a7bfbad92f"
 FORK_BUILD_HAS_MEMBRANE_WP208: dict[str, bool] = {
     # The floor commit itself.
     MEMBRANE_WP208_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261120 (23e0f0002): b6d3e3d21 is its ancestor
+    # FORK_PIN ladruno-v20261123b (3eb195bbc): b6d3e3d21 is its ancestor
+    # (GitHub compare: ahead 586, behind 0). It is 23e0f0002 plus 121 commits: MPM two-phase particles (WP-232l,
+    # OpenSees#1116), LadrunoRCConcrete add-ons (WP-241, WP-243), the
+    # LadrunoNDFiber section (WP-245), the MPM footing track (WP-244),
+    # `model testNDMaterial` (WP-248, OpenSees#1142) and the mpm usage
+    # line naming every subcommand (OpenSees#1144).
+    "3eb195bbccb8b78a8982267179a8a0b2b7e03977": True,
+    # ladruno-v20261120 (23e0f0002): b6d3e3d21 is its ancestor
     # (GitHub compare: ahead 465, behind 0). It is f9864cfec plus
     # 4 commits: WP-242, ASDShellQ4/T3 answer localAxes so
     # `recorder ladruno` writes their frames (OpenSees#1133).
@@ -1234,7 +1248,14 @@ BEAM3D_PARTIAL_LOAD_FORK_COMMIT = "34df942c75fa8006da7fa930d32645c0fd37b20f"
 FORK_BUILD_HAS_BEAM3D_PARTIAL_LOAD: dict[str, bool] = {
     # The floor commit itself.
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261120 (23e0f0002): 34df942c7 is its ancestor
+    # FORK_PIN ladruno-v20261123b (3eb195bbc): 34df942c7 is its ancestor
+    # (GitHub compare: ahead 616, behind 0). It is 23e0f0002 plus 121 commits: MPM two-phase particles (WP-232l,
+    # OpenSees#1116), LadrunoRCConcrete add-ons (WP-241, WP-243), the
+    # LadrunoNDFiber section (WP-245), the MPM footing track (WP-244),
+    # `model testNDMaterial` (WP-248, OpenSees#1142) and the mpm usage
+    # line naming every subcommand (OpenSees#1144).
+    "3eb195bbccb8b78a8982267179a8a0b2b7e03977": True,
+    # ladruno-v20261120 (23e0f0002): 34df942c7 is its ancestor
     # (GitHub compare: ahead 495, behind 0). It is f9864cfec plus
     # 4 commits: WP-242, ASDShellQ4/T3 answer localAxes so
     # `recorder ladruno` writes their frames (OpenSees#1133).
@@ -1402,7 +1423,14 @@ FORCE_BEAM_PARTIAL_LOAD_STOCK_VERSION: tuple[int, int, int] = (3, 7, 0)
 FORK_BUILD_HAS_FORCE_BEAM_PARTIAL_LOAD: dict[str, bool] = {
     # The 3-D partial-load floor commit (compare: ahead 4045, behind 0).
     BEAM3D_PARTIAL_LOAD_FORK_COMMIT: True,
-    # FORK_PIN ladruno-v20261120 (23e0f0002): f4c791df6 is its ancestor
+    # FORK_PIN ladruno-v20261123b (3eb195bbc): f4c791df6 is its ancestor
+    # (GitHub compare: ahead 4661, behind 0). It is 23e0f0002 plus 121 commits: MPM two-phase particles (WP-232l,
+    # OpenSees#1116), LadrunoRCConcrete add-ons (WP-241, WP-243), the
+    # LadrunoNDFiber section (WP-245), the MPM footing track (WP-244),
+    # `model testNDMaterial` (WP-248, OpenSees#1142) and the mpm usage
+    # line naming every subcommand (OpenSees#1144).
+    "3eb195bbccb8b78a8982267179a8a0b2b7e03977": True,
+    # ladruno-v20261120 (23e0f0002): f4c791df6 is its ancestor
     # (GitHub compare: ahead 4540, behind 0). It is f9864cfec plus
     # 4 commits: WP-242, ASDShellQ4/T3 answer localAxes so
     # `recorder ladruno` writes their frames (OpenSees#1133).
