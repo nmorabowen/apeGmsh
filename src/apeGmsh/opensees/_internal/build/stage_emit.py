@@ -817,7 +817,7 @@ MD_STATIC_FIX_COMMIT = "43b235bbb753113c3fdee7922e6e037c9ed138df"
 
 #: The ``ladrunoSchema`` v1 capability that promises that fix
 #: (``kCapabilities`` in the fork's ``SRC/interpreter/LadrunoSchema.h``,
-#: listed at ``FORK_PIN`` ``23e0f0002``).  The fork defines a capability's
+#: listed at ``FORK_PIN`` ``3eb195bbc``).  The fork defines a capability's
 #: absence as "older build, refuse", so a v0 schema, which predates every
 #: name, lacks it.
 MD_STAGE_FLAG_CAPABILITY = "mdStageFlagPreserved"
