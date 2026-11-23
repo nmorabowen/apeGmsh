@@ -139,6 +139,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   materialTestRequested: { kind: "gesture", reason: "the material tester tool starts a run from its own controls" },
   materialTestFinished: { kind: "system", reason: "dispatched by effects with the answer of a material test run" },
   materialTestCleared: { kind: "gesture", reason: "the material tester tool drops its run from its own controls" },
+  materialTestFormSet: { kind: "gesture", reason: "the materials window opens, edits or closes the tester's form from its own controls" },
   openSpotlight: { kind: "gesture", reason: "Ctrl+K / header trigger that opens the Spotlight palette itself" },
   closeSpotlight: { kind: "gesture", reason: "Escape / backdrop gesture that closes the Spotlight palette" },
   setSpotlightMode: { kind: "gesture", reason: "internal drill-down navigation within the Spotlight palette" },

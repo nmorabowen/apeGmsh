@@ -13,7 +13,8 @@ import { WINDOWS } from "./registry.ts";
 /**
  * The parts of the state a window view reads; the frame re-renders when one
  * changes. `selection` (the selected-row highlight), `stage` (the selected
- * stage card) and `source` (a go-to-source answer) are among them, so a click
+ * stage card), `source` (a go-to-source answer) and `materialTest` (the
+ * tester's form and run, in the materials window) are among them, so a click
  * in a window comes back through the store as a redraw (D6: one-way flow).
  */
 export const changed = (s: State, p: State): boolean =>
@@ -28,7 +29,8 @@ export const changed = (s: State, p: State): boolean =>
   s.search !== p.search ||
   s.stage !== p.stage ||
   s.source !== p.source ||
-  s.loads !== p.loads;
+  s.loads !== p.loads ||
+  s.materialTest !== p.materialTest;
 
 /**
  * The highlight of a selected row: the office accent, as the selection is drawn

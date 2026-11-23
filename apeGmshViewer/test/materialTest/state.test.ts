@@ -56,14 +56,16 @@ test("a file without decl_params sends the material's own line", () => {
 
 const blobRef = { id: "1:x", path: "x", dtype: "f64", shape: [1] } as const;
 const curves = { strain: blobRef, stress: blobRef, tangent: blobRef };
+const points = { strain: [0, 1], stress: [0, 2] };
 
 test("the reducer: a run goes running to ready, a stale answer is ignored, ids are never reused", () => {
   let s = reduce(wrapped(), { type: "materialTestRequested", decl: "bar", protocol });
   assert.equal(s.materialTest.run?.status, "running");
-  assert.equal(reduce(s, { type: "materialTestFinished", id: 99, build: "b", curves, error: null }), s);
-  s = reduce(s, { type: "materialTestFinished", id: 1, build: "b", curves, error: null });
+  assert.equal(reduce(s, { type: "materialTestFinished", id: 99, build: "b", curves, points, error: null }), s);
+  s = reduce(s, { type: "materialTestFinished", id: 1, build: "b", curves, points, error: null });
   assert.equal(s.materialTest.run?.status, "ready");
   assert.equal(s.materialTest.run?.build, "b");
+  assert.equal(s.materialTest.run?.points, points);
   s = reduce(s, { type: "materialTestCleared" });
   assert.equal(s.materialTest.run, null);
   s = reduce(s, { type: "materialTestRequested", decl: "sec", protocol });
@@ -102,6 +104,7 @@ test("the effect runs the job once and stores the curves as blobs", async () => 
   const run = store.get().materialTest.run!;
   assert.equal(run.status, "ready");
   assert.deepEqual([...blobs.get(run.curves!.stress)], [0, 2]);
+  assert.deepEqual(run.points, { strain: [0, 1], stress: [0, 2] }, "the drawn curve reaches the state");
 });
 
 test("a failure reaches the state; clearing a run in flight cancels it and ignores its answer", async () => {
