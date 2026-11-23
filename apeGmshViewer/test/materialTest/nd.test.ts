@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { MaterialTestRunner } from "../../src/main/materialTest.ts";
-import { CONFINE_STEPS, condensedTangent, ndLoadOf, parseNdRun, scriptOf } from "../../src/main/materialTestScript.ts";
+import { CONFINE_STEPS, NO_ND_TESTER, condensedTangent, ndLoadOf, parseNdRun, scriptOf } from "../../src/main/materialTestScript.ts";
 import { openModel } from "../../src/reader/node.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
 import { loadModel } from "../../src/state/load.ts";
@@ -73,7 +73,7 @@ test("an nD material's job carries its family; the script declares it with nDMat
   assert.equal(built.strain, null);
   assert.equal(built.rows, 31);
   assert.deepEqual(built.nd, { kinds: "esssss", drive: 0 });
-  assert.match(built.script, /^model testNDMaterial$/m);
+  assert.match(built.script, /^if \{\[catch \{model testNDMaterial\}\]\} \{puts "@@MT nond"; exit\}$/m);
   assert.match(built.script, /^nDMaterial ASDConcrete3D 2 30000 0\.2 -Te /m);
   assert.match(built.script, /^ndTest material 2 ThreeDimensional$/m);
   assert.equal((built.script.match(/^ndTest mixed ssssss /gm) ?? []).length, CONFINE_STEPS, "the confinement steps");
@@ -119,6 +119,19 @@ test("an nD run is read with the driven strain and stress, and the condensed tan
     const r2 = parseNdRun(text, 2, "esssss", 0);
     assert.ok(!r2.ok && why.test(r2.error), `${name}: ${JSON.stringify(r2)}`);
   }
+});
+
+test("a fork build without the nD tester is told so by name, and a solver message carries no temporary path", () => {
+  const old = parseNdRun("@@MT build 8b5e0593\n@@MT nond", 2, "esssss", 0);
+  assert.deepEqual(old, { ok: false, build: "8b5e0593", error: NO_ND_TESTER });
+  // the run's folder is random: two runs of one failure must read the same
+  const trace = (dir: string) => `@@MT build abc\nWARNING bad input\n    (file "C:\\Users\\x\\AppData\\Local\\Temp\\${dir}\\test.tcl" line 5)`;
+  const a = parseNdRun(trace("dlzOeZ"), 2, "esssss", 0);
+  const b = parseNdRun(trace("FrQyP4"), 2, "esssss", 0);
+  assert.ok(!a.ok && !b.ok);
+  assert.equal(a.error, b.error);
+  assert.match(a.error, /\(test script line 5\)/);
+  assert.doesNotMatch(a.error, /AppData|test\.tcl/);
 });
 
 test("the form: nD needs a valid loading, carries it in the protocol, labels the driven component, and its slots are the nD command's", () => {

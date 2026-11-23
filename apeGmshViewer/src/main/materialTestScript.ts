@@ -293,7 +293,8 @@ export function scriptOf(raw: unknown): { script: string; strain: number[] | nul
     const all = "s".repeat(load.kinds.length);
     const script = [
       ...head,
-      "model testNDMaterial",
+      // a fork build older than WP-248 has no nD tester: say so, not a Tcl trace
+      `if {[catch {model testNDMaterial}]} {puts "${PREFIX}nond"; exit}`,
       ...lines.map((l) => l.text),
       `ndTest material ${job.target} ${load.view}`,
       // to the confinement first, all stresses held, committed and not printed
@@ -366,12 +367,17 @@ export type ParsedStressRun =
   | { ok: true; build: string; strain: Float64Array; stress: Float64Array; tangent: Float64Array; stopped: string | null }
   | { ok: false; error: string; build: string | null };
 
-/** The solver's last words: what it printed after the build line, or else its last lines. */
+/** The solver's last words: what it printed after the build line, or else its last lines. Tcl's
+ *  `(file "<temp dir>\test.tcl" line N)` becomes `(test script line N)`: the run's temporary
+ *  folder is random, so it would make every message, and every still of one, unique. */
 function messageOf(lines: string[]): string {
   const after = lines.findIndex((l) => l.startsWith(`${PREFIX}build `));
   const own = lines.slice(after + 1).filter((l) => l.trim() !== "" && !l.startsWith(PREFIX));
-  return own.slice(-6).join(" ").slice(-600).trim();
+  return own.slice(-6).join(" ").replace(/\(file "[^"]*" line (\d+)\)/g, "(test script line $1)").slice(-600).trim();
 }
+
+/** What a fork build without `model testNDMaterial` (before WP-248) is told. */
+export const NO_ND_TESTER = "this fork build has no nD material tester (model testNDMaterial, WP-248): install ladruno-v20261123 or later";
 
 /** Read stderr against the `steps` rows the script must have produced. */
 export function parseRun(stderr: string, steps: number): ParsedRun {
@@ -465,6 +471,7 @@ export function parseNdRun(stderr: string, rows: number, kinds: string, drive: n
   const head = framed[0];
   if (!head || head[0] !== "build" || head.length !== 2) return fail("the solver did not start the script", null);
   const build = head[1]!;
+  if (framed.some((f) => f[0] === "nond")) return { ok: false, build, error: NO_ND_TESTER };
   const strain: number[] = [], stress: number[] = [], tangent: number[] = [];
   let k = 1;
   for (; k < framed.length && framed[k]![0] === "nrow"; k++) {
