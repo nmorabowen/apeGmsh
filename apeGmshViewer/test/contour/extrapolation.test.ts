@@ -547,7 +547,7 @@ test("simplex rows that match neither table refuse that group by name: one warni
 //   X12 the whole field falls back, not the group         -> "a mixed field ..." (both)
 
 test("VF #2940: a BezierTet10-like group with no natural coordinates is the verdict's whole refusal, so gauss_node may fall back; any other refusal next to it keeps it refused", () => {
-  // A tet10 (gmsh 11, 10 nodes) group of 4 Gauss points whose points the reader offers no coordinates for (barycentric).
+  // A tet10 (gmsh 11, 10 nodes) group of 4 Gauss points whose points the reader offers no coordinates for (no GP_PARAM).
   const tet10 = { id: "rec_BezierTet10", nElements: 1, nGauss: 4, eids: Float64Array.of(1), naturalCoords: null };
   const cell = legacyCell(11, 10);
   const v = extrapolationVerdict([tet10], cell);
@@ -585,7 +585,7 @@ test("VF #2940: a BezierTet10-like group with no natural coordinates is the verd
 
 test("VF #2940: gauss_node on a field whose one group has no natural coordinates draws Python's cell_averaged values and colours, and the banner names the group; node_discrete stays refused", async () => {
   const h = await opened(fx("extrap_solid.h5"), fx("extrap_solid.results.h5"));
-  // What the reader gives a BezierTet10's barycentric Gauss group (reader/ladrunoElements.ts): no natural coordinates.
+  // What the reader gives a .ladruno group with no QUADRATURE/GP_PARAM, or a domain or "bary" frame it cannot convert (reader/ladrunoElements.ts): no natural coordinates.
   const grp = h.store.get().results!.stages[0]!.gauss.find((x) => x.id === "hex_G8")!;
   grp.naturalCoords = null;
   const o = ORACLE["extrap_solid"]!["stress_xx"]!;
@@ -654,7 +654,7 @@ test("VF #2940: only the no-coordinates refusal falls back; other words keep gau
 
 test("VF #2940: a mixed field draws per group: the group with coordinates keeps Python's extrapolated corners, the BezierTet10 group with none gets its element mean (real file values)", () => {
   // legacy_simplex_capture_tet: a TenNodeTetrahedron and a BezierTet10 group, 4 points each, one element each, from a live solve.
-  // The BezierTet10's coordinates are removed as the reader removes a barycentric group's; the TenNodeTetrahedron keeps its own.
+  // The BezierTet10's coordinates are removed, as the reader gives a group with no GP_PARAM none (its "bary" rows are converted since #2706); the TenNodeTetrahedron keeps its own.
   const rf = openResults(H5, fx("legacy_simplex_capture_tet.results.h5"));
   try {
     const st = rf.index.stages[0]!;
@@ -701,7 +701,7 @@ test("VF #2940: a mixed view keeps gauss_node, names only the refused group, and
   const j = s1.contour.join!;
   assert.ok(j.ok);
   const hex = s1.results!.stages[0]!.gauss.find((x) => x.id === "hex_G8")!;
-  // A second multi-point group beside hex_G8 with no coordinates, as the reader gives a BezierTet10's (state only: never drawn here).
+  // A second multi-point group beside hex_G8 with no coordinates, as the reader gives a group with no GP_PARAM (state only: never drawn here).
   const tet = { ...hex, id: "rec_BezierTet10", naturalCoords: null };
   const noCoords = extrapolationVerdict([{ id: tet.id, nElements: 1, nGauss: 4, eids: Float64Array.of(1), naturalCoords: null }], () => ({ code: 11, nodes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }));
   const mixed: State = { ...s1, results: { ...s1.results!, stages: s1.results!.stages.map((st, i) => (i ? st : { ...st, gauss: [...st.gauss, tet] })) } };

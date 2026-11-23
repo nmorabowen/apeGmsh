@@ -644,7 +644,7 @@ def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
     part of the set the app opens, or refused. A block renamed in place (the shell
     families, ``_name_shell_blocks``) keeps the file's label at the same position. The
     mode is v1's averaged still: ``gauss_cell_averaged`` at one Gauss point, else
-    ``gauss_node``. Any other source is drawn nothing, so it passes only under the skip."""
+    ``gauss_node`` (the app labels its per-group fallback). Any other source is drawn nothing, so it passes only under the skip."""
     import h5py
 
     if results.path is None or Path(results.path).suffix.lower() != ".ladruno":
@@ -669,7 +669,7 @@ def _app_gauss_contour(results: Any, component: str) -> dict[str, str]:
                         own = own if own is not None and len(own) == len(b.comp_names) else None
                         for i in (i for i, c in enumerate(_block_canonicals(token, b)) if c == component):
                             hits.add((token, own[i] if own else b.comp_names[i], own is None))
-                            n_gauss = n_gauss if any(f"-{c}[" in key for c in ("BezierTet10", "BezierTri6")) else max(n_gauss, len(gauss))  # barycentric points ("bary"), not extrapolated by the app: a set of only these asks cell_averaged
+                            n_gauss = max(n_gauss, len(gauss))
     if len(hits) != 1 or next(iter(hits))[2]:
         raise ContourDataError(f"stored Gauss component {component!r} is not one column the app names in {Path(results.path).name}: {sorted(h[:2] for h in hits) or 'none'}"
                                f"{' (named by the response catalog, not by the file)' if any(h[2] for h in hits) else ''} (R16b).")

@@ -103,7 +103,8 @@ export type ManifestContour =
       topology: string;
       /**
        * VF (#2940), only when some groups are not drawn as `topology` says: `topology` is `gauss_node` (`asked`),
-       * and `groups` have no natural coordinates (as a BezierTet10's barycentric Gauss points), so each of their
+       * and `groups` have no natural coordinates (a `.ladruno` group with no QUADRATURE/GP_PARAM, or a PARAM_DOMAIN or
+       * "bary" frame reader/ladrunoElements.ts cannot convert; a "bary" BezierTet10 has them since #2706), so each of their
        * elements gives its mean to its corners (`drawn`: `cell_averaged`); every other group is extrapolated.
        * `reason` is the verdict that refused them
        */
