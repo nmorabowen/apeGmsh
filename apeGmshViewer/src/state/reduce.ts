@@ -469,6 +469,8 @@ function reduceEvent(s: State, e: Event): State {
         user: s.user,
         // ADR 0134 D5: the particles are the set's, not the model's (a particle set draws with no model).
         particles: s.particles,
+        // ADR 0137 D4: the memory warning of the load stays with its path (selectors.ts `noticesOf` matches it).
+        memory: s.memory,
         contour: syncContourUnits(initialState.contour, s.results?.units ?? particleSystemOf(s.particles), false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
@@ -514,6 +516,8 @@ function reduceEvent(s: State, e: Event): State {
         results: s.results,
         user: s.user,
         particles: s.particles,
+        // ADR 0137 D4: the memory warning of the load stays with its path (selectors.ts `noticesOf` matches it).
+        memory: s.memory,
         contour: syncContourUnits(initialState.contour, s.results?.units ?? particleSystemOf(s.particles), false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
@@ -543,6 +547,8 @@ function reduceEvent(s: State, e: Event): State {
       // keeps it only if that row still names the same stage).
       return { ...s, artifacts: { ...s.artifacts, [k]: { ...s.artifacts[k]!, stale: true } } };
     }
+    case "memoryStatus":
+      return { ...s, memory: e.status };
     case "zoneRefused": {
       const prev = s.artifacts[e.artifact];
       if (!prev) throw new Error(`zoneRefused for ${e.artifact} before fileOpened`);

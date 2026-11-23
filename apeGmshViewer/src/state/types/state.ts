@@ -8,7 +8,7 @@ import type { ClipState } from "./clip.ts";
 import type { ContourState } from "./contour.ts";
 import type { DeformState } from "./deform.ts";
 import type { LineDiagramState } from "./lineDiagram.ts";
-import type { ArtifactInfo, ArtifactKind, BlockInfo, Decl, DeclPath, GeometryInfo, Lineage, MeshInfo, PhaseKey, Pick, ProvenanceEntry, SelectionState, SelectionStep, SpatialNdm, StageElements, UnitSystemId } from "./model.ts";
+import type { ArtifactInfo, ArtifactKind, BlockInfo, Decl, DeclPath, GeometryInfo, Lineage, MemoryStatus, MeshInfo, PhaseKey, Pick, ProvenanceEntry, SelectionState, SelectionStep, SpatialNdm, StageElements, UnitSystemId } from "./model.ts";
 import type { MaterialTestState } from "./materialTest.ts";
 import type { OffersState } from "./offers.ts";
 import type { CracksState, HingesState, LoadsState, PrincipalState, ReactionsState, SpringsState, SupportsState, VectorsState } from "./overlays.ts";
@@ -218,4 +218,6 @@ export interface State {
   offers: OffersState;
   /** ADR 0134 D5: the particles the points layer draws; null when the set has none */
   particles: ParticlesState | null;
+  /** ADR 0137 D4 (#3057): the last memory reading for a model load, or null (view mode only) */
+  memory: MemoryStatus | null;
 }

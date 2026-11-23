@@ -77,6 +77,7 @@ import { guardContents } from "./windowPolicy.ts";
 import { openLineage } from "./zones.ts";
 import { Loader } from "./loader/client.ts";
 import { forkLoader } from "./loader/fork.ts";
+import { watchLoad } from "./memory.ts";
 import { nodeDeps, registerWorkspace } from "./workspace.ts";
 import { combinationToken, nodeCombinationDeps, registerCombinations, sweepOnOpen, type CombinationH5 } from "./combinations.ts";
 import type { WorkspaceH5 } from "../reader/workspace.ts";
@@ -487,15 +488,22 @@ function ungestured(door: string, path: string): string | null {
   return `${door} opens only a file the user dropped or a path main sent the page; refused ${path}`;
 }
 
-ipcMain.handle("model:open", async (_e, path: unknown) => {
+ipcMain.handle("model:open", async (e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, error: `model:open needs a path; got ${shown(path)}` };
   // A free string is refused before any read, so the set stays as it is (VU12).
   const refused = ungestured("model:open", path);
   if (refused !== null) return { ok: false, error: refused };
   let opened;
   try {
-    // The model and its zones, in the loader process (ADR 0137 D2).
-    opened = await loader.model(path);
+    // The model and its zones, in the loader process (ADR 0137 D2). In view mode the page hears the
+    // machine's memory before the read and every second during it, and a banner warns when it is
+    // short (ADR 0137 D4 stage 1, #3057; ./memory.ts). It never refuses. An agent's still never carries it.
+    const read = () => loader.model(path);
+    const sender = e.sender;
+    opened =
+      mode === "view"
+        ? await watchLoad(path, loader.cells(path), (m) => void (!sender.isDestroyed() && sender.send("memory:status", m)), read)
+        : await read();
   } catch (err) {
     // The renderer takes the old model off screen (state/reduce.ts `fileFailed`),
     // so the old set ends either way (./session.ts). A `<stem>.h5` that failed

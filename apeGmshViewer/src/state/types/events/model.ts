@@ -3,7 +3,7 @@
 
 import type { ThemeMode } from "../../../theme/tokens.ts";
 import type { SetKind } from "../workspace.ts";
-import type { ArtifactKind, ColourBy, DeclPath, GeometryLoad, ModelLoad, PhaseKey, Pick, TargetKind } from "../model.ts";
+import type { ArtifactKind, ColourBy, DeclPath, GeometryLoad, MemoryStatus, ModelLoad, PhaseKey, Pick, TargetKind } from "../model.ts";
 
 export type ModelEvent =
   | { type: "fileOpened"; artifact: ArtifactKind; path: string }
@@ -13,6 +13,8 @@ export type ModelEvent =
   | { type: "fileFailed"; artifact: ArtifactKind; path: string; error: string }
   | { type: "fileClosed"; artifact: ArtifactKind }
   | { type: "fileChanged"; path: string }
+  /** ADR 0137 D4 (#3057): main's memory reading for a model load, before and during it */
+  | { type: "memoryStatus"; status: MemoryStatus }
   | { type: "zoneRefused"; artifact: ArtifactKind; zone: string; version: string; accepted: string; newer: boolean; reason: string }
   | { type: "select"; pick: Pick }
   | { type: "selectAdd"; pick: Pick }

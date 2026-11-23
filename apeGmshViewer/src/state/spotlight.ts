@@ -70,6 +70,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   fileClosed: { kind: "system", reason: "dispatched by the loader when an open set closes an artifact" },
   fileChanged: { kind: "system", reason: "dispatched by the file watcher when an artifact changes on disk" },
   zoneRefused: { kind: "system", reason: "dispatched by the loader when a schema zone version is refused" },
+  memoryStatus: { kind: "system", reason: "dispatched by effects with main's memory reading for a model load (ADR 0137 D4)" },
   sourceResult: { kind: "system", reason: "dispatched by effects with the outcome of a go-to-source request" },
   resultsLoaded: { kind: "system", reason: "dispatched by effects when results metadata finishes reading" },
   // ADR 0134 D5 (M2-S4 #2983): the particle points layer. The effects read the index and push each frame; the

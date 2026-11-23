@@ -31,7 +31,7 @@ import { smartNodeSize } from "./state/nodes.ts";
 import { componentOf, particleRange, type ParticleFrame } from "./renderer/particles.ts";
 import { materialTestJobOf } from "./state/materialTest.ts";
 import { materialTestCsvName, materialTestCsvOf, materialTestPointsOf } from "./state/materialTestForm.ts";
-import type { MaterialTestJob, MaterialTestRun } from "./state/types.ts";
+import type { MaterialTestJob, MaterialTestRun, MemoryStatus } from "./state/types.ts";
 import { contourView, crackFieldOf, shellCrackFieldOf, deformView, draftJudgedOf, elementJoinKey, hingeHistoryWanted, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
 import { focusOf, type Focus } from "./renderer/selection.ts";
@@ -131,6 +131,8 @@ export interface Bridge {
   /** V4c1, measure mode: the machine's CPU load (%) since the last call, and the main and renderer working sets (MB). */
   measureCpu?(): Promise<number>;
   measureMemory?(): Promise<{ main: number; renderer: number }>;
+  /** ADR 0137 D4 (#3057): main's memory reading for a model load (view mode); returns the unsubscribe. */
+  onMemoryStatus?(cb: (m: MemoryStatus) => void): (() => void) | void;
   /** V4c1: the progress of the running scans; returns the unsubscribe. */
   onScanProgress?(cb: (p: { scanId: number; done: number; total: number }) => void): (() => void) | void;
   /** V4b: one step of the open results file; the reply echoes `seq`. V4c2a: `element` reads one Gauss component too (`gauss`, by group); `tensor` several (by component, then group). */
@@ -667,6 +669,10 @@ export class Effects {
       this.store.subscribe((s) => this.syncMaterialTest(s)),
       this.store.subscribe((s) => this.syncMaterialTestSave(s)),
     );
+    if (typeof this.bridge.onMemoryStatus === "function") {
+      const off = this.bridge.onMemoryStatus((m) => this.store.dispatch({ type: "memoryStatus", status: m }));
+      if (typeof off === "function") this.off.push(off);
+    }
     if (typeof this.bridge.onScanProgress === "function") {
       const off = this.bridge.onScanProgress((p) => {
         const run = this.scanRun;

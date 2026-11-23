@@ -17,7 +17,7 @@ import * as h5wasm from "h5wasm/node";
 import { openModel } from "../../reader/node.ts";
 import type { ResultsH5 } from "../../reader/results.ts";
 import { readParticleSet, ResultsHost, type HingeHistoryRequest, type ParticleOutputRequest, type ScanRequest, type StepRequest } from "../results.ts";
-import { openGeometry, openLineage, openProvenance, openStageElements } from "../zones.ts";
+import { openCellCount, openGeometry, openLineage, openProvenance, openStageElements } from "../zones.ts";
 import type { LoaderMessage, LoaderOps, LoaderRequest, ResultsCall, ResultsHostName, ScanOptions } from "./protocol.ts";
 
 interface Port {
@@ -46,6 +46,7 @@ const reads: { [K in keyof LoaderOps]: (path: string) => Promise<LoaderOps[K]> }
     const model = await openModel(path);
     return { nodes: model.nodeIds.length, elements: model.blocks.reduce((n, b) => n + b.ids.length, 0) };
   },
+  cells: openCellCount,
   geometry: openGeometry,
   provenance: openProvenance,
   particleSet: (path) => readParticleSet(h5, h5wasm.ready, path),

@@ -139,6 +139,28 @@ export type ZoneStatus =
   /** the zone's version is fine but its content is broken (the reader's message names the HDF5 path) */
   | { status: "malformed"; reason: string };
 
+/**
+ * ADR 0137 D4 stage 1 (#3057): the memory main read for a model load, before it and every second
+ * while it runs (src/main/memory.ts), and why it is short (state/memory.ts `memoryReasons`).
+ * View mode only: an agent's still never carries it.
+ */
+export interface MemoryStatus {
+  /** the model being loaded */
+  path: string;
+  /** "before": read before the model is read; "during": while it is; "after": when the read ended */
+  phase: "before" | "during" | "after";
+  /** the model's cells, or null when they could not be counted */
+  cells: number | null;
+  /** the whole app's estimated load peak, MB (state/memory.ts `estimatePeakMB`), or null with no cell count */
+  estimateMB: number | null;
+  /** available RAM, MB */
+  availableMB: number;
+  /** commit headroom, MB; null where the platform does not report it (only Windows does) */
+  commitHeadroomMB: number | null;
+  /** one per threshold crossed; empty: not short */
+  reasons: string[];
+}
+
 export interface ArtifactInfo {
   path: string;
   /** opened: the path is known and nothing has been read yet (a sibling V2f names, or a file being loaded) */

@@ -98,4 +98,5 @@ export const initialState: State = {
   theme: "dark",
   offers: initialOffers,
   particles: null,
+  memory: null,
 };

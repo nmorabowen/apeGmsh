@@ -41,6 +41,8 @@ export interface LoaderOps {
   geometry: GeometryAnswer;
   /** A model's /provenance (`source:goto`). A reader error is an `ok: false` answer, not a failure. */
   provenance: ProvenanceAnswer;
+  /** The model's cell count from the shape of each `/elements/<alias>/ids`, before the model is read (the memory warning, #3057). */
+  cells: number;
   /** A `<stem>.particles.h5` (`particles:set`). A reader error is an `ok: false` answer. */
   particleSet: ParticleSetAnswer;
 }
