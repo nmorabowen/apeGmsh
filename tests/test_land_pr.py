@@ -2572,6 +2572,67 @@ def test_an_unreadable_test_file_refuses_3023():
         _run(1218, gh, git_fails_on_show)
 
 
+# --- #3105: check 12 reads the marker from the AST, so strings and comments stop counting ----------
+#: #3102's shape: the marker only inside a string literal and a docstring (as in MARKED above).
+STRING_ONLY = (
+    'import pytest\n\nSRC = "@pytest.mark.ladruno_fork"\n\n\n'
+    'def test_names_it():\n    """Checks ``pytest.mark.ladruno_fork`` in a fixture."""\n    assert SRC\n'
+)
+COMMENT_ONLY = "import pytest\n\n\n# @pytest.mark.ladruno_fork lives in the fork suite\ndef test_stock():\n    pass\n"
+MULTILINE_PYTESTMARK = "import pytest\n\npytestmark = [\n    pytest.mark.live,\n    pytest.mark.ladruno_fork,\n]\n"
+PARAM_MARKED = (
+    "import pytest\n\n\n@pytest.mark.parametrize('x', [1, pytest.param(2, marks=pytest.mark.ladruno_fork)])\n"
+    "def test_x(x):\n    pass\n"
+)
+FROM_IMPORT_MARK = "from pytest import mark\n\n\n@mark.ladruno_fork\ndef test_fork():\n    pass\n"
+ALIASED = "import pytest\n\nFORK = pytest.mark.ladruno_fork\n\n\n@FORK\ndef test_fork():\n    pass\n"
+UNPARSEABLE = "import pytest\n\n\ndef test_broken(:\n    pass\n"
+MARK_PROBE = "tests/a/test_m.py"
+
+
+@pytest.mark.parametrize("rows, shows, base_shows", [
+    pytest.param([_row(MARK_PROBE)], {MARK_PROBE: MULTILINE_PYTESTMARK}, None, id="pytestmark-over-lines"),
+    pytest.param([_row(MARK_PROBE)], {MARK_PROBE: PARAM_MARKED}, None, id="pytest-param-marks"),
+    pytest.param([_row(MARK_PROBE)], {MARK_PROBE: FROM_IMPORT_MARK}, None, id="from-pytest-import-mark"),
+    pytest.param([_row(MARK_PROBE)], {MARK_PROBE: ALIASED}, None, id="aliased-mark"),
+    pytest.param([_row(MARK_PROBE)], {MARK_PROBE: "\ufeff" + MARKED}, None, id="leading-bom"),
+    pytest.param([_row("tests/b/test_new.py", "renamed", MARK_PROBE)], None, {MARK_PROBE: ALIASED}, id="renamed-away-reads-main"),
+])
+def test_a_marker_the_code_applies_is_fork_only_3105(rows, shows, base_shows):
+    gh, git = _fork_pr(rows, shows, base_shows, runs=[])
+    with pytest.raises(land_pr.LandError, match=rf"check 12: #1218 changes fork-only files \({MARK_PROBE}\) but no live-fork"):
+        _run(1218, gh, git)
+    assert not _merged(gh)
+
+
+@pytest.mark.parametrize("rows, shows, base_shows", [
+    pytest.param([_row(MARK_PROBE)], {MARK_PROBE: STRING_ONLY}, None, id="string-and-docstring"),
+    pytest.param([_row(MARK_PROBE)], {MARK_PROBE: COMMENT_ONLY}, None, id="comment"),
+    pytest.param([_row(MARK_PROBE, "removed")], None, {MARK_PROBE: STRING_ONLY}, id="deleted-string-only"),
+    pytest.param([_row("tests/test_land_pr.py")], {"tests/test_land_pr.py": Path(__file__).read_text(encoding="utf-8")},
+                 None, id="this-file-3102"),
+])
+def test_a_marker_only_in_strings_or_comments_is_not_fork_only_3105(rows, shows, base_shows, capsys):
+    """Revert-proof: with main's `FORK_MARK.search(text)` text match, every case asks for a dispatch."""
+    gh, git = _fork_pr(rows, shows, base_shows)
+    assert _run(1218, gh, git, dry_run=True) == 0
+    assert "does not change FORK_PIN; no live-fork dispatch is required." in capsys.readouterr().out
+    assert not any(call.startswith("run list") for call in gh.calls)
+
+
+@pytest.mark.parametrize("rows, shows, base_shows, rev", [
+    pytest.param([_row(MARK_PROBE)], {MARK_PROBE: UNPARSEABLE}, None, HEAD_2138[:12], id="at-head"),
+    pytest.param([_row(MARK_PROBE, "removed")], None, {MARK_PROBE: UNPARSEABLE}, "origin/main", id="deleted-at-main"),
+    pytest.param([_row(MARK_PROBE)], {MARK_PROBE: "x = 1\x00\n"}, None, HEAD_2138[:12], id="null-byte"),
+])
+def test_a_test_file_that_does_not_parse_refuses_3105(rows, shows, base_shows, rev):
+    """Fail closed: a file whose marker cannot be read is not treated as stock."""
+    gh, git = _fork_pr(rows, shows, base_shows)
+    with pytest.raises(land_pr.LandError, match=rf"check 12: {re.escape(MARK_PROBE)} does not parse at {re.escape(rev)} .*refusing"):
+        _run(1218, gh, git)
+    assert not any(call.startswith("run list") for call in gh.calls)
+
+
 # --- #2326: check 9 scopes a negation to its own line -------------------------------------
 
 AMENDMENT_2410 = (
