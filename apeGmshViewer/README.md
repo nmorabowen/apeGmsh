@@ -65,7 +65,11 @@ Then:
   sections window, **Test** on a uniaxial material opens a form under its row:
   a monotonic, cyclic or pasted strain history, then **Run**. The Ladruno
   fork's `OpenSees.exe` runs the declared material with its dependencies, and
-  the window draws the response with the fork's build id. The executable comes
+  the window draws the response with the fork's build id. Up to six runs are
+  kept: a material's runs overlay (the newest in the accent, older ones dashed),
+  a second plot shows the imposed history, the tangent or the work done (the
+  app's trapezoidal integral, labelled so) against the step, and **CSV** saves
+  a run's full arrays where you choose in a save dialog. The executable comes
   from `$APEGMSH_OPENSEES` (a full path), or else from the default install,
   never from a model; without one, a run says so and the rest of the app is
   unaffected.

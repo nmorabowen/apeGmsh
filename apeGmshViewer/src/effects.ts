@@ -30,7 +30,7 @@ import { buildHinges3D, smartHingeSize } from "./state/hinges.ts";
 import { smartNodeSize } from "./state/nodes.ts";
 import { componentOf, particleRange, type ParticleFrame } from "./renderer/particles.ts";
 import { materialTestJobOf } from "./state/materialTest.ts";
-import { materialTestPointsOf } from "./state/materialTestForm.ts";
+import { materialTestCsvName, materialTestCsvOf, materialTestPointsOf } from "./state/materialTestForm.ts";
 import type { MaterialTestJob, MaterialTestRun } from "./state/types.ts";
 import { contourView, crackFieldOf, shellCrackFieldOf, deformView, draftJudgedOf, elementJoinKey, hingeHistoryWanted, lineDiagramClimOf, lineDiagramKeysOf, principalFieldOf, resultsPairing, sourceFor, spectrumCasesOf, summarizeDrawnBeams } from "./state/selectors.ts";
 import type { Store } from "./state/store.ts";
@@ -213,6 +213,8 @@ export interface Bridge {
     | { ok: false; seq: number; build: string | null; error: string; superseded?: true }
   >;
   materialTestCancel?(): Promise<void>;
+  /** ADR 0135 D7: save a run's CSV where the user picks in main's save dialog; the answer says where, or why not (main's `materialTest:saveCsv`) */
+  materialTestSaveCsv?(text: string, name: string): Promise<{ ok: true; path: string } | { ok: false; cancelled?: true; error: string }>;
 }
 
 /**
@@ -326,8 +328,7 @@ export function parseRefusal(error: string): { zone: string; version: string; ac
 /** Every BlobRef the state holds (what the BlobStore keeps after a load). */
 export function blobRefsOf(s: State): BlobRef[] {
   const out: BlobRef[] = [];
-  const tested = s.materialTest.run?.curves;
-  if (tested) out.push(tested.strain, tested.stress, tested.tangent);
+  for (const r of s.materialTest.runs) if (r.curves) out.push(r.curves.strain, r.curves.stress, r.curves.tangent);
   if (s.mesh) {
     const m = s.mesh;
     out.push(m.linePositions, m.triPositions, m.edgePositions, m.lineElement, m.triElement, m.lineGroup, m.triGroup);
@@ -664,6 +665,7 @@ export class Effects {
       this.store.subscribe((s) => this.syncParticleFrame(s)),
       // ADR 0135: the material tester run the state calls for.
       this.store.subscribe((s) => this.syncMaterialTest(s)),
+      this.store.subscribe((s) => this.syncMaterialTestSave(s)),
     );
     if (typeof this.bridge.onScanProgress === "function") {
       const off = this.bridge.onScanProgress((p) => {
@@ -1685,13 +1687,14 @@ export class Effects {
 
   /** Start the run the state calls for, cancel one it no longer does, and put the answer back as an event. */
   private syncMaterialTest(s: State): void {
-    const run = s.materialTest.run;
-    const going = run?.status === "running" ? run.id : null;
+    const run = s.materialTest.runs.find((r) => r.status === "running") ?? null;
+    const going = run ? run.id : null;
     const had = this.materialTestGoing;
     if (going === had) return;
     this.materialTestGoing = going;
     if (going === null) {
-      if (had !== null && run?.id !== had) void this.bridge.materialTestCancel?.();
+      // The run that was going left the list (removed or cleared), not finished: stop its process.
+      if (had !== null && !s.materialTest.runs.some((r) => r.id === had)) void this.bridge.materialTestCancel?.();
       return;
     }
     const id = going;
@@ -1705,12 +1708,34 @@ export class Effects {
       : (this.bridge.materialTestRun?.(answer.job, id) ?? Promise.reject(new Error("this window cannot run the material tester")));
     asked.then(
       (a) => {
-        if (this.store.get().materialTest.run?.id !== id) return;
+        if (!this.store.get().materialTest.runs.some((r) => r.id === id && r.status === "running")) return;
         if (!a.ok) return finish(a.build, null, a.error);
         const at = `materialTest/${id}`;
-        finish(a.build, { strain: this.blobs.put(`${at}/strain`, a.strain), stress: this.blobs.put(`${at}/stress`, a.stress), tangent: this.blobs.put(`${at}/tangent`, a.tangent) }, null, materialTestPointsOf(a.strain, a.stress));
+        finish(a.build, { strain: this.blobs.put(`${at}/strain`, a.strain), stress: this.blobs.put(`${at}/stress`, a.stress), tangent: this.blobs.put(`${at}/tangent`, a.tangent) }, null, materialTestPointsOf(a.strain, a.stress, a.tangent));
       },
       (e: unknown) => finish(null, null, e instanceof Error ? e.message : String(e)),
+    );
+  }
+
+  private materialTestSaving: number | null = null;
+
+  /** ADR 0135 D7: save the run the state asks for as CSV, from the full arrays in the BlobStore, through main's save dialog. */
+  private syncMaterialTestSave(s: State): void {
+    const id = s.materialTest.saving;
+    if (id === this.materialTestSaving) return;
+    this.materialTestSaving = id;
+    if (id === null) return;
+    const run = s.materialTest.runs.find((r) => r.id === id);
+    // Answered after this notification returns, never from inside it.
+    const answer = (notice: string): void => void Promise.resolve().then(() => this.store.dispatch({ type: "materialTestSaved", id, notice }));
+    if (!run?.curves) return answer("this run has no curve to save");
+    const save = this.bridge.materialTestSaveCsv;
+    if (!save) return answer("this window cannot save files");
+    const c = run.curves;
+    const text = materialTestCsvOf(run, this.blobs.get(c.strain), this.blobs.get(c.stress), this.blobs.get(c.tangent));
+    save(text, materialTestCsvName(run.decl, run.id)).then(
+      (a) => answer(a.ok ? `saved run ${id} to ${a.path}` : a.cancelled ? "the save was cancelled" : `run ${id} was not saved: ${a.error}`),
+      (e: unknown) => answer(`run ${id} was not saved: ${e instanceof Error ? e.message : String(e)}`),
     );
   }
 

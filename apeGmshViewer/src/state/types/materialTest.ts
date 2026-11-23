@@ -1,5 +1,5 @@
-// The material tester slice (ADR 0135): one run of the fork's uniaxial tester on
-// one declared material. One slice of the store's types; src/state/types.ts
+// The material tester slice (ADR 0135): the runs of the fork's uniaxial tester on
+// declared materials, kept for overlay (D7, Amendment 1 slice A2). One slice of the store's types; src/state/types.ts
 // re-exports it. The curves live in the BlobStore; the state holds their refs.
 
 import type { BlobRef, DeclPath } from "./model.ts";
@@ -44,11 +44,19 @@ export interface MaterialTestRun {
   points: MaterialTestPoints | null;
 }
 
-/** A curve to draw: strain and stress, of one length. */
+/** A run thinned for drawing: the same steps of every array, all of one length. */
 export interface MaterialTestPoints {
+  /** the step of each point (0 is the starting zero) */
+  step: readonly number[];
   strain: readonly number[];
   stress: readonly number[];
+  tangent: readonly number[];
+  /** the work done, the running trapezoidal integral of stress over strain, computed in the app on the full run (D7) */
+  energy: readonly number[];
 }
+
+/** The tester's second plot, against the step (D7). */
+export type MaterialTestSecond = "history" | "tangent" | "energy";
 
 /**
  * The tester's form in the materials window (ADR 0135 Amendment 1), as typed: the
@@ -65,12 +73,22 @@ export interface MaterialTestForm {
   stepsPerRamp: string;
   /** comma-, space- or newline-separated */
   values: string;
+  /** what the second plot shows */
+  second: MaterialTestSecond;
 }
 
+/** The most runs kept at once, over all materials; the oldest leaves first. */
+export const MAX_MATERIAL_TEST_RUNS = 6;
+
 export interface MaterialTestState {
-  run: MaterialTestRun | null;
+  /** oldest first; at most one is running, and it is the last */
+  runs: readonly MaterialTestRun[];
   /** the open form; null when none is */
   form: MaterialTestForm | null;
   /** the next run's id: never reused, so a late answer cannot match a newer run */
   nextId: number;
+  /** the run whose CSV the effect is saving; null when none */
+  saving: number | null;
+  /** what the last save said ("saved to …", or why not); null when there is nothing to say */
+  notice: string | null;
 }

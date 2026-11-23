@@ -23,7 +23,10 @@ const SHOWN: Readonly<Record<string, Partial<MaterialTestForm>>> = {
  * With the materials window open:
  * (1) `mt-1-form`: the first uniaxial material's form, before a run;
  * (2..) `mt-<n>-<handle>`: each uniaxial material (at most 8) run and drawn;
- * then `mt-<n>-refused`: a field that does not parse, Run disabled.
+ * then `mt-<n>-refused`: a field that does not parse, Run disabled;
+ * then, on the first Steel02 (or the first material), three runs overlaid
+ * (`mt-<n>-overlay`) with the second plot on the history, the tangent
+ * (`mt-<n>-tangent`) and the work done (`mt-<n>-energy`).
  * The window, form and run are put back afterwards.
  */
 export async function captureMaterialTest(ctx: HarnessContext, settle: (ms?: number) => Promise<unknown>) {
@@ -42,18 +45,33 @@ export async function captureMaterialTest(ctx: HarnessContext, settle: (ms?: num
   const first = materials[0]!;
   store.dispatch({ type: "materialTestFormSet", form: { ...materialTestFormFor(first.path), ...SHOWN[first.type] } });
   await still("mt-1-form");
-  let n = 2;
-  for (const d of materials) {
-    const form = { ...materialTestFormFor(d.path), ...SHOWN[d.type] };
+  /** Set the form, press its Run, and wait for the answer. */
+  const run = async (form: MaterialTestForm) => {
     store.dispatch({ type: "materialTestFormSet", form });
     const id = store.get().materialTest.nextId;
-    document.querySelector<HTMLButtonElement>(`#windows .mt[data-material-test="${CSS.escape(d.path)}"] .mt-bar .window-test`)?.click();
+    document.querySelector<HTMLButtonElement>(`#windows .mt[data-material-test="${CSS.escape(form.decl)}"] .mt-run-button`)?.click();
     await until(() => {
-      const run = store.get().materialTest.run;
-      return run !== null && run.id === id && run.status !== "running";
+      const r = store.get().materialTest.runs.find((x) => x.id === id);
+      return r !== undefined && r.status !== "running";
     }, 15000);
+  };
+  let n = 2;
+  for (const d of materials) {
+    store.dispatch({ type: "materialTestCleared" });
+    await run({ ...materialTestFormFor(d.path), ...SHOWN[d.type] });
     await still(`mt-${n++}-${d.path.split("/").pop()!.replace(/[^A-Za-z0-9_-]/g, "_")}`);
   }
+  store.dispatch({ type: "materialTestCleared" });
+  const steel = materials.find((d) => d.type === "Steel02") ?? first;
+  const base = materialTestFormFor(steel.path);
+  await run({ ...base, kind: "monotonic", peak: "0.03", steps: "300" });
+  await run({ ...base, kind: "cyclic", amplitudes: "0.01", stepsPerRamp: "100" });
+  await run({ ...base, ...SHOWN[steel.type] });
+  await still(`mt-${n++}-overlay`);
+  store.dispatch({ type: "materialTestFormSet", form: { ...store.get().materialTest.form!, second: "tangent" } });
+  await still(`mt-${n++}-tangent`);
+  store.dispatch({ type: "materialTestFormSet", form: { ...store.get().materialTest.form!, second: "energy" } });
+  await still(`mt-${n++}-energy`);
   store.dispatch({ type: "materialTestFormSet", form: { ...materialTestFormFor(first.path), kind: "monotonic", peak: "0.01x" } });
   await still(`mt-${n}-refused`);
   store.dispatch({ type: "materialTestCleared" });

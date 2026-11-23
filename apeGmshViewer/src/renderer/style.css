@@ -471,7 +471,13 @@ textarea.mt-input { min-height: 3.5em; resize: vertical; }
 .mt-bar { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; }
 .mt-bar .window-test { margin-left: 0; }
 .mt-error { color: var(--text); font-size: 12px; font-style: italic; overflow-wrap: anywhere; }
-.mt-run { margin-top: 4px; }
+.mt-plots { margin-top: 4px; }
+.mt-plots .mt-bar { margin-top: 4px; }
+.mt-legend { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+.mt-legend > .window-test { align-self: flex-start; margin-left: 0; }
+.mt-legend-line { display: flex; align-items: center; gap: 6px; }
+.mt-legend-text { flex: 1 1 auto; min-width: 0; font: 11px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.mt-legend-line .window-test { margin-left: 0; }
 
 /* V4e1: the section planes panel (ADR 0083 Part 4), at the top of the rail,
    above the inspector; it scrolls past 45 % of the rail. */
@@ -856,3 +862,10 @@ body[data-still-chrome="model"] > :not(#viewport) { display: none !important; }
 .xy-curve { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
 .xy-now { fill: var(--accent); stroke: var(--panel, #000); stroke-width: 1; }
 .xy-label { fill: var(--muted); font-size: 10px; font-family: var(--font); }
+.xy-other { fill: none; stroke: var(--muted); stroke-width: 1.25; stroke-linejoin: round; }
+.xy-dash-0 { stroke-dasharray: none; opacity: 0.8; }
+.xy-dash-1 { stroke-dasharray: 5 3; }
+.xy-dash-2 { stroke-dasharray: 1.5 2.5; }
+.xy-dash-3 { stroke-dasharray: 8 3 2 3; }
+.xy-dash-4 { stroke-dasharray: 3 5; }
+.xy-swatch { flex: none; vertical-align: middle; }

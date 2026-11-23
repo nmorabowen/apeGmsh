@@ -18,5 +18,11 @@ export type MaterialTestEvent =
     }
   /** Open, edit or (null) close the tester's form in the materials window. */
   | { type: "materialTestFormSet"; form: MaterialTestForm | null }
-  /** Forget the run; one still going is cancelled. */
-  | { type: "materialTestCleared" };
+  /** Forget every run; one still going is cancelled. */
+  | { type: "materialTestCleared" }
+  /** Forget one run (its overlay); a run still going is cancelled. */
+  | { type: "materialTestRemoved"; id: number }
+  /** Save run `id` as CSV through main's save dialog (D7); the effect does it. */
+  | { type: "materialTestSaveRequested"; id: number }
+  /** The effect's answer to a save: what to tell the user. */
+  | { type: "materialTestSaved"; id: number; notice: string };

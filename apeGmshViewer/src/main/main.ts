@@ -70,7 +70,7 @@ import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } 
 import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
 import { compareStagesOf, readParticleSet, ResultsHost, type ParticleOutputRequest, type HingeHistoryRequest, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
-import { MaterialTestRunner } from "./materialTest.ts";
+import { MaterialTestRunner, saveCsv } from "./materialTest.ts";
 import { OpenSession, Study } from "./session.ts";
 import { confinedToStudy, isManifestPath, readVariants, resolveRow, type VariantsFs } from "../reader/variants.ts";
 import { goToSource, provenanceSources, type SourceScope } from "./source.ts";
@@ -659,6 +659,16 @@ ipcMain.handle("materialTest:run", (_e, job: unknown, seq: unknown) => {
   return materialTests.run(job, seq);
 });
 ipcMain.handle("materialTest:cancel", () => materialTests.cancel());
+// ADR 0135 D7: a run's CSV, written where the user picks in the save dialog. The page
+// sends the text and a suggested name only; the dialog is the gesture and names the path.
+ipcMain.handle("materialTest:saveCsv", (e, text: unknown, name: unknown) =>
+  saveCsv(text, name, async (suggested) => {
+    const options = { title: "Save the material test as CSV", defaultPath: suggested, filters: [{ name: "CSV", extensions: ["csv"] }] };
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const r = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+    return r.canceled || !r.filePath ? null : r.filePath;
+  }),
+);
 
 // VU10 (ADR 0132 D9): the variant doors. Each names a manifest row by index and
 // label (`study.row`, which refuses a mismatch); none takes a path. A switch

@@ -1,5 +1,6 @@
 // The material tester's runner (ADR 0135 D1 to D3): the one module besides
 // source.ts that starts a process, and it only ever starts the fork's OpenSees.
+// Also the CSV save (D7): main writes only where the user picked in a save dialog.
 //
 // The executable comes from $APEGMSH_OPENSEES or the default install, never from
 // a model or the page. Each run gets a fresh temporary directory, no shell, a
@@ -58,6 +59,37 @@ export function resolveSolver(env: NodeJS.ProcessEnv = process.env, fallback: st
 
 interface Active {
   stop(reason: "superseded" | "cancelled"): void;
+}
+
+/** The largest CSV main will write: a run is capped at MAX_STEPS rows, well under this. */
+export const MAX_CSV_BYTES = 64 * 1024 * 1024;
+const CSV_NAME = /^[A-Za-z0-9_-]{1,80}\.csv$/;
+
+export type SaveCsvAnswer = { ok: true; path: string } | { ok: false; cancelled?: true; error: string };
+
+/**
+ * Save a run's CSV (ADR 0135 D7). The page sends the text and a suggested name; the
+ * path is whatever `choose` returns (main's save dialog), never a string from the
+ * page. A malformed request is refused before any dialog opens.
+ */
+export async function saveCsv(
+  text: unknown,
+  name: unknown,
+  choose: (suggested: string) => Promise<string | null>,
+  write: (path: string, text: string) => Promise<void> = (p, t) => writeFile(p, t, "utf8"),
+): Promise<SaveCsvAnswer> {
+  if (typeof text !== "string" || text.length === 0) return { ok: false, error: "there is no CSV text to save" };
+  if (Buffer.byteLength(text, "utf8") > MAX_CSV_BYTES) return { ok: false, error: `the CSV is larger than ${MAX_CSV_BYTES / (1024 * 1024)} MB` };
+  const suggested = typeof name === "string" && CSV_NAME.test(name) ? name : "material-test.csv";
+  const path = await choose(suggested);
+  if (path === null) return { ok: false, cancelled: true, error: "cancelled" };
+  if (!isAbsolute(path)) return { ok: false, error: `the save dialog returned a path that is not absolute: ${path}` };
+  try {
+    await write(path, text);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ok: true, path };
 }
 
 export class MaterialTestRunner {

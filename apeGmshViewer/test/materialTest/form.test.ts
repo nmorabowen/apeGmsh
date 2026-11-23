@@ -7,8 +7,12 @@ import { strainPath } from "../../src/main/materialTestScript.ts";
 import {
   materialTestAxesOf,
   materialTestFormFor,
+  materialTestCsvName,
+  materialTestCsvOf,
   materialTestPointsOf,
   materialTestProtocolOf,
+  materialTestProtocolText,
+  materialTestWorkOf,
   materialTestStepsOf,
 } from "../../src/state/materialTestForm.ts";
 import { initialState, reduce } from "../../src/state/reduce.ts";
@@ -54,7 +58,7 @@ test("the axes: strain and stress, except the two materials ADR 0135 D6 relabels
 });
 
 test("a short curve is drawn whole", () => {
-  assert.deepEqual(materialTestPointsOf([0, 1, 2], [0, 10, 20]), { strain: [0, 1, 2], stress: [0, 10, 20] });
+  assert.deepEqual(materialTestPointsOf([0, 1, 2], [0, 10, 20], [10, 10, 10]), { step: [0, 1, 2], strain: [0, 1, 2], stress: [0, 10, 20], tangent: [10, 10, 10], energy: [0, 5, 20] });
 });
 
 test("a long curve is thinned to the cap, keeping every reversal and the last point", () => {
@@ -67,17 +71,57 @@ test("a long curve is thinned to the cap, keeping every reversal and the last po
   ramp(1, -1, 20011);
   ramp(-1, 0.5, 9973);
   const stress = strain.map((e) => 2 * e);
-  const p = materialTestPointsOf(strain, stress, 1000);
+  const p = materialTestPointsOf(strain, stress, strain.map(() => 2), 1000);
   assert.ok(p.strain.length <= 1000 + 3, `${p.strain.length} points`);
   assert.ok(p.strain.includes(1) && p.strain.includes(-1), "both reversal corners are kept");
   assert.equal(p.strain.at(-1), 0.5, "the last point is kept");
   assert.deepEqual(p.stress, p.strain.map((e) => 2 * e), "stress is taken at the same steps");
+  assert.deepEqual(p.strain, p.step.map((i) => strain[i]), "each point names its step");
+  const full = materialTestWorkOf(strain, stress);
+  assert.deepEqual(p.energy, p.step.map((i) => full[i]), "the work is integrated on the full run, then thinned");
 });
 
 test("when reversals alone pass twice the cap, the stride alone decides", () => {
   const strain = Array.from({ length: 10_000 }, (_, i) => (i % 2 ? 1 : -1));
-  const p = materialTestPointsOf(strain, strain, 100);
+  const p = materialTestPointsOf(strain, strain, strain, 100);
   assert.ok(p.strain.length <= 101, `${p.strain.length} points`);
+});
+
+test("the work done: exact on a linear ramp, zero over an elastic cycle, the loop's area over a rigid-plastic one", () => {
+  const ramp = Array.from({ length: 11 }, (_, i) => i / 10);
+  assert.ok(Math.abs(materialTestWorkOf(ramp, ramp.map((e) => 200 * e)).at(-1)! - 100) < 1e-9, "E e^2 / 2 at e = 1, E = 200");
+  const cycle = [0, 1, 0, -1, 0];
+  assert.ok(Math.abs(materialTestWorkOf(cycle, cycle.map((e) => 3 * e)).at(-1)!) < 1e-12, "an elastic cycle stores and returns all of it");
+  // rigid-plastic at +-1, with the reversals as their own steps: +1 to 2, unload at 2, -1 to -2, unload at -2, +1 back to 0
+  const e = [0, 2, 2, -2, -2, 0];
+  const s = [1, 1, -1, -1, 1, 1];
+  assert.equal(materialTestWorkOf(e, s).at(-1), 2 + 4 + 2, "|stress| times the plastic path, 8");
+});
+
+test("the CSV: the material, build and protocol as # lines, then one row per step, in full precision", () => {
+  const csv = materialTestCsvOf(
+    { decl: "opensees/uniaxialMaterial/bond", type: "LadrunoBondSlip", build: "8b5e0593f8de", protocol: { kind: "monotonic", peak: 2, steps: 2 } },
+    [0, 1, 2],
+    [0, 0.1 + 0.2, 10],
+    [0.3, 0.3, 0],
+  );
+  assert.equal(
+    csv,
+    [
+      "# opensees/uniaxialMaterial/bond (LadrunoBondSlip)",
+      "# fork build 8b5e0593f8de; monotonic to 2 in 2 steps; values in the model's units",
+      "# work: the trapezoidal integral of bond stress over slip, computed by apeGmshViewer",
+      "step,slip,bond stress,tangent,work",
+      "0,0,0,0.3,0",
+      "1,1,0.30000000000000004,0.3,0.15000000000000002",
+      "2,2,10,0,5.300000000000001",
+      "",
+    ].join("\n"),
+  );
+  assert.equal(materialTestCsvName("opensees/uniaxialMaterial/buckled steel", 3), "buckled_steel-run3.csv");
+  assert.equal(materialTestCsvName("", 1), "material-run1.csv");
+  assert.equal(materialTestProtocolText({ kind: "cyclic", amplitudes: [0.01, 0.02], stepsPerRamp: 50 }), "cyclic 0.01, 0.02 at 50 steps per ramp");
+  assert.equal(materialTestProtocolText({ kind: "values", values: [1, 2, 3] }), "3 pasted values");
 });
 
 test("the form lives in the store: opened, edited, closed; another model drops it", () => {

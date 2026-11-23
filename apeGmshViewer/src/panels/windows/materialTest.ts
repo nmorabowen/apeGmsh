@@ -1,18 +1,26 @@
 // The material tester's interim surface (ADR 0135 Amendment 1): under a uniaxial
-// row of the materials window, a form for the strain protocol, a Run button, the
-// run's state and the response curve. The fork computes; this only dispatches
-// events and draws the state (ADR 0112 D6), so it moves to ADR 0137's tool host
-// as it is.
+// row of the materials window, a form for the strain protocol, a Run button, and
+// the material's runs: the response curves overlaid (the newest in the accent, older
+// ones muted, each with its own dash), a second plot against the step (the imposed
+// history, the tangent, or the work done), and per run a CSV save and a remove (D7).
+// The fork computes; this only dispatches events and draws the state (ADR 0112 D6),
+// so it moves to ADR 0137's tool host as it is.
 //
 // The window is rebuilt on every state change, so what is typed lives in the
 // store (`materialTestFormSet`), and each field carries a focus key the frame
 // puts the caret back on.
 
 import type { Event, State } from "../../state/store.ts";
-import { materialTestAxesOf, materialTestFormFor, materialTestProtocolOf, materialTestStepsOf } from "../../state/selectors.ts";
-import type { DeclPath, MaterialTestForm, MaterialTestRun } from "../../state/types.ts";
+import {
+  materialTestAxesOf,
+  materialTestFormFor,
+  materialTestProtocolOf,
+  materialTestProtocolText,
+  materialTestStepsOf,
+} from "../../state/selectors.ts";
+import type { DeclPath, MaterialTestForm, MaterialTestPoints, MaterialTestRun, MaterialTestSecond } from "../../state/types.ts";
 import { el } from "../../ui/dom.ts";
-import { fmt, xyPlot } from "../../ui/xyPlot.ts";
+import { fmt, xyPlot, xySwatch } from "../../ui/xyPlot.ts";
 
 const KINDS: readonly (readonly [MaterialTestForm["kind"], string])[] = [
   ["monotonic", "monotonic"],
@@ -28,6 +36,19 @@ const contained = <T extends HTMLElement>(e: T): T => {
   return e;
 };
 
+function select<T extends string>(cls: string, title: string, options: readonly (readonly [T, string])[], value: T, on: (v: T) => void): HTMLElement {
+  const s = contained(el("select", cls) as HTMLSelectElement);
+  s.title = title;
+  for (const [v, label] of options) {
+    const o = el("option", undefined, label) as HTMLOptionElement;
+    o.value = v;
+    o.selected = v === value;
+    s.append(o);
+  }
+  s.addEventListener("change", () => on(s.value as T));
+  return s;
+}
+
 function input(f: MaterialTestForm, field: Field, label: string, title: string, act: (e: Event) => void, area = false): HTMLElement {
   const wrap = el("label", "mt-field");
   const box = contained(el(area ? "textarea" : "input", "mt-input") as HTMLInputElement);
@@ -41,24 +62,92 @@ function input(f: MaterialTestForm, field: Field, label: string, title: string, 
   return wrap;
 }
 
-function runEl(run: MaterialTestRun, xName: string, yName: string): HTMLElement {
-  const box = el("div", "mt-run");
-  if (run.status === "running") {
-    box.append(el("div", "window-note", "running on the fork…"));
-    return box;
-  }
-  if (run.status === "failed") {
-    box.append(el("div", "mt-error", run.error ?? "the run failed"));
-    if (run.build) box.append(el("div", "window-row-decl", `fork build ${run.build.slice(0, 8)}`));
-    return box;
-  }
-  const p = run.points!;
-  let peak = 0;
-  for (const y of p.stress) if (Math.abs(y) > Math.abs(peak)) peak = y;
+function button(text: string, title: string, on: () => void, cls = "window-test"): HTMLElement {
+  const b = contained(el("button", cls, text));
+  b.title = title;
+  b.addEventListener("click", on);
+  return b;
+}
+
+/** The second plot's curve of one run, against the step. */
+function second(p: MaterialTestPoints, what: MaterialTestSecond): readonly number[] {
+  return what === "history" ? p.strain : what === "tangent" ? p.tangent : p.energy;
+}
+
+/** The dash of a run in the overlay: the newest ready run is the main curve (null), older ones count back from 0. */
+const dashOf = (ready: readonly MaterialTestRun[], r: MaterialTestRun): number | null => {
+  const i = ready.indexOf(r);
+  return i === ready.length - 1 ? null : ready.length - 2 - i;
+};
+
+function plotsEl(ready: readonly MaterialTestRun[], f: MaterialTestForm, xName: string, yName: string, act: (e: Event) => void): HTMLElement {
+  const box = el("div", "mt-plots");
+  const main = ready[ready.length - 1]!;
+  const older = ready.slice(0, -1);
+  const p = main.points!;
   box.append(
-    xyPlot({ xs: p.strain, ys: p.stress, xName, yName, title: `${yName} against ${xName}, ${run.type}` }),
-    el("div", "window-row-decl", `fork build ${(run.build ?? "?").slice(0, 8)} · ${materialTestStepsOf(run.protocol).toLocaleString()} steps · peak ${yName} ${fmt(peak)}`),
+    xyPlot({
+      xs: p.strain,
+      ys: p.stress,
+      xName,
+      yName,
+      title: `${yName} against ${xName}, ${main.type}, ${ready.length} run${ready.length === 1 ? "" : "s"}`,
+      others: older.map((r) => ({ xs: r.points!.strain, ys: r.points!.stress, dash: dashOf(ready, r)! })),
+    }),
   );
+  const names: Record<MaterialTestSecond, string> = { history: `imposed ${xName}`, tangent: "tangent", energy: "work done (app, trapezoid)" };
+  const titles: Record<MaterialTestSecond, string> = {
+    history: `the imposed ${xName} at each step`,
+    tangent: "the material's tangent at each step, as the fork returns it",
+    energy: `the running integral of ${yName} over ${xName}, computed by the app (trapezoid); where the ${yName} returns to zero it is the dissipated energy`,
+  };
+  const pick = el("div", "mt-bar");
+  pick.append(
+    select<MaterialTestSecond>("mt-second", "what the second plot shows against the step", [["history", names.history], ["tangent", names.tangent], ["energy", names.energy]], f.second, (v) =>
+      act({ type: "materialTestFormSet", form: { ...f, second: v } }),
+    ),
+  );
+  const note = el("span", "window-row-decl", titles[f.second]);
+  pick.append(note);
+  box.append(
+    pick,
+    xyPlot({
+      xs: p.step,
+      ys: second(p, f.second),
+      xName: "step",
+      yName: names[f.second],
+      title: `${names[f.second]} against the step, ${main.type}`,
+      others: older.map((r) => ({ xs: r.points!.step, ys: second(r.points!, f.second), dash: dashOf(ready, r)! })),
+    }),
+  );
+  return box;
+}
+
+/** One line of the legend: the run's dash, what it ran, its build and peak, and its buttons. */
+function runLine(s: State, r: MaterialTestRun, dash: number | null | undefined, yName: string, act: (e: Event) => void): HTMLElement {
+  const line = el("div", "mt-legend-line");
+  if (dash !== undefined) line.append(xySwatch(dash));
+  let text = `run ${r.id} · ${materialTestProtocolText(r.protocol)}`;
+  if (r.status === "running") text += " · running on the fork…";
+  if (r.status === "ready") {
+    let peak = 0;
+    for (const y of r.points!.stress) if (Math.abs(y) > Math.abs(peak)) peak = y;
+    text += ` · fork build ${(r.build ?? "?").slice(0, 8)} · peak ${yName} ${fmt(peak)}`;
+  }
+  line.append(el("span", "mt-legend-text", text));
+  if (r.status === "ready") {
+    const saving = s.materialTest.saving !== null;
+    const csv = button("CSV", "save this run's full arrays as CSV, where you choose", () => act({ type: "materialTestSaveRequested", id: r.id })) as HTMLButtonElement;
+    csv.disabled = saving;
+    line.append(csv);
+  }
+  line.append(button("×", r.status === "running" ? "stop this run" : "remove this run from the plot", () => act({ type: "materialTestRemoved", id: r.id }), "window-test mt-remove"));
+  const box = el("div", "mt-legend-run");
+  box.append(line);
+  if (r.status === "failed") {
+    box.append(el("div", "mt-error", r.error ?? "the run failed"));
+    if (r.build) box.append(el("div", "window-row-decl", `fork build ${r.build.slice(0, 8)}`));
+  }
   return box;
 }
 
@@ -79,17 +168,8 @@ export function testerEl(s: State, path: DeclPath, type: string, act: (e: Event)
   const box = contained(el("div", "mt"));
   box.dataset["materialTest"] = path;
 
-  const kind = contained(el("select", "mt-kind") as HTMLSelectElement);
-  kind.title = "the imposed history, from zero";
-  for (const [v, label] of KINDS) {
-    const o = el("option", undefined, label) as HTMLOptionElement;
-    o.value = v;
-    o.selected = v === f.kind;
-    kind.append(o);
-  }
-  kind.addEventListener("change", () => act({ type: "materialTestFormSet", form: { ...f, kind: kind.value as MaterialTestForm["kind"] } }));
   const fields = el("div", "mt-fields");
-  fields.append(kind);
+  fields.append(select("mt-kind", "the imposed history, from zero", KINDS, f.kind, (kind) => act({ type: "materialTestFormSet", form: { ...f, kind } })));
   if (f.kind === "monotonic") {
     fields.append(input(f, "peak", `peak ${xName}`, `the ${xName} the ramp ends at`, act), input(f, "steps", "steps", "steps from zero to the peak", act));
   } else if (f.kind === "cyclic") {
@@ -104,14 +184,23 @@ export function testerEl(s: State, path: DeclPath, type: string, act: (e: Event)
 
   const asked = materialTestProtocolOf(f, xName);
   const bar = el("div", "mt-bar");
-  const run = contained(el("button", "window-test", "Run") as HTMLButtonElement);
+  const run = contained(el("button", "window-test mt-run-button", "Run") as HTMLButtonElement);
   run.disabled = "error" in asked;
-  run.title = "error" in asked ? asked.error : "run the fork's uniaxial tester; a run still going is replaced";
+  run.title = "error" in asked ? asked.error : "run the fork's uniaxial tester; a run still going is replaced, earlier runs stay for comparison";
   if ("protocol" in asked) run.addEventListener("click", () => act({ type: "materialTestRequested", decl: path, protocol: asked.protocol }));
   bar.append(run, el("span", "error" in asked ? "mt-error" : "window-row-decl", "error" in asked ? asked.error : `${materialTestStepsOf(asked.protocol).toLocaleString()} steps · values in the model's units`));
   box.append(bar);
 
-  const r = s.materialTest.run;
-  if (r && r.decl === path) box.append(runEl(r, xName, yName));
+  const mine = s.materialTest.runs.filter((r) => r.decl === path);
+  const ready = mine.filter((r) => r.status === "ready");
+  if (ready.length) box.append(plotsEl(ready, f, xName, yName, act));
+  if (mine.length) {
+    const legend = el("div", "mt-legend");
+    for (const r of [...mine].reverse()) legend.append(runLine(s, r, r.status === "ready" ? dashOf(ready, r) : undefined, yName, act));
+    if (mine.length > 1) legend.append(button("Clear runs", "remove every run of every material", () => act({ type: "materialTestCleared" })));
+    box.append(legend);
+  }
+  if (s.materialTest.saving !== null) box.append(el("div", "window-note", "saving: choose where in the dialog…"));
+  else if (s.materialTest.notice) box.append(el("div", "window-note", s.materialTest.notice));
   return box;
 }

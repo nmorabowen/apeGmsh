@@ -496,17 +496,63 @@ test("a field that does not parse disables Run and says why", () => {
   assert.deepEqual(events, [], "a disabled Run dispatches nothing");
 });
 
-test("a run of this material: running, then its curve and the fork build, or the solver's message", () => {
+type Run = State["materialTest"]["runs"][number];
+const pts = (stress: number[]) => ({ step: stress.map((_, i) => i), strain: stress.map((_, i) => i / 100), stress, tangent: stress.map(() => 1), energy: stress.map(() => 0) });
+const aRun = (r: Partial<Run>): Run =>
+  ({ id: 1, decl: M, type: "ASDSteel1D", protocol: { kind: "monotonic", peak: 0.01, steps: 2 }, status: "ready", error: null, build: "8b5e0593f8de", curves: null, points: pts([0, 300, 380]), ...r }) as Run;
+const withRuns = (runs: Run[], patch: Partial<State["materialTest"]> = {}): State => {
   const s = withForm();
-  const run = { id: 1, decl: M, type: "ASDSteel1D", protocol: { kind: "monotonic", peak: 0.01, steps: 2 }, error: null, curves: null, points: null } as const;
-  const at = (r: object): State => ({ ...s, materialTest: { ...s.materialTest, run: { ...run, ...r } as State["materialTest"]["run"] } });
-  assert.match(testerOf(render(at({ status: "running", build: null })).root)!.textContent, /running on the fork/);
-  const ready = testerOf(render(at({ status: "ready", build: "8b5e0593f8de", points: { strain: [0, 0.005, 0.01], stress: [0, 300, 380] } })).root)!;
-  assert.equal(ready.all((n) => n.tagName === "SVG").length, 1, "one plot");
-  assert.match(ready.textContent, /fork build 8b5e0593 · 2 steps · peak stress 380/);
-  const failed = testerOf(render(at({ status: "failed", build: "8b5e0593", error: "the run stopped after 0 of 3 steps. The solver said: unknown material" })).root)!;
+  return { ...s, materialTest: { ...s.materialTest, runs, ...patch } };
+};
+const plotsOf = (n: FakeNode) => n.all((x) => x.tagName === "SVG" && x.all((y) => y.tagName === "POLYLINE").length > 0);
+const buttonsOf = (n: FakeNode, text: string) => n.all((x) => x.tagName === "BUTTON" && x.textContent === text) as (FakeNode & { disabled?: boolean })[];
+
+test("a run of this material: running, then its curves and the fork build, or the solver's message", () => {
+  assert.match(testerOf(render(withRuns([aRun({ status: "running", build: null, points: null })])).root)!.textContent, /running on the fork/);
+  const ready = testerOf(render(withRuns([aRun({})])).root)!;
+  assert.equal(plotsOf(ready).length, 2, "the response, and the second plot against the step");
+  assert.match(ready.textContent, /run 1 · monotonic to 0.01 in 2 steps · fork build 8b5e0593 · peak stress 380/);
+  assert.match(ready.textContent, /imposed strain/, "the second plot shows the history by default");
+  const failed = testerOf(render(withRuns([aRun({ status: "failed", build: "8b5e0593", points: null, error: "the run stopped after 0 of 3 steps. The solver said: unknown material" })])).root)!;
   assert.match(failed.textContent, /The solver said: unknown material/);
-  assert.equal(failed.all((n) => n.tagName === "SVG").length, 0, "no curve");
-  const other = testerOf(render(at({ status: "ready", decl: S, build: "b", points: { strain: [0], stress: [0] } })).root)!;
-  assert.equal(other.all((n) => n.tagName === "SVG").length, 0, "another material's run is not drawn here");
+  assert.equal(plotsOf(failed).length, 0, "no curve");
+  const other = testerOf(render(withRuns([aRun({ decl: S })])).root)!;
+  assert.equal(plotsOf(other).length, 0, "another material's run is not drawn here");
+});
+
+test("A2: the material's ready runs overlay in both plots, newest last; the legend lists every run, newest first", () => {
+  const runs = [aRun({ id: 1 }), aRun({ id: 2, decl: S }), aRun({ id: 3, points: pts([0, 200, 250, 260]) }), aRun({ id: 4, status: "failed", points: null, error: "no" })];
+  const t = testerOf(render(withRuns(runs)).root)!;
+  const [main, second] = plotsOf(t);
+  assert.equal(main!.all((x) => x.tagName === "POLYLINE").length, 2, "runs 1 and 3 of this material, not run 2 of the section");
+  assert.equal(second!.all((x) => x.tagName === "POLYLINE").length, 2);
+  const lines = t.all((x) => x.className === "mt-legend-text").map((x) => x.textContent);
+  assert.deepEqual(lines.map((x) => x.split(" · ")[0]), ["run 4", "run 3", "run 1"]);
+  assert.match(t.textContent, /peak stress 260/);
+  assert.equal(buttonsOf(t, "CSV").length, 2, "a ready run can be saved; a failed one cannot");
+  assert.equal(buttonsOf(t, "Clear runs").length, 1);
+});
+
+test("A2: the second plot follows the form's choice; the work is labelled as the app's", () => {
+  for (const [second, label] of [["tangent", /tangent/], ["energy", /work done \(app, trapezoid\)/]] as const) {
+    const s = withRuns([aRun({})]);
+    const t = testerOf(render({ ...s, materialTest: { ...s.materialTest, form: { ...s.materialTest.form!, second } } }).root)!;
+    assert.match(t.textContent, label);
+  }
+});
+
+test("A2: CSV asks for a save, × removes a run, Clear runs clears; none selects the row", () => {
+  const { root, events } = render(withRuns([aRun({ id: 1 }), aRun({ id: 3 })]));
+  const t = testerOf(root)!;
+  assert.equal(buttonsOf(t, "CSV")[0]!.click(), true);
+  assert.equal(buttonsOf(t, "×")[1]!.click(), true);
+  assert.equal(buttonsOf(t, "Clear runs")[0]!.click(), true);
+  assert.deepEqual(events, [{ type: "materialTestSaveRequested", id: 3 }, { type: "materialTestRemoved", id: 1 }, { type: "materialTestCleared" }]);
+});
+
+test("A2: while a save is open, the CSV buttons wait and the window says so; then the notice", () => {
+  const saving = testerOf(render(withRuns([aRun({})], { saving: 1 })).root)!;
+  assert.equal(buttonsOf(saving, "CSV")[0]!.disabled, true);
+  assert.match(saving.textContent, /choose where in the dialog/);
+  assert.match(testerOf(render(withRuns([aRun({})], { notice: "saved run 1 to D:/x.csv" })).root)!.textContent, /saved run 1 to D:\/x\.csv/);
 });
