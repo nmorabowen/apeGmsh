@@ -21,6 +21,7 @@ export const materialTestFormFor = (decl: DeclPath): MaterialTestForm => ({
   amplitudes: "0.002, 0.005, 0.01",
   stepsPerRamp: "50",
   values: "",
+  second: "history",
 });
 
 /** ADR 0135 D6: the axes of a material's curve. Values are in the model's units. */
@@ -86,13 +87,34 @@ export function materialTestStepsOf(p: MaterialTestProtocol): number {
 }
 
 /**
- * The curve thinned for drawing: every `stride`-th point, the last, and every
- * reversal of strain (so a hysteresis loop keeps its corners). When the reversals
- * alone would pass twice the cap, the stride alone decides.
+ * The work done on the material: the running trapezoidal integral of stress over
+ * strain, from zero (ADR 0135 D7: computed in the app, and labelled so). Over a
+ * path that ends where the stress is zero it is the dissipated energy; elsewhere
+ * it also holds the stored part.
  */
-export function materialTestPointsOf(strain: ArrayLike<number>, stress: ArrayLike<number>, max: number = MAX_DRAWN): MaterialTestPoints {
+export function materialTestWorkOf(strain: ArrayLike<number>, stress: ArrayLike<number>): Float64Array {
   const n = Math.min(strain.length, stress.length);
-  const take = (idx: number[]): MaterialTestPoints => ({ strain: idx.map((i) => strain[i]!), stress: idx.map((i) => stress[i]!) });
+  const w = new Float64Array(n);
+  for (let i = 1; i < n; i++) w[i] = w[i - 1]! + 0.5 * (stress[i]! + stress[i - 1]!) * (strain[i]! - strain[i - 1]!);
+  return w;
+}
+
+/**
+ * A run thinned for drawing: every `stride`-th step, the last, and every reversal
+ * of strain (so a hysteresis loop keeps its corners). When the reversals alone
+ * would pass twice the cap, the stride alone decides. The work is integrated over
+ * the full run first, so thinning does not change it.
+ */
+export function materialTestPointsOf(strain: ArrayLike<number>, stress: ArrayLike<number>, tangent: ArrayLike<number>, max: number = MAX_DRAWN): MaterialTestPoints {
+  const n = Math.min(strain.length, stress.length, tangent.length);
+  const work = materialTestWorkOf(strain, stress);
+  const take = (idx: number[]): MaterialTestPoints => ({
+    step: idx,
+    strain: idx.map((i) => strain[i]!),
+    stress: idx.map((i) => stress[i]!),
+    tangent: idx.map((i) => tangent[i]!),
+    energy: idx.map((i) => work[i]!),
+  });
   if (n <= max) return take(Array.from({ length: n }, (_, i) => i));
   const stride = Math.ceil(n / max);
   const strided: number[] = [];
@@ -106,3 +128,38 @@ export function materialTestPointsOf(strain: ArrayLike<number>, stress: ArrayLik
   }
   return take(kept.length > 2 * max ? strided : kept);
 }
+
+/** A protocol in one line, for a legend and the CSV's header. */
+export function materialTestProtocolText(p: MaterialTestProtocol): string {
+  if (p.kind === "monotonic") return `monotonic to ${p.peak} in ${p.steps} steps`;
+  if (p.kind === "cyclic") return `cyclic ${p.amplitudes.join(", ")} at ${p.stepsPerRamp} steps per ramp`;
+  return `${p.values.length} pasted values`;
+}
+
+/** What a CSV header says of the run. */
+export interface MaterialTestCsvHead {
+  decl: DeclPath;
+  type: string;
+  build: string | null;
+  protocol: MaterialTestProtocol;
+}
+
+/**
+ * The full run as CSV (D7): `#` lines naming the material, the fork build and the
+ * protocol, then one row per step. Numbers are written in full (shortest round trip).
+ */
+export function materialTestCsvOf(head: MaterialTestCsvHead, strain: ArrayLike<number>, stress: ArrayLike<number>, tangent: ArrayLike<number>): string {
+  const [x, y] = materialTestAxesOf(head.type);
+  const work = materialTestWorkOf(strain, stress);
+  const lines = [
+    `# ${head.decl} (${head.type})`,
+    `# fork build ${head.build ?? "unknown"}; ${materialTestProtocolText(head.protocol)}; values in the model's units`,
+    `# work: the trapezoidal integral of ${y} over ${x}, computed by apeGmshViewer`,
+    `step,${x},${y},tangent,work`,
+  ];
+  for (let i = 0; i < work.length; i++) lines.push(`${i},${strain[i]},${stress[i]},${tangent[i]},${work[i]}`);
+  return lines.join("\n") + "\n";
+}
+
+/** A file name to suggest for a run: the declaration's handle and the run id, in plain characters. */
+export const materialTestCsvName = (decl: DeclPath, id: number): string => `${(decl.split("/").pop() || "material").replace(/[^A-Za-z0-9_-]/g, "_")}-run${id}.csv`;

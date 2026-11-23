@@ -166,7 +166,7 @@ export {
 } from "./lineDiagramChainSvg.ts";
 
 export type { Activation } from "./activation.ts";
-export { materialTestAxesOf, materialTestFormFor, materialTestProtocolOf, materialTestStepsOf } from "./materialTestForm.ts";
+export { materialTestAxesOf, materialTestFormFor, materialTestProtocolOf, materialTestProtocolText, materialTestStepsOf } from "./materialTestForm.ts";
 export type { ResultsPairing } from "./results.ts";
 export {
   buildLoads3D,

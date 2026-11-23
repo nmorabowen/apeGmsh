@@ -64,7 +64,7 @@ test("every material of the file runs on the fork and returns a curve", { skip }
     const r = await runner.run(a.job, 1);
     assert.ok(r.ok, `${name}: ${r.ok ? "" : r.error}`);
     assert.ok(r.stress.some((s) => s !== 0), `${name}: a curve, not zeros`);
-    const p = materialTestPointsOf(r.strain, r.stress);
+    const p = materialTestPointsOf(r.strain, r.stress, r.tangent);
     assert.equal(p.strain.length, r.strain.length, `${name}: a short run is drawn whole`);
   }
 });

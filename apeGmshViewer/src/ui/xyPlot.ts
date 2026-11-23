@@ -42,25 +42,45 @@ export interface XyPlot {
   caps?: readonly number[];
   /** the index of a point to mark (the step on screen); none when absent */
   mark?: number;
+  /** curves drawn under the main one, muted, each with its own dash (`xySwatch` draws the same dash for a legend) */
+  others?: readonly { xs: readonly number[]; ys: readonly number[]; dash: number }[];
+}
+
+/** How many dashes the overlaid curves cycle through (style.css `.xy-dash-<k>`). */
+export const XY_DASHES = 5;
+
+const curveClass = (dash: number | null): string => (dash === null ? "xy-curve" : `xy-other xy-dash-${((dash % XY_DASHES) + XY_DASHES) % XY_DASHES}`);
+
+function polyline(xs: readonly number[], ys: readonly number[], px: (v: number) => number, py: (v: number) => number, dash: number | null): HTMLElement {
+  const points: string[] = [];
+  xs.forEach((x, i) => {
+    const y = ys[i]!;
+    if (Number.isFinite(x) && Number.isFinite(y)) points.push(`${px(x).toFixed(1)},${py(y).toFixed(1)}`);
+  });
+  return svgEl("polyline", { class: curveClass(dash), points: points.join(" ") });
+}
+
+/** A short line in the style of the main curve (`dash` null) or of an overlaid one, for a legend. */
+export function xySwatch(dash: number | null): HTMLElement {
+  const root = svgEl("svg", { class: "xy-swatch", viewBox: "0 0 24 8", width: 24, height: 8, "aria-hidden": "true" });
+  root.append(svgEl("line", { class: curveClass(dash), x1: 1, y1: 4, x2: 23, y2: 4 }));
+  return root;
 }
 
 /** The plot. Both axes span zero; non-finite points are skipped. */
 export function xyPlot(p: XyPlot): HTMLElement {
   const caps = p.caps ?? [];
-  const [x0, x1] = finiteRange(p.xs, []);
-  const [y0, y1] = finiteRange(p.ys, caps);
+  const others = p.others ?? [];
+  const [x0, x1] = finiteRange([...p.xs, ...others.flatMap((o) => o.xs)], []);
+  const [y0, y1] = finiteRange([...p.ys, ...others.flatMap((o) => o.ys)], caps);
   const px = (v: number) => L + ((v - x0) / (x1 - x0)) * (W - L - R);
   const py = (v: number) => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
   const root = svgEl("svg", { class: "xy-plot", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": p.title });
   const axis = { class: "xy-axis" };
   root.append(svgEl("line", { ...axis, x1: L, y1: py(0), x2: W - R, y2: py(0) }), svgEl("line", { ...axis, x1: px(0), y1: T, x2: px(0), y2: H - B }));
   for (const c of caps) root.append(svgEl("line", { class: "xy-capacity", x1: L, y1: py(c), x2: W - R, y2: py(c) }));
-  const points: string[] = [];
-  p.xs.forEach((x, i) => {
-    const y = p.ys[i]!;
-    if (Number.isFinite(x) && Number.isFinite(y)) points.push(`${px(x).toFixed(1)},${py(y).toFixed(1)}`);
-  });
-  root.append(svgEl("polyline", { class: "xy-curve", points: points.join(" ") }));
+  for (const o of others) root.append(polyline(o.xs, o.ys, px, py, o.dash));
+  root.append(polyline(p.xs, p.ys, px, py, null));
   const k = p.mark;
   if (k !== undefined && Number.isFinite(p.xs[k]) && Number.isFinite(p.ys[k])) root.append(svgEl("circle", { class: "xy-now", cx: px(p.xs[k]!), cy: py(p.ys[k]!), r: 3.5 }));
   const label = { class: "xy-label" };
