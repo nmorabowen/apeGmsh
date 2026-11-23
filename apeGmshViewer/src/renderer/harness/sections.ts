@@ -1,7 +1,7 @@
 // The capture harness (VH1, #2865): the section-plane stills (D7): cut-face caps, clip planes and plane gizmos.
 
 import * as THREE from "three";
-import { contourView, deformOf } from "../../state/selectors.ts";
+import { contourFieldsOf, contourView, deformOf } from "../../state/selectors.ts";
 import { tipPoint } from "../gizmo.ts";
 import { zoomToward } from "../navigation.ts";
 import { painted, until, type HarnessContext } from "./context.ts";
@@ -224,6 +224,7 @@ export async function captureClip(ctx: HarnessContext, settle: (ms?: number) => 
   store.dispatch({ type: "setReferenceGhost", on: true });
   store.dispatch({ type: "setDeformScale", scale: 10 });
   store.dispatch({ type: "setColourBy", by: "contour" });
+  pickNodalContour(store);
   addAt(ctx, [0, 1, 0], 0.5);
   addAt(ctx, [1, 0, 0], 0.45);
   await still("clip-11-deformed-contour-step1");
@@ -239,6 +240,18 @@ export async function captureClip(ctx: HarnessContext, settle: (ms?: number) => 
   store.dispatch({ type: "setDeform", on: false });
   store.dispatch({ type: "setColourBy", by: "group" });
   store.dispatch({ type: "setCutFace", on: true });
+}
+
+/**
+ * #3079: colour by the first nodal field of the stage on screen (its first component), not by the pick the
+ * sequence before left. captureElements leaves its element field, which an unverified file refuses, and a refused
+ * contour never shows a step, so a still that waits for one fails. False when the stage has no nodal field.
+ */
+export function pickNodalContour(store: HarnessContext["store"]): boolean {
+  const nf = contourFieldsOf(store.get())?.fields[0];
+  if (!nf?.components[0]) return false;
+  store.dispatch({ type: "setContourField", source: "nodal", field: nf.name, component: nf.components[0].key });
+  return true;
 }
 
 /**

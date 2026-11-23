@@ -1,0 +1,3 @@
+### FIXED — apeGmshViewer's clip stills pick their own contour field
+
+`npm run capture` stopped on the slab model `yoo_slab_N56_75` at `clip-11-deformed-contour-step1` with "the step did not show" (#3079). The clip stills coloured the deformed model by whatever contour field the sequence before had left. On that model it was the element field `captureElements` picks, which an unverified results file refuses. A refused contour never shows a step, so the still's wait could not pass. `captureClip` now colours by the first nodal field of its stage, first component (`pickNodalContour` in renderer/harness/sections.ts). On a model whose clip stills already passed, `clip-11` to `clip-13` now show that component instead of the one the sequence before left.
