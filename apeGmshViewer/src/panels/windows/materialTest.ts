@@ -3,6 +3,9 @@
 // the material's runs: the response curves overlaid (the newest in the accent, older
 // ones muted, each with its own dash), a second plot against the step (the imposed
 // history, the tangent, or the work done), and per run a CSV save and a remove (D7).
+// Below the protocol, the material's numeric argument slots can be overridden for
+// the test only (D6); the changed values show as text to copy into the script by
+// hand (D8), since the model is never changed.
 // The fork computes; this only dispatches events and draws the state (ADR 0112 D6),
 // so it moves to ADR 0137's tool host as it is.
 //
@@ -14,11 +17,14 @@ import type { Event, State } from "../../state/store.ts";
 import {
   materialTestAxesOf,
   materialTestFormFor,
+  materialTestOverridesOf,
+  materialTestOverrideText,
   materialTestProtocolOf,
   materialTestProtocolText,
+  materialTestSlotsOf,
   materialTestStepsOf,
 } from "../../state/selectors.ts";
-import type { DeclPath, MaterialTestForm, MaterialTestPoints, MaterialTestRun, MaterialTestSecond } from "../../state/types.ts";
+import type { DeclPath, MaterialTestForm, MaterialTestOverride, MaterialTestPoints, MaterialTestRun, MaterialTestSecond, MaterialTestSlot } from "../../state/types.ts";
 import { el } from "../../ui/dom.ts";
 import { fmt, xyPlot, xySwatch } from "../../ui/xyPlot.ts";
 
@@ -67,6 +73,41 @@ function button(text: string, title: string, on: () => void, cls = "window-test"
   b.title = title;
   b.addEventListener("click", on);
   return b;
+}
+
+/** The material's numeric slots, each an input holding its declared value or what was typed; locked ones disabled. */
+function slotsEl(f: MaterialTestForm, slots: readonly MaterialTestSlot[], act: (e: Event) => void): HTMLElement {
+  const grid = el("div", "mt-slots");
+  for (const sl of slots) {
+    const typed = f.overrides[String(sl.slot)];
+    const text = typed ?? String(sl.value);
+    const changed = text.trim() !== "" && Number(text) !== sl.value;
+    const wrap = el("label", "mt-field mt-slot" + (changed ? " mt-changed" : ""));
+    const box = contained(el("input", "mt-input") as HTMLInputElement);
+    box.type = "text";
+    box.value = text;
+    box.spellcheck = false;
+    box.dataset["focusKey"] = `mt-o-${sl.slot}`;
+    box.disabled = sl.locked !== null;
+    box.title = sl.locked ? `locked: ${sl.locked}` : `declared ${sl.value}; this test only, the model is not changed`;
+    box.addEventListener("input", () => act({ type: "materialTestFormSet", form: { ...f, overrides: { ...f.overrides, [String(sl.slot)]: box.value } } }));
+    wrap.append(el("span", "mt-label", sl.label), box);
+    grid.append(wrap);
+  }
+  return grid;
+}
+
+/** The changed values as text to copy (D8), with a Copy button where the page has a clipboard. */
+function copyEl(path: DeclPath, type: string, overrides: readonly MaterialTestOverride[], f: MaterialTestForm, act: (e: Event) => void): HTMLElement {
+  const box = el("div", "mt-copy");
+  const text = materialTestOverrideText(path, type, overrides);
+  box.append(el("div", "mt-copy-text", text));
+  const bar = el("div", "mt-bar");
+  const clip = (globalThis as { navigator?: { clipboard?: { writeText(t: string): Promise<void> } } }).navigator?.clipboard;
+  if (clip) bar.append(button("Copy", "copy the changed values, to edit the script by hand", () => void clip.writeText(text)));
+  bar.append(button("Reset", "go back to the declared values", () => act({ type: "materialTestFormSet", form: { ...f, overrides: {} } })));
+  box.append(bar);
+  return box;
 }
 
 /** The second plot's curve of one run, against the step. */
@@ -127,7 +168,7 @@ function plotsEl(ready: readonly MaterialTestRun[], f: MaterialTestForm, xName: 
 function runLine(s: State, r: MaterialTestRun, dash: number | null | undefined, yName: string, act: (e: Event) => void): HTMLElement {
   const line = el("div", "mt-legend-line");
   if (dash !== undefined) line.append(xySwatch(dash));
-  let text = `run ${r.id} · ${materialTestProtocolText(r.protocol)}`;
+  let text = `run ${r.id} · ${materialTestProtocolText(r.protocol)} · ${r.overrides.length ? r.overrides.map((o) => `${o.label} ${o.declared}→${o.value}`).join(", ") : "declared"}`;
   if (r.status === "running") text += " · running on the fork…";
   if (r.status === "ready") {
     let peak = 0;
@@ -181,13 +222,20 @@ export function testerEl(s: State, path: DeclPath, type: string, act: (e: Event)
     fields.append(input(f, "values", `${xName} values`, `the ${xName} of each step after zero; separate them with commas, spaces or new lines`, act, true));
   }
   box.append(fields);
+  const slots = materialTestSlotsOf(s, path);
+  const changed = materialTestOverridesOf(f, slots);
+  if (slots.length) {
+    box.append(el("div", "mt-label mt-slots-head", "parameters (this test only; the model is not changed)"), slotsEl(f, slots, act));
+    if ("overrides" in changed && changed.overrides.length) box.append(copyEl(path, type, changed.overrides, f, act));
+  }
 
-  const asked = materialTestProtocolOf(f, xName);
+  const protocol = materialTestProtocolOf(f, xName);
+  const asked = "error" in protocol ? protocol : "error" in changed ? changed : { protocol: protocol.protocol, overrides: changed.overrides };
   const bar = el("div", "mt-bar");
   const run = contained(el("button", "window-test mt-run-button", "Run") as HTMLButtonElement);
   run.disabled = "error" in asked;
   run.title = "error" in asked ? asked.error : "run the fork's uniaxial tester; a run still going is replaced, earlier runs stay for comparison";
-  if ("protocol" in asked) run.addEventListener("click", () => act({ type: "materialTestRequested", decl: path, protocol: asked.protocol }));
+  if ("protocol" in asked) run.addEventListener("click", () => act({ type: "materialTestRequested", decl: path, protocol: asked.protocol, overrides: asked.overrides }));
   bar.append(run, el("span", "error" in asked ? "mt-error" : "window-row-decl", "error" in asked ? asked.error : `${materialTestStepsOf(asked.protocol).toLocaleString()} steps · values in the model's units`));
   box.append(bar);
 

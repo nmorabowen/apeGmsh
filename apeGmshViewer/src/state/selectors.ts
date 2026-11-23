@@ -6,6 +6,7 @@ import { judgeDraft } from "../combination/author.ts";
 import { CombinationRefused, CombinationTable, isSigned } from "../combination/evaluate.ts";
 import { REASONS, type Refusal as RuleRefusal } from "../reader/userRules.ts";
 import type { OpsFamily, Param } from "../model/types.ts";
+import { declOfTag } from "./declTags.ts";
 import { elementFields, elementLinks, type Lookup } from "./decls.ts";
 import { pairSessions } from "../reader/geometry.ts";
 import { PROVENANCE_ORIGIN_FROM } from "../reader/provenance.ts";
@@ -166,7 +167,7 @@ export {
 } from "./lineDiagramChainSvg.ts";
 
 export type { Activation } from "./activation.ts";
-export { materialTestAxesOf, materialTestFormFor, materialTestProtocolOf, materialTestProtocolText, materialTestStepsOf } from "./materialTestForm.ts";
+export { materialTestAxesOf, materialTestFormFor, materialTestOverridesOf, materialTestOverrideText, materialTestProtocolOf, materialTestProtocolText, materialTestStepsOf } from "./materialTestForm.ts";
 export type { ResultsPairing } from "./results.ts";
 export {
   buildLoads3D,
@@ -1337,12 +1338,8 @@ export function namedParams(d: DeclRecord | null): string {
   return Object.entries(p.params).map(([k, v]) => `${k}=${shortValue(v)}`).join(" · ");
 }
 
-/** The `/opensees/decls` row that owns tag `tag` of allocator kind `kind`, or null. */
-export function declOfTag(defs: Definitions, kind: string, tag: number | null): DeclRecord | null {
-  if (!defs.decls || tag === null) return null;
-  const run = defs.decls.tags.find((t) => t.kind === kind && tag >= t.first && tag < t.first + t.count);
-  return run ? (defs.decls.records[run.decl] ?? null) : null;
-}
+export { declOfTag } from "./declTags.ts";
+export { materialTestSlotsOf } from "./materialTest.ts";
 
 /**
  * The declaration of each recorder group, from `rows/<store>`: "one per

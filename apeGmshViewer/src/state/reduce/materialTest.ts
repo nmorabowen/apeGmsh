@@ -27,13 +27,15 @@ export function reduceMaterialTest(s: State, e: MaterialTestEvent): MaterialTest
   const m = s.materialTest;
   switch (e.type) {
     case "materialTestRequested": {
-      const answer = materialTestJobOf(s, e.decl, e.protocol);
+      const overrides = e.overrides ?? [];
+      const answer = materialTestJobOf(s, e.decl, e.protocol, overrides);
       const error = "error" in answer ? answer.error : null;
       const run: MaterialTestRun = {
         id: m.nextId,
         decl: e.decl,
         type: s.decls[e.decl]?.type ?? "",
         protocol: e.protocol,
+        overrides,
         status: error === null ? "running" : "failed",
         error,
         build: null,

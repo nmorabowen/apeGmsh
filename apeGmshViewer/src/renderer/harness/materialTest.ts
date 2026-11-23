@@ -26,7 +26,9 @@ const SHOWN: Readonly<Record<string, Partial<MaterialTestForm>>> = {
  * then `mt-<n>-refused`: a field that does not parse, Run disabled;
  * then, on the first Steel02 (or the first material), three runs overlaid
  * (`mt-<n>-overlay`) with the second plot on the history, the tangent
- * (`mt-<n>-tangent`) and the work done (`mt-<n>-energy`).
+ * (`mt-<n>-tangent`) and the work done (`mt-<n>-energy`); then the declared
+ * curve against an override of fy and b, with the changed values to copy
+ * (`mt-<n>-override`).
  * The window, form and run are put back afterwards.
  */
 export async function captureMaterialTest(ctx: HarnessContext, settle: (ms?: number) => Promise<unknown>) {
@@ -72,6 +74,12 @@ export async function captureMaterialTest(ctx: HarnessContext, settle: (ms?: num
   await still(`mt-${n++}-tangent`);
   store.dispatch({ type: "materialTestFormSet", form: { ...store.get().materialTest.form!, second: "energy" } });
   await still(`mt-${n++}-energy`);
+  // A3: the declared curve against two overrides (Steel02: fy and b), the changed values shown to copy.
+  store.dispatch({ type: "materialTestCleared" });
+  const cyc = { ...base, ...SHOWN[steel.type] };
+  await run(cyc);
+  await run({ ...cyc, overrides: steel.type === "Steel02" ? { "0": "600", "2": "0.03" } : {} });
+  await still(`mt-${n++}-override`);
   store.dispatch({ type: "materialTestFormSet", form: { ...materialTestFormFor(first.path), kind: "monotonic", peak: "0.01x" } });
   await still(`mt-${n}-refused`);
   store.dispatch({ type: "materialTestCleared" });

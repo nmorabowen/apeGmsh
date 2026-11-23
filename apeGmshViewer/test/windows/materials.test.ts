@@ -25,6 +25,7 @@ import { openModel } from "../../src/reader/node.ts";
 import { BlobStore } from "../../src/state/blobs.ts";
 import { loadModel } from "../../src/state/load.ts";
 import { materialTestFormFor } from "../../src/state/materialTestForm.ts";
+import { materialTestSlotsOf } from "../../src/state/materialTest.ts";
 import { initialState, reduce } from "../../src/state/reduce.ts";
 import type { Event, State } from "../../src/state/types.ts";
 
@@ -482,7 +483,7 @@ test("the open form: the protocol, its step count, and Run dispatching the proto
   const run = tester.all((n) => n.textContent === "Run")[0]! as FakeNode & { disabled?: boolean };
   assert.equal(run.disabled, false);
   assert.equal(run.click(), true);
-  assert.deepEqual(events, [{ type: "materialTestRequested", decl: M, protocol: { kind: "cyclic", amplitudes: [0.002, 0.005, 0.01], stepsPerRamp: 50 } }]);
+  assert.deepEqual(events, [{ type: "materialTestRequested", decl: M, protocol: { kind: "cyclic", amplitudes: [0.002, 0.005, 0.01], stepsPerRamp: 50 }, overrides: [] }]);
   assert.equal(tester.click(), true, "a click in the form does not select the row");
 });
 
@@ -499,7 +500,7 @@ test("a field that does not parse disables Run and says why", () => {
 type Run = State["materialTest"]["runs"][number];
 const pts = (stress: number[]) => ({ step: stress.map((_, i) => i), strain: stress.map((_, i) => i / 100), stress, tangent: stress.map(() => 1), energy: stress.map(() => 0) });
 const aRun = (r: Partial<Run>): Run =>
-  ({ id: 1, decl: M, type: "ASDSteel1D", protocol: { kind: "monotonic", peak: 0.01, steps: 2 }, status: "ready", error: null, build: "8b5e0593f8de", curves: null, points: pts([0, 300, 380]), ...r }) as Run;
+  ({ id: 1, decl: M, type: "ASDSteel1D", protocol: { kind: "monotonic", peak: 0.01, steps: 2 }, overrides: [], status: "ready", error: null, build: "8b5e0593f8de", curves: null, points: pts([0, 300, 380]), ...r }) as Run;
 const withRuns = (runs: Run[], patch: Partial<State["materialTest"]> = {}): State => {
   const s = withForm();
   return { ...s, materialTest: { ...s.materialTest, runs, ...patch } };
@@ -511,7 +512,7 @@ test("a run of this material: running, then its curves and the fork build, or th
   assert.match(testerOf(render(withRuns([aRun({ status: "running", build: null, points: null })])).root)!.textContent, /running on the fork/);
   const ready = testerOf(render(withRuns([aRun({})])).root)!;
   assert.equal(plotsOf(ready).length, 2, "the response, and the second plot against the step");
-  assert.match(ready.textContent, /run 1 · monotonic to 0.01 in 2 steps · fork build 8b5e0593 · peak stress 380/);
+  assert.match(ready.textContent, /run 1 · monotonic to 0.01 in 2 steps · declared · fork build 8b5e0593 · peak stress 380/);
   assert.match(ready.textContent, /imposed strain/, "the second plot shows the history by default");
   const failed = testerOf(render(withRuns([aRun({ status: "failed", build: "8b5e0593", points: null, error: "the run stopped after 0 of 3 steps. The solver said: unknown material" })])).root)!;
   assert.match(failed.textContent, /The solver said: unknown material/);
@@ -555,4 +556,33 @@ test("A2: while a save is open, the CSV buttons wait and the window says so; the
   assert.equal(buttonsOf(saving, "CSV")[0]!.disabled, true);
   assert.match(saving.textContent, /choose where in the dialog/);
   assert.match(testerOf(render(withRuns([aRun({})], { notice: "saved run 1 to D:/x.csv" })).root)!.textContent, /saved run 1 to D:\/x\.csv/);
+});
+
+test("A3: the form lists the material's numeric slots with their declared values; a change shows the text to copy and Run carries it", () => {
+  const slots = materialTestSlotsOf(state, M);
+  assert.ok(slots.length > 0, "ASDSteel1D has numeric slots");
+  const plain = testerOf(render(withForm()).root)!;
+  const inputs = plain.all((n) => n.tagName === "INPUT" && (n.dataset["focusKey"] ?? "").startsWith("mt-o-")) as (FakeNode & { value?: string })[];
+  assert.deepEqual(inputs.map((n) => n.value), slots.map((x) => String(x.value)), "each box holds the declared value");
+  assert.equal(plain.all((n) => n.className === "mt-copy-text").length, 0, "nothing changed, nothing to copy");
+  const first = slots.find((x) => x.locked === null)!;
+  const s = withForm();
+  const changed: State = { ...s, materialTest: { ...s.materialTest, form: { ...s.materialTest.form!, overrides: { [String(first.slot)]: String(first.value * 2) } } } };
+  const { root, events } = render(changed);
+  const t = testerOf(root)!;
+  const copy = t.all((n) => n.className === "mt-copy-text")[0]!.textContent;
+  assert.ok(copy.endsWith(`(ASDSteel1D): ${first.label} ${first.value} -> ${first.value * 2}`), copy);
+  assert.ok(t.all((n) => n.className.includes("mt-changed")).length === 1, "the changed slot is marked");
+  t.all((n) => n.textContent === "Run")[0]!.click();
+  const asked = events.at(-1) as Extract<Event, { type: "materialTestRequested" }>;
+  assert.deepEqual(asked.overrides, [{ slot: first.slot, label: first.label, declared: first.value, value: first.value * 2 }]);
+  t.all((n) => n.tagName === "BUTTON" && n.textContent === "Reset")[0]!.click();
+  assert.deepEqual((events.at(-1) as Extract<Event, { type: "materialTestFormSet" }>).form!.overrides, {});
+});
+
+test("A3: a run with overrides says which in the legend; a declared run says declared", () => {
+  const t = testerOf(render(withRuns([aRun({ id: 1 }), aRun({ id: 2, overrides: [{ slot: 1, label: "fy", declared: 3.75e8, value: 4e8 }] })])).root)!;
+  const lines = t.all((x) => x.className === "mt-legend-text").map((x) => x.textContent);
+  assert.match(lines[0]!, /^run 2 · monotonic to 0.01 in 2 steps · fy 375000000→400000000/);
+  assert.match(lines[1]!, /^run 1 · monotonic to 0.01 in 2 steps · declared/);
 });

@@ -27,12 +27,35 @@ export interface MaterialTestJob {
   protocol: MaterialTestProtocol;
 }
 
+/** A numeric argument slot of the material under test, replaced in one test only (D6, D8). */
+export interface MaterialTestOverride {
+  /** the argument's index in the material's command, after the tag */
+  slot: number;
+  /** the slot's label (`params_names`, or flag and position) */
+  label: string;
+  /** the declared value, from the file */
+  declared: number;
+  value: number;
+}
+
+/** One numeric argument slot of a material's command, as the form lists it (D6). */
+export interface MaterialTestSlot {
+  slot: number;
+  label: string;
+  /** the declared value */
+  value: number;
+  /** why the slot cannot be overridden (it holds a dependency's tag); null when it can */
+  locked: string | null;
+}
+
 export interface MaterialTestRun {
   id: number;
   decl: DeclPath;
   /** the OpenSees type of the material under test */
   type: string;
   protocol: MaterialTestProtocol;
+  /** the slots this run replaced; [] for the declared material */
+  overrides: readonly MaterialTestOverride[];
   status: "running" | "ready" | "failed";
   /** why there is no curve; null unless failed */
   error: string | null;
@@ -75,6 +98,8 @@ export interface MaterialTestForm {
   values: string;
   /** what the second plot shows */
   second: MaterialTestSecond;
+  /** typed override per slot index; a slot absent, blank or equal to its declared value is not overridden */
+  overrides: Readonly<Record<string, string>>;
 }
 
 /** The most runs kept at once, over all materials; the oldest leaves first. */
