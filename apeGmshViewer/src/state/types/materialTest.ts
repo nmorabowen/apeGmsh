@@ -9,7 +9,9 @@ export type MaterialTestProtocol =
   | { kind: "monotonic"; peak: number; steps: number }
   /** each amplitude once: 0 to +a to -a to 0, `stepsPerRamp` steps per quarter cycle */
   | { kind: "cyclic"; amplitudes: number[]; stepsPerRamp: number }
-  | { kind: "values"; values: number[] };
+  | { kind: "values"; values: number[] }
+  /** stress control (D6, S3): from zero through each target stress, `stepsPerRamp` steps per leg; the fork's driver finds each step's strain */
+  | { kind: "stress"; targets: number[]; stepsPerRamp: number };
 
 /** One `uniaxialMaterial` command, as `/opensees/materials` stores it. */
 export interface MaterialTestLine {
@@ -56,6 +58,8 @@ export interface MaterialTestRun {
   protocol: MaterialTestProtocol;
   /** the slots this run replaced; [] for the declared material */
   overrides: readonly MaterialTestOverride[];
+  /** stress control: why the run stopped before its last step (a target beyond the peak); null when it did not */
+  stopped: string | null;
   status: "running" | "ready" | "failed";
   /** why there is no curve; null unless failed */
   error: string | null;
@@ -96,6 +100,8 @@ export interface MaterialTestForm {
   stepsPerRamp: string;
   /** comma-, space- or newline-separated */
   values: string;
+  /** stress control: the target stresses, comma- or space-separated (`stepsPerRamp` steps per leg) */
+  targets: string;
   /** what the second plot shows */
   second: MaterialTestSecond;
   /** typed override per slot index; a slot absent, blank or equal to its declared value is not overridden */

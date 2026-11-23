@@ -21,6 +21,7 @@ export const materialTestFormFor = (decl: DeclPath): MaterialTestForm => ({
   amplitudes: "0.002, 0.005, 0.01",
   stepsPerRamp: "50",
   values: "",
+  targets: "300, -300, 400",
   second: "history",
   overrides: {},
 });
@@ -75,6 +76,13 @@ export function materialTestProtocolOf(f: MaterialTestForm, axis = "strain"): { 
     if ("error" in n) return n;
     return { protocol: { kind: "cyclic", amplitudes: amplitudes.ok, stepsPerRamp: n.ok } };
   }
+  if (f.kind === "stress") {
+    const targets = numbers(f.targets, "targets");
+    if ("error" in targets) return targets;
+    const n = count(f.stepsPerRamp, "steps per ramp");
+    if ("error" in n) return n;
+    return { protocol: { kind: "stress", targets: targets.ok, stepsPerRamp: n.ok } };
+  }
   const values = numbers(f.values, `${axis} values`);
   if ("error" in values) return values;
   return { protocol: { kind: "values", values: values.ok } };
@@ -84,6 +92,7 @@ export function materialTestProtocolOf(f: MaterialTestForm, axis = "strain"): { 
 export function materialTestStepsOf(p: MaterialTestProtocol): number {
   if (p.kind === "monotonic") return p.steps;
   if (p.kind === "cyclic") return p.amplitudes.length * 4 * p.stepsPerRamp;
+  if (p.kind === "stress") return p.targets.length * p.stepsPerRamp;
   return p.values.length;
 }
 
@@ -134,6 +143,7 @@ export function materialTestPointsOf(strain: ArrayLike<number>, stress: ArrayLik
 export function materialTestProtocolText(p: MaterialTestProtocol): string {
   if (p.kind === "monotonic") return `monotonic to ${p.peak} in ${p.steps} steps`;
   if (p.kind === "cyclic") return `cyclic ${p.amplitudes.join(", ")} at ${p.stepsPerRamp} steps per ramp`;
+  if (p.kind === "stress") return `stress control to ${p.targets.join(", ")} at ${p.stepsPerRamp} steps per leg`;
   return `${p.values.length} pasted values`;
 }
 

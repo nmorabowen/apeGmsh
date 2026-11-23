@@ -13,6 +13,9 @@
 import type { MaterialTestJob, MaterialTestLine, MaterialTestProtocol } from "../state/types/materialTest.ts";
 
 export const MAX_STEPS = 200_000;
+/** Stress control (S3): the most target steps, and the trials each makes (the last commits). */
+export const MAX_STRESS_STEPS = 5_000;
+export const STRESS_TRIALS = 60;
 
 const PREFIX = "@@MT ";
 const TYPE = /^[A-Za-z][A-Za-z0-9_]*$/;
@@ -69,6 +72,106 @@ export function strainPath(raw: MaterialTestProtocol): number[] {
   return out;
 }
 
+/** The target stress of every step of a stress protocol, after the starting zero (D6, S3). */
+export function stressPath(raw: MaterialTestProtocol): number[] {
+  const p: unknown = raw;
+  if (!isRecord(p) || p["kind"] !== "stress") return refuse("the protocol is not stress control");
+  const n = count(p["stepsPerRamp"], "stepsPerRamp");
+  const out = [0];
+  for (const t of numbers(p["targets"], "targets")) {
+    ramp(out, t, n);
+    if (out.length > MAX_STRESS_STEPS + 1) refuse(`a stress protocol has at most ${MAX_STRESS_STEPS} steps`);
+  }
+  return out.slice(1);
+}
+
+/**
+ * The stress-control driver (ADR 0135 D6, S3): fixed text, never built from the file.
+ * Each target step makes exactly STRESS_TRIALS calls of strainUniaxialTest under
+ * `model testUniaxial STRESS_TRIALS`, so the last one, at the chosen strain, commits
+ * (TclUniaxialMaterialTester.cpp: the N-th call commits, nothing reverts). The search
+ * marches from the committed strain toward the target with bounded growth; when its
+ * progress turns back, a peak lies inside the last two steps, and a golden-section
+ * search decides whether the peak reaches the target. The first crossing is refined by
+ * Illinois false position. A target beyond the peak stops the run, with the most the
+ * material reached.
+ */
+const STRESS_DRIVER = String.raw`proc mtTry {e} {
+  global mtUsed mtD mtTarget
+  incr mtUsed
+  strainUniaxialTest $e
+  return [expr {$mtD * ([stressUniaxialTest] - $mtTarget)}]
+}
+proc mtStep {target} {
+  global mtUsed mtD mtTarget mtE mtS mtE0 mtN
+  set mtTarget $target
+  set mtUsed 0
+  set e0 $mtE
+  set s0 $mtS
+  set mtD [expr {$target >= $s0 ? 1.0 : -1.0}]
+  set tol [expr {1e-9 * max(abs($target), abs($s0), 1e-12)}]
+  set budget [expr {$mtN - 1}]
+  set f0 [expr {$mtD * ($s0 - $target)}]
+  set best $e0
+  set bestF $f0
+  set lo ""
+  if {abs($f0) > $tol} {
+    set h [expr {0.5 * abs($target - $s0) / abs($mtE0)}]
+    set ep $e0 ; set fp $f0
+    set eq $e0 ; set fq $f0
+    while {$mtUsed < $budget} {
+      set e [expr {$ep + $mtD * $h}]
+      set f [mtTry $e]
+      if {abs($f) < abs($bestF)} { set best $e ; set bestF $f }
+      if {$f >= -$tol} { set lo $ep ; set flo $fp ; set hi $e ; set fhi $f ; break }
+      if {$f < $fp} {
+        set a $eq ; set b $e
+        set x1 $ep ; set f1 $fp
+        set x2 $x1 ; set f2 $f1
+        set gr 0.381966011250105
+        while {$mtUsed < $budget - 2 && abs($b - $a) > 1e-12 * max(abs($a), abs($b), 1e-30)} {
+          if {abs($b - $x1) > abs($x1 - $a)} { set x2 [expr {$x1 + $gr * ($b - $x1)}] } else { set x2 [expr {$x1 - $gr * ($x1 - $a)}] }
+          set f2 [mtTry $x2]
+          if {abs($f2) < abs($bestF)} { set best $x2 ; set bestF $f2 }
+          if {$f2 >= -$tol} { break }
+          if {$f2 > $f1} {
+            if {($x2 - $x1) * $mtD > 0} { set a $x1 } else { set b $x1 }
+            set x1 $x2 ; set f1 $f2
+          } else {
+            if {($x2 - $x1) * $mtD > 0} { set b $x2 } else { set a $x2 }
+          }
+        }
+        if {$f2 >= -$tol} { set lo $eq ; set flo $fq ; set hi $x2 ; set fhi $f2 ; break }
+        return [list stop "the target $target is beyond the peak: the most the material reaches on this path is [expr {$mtD * $f1 + $target}]"]
+      }
+      set eq $ep ; set fq $fp
+      set ep $e ; set fp $f
+      set h [expr {$h * 1.6}]
+    }
+    if {$lo eq ""} { return [list stop "the target $target was not reached in $budget trials"] }
+    set side 0
+    while {$mtUsed < $budget && abs($bestF) > $tol} {
+      set e [expr {$hi - $fhi * ($hi - $lo) / ($fhi - $flo)}]
+      if {!(($e - $lo) * ($e - $hi) < 0)} { set e [expr {0.5 * ($lo + $hi)}] }
+      set f [mtTry $e]
+      if {abs($f) < abs($bestF)} { set best $e ; set bestF $f }
+      if {$f >= 0} {
+        set hi $e ; set fhi $f
+        if {$side == 1} { set flo [expr {$flo / 2.0}] } ; set side 1
+      } else {
+        set lo $e ; set flo $f
+        if {$side == -1} { set fhi [expr {$fhi / 2.0}] } ; set side -1
+      }
+    }
+    if {abs($bestF) > 1e-6 * max(abs($target), abs($s0), 1e-12)} { return [list stop "the target $target was not reached closely: off by [expr {abs($bestF)}]"] }
+  }
+  while {$mtUsed < $budget} { strainUniaxialTest $best ; incr mtUsed }
+  strainUniaxialTest $best
+  set mtE $best
+  set mtS [stressUniaxialTest]
+  return [list ok $best]
+}`;
+
 /** A number as Tcl and OpenSees read it: integers stay integers, so tag slots parse. */
 const num = (n: number): string => String(n === 0 ? 0 : n);
 
@@ -87,8 +190,11 @@ function lineOf(raw: unknown): { text: string; tag: number } {
   return { text: ["uniaxialMaterial", m.type, m.tag, ...args].join(" "), tag: m.tag };
 }
 
-/** The Tcl script of a job, and the strains it imposes. Throws `MaterialTestRefused`. */
-export function scriptOf(raw: unknown): { script: string; strain: number[] } {
+/**
+ * The Tcl script of a job, the strains it imposes (null under stress control, where the
+ * fork finds them), and the rows it must print. Throws `MaterialTestRefused`.
+ */
+export function scriptOf(raw: unknown): { script: string; strain: number[] | null; rows: number } {
   if (!isRecord(raw)) refuse("the job is not an object");
   const job = raw as unknown as MaterialTestJob;
   if (!Array.isArray(job.materials) || job.materials.length === 0) refuse("the job names no material");
@@ -96,12 +202,41 @@ export function scriptOf(raw: unknown): { script: string; strain: number[] } {
   const tags = new Set(lines.map((l) => l.tag));
   if (tags.size !== lines.length) refuse("two materials of the job share a tag");
   if (lines[lines.length - 1]!.tag !== job.target) refuse("the material under test must be the job's last line");
-  const strain = strainPath(job.protocol);
-  const script = [
+  const head = [
     `if {[info commands ladrunoBuild] eq ""} {puts "${PREFIX}nofork"; exit}`,
     "set mtBuild [ladrunoBuild]",
     `foreach mtCommand {${REMOVED.join(" ")}} {rename $mtCommand {}}`,
     `puts "${PREFIX}build $mtBuild"`,
+  ];
+  if (isRecord(job.protocol) && (job.protocol as { kind?: unknown }).kind === "stress") {
+    const targets = stressPath(job.protocol);
+    const script = [
+      ...head,
+      `model testUniaxial ${STRESS_TRIALS}`,
+      ...lines.map((l) => l.text),
+      `uniaxialTest ${job.target}`,
+      STRESS_DRIVER,
+      `set mtN ${STRESS_TRIALS}`,
+      "set mtE 0.0",
+      "set mtS 0.0",
+      "set mtE0 [tangUniaxialTest]",
+      // row 0, the starting zero, needs no call: a call would count towards the commit
+      `puts "${PREFIX}srow 0 0 [stressUniaxialTest] $mtE0"`,
+      "set mtStep 1",
+      `foreach mtTarget0 {${targets.map(num).join(" ")}} {`,
+      "  set mtR [mtStep $mtTarget0]",
+      `  if {[lindex $mtR 0] eq "stop"} {puts "${PREFIX}stop $mtStep [lindex $mtR 1]"; break}`,
+      `  puts "${PREFIX}srow $mtStep $mtE $mtS [tangUniaxialTest]"`,
+      "  incr mtStep",
+      "}",
+      `puts "${PREFIX}end $mtStep"`,
+      "",
+    ].join("\n");
+    return { script, strain: null, rows: targets.length + 1 };
+  }
+  const strain = strainPath(job.protocol);
+  const script = [
+    ...head,
     "model testUniaxial",
     ...lines.map((l) => l.text),
     `uniaxialTest ${job.target}`,
@@ -114,10 +249,17 @@ export function scriptOf(raw: unknown): { script: string; strain: number[] } {
     `puts "${PREFIX}end $mtStep"`,
     "",
   ].join("\n");
-  return { script, strain };
+  return { script, strain, rows: strain.length };
 }
 
-export type ParsedRun = { ok: true; build: string; stress: Float64Array; tangent: Float64Array } | { ok: false; error: string; build: string | null };
+export type ParsedRun =
+  | { ok: true; build: string; stress: Float64Array; tangent: Float64Array }
+  | { ok: false; error: string; build: string | null };
+
+/** A stress-control run: the strain each step found, and why it stopped early (null when every step was reached). */
+export type ParsedStressRun =
+  | { ok: true; build: string; strain: Float64Array; stress: Float64Array; tangent: Float64Array; stopped: string | null }
+  | { ok: false; error: string; build: string | null };
 
 /** The solver's last words: what it printed after the build line, or else its last lines. */
 function messageOf(lines: string[]): string {
@@ -155,4 +297,47 @@ export function parseRun(stderr: string, steps: number): ParsedRun {
     return fail(`the run stopped after ${row} of ${steps} steps`, build);
   }
   return { ok: true, build, stress, tangent };
+}
+
+/**
+ * Read a stress-control run (S3) against the `rows` its script may print: row 0 and
+ * one per target step, each with the strain the driver found. A `stop` line after
+ * the rows it reached ends the run early with the driver's reason; the rows before
+ * it are the curve. Anything else out of frame fails, as for a strain run.
+ */
+export function parseStressRun(stderr: string, rows: number): ParsedStressRun {
+  const lines = stderr.split(/\r?\n/);
+  const fail = (what: string, build: string | null): ParsedStressRun => {
+    const said = messageOf(lines);
+    return { ok: false, build, error: said ? `${what}. The solver said: ${said}` : `${what}.` };
+  };
+  const framed = lines.filter((l) => l.startsWith(PREFIX)).map((l) => l.slice(PREFIX.length).trim().split(/\s+/));
+  if (framed.some((f) => f[0] === "nofork")) return { ok: false, build: null, error: "this OpenSees executable is not a Ladruno fork build (it has no ladrunoBuild command)" };
+  const head = framed[0];
+  if (!head || head[0] !== "build" || head.length !== 2) return fail("the solver did not start the script", null);
+  const build = head[1]!;
+  const strain: number[] = [], stress: number[] = [], tangent: number[] = [];
+  let k = 1;
+  for (; k < framed.length && framed[k]![0] === "srow"; k++) {
+    const f = framed[k]!;
+    const row = strain.length;
+    if (f.length !== 5 || f[1] !== String(row) || row >= rows) return fail(`the solver's row ${row} is malformed`, build);
+    const [, , e, s, t] = f;
+    if (!NUMBER.test(e!) || !NUMBER.test(s!) || !NUMBER.test(t!)) return fail(`at step ${row} the material returned strain ${e}, stress ${s} and tangent ${t}`, build);
+    strain.push(Number(e));
+    stress.push(Number(s));
+    tangent.push(Number(t));
+  }
+  let stopped: string | null = null;
+  const next = framed[k];
+  if (next && next[0] === "stop" && next[1] === String(strain.length) && strain.length > 0) {
+    stopped = `step ${next[1]}: ${next.slice(2).join(" ")}`;
+    k++;
+  }
+  const last = framed[k];
+  if (!last || last[0] !== "end" || last[1] !== String(strain.length) || k !== framed.length - 1 || strain.length === 0) {
+    return fail(`the run stopped after ${Math.max(0, strain.length - 1)} of ${rows - 1} steps`, build);
+  }
+  if (stopped === null && strain.length !== rows) return fail(`the run stopped after ${strain.length - 1} of ${rows - 1} steps`, build);
+  return { ok: true, build, strain: Float64Array.from(strain), stress: Float64Array.from(stress), tangent: Float64Array.from(tangent), stopped };
 }

@@ -28,7 +28,8 @@ const SHOWN: Readonly<Record<string, Partial<MaterialTestForm>>> = {
  * (`mt-<n>-overlay`) with the second plot on the history, the tangent
  * (`mt-<n>-tangent`) and the work done (`mt-<n>-energy`); then the declared
  * curve against an override of fy and b, with the changed values to copy
- * (`mt-<n>-override`).
+ * (`mt-<n>-override`); then stress control: Concrete02 to -29 and to -35 (stopped
+ * past its peak) and a J2 stress cycle (`mt-<n>-stress-*`).
  * The window, form and run are put back afterwards.
  */
 export async function captureMaterialTest(ctx: HarnessContext, settle: (ms?: number) => Promise<unknown>) {
@@ -80,6 +81,14 @@ export async function captureMaterialTest(ctx: HarnessContext, settle: (ms?: num
   await run(cyc);
   await run({ ...cyc, overrides: steel.type === "Steel02" ? { "0": "600", "2": "0.03" } : {} });
   await still(`mt-${n++}-override`);
+  // S3: stress control. Concrete02 reaches -29 and stops before -35 (past its peak); J2 follows a stress cycle.
+  for (const [type, targets, tag] of [["Concrete02", "-29", "stress-reached"], ["Concrete02", "-35", "stress-stopped"], ["LadrunoUniaxialJ2", "450, -450, 0", "stress-cycle"]] as const) {
+    const d = materials.find((m) => m.type === type);
+    if (!d) continue;
+    store.dispatch({ type: "materialTestCleared" });
+    await run({ ...materialTestFormFor(d.path), kind: "stress", targets, stepsPerRamp: "10" });
+    await still(`mt-${n++}-${tag}`);
+  }
   store.dispatch({ type: "materialTestFormSet", form: { ...materialTestFormFor(first.path), kind: "monotonic", peak: "0.01x" } });
   await still(`mt-${n}-refused`);
   store.dispatch({ type: "materialTestCleared" });

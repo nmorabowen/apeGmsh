@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { strainPath } from "../../src/main/materialTestScript.ts";
+import { strainPath, stressPath } from "../../src/main/materialTestScript.ts";
 import {
   materialTestAxesOf,
   materialTestFormFor,
@@ -133,4 +133,14 @@ test("the form lives in the store: opened, edited, closed; another model drops i
   assert.equal(reduce(s, { type: "materialTestFormSet", form: edited }), s, "the same form is no change");
   assert.equal(reduce(s, { type: "materialTestFormSet", form: null }).materialTest.form, null);
   assert.equal(reduce(s, { type: "fileOpened", artifact: "model", path: "other.h5" }).materialTest.form, null);
+});
+
+test("S3: a stress-control form becomes its protocol; its step count is main's stress path", () => {
+  const f = form({ kind: "stress", targets: "300; -300 400", stepsPerRamp: "5" });
+  const a = materialTestProtocolOf(f, "strain");
+  if (!("protocol" in a)) return assert.fail(a.error);
+  assert.deepEqual(a.protocol, { kind: "stress", targets: [300, -300, 400], stepsPerRamp: 5 });
+  assert.equal(materialTestStepsOf(a.protocol), stressPath(a.protocol).length);
+  assert.deepEqual(materialTestProtocolOf(form({ kind: "stress", targets: "300, x" })), { error: 'targets: "x" is not a number' });
+  assert.equal(materialTestProtocolText({ kind: "stress", targets: [300, -300], stepsPerRamp: 5 }), "stress control to 300, -300 at 5 steps per leg");
 });
