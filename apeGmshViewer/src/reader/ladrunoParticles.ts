@@ -52,8 +52,14 @@ const STATE_NAME = /^STATE_[A-Za-z0-9_]+$/;
 /** The index datasets directly in ON_PARTICLES (§2.5). */
 const INDEX_DATASETS = ["STEP", "TIME", "OFFSETS", "ID"] as const;
 const MODES = { explicit: "transient", implicit: "transient", "quasi-static": "static" } as const;
-/** §2.6: the reserved fields' COMPONENTS, by spatial dimension (C2-CAT). */
-const RESERVED: Readonly<Record<string, Readonly<Record<2 | 3, string | null>>>> = {
+/**
+ * §2.6: the reserved fields' COMPONENTS, by spatial dimension (C2-CAT); null is a field refused in that
+ * dimension. The fork checker's `PARTICLE_FIELDS` (`ladruno_format.py` at `ladruno-v20261123b`, vendored in
+ * `tests/fixtures/mpm/fork_3eb195bbc/`), as Python's `PARTICLE_FIELDS` carries it. A name not listed reads as
+ * the file spells it (§2.6: a reader that does not know a new field skips it rather than refusing it).
+ * WP-232l (#3121) added `PORE_PRESSURE`: excess pore pressure, compression positive, 0 on a single-phase particle.
+ */
+export const RESERVED: Readonly<Record<string, Readonly<Record<2 | 3, string | null>>>> = {
   POSITION: { 2: "x,y", 3: "x,y,z" },
   VELOCITY: { 2: "Vx,Vy", 3: "Vx,Vy,Vz" },
   ACCELERATION: { 2: "Ax,Ay", 3: "Ax,Ay,Az" },
@@ -63,6 +69,7 @@ const RESERVED: Readonly<Record<string, Readonly<Record<2 | 3, string | null>>>>
   VOLUME: { 2: "V", 3: "V" },
   GIMP_HALF_LENGTH: { 2: "lx,ly", 3: "lx,ly,lz" },
   DEFORMATION_GRADIENT: { 2: "F11,F12,F21,F22", 3: "F11,F12,F13,F21,F22,F23,F31,F32,F33" },
+  PORE_PRESSURE: { 2: "p", 3: "p" },
 };
 
 // -- the h5wasm surface this module reads (structural, as reader/ladrunoElements.ts) --
@@ -698,12 +705,14 @@ function readField(g: PGroup, name: string, ndm: 2 | 3, ctors: PCtors): Particle
   if (displayName === "") throw new ParticleContractError("C2-ATTR", `${g.path}@DISPLAY_NAME is empty`);
   const compText = requiredText(g, "COMPONENTS", "C2-COMP");
   const components = compText.split(",");
-  if (components.some((c) => c === "") || new Set(components).size !== components.length) {
-    throw new ParticleContractError("C2-COMP", `${g.path}@COMPONENTS = ${JSON.stringify(compText)}: a label is empty or repeated`);
-  }
-  const reserved = RESERVED[name];
+  // A reserved field's COMPONENTS is exactly the catalogue's (no empty or repeated label), so C2-CAT is
+  // checked first: the fork's checker reports an empty one as C2-CAT too.
+  const reserved = Object.hasOwn(RESERVED, name) ? RESERVED[name] : undefined;
   if (reserved !== undefined && reserved[ndm] !== compText) {
     throw new ParticleContractError("C2-CAT", `${g.path}@COMPONENTS = ${JSON.stringify(compText)}; the reserved ${name} is ${reserved[ndm] === null ? `refused in ${ndm}-D` : JSON.stringify(reserved[ndm])}`);
+  }
+  if (components.some((c) => c === "") || new Set(components).size !== components.length) {
+    throw new ParticleContractError("C2-COMP", `${g.path}@COMPONENTS = ${JSON.stringify(compText)}: a label is empty or repeated`);
   }
   const reduction = requiredText(g, "PARTITION_REDUCTION", "C2-RED");
   if (reduction !== "NONE") throw new ParticleContractError("C2-RED", `${g.path}@PARTITION_REDUCTION = ${JSON.stringify(reduction)}; expected "NONE"`);

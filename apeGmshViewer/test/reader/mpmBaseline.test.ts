@@ -18,7 +18,9 @@ import { PARTICLES_UNREAD } from "../../src/state/results.ts";
 await h5wasm.ready;
 const H5 = h5wasm as unknown as ResultsH5;
 const repo = (rel: string) => fileURLToPath(new URL(`../../../${rel}`, import.meta.url));
-const FIXTURES = ["particles_v1m2.ladruno", "particles_mixed_v1m2.ladruno"] as const;
+// particles_pore_pressure_v1m2.ladruno (#3121): particles_v1m2 with a PORE_PRESSURE field added in the
+// fork writer's encoding at ladruno-v20261123b (tests/fixtures/mpm/make_pore_pressure_fixture.py).
+const FIXTURES = ["particles_v1m2.ladruno", "particles_mixed_v1m2.ladruno", "particles_pore_pressure_v1m2.ladruno"] as const;
 
 function withFile(name: string, body: (f: LadrunoFile) => void): void {
   const f = openLadruno(H5, repo(`tests/fixtures/mpm/${name}`));

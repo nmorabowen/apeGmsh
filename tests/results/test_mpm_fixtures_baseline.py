@@ -161,3 +161,40 @@ def test_ladruno_reader_on_the_torn_stage_fixtures(path: Path, expected: list) -
         assert got == expected
     finally:
         r.close()
+
+
+# --- pin 6: the PORE_PRESSURE fixture (#3121; built by make_pore_pressure_fixture.py) ---
+
+PORE = MPM / "particles_pore_pressure_v1m2.ladruno"
+
+
+def _blob_sha(path: Path) -> str:
+    """``git hash-object`` of ``path`` (a ``.py`` read with LF line ends, as git
+    stores it on a ``core.autocrlf`` checkout)."""
+    import hashlib
+
+    data = path.read_bytes()
+    if path.suffix == ".py":
+        data = data.replace(b"\r\n", b"\n")
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+@pytest.mark.parametrize("name", [
+    "particles_pore_pressure_v1m2.ladruno",
+    "fork_3eb195bbc/ladruno_format.py",
+    "fork_3eb195bbc/ladruno_basis.py",
+])
+def test_the_pore_pressure_files_are_the_readmes(name: str) -> None:
+    readme = (MPM / "README.md").read_text(encoding="utf-8")
+    sha = _blob_sha(MPM / name)
+    assert f"| `{name}` |" in readme and sha in readme, (name, sha)
+
+
+def test_the_pore_pressure_fixture_reads_its_three_outputs() -> None:
+    assert _blob_sha(PORE) != _blob_sha(PARTICLES)
+    r = Results.from_ladruno(PORE)
+    try:
+        assert r.fem is None
+        assert r.particles.get(component="PORE_PRESSURE/p").n_outputs == 3
+    finally:
+        r.close()
