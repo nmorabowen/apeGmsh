@@ -13,7 +13,7 @@ import { existsSync, statSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
-import { MaterialTestRefused, parseRun, scriptOf } from "./materialTestScript.ts";
+import { MaterialTestRefused, parseRun, parseStressRun, scriptOf } from "./materialTestScript.ts";
 
 export const DEFAULT_SOLVER = "C:\\Program Files\\Ladruno\\OpenSees\\bin\\OpenSees.exe";
 const TIME_LIMIT_MS = 10_000;
@@ -29,7 +29,7 @@ export interface SolverLaunch {
 export type SolverAnswer = { ok: true; launch: SolverLaunch } | { ok: false; error: string };
 
 export type MaterialTestAnswer =
-  | { ok: true; seq: number; build: string; strain: Float64Array; stress: Float64Array; tangent: Float64Array }
+  | { ok: true; seq: number; build: string; strain: Float64Array; stress: Float64Array; tangent: Float64Array; stopped?: string }
   | { ok: false; seq: number; build: string | null; error: string; superseded?: true };
 
 const isFile = (p: string): boolean => existsSync(p) && statSync(p).isFile();
@@ -136,7 +136,13 @@ export class MaterialTestRunner {
         if (out.stopped === "superseded") return overtaken;
         return failed(out.stopped === "cancelled" ? "the run was cancelled" : out.stopped);
       }
-      const parsed = parseRun(out.stderr, built.strain.length);
+      if (built.strain === null) {
+        const found = parseStressRun(out.stderr, built.rows);
+        if (!found.ok) return failed(found.error, found.build);
+        const answer = { ok: true as const, seq, build: found.build, strain: found.strain, stress: found.stress, tangent: found.tangent };
+        return found.stopped === null ? answer : { ...answer, stopped: found.stopped };
+      }
+      const parsed = parseRun(out.stderr, built.rows);
       if (!parsed.ok) return failed(parsed.error, parsed.build);
       return { ok: true, seq, build: parsed.build, strain: Float64Array.from(built.strain), stress: parsed.stress, tangent: parsed.tangent };
     } finally {

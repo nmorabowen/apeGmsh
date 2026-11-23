@@ -63,7 +63,9 @@ Then:
   the OS default opener, because on Windows that runs a `.py` file.
 - **Material tester** (ADR 0135 and its Amendment 1). In the Materials &
   sections window, **Test** on a uniaxial material opens a form under its row:
-  a monotonic, cyclic or pasted strain history, then **Run**. The Ladruno
+  a monotonic, cyclic or pasted strain history, or stress control (target
+  stresses; the fork's driver finds each step's strain, and a target beyond the
+  material's peak stops the run there, saying why), then **Run**. The Ladruno
   fork's `OpenSees.exe` runs the declared material with its dependencies, and
   the window draws the response with the fork's build id. Up to six runs are
   kept: a material's runs overlay (the newest in the accent, older ones dashed),

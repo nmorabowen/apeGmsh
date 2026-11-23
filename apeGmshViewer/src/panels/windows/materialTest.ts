@@ -24,7 +24,7 @@ import {
   materialTestSlotsOf,
   materialTestStepsOf,
 } from "../../state/selectors.ts";
-import type { DeclPath, MaterialTestForm, MaterialTestOverride, MaterialTestPoints, MaterialTestRun, MaterialTestSecond, MaterialTestSlot } from "../../state/types.ts";
+import type { DeclPath, MaterialTestForm, MaterialTestOverride, MaterialTestRun, MaterialTestSecond, MaterialTestSlot } from "../../state/types.ts";
 import { el } from "../../ui/dom.ts";
 import { fmt, xyPlot, xySwatch } from "../../ui/xyPlot.ts";
 
@@ -32,9 +32,10 @@ const KINDS: readonly (readonly [MaterialTestForm["kind"], string])[] = [
   ["monotonic", "monotonic"],
   ["cyclic", "cyclic"],
   ["values", "values"],
+  ["stress", "stress control"],
 ];
 
-type Field = "peak" | "steps" | "amplitudes" | "stepsPerRamp" | "values";
+type Field = "peak" | "steps" | "amplitudes" | "stepsPerRamp" | "values" | "targets";
 
 /** Keep a click inside the tester from selecting the row under it. */
 const contained = <T extends HTMLElement>(e: T): T => {
@@ -110,9 +111,11 @@ function copyEl(path: DeclPath, type: string, overrides: readonly MaterialTestOv
   return box;
 }
 
-/** The second plot's curve of one run, against the step. */
-function second(p: MaterialTestPoints, what: MaterialTestSecond): readonly number[] {
-  return what === "history" ? p.strain : what === "tangent" ? p.tangent : p.energy;
+/** The second plot's curve of one run, against the step: its imposed history is the stress under stress control. */
+function second(r: MaterialTestRun, what: MaterialTestSecond): readonly number[] {
+  const p = r.points!;
+  if (what === "history") return r.protocol.kind === "stress" ? p.stress : p.strain;
+  return what === "tangent" ? p.tangent : p.energy;
 }
 
 /** The dash of a run in the overlay: the newest ready run is the main curve (null), older ones count back from 0. */
@@ -136,9 +139,10 @@ function plotsEl(ready: readonly MaterialTestRun[], f: MaterialTestForm, xName: 
       others: older.map((r) => ({ xs: r.points!.strain, ys: r.points!.stress, dash: dashOf(ready, r)! })),
     }),
   );
-  const names: Record<MaterialTestSecond, string> = { history: `imposed ${xName}`, tangent: "tangent", energy: "work done (app, trapezoid)" };
+  const imposed = main.protocol.kind === "stress" ? yName : xName;
+  const names: Record<MaterialTestSecond, string> = { history: `imposed ${imposed}`, tangent: "tangent", energy: "work done (app, trapezoid)" };
   const titles: Record<MaterialTestSecond, string> = {
-    history: `the imposed ${xName} at each step`,
+    history: `the imposed ${imposed} at each step`,
     tangent: "the material's tangent at each step, as the fork returns it",
     energy: `the running integral of ${yName} over ${xName}, computed by the app (trapezoid); where the ${yName} returns to zero it is the dissipated energy`,
   };
@@ -154,11 +158,11 @@ function plotsEl(ready: readonly MaterialTestRun[], f: MaterialTestForm, xName: 
     pick,
     xyPlot({
       xs: p.step,
-      ys: second(p, f.second),
+      ys: second(main, f.second),
       xName: "step",
       yName: names[f.second],
       title: `${names[f.second]} against the step, ${main.type}`,
-      others: older.map((r) => ({ xs: r.points!.step, ys: second(r.points!, f.second), dash: dashOf(ready, r)! })),
+      others: older.map((r) => ({ xs: r.points!.step, ys: second(r, f.second), dash: dashOf(ready, r)! })),
     }),
   );
   return box;
@@ -185,6 +189,7 @@ function runLine(s: State, r: MaterialTestRun, dash: number | null | undefined, 
   line.append(button("×", r.status === "running" ? "stop this run" : "remove this run from the plot", () => act({ type: "materialTestRemoved", id: r.id }), "window-test mt-remove"));
   const box = el("div", "mt-legend-run");
   box.append(line);
+  if (r.status === "ready" && r.stopped) box.append(el("div", "mt-error", `stopped at ${r.stopped}`));
   if (r.status === "failed") {
     box.append(el("div", "mt-error", r.error ?? "the run failed"));
     if (r.build) box.append(el("div", "window-row-decl", `fork build ${r.build.slice(0, 8)}`));
@@ -217,6 +222,11 @@ export function testerEl(s: State, path: DeclPath, type: string, act: (e: Event)
     fields.append(
       input(f, "amplitudes", `amplitudes (${xName})`, "each amplitude once: 0 to +a to -a to 0; separate them with commas or spaces", act),
       input(f, "stepsPerRamp", "steps per ramp", "steps per quarter cycle", act),
+    );
+  } else if (f.kind === "stress") {
+    fields.append(
+      input(f, "targets", `targets (${yName})`, `the ${yName} each leg ends at, from zero; the fork finds the ${xName}, and a target beyond the material's peak stops the run there`, act),
+      input(f, "stepsPerRamp", "steps per leg", "steps from one target to the next", act),
     );
   } else {
     fields.append(input(f, "values", `${xName} values`, `the ${xName} of each step after zero; separate them with commas, spaces or new lines`, act, true));

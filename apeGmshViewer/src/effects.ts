@@ -209,7 +209,7 @@ export interface Bridge {
   particleHarnessDone?(result: unknown): Promise<void>;
   /** ADR 0135: run the fork's uniaxial tester on one material (main's `materialTest:run`; main/materialTest.ts) */
   materialTestRun?(job: MaterialTestJob, seq: number): Promise<
-    | { ok: true; seq: number; build: string; strain: Float64Array; stress: Float64Array; tangent: Float64Array }
+    | { ok: true; seq: number; build: string; strain: Float64Array; stress: Float64Array; tangent: Float64Array; stopped?: string }
     | { ok: false; seq: number; build: string | null; error: string; superseded?: true }
   >;
   materialTestCancel?(): Promise<void>;
@@ -1698,8 +1698,8 @@ export class Effects {
       return;
     }
     const id = going;
-    const finish = (build: string | null, curves: MaterialTestRun["curves"], error: string | null, points: MaterialTestRun["points"] = null): void => {
-      this.store.dispatch({ type: "materialTestFinished", id, build, curves, points, error });
+    const finish = (build: string | null, curves: MaterialTestRun["curves"], error: string | null, points: MaterialTestRun["points"] = null, stopped?: string): void => {
+      this.store.dispatch({ type: "materialTestFinished", id, build, curves, points, error, ...(stopped === undefined ? {} : { stopped }) });
       this.blobs.retain(blobRefsOf(this.store.get()));
     };
     const answer = materialTestJobOf(s, run!.decl, run!.protocol, run!.overrides);
@@ -1711,7 +1711,7 @@ export class Effects {
         if (!this.store.get().materialTest.runs.some((r) => r.id === id && r.status === "running")) return;
         if (!a.ok) return finish(a.build, null, a.error);
         const at = `materialTest/${id}`;
-        finish(a.build, { strain: this.blobs.put(`${at}/strain`, a.strain), stress: this.blobs.put(`${at}/stress`, a.stress), tangent: this.blobs.put(`${at}/tangent`, a.tangent) }, null, materialTestPointsOf(a.strain, a.stress, a.tangent));
+        finish(a.build, { strain: this.blobs.put(`${at}/strain`, a.strain), stress: this.blobs.put(`${at}/stress`, a.stress), tangent: this.blobs.put(`${at}/tangent`, a.tangent) }, null, materialTestPointsOf(a.strain, a.stress, a.tangent), a.stopped);
       },
       (e: unknown) => finish(null, null, e instanceof Error ? e.message : String(e)),
     );

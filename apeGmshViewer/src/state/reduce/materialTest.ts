@@ -36,6 +36,7 @@ export function reduceMaterialTest(s: State, e: MaterialTestEvent): MaterialTest
         type: s.decls[e.decl]?.type ?? "",
         protocol: e.protocol,
         overrides,
+        stopped: null,
         status: error === null ? "running" : "failed",
         error,
         build: null,
@@ -59,6 +60,7 @@ export function reduceMaterialTest(s: State, e: MaterialTestEvent): MaterialTest
         build: e.build,
         curves: ok ? e.curves : null,
         points: ok ? e.points : null,
+        stopped: ok ? (e.stopped ?? null) : null,
       };
       return { ...m, runs: m.runs.map((r, k) => (k === i ? done : r)) };
     }

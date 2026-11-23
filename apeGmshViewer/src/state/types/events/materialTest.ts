@@ -15,6 +15,8 @@ export type MaterialTestEvent =
       curves: MaterialTestRun["curves"];
       points: MaterialTestRun["points"];
       error: string | null;
+      /** stress control: why the run stopped early; absent when it did not */
+      stopped?: string;
     }
   /** Open, edit or (null) close the tester's form in the materials window. */
   | { type: "materialTestFormSet"; form: MaterialTestForm | null }
