@@ -82,6 +82,11 @@ export class Loader {
     return this.call("modelCounts", path);
   }
 
+  /** The model's cell count, read from dataset shapes only. Rejects with the reader's message. */
+  cells(path: string): Promise<number> {
+    return this.call("cells", path);
+  }
+
   /** A /geometry sibling. A stopped loader is an `ok: false` answer, as a reader error is. */
   geometry(path: string): Promise<LoaderOps["geometry"]> {
     return this.call("geometry", path).catch((err: Error) => ({ ok: false as const, error: err.message }));

@@ -125,6 +125,29 @@ export async function openStageElements(path: string, sequence: SequenceZone): P
   }
 }
 
+/**
+ * ADR 0137 D4 (#3057): the model's cell count, from the shape of each `/elements/<alias>/ids`
+ * dataset only, so the memory warning has it before the model is read. 0 with no `/elements`.
+ */
+export async function openCellCount(path: string): Promise<number> {
+  await h5wasm.ready;
+  const f = openFile(path);
+  try {
+    if (!f.keys().includes("elements")) return 0;
+    const elements = f.get("elements") as H5Handle;
+    if (!(elements instanceof h5wasm.Group)) throw new Error("/elements is not a group");
+    let n = 0;
+    for (const alias of elements.keys()) {
+      const ids = f.get(`elements/${alias}/ids`);
+      if (!(ids instanceof h5wasm.Dataset)) throw new Error(`/elements/${alias}/ids is missing or not a dataset`);
+      n += ids.shape?.[0] ?? 0;
+    }
+    return n;
+  } finally {
+    f.close();
+  }
+}
+
 export async function openProvenance(path: string): Promise<ProvenanceAnswer> {
   try {
     await h5wasm.ready;

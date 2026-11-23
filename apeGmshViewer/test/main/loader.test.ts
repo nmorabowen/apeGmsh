@@ -256,3 +256,52 @@ test("the first open starts the process and sends that one open, not a replay of
   assert.equal(spawned.length, 1);
   assert.deepEqual(spawned[0]!.sent.map((r) => ("call" in r ? `${r.host}:${r.call}` : r.op)), ["window:open"]);
 });
+
+// ---------------------------------------------------------------------------
+// ADR 0137 D4 stage 1 (#3057): main's memory status for a model load, with an injected reading.
+
+type Status = { path: string; phase: string; cells: number | null; estimateMB: number | null; availableMB: number; commitHeadroomMB: number | null; reasons: string[] };
+
+function runMemory(dir: string, freeMb: number, commitMb: number): { open: Seen; memory: Status[] } {
+  const stdout = execFileSync(process.execPath, [DRIVER, "--case=memory", "--mode=view", `--file=${join(dir, "s.h5")}`, `--free-mb=${freeMb}`, `--commit-mb=${commitMb}`], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 60_000,
+  });
+  const line = stdout.split(/\r?\n/).find((l) => l.startsWith("LOADER "));
+  assert.ok(line, `the driver printed no answer:\n${stdout}`);
+  return JSON.parse(line.slice("LOADER ".length)) as { open: Seen; memory: Status[] };
+}
+
+test("view mode: a model opened with little memory sends the page its memory status before and after the read, and still opens", async () => {
+  const dir = join(root, "memory");
+  mkdirSync(dir);
+  copyFileSync(join(FIX, "bridge_provenance.h5"), join(dir, "s.h5"));
+  const model = await openModel(join(dir, "s.h5"));
+  const cells = model.blocks.reduce((n, b) => n + b.ids.length, 0);
+  const got = runMemory(dir, 1500, 3000);
+  assert.equal(got.open.ok, true, `the warning never refuses: ${got.open.error}`);
+  const phases = got.memory.map((m) => m.phase);
+  assert.equal(phases[0], "before");
+  assert.equal(phases.at(-1), "after");
+  for (const m of got.memory) {
+    assert.equal(m.path, join(dir, "s.h5"));
+    assert.equal(m.cells, cells, "the cell count from the dataset shapes is the model's");
+    assert.equal(m.availableMB, 1500);
+    // Electron reports commit headroom only on Windows (src/main/memory.ts).
+    assert.equal(m.commitHeadroomMB, process.platform === "win32" ? 3000 : null);
+    assert.deepEqual(m.reasons, ["1.5 GB of RAM is available, under 2.0 GB"]);
+  }
+});
+
+test("view mode: a model opened with memory to spare sends a status with no reason", () => {
+  const got = runMemory(join(root, "memory"), 16_000, 60_000);
+  assert.equal(got.open.ok, true);
+  assert.ok(got.memory.length >= 2);
+  assert.ok(got.memory.every((m) => m.reasons.length === 0), JSON.stringify(got.memory));
+});
+
+test("an agent mode (describe) sends no memory status: a still never carries the warning", () => {
+  const got = run("good", join(root, "good"));
+  assert.equal(got["memorySent"], 0);
+});

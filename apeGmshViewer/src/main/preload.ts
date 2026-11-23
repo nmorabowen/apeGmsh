@@ -147,6 +147,14 @@ contextBridge.exposeInMainWorld("viewer", {
   // VU16 (#2800): one component of a state-free ON_NODES user result, as a contour column (`user:readResult`). As
   // readUserCase, the path is the one `readUser` named; main reads only the open set's user file, and refuses a stale entry.
   readUserResult: (req: { path: string; name: string; component: string }) => ipcRenderer.invoke("user:readResult", req),
+  // ADR 0137 D4 (#3057): main's memory reading for a model load, before it and every second during it (view mode).
+  onMemoryStatus: (cb: (m: unknown) => void) => {
+    const handler = (_e: IpcRendererEvent, m: unknown) => cb(m);
+    ipcRenderer.on("memory:status", handler);
+    return () => {
+      ipcRenderer.removeListener("memory:status", handler);
+    };
+  },
   onScanProgress: (cb: (p: { scanId: number; done: number; total: number }) => void) => {
     const handler = (_e: IpcRendererEvent, p: { scanId: number; done: number; total: number }) => cb(p);
     ipcRenderer.on("results:scanProgress", handler);

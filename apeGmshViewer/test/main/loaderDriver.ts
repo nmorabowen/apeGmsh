@@ -5,6 +5,11 @@
 //
 //   node test/main/loaderDriver.ts --case=<good|unreadable> --mode=describe --file=<dir>/s.h5 --out=<dir>/out
 //   node test/main/loaderDriver.ts --case=results --mode=capture --file=<dir>/s.h5 --out=<dir>/out.png
+//   node test/main/loaderDriver.ts --case=memory --mode=view --file=<dir>/s.h5 --free-mb=N [--commit-mb=N]
+//
+// `--case=memory` (ADR 0137 D4, #3057) puts a memory reading on `process.getSystemMemoryInfo`, as
+// Electron's main process has it, drops the model and opens it: main must send the page its memory
+// status and still open the model.
 
 import { registerHooks } from "node:module";
 import { join, resolve } from "node:path";
@@ -21,15 +26,26 @@ const file = opt("file");
 if (!which || !file) throw new Error("loaderDriver needs --case= and --file=");
 const model = resolve(file);
 
-const { forked, handlers } = (await import(STUB)) as typeof import("./electronStub.ts");
+const freeMb = opt("free-mb");
+if (freeMb !== undefined) {
+  const commitMb = opt("commit-mb");
+  // Electron's reading, in KB: `free` is available RAM, `swapFree` the commit headroom on Windows (src/main/memory.ts).
+  (process as { getSystemMemoryInfo?: () => object }).getSystemMemoryInfo = () => ({ free: Number(freeMb) * 1024, ...(commitMb ? { swapFree: Number(commitMb) * 1024 } : {}) });
+}
+
+const { forked, handlers, listeners } = (await import(STUB)) as typeof import("./electronStub.ts");
 await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "main.ts")).href);
 
-/** What main sent the asking page: the scans' progress (`results:scanProgress`). */
+/** What main sent the asking page: the scans' progress (`results:scanProgress`) and the memory statuses (`memory:status`). */
 const progress: { scanId: number; done: number; total: number }[] = [];
+const memory: unknown[] = [];
 const event = {
   sender: {
     isDestroyed: () => false,
-    send: (channel: string, p: { scanId: number; done: number; total: number }) => void (channel === "results:scanProgress" && progress.push(p)),
+    send: (channel: string, p: { scanId: number; done: number; total: number }) => {
+      if (channel === "results:scanProgress") progress.push(p);
+      if (channel === "memory:status") memory.push(p);
+    },
   },
 };
 /** Wait until `cond`, or fail after 20 s. */
@@ -57,7 +73,11 @@ const seen = (r: Opened) => ({
 });
 
 const out: Record<string, unknown> = {};
-if (which === "results") {
+if (which === "memory") {
+  listeners.get("viewer:dropped")!({ returnValue: undefined }, model);
+  out["open"] = seen(await call("model:open", model));
+  out["memory"] = memory;
+} else if (which === "results") {
   // A capture paces a scan at one step per chunk, 2 s apart (main.ts `results:scan`), so a cancel lands mid-scan.
   const results = model.replace(/\.h5$/, ".results.h5");
   type Answer = { ok: boolean; error?: string; meta?: { stages: unknown[] }; nodal?: Record<string, unknown>; cancelled?: boolean };
@@ -103,5 +123,6 @@ if (which === "results") {
   out["afterStoppedDuring"] = seen(await call("model:open", model));
   out["forksAtEnd"] = forked.length;
 }
+out["memorySent"] = memory.length;
 process.stdout.write(`LOADER ${JSON.stringify(out)}\n`);
 process.exit(0);

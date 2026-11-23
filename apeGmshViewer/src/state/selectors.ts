@@ -1,6 +1,7 @@
 // Selectors: pure reads of the state that panels and the viewport render
 // from. A panel imports this module and store.ts, nothing else of the app.
 
+import { memoryNotice } from "./memory.ts";
 import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 import { judgeDraft } from "../combination/author.ts";
 import { CombinationRefused, CombinationTable, isSigned } from "../combination/evaluate.ts";
@@ -582,6 +583,9 @@ export function noticesOf(s: State): string[] {
   if (d) out.push(d);
   // ADR 0134 D5: the particles drawn, how they are coloured, and what of them is not drawn.
   out.push(...particleNotices(s));
+  // ADR 0137 D4 (#3057): memory short for the model on screen or being loaded.
+  const mem = s.memory !== null && s.memory.path === s.artifacts.model?.path ? memoryNotice(s.memory) : null;
+  if (mem) out.push(mem);
   return out;
 }
 
