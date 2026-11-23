@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { H5BusyError, H5ReadError, lookup3, openH5ByRule, readRows, repairCopy, superblockFlags, superblockIo, type H5ReadModule, type H5RowsDataset, type H5RuleOpenable } from "../../src/reader/h5open.ts";
 import { LadrunoError, LadrunoMissingError, openLadruno, type LadrunoFile } from "../../src/reader/ladruno.ts";
-import { C2_BASES, committedOutputs, type LadrunoParticles, type ParticleStage, type PCtors, type PGroup } from "../../src/reader/ladrunoParticles.ts";
+import { C2_BASES, committedOutputs, RESERVED, type LadrunoParticles, type ParticleStage, type PCtors, type PGroup } from "../../src/reader/ladrunoParticles.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { metaOf } from "../../src/main/results.ts";
 import { pairingNotice, pairResults, particlesOnly, PARTICLES_UNREAD } from "../../src/state/results.ts";
@@ -1091,5 +1091,215 @@ for (const basis of ["linear", "bspline2", "bspline3"] as const) {
 for (const basis of ["bspline4", "bspline", "BSPLINE2", "quadratic"]) {
   test(`BASIS ${basis} is outside Contract 2: the stage is refused by name (C2-GRID)`, () => {
     assertRefusedStage(basisCopy(basis), new RegExp(`@BASIS = "${basis}"; expected gimp \\| linear \\| bspline2 \\| bspline3 \\(C2-GRID\\)`));
+  });
+}
+
+// -- the §2.6 field catalogue, and PORE_PRESSURE (fork WP-232l, P12; #3121) ----------------------
+//
+// The oracle is the fork's checker at the pin `ladruno-v20261123b` (`3eb195bbc`), vendored in
+// tests/fixtures/mpm/fork_3eb195bbc/: its `PARTICLE_FIELDS` refuses a reserved field whose COMPONENTS
+// differ from the catalogue's (C2-CAT, an empty one too) and checks no other name. The fixture
+// particles_pore_pressure_v1m2.ladruno is particles_v1m2 with a PORE_PRESSURE group in the writer's
+// encoding (tests/fixtures/mpm/make_pore_pressure_fixture.py), values 9.81 * (2 - y) of each row's
+// position. The Python reader's test_ladruno_particles.py makes the same cases; there the stage is
+// refused, here the field alone (the per-field refusal of #2987), and a refused POSITION refuses the stage.
+
+const PORE = repo("tests/fixtures/mpm/particles_pore_pressure_v1m2.ladruno");
+const FIXTURE_FIELDS = ["DEFORMATION_GRADIENT", "POSITION", "STATE_eqPlasticStrain", "STRAIN", "STRESS", "VELOCITY", "VOLUME"];
+const S_ROWS = 35;
+
+/** The pin's `PARTICLE_FIELDS`, read from the vendored checker's source. */
+function pinCatalogue(): Record<string, Record<2 | 3, string | null>> {
+  const src = readFileSync(repo("tests/fixtures/mpm/fork_3eb195bbc/ladruno_format.py"), "utf8");
+  const block = /^PARTICLE_FIELDS = \{([\s\S]*?)^\}/m.exec(src);
+  assert.ok(block, "the vendored checker defines PARTICLE_FIELDS");
+  const v = (s: string) => (s === "None" ? null : s.slice(1, -1));
+  const out: Record<string, Record<2 | 3, string | null>> = {};
+  for (const m of block[1]!.matchAll(/"([A-Z0-9_]+)":\s*\(("[^"]*"|None),\s*("[^"]*"|None)\)/g)) out[m[1]!] = { 2: v(m[2]!), 3: v(m[3]!) };
+  return out;
+}
+
+/** Add `ON_PARTICLES/<field>` with these COMPONENTS (variable-length: "" is writable) and DATA. */
+function putField(on: h5wasm.Group, field: string, comps: string, data: Float64Array | Float32Array, ncol: number): void {
+  const g = on.create_group(field);
+  g.create_attribute("DISPLAY_NAME", field);
+  g.create_attribute("COMPONENTS", comps);
+  g.create_attribute("TYPE", new Int32Array([0]), [1]);
+  g.create_attribute("DATA_TYPE", new Int32Array([0]), [1]);
+  g.create_attribute("PARTITION_REDUCTION", "NONE");
+  // A Float64Array is written as float64 when no dtype is named; "<f4" names float32.
+  g.create_dataset({ name: "DATA", data, shape: [S_ROWS, ncol], ...(data instanceof Float32Array ? { dtype: "<f4" } : {}) });
+}
+
+/**
+ * The fixture's stage (rewritten, so stage_0) with `field` written fresh. `dim3` makes it 3-D as the Python
+ * test's `_as_3d` does: SPATIAL_DIM 3, a 3-D grid, no thickness, POSITION alone with z = 0.25.
+ */
+function fieldCopy(name: string, field: string, comps: string, data: Float64Array | Float32Array, ncol: number, dim3 = false): string {
+  const skip = (dim3 ? FIXTURE_FIELDS : [field]).map((f) => `RESULTS/ON_PARTICLES/${f}`);
+  const path = rewritten(name, null, { skip });
+  const pos = (() => {
+    const src = new h5wasm.File(ALL, "r");
+    try {
+      return (src.get(`${ON}/POSITION/DATA`) as h5wasm.Dataset).value as Float64Array;
+    } finally {
+      src.close();
+    }
+  })();
+  const w = new h5wasm.File(path, "a");
+  try {
+    const on = w.get("MODEL_STAGE[0]/RESULTS/ON_PARTICLES") as h5wasm.Group;
+    if (dim3) {
+      const info = w.get("INFO") as h5wasm.Group;
+      info.delete_attribute("SPATIAL_DIM");
+      info.create_attribute("SPATIAL_DIM", new Int32Array([3]), [1]);
+      const grid = w.get("MODEL_STAGE[0]/MODEL/PARTICLES/GRID") as h5wasm.Group;
+      for (const [k, v] of [["ORIGIN", new Float64Array([0, 0, 0])], ["CELL_SIZE", new Float64Array([0.5, 0.5, 0.5])], ["NUM_CELLS", new Int32Array([4, 4, 4])]] as const) {
+        grid.delete_attribute(k);
+        grid.create_attribute(k, v, [3]);
+      }
+      (w.get("MODEL_STAGE[0]/MODEL/PARTICLES") as h5wasm.Group).delete_attribute("PLANE_STRAIN_THICKNESS");
+      const xyz = new Float64Array(S_ROWS * 3);
+      for (let i = 0; i < S_ROWS; i++) xyz.set([pos[2 * i]!, pos[2 * i + 1]!, 0.25], 3 * i);
+      if (field !== "POSITION") putField(on, "POSITION", "x,y,z", xyz, 3);
+    }
+    putField(on, field, comps, data, ncol);
+  } finally {
+    w.close();
+  }
+  return path;
+}
+
+const zeros = (ncol: number) => new Float64Array(S_ROWS * ncol);
+
+test("the catalogue is the pin's PARTICLE_FIELDS (ladruno_format.py at 3eb195bbc), PORE_PRESSURE and ACCELERATION included", () => {
+  const pin = pinCatalogue();
+  assert.equal(Object.keys(pin).length, 10);
+  assert.deepEqual(RESERVED, pin);
+  assert.deepEqual(RESERVED["PORE_PRESSURE"], { 2: "p", 3: "p" });
+});
+
+test("particles_pore_pressure_v1m2.ladruno: PORE_PRESSURE reads as stored (9.81 (2 - y)), with the writer's attributes", () => {
+  withFile(PORE, (_f, p) => {
+    assert.equal(p.stages.length, 1);
+    const s = p.stages[0]!;
+    assert.deepEqual(s.refusedFields, []);
+    const f = s.fields.find((x) => x.name === "PORE_PRESSURE")!;
+    assert.deepEqual(
+      { displayName: f.displayName, components: f.components, dimension: f.dimension, description: f.description, dataType: f.dataType, dtype: f.dtype },
+      { displayName: "Pore pressure (compression positive)", components: ["p"], dimension: "F/L^2", description: "", dataType: 0, dtype: "f64" },
+    );
+    for (let k = 0; k < s.nOutputs; k++) {
+      const pp = p.readOutput(s.stageId, k, "PORE_PRESSURE");
+      const pos = p.readOutput(s.stageId, k, "POSITION");
+      assert.equal(pp.nComp, 1);
+      assert.deepEqual(Array.from(pp.ids), Array.from(pos.ids));
+      assert.deepEqual(Array.from(pp.values), Array.from(pos.ids, (_id, i) => 9.81 * (2 - pos.values[2 * i + 1]!)));
+      const y = Array.from(pos.ids, (_id, i) => pos.values[2 * i + 1]!);
+      const base = y.indexOf(Math.min(...y));
+      const top = y.indexOf(Math.max(...y));
+      assert.ok(pp.values[base]! > pp.values[top]! && pp.values[top]! > 0, "compression positive, growing with depth");
+    }
+  });
+});
+
+for (const dim3 of [false, true]) {
+  for (const dtype of ["f64", "f32"] as const) {
+    test(`PORE_PRESSURE with COMPONENTS p reads in ${dim3 ? 3 : 2}-D, ${dtype}`, () => {
+      const raw = Array.from({ length: S_ROWS }, (_, i) => i / 7);
+      const values = dtype === "f64" ? Float64Array.from(raw) : Float32Array.from(raw);
+      withFile(fieldCopy(`pore_${dim3 ? 3 : 2}d_${dtype}.ladruno`, "PORE_PRESSURE", "p", values, 1, dim3), (_f, p) => {
+        const s = p.stage("stage_0");
+        assert.equal(s.ndm, dim3 ? 3 : 2);
+        assert.ok(!s.refusedFields.some((x) => x.field === "PORE_PRESSURE"), JSON.stringify(s.refusedFields));
+        assert.equal(s.fields.find((x) => x.name === "PORE_PRESSURE")!.dtype, dtype);
+        const got = [0, 1, 2].flatMap((k) => Array.from(p.readOutput("stage_0", k, "PORE_PRESSURE").values));
+        assert.deepEqual(got, Array.from(values));
+      });
+    });
+    for (const comps of ["pw", "p,q", ""]) {
+      if (dtype === "f32") continue;
+      test(`PORE_PRESSURE with COMPONENTS ${JSON.stringify(comps)} in ${dim3 ? 3 : 2}-D is refused by name (C2-CAT); the stage reads`, () => {
+        const ncol = Math.max(1, comps.split(",").length);
+        withFile(fieldCopy(`pore_bad_${dim3 ? 3 : 2}d_${comps.length}_${ncol}.ladruno`, "PORE_PRESSURE", comps, zeros(ncol), ncol, dim3), (_f, p) => {
+          const s = p.stage("stage_0");
+          const why = s.refusedFields.find((x) => x.field === "PORE_PRESSURE");
+          assert.ok(why, "PORE_PRESSURE is refused");
+          assert.match(why.reason, new RegExp(`PORE_PRESSURE@COMPONENTS = ${JSON.stringify(comps)}; the reserved PORE_PRESSURE is "p" \\(C2-CAT\\)`));
+          assert.ok(!s.fields.some((x) => x.name === "PORE_PRESSURE"));
+          assert.equal(s.nOutputs, 3);
+        });
+      });
+    }
+  }
+}
+
+test("COMPONENTS p over a two-column DATA is refused (C2-DATA), as before", () => {
+  withFile(fieldCopy("pore_two_columns.ladruno", "PORE_PRESSURE", "p", zeros(2), 2), (_f, p) => {
+    const why = p.stage("stage_0").refusedFields.find((x) => x.field === "PORE_PRESSURE");
+    assert.match(why!.reason, /PORE_PRESSURE\/DATA has shape \(35, 2\); expected \(S, 1\).*\(C2-DATA\)/);
+  });
+});
+
+test("NaN in PORE_PRESSURE reads as stored (C2-FINITE stays the validator's check)", () => {
+  const values = Float64Array.from({ length: S_ROWS }, (_, i) => (i === 3 ? NaN : i));
+  withFile(fieldCopy("pore_nan.ladruno", "PORE_PRESSURE", "p", values, 1), (_f, p) => {
+    const got = [0, 1, 2].flatMap((k) => Array.from(p.readOutput("stage_0", k, "PORE_PRESSURE").values));
+    assert.deepEqual(got, Array.from(values));
+  });
+});
+
+test("a file without PORE_PRESSURE reads (the field is optional)", () => {
+  withFile(ALL, (_f, p) => {
+    assert.ok(!p.stages[0]!.fields.some((x) => x.name === "PORE_PRESSURE"));
+    assert.deepEqual(p.stages[0]!.refusedFields, []);
+  });
+});
+
+for (const [dim3, comps, ok] of [[false, "Ax,Ay", true], [true, "Ax,Ay,Az", true], [false, "Ax,Ay,Az", false], [true, "Ax,Ay", false], [false, "ax,ay", false]] as const) {
+  test(`ACCELERATION with COMPONENTS ${comps} in ${dim3 ? 3 : 2}-D ${ok ? "reads" : "is refused (C2-CAT)"}`, () => {
+    const ncol = comps.split(",").length;
+    withFile(fieldCopy(`acc_${dim3 ? 3 : 2}d_${ncol}_${ok}.ladruno`, "ACCELERATION", comps, zeros(ncol), ncol, dim3), (_f, p) => {
+      const s = p.stage("stage_0");
+      const why = s.refusedFields.find((x) => x.field === "ACCELERATION");
+      if (ok) assert.equal(why, undefined, why?.reason);
+      else assert.match(why!.reason, /ACCELERATION@COMPONENTS = .*; the reserved ACCELERATION is .*\(C2-CAT\)/);
+    });
+  });
+}
+
+test("STRESS33 in a 3-D stage is refused (C2-CAT)", () => {
+  withFile(fieldCopy("stress33_3d.ladruno", "STRESS33", "sigma33", zeros(1), 1, true), (_f, p) => {
+    const why = p.stage("stage_0").refusedFields.find((x) => x.field === "STRESS33");
+    assert.match(why!.reason, /the reserved STRESS33 is refused in 3-D \(C2-CAT\)/);
+  });
+});
+
+for (const field of Object.keys(pinCatalogue())) {
+  test(`the reserved ${field} with COMPONENTS q is refused by name (C2-CAT)`, () => {
+    const path = fieldCopy(`cat_${field}.ladruno`, field, "q", zeros(1), 1);
+    const want = new RegExp(`${field}@COMPONENTS = "q"; the reserved ${field} is .*\\(C2-CAT\\)`);
+    if (field === "POSITION") {
+      assertRefusedStage(path, want);
+      return;
+    }
+    withFile(path, (_f, p) => {
+      const why = p.stage("stage_0").refusedFields.find((x) => x.field === field);
+      assert.match(why!.reason, want);
+    });
+  });
+}
+
+for (const [field, comps] of [["PORE_PRESSURE_X", "pw"], ["PORE_PRESSURE_X", "p,q"], ["HEAT", "T"]] as const) {
+  test(`the unreserved ${field} with COMPONENTS ${comps} reads as the file spells it`, () => {
+    const ncol = comps.split(",").length;
+    const values = Float64Array.from({ length: S_ROWS * ncol }, (_, i) => i);
+    withFile(fieldCopy(`free_${field}_${ncol}.ladruno`, field, comps, values, ncol), (_f, p) => {
+      const s = p.stage("stage_0");
+      assert.deepEqual(s.refusedFields, []);
+      assert.deepEqual(s.fields.find((x) => x.name === field)!.components, comps.split(","));
+      const got = [0, 1, 2].flatMap((k) => Array.from(p.readOutput("stage_0", k, field).values));
+      assert.deepEqual(got, Array.from(values));
+    });
   });
 }

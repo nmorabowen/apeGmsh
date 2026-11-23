@@ -104,6 +104,36 @@ builds the readers against 232a §2.5 at that commit; the fixtures and the build
 | `fork_a1d4c7260/ladruno_format.py` | `Ladruno_scripts/ladruno_recorder_tests/ladruno_format.py` | `786af6ef9ca7617e254877c3aea8470f216d65a2` |
 | `fork_a1d4c7260/ladruno_basis.py` | `Ladruno_scripts/ladruno_recorder_tests/ladruno_basis.py` | `2c1f178877797e7977f66b3bf826fa8f9b1292a7` |
 
+## PORE_PRESSURE and the field catalogue (#3121)
+
+Fork release `ladruno-v20261123b` (`3eb195bbccb8b78a8982267179a8a0b2b7e03977`, the `FORK_PIN`
+when this was made; WP-232l, OpenSees#1116, P12) adds one reserved particle field to 232a
+§2.6: `PORE_PRESSURE`, `COMPONENTS` `p` in 2-D and 3-D, `DIMENSION` `F/L^2`, `DATA_TYPE` 0,
+the excess pore pressure of a two-phase particle, compression positive (0 on a single-phase
+particle), with no minor bump. A two-phase particle's `STRESS` is σ′. Both readers carry the
+checker's `PARTICLE_FIELDS` as their catalogue and refuse a reserved field with other
+`COMPONENTS` (C2-CAT); an unreserved name reads.
+
+`fork_3eb195bbc/` holds the checker at the pin, read as an oracle (its `PARTICLE_FIELDS`, and
+`validate()` on the fixture below and on the live test's file):
+
+| File here | Fork path at `3eb195bbc` | git blob sha |
+|---|---|---|
+| `fork_3eb195bbc/ladruno_format.py` | `Ladruno_scripts/ladruno_recorder_tests/ladruno_format.py` | `3413e97d0287fb336398bc1b34f4cc291eef1f49` |
+| `fork_3eb195bbc/ladruno_basis.py` | `Ladruno_scripts/ladruno_recorder_tests/ladruno_basis.py` | `2c1f178877797e7977f66b3bf826fa8f9b1292a7` |
+
+The fork commits no `.ladruno` with a `PORE_PRESSURE` field, so this one is **made** from
+`particles_v1m2.ladruno` by `make_pore_pressure_fixture.py`, which adds the group in the
+writer's encoding (`LadrunoMPMIO.cpp`'s field table at the pin). Its values are
+`9.81 * (2 - y)` of each row's position, not a two-phase run's: the file pins what a reader
+accepts. The live test `tests/opensees/integration_ladruno/test_mpm_pore_pressure_readers_live.py`
+runs a two-phase column at the pin and checks the fork writes this encoding. A rebuild is
+byte-identical.
+
+| File here | How it was made | git blob sha |
+|---|---|---|
+| `particles_pore_pressure_v1m2.ladruno` | `make_pore_pressure_fixture.py`, from `particles_v1m2.ladruno` | `822901c999e5f93cb40b93c856c7c83ae04be1e9` |
+
 Refresh one file (set `S` to the new fork commit, then update the table):
 
 ```bash
