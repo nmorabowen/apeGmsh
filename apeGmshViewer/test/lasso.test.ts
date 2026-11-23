@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { selectionBarLines } from "../src/panels/selectionBar.ts";
-import { lassoAround } from "../src/renderer/harness/selection.ts";
+import { captureBox, lassoAround } from "../src/renderer/harness/selection.ts";
 import { elementsInLasso, idsInLasso, inLasso, lassoClockwise, lassoMask } from "../src/renderer/picking.ts";
 import { regionLabel } from "../src/renderer/viewport.ts";
 import { initialState, reduce } from "../src/state/reduce.ts";
@@ -65,6 +65,27 @@ test("the capture's lasso holds its whole box, clockwise, so it takes what the b
   for (let y = Math.ceil(a.y); y <= b.y; y += 3) for (let x = Math.ceil(a.x); x <= b.x; x += 3) assert.ok(inLasso(m, x, y), `box pixel ${x},${y} outside the lasso`);
   const shell = [[660, 338], [935, 410], [905, 690], [655, 598]] as const;
   assert.deepEqual(elementsInLasso(Float32Array.from(shell.flat()), new Int32Array(4), m, 1, false), [0]);
+});
+
+test("the capture box takes an element whole: the middle box, or a wider one where the middle holds none (hinge fixtures)", () => {
+  // ladruno_hinges3d's capture (1584 x 1113 canvas): four beams from one tip fanning up and left, as drawn. None lies whole
+  // in the middle box, so it took nothing, the clear after it was no undo step, and undo put back the click still's beam.
+  const r = { left: 0, top: 0, width: 1584, height: 1113 };
+  const tip = [878, 772], beams = [[250, 205], [262, 375], [275, 531], [287, 674]].map((p) => [tip, p]);
+  type P = { x: number; y: number };
+  const takes = (segs: number[][][]) => (a: P, b: P) => segs.filter((s) => s.every(([x, y]) => x! >= a.x && x! <= b.x && y! >= a.y && y! <= b.y)).length;
+  assert.equal(takes(beams)({ x: 475.2, y: 333.9 }, { x: 950.4, y: 779.1 }), 0, "the middle box holds none of the beams whole");
+  const { a, b } = captureBox(r, takes(beams));
+  assert.deepEqual([a, b].map((p) => [Math.round(p.x), Math.round(p.y)]), [[48, 33], [1536, 1080]]);
+  assert.equal(takes(beams)(a, b), 4);
+  // ladruno_hinges2d's capture: two beams framed out to 7 % of the width; only the inset canvas holds them.
+  const fan2d = [[[975, 556], [110, 340]], [[975, 556], [112, 772]]];
+  const wide = captureBox(r, takes(fan2d));
+  assert.equal(takes(fan2d)(wide.a, wide.b), 2);
+  const shell = [[[660, 338], [935, 410], [905, 690], [655, 598]]];
+  const kept = captureBox(r, takes(shell));
+  assert.deepEqual([kept.a, kept.b].map((p) => [Math.round(p.x), Math.round(p.y)]), [[475, 334], [950, 779]], "a solid model keeps the middle box");
+  assert.throws(() => captureBox(r, () => 0), /no capture box takes an element whole/);
 });
 
 test("the label says what a box or lasso takes, and how", () => {
