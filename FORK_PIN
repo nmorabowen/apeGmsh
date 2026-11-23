@@ -3,7 +3,7 @@
 # tests/conftest.py. Bump all four keys together, then run
 # `python scripts/refresh_mpm_fork_surface.py`: a new fork `mpm` subcommand must be
 # classified (member or not-offered row in tests/opensees/parity/mpm_fork_surface.py).
-tag=ladruno-v20261120
-sha=23e0f000283675b935bfd1c00a4533550fa053e0
+tag=ladruno-v20261123b
+sha=3eb195bbccb8b78a8982267179a8a0b2b7e03977
 repo=nmorabowen/OpenSees
-asset=ladruno-opensees-linux-mkl-ladruno-v20261120.tar.gz
+asset=ladruno-opensees-linux-mkl-ladruno-v20261123b.tar.gz

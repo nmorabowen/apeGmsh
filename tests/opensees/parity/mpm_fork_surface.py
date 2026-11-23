@@ -36,6 +36,11 @@ _SET = ("the particle set (ADR 0134 Contract 1) carries it per particle; "
         "apeGmsh never writes per-particle commands into a deck")
 _MODE_A = ("mode A (implicit / quasiStatic, fork WP-232f) only; apeGmsh emits "
            "the explicit engine (mode F) and has no `mode` member")
+_TWO_PHASE = ("two-phase saturated u-p particles (fork WP-232l, #1116): not "
+              "adopted; apeGmsh has no two-phase MPM member and no ADR decision "
+              "to offer one yet")
+_232L = ("added with WP-232l's two-phase build (fork fd81cbdd3); no apeGmsh "
+         "member yet, and offering it is a follow-up with no ADR decision")
 _QUERY = ("a query that answers a value inside a running deck; apeGmsh "
           "declares the run and reads results from the .ladruno file "
           "(Results.particles, ADR 0134 D3)")
@@ -79,6 +84,16 @@ NOT_OFFERED: dict[str, str] = {
     "particleResponse": f"a material response per particle (WP-232k): {_QUERY}",
     "info": f"run counters and summaries: {_QUERY}",
     "debug": "the fork's unit-test hooks (shape functions, refusal injection)",
+    "twoPhase": f"switches a body to {_TWO_PHASE}",
+    "pfix": f"a face's pore-pressure condition (p0 = 0: drained): {_TWO_PHASE}",
+    "porePressure": f"a body's initial pore pressure: {_TWO_PHASE}",
+    "pressureBlend": f"the pressure blend alpha_p: {_TWO_PHASE}",
+    "pressureCutoff": f"route S's pore-pressure cutoff: {_TWO_PHASE}",
+    "particlePressure": f"every particle's pore pressure as one flat list: {_SET}",
+    "particleAcceleration": f"every particle's acceleration as one flat list: {_SET}",
+    "plate": f"a rigid plate's total normal force on a face: {_232L}",
+    "traction": f"a named traction on a face box: {_232L}",
+    "kinematics": f"the small or hypoelastic kinematics switch: {_232L}",
 }
 
 
