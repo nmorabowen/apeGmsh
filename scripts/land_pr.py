@@ -63,6 +63,7 @@ those seams with neither ``gh`` nor a network. Stdlib only.
 from __future__ import annotations
 
 import argparse
+import ast
 import fnmatch
 import json
 import os
@@ -71,6 +72,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import warnings
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
@@ -1094,16 +1096,36 @@ def check_fresh_base(number: int, rows: list[FileRow], gh: Runner, bases: Bases)
 PIN_FILE = "FORK_PIN"
 LIVE_FORK_RUNS_JSON = "databaseId,status,conclusion,headSha,url"
 #: #3023 (#2889 -> #2907): fork-only changes, which the stock required lanes skip. A file under
-#: FORK_TESTS, a `.py` under tests/ whose content applies the `ladruno_fork` marker, or a src/
+#: FORK_TESTS, a `.py` under tests/ whose code applies the `ladruno_fork` marker, or a src/
 #: path containing "ladruno" (any case) needs the same green dispatch as a pin bump.
 FORK_TESTS = "tests/opensees/integration_ladruno/"
-FORK_MARK = re.compile(r"\bmark\.ladruno_fork\b")
+FORK_MARKER = "ladruno_fork"
+
+
+def _applies_fork_mark(text: str) -> bool:
+    """Whether the module's code holds the attribute ``<x>.mark.ladruno_fork`` or ``mark.ladruno_fork``
+    (#3105). It reads the AST, so a string, a docstring or a comment that names the marker does
+    not count (`tests/test_land_pr.py` holds it only in fixtures). One leading BOM is dropped, as
+    the interpreter drops it. Raises SyntaxError (or ValueError) on a file that does not parse; a
+    SyntaxWarning (an invalid escape) is silenced, since only the tree is read."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(text.removeprefix("\ufeff"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == FORK_MARKER:
+            owner = node.value
+            if (isinstance(owner, ast.Attribute) and owner.attr == "mark") or (
+                isinstance(owner, ast.Name) and owner.id == "mark"
+            ):
+                return True
+    return False
 
 
 def _fork_only(rows: list[FileRow], head: str, git: Runner) -> list[str]:
     """The changed paths only the fork lane exercises. Either name of a rename triggers. A test's
     content is read at the head, or on origin/main (fetched by `main`) for a name the PR deletes
-    or renames away. The reads are local `git show`s; one that fails refuses."""
+    or renames away. The reads are local `git show`s; one that fails, or a file that does not
+    parse (`_applies_fork_mark`), refuses."""
     hits: list[str] = []
     for path, status, previous, _changes, _patch in rows:
         for name in (path, previous):
@@ -1122,7 +1144,14 @@ def _fork_only(rows: list[FileRow], head: str, git: Runner) -> list[str]:
                     f"check 12: {name} could not be read at {rev[:12]} ({exc!r}), so whether it applies "
                     f"the ladruno_fork marker is unknown; refusing."
                 ) from exc
-            if FORK_MARK.search(text):
+            try:
+                marked = _applies_fork_mark(text)
+            except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
+                raise LandError(
+                    f"check 12: {name} does not parse at {rev[:12]} ({exc!r}), so whether it applies "
+                    f"the ladruno_fork marker is unknown; refusing."
+                ) from exc
+            if marked:
                 hits.append(name)
     return hits
 
