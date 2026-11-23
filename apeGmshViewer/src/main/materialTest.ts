@@ -13,7 +13,7 @@ import { existsSync, statSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
-import { MaterialTestRefused, parseRun, parseStressRun, scriptOf } from "./materialTestScript.ts";
+import { MaterialTestRefused, parseNdRun, parseRun, parseStressRun, scriptOf } from "./materialTestScript.ts";
 
 export const DEFAULT_SOLVER = "C:\\Program Files\\Ladruno\\OpenSees\\bin\\OpenSees.exe";
 const TIME_LIMIT_MS = 10_000;
@@ -137,7 +137,7 @@ export class MaterialTestRunner {
         return failed(out.stopped === "cancelled" ? "the run was cancelled" : out.stopped);
       }
       if (built.strain === null) {
-        const found = parseStressRun(out.stderr, built.rows);
+        const found = built.nd ? parseNdRun(out.stderr, built.rows, built.nd.kinds, built.nd.drive) : parseStressRun(out.stderr, built.rows);
         if (!found.ok) return failed(found.error, found.build);
         const answer = { ok: true as const, seq, build: found.build, strain: found.strain, stress: found.stress, tangent: found.tangent };
         return found.stopped === null ? answer : { ...answer, stopped: found.stopped };

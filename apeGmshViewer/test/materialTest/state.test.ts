@@ -41,11 +41,11 @@ test("a wrapper brings its material first, with the file's tags", () => {
 
 test("what cannot be a job says why", () => {
   assert.match((materialTestJobOf(wrapped(), "none", protocol) as { error: string }).error, /not a declaration/);
-  assert.match((materialTestJobOf(wrapped(), "sec", protocol) as { error: string }).error, /uniaxial materials/);
+  assert.match((materialTestJobOf(wrapped(), "sec", protocol) as { error: string }).error, /the tester runs uniaxial and nD materials/);
   const loop = modelState([record(0, "a", { m: { $decl: "b" } }), record(1, "b", { m: [{ $decl: "a" }] })], [{ kind: "uniaxialMaterial", first: 1, count: 1, decl: 0 }, { kind: "uniaxialMaterial", first: 2, count: 1, decl: 1 }]);
   assert.match((materialTestJobOf(loop, "bar", protocol) as { error: string }).error, /references itself/);
   const notMaterial = modelState([record(0, "a", { m: { $decl: "s" } }), record(1, "s", {}, "section")], [{ kind: "uniaxialMaterial", first: 1, count: 1, decl: 0 }]);
-  assert.match((materialTestJobOf(notMaterial, "bar", protocol) as { error: string }).error, /not a uniaxial material/);
+  assert.match((materialTestJobOf(notMaterial, "bar", protocol) as { error: string }).error, /which is not a material/);
 });
 
 test("a file without decl_params sends the material's own line", () => {

@@ -472,6 +472,8 @@ textarea.mt-input { min-height: 3.5em; resize: vertical; }
 .mt-bar .window-test { margin-left: 0; }
 .mt-error { color: var(--text); font-size: 12px; font-style: italic; overflow-wrap: anywhere; }
 .mt-slots-head { display: block; margin-top: 6px; }
+.mt-fold { font-size: 11px; color: var(--muted); background: none; border: none; padding: 0; cursor: pointer; text-align: left; }
+.mt-fold:hover { color: var(--text); }
 .mt-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 4px 6px; margin-top: 2px; }
 .mt-slot.mt-changed .mt-label { color: var(--accent); }
 .mt-slot.mt-changed .mt-input { border-color: var(--accent); }

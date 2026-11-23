@@ -7,7 +7,7 @@
 // (main/materialTestScript.ts), including the step limit, so nothing here guards
 // the solver.
 
-import type { DeclPath, MaterialTestForm, MaterialTestOverride, MaterialTestPoints, MaterialTestProtocol, MaterialTestSlot } from "./types.ts";
+import type { DeclPath, MaterialTestForm, MaterialTestNd, MaterialTestNdMode, MaterialTestNdView, MaterialTestOverride, MaterialTestPoints, MaterialTestProtocol, MaterialTestSlot } from "./types.ts";
 
 /** The most points a drawn curve keeps, besides its reversals. */
 export const MAX_DRAWN = 4000;
@@ -22,8 +22,12 @@ export const materialTestFormFor = (decl: DeclPath): MaterialTestForm => ({
   stepsPerRamp: "50",
   values: "",
   targets: "300, -300, 400",
+  view: "ThreeDimensional",
+  mode: "uniaxialStress",
+  confinement: "0",
   second: "history",
   overrides: {},
+  showSlots: null,
 });
 
 /** ADR 0135 D6: the axes of a material's curve. Values are in the model's units. */
@@ -32,7 +36,26 @@ const AXES: Readonly<Record<string, readonly [string, string]>> = {
   LadrunoCohesiveHinge: ["rotation jump", "moment"],
 };
 
-export const materialTestAxesOf = (type: string): readonly [string, string] => AXES[type] ?? ["strain", "stress"];
+/**
+ * The nD loadings the form offers (S5), in the form's words. Main holds the same
+ * table as `ND_MODES` and checks it again; `confined` modes take a pressure p.
+ */
+export const MATERIAL_TEST_ND_MODES: readonly { mode: MaterialTestNdMode; text: string; confined: boolean; views: readonly MaterialTestNdView[]; shear: boolean }[] = [
+  { mode: "uniaxialStress", text: "uniaxial stress", confined: false, views: ["ThreeDimensional", "PlaneStress"], shear: false },
+  { mode: "triaxial", text: "triaxial", confined: true, views: ["ThreeDimensional"], shear: false },
+  { mode: "oedometer", text: "uniaxial strain (oedometer)", confined: false, views: ["ThreeDimensional", "PlaneStress"], shear: false },
+  { mode: "simpleShear", text: "simple shear", confined: true, views: ["ThreeDimensional", "PlaneStress"], shear: true },
+];
+export const MATERIAL_TEST_ND_VIEWS: readonly { view: MaterialTestNdView; text: string }[] = [
+  { view: "ThreeDimensional", text: "3D" },
+  { view: "PlaneStress", text: "plane stress" },
+];
+
+/** The axes of a material's curve; for an nD loading, the driven component's strain and stress. */
+export const materialTestAxesOf = (type: string, nd?: MaterialTestNd): readonly [string, string] => {
+  if (nd) return MATERIAL_TEST_ND_MODES.find((m) => m.mode === nd.mode)?.shear ? ["γ12", "τ12"] : ["ε11", "σ11"];
+  return AXES[type] ?? ["strain", "stress"];
+};
 
 type Parsed<T> = { ok: T } | { error: string };
 
@@ -60,8 +83,30 @@ function numbers(text: string, what: string): Parsed<number[]> {
   return { ok: out };
 }
 
-/** The protocol the form describes, or the first thing wrong with it, in the words of the form. */
-export function materialTestProtocolOf(f: MaterialTestForm, axis = "strain"): { protocol: MaterialTestProtocol } | { error: string } {
+/** The nD loading the form describes (S5), or what is wrong with it. */
+function ndOf(f: MaterialTestForm): Parsed<MaterialTestNd> {
+  const m = MATERIAL_TEST_ND_MODES.find((x) => x.mode === f.mode);
+  const view = MATERIAL_TEST_ND_VIEWS.find((v) => v.view === f.view);
+  if (!m || !view) return { error: "choose a view and a loading" };
+  if (!m.views.includes(f.view)) return { error: `${m.text} needs the 3D view` };
+  if (!m.confined) return { ok: { view: f.view, mode: f.mode, confinement: 0 } };
+  const p = number(f.confinement, "the confinement p");
+  if ("error" in p) return p;
+  return { ok: { view: f.view, mode: f.mode, confinement: p.ok } };
+}
+
+/**
+ * The protocol the form describes, or the first thing wrong with it, in the words of
+ * the form. For an nD material (`nd`) the protocol carries the loading.
+ */
+export function materialTestProtocolOf(f: MaterialTestForm, axis = "strain", nd = false): { protocol: MaterialTestProtocol } | { error: string } {
+  if (nd) {
+    if (f.kind === "stress") return { error: "stress control runs uniaxial materials" };
+    const load = ndOf(f);
+    if ("error" in load) return load;
+    const a = materialTestProtocolOf(f, axis);
+    return "error" in a ? a : { protocol: { ...(a.protocol as Exclude<MaterialTestProtocol, { kind: "stress" }>), nd: load.ok } };
+  }
   if (f.kind === "monotonic") {
     const peak = number(f.peak, `the peak ${axis}`);
     if ("error" in peak) return peak;
@@ -139,12 +184,18 @@ export function materialTestPointsOf(strain: ArrayLike<number>, stress: ArrayLik
   return take(kept.length > 2 * max ? strided : kept);
 }
 
+/** An nD loading in words: "triaxial at p = 10, 3D". */
+function ndText(nd: MaterialTestNd): string {
+  const m = MATERIAL_TEST_ND_MODES.find((x) => x.mode === nd.mode);
+  const view = MATERIAL_TEST_ND_VIEWS.find((v) => v.view === nd.view)?.text ?? nd.view;
+  return `${m?.text ?? nd.mode}${m?.confined && nd.confinement !== 0 ? ` at p = ${nd.confinement}` : ""}, ${view}`;
+}
+
 /** A protocol in one line, for a legend and the CSV's header. */
 export function materialTestProtocolText(p: MaterialTestProtocol): string {
-  if (p.kind === "monotonic") return `monotonic to ${p.peak} in ${p.steps} steps`;
-  if (p.kind === "cyclic") return `cyclic ${p.amplitudes.join(", ")} at ${p.stepsPerRamp} steps per ramp`;
   if (p.kind === "stress") return `stress control to ${p.targets.join(", ")} at ${p.stepsPerRamp} steps per leg`;
-  return `${p.values.length} pasted values`;
+  const path = p.kind === "monotonic" ? `monotonic to ${p.peak} in ${p.steps} steps` : p.kind === "cyclic" ? `cyclic ${p.amplitudes.join(", ")} at ${p.stepsPerRamp} steps per ramp` : `${p.values.length} pasted values`;
+  return p.nd ? `${ndText(p.nd)}: ${path}` : path;
 }
 
 /** What a CSV header says of the run. */
@@ -160,7 +211,7 @@ export interface MaterialTestCsvHead {
  * protocol, then one row per step. Numbers are written in full (shortest round trip).
  */
 export function materialTestCsvOf(head: MaterialTestCsvHead, strain: ArrayLike<number>, stress: ArrayLike<number>, tangent: ArrayLike<number>): string {
-  const [x, y] = materialTestAxesOf(head.type);
+  const [x, y] = materialTestAxesOf(head.type, head.protocol.kind === "stress" ? undefined : head.protocol.nd);
   const work = materialTestWorkOf(strain, stress);
   const lines = [
     `# ${head.decl} (${head.type})`,

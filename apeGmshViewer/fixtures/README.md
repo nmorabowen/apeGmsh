@@ -622,3 +622,34 @@ ops.h5("model.h5")
 `test/materialTest/fixture.test.ts` checks every material's job against the
 script's arguments and, where `$APEGMSH_OPENSEES` names the fork, runs all
 seven.
+
+## `materials_nd.h5` (ADR 0135 D9, S5)
+
+A `model.h5` written by the bridge with two nD materials: `ElasticIsotropic`
+"solid" (tag 1, E 30000, nu 0.2), which the tetrahedra use, and the owner's
+first nD material for the tester, `ASDConcrete3D` "concrete" (tag 2, E 30000,
+v 0.2, fc 30 in MPa-mm-N, `lch_ref` 100, so its command carries
+`-autoRegularization 100`). The generator is run like the one above:
+
+```python
+from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
+
+with apeGmsh(model_name="materials_nd", verbose=False) as g:
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="block")
+    g.physical.add_volume("block", name="Block")
+    g.mesh.sizing.set_global_size(1.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+solid = ops.nDMaterial.ElasticIsotropic(E=30000.0, nu=0.2, rho=0.0, name="solid")
+ops.element.FourNodeTetrahedron(pg="Block", material=solid)
+ops.nDMaterial.ASDConcrete3D(E=30000.0, v=0.2, fc=30.0, lch_ref=100.0, name="concrete")
+ops.h5("model.h5")
+```
+
+`test/materialTest/nd.test.ts` builds both jobs from it and, where
+`$APEGMSH_OPENSEES` names a fork build with `ndTest` (WP-248), runs the S5
+acceptance.

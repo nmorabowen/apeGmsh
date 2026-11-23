@@ -422,9 +422,9 @@ function rowEl(s: State, r: MaterialRow, act: (e: Event) => void): HTMLElement {
   head.append(el("span", "window-row-title", r.handle), el("span", "node-type", r.type));
   if (r.tag !== null) head.append(el("span", "window-row-decl", `@${r.tag}`));
   if (r.declKey) head.append(el("span", "window-row-decl", r.declKey));
-  if (r.kind === "uniaxialMaterial") head.append(testButton(s, r.path, act));
+  if (r.kind === "uniaxialMaterial" || r.kind === "nDMaterial") head.append(testButton(s, r.path, act));
   row.append(head);
-  const tester = r.kind === "uniaxialMaterial" ? testerEl(s, r.path, r.type, act) : null;
+  const tester = r.kind === "uniaxialMaterial" || r.kind === "nDMaterial" ? testerEl(s, r.path, r.type, act) : null;
   if (tester) row.append(tester);
   for (const [i, o] of r.owners.entries()) {
     if (r.owners.length > 1 || o.type !== r.type) row.append(el("div", "window-row-detail", r.owners.length > 1 ? `owner ${i + 1} · ${o.type}` : o.type));

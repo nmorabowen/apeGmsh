@@ -238,3 +238,30 @@ allows: the reduced values a tool draws.
 **What this changes in the slices.** S1b is delivered by this amendment's slice, A1. It also
 adds `fixtures/materials_tester.h5`, written by the bridge, which turns S1's "from a real
 `model.h5`" into a test. S2 to S5 stand unchanged, now mounted in the window until H1.
+
+## Amendment 2 (2026-11-23): the nD command and loadings (S4, S5)
+
+**Ruling:** the owner, 2026-11-23, choosing the first nD material (ASDConcrete3D) and all four
+loadings offered below. This records what D9 left to the slice.
+
+**The command (S4).** nmorabowen/OpenSees WP-248 adds `model testNDMaterial` and one Tcl command,
+`ndTest`: `material $tag $view` (a `getCopy($view)`), `strain`, `mixed $kinds v…` (one letter per
+component, `e` for a given strain and `s` for a given stress; Newton on the stress-held block of
+the tangent), `getStrain`, `getStress`, `getTangent`, `commit` and `revert`. Nothing commits
+unless asked, so D6's trial budget does not apply to nD.
+
+**Held components (D9's open question).** One strain component is driven; the others are held
+at a stress or a strain, named by a loading: uniaxial stress (`esssss`), triaxial at a confining
+pressure p (`esssss` with σ22 = σ33 = −p, reached in ten all-stress steps before the drive),
+uniaxial strain (`eeeeee`) and simple shear (`sssess`, normal stresses −p). Plane stress offers
+the same less triaxial. The script carries only the app's numbers and these letters, so D3 holds.
+
+**What is shown.** The driven component's strain and stress. The tangent is the fork's n-by-n
+tangent condensed onto the driven component by the app, `K_dd − K_ds K_ss⁻¹ K_sd`: linear
+algebra on the fork's numbers, not a material law, so D1 holds. Stress control (D6) stays
+uniaxial.
+
+**Found on the way.** With no element, `ops_TheActiveElement` is null and ASDConcrete3D keeps
+`lch = 1`, so `-autoRegularization $lch_ref` scales its fracture energy by `lch_ref`: the tester
+shows the softening of an element of length 1. The window says so; setting that slot to 1 shows
+the curve as declared.

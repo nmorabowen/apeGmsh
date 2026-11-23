@@ -10,12 +10,84 @@
 // the script stopped on an error, so a run counts only when its framed lines are
 // all there: the build, one row per step in order, and the closing count.
 
-import type { MaterialTestJob, MaterialTestLine, MaterialTestProtocol } from "../state/types/materialTest.ts";
+import type { MaterialTestJob, MaterialTestLine, MaterialTestNd, MaterialTestProtocol } from "../state/types/materialTest.ts";
 
 export const MAX_STEPS = 200_000;
 /** Stress control (S3): the most target steps, and the trials each makes (the last commits). */
 export const MAX_STRESS_STEPS = 5_000;
 export const STRESS_TRIALS = 60;
+/** nD (S5): the most steps of a run (each row carries the n-by-n tangent), and the steps that bring it to its confinement. */
+export const MAX_ND_STEPS = 20_000;
+export const CONFINE_STEPS = 10;
+/** The relative stress tolerance of the fork's mixed control for nD runs: a softening material's own return mapping settles at about 1e-10 of its stress, the fork's default. */
+export const ND_TOL = 1e-8;
+export const ND_MAX_ITER = 50;
+
+/**
+ * Each nD loading mode as the fork's `ndTest mixed` sees it (WP-248): one letter per
+ * component, e (strain given) or s (stress given), the driven component, and whether
+ * the held normal stresses are -p. Components in OpenSees' order: 3D 11 22 33 12 23 31,
+ * plane stress 11 22 12, shear as engineering strain.
+ */
+export const ND_MODES: Readonly<Record<MaterialTestNd["view"], Partial<Record<MaterialTestNd["mode"], { kinds: string; drive: number; confined: boolean }>>>> = {
+  ThreeDimensional: {
+    uniaxialStress: { kinds: "esssss", drive: 0, confined: false },
+    triaxial: { kinds: "esssss", drive: 0, confined: true },
+    oedometer: { kinds: "eeeeee", drive: 0, confined: false },
+    simpleShear: { kinds: "sssess", drive: 3, confined: true },
+  },
+  PlaneStress: {
+    uniaxialStress: { kinds: "ess", drive: 0, confined: false },
+    oedometer: { kinds: "eee", drive: 0, confined: false },
+    simpleShear: { kinds: "sse", drive: 2, confined: true },
+  },
+};
+const NORMALS: Readonly<Record<MaterialTestNd["view"], number>> = { ThreeDimensional: 3, PlaneStress: 2 };
+
+/** How an nD job loads its material, checked: the mode's letters, the driven component, the held values and the confinement targets (none when p is 0). */
+export function ndLoadOf(raw: unknown): { view: MaterialTestNd["view"]; kinds: string; drive: number; held: number[]; confine: number[][] } {
+  if (!isRecord(raw)) return refuse("the nD loading is not an object");
+  const view = raw["view"];
+  if (view !== "ThreeDimensional" && view !== "PlaneStress") return refuse("the nD view must be ThreeDimensional or PlaneStress");
+  const mode = ND_MODES[view][raw["mode"] as MaterialTestNd["mode"]];
+  if (!mode) return refuse(`the ${view} view has no ${String(raw["mode"])} loading`);
+  const p = raw["confinement"];
+  if (!finite(p)) return refuse("the confinement must be a finite number");
+  if (!mode.confined && p !== 0) return refuse(`${String(raw["mode"])} holds no confinement: it must be 0`);
+  const normal = (i: number): boolean => i < NORMALS[view];
+  const held = [...mode.kinds].map((k, i) => (i === mode.drive || k === "e" || !normal(i) ? 0 : 0 - p));
+  const goal = [...mode.kinds].map((_, i) => (normal(i) ? 0 - p : 0));
+  const confine = p === 0 ? [] : Array.from({ length: CONFINE_STEPS }, (_, j) => goal.map((g) => (g * (j + 1)) / CONFINE_STEPS));
+  return { view, kinds: mode.kinds, drive: mode.drive, held, confine };
+}
+
+/**
+ * The tangent of the driven component along the mode's path: the fork's n-by-n tangent
+ * condensed onto it, K_dd - K_ds K_ss^-1 K_sd over the stress-held set s (the strain-held
+ * components do not move). Linear algebra on the fork's numbers, no material law (D1).
+ * Null when K_ss is singular.
+ */
+export function condensedTangent(k: readonly number[], kinds: string, drive: number): number | null {
+  const n = kinds.length;
+  const s = [...kinds].flatMap((c, i) => (c === "s" ? [i] : []));
+  const m = s.length;
+  // [K_ss | K_sd], reduced by Gauss-Jordan with partial pivoting
+  const a = s.map((i) => [...s.map((j) => k[i * n + j]!), k[i * n + drive]!]);
+  for (let c = 0; c < m; c++) {
+    let piv = c;
+    for (let r = c + 1; r < m; r++) if (Math.abs(a[r]![c]!) > Math.abs(a[piv]![c]!)) piv = r;
+    if (!(Math.abs(a[piv]![c]!) > 0)) return null;
+    [a[c], a[piv]] = [a[piv]!, a[c]!];
+    for (let r = 0; r < m; r++) {
+      if (r === c) continue;
+      const f = a[r]![c]! / a[c]![c]!;
+      for (let j = c; j <= m; j++) a[r]![j] = a[r]![j]! - f * a[c]![j]!;
+    }
+  }
+  let t = k[drive * n + drive]!;
+  for (let c = 0; c < m; c++) t -= k[drive * n + s[c]!]! * (a[c]![m]! / a[c]![c]!);
+  return t;
+}
 
 const PREFIX = "@@MT ";
 const TYPE = /^[A-Za-z][A-Za-z0-9_]*$/;
@@ -175,11 +247,13 @@ proc mtStep {target} {
 /** A number as Tcl and OpenSees read it: integers stay integers, so tag slots parse. */
 const num = (n: number): string => String(n === 0 ? 0 : n);
 
-function lineOf(raw: unknown): { text: string; tag: number } {
+function lineOf(raw: unknown): { text: string; tag: number; family: string } {
   if (!isRecord(raw)) return refuse("a material is not an object");
   const m = raw as unknown as MaterialTestLine;
   if (!Number.isSafeInteger(m.tag) || m.tag < 0) refuse("a material tag must be a whole number");
-  const who = `material tag ${m.tag}`;
+  const family = m.family ?? "uniaxialMaterial";
+  if (family !== "uniaxialMaterial" && family !== "nDMaterial") refuse(`material tag ${m.tag}: its family must be uniaxialMaterial or nDMaterial`);
+  const who = `${family === "nDMaterial" ? "nD material" : "material"} tag ${m.tag}`;
   if (typeof m.type !== "string" || !TYPE.test(m.type)) refuse(`${who}: its type is not a plain name`);
   if (!Array.isArray(m.args)) refuse(`${who}: its arguments are not a list`);
   const args = m.args.map((a, i) => {
@@ -187,27 +261,58 @@ function lineOf(raw: unknown): { text: string; tag: number } {
     if (typeof a === "string" && WORD.test(a)) return a;
     return refuse(`${who} (${m.type}): argument ${i} is neither a finite number nor a plain word`);
   });
-  return { text: ["uniaxialMaterial", m.type, m.tag, ...args].join(" "), tag: m.tag };
+  return { text: [family, m.type, m.tag, ...args].join(" "), tag: m.tag, family };
 }
 
 /**
  * The Tcl script of a job, the strains it imposes (null under stress control, where the
  * fork finds them), and the rows it must print. Throws `MaterialTestRefused`.
  */
-export function scriptOf(raw: unknown): { script: string; strain: number[] | null; rows: number } {
+export function scriptOf(raw: unknown): { script: string; strain: number[] | null; rows: number; nd: { kinds: string; drive: number } | null } {
   if (!isRecord(raw)) refuse("the job is not an object");
   const job = raw as unknown as MaterialTestJob;
   if (!Array.isArray(job.materials) || job.materials.length === 0) refuse("the job names no material");
   const lines = job.materials.map(lineOf);
-  const tags = new Set(lines.map((l) => l.tag));
+  const tags = new Set(lines.map((l) => `${l.family} ${l.tag}`));
   if (tags.size !== lines.length) refuse("two materials of the job share a tag");
-  if (lines[lines.length - 1]!.tag !== job.target) refuse("the material under test must be the job's last line");
+  const last = lines[lines.length - 1]!;
+  if (last.tag !== job.target) refuse("the material under test must be the job's last line");
+  const nd = isRecord(job.protocol) ? (job.protocol as { nd?: unknown }).nd : undefined;
+  if ((last.family === "nDMaterial") !== (nd !== undefined)) refuse(last.family === "nDMaterial" ? "an nD material needs a view and a loading mode" : "a uniaxial material takes no nD loading");
   const head = [
     `if {[info commands ladrunoBuild] eq ""} {puts "${PREFIX}nofork"; exit}`,
     "set mtBuild [ladrunoBuild]",
     `foreach mtCommand {${REMOVED.join(" ")}} {rename $mtCommand {}}`,
     `puts "${PREFIX}build $mtBuild"`,
   ];
+  if (nd !== undefined) {
+    if ((job.protocol as { kind?: unknown }).kind === "stress") refuse("stress control runs uniaxial materials");
+    const load = ndLoadOf(nd);
+    const strain = strainPath(job.protocol);
+    if (strain.length > MAX_ND_STEPS + 1) refuse(`an nD run has at most ${MAX_ND_STEPS} steps`);
+    const all = "s".repeat(load.kinds.length);
+    const script = [
+      ...head,
+      "model testNDMaterial",
+      ...lines.map((l) => l.text),
+      `ndTest material ${job.target} ${load.view}`,
+      // to the confinement first, all stresses held, committed and not printed
+      ...load.confine.map((c) => `ndTest mixed ${all} ${c.map(num).join(" ")} -tol ${ND_TOL} -maxIter ${ND_MAX_ITER}; ndTest commit`),
+      `set mtV {${load.held.map(num).join(" ")}}`,
+      `set mtE0 [lindex [ndTest getStrain] ${load.drive}]`,
+      "set mtStep 0",
+      `foreach mtStrain {${strain.map(num).join(" ")}} {`,
+      `  lset mtV ${load.drive} [expr {$mtE0 + $mtStrain}]`,
+      `  if {[catch {ndTest mixed ${load.kinds} {*}$mtV -tol ${ND_TOL} -maxIter ${ND_MAX_ITER}} mtErr]} {puts "${PREFIX}stop $mtStep $mtErr"; break}`,
+      "  ndTest commit",
+      `  puts "${PREFIX}nrow $mtStep [lindex [ndTest getStrain] ${load.drive}] [lindex [ndTest getStress] ${load.drive}] [ndTest getTangent]"`,
+      "  incr mtStep",
+      "}",
+      `puts "${PREFIX}end $mtStep"`,
+      "",
+    ].join("\n");
+    return { script, strain: null, rows: strain.length, nd: { kinds: load.kinds, drive: load.drive } };
+  }
   if (isRecord(job.protocol) && (job.protocol as { kind?: unknown }).kind === "stress") {
     const targets = stressPath(job.protocol);
     const script = [
@@ -232,7 +337,7 @@ export function scriptOf(raw: unknown): { script: string; strain: number[] | nul
       `puts "${PREFIX}end $mtStep"`,
       "",
     ].join("\n");
-    return { script, strain: null, rows: targets.length + 1 };
+    return { script, strain: null, rows: targets.length + 1, nd: null };
   }
   const strain = strainPath(job.protocol);
   const script = [
@@ -249,7 +354,7 @@ export function scriptOf(raw: unknown): { script: string; strain: number[] | nul
     `puts "${PREFIX}end $mtStep"`,
     "",
   ].join("\n");
-  return { script, strain, rows: strain.length };
+  return { script, strain, rows: strain.length, nd: null };
 }
 
 export type ParsedRun =
@@ -331,6 +436,54 @@ export function parseStressRun(stderr: string, rows: number): ParsedStressRun {
   let stopped: string | null = null;
   const next = framed[k];
   if (next && next[0] === "stop" && next[1] === String(strain.length) && strain.length > 0) {
+    stopped = `step ${next[1]}: ${next.slice(2).join(" ")}`;
+    k++;
+  }
+  const last = framed[k];
+  if (!last || last[0] !== "end" || last[1] !== String(strain.length) || k !== framed.length - 1 || strain.length === 0) {
+    return fail(`the run stopped after ${Math.max(0, strain.length - 1)} of ${rows - 1} steps`, build);
+  }
+  if (stopped === null && strain.length !== rows) return fail(`the run stopped after ${strain.length - 1} of ${rows - 1} steps`, build);
+  return { ok: true, build, strain: Float64Array.from(strain), stress: Float64Array.from(stress), tangent: Float64Array.from(tangent), stopped };
+}
+
+/**
+ * Read an nD run (S5) against the `rows` its script may print: one `nrow` per step with
+ * the driven component's strain and stress and the fork's n-by-n tangent, condensed here
+ * onto the driven component. A `stop` after the rows it reached (the fork's mixed control
+ * refused a step) ends the run early with the fork's reason, as stress control does.
+ */
+export function parseNdRun(stderr: string, rows: number, kinds: string, drive: number): ParsedStressRun {
+  const n = kinds.length;
+  const lines = stderr.split(/\r?\n/);
+  const fail = (what: string, build: string | null): ParsedStressRun => {
+    const said = messageOf(lines);
+    return { ok: false, build, error: said ? `${what}. The solver said: ${said}` : `${what}.` };
+  };
+  const framed = lines.filter((l) => l.startsWith(PREFIX)).map((l) => l.slice(PREFIX.length).trim().split(/\s+/));
+  if (framed.some((f) => f[0] === "nofork")) return { ok: false, build: null, error: "this OpenSees executable is not a Ladruno fork build (it has no ladrunoBuild command)" };
+  const head = framed[0];
+  if (!head || head[0] !== "build" || head.length !== 2) return fail("the solver did not start the script", null);
+  const build = head[1]!;
+  const strain: number[] = [], stress: number[] = [], tangent: number[] = [];
+  let k = 1;
+  for (; k < framed.length && framed[k]![0] === "nrow"; k++) {
+    const f = framed[k]!;
+    const row = strain.length;
+    if (f.length !== 4 + n * n || f[1] !== String(row) || row >= rows) return fail(`the solver's row ${row} is malformed`, build);
+    const values = f.slice(2);
+    const bad = values.find((v) => !NUMBER.test(v));
+    if (bad !== undefined) return fail(`at step ${row} the material returned ${bad}`, build);
+    const t = condensedTangent(values.slice(2).map(Number), kinds, drive);
+    if (t === null) return fail(`at step ${row} the tangent of the held components is singular`, build);
+    strain.push(Number(values[0]));
+    stress.push(Number(values[1]));
+    tangent.push(t);
+  }
+  let stopped: string | null = null;
+  const next = framed[k];
+  if (next && next[0] === "stop" && next[1] === String(strain.length)) {
+    if (strain.length === 0) return fail(`the first step was refused: ${next.slice(2).join(" ")}`, build);
     stopped = `step ${next[1]}: ${next.slice(2).join(" ")}`;
     k++;
   }
