@@ -1396,3 +1396,50 @@ behind it. Three meshes above 130k cells (151k, 268k and 301k) loaded in 1.8 to
 3.1 s, with at most 535 MB in the page and 1.15 GB in the whole app, against the
 5.3 GB page the building took before the fixes. Once the building is
 re-measured, the stated size can be set from it and from these rows.
+
+## The loader process, model opens (#3058, first slice, ADR 0137 D2)
+
+The first slice of #3058 moves `model:open` (the model, `/provenance`, `/meta/lineage` and the
+`/sequence` element tags), `geometry:open`, `compare:model` and the `source:goto` provenance read
+into an Electron utility process (`src/main/loader/`). `results:open`, `results:scan`, step reads,
+particles and the `.user.h5` reads stay in main until the second slice.
+
+### Machine and method
+
+- Same machine as above (Ryzen AI 7 PRO 350, 23.6 GB RAM). Before: `main` at `58be85a0`. After:
+  that commit plus this slice. Available RAM at each launch 1.9 to 3.0 GB, CPU 10 to 40%.
+- **Main stall.** The build's `dist/main.mjs` run under a small Electron entry that enables
+  `perf_hooks.monitorEventLoopDelay` (5 ms resolution) and a 20 ms interval timer before it imports
+  main; a stall is an interval that fired more than 50 ms late. The app ran
+  `--mode=describe --file=<model>`, which opens the set, draws it, writes `describe.json` and quits
+  (about 1.5 s on `tims_c3b`, 2.5 s on the slab). Stalls in the first 250 ms are Electron's start,
+  present in both builds, and are left out of the column.
+- **Load and main busy.** `npm run profile -- <model> --scenarios=load --reps=1`: the profiler's
+  load time (file handed to the window, to the first painted frame) and the main process's CPU-busy
+  time during it.
+
+### Rows
+
+| model | build | runs | longest main stall during the load (ms) | load (ms) | main busy in the load (ms) |
+|---|---|---|---|---|---|
+| `tims_c3b` (26,970 cells, 11.4 MB) | before | 3 | 125, 141, 135 | 756 | 265 |
+| `tims_c3b` | after | 3 (stall), 2 (load) | 53, 72, 59 | 720, 765 | 159, 134 |
+| `yoo_slab_N56_75` (24,424 cells, 25.8 MB) | before | 2 | 843, 779 | 1,634 | 1,033 |
+| `yoo_slab_N56_75` | after | 2 | 97, 100 | 1,678 | 258 |
+
+- **The model read leaves main.** The before builds stall once during the load, for the time the
+  model read takes (about 130 ms on `tims_c3b`, about 800 ms on the slab). After, that stall is gone;
+  what remains (50 to 100 ms) is the results file's open and index, which this slice leaves in main.
+- **The hop costs no measurable load time.** Load time is within one run's noise of the before
+  build on both models (720 to 765 ms against 756; 1,678 against 1,634). The model crosses one more
+  structured clone (loader to main) before the IPC to the page.
+- **The loader starts with the window.** Started on the first open instead, the first `tims_c3b`
+  load took 866 ms, about 100 ms more: the process start and h5wasm's module compile. Starting it
+  with the window moves that cost off the first open.
+- **The loader's memory.** After a `tims_c3b` open in view mode, the loader process held 93 MB
+  private (122 MB working set), one reading. h5wasm's heap grows to the largest read and does not
+  shrink, so the figure follows the largest model opened; main's own h5wasm heap no longer grows for
+  model reads. The whole app's peak was not re-measured for this slice.
+- **Error.** One to three runs per row on a shared machine; read the load column as equal within
+  noise, not as a speed-up or a slow-down. The stall is a lower bound when a stall overlaps the
+  timer's 20 ms period.

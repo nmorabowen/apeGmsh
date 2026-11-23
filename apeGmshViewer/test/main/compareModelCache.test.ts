@@ -2,7 +2,8 @@
 // in 1.5-1.8 s, so main answers a re-open of the same compare set from its last
 // read. The oracle is main.ts itself, run in a child Node process with `electron`
 // stubbed (as ./compareDoorsDriver.ts does; this file is its own driver when
-// VF3E_DRIVER=1) and `../reader/node.ts`'s `openModel` counted, on the VU10
+// VF3E_DRIVER=1) and every model read it asks the loader process for
+// (`Loader.modelCounts`, ADR 0137 D2) counted, on the VU10
 // study (test/fixtures/vu10: a 4 x 2 FourNodeQuad plate, so 15 nodes and 24
 // elements of every dimension by construction):
 //
@@ -27,11 +28,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SELF = fileURLToPath(import.meta.url);
 const MAIN = join(import.meta.dirname, "..", "..", "src", "main", "main.ts");
-const READER = pathToFileURL(join(import.meta.dirname, "..", "..", "src", "reader", "node.ts")).href;
+const CLIENT = pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "loader", "client.ts")).href;
 const COUNTED = "vf3e:counted-reader";
 const opt = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 
-/** The driver: main.ts with `electron` stubbed and every `openModel` it makes recorded by file name. */
+/** The driver: main.ts with `electron` stubbed and every model read it asks the loader for recorded by file name. */
 async function drive(): Promise<void> {
   const root = opt("dir");
   if (!root) throw new Error("compareModelCache driver needs --dir=");
@@ -39,7 +40,7 @@ async function drive(): Promise<void> {
   registerHooks({
     resolve: (specifier, context, next) => {
       if (specifier === "electron") return { url: STUB, shortCircuit: true };
-      if (specifier === "../reader/node.ts" && pathToFileURL(MAIN).href === context.parentURL) return { url: COUNTED, shortCircuit: true };
+      if (specifier === "./loader/client.ts" && pathToFileURL(MAIN).href === context.parentURL) return { url: COUNTED, shortCircuit: true };
       return next(specifier, context);
     },
     load: (url, context, next) =>
@@ -47,16 +48,18 @@ async function drive(): Promise<void> {
         ? {
             format: "module",
             shortCircuit: true,
-            source: `import { openModel as read } from ${JSON.stringify(READER)};
+            source: `import { Loader as Real } from ${JSON.stringify(CLIENT)};
 export const reads = [];
 globalThis.__vf3eReads = reads;
-export async function openModel(path) {
-  reads.push(path);
-  const model = await read(path);
-  const during = globalThis.__vf3eDuringRead;
-  globalThis.__vf3eDuringRead = null;
-  if (during) during(path);
-  return model;
+export class Loader extends Real {
+  async modelCounts(path) {
+    reads.push(path);
+    const counts = await super.modelCounts(path);
+    const during = globalThis.__vf3eDuringRead;
+    globalThis.__vf3eDuringRead = null;
+    if (during) during(path);
+    return counts;
+  }
 }`,
           }
         : next(url, context),
@@ -64,7 +67,7 @@ export async function openModel(path) {
   const { handlers } = (await import(STUB)) as typeof import("./electronStub.ts");
   await import(pathToFileURL(MAIN).href);
   const reads = (globalThis as { __vf3eReads?: string[] }).__vf3eReads;
-  if (!reads) throw new Error("main.ts did not load ../reader/node.ts through the counting hook");
+  if (!reads) throw new Error("main.ts did not load ./loader/client.ts through the counting hook");
   const study = join(root, "study");
   const CRACKED = join(study, "cracked", "plate_cracked.h5");
   const event = { sender: { isDestroyed: () => false, send: () => undefined } };
@@ -90,7 +93,7 @@ export async function openModel(path) {
   const t = statSync(CRACKED);
   utimesSync(CRACKED, t.atime, new Date(t.mtimeMs + 5000));
   await model("touched");
-  // 2b. A file rewritten while it was read (its mtime bumped once, before openModel returns) is refused and
+  // 2b. A file rewritten while it was read (its mtime bumped once, before the loader's read returns) is refused and
   // nothing is held: the next call reads it again.
   const t2 = statSync(CRACKED);
   utimesSync(CRACKED, t2.atime, new Date(t2.mtimeMs + 5000));

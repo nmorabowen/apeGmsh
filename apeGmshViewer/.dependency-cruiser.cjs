@@ -37,6 +37,13 @@ module.exports = {
       to: { path: "(^|/)src/apeGmsh(/|$)" },
     },
     {
+      name: "model-read-in-loader",
+      severity: "error",
+      comment: "ADR 0137 D2 (#3058): main reads a model only through the loader process (src/main/loader/), never on the thread that owns the windows",
+      from: { path: "^src/main/", pathNot: "^src/main/loader/" },
+      to: { path: "^src/reader/node\.ts$" },
+    },
+    {
       name: "no-circular",
       severity: "error",
       from: {},

@@ -57,13 +57,12 @@
 // subscribed (the P0 page) is reloaded instead, and reads the new model from
 // `app:config`.
 
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, utilityProcess } from "electron";
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, unwatchFile, watchFile, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 import * as h5wasm from "h5wasm/node";
-import { openModel } from "../reader/node.ts";
 import type { ResultsH5 } from "../reader/results.ts";
 import { readUserFile, readUserResultColumn, readUserSet, type UserColumnRead, type UserH5 } from "../reader/userFile.ts";
 import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } from "../reader/userSpectra.ts";
@@ -76,7 +75,8 @@ import { confinedToStudy, isManifestPath, readVariants, resolveRow, type Variant
 import { goToSource, provenanceSources, type SourceScope } from "./source.ts";
 import { SetWatcher } from "./watch.ts";
 import { guardContents } from "./windowPolicy.ts";
-import { openGeometry, openLineage, openProvenance, openStageElements } from "./zones.ts";
+import { openLineage } from "./zones.ts";
+import { Loader } from "./loader/client.ts";
 import { nodeDeps, registerWorkspace } from "./workspace.ts";
 import { combinationToken, nodeCombinationDeps, registerCombinations, sweepOnOpen, type CombinationH5 } from "./combinations.ts";
 import type { WorkspaceH5 } from "../reader/workspace.ts";
@@ -88,6 +88,23 @@ import { abandonRender, agentStartup, drawnSet, registerRender, whereStopped } f
 const here = dirname(fileURLToPath(import.meta.url));
 /** The preload script of every window, beside dist/main.mjs; a module under ./modes/ takes it from here (VH3, #2868). */
 const preload = join(here, "preload.cjs");
+
+/**
+ * ADR 0137 D2 (#3058): the reads that take seconds on a large model (a model, its zones, a
+ * /geometry sibling) run in the loader process, so this thread keeps the windows answering.
+ * Its entry is dist/loader.mjs beside dist/main.mjs, or ./loader/process.ts when main runs
+ * from src/ (the door tests, whose `electron` stub forks it with Node). Every door checks its
+ * path here first; the loader reads only what it is sent.
+ */
+const loaderEntry = import.meta.url.endsWith(".ts") ? join(here, "loader", "process.ts") : join(here, "loader.mjs");
+const loader = new Loader(() => {
+  const child = utilityProcess.fork(loaderEntry, [], { serviceName: "apeGmshViewer loader", stdio: "inherit" });
+  return {
+    postMessage: (m) => child.postMessage(m),
+    onMessage: (fn) => void child.on("message", fn),
+    onExit: (fn) => void child.on("exit", fn),
+  };
+});
 
 // The command line is read in ./args.ts (VH2, #2866); a refused one exits here, before anything starts.
 if (badArgs !== null) {
@@ -481,9 +498,10 @@ ipcMain.handle("model:open", async (_e, path: unknown) => {
   // A free string is refused before any read, so the set stays as it is (VU12).
   const refused = ungestured("model:open", path);
   if (refused !== null) return { ok: false, error: refused };
-  let model;
+  let opened;
   try {
-    model = await openModel(path);
+    // The model and its zones, in the loader process (ADR 0137 D2).
+    opened = await loader.model(path);
   } catch (err) {
     // The renderer takes the old model off screen (state/reduce.ts `fileFailed`),
     // so the old set ends either way (./session.ts). A `<stem>.h5` that failed
@@ -497,15 +515,10 @@ ipcMain.handle("model:open", async (_e, path: unknown) => {
   // set follows what is on screen (./session.ts), by the same rule.
   if (mode === "view" && typeof path === "string") followModel(path);
   // /provenance rides with the model; a refused or broken zone does not stop
-  // the model from loading (the renderer shows why go-to-source is off).
-  return {
-    ok: true,
-    model,
-    provenance: await openProvenance(path),
-    // V4b: the results pairing key, and the element tags of the /sequence element rows.
-    lineage: await openLineage(path),
-    stageElements: await openStageElements(path, model.sequence),
-  };
+  // the model from loading (the renderer shows why go-to-source is off). V4b: the
+  // lineage is the results pairing key, and the stage elements the tags of the
+  // /sequence element rows (./loader/process.ts reads all four).
+  return { ok: true, ...opened };
 });
 
 /**
@@ -874,9 +887,9 @@ ipcMain.handle("compare:model", async (_e, req: unknown) => {
   const answer = (n: { nodes: number; elements: number }) => ({ ok: true, slot, femHash: own.femHash, modelHash: own.modelHash, nodes: n.nodes, elements: n.elements });
   const key = compareModelKey(path, stat, own);
   if (compareModelSeen !== null && compareModelSeen.key === key) return answer(compareModelSeen);
-  let model;
+  let counts;
   try {
-    model = await openModel(path);
+    counts = await loader.modelCounts(path);
   } catch (err) {
     return { ok: false, slot, reason: `compare:model: ${path} cannot be read (${err instanceof Error ? err.message : String(err)})` };
   }
@@ -889,7 +902,7 @@ ipcMain.handle("compare:model", async (_e, req: unknown) => {
     still = null;
   }
   if (still !== key) return { ok: false, slot, reason: `compare:model: ${path} was rewritten while it was read` };
-  compareModelSeen = { path, key, nodes: model.nodeIds.length, elements: model.blocks.reduce((n, b) => n + b.ids.length, 0) };
+  compareModelSeen = { path, key, ...counts };
   return answer(compareModelSeen);
 });
 
@@ -923,7 +936,7 @@ ipcMain.handle("geometry:open", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${shown(path)}` };
   const f = setFile("geometry:open", "geometry", path);
   if (!f.ok) return f;
-  return openGeometry(f.path);
+  return loader.geometry(f.path);
 });
 
 /** A request as a log line, whatever the IPC carried (a BigInt, a cycle): never throws, unlike `JSON.stringify` (VU11, #2750). */
@@ -1132,7 +1145,7 @@ async function setSources(): Promise<SourceScope> {
   const set = windowSet();
   if ("reason" in set) return { reason: set.reason };
   if (set.model === null) return { reason: "the open set has no model" };
-  const p = await openProvenance(set.model);
+  const p = await loader.provenance(set.model);
   if (!p.ok) return { reason: `the /provenance of ${set.model} cannot be read (${p.error})` };
   if (p.zone === null) return { reason: `${set.model} has no /provenance zone` };
   return { files: provenanceSources(p.zone) };
@@ -1175,6 +1188,8 @@ app.whenReady().then(() => {
   }
   if (badArgs !== null || reachMode || outBusy || (mode === "render" && !renderJob)) return;
   if (agentMode) mkdirSync(resolve(out!), { recursive: true });
+  // The loader starts with the window, so the first open does not wait for a process and h5wasm to start (#3058).
+  loader.warm();
   const w = new BrowserWindow({
     // ADR 0128 D9: a render window's page is the spec's size (at device scale 1, above).
     width: renderJob ? renderJob.spec.size[0] : particleRun ? PARTICLE_WINDOW[0] : 1600,

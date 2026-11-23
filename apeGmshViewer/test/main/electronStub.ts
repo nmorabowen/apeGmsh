@@ -5,6 +5,8 @@
 // Electron fails the test loudly instead of being stubbed into silence.
 // preload.ts loads against it too (test/main/preload.test.ts, VU12 #2753).
 
+import { fork } from "node:child_process";
+
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
 
 /** The `ipcMain.handle` registrations, by channel. */
@@ -148,3 +150,25 @@ class StubWindow {
 export const BrowserWindow = strict("BrowserWindow", StubWindow);
 
 export const dialog = strict("dialog", { showErrorBox: () => undefined });
+
+/**
+ * ADR 0137 D2 (#3058): the loader process, forked as a plain Node child that speaks over Node's
+ * IPC channel (src/main/loader/process.ts takes either port). `serialization: "advanced"` is the
+ * structured clone Electron's port uses, so typed arrays arrive as typed arrays. No `execArgv`:
+ * a child of `node --test` must not become a test runner. Every fork is recorded.
+ */
+export const forked: { modulePath: string; kill: () => boolean; exited: Promise<number | null> }[] = [];
+export const utilityProcess = strict("utilityProcess", {
+  fork: (modulePath: string, args: string[] = []) => {
+    const child = fork(modulePath, args, { serialization: "advanced", execArgv: [], stdio: ["ignore", "inherit", "inherit", "ipc"] });
+    forked.push({ modulePath, kill: () => child.kill(), exited: new Promise((r) => child.once("exit", r)) });
+    return strict("UtilityProcess", {
+      postMessage: (m: unknown) => void child.send(m as never),
+      on: (event: string, fn: (...a: unknown[]) => void) => {
+        if (event === "exit") child.on("exit", (code, signal) => fn(code ?? (signal ? -1 : 0)));
+        else child.on(event, fn);
+        return undefined;
+      },
+    });
+  },
+});
