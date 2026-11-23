@@ -63,11 +63,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 import * as h5wasm from "h5wasm/node";
-import type { ResultsH5 } from "../reader/results.ts";
 import { readUserFile, readUserResultColumn, readUserSet, type UserColumnRead, type UserH5 } from "../reader/userFile.ts";
 import { readCaseValues, SPECTRA_FAMILIES, type CaseRead, type SpectrumTarget } from "../reader/userSpectra.ts";
 import { candidates, classify, FOLD_CASE, fileFromArgv, listDir, pairSet, samePath, type Kind, type OpenSet } from "./pairing.ts";
-import { compareStagesOf, readParticleSet, ResultsHost, type ParticleOutputRequest, type HingeHistoryRequest, type ScanRequest, type StepRequest } from "./results.ts";
+import { compareStagesOf, type ParticleOutputRequest, type HingeHistoryRequest, type ScanRequest, type StepRequest } from "./results.ts";
 import { checkPlan } from "../state/extrapolation.ts";
 import { MaterialTestRunner, saveCsv } from "./materialTest.ts";
 import { OpenSession, Study } from "./session.ts";
@@ -285,8 +284,9 @@ function rowSet(open: string): { ok: true; set: OpenSet } | { ok: false; reason:
  * D9.5: the compare set's results host, apart from the window set's
  * `resultsHost`: `results:open` and `results:close` never touch it, and only
  * `variants:compare`, `compare:readStep` and `compare:close` read or close it.
+ * Both hosts live in the loader process (ADR 0137 D2, #3058).
  */
-const compareHost = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);
+const compareHost = loader.results("compare");
 
 // ADR 0128 D2: an agent mode's arguments, `--out` and render job are checked before any window (./modes/render.ts).
 const startup = agentMode ? agentStartup(study) : { refused: false, job: null };
@@ -559,7 +559,8 @@ function setFile(door: string, slot: "geometry" | "results", asked: string): { o
 // metadata and asks for one step at a time (./results.ts). Each door reads
 // only the window's set's results file (`setFile`, VU12); a step or a scan of
 // a file the set has left is refused too, though the host still indexes it.
-const resultsHost = new ResultsHost(h5wasm as unknown as ResultsH5, h5wasm.ready);
+// ADR 0137 D2 (#3058): the host, with its open file, index and scans, lives in the loader process.
+const resultsHost = loader.results("window");
 ipcMain.handle("results:open", (_e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, error: `results:open needs a path; got ${shown(path)}` };
   const f = setFile("results:open", "results", path);
@@ -655,7 +656,7 @@ ipcMain.handle("particles:set", () => {
   const set = windowSet();
   if ("reason" in set) return { ok: false, error: `particles:set reads only the open set's particle set, and ${set.reason}` };
   if (!set.particles) return { ok: false, error: "particles:set: the open set has no <stem>.particles.h5" };
-  return readParticleSet(h5wasm as unknown as ResultsH5, h5wasm.ready, set.particles);
+  return loader.particleSet(set.particles);
 });
 
 // ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ import { outRefusal, prepareRender, PROFILE_DIR, type RenderJobFiles } from "../
 import { MANIFEST_FILE, refusedManifest } from "../../spec/manifest.ts";
 import { agentMode, arg, file, mode, out } from "../args.ts";
 import { pairSet, type OpenSet } from "../pairing.ts";
-import type { ResultsHost } from "../results.ts";
+import type { RemoteResults } from "../loader/client.ts";
 import type { Study } from "../session.ts";
 import { jobFs, stamped, writeManifestLast } from "./out.ts";
 
@@ -47,7 +47,7 @@ export interface RenderHost {
   /** main.ts's log line of whatever the IPC carried. */
   shown: (req: unknown) => string;
   /** The window set's results host, closed before an agent mode exits. */
-  resultsHost: ResultsHost;
+  resultsHost: RemoteResults;
   /** Whether the run is ending (main.ts's `ending`). */
   isEnding: () => boolean;
   /** Mark the run as ending, so a late event changes nothing (main.ts's `ending`). */

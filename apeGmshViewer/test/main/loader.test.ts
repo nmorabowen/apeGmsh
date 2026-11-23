@@ -20,18 +20,18 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { openModel } from "../../src/reader/node.ts";
 import { Loader, type LoaderChild } from "../../src/main/loader/client.ts";
-import type { LoaderReply, LoaderRequest } from "../../src/main/loader/protocol.ts";
+import type { LoaderMessage, LoaderReply, LoaderRequest } from "../../src/main/loader/protocol.ts";
 
 const FIX = fileURLToPath(new URL("../../fixtures/", import.meta.url));
 const DRIVER = fileURLToPath(new URL("./loaderDriver.ts", import.meta.url));
 
 /** A stand-in process: it records what it is sent and answers or exits when the test says. */
 function standIn() {
-  const spawned: { sent: LoaderRequest[]; reply(m: LoaderReply): void; exit(code: number): void }[] = [];
+  const spawned: { sent: LoaderRequest[]; reply(m: LoaderReply): void; event(m: LoaderMessage): void; exit(code: number): void }[] = [];
   const spawn = (): LoaderChild => {
-    let onMessage: (m: LoaderReply) => void = () => undefined;
+    let onMessage: (m: LoaderMessage) => void = () => undefined;
     let onExit: (code: number) => void = () => undefined;
-    const c = { sent: [] as LoaderRequest[], reply: (m: LoaderReply) => onMessage(m), exit: (code: number) => onExit(code) };
+    const c = { sent: [] as LoaderRequest[], reply: (m: LoaderReply) => onMessage(m), event: (m: LoaderMessage) => onMessage(m), exit: (code: number) => onExit(code) };
     spawned.push(c);
     return { postMessage: (m) => c.sent.push(m), onMessage: (fn) => (onMessage = fn), onExit: (fn) => (onExit = fn) };
   };
@@ -44,7 +44,7 @@ test("the client starts the process on the first read, keeps it, and matches ans
   const a = loader.modelCounts("a.h5");
   const b = loader.geometry("b.geometry.h5");
   assert.equal(spawned.length, 1, "one process for both reads");
-  assert.deepEqual(spawned[0]!.sent.map((r) => [r.op, r.path]), [["modelCounts", "a.h5"], ["geometry", "b.geometry.h5"]]);
+  assert.deepEqual(spawned[0]!.sent.map((r) => [r.op, "path" in r ? r.path : null]), [["modelCounts", "a.h5"], ["geometry", "b.geometry.h5"]]);
   const [ra, rb] = spawned[0]!.sent;
   spawned[0]!.reply({ id: rb!.id, ok: true, value: { ok: true, geometry: null, sizeBytes: 1, readMs: 0 } });
   spawned[0]!.reply({ id: ra!.id, ok: true, value: { nodes: 15, elements: 24 } });
@@ -153,4 +153,106 @@ test("warm() starts the process before the first read, once", async () => {
   assert.equal(spawned.length, 1, "the read uses the warm process");
   spawned[0]!.reply({ id: spawned[0]!.sent[0]!.id, ok: true, value: { nodes: 2, elements: 1 } });
   assert.deepEqual(await a, { nodes: 2, elements: 1 });
+});
+
+// ---------------------------------------------------------------------------
+// The results hosts in the loader (#3058, second slice).
+
+test("a stopped loader's results files are opened again before the next read of them", async () => {
+  const { spawned, loader } = standIn();
+  const host = loader.results("window");
+  const open = host.open("r.ladruno");
+  spawned[0]!.reply({ id: spawned[0]!.sent[0]!.id, ok: true, value: { ok: true } });
+  assert.deepEqual(await open, { ok: true });
+  spawned[0]!.exit(1);
+  const step = host.readStep({ path: "r.ladruno", stage: "s", step: 3, seq: 9 });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(spawned.length, 2, "the read started a new process");
+  const sent = () => spawned[1]!.sent.map((r) => ("call" in r ? `${r.host}:${r.call}` : r.op));
+  assert.deepEqual(sent(), ["window:open"], "the open is sent first, and the read waits for it");
+  spawned[1]!.reply({ id: spawned[1]!.sent[0]!.id, ok: true, value: { ok: true } });
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(sent(), ["window:open", "window:readStep"]);
+  spawned[1]!.reply({ id: spawned[1]!.sent[1]!.id, ok: true, value: { ok: true, seq: 9 } });
+  assert.deepEqual(await step, { ok: true, seq: 9 });
+});
+
+test("a closed host is not opened again in a new process, and the other host is", () => {
+  const { spawned, loader } = standIn();
+  void loader.results("window").open("w.ladruno");
+  const compare = loader.results("compare");
+  void compare.open("c.ladruno");
+  compare.close();
+  spawned[0]!.exit(1);
+  loader.warm();
+  const opens = spawned[1]!.sent.map((r) => ("call" in r ? [r.host, r.call, r.args[0]] : null));
+  assert.deepEqual(opens, [["window", "open", "w.ladruno"]]);
+});
+
+test("a results read whose loader stopped answers ok: false with why, never rejects", async () => {
+  const { spawned, loader } = standIn();
+  const host = loader.results("compare");
+  const step = host.readStep({ path: "c", stage: "s", step: 0, seq: 4 });
+  const scan = host.scan({ path: "c", stage: "s", components: ["x"], magnitude: false, scanId: 5 }, () => undefined);
+  const open = host.open("c");
+  await new Promise((r) => setImmediate(r));
+  spawned[0]!.exit(7);
+  const msg = "the loader process stopped (exit code 7) before it finished reading";
+  assert.deepEqual(await step, { ok: false, seq: 4, error: msg });
+  assert.deepEqual(await scan, { ok: false, scanId: 5, error: msg });
+  assert.deepEqual(await open, { ok: false, error: msg });
+});
+
+test("a scan's progress reaches its own listener, by host and scan id", async () => {
+  const { spawned, loader } = standIn();
+  const seen: string[] = [];
+  const w = loader.results("window").scan({ path: "w", stage: "s", components: ["x"], magnitude: false, scanId: 1 }, (p) => seen.push(`w${p.done}`));
+  const c = loader.results("compare").scan({ path: "c", stage: "s", components: ["x"], magnitude: false, scanId: 1 }, (p) => seen.push(`c${p.done}`));
+  await new Promise((r) => setImmediate(r));
+  const child = spawned[0]!;
+  const fire = (host: "window" | "compare", done: number) => child.event({ event: "scanProgress", host, progress: { scanId: 1, done, total: 9 } });
+  fire("window", 2);
+  fire("compare", 5);
+  fire("window", 4);
+  assert.deepEqual(seen, ["w2", "c5", "w4"]);
+  for (const r of child.sent) child.reply({ id: r.id, ok: true, value: { ok: true } });
+  await Promise.all([w, c]);
+  fire("window", 6);
+  assert.deepEqual(seen, ["w2", "c5", "w4"], "a finished scan hears nothing more");
+});
+
+test("the results doors answer through the loader: open, step, progress, a cancel and a step read mid-scan, a stop mid-scan", () => {
+  const dir = join(root, "results");
+  mkdirSync(dir);
+  copyFileSync(join(FIX, "contour_staged.h5"), join(dir, "s.h5"));
+  copyFileSync(join(FIX, "contour_staged.results.h5"), join(dir, "s.results.h5"));
+  const stdout = execFileSync(process.execPath, [DRIVER, "--case=results", "--mode=capture", `--file=${join(dir, "s.h5")}`, `--out=${join(dir, "out.png")}`], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 90_000,
+  });
+  const line = stdout.split(/\r?\n/).find((l) => l.startsWith("LOADER "));
+  assert.ok(line, `the driver printed no answer:\n${stdout}`);
+  type Said = { ok: boolean; error?: string; stages?: number; nodal?: string[]; cancelled?: boolean };
+  const got = JSON.parse(line.slice("LOADER ".length)) as Record<string, unknown>;
+  const said = (k: string) => got[k] as Said;
+  assert.equal(said("open").ok, true, said("open").error);
+  assert.equal(said("open").stages, 3);
+  assert.equal(said("step").ok, true, said("step").error);
+  assert.deepEqual(said("step").nodal, ["displacement_x", "displacement_y", "displacement_z"]);
+  assert.deepEqual(said("cancelled"), { ok: false, error: "cancelled", cancelled: true }, "the cancel reached the running scan");
+  const progress = got["progress"] as { scanId: number; done: number; total: number }[];
+  assert.ok(progress.length >= 1 && progress.every((p) => p.scanId === 7 && p.total === 4), JSON.stringify(progress));
+  assert.equal(said("stepDuringScan").ok, true, "a step read is served while a scan runs");
+  assert.equal(said("stoppedScan").ok, false);
+  assert.match(said("stoppedScan").error ?? "", /^the loader process stopped \(exit code -?\d+\) before it finished reading$/);
+  assert.equal(said("stepAfterStop").ok, true, `the file is opened again in the new loader: ${said("stepAfterStop").error}`);
+  assert.equal(got["newForks"], 1);
+});
+
+test("the first open starts the process and sends that one open, not a replay of it too", () => {
+  const { spawned, loader } = standIn();
+  void loader.results("window").open("r.ladruno");
+  assert.equal(spawned.length, 1);
+  assert.deepEqual(spawned[0]!.sent.map((r) => ("call" in r ? `${r.host}:${r.call}` : r.op)), ["window:open"]);
 });

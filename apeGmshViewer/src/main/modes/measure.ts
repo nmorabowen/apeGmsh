@@ -21,7 +21,7 @@ import { LadrunoFile, openLadruno } from "../../reader/ladruno.ts";
 import { openResults, type ResultsFile, type ResultsH5 } from "../../reader/results.ts";
 import { arg, file, mode, out, t0 } from "../args.ts";
 import { pairSet, type OpenSet } from "../pairing.ts";
-import type { ResultsHost } from "../results.ts";
+import type { RemoteResults } from "../loader/client.ts";
 import { DISPLACEMENT, readRowStage } from "./readRow.ts";
 
 /** What the measurement harness takes from main.ts, handed over once (`registerMeasure`). */
@@ -31,7 +31,7 @@ export interface MeasureHost {
   /** main.ts's text of a thrown value. */
   errText: (err: unknown) => string;
   /** The window set's results host, closed before the .ladruno read row. */
-  resultsHost: ResultsHost;
+  resultsHost: RemoteResults;
   /** The preload script every window of the app loads (main.ts's, beside dist/main.mjs). */
   preload: string;
 }
@@ -130,7 +130,7 @@ interface ReadRow {
   stepWarmMs: number;
 }
 
-function measureLadrunoRead(model: string, resultsHost: ResultsHost): void {
+function measureLadrunoRead(model: string, resultsHost: RemoteResults): void {
   const results = pairSet(model, existsSync).results;
   if (results === null || !/\.ladruno$/i.test(results)) return;
   resultsHost.close();
