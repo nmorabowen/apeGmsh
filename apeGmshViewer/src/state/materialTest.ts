@@ -1,5 +1,6 @@
-// ADR 0135 D4: the job that tests one declared uniaxial material, from the state
-// alone. The material's command comes from `/opensees/materials` (`Decl.params`)
+// ADR 0135 D4: the job that tests one declared uniaxial or (D9, S5) nD material,
+// from the state alone. A dependency may be of either family, and tags are per family.
+// The material's command comes from `/opensees/materials` (`Decl.params`)
 // and its dependencies from the `$decl` values of `/opensees/decl_params`, with
 // the file's tags unchanged so that the slots holding a tag stay valid.
 //
@@ -18,7 +19,10 @@ import type { Decl, DeclPath, MaterialTestJob, MaterialTestLine, MaterialTestOve
 
 export type MaterialTestJobAnswer = { job: MaterialTestJob } | { error: string };
 
-const KIND = "uniaxialMaterial";
+type Family = "uniaxialMaterial" | "nDMaterial";
+const FAMILIES: readonly string[] = ["uniaxialMaterial", "nDMaterial"];
+const isFamily = (k: string): k is Family => FAMILIES.includes(k);
+const named = (k: Family): string => (k === "nDMaterial" ? "nD material" : "uniaxial material");
 
 function declKeysOf(v: DeclValue, out: string[]): void {
   if (v === null || typeof v !== "object") return;
@@ -33,38 +37,46 @@ function declKeysOf(v: DeclValue, out: string[]): void {
   for (const x of Object.values(v)) declKeysOf(x, out);
 }
 
-/** The one tag `rec` owns as a uniaxial material, or why there is none. */
-function tagOf(defs: Definitions, rec: DeclRecord): number | string {
-  if (rec.family !== KIND) return `it references ${rec.key}, which is not a uniaxial material`;
-  const runs = (defs.decls?.tags ?? []).filter((t) => t.decl === rec.row && t.kind === KIND);
+/** The one tag `rec` owns as a material, with its family, or why there is none. */
+function tagOf(defs: Definitions, rec: DeclRecord): { family: Family; tag: number } | string {
+  const family = rec.family;
+  if (!isFamily(family)) return `it references ${rec.key}, which is not a material`;
+  const runs = (defs.decls?.tags ?? []).filter((t) => t.decl === rec.row && t.kind === family);
   const only = runs[0];
-  if (runs.length !== 1 || !only || only.count !== 1) return `${rec.key} does not own exactly one uniaxial material tag`;
-  return only.first;
+  if (runs.length !== 1 || !only || only.count !== 1) return `${rec.key} does not own exactly one ${named(family)} tag`;
+  return { family, tag: only.first };
 }
 
 export function materialTestJobOf(s: State, path: DeclPath, protocol: MaterialTestProtocol, overrides: readonly MaterialTestOverride[] = []): MaterialTestJobAnswer {
   const target = s.decls[path];
   if (!target) return { error: `${path} is not a declaration of this model` };
-  if (target.kind !== KIND) return { error: `${path} is a ${target.kind}; the tester runs uniaxial materials` };
+  if (!isFamily(target.kind)) return { error: `${path} is a ${target.kind}; the tester runs uniaxial and nD materials` };
   if (target.tag === null) return { error: `${path} has no tag in this file` };
+  const nd = (protocol as { nd?: unknown }).nd !== undefined;
+  if (target.kind === "nDMaterial" && protocol.kind === "stress") return { error: `${path}: stress control runs uniaxial materials` };
+  if ((target.kind === "nDMaterial") !== nd) return { error: target.kind === "nDMaterial" ? `${path} needs a view and a loading mode` : `${path} is uniaxial and takes no nD loading` };
 
-  const byTag = new Map<number, Decl[]>();
+  const byTag = new Map<string, Decl[]>();
   for (const d of Object.values(s.decls)) {
-    if (d.kind === KIND && d.tag !== null) (byTag.get(d.tag) ?? byTag.set(d.tag, []).get(d.tag)!).push(d);
+    if (!isFamily(d.kind) || d.tag === null) continue;
+    const at = `${d.kind} ${d.tag}`;
+    (byTag.get(at) ?? byTag.set(at, []).get(at)!).push(d);
   }
   const defs = s.definitions;
   const byKey = new Map((defs?.decls?.records ?? []).map((r) => [r.key, r]));
   const materials: MaterialTestLine[] = [];
-  const done = new Set<number>();
-  const open = new Set<number>();
+  const done = new Set<string>();
+  const open = new Set<string>();
 
   /** Depth first, so a dependency's line comes before the line naming it. Returns why it cannot, or null. */
   const visit = (d: Decl): string | null => {
     const tag = d.tag!;
-    if (done.has(tag)) return null;
-    if (open.has(tag)) return `material tag ${tag} references itself through its dependencies`;
-    open.add(tag);
-    const rec = defs ? declOfTag(defs, KIND, tag) : null;
+    const family = d.kind as Family;
+    const at = `${family} ${tag}`;
+    if (done.has(at)) return null;
+    if (open.has(at)) return `${named(family)} tag ${tag} references itself through its dependencies`;
+    open.add(at);
+    const rec = defs ? declOfTag(defs, family, tag) : null;
     const keys: string[] = [];
     for (const owner of rec?.params ?? []) for (const v of Object.values(owner.params)) declKeysOf(v, keys);
     for (const key of keys) {
@@ -72,15 +84,15 @@ export function materialTestJobOf(s: State, path: DeclPath, protocol: MaterialTe
       if (!dep) return `${key} is not a declaration of this file`;
       const depTag = tagOf(defs!, dep);
       if (typeof depTag === "string") return depTag;
-      const hits = byTag.get(depTag) ?? [];
+      const hits = byTag.get(`${depTag.family} ${depTag.tag}`) ?? [];
       const hit = hits[0];
-      if (hits.length !== 1 || !hit) return `uniaxial material tag ${depTag} (${key}) is not one material of this file`;
+      if (hits.length !== 1 || !hit) return `${named(depTag.family)} tag ${depTag.tag} (${key}) is not one material of this file`;
       const why = visit(hit);
       if (why) return why;
     }
-    open.delete(tag);
-    done.add(tag);
-    materials.push({ type: d.type, tag, args: [...d.params] });
+    open.delete(at);
+    done.add(at);
+    materials.push({ ...(family === "nDMaterial" ? { family } : {}), type: d.type, tag, args: [...d.params] });
     return null;
   };
   const why = visit(target);
@@ -102,7 +114,7 @@ export function materialTestJobOf(s: State, path: DeclPath, protocol: MaterialTe
 
 /** The numeric slots of `d`'s command, labelled, with a dependency's tag slot locked. */
 function slotsOf(s: State, d: Decl, depTags: readonly number[]): MaterialTestSlot[] {
-  const rec = s.definitions ? declOfTag(s.definitions, KIND, d.tag) : null;
+  const rec = s.definitions ? declOfTag(s.definitions, d.kind, d.tag) : null;
   const names = rec?.params[0]?.paramsNames ?? null;
   const named = names !== null && names.length === d.params.length;
   const out: MaterialTestSlot[] = [];
@@ -135,8 +147,9 @@ function slotsOf(s: State, d: Decl, depTags: readonly number[]): MaterialTestSlo
 /** The slots the form offers for `path`: every numeric argument of its command. */
 export function materialTestSlotsOf(s: State, path: DeclPath): MaterialTestSlot[] {
   const d = s.decls[path];
-  if (!d || d.kind !== KIND) return [];
-  const job = materialTestJobOf(s, path, { kind: "values", values: [0] });
+  if (!d || !isFamily(d.kind)) return [];
+  const probe = d.kind === "nDMaterial" ? { view: "ThreeDimensional" as const, mode: "uniaxialStress" as const, confinement: 0 } : undefined;
+  const job = materialTestJobOf(s, path, { kind: "values", values: [0], ...(probe ? { nd: probe } : {}) });
   const depTags = "job" in job ? job.job.materials.slice(0, -1).map((m) => m.tag) : [];
   return slotsOf(s, d, depTags);
 }

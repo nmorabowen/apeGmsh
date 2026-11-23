@@ -4,17 +4,34 @@
 
 import type { BlobRef, DeclPath } from "./model.ts";
 
-/** The imposed strain history (ADR 0135 D6). Every path starts from zero. */
+/** How an nD material is loaded (ADR 0135 D9, S5): which view of it, and which components are held. */
+export type MaterialTestNdView = "ThreeDimensional" | "PlaneStress";
+/**
+ * uniaxialStress: e11 driven, every other stress zero. triaxial: e11 driven, s22 = s33 = -p,
+ * shear stresses zero (3D only). oedometer: e11 driven, every other strain zero. simpleShear:
+ * gamma12 driven, normal stresses -p, the other shear stresses zero.
+ */
+export type MaterialTestNdMode = "uniaxialStress" | "triaxial" | "oedometer" | "simpleShear";
+export interface MaterialTestNd {
+  view: MaterialTestNdView;
+  mode: MaterialTestNdMode;
+  /** the confining pressure p (compression positive) for triaxial and simpleShear; 0 otherwise */
+  confinement: number;
+}
+
+/** The imposed strain history (ADR 0135 D6). Every path starts from zero; for an nD material (`nd`) it is the driven component's, from the confined state. */
 export type MaterialTestProtocol =
-  | { kind: "monotonic"; peak: number; steps: number }
+  | { kind: "monotonic"; peak: number; steps: number; nd?: MaterialTestNd }
   /** each amplitude once: 0 to +a to -a to 0, `stepsPerRamp` steps per quarter cycle */
-  | { kind: "cyclic"; amplitudes: number[]; stepsPerRamp: number }
-  | { kind: "values"; values: number[] }
+  | { kind: "cyclic"; amplitudes: number[]; stepsPerRamp: number; nd?: MaterialTestNd }
+  | { kind: "values"; values: number[]; nd?: MaterialTestNd }
   /** stress control (D6, S3): from zero through each target stress, `stepsPerRamp` steps per leg; the fork's driver finds each step's strain */
   | { kind: "stress"; targets: number[]; stepsPerRamp: number };
 
-/** One `uniaxialMaterial` command, as `/opensees/materials` stores it. */
+/** One `uniaxialMaterial` or `nDMaterial` command, as `/opensees/materials` stores it. */
 export interface MaterialTestLine {
+  /** absent: a uniaxial material */
+  family?: "uniaxialMaterial" | "nDMaterial";
   type: string;
   tag: number;
   args: (number | string)[];
@@ -22,7 +39,7 @@ export interface MaterialTestLine {
 
 /** What the page asks main to run. Main validates all of it again (ADR 0135 D3). */
 export interface MaterialTestJob {
-  /** the material under test; its line is in `materials` */
+  /** the material under test; its line is in `materials` (an nD target needs `protocol.nd`) */
   target: number;
   /** dependencies first, the target last */
   materials: MaterialTestLine[];
@@ -102,11 +119,20 @@ export interface MaterialTestForm {
   values: string;
   /** stress control: the target stresses, comma- or space-separated (`stepsPerRamp` steps per leg) */
   targets: string;
+  /** nD materials (S5): the view, the loading mode and the confining pressure as typed */
+  view: MaterialTestNdView;
+  mode: MaterialTestNdMode;
+  confinement: string;
   /** what the second plot shows */
   second: MaterialTestSecond;
   /** typed override per slot index; a slot absent, blank or equal to its declared value is not overridden */
   overrides: Readonly<Record<string, string>>;
+  /** whether the parameter grid is shown; null: shown when the material has at most MATERIAL_TEST_SLOTS_SHOWN slots */
+  showSlots: boolean | null;
 }
+
+/** A material with more numeric slots than this opens with its parameter grid folded (ASDConcrete3D has 63). */
+export const MATERIAL_TEST_SLOTS_SHOWN = 12;
 
 /** The most runs kept at once, over all materials; the oldest leaves first. */
 export const MAX_MATERIAL_TEST_RUNS = 6;

@@ -74,10 +74,18 @@ Then:
   a run's full arrays where you choose in a save dialog. Under the protocol,
   each numeric argument of the material can be changed for the test only (a
   slot holding a dependency's tag is locked); the model is never changed, and
-  the changed values show as text to copy into the script. The executable comes
+  the changed values show as text to copy into the script. **Test** on an nD
+  material (S5) adds the view (3D or plane stress) and the loading: uniaxial
+  stress, triaxial at a confining pressure p, uniaxial strain (oedometer) or
+  simple shear. One strain component is driven and the others are held by the
+  fork's `ndTest mixed` (WP-248); the plot shows the driven component's strain and
+  stress, and the tangent is the fork's with the held components condensed out.
+  Stress control stays uniaxial. A material using `-autoRegularization` is
+  regularized to an element of length 1 here, since the tester has no element,
+  and the window says so. The executable comes
   from `$APEGMSH_OPENSEES` (a full path), or else from the default install,
   never from a model; without one, a run says so and the rest of the app is
-  unaffected.
+  unaffected. nD runs need a fork build with `model testNDMaterial`.
 - **Results.** A `<stem>.results.h5` opens like the model: "Open with", a
   drop, `npm start -- x.results.h5`, or beside an opened model. It is drawn
   on the model only when its `/meta/lineage/model_hash` equals the model's

@@ -586,3 +586,55 @@ test("A3: a run with overrides says which in the legend; a declared run says dec
   assert.match(lines[0]!, /^run 2 · monotonic to 0.01 in 2 steps · fy 375000000→400000000/);
   assert.match(lines[1]!, /^run 1 · monotonic to 0.01 in 2 steps · declared/);
 });
+
+// ---- ADR 0135 D9, S5: the tester under an nD row (fixtures/materials_nd.h5) ----------
+
+const ndState = load(await openModel(join(fixtures, "materials_nd.h5")));
+const ND = "opensees/nDMaterial/concrete", NS = "opensees/nDMaterial/solid";
+const ndForm = (path: string, patch: Partial<State["materialTest"]["form"] & object> = {}): State => reduce(ndState, { type: "materialTestFormSet", form: { ...materialTestFormFor(path), ...patch } });
+
+test("S5: an nD row has a Test button; its form offers the view and the loading, no stress control, and labels the driven component", () => {
+  const { root } = render(ndState);
+  assert.ok(rowsOf(root).every((r) => testButtonOf(r)), "both nD rows have Test");
+  const t = testerOf(render(ndForm(NS)).root)!;
+  const options = (cls: string) => t.all((n) => n.className === cls)[0]!.all((n) => n.tagName === "OPTION").map((n) => n.textContent);
+  assert.deepEqual(options("mt-view"), ["3D", "plane stress"]);
+  assert.deepEqual(options("mt-mode"), ["uniaxial stress", "triaxial", "uniaxial strain (oedometer)", "simple shear"]);
+  assert.deepEqual(options("mt-kind"), ["monotonic", "cyclic", "values"]);
+  assert.match(t.textContent, /amplitudes \(ε11\)/);
+  assert.doesNotMatch(t.textContent, /confinement p/, "an unconfined mode has no p field");
+  assert.match(testerOf(render(ndForm(NS, { mode: "triaxial" })).root)!.textContent, /confinement p/);
+  assert.match(testerOf(render(ndForm(NS, { mode: "simpleShear" })).root)!.textContent, /amplitudes \(γ12\)/);
+});
+
+test("S5: Run dispatches the protocol with its nD loading; a loading the view lacks disables Run and says why", () => {
+  const { root, events } = render(ndForm(NS, { kind: "monotonic", peak: "0.001", steps: "4", mode: "triaxial", confinement: "5" }));
+  testerOf(root)!.all((n) => n.textContent === "Run")[0]!.click();
+  assert.deepEqual(events, [{ type: "materialTestRequested", decl: NS, protocol: { kind: "monotonic", peak: 0.001, steps: 4, nd: { view: "ThreeDimensional", mode: "triaxial", confinement: 5 } }, overrides: [] }]);
+  const t = testerOf(render(ndForm(NS, { mode: "triaxial", view: "PlaneStress" })).root)!;
+  assert.equal((t.all((n) => n.textContent === "Run")[0] as FakeNode & { disabled?: boolean }).disabled, true);
+  assert.match(t.textContent, /triaxial needs the 3D view/);
+});
+
+test("S5: a material with many slots opens with its parameters folded; the fold toggles through the form", () => {
+  assert.ok(materialTestSlotsOf(ndState, ND).length > 12, "ASDConcrete3D has many numeric slots");
+  const { root, events } = render(ndForm(ND));
+  const t = testerOf(root)!;
+  assert.equal(t.all((n) => n.className === "mt-slots").length, 0, "folded");
+  const fold = t.all((n) => n.className.includes("mt-fold"))[0]!;
+  assert.match(fold.textContent, /^▸ parameters \(\d+; this test only/);
+  fold.click();
+  assert.equal((events[0] as { form: { showSlots: boolean } }).form.showSlots, true);
+  assert.equal(testerOf(render(ndForm(ND, { showSlots: true })).root)!.all((n) => n.className === "mt-slots").length, 1);
+  assert.equal(testerOf(render(ndForm(NS)).root)!.all((n) => n.className === "mt-slots").length, 1, "three slots: shown");
+});
+
+test("S5: the plot and legend name the drawn run's axes, not the form's; the regularization note shows for -autoRegularization only", () => {
+  const shear = { id: 1, decl: NS, type: "ElasticIsotropic", protocol: { kind: "monotonic", peak: 0.001, steps: 2, nd: { view: "ThreeDimensional", mode: "simpleShear", confinement: 0 } }, overrides: [], stopped: null, status: "ready", error: null, build: "abc", curves: null, points: { step: [0, 1], strain: [0, 1e-3], stress: [0, 12.5], tangent: [12500, 12500], energy: [0, 0] } } as unknown as State["materialTest"]["runs"][number];
+  const s = ndForm(NS, { mode: "uniaxialStress" });
+  const t = testerOf(render({ ...s, materialTest: { ...s.materialTest, runs: [shear] } }).root)!;
+  assert.match(t.textContent, /γ12τ12imposed γ12/, "the axis labels are the shear run's");
+  assert.match(t.textContent, /peak τ12 12\.5/);
+  assert.doesNotMatch(t.textContent, /-autoRegularization scales/);
+  assert.match(testerOf(render(ndForm(ND)).root)!.textContent, /no element, so -autoRegularization scales this material's softening/);
+});
