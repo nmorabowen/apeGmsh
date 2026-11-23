@@ -754,7 +754,15 @@ _MD_STATIC_FIX = MD_STATIC_FIX_COMMIT
 #: capability.  It stays the live reset test's record of what each build
 #: does, for the v0 builds that carry the fix but cannot say so.
 _FORK_BUILD_HAS_MD_STATIC_FIX: "dict[str, bool]" = {
-    # FORK_PIN ladruno-v20261120 (23e0f0002): 43b235bbb is its ancestor
+    # FORK_PIN ladruno-v20261123b (3eb195bbc): 43b235bbb is its ancestor
+    # (GitHub compare: ahead 603, behind 0). It is 23e0f0002 plus 121
+    # commits: MPM two-phase particles (WP-232l), the RC add-ons and the
+    # LadrunoNDFiber section (WP-241, WP-243, WP-245), the MPM footing
+    # track (WP-244), `model testNDMaterial` (WP-248) and the mpm usage
+    # line (OpenSees#1144). Measured on a Windows build at 3eb195bbc:
+    # test_live_reset_follows_the_fork_build keeps the static.
+    "3eb195bbccb8b78a8982267179a8a0b2b7e03977": True,
+    # ladruno-v20261120 (23e0f0002): 43b235bbb is its ancestor
     # (GitHub compare: ahead 482, behind 0). It is f9864cfec plus
     # 4 commits: WP-242, ASDShellQ4/T3 answer localAxes so
     # `recorder ladruno` writes their frames (OpenSees#1133).
