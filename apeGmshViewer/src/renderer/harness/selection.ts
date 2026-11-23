@@ -6,7 +6,8 @@
 // - `<out>.selection-hover.png`: the pointer over an element, through the
 //   canvas's own pointermove listener, so the element is marked and named.
 // - `<out>.selection-box.png`: a box drawn left to right over the middle of the
-//   canvas, mid-drag, with the count of elements fully inside it.
+//   canvas (a wider one where that takes nothing: `captureBox`), mid-drag, with
+//   the count of elements fully inside it.
 // - `<out>.selection-boxed.png`: the same box released: those elements selected.
 // - `<out>.selection-undone.png`: that selection cleared, then brought back
 //   by undo (ADR 0138 D6).
@@ -48,8 +49,13 @@ export async function captureSelection(ctx: HarnessContext, settle: (ms?: number
     await shot("selection-hover");
     canvas.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
   }
-  const r = canvas.getBoundingClientRect();
-  const a = { x: r.left + r.width * 0.3, y: r.top + r.height * 0.3 }, b = { x: r.left + r.width * 0.6, y: r.top + r.height * 0.7 };
+  // The box must take something, or the undo check below has nothing to bring back: a clear of an empty selection is no
+  // undo step (ADR 0138 D6), so the undo would put back the click's selection instead (the beam-only hinge fixtures, #3108).
+  const { a, b } = captureBox(canvas.getBoundingClientRect(), (a, b) => {
+    const n = viewport.boxAt(a.x, a.y, b.x, b.y, "replace")?.length ?? 0;
+    viewport.boxCancel();
+    return n;
+  });
   viewport.boxAt(a.x, a.y, b.x, b.y, "replace");
   await shot("selection-box");
   viewport.boxEnd(a.x, a.y, b.x, b.y, "replace");
@@ -97,6 +103,23 @@ export async function captureSelection(ctx: HarnessContext, settle: (ms?: number
   store.dispatch({ type: "setNodes", on: false });
   store.dispatch({ type: "setWorkspaceKind", kind: "elements" });
   await settle();
+}
+
+/**
+ * The capture's box, from `a` to `b` (screen points in `r`): the middle of the
+ * canvas, from 30 % to 60 % across and 30 % to 70 % down, which the approved
+ * stills of the solid models show; where that takes no element whole (a few
+ * long beams through the middle), the canvas inset by 3 %, which holds the
+ * framed model (the 2-D hinge fixture's beams reach 7 % of the width).
+ * `takes` counts the elements a box takes. It throws where neither takes one.
+ */
+export function captureBox(
+  r: { left: number; top: number; width: number; height: number },
+  takes: (a: { x: number; y: number }, b: { x: number; y: number }) => number,
+): { a: { x: number; y: number }; b: { x: number; y: number } } {
+  const at = (fx: number, fy: number) => ({ x: r.left + r.width * fx, y: r.top + r.height * fy });
+  for (const [a, b] of [[at(0.3, 0.3), at(0.6, 0.7)], [at(0.03, 0.03), at(0.97, 0.97)]] as const) if (takes(a, b) > 0) return { a, b };
+  throw new Error("capture selection-box: no capture box takes an element whole (30-60 % x 30-70 %, nor 3-97 %)");
 }
 
 /**

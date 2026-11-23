@@ -1,0 +1,3 @@
+### FIXED — apeGmshViewer's still capture runs on the beam-only hinge fixtures
+
+`npm run capture` stopped on `ladruno_hinges2d.h5` and `ladruno_hinges3d.h5` with "undo did not bring back the boxed selection", before any Hinges-card still. The harness's fixed box over the middle of the canvas held none of their long beams whole, so it took nothing; clearing that empty selection is no undo step (ADR 0138 D6), and the undo put back the click still's element instead. The product's undo was right. The harness now uses the canvas inset by 3 % where the middle box takes nothing (`captureBox` in renderer/harness/selection.ts), and names the case where no box takes an element. Captures of models the middle box already serves are unchanged.
