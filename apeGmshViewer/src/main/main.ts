@@ -57,7 +57,7 @@
 // subscribed (the P0 page) is reloaded instead, and reads the new model from
 // `app:config`.
 
-import { app, BrowserWindow, dialog, ipcMain, utilityProcess } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, unwatchFile, watchFile, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,6 +77,7 @@ import { SetWatcher } from "./watch.ts";
 import { guardContents } from "./windowPolicy.ts";
 import { openLineage } from "./zones.ts";
 import { Loader } from "./loader/client.ts";
+import { forkLoader } from "./loader/fork.ts";
 import { nodeDeps, registerWorkspace } from "./workspace.ts";
 import { combinationToken, nodeCombinationDeps, registerCombinations, sweepOnOpen, type CombinationH5 } from "./combinations.ts";
 import type { WorkspaceH5 } from "../reader/workspace.ts";
@@ -97,14 +98,7 @@ const preload = join(here, "preload.cjs");
  * path here first; the loader reads only what it is sent.
  */
 const loaderEntry = import.meta.url.endsWith(".ts") ? join(here, "loader", "process.ts") : join(here, "loader.mjs");
-const loader = new Loader(() => {
-  const child = utilityProcess.fork(loaderEntry, [], { serviceName: "apeGmshViewer loader", stdio: "inherit" });
-  return {
-    postMessage: (m) => child.postMessage(m),
-    onMessage: (fn) => void child.on("message", fn),
-    onExit: (fn) => void child.on("exit", fn),
-  };
-});
+const loader = new Loader(() => forkLoader(loaderEntry));
 
 // The command line is read in ./args.ts (VH2, #2866); a refused one exits here, before anything starts.
 if (badArgs !== null) {
