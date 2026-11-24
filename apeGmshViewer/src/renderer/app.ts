@@ -3,6 +3,7 @@
 // capture in ./harness/; ADR 0128's render and describe in ./agentRender.ts).
 
 import * as THREE from "three";
+import { BulkInbox } from "../bulk.ts";
 import { checkCombinationDraft, Effects, saveCombinationEdit, userCombinationColumn, userResultColumn, type Bridge } from "../effects.ts";
 import { mountCombine } from "../panels/combine.ts";
 import { mountToolLinks, type ToolBridge } from "./tools.ts";
@@ -47,7 +48,14 @@ import { runMeasure } from "./harness/measure.ts";
 import { mountViewCube } from "./viewcube.ts";
 import { Viewport } from "./viewport.ts";
 
-const bridge = (window as unknown as { viewer: Bridge }).viewer;
+// #3130: the preload's openModel returns the id of a bulk answer (../bulk.ts), which the page takes here, so
+// Effects keeps the Bridge contract (an answer) and the model never crosses contextBridge's copy.
+const viewerDoor = (window as unknown as { viewer: Bridge }).viewer;
+const inbox = new BulkInbox(window);
+const bridge: Bridge = {
+  ...viewerDoor,
+  openModel: (path) => inbox.take(viewerDoor.openModel(path) as unknown as Promise<number>) as ReturnType<Bridge["openModel"]>,
+};
 
 const store = new Store();
 const blobs = new BlobStore();

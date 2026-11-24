@@ -388,17 +388,11 @@ export function buildFrameExtrusion(input: FrameExtrusionInput): FrameExtrusionD
     const declPath = ref.kind === "fem" ? cellPath(eid) : undefined;
     let eleDecl: Decl | undefined = declPath ? decls[declPath] : undefined;
     if (!eleDecl && ref.kind === "ops") {
-      // Find matching ops-row declaration
-      for (const d of Object.values(decls)) {
-        const firstMeta = d.element?.metas[0];
-        if (d.kind === "element" && d.element?.cell === null && firstMeta !== undefined && firstMeta.row === ref.row) {
-          const candidatePath = opsRowPath(firstMeta.type, ref.row);
-          if (d.path === candidatePath) {
-            eleDecl = d;
-            break;
-          }
-        }
-      }
+      // The ops row's declaration, by its key (load.ts `pathOfRef`). A scan of every decl here
+      // was quadratic: 19 476 inline zeroLength springs never finished loading (#3130).
+      const m = elementMeta?.[ref.metaIndex];
+      const d = m ? decls[opsRowPath(m.type, ref.row)] : undefined;
+      if (d?.kind === "element" && d.element?.cell === null) eleDecl = d;
     }
     const meta = eleDecl?.element?.metas[0];
     if (!meta) continue;
