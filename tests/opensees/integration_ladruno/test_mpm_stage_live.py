@@ -259,3 +259,26 @@ def test_mpm_control_without_stage_ends_elastoplastic_on_fork(
     final = runs["staged"]["after_2"]
     diff = np.abs(run["after_2"]["sig"] - final["sig"]).max()
     record_property("control_vs_staged_final_sig_max_abs_diff", float(diff))
+
+
+def test_mpm_rule_k0_refusal_is_the_fork_message_at_fork_pin() -> None:
+    """apeGmsh refuses a LadrunoSANISAND body (``mpm_block``) because the
+    fork refuses SANISAND particles in mode F off a B-spline grid. The
+    message it quotes is read here from ``LadrunoMPMPattern.cpp`` at
+    ``FORK_PIN``'s sha, so a pin bump that drops or rewords the fork's rule
+    fails by name. A failed read fails the test."""
+    import urllib.request
+
+    from apeGmsh.opensees import mpm as mpm_mod
+    from tests.opensees.parity import mpm_fork_surface as surface
+
+    pin = surface.read_pin()
+    url = (f"https://raw.githubusercontent.com/{pin['repo']}/{pin['sha']}/"
+           "SRC/domain/pattern/ladrunoMPM/LadrunoMPMPattern.cpp")
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            source = resp.read().decode("utf-8")
+    except Exception as e:  # any failed read is a failure, never a skip
+        pytest.fail(f"could not read {url}: {type(e).__name__}: {e}")
+    assert mpm_mod.FORK_SANISAND_BASIS_REFUSAL in source
+    assert "isSanisandTag" in source and "isBSpline(eng.par.basis)" in source
