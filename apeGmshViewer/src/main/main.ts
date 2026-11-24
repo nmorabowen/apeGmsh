@@ -542,11 +542,22 @@ function ungestured(door: string, path: string): string | null {
   return `${door} opens only a file the user dropped or a path main sent the page; refused ${path}`;
 }
 
+/**
+ * The latest `model:open` that passed its gesture check. Only the latest moves the open set: the
+ * page keeps only the latest answer (effects.ts `openToken`), so an older read that finishes last
+ * must not pair the results doors against a model that is no longer on screen.
+ */
+let latestOpen = 0;
+
 ipcMain.handle("model:open", async (e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, error: `model:open needs a path; got ${shown(path)}` };
   // A free string is refused before any read, so the set stays as it is (VU12).
   const refused = ungestured("model:open", path);
   if (refused !== null) return { ok: false, error: refused };
+  const thisOpen = ++latestOpen;
+  const follow = () => {
+    if (mode === "view" && thisOpen === latestOpen) followModel(path);
+  };
   let opened;
   try {
     // The model and its zones, in the loader process (ADR 0137 D2). In view mode the page hears the
@@ -564,12 +575,12 @@ ipcMain.handle("model:open", async (e, path: unknown) => {
     // (a model still being written) becomes the open set, watched, so its
     // rewrite retries the read. Any other path (a `.user.h5`, a results file)
     // never becomes the set: the user doors would then read beside it (#2752 review F1).
-    if (mode === "view" && typeof path === "string") followModel(path);
+    follow();
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
   // A model the renderer opened on its own (a drop on the P0 page): the open
   // set follows what is on screen (./session.ts), by the same rule.
-  if (mode === "view" && typeof path === "string") followModel(path);
+  follow();
   // /provenance rides with the model; a refused or broken zone does not stop
   // the model from loading (the renderer shows why go-to-source is off). V4b: the
   // lineage is the results pairing key, and the stage elements the tags of the

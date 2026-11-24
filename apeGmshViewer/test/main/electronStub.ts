@@ -158,14 +158,30 @@ export const dialog = strict("dialog", { showErrorBox: () => undefined });
  * a child of `node --test` must not become a test runner. Every fork is recorded.
  */
 export const forked: { modulePath: string; kill: () => boolean; exited: Promise<number | null> }[] = [];
+/**
+ * A test's hold on the loader's replies, to order two reads the way a slow file would: while
+ * `hold(path)` is true, the reply to a request naming that path waits in `held` until the test
+ * calls it. A request sent after `hold` is cleared is answered as usual.
+ */
+export const loaderHold: { hold: ((path: string) => boolean) | null; held: (() => void)[] } = { hold: null, held: [] };
 export const utilityProcess = strict("utilityProcess", {
   fork: (modulePath: string, args: string[] = []) => {
     const child = fork(modulePath, args, { serialization: "advanced", execArgv: [], stdio: ["ignore", "inherit", "inherit", "ipc"] });
     forked.push({ modulePath, kill: () => child.kill(), exited: new Promise((r) => child.once("exit", r)) });
+    const heldIds = new Set<number>();
     return strict("UtilityProcess", {
-      postMessage: (m: unknown) => void child.send(m as never),
+      postMessage: (m: unknown) => {
+        const req = m as { id?: number; path?: unknown };
+        if (loaderHold.hold && typeof req.id === "number" && typeof req.path === "string" && loaderHold.hold(req.path)) heldIds.add(req.id);
+        child.send(m as never);
+      },
       on: (event: string, fn: (...a: unknown[]) => void) => {
         if (event === "exit") child.on("exit", (code, signal) => fn(code ?? (signal ? -1 : 0)));
+        else if (event === "message")
+          child.on("message", (msg: { id?: number }) => {
+            if (typeof msg?.id === "number" && heldIds.delete(msg.id)) loaderHold.held.push(() => fn(msg));
+            else fn(msg);
+          });
         else child.on(event, fn);
         return undefined;
       },

@@ -24,7 +24,7 @@ const root = opt("dir");
 const which = opt("case");
 if (!root || !which) throw new Error("setDoorsDriver needs --case= and --dir=");
 
-const { appEvents, commitFrame, handlers, listeners, pageEvent, pageEvents, pageSent, ready } = (await import(STUB)) as typeof import("./electronStub.ts");
+const { appEvents, commitFrame, handlers, listeners, loaderHold, pageEvent, pageEvents, pageSent, ready } = (await import(STUB)) as typeof import("./electronStub.ts");
 type StubFrame = import("./electronStub.ts").StubFrame;
 await import(pathToFileURL(join(import.meta.dirname, "..", "..", "src", "main", "main.ts")).href);
 
@@ -312,6 +312,27 @@ if (which === "view") {
 } else if (which === "describe" || which === "measure") {
   const { ladruno, ...refused } = RESULTS;
   await battery(ladruno, refused, GEOMETRY.paired);
+} else if (which === "overlap") {
+  // Two model:opens that overlap: the older one's read finishes last. The page keeps the newer
+  // model (effects.ts openToken), so main's open set must stay on it too.
+  const modelOf = async () => ((await handlers.get("viewer:currentSet")!(event)) as { model: string | null } | null)?.model ?? null;
+  const slow = join(set, "s.h5");
+  const fast = join(elsewhere, "s.h5");
+  listeners.get("viewer:dropped")!({ returnValue: undefined }, fast);
+  loaderHold.hold = (p) => p === slow;
+  let settled = false;
+  const first = call("overlap:1 slow model:open", "model:open", slow).then(() => void (settled = true));
+  const end = Date.now() + 20000;
+  while (loaderHold.held.length === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+  await call("overlap:2 fast model:open", "model:open", fast);
+  out["overlap:2 model"] = { onScreen: await modelOf() };
+  loaderHold.hold = null;
+  while (!settled && Date.now() < end) {
+    for (const release of loaderHold.held.splice(0)) release();
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  await first;
+  out["overlap:3 model"] = { onScreen: await modelOf() };
 } else throw new Error(`setDoorsDriver: unknown --case=${which}`);
 
 process.stdout.write(`SET_DOORS ${JSON.stringify(out)}\n`);

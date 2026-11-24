@@ -349,3 +349,14 @@ test("VU13 (#2760): with no set open, source:goto opens nothing, even a file a s
 test("VU12: a capture reads the set of its --file", () => {
   judgeBattery(run("capture", ["--mode=capture", `--file=${join(SET, "s.h5")}`, `--out=${join(root, "capture.png")}`]), join(SET, "s.ladruno"), ["native", "traversal", "elsewhere"], false);
 });
+
+// A slow model:open that finishes after a newer one does not move main's open set back to it:
+// the page keeps the newer model, so the results doors must keep pairing against it.
+test("an older model:open that finishes last leaves the open set on the newer model", () => {
+  const r = run("overlap", [`--file=${join(SET, "s.h5")}`]);
+  assert.equal(resolved(r, "overlap:2 fast model:open").ok, true, resolved(r, "overlap:2 fast model:open").error);
+  assert.equal(resolved(r, "overlap:1 slow model:open").ok, true, resolved(r, "overlap:1 slow model:open").error);
+  const onScreen = (k: string) => (r[k] as { onScreen: string | null }).onScreen;
+  assert.equal(onScreen("overlap:2 model"), join(root, "elsewhere", "s.h5"), "the newer model became the set");
+  assert.equal(onScreen("overlap:3 model"), join(root, "elsewhere", "s.h5"), "the older read finishing last did not take it back");
+});
