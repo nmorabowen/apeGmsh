@@ -120,7 +120,7 @@ const EVERY: Record<EventType, Event> = {
   fileClosed: { type: "fileClosed", artifact: "results" },
   fileChanged: { type: "fileChanged", path: model.path },
   openTool: { type: "openTool", tool: "step" },
-  toolStatus: { type: "toolStatus", status: { tool: "step", title: "Step readout", status: "stopped", reason: "its renderer crashed" } },
+  toolStatus: { type: "toolStatus", status: { window: "w1", title: "Tool window 1", status: "stopped", reason: "its renderer crashed" } },
   toolsPaused: { type: "toolsPaused", paused: true },
   setPlaying: { type: "setPlaying", on: true },
   memoryStatus: { type: "memoryStatus", status: { path: "/m.h5", phase: "before", cells: 1000, estimateMB: 910, availableMB: 1500, commitHeadroomMB: 4000, reasons: ["1.5 GB of RAM is available, under 2.0 GB"] } },

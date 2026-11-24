@@ -3,7 +3,8 @@
 
 /** A tool window's status, as main reports it (src/main/toolWindows.ts). */
 export interface ToolStatus {
-  tool: string;
+  /** the window's id ("w1", "w2", …): a window holds tiles of several tools (H4) */
+  window: string;
   /** the window's title, for the banner */
   title: string;
   /**
@@ -15,10 +16,13 @@ export interface ToolStatus {
 }
 
 export interface ToolsState {
-  /** the last status of each tool window, by tool id */
+  /** the last status of each tool window, by window id */
   windows: Record<string, ToolStatus>;
   /** ADR 0137 D4: under 1 GB of RAM available, tool updates are paused */
   paused: boolean;
-  /** the latest open request, which an effect (renderer/tools.ts) sends main; `seq` grows per request */
-  request: { tool: string; seq: number } | null;
+  /**
+   * the latest request, which an effect (renderer/tools.ts) carries out; `seq` grows per request. H4:
+   * a tile of `tool` in the newest tool window (one opens when none is), or `newWindow`: a new window.
+   */
+  request: { tool: string; seq: number; newWindow: boolean } | null;
 }

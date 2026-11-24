@@ -319,8 +319,8 @@ const toolWindows = new ToolWindows(
   {
     create: (_tool, title) => {
       const t = new BrowserWindow({
-        width: 560,
-        height: 640,
+        width: 960,
+        height: 680,
         title,
         backgroundColor: "#16181d",
         autoHideMenuBar: true,
@@ -337,7 +337,7 @@ const toolWindows = new ToolWindows(
       return () => clearInterval(timer);
     },
   },
-  Object.fromEntries(Object.values(TOOLS).map((t) => [t.id, t.title])),
+  Object.keys(TOOLS),
 );
 handle(ipcMain, "tool:open")((e, tool) => {
   if (mode !== "view" || win === null || e.sender !== win.webContents) return { ok: false, reason: "tool:open: only the model window opens a tool window" };
@@ -356,15 +356,16 @@ const toolBroker = new ToolBroker(async (path, q): Promise<ToolAnswer> => {
   const a = await resultsHost.stepRange({ path, stage: q.stage, step: q.step, component: q.component });
   return a.ok ? { ok: true, kind: "stepRange", stage: a.stage, step: a.step, component: a.component, min: a.min, max: a.max, nodes: a.nodes } : { ok: false, error: a.error };
 });
-handle(ipcMain, "tool:request")((e, q, seq) => {
+handle(ipcMain, "tool:request")((e, q, seq, tile) => {
   if (!toolWindows.isTool(e.sender)) return { ok: false, error: "tool:request: only a tool window asks for tool data" };
   if (typeof seq !== "number") return { ok: false, error: `tool:request: malformed request number ${shown(seq)}` };
+  if (typeof tile !== "number" || !Number.isInteger(tile)) return { ok: false, error: `tool:request: malformed tile ${shown(tile)}` };
   const c = checkToolRequest(q);
   if (!c.ok) return c;
   const set = windowSet();
   if ("reason" in set) return { ok: false, error: `tool:request: ${set.reason}` };
   if (set.results === null) return { ok: false, error: "tool:request: the open set has no results file" };
-  return toolBroker.request(e.sender, set.results, c.q, seq);
+  return toolBroker.request(e.sender, set.results, c.q, seq, tile);
 });
 /** Renderer subscriptions ("open", "fileChanged"); a page load clears them. */
 const subscribed = new Set<string>();

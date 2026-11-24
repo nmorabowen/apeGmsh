@@ -4,8 +4,8 @@
 import type { ToolStatus } from "../tools.ts";
 
 export type ToolsEvent =
-  /** Open tool window `tool` (Spotlight), or focus it when it is open. */
-  | { type: "openTool"; tool: string }
+  /** Add a tile of `tool` to the newest tool window, opening one when none is; `newWindow`: in a new window (Spotlight). */
+  | { type: "openTool"; tool: string; newWindow?: boolean }
   /** Main's report of a tool window's status. */
   | { type: "toolStatus"; status: ToolStatus }
   /** ADR 0137 D4: main paused (or resumed) tool updates for memory. */

@@ -33,6 +33,12 @@ export interface XyPlot {
   mark?: number;
   /** curves drawn under the main one, muted, each with its own dash (`xySwatch` draws the same dash for a legend) */
   others?: readonly { xs: ArrayLike<number>; ys: ArrayLike<number>; dash: number }[];
+  /**
+   * fit the chart inside its parent's box, keeping its aspect (the parent must have a height of its
+   * own, e.g. a flex item in a tool tile); otherwise it is as wide as its container and as tall as
+   * its aspect makes it
+   */
+  fit?: boolean;
 }
 
 /** How many dashes the overlaid curves cycle through. */
@@ -246,6 +252,17 @@ export function xyPlot(p: XyPlot): HTMLElement {
       return;
     }
     observed ||= canvas.isConnected;
+    const box = canvas.parentElement;
+    if (p.fit && box) {
+      // The parent sets the room; the canvas is sized to it here, never from its own size (no feedback).
+      if (!boxObserved) {
+        ro.observe(box);
+        boxObserved = true;
+      }
+      const w = Math.max(0, Math.floor(Math.min(box.clientWidth, (box.clientHeight * W) / H)));
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${(w * H) / W}px`;
+    }
     const width = canvas.clientWidth;
     if (width <= 0) return;
     const dpr = window.devicePixelRatio || 1;
@@ -258,6 +275,7 @@ export function xyPlot(p: XyPlot): HTMLElement {
     if (ctx) drawChart(ctx as unknown as ChartContext, p, width, dpr, coloursOf(canvas));
   };
   let observed = false;
+  let boxObserved = false;
   // No ResizeObserver (a test's fake document): the canvas is built and never drawn.
   if (typeof ResizeObserver === "undefined") return canvas;
   const ro = new ResizeObserver(draw);

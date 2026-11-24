@@ -7,11 +7,12 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { ToolPortMessage, ToolPortMeta } from "../tools/contract.ts";
 
 ipcRenderer.on("tool:port", (e, meta: ToolPortMeta) => {
-  window.postMessage({ toolPort: { tool: meta.tool } } satisfies ToolPortMessage, "*", e.ports as unknown as Transferable[]);
+  window.postMessage({ toolPort: { window: meta.window, tool: meta.tool } } satisfies ToolPortMessage, "*", e.ports as unknown as Transferable[]);
 });
 
 contextBridge.exposeInMainWorld("toolHost", {
   ready: () => ipcRenderer.send("tool:ready"),
   // ADR 0137 D10 (H2b): ask main for data; main checks this window and the request, and names the file.
-  request: (q: unknown, seq: number) => ipcRenderer.invoke("tool:request", q, seq),
+  // H4: `tile` names the tile asking, so each tile's newest request wins on its own.
+  request: (q: unknown, seq: number, tile: number) => ipcRenderer.invoke("tool:request", q, seq, tile),
 });

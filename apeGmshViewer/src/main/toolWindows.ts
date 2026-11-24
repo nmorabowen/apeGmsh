@@ -7,13 +7,16 @@
 //   the content security policy in src/tools/tool.html.
 // - D13 item 5: `tool:ready` is honoured only from a window main made for a tool.
 // - D11: a renderer that dies or stops responding shows as stopped or not responding in the model
-//   window, which keeps running; opening the tool again starts a new window.
+//   window, which keeps running; the next tool window is a new one.
+// - H4: a tool window holds tiles of several tools (src/tools/window.ts). Each window has an id
+//   ("w1", "w2", …) and opens with one tile; the model window adds more over its port.
 // - D4: while a tool window is open, main reads memory every 2 s; under 1 GB available it pauses
 //   tool updates (the model window stops sending context) and refuses new tool windows.
 //
 // No Electron import: main.ts hands in how to make a window and a port pair, so a test drives this.
 
 import type { ToolStatus } from "../state/types.ts";
+import type { ToolPortMeta } from "../tools/contract.ts";
 import { push } from "./ipc.ts";
 
 /** D4: under this much available RAM, tool updates pause and no tool window opens. */
@@ -64,57 +67,59 @@ interface Open {
   win: ToolWin;
   page: ToolPage;
   title: string;
-  /** its renderer died: the window shows nothing, and opening the tool replaces it */
+  /** the tool its first tile mounts (H4: the window adds more tiles on the model window's word) */
+  tool: string;
+  /** its renderer died: the window shows nothing, and the next tool window is a new one */
   gone: boolean;
 }
 
 export class ToolWindows {
   private readonly deps: ToolWindowDeps;
-  private readonly titles: Readonly<Record<string, string>>;
+  private readonly tools: ReadonlySet<string>;
+  /** the open tool windows, by window id */
   private readonly open = new Map<string, Open>();
+  private next = 1;
   private stopPoll: (() => void) | null = null;
   private paused = false;
 
-  constructor(deps: ToolWindowDeps, titles: Readonly<Record<string, string>>) {
+  constructor(deps: ToolWindowDeps, tools: Iterable<string>) {
     this.deps = deps;
-    this.titles = titles;
+    this.tools = new Set(tools);
   }
 
-  /** Open `tool` for the model window's `page`, or focus it when it is open. Refused: why. */
-  openTool(page: ToolPage, tool: unknown): { ok: true } | { ok: false; reason: string } {
-    if (typeof tool !== "string" || !Object.hasOwn(this.titles, tool)) return { ok: false, reason: `no tool named ${JSON.stringify(tool)}` };
-    const title = this.titles[tool]!;
-    const have = this.open.get(tool);
-    if (have && !have.win.isDestroyed() && !have.gone) {
-      have.win.focus();
-      return { ok: true };
-    }
-    // A window whose renderer died is closed, and the tool opens in a new one.
-    if (have && !have.win.isDestroyed()) have.win.close();
+  /**
+   * H4: open a new tool window for the model window's `page`, its first tile a `tool`. Its id names
+   * it to the page (`ToolStatus.window`, the port's meta); the page adds more tiles to it over the
+   * port. A window whose renderer died is closed first. Refused: why.
+   */
+  openTool(page: ToolPage, tool: unknown): { ok: true; window: string } | { ok: false; reason: string } {
+    if (typeof tool !== "string" || !this.tools.has(tool)) return { ok: false, reason: `no tool named ${JSON.stringify(tool)}` };
+    for (const o of [...this.open.values()]) if (o.gone && !o.win.isDestroyed()) o.win.close();
+    const id = `w${this.next++}`;
+    const title = `Tool window ${id.slice(1)}`;
     const mb = this.deps.availableMB();
     if (mb !== null && mb < TOOL_FLOOR_MB) {
       const reason = `${(mb / 1024).toFixed(1)} GB of RAM is available, under ${(TOOL_FLOOR_MB / 1024).toFixed(1)} GB`;
-      this.status(page, tool, "refused", reason);
+      this.status(page, id, title, "refused", reason);
       return { ok: false, reason };
     }
     const win = this.deps.create(tool, title);
-    const entry: Open = { win, page, title, gone: false };
-    this.open.set(tool, entry);
-    this.status(page, tool, "opening", null);
+    const entry: Open = { win, page, title, tool, gone: false };
+    this.open.set(id, entry);
+    this.status(page, id, title, "opening", null);
     win.webContents.on("render-process-gone", (_e, d) => {
       entry.gone = true;
-      this.status(page, tool, "stopped", `its renderer ${d.reason === "crashed" ? "crashed" : `stopped (${d.reason})`}`);
+      this.status(page, id, title, "stopped", `its renderer ${d.reason === "crashed" ? "crashed" : `stopped (${d.reason})`}`);
     });
-    win.webContents.on("unresponsive", () => this.status(page, tool, "unresponsive", null));
-    win.webContents.on("responsive", () => this.status(page, tool, "open", null));
+    win.webContents.on("unresponsive", () => this.status(page, id, title, "unresponsive", null));
+    win.webContents.on("responsive", () => this.status(page, id, title, "open", null));
     win.on("closed", () => {
-      if (this.open.get(tool)?.win !== win) return; // replaced: the new window reports for the tool
-      this.open.delete(tool);
-      this.status(page, tool, "closed", null);
+      this.open.delete(id);
+      this.status(page, id, title, "closed", null);
       if (this.open.size === 0) this.stopMemory();
     });
     this.startMemory();
-    return { ok: true };
+    return { ok: true, window: id };
   }
 
   /**
@@ -122,13 +127,14 @@ export class ToolWindows {
    * link it to its model window's page. False for any other sender.
    */
   ready(sender: unknown): boolean {
-    for (const [tool, o] of this.open) {
+    for (const [id, o] of this.open) {
       if (o.win.isDestroyed() || o.win.webContents !== sender) continue;
       if (o.page.isDestroyed()) return false;
       const { port1, port2 } = this.deps.channel();
-      o.win.webContents.postMessage("tool:port", { tool }, [port2]);
-      o.page.postMessage("tool:port", { tool }, [port1]);
-      this.status(o.page, tool, "open", null);
+      const meta: ToolPortMeta = { window: id, tool: o.tool };
+      o.win.webContents.postMessage("tool:port", meta, [port2]);
+      o.page.postMessage("tool:port", meta, [port1]);
+      this.status(o.page, id, o.title, "open", null);
       if (this.paused) push(o.page, "tool:paused", true);
       return true;
     }
@@ -146,13 +152,13 @@ export class ToolWindows {
     for (const o of [...this.open.values()]) if (!o.win.isDestroyed()) o.win.close();
   }
 
-  /** The tools open now, for the tests and the harness. */
+  /** The tool windows open now, by id, for the tests and the harness. */
   openTools(): string[] {
     return [...this.open.keys()];
   }
 
-  private status(page: ToolPage, tool: string, status: ToolStatus["status"], reason: string | null): void {
-    if (!page.isDestroyed()) push(page, "tool:status", { tool, title: this.titles[tool] ?? tool, status, reason });
+  private status(page: ToolPage, window: string, title: string, status: ToolStatus["status"], reason: string | null): void {
+    if (!page.isDestroyed()) push(page, "tool:status", { window, title, status, reason });
   }
 
   private startMemory(): void {

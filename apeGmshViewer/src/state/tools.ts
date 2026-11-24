@@ -51,9 +51,9 @@ export function checkToolEvent(s: State, e: unknown): Event | null {
 export function toolNotices(s: State): string[] {
   const out: string[] = [];
   for (const t of Object.values(s.tools.windows)) {
-    if (t.status === "stopped") out.push(`Tool window "${t.title}" stopped: ${t.reason ?? "its renderer exited"}. The model window is unaffected; open it again from Spotlight (Ctrl+K).`);
-    else if (t.status === "unresponsive") out.push(`Tool window "${t.title}" is not responding. The model window is unaffected.`);
-    else if (t.status === "refused") out.push(`Tool window "${t.title}" was not opened: ${t.reason ?? "refused"}.`);
+    if (t.status === "stopped") out.push(`${t.title} stopped: ${t.reason ?? "its renderer exited"}. The model window is unaffected; open a new one from Spotlight (Ctrl+K).`);
+    else if (t.status === "unresponsive") out.push(`${t.title} is not responding. The model window is unaffected.`);
+    else if (t.status === "refused") out.push(`${t.title} was not opened: ${t.reason ?? "refused"}.`);
   }
   if (s.tools.paused) out.push("Tool windows are paused: under 1.0 GB of RAM is available. They update again when memory frees.");
   return out;

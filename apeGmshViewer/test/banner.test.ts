@@ -377,8 +377,8 @@ test("ADR 0137: the banner follows a memory reading and a tool window's status w
     reading("during", 1500);
     assert.equal(memory().length, 1);
     assert.match(memory()[0]!, /^Memory is short while the model loads: 1\.5 GB/);
-    store.dispatch({ type: "toolStatus", status: { tool: "step", title: "Step readout", status: "stopped", reason: "its renderer crashed" } });
-    assert.ok(b.lines().some((l) => l.startsWith('Tool window "Step readout" stopped: its renderer crashed.')), JSON.stringify(b.lines()));
+    store.dispatch({ type: "toolStatus", status: { window: "w1", title: "Tool window 1", status: "stopped", reason: "its renderer crashed" } });
+    assert.ok(b.lines().some((l) => l.startsWith('Tool window 1 stopped: its renderer crashed.')), JSON.stringify(b.lines()));
     store.dispatch({ type: "toolsPaused", paused: true });
     assert.ok(b.lines().some((l) => l.startsWith("Tool windows are paused")));
   } finally {

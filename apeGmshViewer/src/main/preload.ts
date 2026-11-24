@@ -95,7 +95,7 @@ function listen<F extends PageFeed>(feed: F, cb: (value: F extends "open" ? Open
 // ADR 0137 H1: the end of a tool window's MessagePort main hands this page, passed on to the page
 // (renderer/tools.ts) with the tool's id. The tool window's own preload is ./toolPreload.ts.
 ipcRenderer.on("tool:port", (e, meta: ToolPortMeta) => {
-  window.postMessage({ toolPort: { tool: meta.tool } } satisfies ToolPortMessage, "*", e.ports as unknown as Transferable[]);
+  window.postMessage({ toolPort: { window: meta.window, tool: meta.tool } } satisfies ToolPortMessage, "*", e.ports as unknown as Transferable[]);
 });
 
 let bulkSeq = 0;

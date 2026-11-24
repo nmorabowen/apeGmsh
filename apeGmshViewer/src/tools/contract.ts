@@ -66,6 +66,9 @@ export type ToolAnswer =
  * MessagePort main linked (`window.postMessage`), and what crosses that port each way.
  */
 export interface ToolPortMeta {
+  /** the tool window's id (main/toolWindows.ts), which the model window links by */
+  window: string;
+  /** the tool the window opens its first tile with */
   tool: string;
 }
 /** A preload's window message carrying the port (src/main/preload.ts, src/main/toolPreload.ts). */
@@ -79,6 +82,10 @@ export interface ToolContextMessage {
 /** Tool → model window, on the port (src/tools/window.ts → src/renderer/tools.ts). */
 export interface ToolEventMessage {
   event: ToolEvent;
+}
+/** H4: model window → tool window, on the port: add a tile of a registered tool. */
+export interface AddTileMessage {
+  addTile: string;
 }
 
 /** What the host gives a tool when it mounts it. */

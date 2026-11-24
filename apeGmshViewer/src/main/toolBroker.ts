@@ -4,9 +4,9 @@
 //   names the file: the model window's results file. A tool never names a path.
 // - `checkToolRequest` refuses anything but a well-formed request.
 // - Requests for the same data while one is being read share that read.
-// - Newest wins, per tool and per kind of request: a request answered after the same tool asked
+// - Newest wins, per tile and per kind of request: a request answered after the same tile asked
 //   again for the same kind is answered `superseded`, so a tool never draws an answer it no longer
-//   wants. A tool's history and its step range are separate streams: one never supersedes the other.
+//   wants. Another kind, or another tile of the same window (H4), is another stream.
 // - The reads run in the loader process (./loader/client.ts), like every results read; a step
 //   range reads through the shared step cache (./results.ts `readStep`, H3).
 //
@@ -39,7 +39,7 @@ export class ToolBroker {
   private readonly read: (path: string, q: ToolRequest) => Promise<ToolAnswer>;
   /** the reads in flight, by what they read */
   private readonly inFlight = new Map<string, Promise<ToolAnswer>>();
-  /** each tool's newest request number, by kind */
+  /** each tool window's newest request number, by tile and kind */
   private readonly newest = new WeakMap<object, Map<string, number>>();
   /** how many reads were made (tests and the harness read it) */
   reads = 0;
@@ -48,11 +48,12 @@ export class ToolBroker {
     this.read = read;
   }
 
-  /** Answer tool `sender`'s request number `seq` from results file `path`. */
-  async request(sender: object, path: string, q: ToolRequest, seq: number): Promise<ToolAnswer> {
+  /** Answer request number `seq` of tile `tile` in tool window `sender` from results file `path`. */
+  async request(sender: object, path: string, q: ToolRequest, seq: number, tile = 0): Promise<ToolAnswer> {
     let byKind = this.newest.get(sender);
     if (byKind === undefined) this.newest.set(sender, (byKind = new Map()));
-    byKind.set(q.kind, Math.max(seq, byKind.get(q.kind) ?? -Infinity));
+    const stream = `${tile}:${q.kind}`;
+    byKind.set(stream, Math.max(seq, byKind.get(stream) ?? -Infinity));
     const key = JSON.stringify([path, q]);
     let pending = this.inFlight.get(key);
     if (pending === undefined) {
@@ -64,7 +65,7 @@ export class ToolBroker {
       });
     }
     const a = await pending;
-    if ((byKind.get(q.kind) ?? seq) > seq) return { ok: false, superseded: true, error: "superseded by a newer request from this tool" };
+    if ((byKind.get(stream) ?? seq) > seq) return { ok: false, superseded: true, error: "superseded by a newer request from this tool" };
     return a;
   }
 }

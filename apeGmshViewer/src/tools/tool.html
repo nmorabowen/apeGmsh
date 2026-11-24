@@ -8,7 +8,20 @@
     <!-- Colours and fonts are the app's tokens (src/theme/tokens.ts cssVariables), set by tool.js from the context's theme. -->
     <style>
       html, body { margin: 0; height: 100%; background: var(--bg-0); color: var(--text); font: 14px var(--font); }
-      #tool { padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+      #tool { position: absolute; inset: 0; display: flex; flex-direction: column; }
+      .tiles-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); flex: none; flex-wrap: wrap; }
+      .tiles-add, .tool-history-bar select { font: inherit; background: var(--bg-1); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+      .tiles-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+      .tiles-tab { font: inherit; font-size: 12px; background: var(--bg-1); color: var(--muted); border: 1px dashed var(--line); border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+      .tiles-area { position: relative; flex: 1; overflow: hidden; }
+      .tile { position: absolute; box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px; display: flex; flex-direction: column; overflow: hidden; }
+      .tile[hidden] { display: none; }
+      .tile-head { display: flex; align-items: center; justify-content: space-between; padding: 3px 8px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); flex: none; }
+      .tile-close { font: inherit; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+      .tile-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; overflow: auto; flex: 1; }
+      .split-bar { position: absolute; z-index: 2; background: var(--line); opacity: 0.5; }
+      .split-bar.h { cursor: col-resize; }
+      .split-bar.v { cursor: row-resize; }
       .tool-model { font-weight: 600; font-size: 15px; }
       .tool-step { font-size: 22px; font-variant-numeric: tabular-nums; }
       .tool-picked { color: var(--muted); }
@@ -16,9 +29,11 @@
       .tool-bar button { font: inherit; padding: 4px 12px; border-radius: 4px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); cursor: pointer; }
       .tool-bar button:disabled { opacity: 0.4; cursor: default; }
       .tool-history { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
-      .tool-history select { font: inherit; background: var(--bg-1); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; align-self: flex-start; }
+
       .tool-history-note { color: var(--muted); font-size: 12px; }
       .xy-plot { display: block; width: 100%; height: auto; }
+      /* Node history's plot takes the tile's remaining height; the chart fits inside it (ui/chart.ts `fit`). */
+      .tile-body .tool-history-plot { flex: 1 1 0; min-height: 60px; overflow: hidden; }
     </style>
   </head>
   <body>

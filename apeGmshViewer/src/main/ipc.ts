@@ -195,7 +195,7 @@ export interface Push {
 
 /** The tool windows' channels (src/main/toolPreload.ts); a tool's data answer is a `ToolAnswer`. */
 export interface ToolInvoke {
-  "tool:request": { req: [q: unknown, seq: number]; res: ToolAnswer };
+  "tool:request": { req: [q: unknown, seq: number, tile: number]; res: ToolAnswer };
 }
 
 // ---------------------------------------------------------------------------
