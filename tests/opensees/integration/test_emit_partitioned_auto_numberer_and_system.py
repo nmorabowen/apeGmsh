@@ -183,10 +183,15 @@ def test_analysis_commands_emitted_globally_not_inside_partition_block() -> None
 # fallback (introduced in the 2026-05-23 amendment) is dead code on the
 # installed single-process OpenSees: ``ops.numberer('ParallelPlain')``
 # silently no-ops instead of raising, so the ``catch`` branch never
-# fires.  The ``system Mumps`` half DOES raise as documented.  The two
-# tests below pin that observed runtime behaviour so a future upstream
-# change that begins raising on ``ParallelPlain`` flips the xfail to
-# pass and surfaces the drift.
+# fires.  The first test pins that observed runtime behaviour so a future
+# upstream change that begins raising on ``ParallelPlain`` flips the
+# xfail to pass and surfaces the drift.  The ``system Mumps`` half
+# depends on the build: OpenSees registers ``Mumps`` only when compiled
+# with ``_MUMPS`` (a real serial MumpsSolver), and answers "unknown system
+# type" otherwise, which openseespy raises.  Stock openseespy 3.7 raises;
+# 3.8 (the CI pin) ships serial MUMPS and accepts it.  The second test
+# pins what INV-5 needs from either: the primary raises (the fallback
+# takes over) or it installs a working solver, never a silent no-op.
 # -----------------------------------------------------------------------
 
 
@@ -199,6 +204,7 @@ def test_analysis_commands_emitted_globally_not_inside_partition_block() -> None
     ),
     strict=False,
 )
+@pytest.mark.live
 def test_numberer_parallel_plain_does_not_raise_under_single_process() -> None:
     ops = pytest.importorskip("openseespy.opensees")
 
@@ -208,13 +214,47 @@ def test_numberer_parallel_plain_does_not_raise_under_single_process() -> None:
         ops.numberer("ParallelPlain")
 
 
-def test_system_mumps_raises_under_single_process() -> None:
-    """The ``system Mumps`` half of INV-5 DOES raise under
-    single-process — verify it stays that way.
-    """
+def _truss_tip_disp(ops, system: str) -> float:
+    """One truss (k = EA/L = 100) under a 10 N tip load, solved on ``system``."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.node(1, 0.0, 0.0)
+    ops.node(2, 1.0, 0.0)
+    ops.fix(1, 1, 1)
+    ops.fix(2, 0, 1)
+    ops.uniaxialMaterial("Elastic", 1, 100.0)
+    ops.element("Truss", 1, 1, 2, 1.0, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(2, 10.0, 0.0)
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system(system)
+    ops.test("NormDispIncr", 1e-12, 10)
+    ops.algorithm("Linear")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    u = float(ops.nodeDisp(2, 1))
+    ops.wipe()
+    return u
+
+
+@pytest.mark.live
+def test_system_mumps_single_process_raises_or_solves(capfd: pytest.CaptureFixture[str]) -> None:
+    """INV-5's ``catch {system Mumps} {system UmfPack}`` is sound on this
+    build: ``system Mumps`` either raises, so the fallback takes over, or
+    installs a solver that solves (stock openseespy 3.8 ships serial MUMPS).
+    A silent no-op would leave the deck on whatever SOE came before."""
     ops = pytest.importorskip("openseespy.opensees")
 
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
-    with pytest.raises(Exception):
+    try:
         ops.system("Mumps")
+    except Exception:
+        ops.wipe()
+        return  # not compiled in: the runtime fallback carries the deck
+    ops.wipe()
+    assert "unknown system" not in capfd.readouterr().err.lower()
+    assert _truss_tip_disp(ops, "Mumps") == pytest.approx(0.1, rel=1e-12)

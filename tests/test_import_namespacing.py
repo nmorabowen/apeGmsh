@@ -76,6 +76,7 @@ def test_no_test_module_is_registered_under_a_bare_name() -> None:
     )
 
 
+@pytest.mark.live
 def test_openseespy_still_resolves_to_a_real_backend() -> None:
     """The consequence check — the thing that actually broke.
 

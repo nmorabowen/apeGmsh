@@ -123,9 +123,12 @@ def test_mortar_tie_resolves_on_composed_assembly(tmp_path: Path):
 
 def _solve_stack_K(tmp_path, *, swap_master_slave: bool) -> float:
     """Assemble the hex8+hex20 stack, mortar-tie, solve, return K."""
-    import openseespy.opensees as openseespy
     from apeGmsh.assembly import Assembly
-    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter, get_ops
+
+    # The module LiveOpsEmitter drives: openseespy by name is a second, empty
+    # domain beside a fork build, so its reactions would read zero.
+    openseespy = get_ops()
 
     sub = tmp_path / ("swap" if swap_master_slave else "fwd")
     sub.mkdir()
@@ -176,14 +179,11 @@ def _solve_stack_K(tmp_path, *, swap_master_slave: bool) -> float:
     return abs(r_z) / delta
 
 
+@pytest.mark.ladruno_fork
 def test_mortar_tied_stack_closed_form_and_order_swap(tmp_path: Path):
     """Acceptance #2 + #3: K = EA/L/2 to 0.1 %, and master/slave swap
     gives the same K — the symmetry collocation does not have, which is
     the property the mortar tie is buying."""
-    openseespy = pytest.importorskip("openseespy.opensees")
-    if not hasattr(openseespy, "ladrunoProjectionTieForce"):
-        pytest.skip("needs the Ladruno fork build (LadrunoBrick20)")
-
     k_exact = E * SIDE * SIDE / (2 * H)
 
     k_fwd = _solve_stack_K(tmp_path, swap_master_slave=False)

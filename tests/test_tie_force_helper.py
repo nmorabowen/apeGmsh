@@ -67,8 +67,13 @@ _F_EXACT = _F * _M2 / (_M1 + _M2)            # = +6.0 on the master (node 1)
 
 
 def _fork_ops():
-    """Importable openseespy with the fork tie-force query, or skip."""
-    ops = pytest.importorskip("openseespy.opensees")
+    """The resolved backend with the fork tie-force query, or skip.
+
+    Not openseespy by name: beside a fork build that is the stock binding,
+    a second domain that has no tie-force query."""
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    ops = get_ops()
     if not hasattr(ops, "ladrunoProjectionTieForce"):
         pytest.skip(
             "stock openseespy has no ladrunoProjectionTieForce — needs the "
@@ -106,6 +111,7 @@ def _build_t8_explicit(ops, *, recorder_file=None):
     assert ops.analyze(1, 1e-3) == 0
 
 
+@pytest.mark.ladruno_fork
 def test_live_tie_force_query_matches_exact():
     _fork_ops()
     from apeGmsh.opensees.emitter.live import LiveOpsEmitter
@@ -123,6 +129,7 @@ def test_live_tie_force_query_matches_exact():
     e._ops.wipe()
 
 
+@pytest.mark.ladruno_fork
 def test_live_tie_force_query_guard_wrong_handler():
     # The fork command refuses (raises) when the active handler is not
     # LadrunoProjection — the wrapper propagates that rather than returning a
@@ -151,6 +158,7 @@ def test_live_tie_force_query_guard_wrong_handler():
     o.wipe()
 
 
+@pytest.mark.ladruno_fork
 def test_recorder_readback_constraint_tie_force(tmp_path):
     # The `-N constraintTieForce` channel writes RESULTS/ON_NODES/
     # CONSTRAINT_TIE_FORCE; the reader maps (CONSTRAINT_TIE_FORCE, "TFx") to

@@ -185,6 +185,54 @@ jobs:
               raise SystemExit(f"::error::corbel step: expected 1 passing case, got {len(ok)} of {len(cases)}")
           PY
 
+      # The viewer's material-tester tests (apeGmshViewer/test/materialTest)
+      # drive the fork's Tcl OpenSees and skip unless $APEGMSH_OPENSEES names
+      # it, which no other lane does. The child inherits this job's
+      # TCL_LIBRARY and the MKL LD_LIBRARY_PATH set above.
+      - uses: actions/setup-node@v4
+        if: ${{ !cancelled() }}
+        with:
+          node-version: '22.18'
+          cache: npm
+          cache-dependency-path: apeGmshViewer/package-lock.json
+
+      - name: npm ci (viewer)
+        if: ${{ !cancelled() }}
+        working-directory: apeGmshViewer
+        run: npm ci --no-audit --no-fund
+
+      - name: Viewer tests on the fork (npm test)
+        if: ${{ !cancelled() }}
+        working-directory: apeGmshViewer
+        run: |
+          set -euo pipefail
+          export APEGMSH_OPENSEES="$APEGMSH_OPENSEES_BIN/OpenSees"
+          # The npm script ignores reporter flags after its glob; NODE_OPTIONS
+          # adds a JUnit report beside the usual output.
+          export NODE_OPTIONS="--test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=$RUNNER_TEMP/viewer-fork.xml"
+          npm test
+          # A skip is not a pass: a fork test that skipped for want of
+          # $APEGMSH_OPENSEES means this step tested nothing it exists for.
+          python - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          path = os.path.join(os.environ["RUNNER_TEMP"], "viewer-fork.xml")
+          cases = list(ET.parse(path).getroot().iter("testcase"))
+          # Node 22's JUnit writes no `file` attribute, so cases are told
+          # apart by the gate's skip message and by name.
+          gated = [
+              c.get("name") for c in cases
+              if (sk := c.find("skipped")) is not None and "APEGMSH_OPENSEES" in sk.get("message", "")
+          ]
+          # live.test.ts: one "the fork runs <material>" case per material.
+          ran = [
+              c for c in cases
+              if (c.get("name") or "").startswith("the fork runs") and c.find("skipped") is None
+          ]
+          print(f"viewer: {len(cases)} cases, {len(ran)} 'the fork runs' cases ran, {len(gated)} skipped on the gate")
+          if gated or not ran:
+              raise SystemExit(f"::error::fork tests skipped on $APEGMSH_OPENSEES: {gated}; ran {len(ran)}")
+          PY
+
       # The pinned build carries MKL, so a `ladruno_mkl:` skip here means the
       # MKL runtime broke, not that the build lacks it: fail instead of
       # letting FEAST/Pardiso go untested.

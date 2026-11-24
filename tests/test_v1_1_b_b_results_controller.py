@@ -85,12 +85,6 @@ from pathlib import Path
 
 import pytest
 
-# No-openseespy CI gate per kickoff memo and ``feedback_viewer_no_gpu``.
-# The asserted invariants only need viewer-source-text inspection, but
-# the module imports ``apeGmsh._core`` which in turn pulls
-# ``openseespy.opensees`` on this Python.
-pytest.importorskip("openseespy.opensees")
-
 
 # Tokens proving the mesh-side ColorMode mechanism is NOT wired into
 # results.viewer or its window shell.  All tokens are searched as

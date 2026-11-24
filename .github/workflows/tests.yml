@@ -514,8 +514,9 @@ jobs:
           # enough — `viewer.show()` never returns), which is what
           # hung the job for 6 h after ADR 0089 landed the first
           # blocking one. They belong to the qt lane, which gives each
-          # file its own X server and a 300 s cap.
-          pytest tests -q -p no:cacheprovider \
+          # file its own X server and a 300 s cap. `-rs` prints every
+          # skip reason, so a test that stops running shows in the log.
+          pytest tests -q -rs -p no:cacheprovider \
             -m "not live and not subprocess and not bench and not qt" \
             --durations=30 --durations-min=5
 

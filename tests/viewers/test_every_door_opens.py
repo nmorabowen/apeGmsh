@@ -25,9 +25,6 @@ from pathlib import Path
 
 import pytest
 
-# Building the demo + rehydrating the typed model needs the apeSees bridge.
-pytest.importorskip("openseespy.opensees", reason="apeSees bridge (demo + readers)")
-
 
 # Each door: (composed_results_path, sibling_model_path) -> object-or-0.
 # It performs the real open/wire-up but stops BEFORE the render boundary.
