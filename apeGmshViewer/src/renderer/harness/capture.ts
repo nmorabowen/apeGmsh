@@ -1,7 +1,7 @@
 // The capture harness (VH1, #2865): `npm run capture`'s sequence of stills, in its fixed order.
 
 import { WINDOW_KINDS } from "../../state/types.ts";
-import type { HarnessConfig, HarnessContext } from "./context.ts";
+import { until, type HarnessConfig, type HarnessContext } from "./context.ts";
 import { demoTarget } from "./pointer.ts";
 import { captureContours, captureDeform, captureElements, captureExtrudeResults, captureLineDiagrams, captureResults } from "./results.ts";
 import { captureCaps, captureClip, captureGizmo } from "./sections.ts";
@@ -60,8 +60,9 @@ export async function runCapture(ctx0: HarnessContext, cfg: HarnessConfig, file:
   // `<out>.framed.png`, shows the view after `F` framed the selection.
   const settle = (ms = 300) => new Promise((r) => setTimeout(r, ms));
   viewport.renderNow();
-  const opened = store.get().camera.pose;
-  if (!opened) throw new Error("capture: the store holds no camera after the model was framed");
+  // The viewport frames the model and writes the pose back to the store: the baseline is the pose it opened on.
+  await until("capture: the store to hold the camera after the model was framed", () => store.get().camera.pose !== null, 10000);
+  const opened = store.get().camera.pose!;
   const width = window.innerWidth, height = window.innerHeight;
   const ctx: HarnessContext = { ...ctx0, baseline: { model: store.get().artifacts.model?.path ?? file, camera: opened, width, height } };
   /** One step of the sequence, from the baseline view. */
