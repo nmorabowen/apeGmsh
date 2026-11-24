@@ -18,7 +18,7 @@
 // is proven by test/main/workspaceSave.test.ts.
 
 import { heldRefusal } from "../../state/workspace.ts";
-import type { HarnessContext } from "./context.ts";
+import { until, type HarnessContext } from "./context.ts";
 
 export async function captureWorkspace(ctx: HarnessContext, settle: (ms?: number) => Promise<unknown>): Promise<void> {
   const { store, effects, viewport, bridge } = ctx;
@@ -49,14 +49,16 @@ export async function captureWorkspace(ctx: HarnessContext, settle: (ms?: number
   input.value = "picked nodes";
   input.dispatchEvent(new Event("input"));
   // The effects compute the preview a task after the selection changes.
-  await settle(50);
-  const preview = store.get().workspace.preview;
-  if (!preview || !("ids" in preview) || preview.kind !== "nodes") throw new Error(`capture: the selection previews no node tags: ${JSON.stringify(preview)}`);
+  const previewed = () => {
+    const p = store.get().workspace.preview;
+    return !!p && "ids" in p && p.kind === "nodes";
+  };
+  await until(() => `capture workspace-named: the selection previews no node tags: ${JSON.stringify(store.get().workspace.preview)}`, previewed, 5000);
   await shot("workspace-named");
   const save = [...document.querySelectorAll<HTMLButtonElement>("#sets .sets-form button")].find((b) => !b.disabled);
   if (!save) throw new Error("capture: the sets panel's Save is disabled with three nodes selected and a name typed");
   save.click();
-  for (let t = 0; t < 10000 && store.get().workspace.saving !== null; t += 50) await settle(50);
+  await until("capture workspace-save-refused: main to answer the save", () => store.get().workspace.saving === null, 10000);
   await shot("workspace-save-refused");
   // The typed refusal of a held target, as main answers it.
   store.dispatch({ type: "workspaceSave", edit: { op: "create", name: "picked nodes" } });
@@ -78,4 +80,6 @@ export async function captureWorkspace(ctx: HarnessContext, settle: (ms?: number
   const model = store.get().artifacts.model?.path ?? "";
   store.dispatch({ type: "fileOpened", artifact: "model", path: model.replace(/(\.h5)$/i, "-other$1") });
   await shot("workspace-switch");
+  // That path names no file: open the real model again, so nothing after this step runs against a model that is not there.
+  if (!(await effects.open(model))) throw new Error(`capture: the model ${model} did not read again after the set switch: ${store.get().artifacts.model?.error}`);
 }

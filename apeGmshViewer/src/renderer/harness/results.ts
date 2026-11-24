@@ -5,6 +5,7 @@ import { gaussFields } from "../../state/contour.ts";
 import { contourFieldsOf, contourView, deformOf, deformView } from "../../state/selectors.ts";
 import { painted, until, untilSteady, type HarnessContext } from "./context.ts";
 import { contourShown, deformShown, refusalShown } from "./shown.ts";
+import { pickStageDefault } from "./reset.ts";
 
 /** The results stills of a capture (see the call site); each waits for its step fetch to settle. */
 export async function captureResults(ctx: HarnessContext, path: string, settle: (ms?: number) => Promise<unknown>) {
@@ -74,7 +75,7 @@ export async function captureLineDiagrams(ctx: HarnessContext, settle: (ms?: num
   store.dispatch({ type: "setLineDiagramRange", range: "step" });
   store.dispatch({ type: "setLineDiagramCmap", cmap: "sign" });
   store.dispatch({ type: "setLineDiagram", on: true });
-  await until(() => store.get().resultStep?.status === "ready" && store.get().lineDiagram.stepRange !== null, 15000);
+  await until("capture line-diagram-1-mz-sign: the step to read and the line diagram to range", () => store.get().resultStep?.status === "ready" && store.get().lineDiagram.stepRange !== null, 15000);
   await settle(150);
   viewport.renderNow();
   await painted();
@@ -109,6 +110,7 @@ export async function captureLineDiagrams(ctx: HarnessContext, settle: (ms?: num
     store.dispatch({ type: "setContourField", source: "nodal", field: nf.name, component: nf.components[0].key });
   }
   await until(
+    "capture line-diagram-3-with-contour: the contour, its history scan, the deformed shape and the line diagram to show",
     () =>
       contourShown(ctx) &&
       store.get().contour.scan?.status === "done" &&
@@ -168,7 +170,7 @@ export async function captureExtrudeResults(ctx: HarnessContext, settle: (ms?: n
     store.dispatch({ type: "setDeformScale", scale: 25 });
     store.dispatch({ type: "setReferenceGhost", on: true });
   }
-  await until(() => deformShown(ctx), 15000);
+  await until("capture extrude-results-1-deform-ghost: the deformed shape to show", () => deformShown(ctx), 15000);
   await settle(150);
   viewport.renderNow();
   await painted();
@@ -182,7 +184,7 @@ export async function captureExtrudeResults(ctx: HarnessContext, settle: (ms?: n
   if (nf && nf.components[0]) {
     store.dispatch({ type: "setContourField", source: "nodal", field: nf.name, component: nf.components[0].key });
   }
-  await untilSteady(() => contourShown(ctx) && store.get().contour.scan?.status === "done" && deformShown(ctx), () => `${store.get().contour.scan?.key}|${store.get().contour.scan?.done}`);
+  await untilSteady("capture extrude-results-2-deform-contour: the contour, its history scan and the deformed shape to show", () => contourShown(ctx) && store.get().contour.scan?.status === "done" && deformShown(ctx), () => `${store.get().contour.scan?.key}|${store.get().contour.scan?.done}`);
   await settle(150);
   viewport.renderNow();
   await painted();
@@ -199,7 +201,7 @@ export async function captureExtrudeResults(ctx: HarnessContext, settle: (ms?: n
     store.dispatch({ type: "setLineDiagramRange", range: "step" });
     store.dispatch({ type: "setLineDiagramCmap", cmap: "sign" });
     store.dispatch({ type: "setLineDiagram", on: true });
-    await until(() => store.get().resultStep?.status === "ready" && store.get().lineDiagram.stepRange !== null, 15000);
+    await until("capture extrude-results-3-line-diagram: the step to read and the line diagram to range", () => store.get().resultStep?.status === "ready" && store.get().lineDiagram.stepRange !== null, 15000);
     await settle(150);
     viewport.renderNow();
     await painted();
@@ -213,7 +215,7 @@ export async function captureExtrudeResults(ctx: HarnessContext, settle: (ms?: n
       store.dispatch({ type: "setReferenceGhost", on: true });
     }
     store.dispatch({ type: "setColourBy", by: "contour" });
-    await until(() => contourShown(ctx) && deformShown(ctx) && store.get().lineDiagram.stepRange !== null, 30000);
+    await until("capture extrude-results-4-deform-contour-diagram: the contour, the deformed shape and the line diagram to show", () => contourShown(ctx) && deformShown(ctx) && store.get().lineDiagram.stepRange !== null, 30000);
     await settle(150);
     viewport.renderNow();
     await painted();
@@ -314,14 +316,14 @@ export async function captureElements(ctx: HarnessContext, settle: (ms?: number)
   const still = async (name: string) => {
     // The history range scans every step (its length grows with the model): wait while the scan advances.
     const scanned = () => `${store.get().contour.scan?.key}|${store.get().contour.scan?.done}`;
-    if (!(await untilSteady(ready, scanned))) throw new Error(`capture ${name}: the element contour did not show (${contourView(store.get()).state})`);
+    await untilSteady(() => `capture ${name}: the element contour did not show (${contourView(store.get()).state})`, ready, scanned);
     await settle(100);
     viewport.renderNow();
     await painted();
     await painted();
     await bridge.captureStill(name);
   };
-  await until(() => contourView(store.get()).state !== "unavailable", 15000);
+  await until("capture elements-1: the element contour to leave unavailable", () => contourView(store.get()).state !== "unavailable", 15000);
   const v = contourView(store.get());
   const first = v.state === "element" ? `elements-1-${v.topology}` : v.state === "refused" ? `elements-1-refused-${v.code}` : `elements-1-${v.state}`;
   await still(first);
@@ -369,7 +371,7 @@ export async function captureContours(ctx: HarnessContext, settle: (ms?: number)
   if (best < 0) return;
   if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
   const still = async (name: string) => {
-    if (!(await until(() => contourShown(ctx)))) throw new Error(`capture ${name}: the contour did not show the step on screen`);
+    await until(() => `capture ${name}: the contour did not show the step on screen`, () => contourShown(ctx));
     await settle(100);
     viewport.renderNow();
     await painted();
@@ -378,14 +380,15 @@ export async function captureContours(ctx: HarnessContext, settle: (ms?: number)
   };
   store.dispatch({ type: "setPhase", at: { kind: "results", stage: best, step: 0 } });
   store.dispatch({ type: "setColourBy", by: "contour" });
+  pickStageDefault(store);
   const scan = () => store.get().contour.scan;
-  if (!(await until(() => scan()?.status === "running" && scan()!.done > 0))) throw new Error(`capture: the history scan did not report progress (${JSON.stringify(scan())})`);
+  await until(() => `capture contour-1-scan-running: the history scan did not report progress (${JSON.stringify(scan())})`, () => scan()?.status === "running" && scan()!.done > 0);
   await still("contour-1-scan-running");
   // The still must show a scan in progress: one that finished first would show "whole history" under this name.
   if (scan()?.status !== "running") throw new Error(`capture: the history scan finished before its still was taken (${JSON.stringify(scan())})`);
   // The scan reads every step, so its length grows with the model: wait while it advances (a stall of 30 s fails).
   const scanned = () => `${scan()?.key}|${scan()?.done}`;
-  if (!(await untilSteady(() => scan()?.status === "done", scanned))) throw new Error(`capture: the history scan did not finish (${JSON.stringify(scan())})`);
+  await untilSteady(() => `capture contour-2-history-first-step: the history scan did not finish (${JSON.stringify(scan())})`, () => scan()?.status === "done", scanned);
   await still("contour-2-history-first-step");
   const last = stages[best]!.time.length - 1;
   store.dispatch({ type: "setResultStep", step: last });
@@ -394,7 +397,7 @@ export async function captureContours(ctx: HarnessContext, settle: (ms?: number)
   const axis = v.state === "ready" ? contourFieldsOf(store.get())?.fields.find((f) => f.name === v.field)?.components.find((c) => !c.magnitude) : undefined;
   if (axis && v.state === "ready") {
     store.dispatch({ type: "setContourField", field: v.field, component: axis.key });
-    await untilSteady(() => scan()?.status === "done" && scan()!.key.endsWith(`|${axis.key}`), scanned);
+    await untilSteady(() => `capture contour-4-component-${axis.label}: the history scan did not finish (${JSON.stringify(scan())})`, () => scan()?.status === "done" && scan()!.key.endsWith(`|${axis.key}`), scanned);
     await still(`contour-4-component-${axis.label}`);
   }
   if (typeof bridge.captureResize === "function") {
@@ -436,7 +439,7 @@ export async function captureDeform(ctx: HarnessContext, settle: (ms?: number) =
     if (step > 0) store.dispatch({ type: "setResultStep", step });
   };
   const still = async (name: string) => {
-    if (!(await until(() => deformShown(ctx) && (store.get().visibility.colourBy !== "contour" || contourShown(ctx))))) throw new Error(`capture ${name}: the deformed shape did not show the step on screen (${deformView(store.get()).state})`);
+    await until(() => `capture ${name}: the deformed shape did not show the step on screen (${deformView(store.get()).state})`, () => deformShown(ctx) && (store.get().visibility.colourBy !== "contour" || contourShown(ctx)));
     await settle(100);
     viewport.renderNow();
     await painted();
@@ -452,6 +455,7 @@ export async function captureDeform(ctx: HarnessContext, settle: (ms?: number) =
   store.dispatch({ type: "setDeformScale", scale: 10 });
   await still("deform-2-scale10-ghost");
   store.dispatch({ type: "setColourBy", by: "contour" });
+  pickStageDefault(store);
   await still("deform-3-scale10-contour");
   store.dispatch({ type: "setColourBy", by: "group" });
   const safe = (n: string) => n.replace(/[^A-Za-z0-9_.-]+/g, "_") || "unnamed";

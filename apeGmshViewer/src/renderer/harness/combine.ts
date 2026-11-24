@@ -19,7 +19,8 @@
 // test/main/combinationsSave.test.ts.
 
 import { combinationHeldRefusal } from "../../combination/author.ts";
-import type { HarnessContext } from "./context.ts";
+import { until, type HarnessContext } from "./context.ts";
+import { contourShown, deformShown, refusalShown } from "./shown.ts";
 
 export async function captureCombine(ctx: HarnessContext, settle: (ms?: number) => Promise<unknown>): Promise<void> {
   const { store, viewport, bridge, combine } = ctx;
@@ -49,13 +50,12 @@ export async function captureCombine(ctx: HarnessContext, settle: (ms?: number) 
       e.value = value;
       e.dispatchEvent(new Event(ev));
     };
-    const tone = async (want: string) => {
-      for (let t = 0; t < 10000; t += 50) {
-        if (q<HTMLElement>('[data-role="combine-check"]').dataset["tone"] === want) return;
-        await settle(50);
-      }
-      throw new Error(`capture: the draft's check never read ${want}: ${q<HTMLElement>('[data-role="combine-check"]').textContent}`);
-    };
+    const tone = (want: string) =>
+      until(
+        () => `capture: the draft's check never read ${want}: ${q<HTMLElement>('[data-role="combine-check"]').textContent}`,
+        () => q<HTMLElement>('[data-role="combine-check"]').dataset["tone"] === want,
+        10000,
+      );
     const name = cases[0]!.name;
     type('[data-role="combine-name"]', "SRSS Ex modes 1-2 (capture)");
     type('[data-role="combine-rule"]', "srss", "change");
@@ -75,7 +75,7 @@ export async function captureCombine(ctx: HarnessContext, settle: (ms?: number) 
     const save = q<HTMLButtonElement>('[data-role="combine-save"]');
     if (save.disabled) throw new Error(`capture: Save is off on a standing draft: ${save.title}`);
     save.click();
-    for (let t = 0; t < 10000 && !document.querySelector('#combine [data-role="combine-notice"]'); t += 50) await settle(50);
+    await until("capture combine-save-refused: main to answer the save", () => !!document.querySelector('#combine [data-role="combine-notice"]'), 10000);
     await shot("combine-save-refused");
   }
   // Each still shows its own state only: the panel is closed for the listing, and the held refusal comes last.
@@ -84,7 +84,8 @@ export async function captureCombine(ctx: HarnessContext, settle: (ms?: number) 
   if (last !== null && store.get().mesh) {
     store.dispatch({ type: "setPhase", at: { kind: "combination", name: last } });
     if (store.get().visibility.colourBy !== "contour") store.dispatch({ type: "setColourBy", by: "contour" });
-    await settle(800);
+    // The combination's colours (or its refusal) on screen, and the deformed shape when it draws one.
+    await until("capture combine-listed: the User Combination to show", () => (contourShown(ctx) || refusalShown(ctx)) && deformShown(ctx), 15000);
     await shot("combine-listed");
   }
   if (cases.length) {
