@@ -1714,7 +1714,8 @@ export class Effects {
       : (this.bridge.materialTestRun?.(answer.job, id) ?? Promise.reject(new Error("this window cannot run the material tester")));
     asked.then(
       (a) => {
-        if (!this.store.get().materialTest.runs.some((r) => r.id === id && r.status === "running")) return;
+        // The answer is this run's by the seq main echoes, and only while the run is still going.
+        if (a.seq !== id || !this.store.get().materialTest.runs.some((r) => r.id === id && r.status === "running")) return;
         if (!a.ok) return finish(a.build, null, a.error);
         const at = `materialTest/${id}`;
         finish(a.build, { strain: this.blobs.put(`${at}/strain`, a.strain), stress: this.blobs.put(`${at}/stress`, a.stress), tangent: this.blobs.put(`${at}/tangent`, a.tangent) }, null, materialTestPointsOf(a.strain, a.stress, a.tangent), a.stopped);

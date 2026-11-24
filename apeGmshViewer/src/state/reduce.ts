@@ -473,6 +473,8 @@ function reduceEvent(s: State, e: Event): State {
         memory: s.memory,
         // ADR 0137 H1: tool windows are the window's, not the model's.
         tools: s.tools,
+        // The runs leave with the model, the ids go on: a late answer of a run the switch cancelled cannot finish a new run (architecture review 2026-11-24, finding 8).
+        materialTest: materialTestForAnotherModel(s.materialTest),
         contour: syncContourUnits(initialState.contour, s.results?.units ?? particleSystemOf(s.particles), false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
@@ -522,6 +524,8 @@ function reduceEvent(s: State, e: Event): State {
         memory: s.memory,
         // ADR 0137 H1: tool windows are the window's, not the model's.
         tools: s.tools,
+        // The runs leave with the model, the ids go on: a late answer of a run the switch cancelled cannot finish a new run (architecture review 2026-11-24, finding 8).
+        materialTest: materialTestForAnotherModel(s.materialTest),
         contour: syncContourUnits(initialState.contour, s.results?.units ?? particleSystemOf(s.particles), false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
