@@ -50,10 +50,14 @@ export type ToolEvent = { type: "setResultStep"; step: number };
  * ADR 0137 D10 (H2b): data a tool asks main for. It names no file: main reads the model window's
  * results file. The answer is the reduced values the tool draws, never the step's arrays.
  */
-export type ToolRequest = { kind: "nodeHistory"; stage: string; node: number; component: string };
+export type ToolRequest =
+  | { kind: "nodeHistory"; stage: string; node: number; component: string }
+  /** H3: one nodal component's range over the stage's nodes at one step (a second reader of the step, shared with the viewport's read) */
+  | { kind: "stepRange"; stage: string; step: number; component: string };
 
 export type ToolAnswer =
   | { ok: true; kind: "nodeHistory"; stage: string; node: number; component: string; values: ArrayLike<number> }
+  | { ok: true; kind: "stepRange"; stage: string; step: number; component: string; min: number | null; max: number | null; nodes: number }
   /** `superseded`: the same tool asked again before this one was answered; the newest request wins */
   | { ok: false; error: string; superseded?: true };
 

@@ -4,7 +4,7 @@
 // with the step on screen marked. A step change moves the mark only; a new stage, node or
 // component asks again, and the newest request wins.
 
-import { xyPlot } from "../ui/chart.ts";
+import { fmt, xyPlot } from "../ui/chart.ts";
 import type { ToolAnswer, ToolContext, ToolDefinition, ToolHost } from "./contract.ts";
 
 /** The component a new stage starts on: the first x displacement, else the first component. */
@@ -39,6 +39,7 @@ function mount(host: ToolHost) {
   const select = doc.createElement("select");
   select.title = "the nodal component to chart over the stage";
   pickRow.append(select);
+  const range = line("tool-range", history);
   const note = line("tool-history-note", history);
   const plotBox = line("tool-history-plot", history);
 
@@ -69,10 +70,40 @@ function mount(host: ToolHost) {
     error = null;
     void host.request({ kind: "nodeHistory", stage: c.step.stage, node, component }).then((a: ToolAnswer) => {
       if (key !== asked) return;
-      if (a.ok) data = { key, values: a.values };
-      else if (!a.superseded) error = a.error;
-      else return;
+      if (!a.ok) {
+        if (a.superseded) return;
+        error = a.error;
+      } else if (a.kind === "nodeHistory") data = { key, values: a.values };
       if (ctx) draw(ctx);
+    });
+  };
+
+  /**
+   * H3: the chosen component's range over the stage's nodes at the step on screen. A second reader of
+   * each step, which main serves from the viewport's read of it (the shared step cache).
+   */
+  let rangeAsked: string | null = null;
+  const askRange = (c: ToolContext) => {
+    if (!c.step || component === null) {
+      range.textContent = "";
+      return;
+    }
+    const s = c.step;
+    const key = JSON.stringify([s.stage, s.step, component]);
+    if (key === rangeAsked) return;
+    rangeAsked = key;
+    const comp = component;
+    void host.request({ kind: "stepRange", stage: s.stage, step: s.step, component: comp }).then((a: ToolAnswer) => {
+      if (key !== rangeAsked) return;
+      if (!a.ok) {
+        if (!a.superseded) range.textContent = a.error;
+        return;
+      }
+      if (a.kind !== "stepRange") return;
+      range.textContent =
+        a.min === null || a.max === null
+          ? `At step ${a.step + 1}: no ${comp} value at any node`
+          : `At step ${a.step + 1}: ${comp} from ${fmt(a.min)} to ${fmt(a.max)} over ${a.nodes.toLocaleString("en-US")} nodes`;
     });
   };
 
@@ -96,6 +127,7 @@ function mount(host: ToolHost) {
     }
     if (component !== null) select.value = component;
     ask(c);
+    askRange(c);
     const key = node === null || component === null ? null : JSON.stringify([s.stage, node, component]);
     if (node === null) {
       note.textContent = "Pick a node in the model window (the selection bar's Nodes) to chart its history here.";

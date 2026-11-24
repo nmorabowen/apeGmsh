@@ -227,6 +227,21 @@ export interface HingeHistoryRequest {
   seq: number;
 }
 
+/** ADR 0137 D5 (H3, #3059): how many step answers `ResultsHost.readStep` keeps (the spike's 4-entry cache). */
+export const STEP_CACHE = 4;
+
+/** ADR 0137 H3: the range of one nodal component over a stage's nodes at one step, for a tool. */
+export interface StepRangeRequest {
+  path: string;
+  stage: string;
+  step: number;
+  component: string;
+}
+
+export type StepRangeAnswer =
+  | { ok: true; stage: string; step: number; component: string; min: number | null; max: number | null; nodes: number }
+  | { ok: false; error: string; changed?: true };
+
 /** ADR 0137 H2b: one node's history of one nodal component over a stage, for a tool (main.ts `tool:request`). */
 export interface NodeHistoryRequest {
   path: string;
@@ -629,6 +644,9 @@ export class ResultsHost {
   /** scans running now, and those asked to stop (each checks between chunks) */
   private readonly running = new Set<number>();
   private readonly cancelled = new Set<number>();
+  /** ADR 0137 D5 (H3): the last step answers, oldest first (`readStep`) */
+  private readonly stepCache: { key: string; base: string; answer: Extract<StepAnswer, { ok: true }> }[] = [];
+  private readonly stepStats = { hits: 0, reads: 0 };
 
   constructor(h5: ResultsH5, ready: Promise<unknown>, opts: { idleMs?: number } = {}) {
     this.h5 = h5;
@@ -645,6 +663,7 @@ export class ResultsHost {
   async open(path: string): Promise<ResultsOpenAnswer> {
     this.close();
     this.indexed = null;
+    this.stepCache.length = 0;
     // A re-index (a file change, or another file) stops every scan of the old index.
     for (const id of this.running) this.cancelled.add(id);
     try {
@@ -736,8 +755,75 @@ export class ResultsHost {
     (this.timer as { unref?: () => void }).unref?.();
   }
 
-  /** The nodal components of one step of the indexed file. Another path is refused; a changed file answers `changed`. */
+  /**
+   * ADR 0137 D5 (H3, #3059): one read serves every consumer of a step. The last `STEP_CACHE`
+   * answers are kept, keyed by everything that changes the answer: the file's on-disk signature and
+   * identity, the stage, the step, and each optional part of the request (element, line diagram,
+   * tensor, layers, springs, hinges). A request with none of those parts (nodal values only, which
+   * every answer carries) is served from any kept answer for the same step. A changed file misses
+   * by its signature; no open or close order is assumed.
+   */
   readStep(req: StepRequest): StepAnswer {
+    const ix = this.indexed;
+    let sig: string | null = null;
+    if (ix !== null && ix.path === req.path) {
+      try {
+        sig = signature(req.path);
+      } catch {
+        sig = null;
+      }
+    }
+    if (ix === null || sig === null || sig !== ix.signature) return this.readStepFresh(req);
+    const base = JSON.stringify([req.path, sig, ix.identity, req.stage, req.step]);
+    const parts = [req.element ?? null, req.lineDiagram ?? null, req.tensor ?? null, req.layers ?? null, req.springs === true, req.hinges === true];
+    const key = JSON.stringify([base, ...parts]);
+    const nodalOnly = parts.every((p) => p === null || p === false);
+    const at = this.stepCache.findIndex((e) => e.key === key || (nodalOnly && e.base === base));
+    if (at >= 0) {
+      const [hit] = this.stepCache.splice(at, 1);
+      this.stepCache.push(hit!);
+      this.stepStats.hits++;
+      const a = hit!.answer;
+      // A nodal-only request served from a fuller answer gets the nodal values only.
+      return hit!.key === key ? { ...a, seq: req.seq } : { ok: true, seq: req.seq, stage: a.stage, step: a.step, nodal: a.nodal, gauss: {} };
+    }
+    const answer = this.readStepFresh(req);
+    if (answer.ok) {
+      this.stepCache.push({ key, base, answer });
+      while (this.stepCache.length > STEP_CACHE) this.stepCache.shift();
+    }
+    return answer;
+  }
+
+  /**
+   * ADR 0137 H3: the lowest and highest finite value of one nodal component over the stage's nodes
+   * at one step, for a tool (the reduced values it draws). It reads through `readStep`, so it
+   * shares the viewport's read of the same step.
+   */
+  stepRange(req: StepRangeRequest): StepRangeAnswer {
+    const a = this.readStep({ path: req.path, stage: req.stage, step: req.step, seq: -1 });
+    if (!a.ok) return { ok: false, error: a.error, ...(a.changed ? { changed: true as const } : {}) };
+    const v = a.nodal[req.component];
+    if (v === undefined) return { ok: false, error: `stage ${req.stage} has no nodal component ${JSON.stringify(req.component)}` };
+    let lo = Infinity, hi = -Infinity, n = 0;
+    for (let i = 0; i < v.length; i++) {
+      const x = v[i]!;
+      if (!Number.isFinite(x)) continue;
+      n++;
+      if (x < lo) lo = x;
+      if (x > hi) hi = x;
+    }
+    return { ok: true, stage: req.stage, step: req.step, component: req.component, min: n ? lo : null, max: n ? hi : null, nodes: n };
+  }
+
+  /** How many step reads were served from the cache, and how many were read (tests and the harness read it). */
+  stepCounts(): { hits: number; reads: number } {
+    return { ...this.stepStats };
+  }
+
+  /** The nodal components of one step of the indexed file. Another path is refused; a changed file answers `changed`. */
+  private readStepFresh(req: StepRequest): StepAnswer {
+    this.stepStats.reads++;
     try {
       const rf = this.handle(req.path);
       if (!rf) {

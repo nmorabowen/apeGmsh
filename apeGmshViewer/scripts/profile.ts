@@ -68,13 +68,13 @@ const SCENARIOS = [
 type ScenarioName = (typeof SCENARIOS)[number];
 
 function usage(message: string): never {
-  console.error(`${message}\nnpm run profile -- <model.h5> [--out=<dir>] [--scenarios=${SCENARIOS.slice(0, 2).join(",")},...] [--reps=5] [--sampling=200] [--hard-cap=1800] [--keep-profiles]\nscenarios: ${SCENARIOS.join(", ")}`);
+  console.error(`${message}\nnpm run profile -- <model.h5> [--out=<dir>] [--scenarios=${SCENARIOS.slice(0, 2).join(",")},...] [--reps=5] [--sampling=200] [--hard-cap=1800] [--keep-profiles] [--tool=step]\nscenarios: ${SCENARIOS.join(", ")}`);
   process.exit(2);
 }
 
 const argv = process.argv.slice(2);
 const flag = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
-const known = ["out", "scenarios", "reps", "sampling", "hard-cap"];
+const known = ["out", "scenarios", "reps", "sampling", "hard-cap", "tool"];
 const bad = argv.find((a) => a.startsWith("--") && a !== "--keep-profiles" && !known.some((k) => a.startsWith(`--${k}=`)));
 if (bad) usage(`unknown flag ${bad}`);
 const positional = argv.filter((a) => !a.startsWith("--"));
@@ -596,6 +596,15 @@ async function runScenarios(page: Cdp, run: Run, openFile: () => void): Promise<
   if (!loaded) {
     run.warnings.push("the model did not load, so no later scenario ran");
     return;
+  }
+  // ADR 0137 H3 (#3059): `--tool=<id>` opens that tool window beside the page once the model is drawn, so every
+  // later scenario runs with the tool attached (Step readout reads each step on screen as a second reader).
+  const tool = flag("tool");
+  if (tool) {
+    const answer = await page.evaluate<string>(`window.viewer.openTool(${JSON.stringify(tool)}).then((r) => JSON.stringify(r))`);
+    await sleep(1500);
+    await page.send("Page.bringToFront");
+    run.warnings.push(`tool window "${tool}" opened beside the page: ${answer}`);
   }
   const orbit = async (): Promise<Outcome> => {
     const { x, y } = await canvasCentre(page);
