@@ -209,11 +209,13 @@ def test_tail_survives_a_half_appended_frame(tmp_path: Path) -> None:
 # Live parity — run a monitored analysis and check the sink vs ops.nodeDisp
 # ---------------------------------------------------------------------------
 
-ops = pytest.importorskip("openseespy.opensees")
-
-
-@pytest.mark.live
+@pytest.mark.ladruno_fork
 def test_monitor_live_parity(tmp_path: Path) -> None:
+    # The Monitor recorder is fork-only, and openseespy by name is the stock
+    # binding beside a fork build, so take the module the bridge resolves.
+    from apeGmsh.opensees.emitter.live import get_ops
+
+    ops = get_ops()
     sink = str(tmp_path / "mon.h5")
     try:
         ops.wipe()

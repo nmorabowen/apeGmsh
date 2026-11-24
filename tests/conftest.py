@@ -487,9 +487,6 @@ def _open_model_or_none(path: "str | Path") -> "Any | None":
 @pytest.fixture(scope="session")
 def _composed_artifacts(tmp_path_factory: pytest.TempPathFactory):
     """Build the demo once; yield ``(composed_results_h5, sibling_model_h5)``."""
-    pytest.importorskip(
-        "openseespy.opensees", reason="apeSees bridge (demo model emit)"
-    )
     from apeGmsh.results import make_demo_results
 
     out_dir = tmp_path_factory.mktemp("composed_artifacts")

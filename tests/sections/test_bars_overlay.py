@@ -130,6 +130,7 @@ def test_ge_signed_eayz_mirror_catch(g):
     )
 
 
+@pytest.mark.live
 def test_ge_mk_slope_exact_with_bars(g):
     """M–κ initial slope through OpenSees == the fiber sum ΣEAy²
     (concrete Gauss fibers + bars as n·A_s steel) — exact identity."""
@@ -178,6 +179,7 @@ def test_ge_mk_slope_exact_with_bars(g):
     ops_py.wipe()
 
 
+@pytest.mark.live
 def test_ge_pp_bar_plateau_both_signs(g):
     """Near-zero concrete + ElasticPP bars: the moment plateaus at
     ΣA_s·fy·|ȳ| in BOTH signs (an asymmetric bar layout would break
@@ -313,6 +315,7 @@ def test_continuum_doc_to_section_end_to_end(tmp_path):
 # gate G-E hardening (adversarial review): point-symmetry breakers
 # ─────────────────────────────────────────────────────────────────────
 
+@pytest.mark.live
 def test_ge_axial_coupling_sign_single_bar(g):
     """W1 killer — ONE bar above the centroid: under +Mz with the
     axial DOF free, the axial displacement is ε0 = −(ΣEAy/ΣEA)·κ with

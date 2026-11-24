@@ -20,9 +20,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-# Rehydrating the typed model needs the apeSees bridge.
-pytest.importorskip("openseespy.opensees", reason="apeSees bridge (readers)")
-
 
 def _fem_key(fem):
     """(ids, coords, snapshot_id) sorted by node id — order-independent."""

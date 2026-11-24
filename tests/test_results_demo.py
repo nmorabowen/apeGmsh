@@ -14,9 +14,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-# apeSees model emit needs the opensees bridge; mesh needs gmsh (base dep).
-pytest.importorskip("openseespy.opensees", reason="apeSees bridge import")
-
 
 def test_make_demo_results_shape():
     from apeGmsh.results import make_demo_results

@@ -39,6 +39,10 @@ openseespy = pytest.importorskip(
 )
 ops = openseespy
 
+# Live-stock selects it, and both cases there skip with a reason (no MPCO
+# recorder in pip openseespy, no Tcl launcher), so the gap shows in `-rs`.
+pytestmark = pytest.mark.live
+
 _DEFAULT_TCL_LAUNCHERS = [
     r"C:\Program Files\El Ladruno OpenSees\opensees_ladruno.bat",
 ]

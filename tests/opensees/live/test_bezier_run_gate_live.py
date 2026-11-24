@@ -10,15 +10,18 @@ from __future__ import annotations
 
 import pytest
 
-# Gate 1: openseespy present (collect-time skip otherwise).
-openseespy = pytest.importorskip("openseespy.opensees")
-
-from apeGmsh.opensees.emitter.live import LiveOpsEmitter  # noqa: E402
+from apeGmsh.opensees.emitter.live import LiveOpsEmitter, get_ops
 
 
 def _fork_has_bezier_tri6() -> bool:
-    """True if the live build knows ``BezierTri6`` (a fork-only element)."""
-    ops = openseespy
+    """True if the live build knows ``BezierTri6`` (a fork-only element).
+
+    Probes the module the bridge resolves: openseespy by name is the stock
+    binding beside a fork build, so it never knows the element."""
+    try:
+        ops = get_ops()
+    except Exception:  # no OpenSees backend at all
+        return False
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     for i, (x, y) in enumerate(
@@ -35,10 +38,13 @@ def _fork_has_bezier_tri6() -> bool:
         ops.wipe()
 
 
-pytestmark = pytest.mark.skipif(
-    not _fork_has_bezier_tri6(),
-    reason="live OpenSees build is not the Ladruno fork (no BezierTri6)",
-)
+pytestmark = [
+    pytest.mark.ladruno_fork,
+    pytest.mark.skipif(
+        not _fork_has_bezier_tri6(),
+        reason="live OpenSees build is not the Ladruno fork (no BezierTri6)",
+    ),
+]
 
 
 def test_run_gate_passes_on_fork_build() -> None:

@@ -1185,6 +1185,81 @@ def test_qt_process_isolation_passes_test_properties_from_main(tmp_path: Path) -
     assert quirks.scan(tmp_path) == []
 
 
+# --- openseespy-unmarked: an openseespy skip in no lane (2026-11-24 review) ---
+
+#: main before the fix: every file below skipped tests that no CI lane selects.
+UNMARKED_BUG_COMMIT = "5685e046"
+UNMARKED_FILES = (
+    "tests/test_reader_parity.py",       # module-level skip, no test marked
+    "tests/results/test_monitor.py",     # module-level skip mid-file: the tail tests above it too
+    "tests/sections/test_bars_overlay.py",  # in-test skips, tests unmarked
+    "tests/test_tie_force_helper.py",    # skip in a helper the unmarked tests call
+)
+
+
+@pytest.mark.parametrize("rel", UNMARKED_FILES)
+def test_openseespy_unmarked_flags_the_files_at_the_commit_that_had_the_bug(tmp_path: Path, rel: str) -> None:
+    _write(tmp_path, rel, _show(UNMARKED_BUG_COMMIT, rel))
+    rules = [f.rule for f in quirks.scan(tmp_path)]
+    assert rules and set(rules) == {"openseespy-unmarked"}
+
+
+@pytest.mark.parametrize("rel", UNMARKED_FILES)
+def test_openseespy_unmarked_passes_the_files_on_main(tmp_path: Path, rel: str) -> None:
+    _write(tmp_path, rel, _real(rel))
+    assert quirks.scan(tmp_path) == []
+
+
+OSP = 'pytest.importorskip("openseespy.opensees")'
+
+
+@pytest.mark.parametrize(
+    ("source", "flagged"),
+    [
+        # module level: every test of the module must be covered
+        (f"import pytest\n{OSP}\ndef test_a():\n    pass\n", True),
+        (f"import pytest\npytestmark = pytest.mark.live\n{OSP}\ndef test_a():\n    pass\n", False),
+        (f"import pytest\npytestmark = [pytest.mark.slow, pytest.mark.ladruno_fork]\n{OSP}\n"
+         "def test_a():\n    pass\n", False),
+        (f"import pytest\n{OSP}\n@pytest.mark.live\ndef test_a():\n    pass\n"
+         "def test_b():\n    pass\n", True),  # test_b skips in suite and is not in live-stock
+        (f"import pytest\n{OSP}\n@pytest.mark.live\ndef test_a():\n    pass\n", False),
+        # in a test: that test, its class, or an alias of the mark
+        (f"import pytest\ndef test_a():\n    {OSP}\n", True),
+        (f"import pytest\n@pytest.mark.live\ndef test_a():\n    {OSP}\n", False),
+        (f"import pytest\n@pytest.mark.subprocess\ndef test_a():\n    {OSP}\n", False),
+        (f"import pytest\n@pytest.mark.skip\ndef test_a():\n    {OSP}\n", True),
+        (f"import pytest\nlive = pytest.mark.live\n@live\ndef test_a():\n    {OSP}\n", False),
+        (f"import pytest\n@pytest.mark.live\nclass TestA:\n    def test_a(self):\n        {OSP}\n", False),
+        (f"import pytest\nclass TestA:\n    def test_a(self):\n        {OSP}\n", True),
+        # in a helper or fixture: the tests here that call or request it
+        (f"import pytest\ndef _ops():\n    return {OSP}\ndef test_a():\n    _ops()\n", True),
+        (f"import pytest\ndef _ops():\n    return {OSP}\n@pytest.mark.live\ndef test_a():\n    _ops()\n", False),
+        (f"import pytest\n@pytest.fixture\ndef ops():\n    return {OSP}\ndef test_a(ops):\n    pass\n", True),
+        (f"import pytest\n@pytest.fixture\ndef ops():\n    return {OSP}\n"
+         "@pytest.mark.live\ndef test_a(ops):\n    pass\ndef test_b():\n    pass\n", False),
+        (f"import pytest\n@pytest.fixture\ndef ops():\n    return {OSP}\n", False),  # no user here: unread
+        # not openseespy
+        ('import pytest\ndef test_a():\n    pytest.importorskip("gmsh")\n', False),
+        ('import pytest\ndef test_a():\n    pytest.importorskip("openseespylinux")\n', False),
+    ],
+)
+def test_openseespy_unmarked_shapes(tmp_path: Path, source: str, flagged: bool) -> None:
+    _write(tmp_path, "tests/a.py", source)
+    assert [f.rule for f in quirks.scan(tmp_path)] == (["openseespy-unmarked"] if flagged else [])
+
+
+def test_openseespy_unmarked_is_scoped_to_tests(tmp_path: Path) -> None:
+    _write(tmp_path, "examples/a.py", f"import pytest\n{OSP}\n")
+    assert [f.rule for f in quirks.scan(tmp_path)] == []
+
+
+def test_openseespy_unmarked_waiver(tmp_path: Path) -> None:
+    source = f"import pytest\ndef test_a():\n    # apegmsh-lint: openseespy-unmarked-ok runs in the docs lane\n    {OSP}\n"
+    _write(tmp_path, "tests/a.py", source)
+    assert quirks.scan(tmp_path) == []
+
+
 # --- qt-worker-gc: a worker thread that can run Qt finalizers (#1649) --------
 
 PROPERTIES = "src/apeGmsh/sections/_properties.py"
