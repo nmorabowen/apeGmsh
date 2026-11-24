@@ -1489,3 +1489,38 @@ in main.
   where the difference shows, and none was measured.
 - **Error.** One profile run per build, three stall runs; read the per-op times as equal within
   noise, and the main-busy column as the effect.
+
+## One step read for the viewport and a tool (ADR 0137 D5, H3, #3059)
+
+The tool-host spike measured a second reader of each step costing the viewport 1.17x, and a
+4-entry cache in main bringing it to 0.98x. H3 builds that cache in the results host (now in the
+loader process, #3058): the last four step answers, keyed by the file's on-disk signature and
+identity, the stage, the step and each optional part of the request. A tool's step range (Step
+readout's "At step k" line) reads through it.
+
+### Method
+
+- `tims_c3b` (26,970 cells, 51 steps), branch at `5a451258` (main `0fdff512` plus H3), dev build.
+- `npm run profile -- tims_c3b.h5 --scenarios=load,enter-results,scrub --reps=12`, with and without
+  the new `--tool=step`, which opens the Step readout tool window once the model is drawn. With it,
+  every step the scrub walks is read twice: by the viewport, and by the tool's step range. Runs
+  alternated, each after at least 2.0 GB of RAM was available.
+- Checked apart: with the model window brought to the front (as the profiler does), the tool window
+  stays `visible` and reads each step (its range line follows the step).
+
+### Rows
+
+| run | tool window | scrub, per step (ms), 50 steps | machine CPU during |
+|---|---|---|---|
+| 1 | none | 54.7 | 82% |
+| 2 | none | 48.2 | 66% |
+| 3 | none | 42.7 | 47% |
+| 4 | Step readout | 44.0 | 54% |
+| 5 | Step readout | 44.8 | 45% |
+
+- **The second reader costs the viewport nothing measurable.** With the tool, 44.0 and 44.8 ms per
+  step; without, 42.7 to 54.7 ms, falling with the machine's load. Against the run with the closest
+  load (42.7 ms at 47%), the tool's runs are 1.03x and 1.05x, inside the spread of the runs without
+  it. The spike's uncached second reader cost 1.17x.
+- **Error.** One run per row on a shared machine, CPU 45 to 82% during the runs; read the per-step
+  times as equal within noise, not as a ranking.

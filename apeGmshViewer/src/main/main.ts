@@ -80,6 +80,7 @@ import { forkLoader } from "./loader/fork.ts";
 import { readMemory, watchLoad } from "./memory.ts";
 import { toolWebPreferences, ToolWindows } from "./toolWindows.ts";
 import { checkToolRequest, ToolBroker } from "./toolBroker.ts";
+import type { ToolAnswer } from "../tools/contract.ts";
 import { TOOLS } from "../tools/registry.ts";
 import { nodeDeps, registerWorkspace } from "./workspace.ts";
 import { combinationToken, nodeCombinationDeps, registerCombinations, sweepOnOpen, type CombinationH5 } from "./combinations.ts";
@@ -318,7 +319,7 @@ const toolWindows = new ToolWindows(
     create: (_tool, title) => {
       const t = new BrowserWindow({
         width: 560,
-        height: 600,
+        height: 640,
         title,
         backgroundColor: "#16181d",
         autoHideMenuBar: true,
@@ -345,7 +346,15 @@ ipcMain.handle("tool:open", (e, tool: unknown) => {
 ipcMain.on("tool:ready", (e) => void toolWindows.ready(e.sender));
 // ADR 0137 D10 (H2b): a tool's data, through the broker (./toolBroker.ts), from the window set's
 // results file only, read in the loader process. The sender and the request are checked first.
-const toolBroker = new ToolBroker((req) => resultsHost.readNodeHistory(req));
+const toolBroker = new ToolBroker(async (path, q): Promise<ToolAnswer> => {
+  if (q.kind === "nodeHistory") {
+    const a = await resultsHost.readNodeHistory({ path, stage: q.stage, node: q.node, component: q.component });
+    return a.ok ? { ok: true, kind: "nodeHistory", stage: a.stage, node: a.node, component: a.component, values: a.values } : { ok: false, error: a.error };
+  }
+  // H3: through the shared step cache, so a tool's read of the step on screen is the viewport's.
+  const a = await resultsHost.stepRange({ path, stage: q.stage, step: q.step, component: q.component });
+  return a.ok ? { ok: true, kind: "stepRange", stage: a.stage, step: a.step, component: a.component, min: a.min, max: a.max, nodes: a.nodes } : { ok: false, error: a.error };
+});
 ipcMain.handle("tool:request", (e, q: unknown, seq: unknown) => {
   if (!toolWindows.isTool(e.sender)) return { ok: false, error: "tool:request: only a tool window asks for tool data" };
   if (typeof seq !== "number") return { ok: false, error: `tool:request: malformed request number ${shown(seq)}` };

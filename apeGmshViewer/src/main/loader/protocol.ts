@@ -12,6 +12,8 @@ import type {
   HingeHistoryRequest,
   NodeHistoryAnswer,
   NodeHistoryRequest,
+  StepRangeAnswer,
+  StepRangeRequest,
   ParticleIndexAnswer,
   ParticleOutputAnswer,
   ParticleOutputRequest,
@@ -60,6 +62,8 @@ export interface ResultsCalls {
   readStep: { args: [req: StepRequest]; answer: StepAnswer };
   readHingeHistory: { args: [req: HingeHistoryRequest]; answer: HingeHistoryAnswer };
   readNodeHistory: { args: [req: NodeHistoryRequest]; answer: NodeHistoryAnswer };
+  stepRange: { args: [req: StepRangeRequest]; answer: StepRangeAnswer };
+  stepCounts: { args: []; answer: { hits: number; reads: number } };
   scan: { args: [req: ScanRequest, opts: ScanOptions]; answer: ScanAnswer };
   cancelScan: { args: [scanId: number]; answer: void };
   particleIndex: { args: [path: string]; answer: ParticleIndexAnswer };

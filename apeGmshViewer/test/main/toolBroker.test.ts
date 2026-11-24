@@ -12,7 +12,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import * as h5wasm from "h5wasm/node";
 import { checkToolRequest, ToolBroker } from "../../src/main/toolBroker.ts";
-import { ResultsHost, type NodeHistoryAnswer, type NodeHistoryRequest } from "../../src/main/results.ts";
+import { ResultsHost } from "../../src/main/results.ts";
+import type { ToolAnswer, ToolRequest } from "../../src/tools/contract.ts";
 import type { ResultsH5 } from "../../src/reader/results.ts";
 import { defaultComponent } from "../../src/tools/step.ts";
 
@@ -25,16 +26,19 @@ test("only a well-formed nodeHistory request passes", () => {
   }
 });
 
+type Asked = { path: string; node: number; stage: string; component: string };
+
 /** A read the test finishes by hand, recording what it was asked. */
 function manualRead() {
-  const asked: NodeHistoryRequest[] = [];
-  const finish: ((a: NodeHistoryAnswer) => void)[] = [];
-  const read = (req: NodeHistoryRequest) =>
-    new Promise<NodeHistoryAnswer>((r) => {
-      asked.push(req);
+  const asked: Asked[] = [];
+  const finish: ((a: ToolAnswer) => void)[] = [];
+  const read = (path: string, q: ToolRequest) =>
+    new Promise<ToolAnswer>((r) => {
+      if (q.kind !== "nodeHistory") throw new Error("these tests ask for histories");
+      asked.push({ path, node: q.node, stage: q.stage, component: q.component });
       finish.push(r);
     });
-  const ok = (req: NodeHistoryRequest): NodeHistoryAnswer => ({ ok: true, stage: req.stage, node: req.node, component: req.component, values: Float64Array.from([req.node, req.node * 2]) });
+  const ok = (req: Asked): ToolAnswer => ({ ok: true, kind: "nodeHistory", stage: req.stage, node: req.node, component: req.component, values: Float64Array.from([req.node, req.node * 2]) });
   return { read, asked, finish, ok };
 }
 
@@ -50,10 +54,10 @@ test("the same data asked twice while it is read is read once; other data reads 
   m.finish[0]!(m.ok(m.asked[0]!));
   m.finish[1]!(m.ok(m.asked[1]!));
   const [a1, a2, a3] = await Promise.all([p1, p2, p3]);
-  assert.deepEqual(a1.ok && Array.from(a1.values), [3, 6]);
+  assert.deepEqual(a1.ok && a1.kind === "nodeHistory" && Array.from(a1.values), [3, 6]);
   assert.equal(a2.ok, false, "tool B asked for node 4 after node 3: its node 3 answer is superseded");
   assert.ok(!a2.ok && a2.superseded);
-  assert.deepEqual(a3.ok && Array.from(a3.values), [4, 8]);
+  assert.deepEqual(a3.ok && a3.kind === "nodeHistory" && Array.from(a3.values), [4, 8]);
   // Finished reads are not kept: asking again reads again.
   const p4 = b.request(toolA, "/r.ladruno", q(3), 2);
   assert.equal(b.reads, 3);
@@ -72,7 +76,7 @@ test("newest wins per tool: the older answer is superseded, the newer one arrive
   m.finish[0]!(m.ok(m.asked[0]!));
   const [o, n] = await Promise.all([older, newer]);
   assert.deepEqual(o, { ok: false, superseded: true, error: "superseded by a newer request from this tool" });
-  assert.equal(n.ok && n.node, 2);
+  assert.equal(n.ok && n.kind === "nodeHistory" && n.node, 2);
 });
 
 test("a read's refusal reaches the tool with its reason", async () => {
@@ -110,4 +114,41 @@ test("the history starts on the stage's x displacement, else its first component
   assert.equal(defaultComponent(["DISPLACEMENT/Uy", "DISPLACEMENT/Ux"]), "DISPLACEMENT/Ux");
   assert.equal(defaultComponent(["pore_pressure"]), "pore_pressure");
   assert.equal(defaultComponent([]), null);
+});
+
+test("H3: a well-formed stepRange request passes; a bad step or an extra field does not", () => {
+  const r = { kind: "stepRange", stage: "stage_0", step: 4, component: "displacement_x" };
+  assert.deepEqual(checkToolRequest(r), { ok: true, q: r });
+  for (const bad of [{ ...r, step: -1 }, { ...r, step: 2.5 }, { ...r, node: 3 }, { kind: "stepRange", stage: "s", component: "c" }]) {
+    assert.equal(checkToolRequest(bad).ok, false, JSON.stringify(bad));
+  }
+});
+
+test("H3: a stepRange and a nodeHistory for the same stage and component are different reads", async () => {
+  const seen: string[] = [];
+  const b = new ToolBroker(async (_path, q) => {
+    seen.push(q.kind);
+    return q.kind === "stepRange" ? { ok: true, kind: "stepRange", stage: q.stage, step: q.step, component: q.component, min: 0, max: 1, nodes: 2 } : { ok: false, error: "x" };
+  });
+  const tool = {};
+  await Promise.all([b.request(tool, "/r", { kind: "stepRange", stage: "s", step: 1, component: "c" }, 1), b.request({}, "/r", { kind: "nodeHistory", stage: "s", node: 1, component: "c" }, 1)]);
+  assert.deepEqual(seen.sort(), ["nodeHistory", "stepRange"]);
+});
+
+test("H3: newest wins per kind: a tool's step range never supersedes its history, and the reverse", async () => {
+  const finish: (() => void)[] = [];
+  const b = new ToolBroker(
+    (_path, q) =>
+      new Promise<ToolAnswer>((r) =>
+        finish.push(() => r(q.kind === "stepRange" ? { ok: true, kind: "stepRange", stage: q.stage, step: q.step, component: q.component, min: 0, max: 1, nodes: 2 } : { ok: true, kind: "nodeHistory", stage: q.stage, node: q.node, component: q.component, values: [1, 2] })),
+      ),
+  );
+  const tool = {};
+  // The Step readout's order: the history (seq 1), then the range of the step on screen (seq 2).
+  const history = b.request(tool, "/r", { kind: "nodeHistory", stage: "s", node: 91, component: "c" }, 1);
+  const range = b.request(tool, "/r", { kind: "stepRange", stage: "s", step: 1, component: "c" }, 2);
+  finish.forEach((f) => f());
+  const [h, r] = await Promise.all([history, range]);
+  assert.equal(h.ok && h.kind, "nodeHistory", JSON.stringify(h));
+  assert.equal(r.ok && r.kind, "stepRange", JSON.stringify(r));
 });
