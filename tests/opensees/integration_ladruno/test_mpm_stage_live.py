@@ -29,7 +29,8 @@ sigZZ``), lines the test adds to the emitted deck. Closed forms:
   elastoplastic from its first step: at the end of each analyze every
   particle is inside the surface, and the deep particles hold the cone's
   lateral ratio, well above K0. So the control ends in another state than
-  the stage-0 run.
+  the stage-0 run, and (by its path, not in closed form) than the staged
+  run.
 
 ``mpm stage`` answers the number of particles it reached: 160, both times.
 
@@ -256,9 +257,16 @@ def test_mpm_control_without_stage_ends_elastoplastic_on_fork(
         assert ratio.min() > K0 + 0.05, (key, ratio.min())
         # The stage-0 run at the same instant is outside the surface.
         assert staged_one["f1"][_deep(staged_one)].min() > 0.0
+    # And the control ends in another state than the staged run. A level,
+    # laterally confined column has one static state on the cone, so the
+    # difference is the path: the control yields under the dynamic overshoot
+    # of its suddenly applied weight and unloads, the staged run yields from
+    # the K0 state (measured 1.4 kPa at 3eb195bbc; asserted above 1 % of the
+    # base stress).
     final = runs["staged"]["after_2"]
     diff = np.abs(run["after_2"]["sig"] - final["sig"]).max()
     record_property("control_vs_staged_final_sig_max_abs_diff", float(diff))
+    assert diff > 0.01 * RHO * GRAV * HC, diff
 
 
 def test_mpm_rule_k0_refusal_is_the_fork_message_at_fork_pin() -> None:

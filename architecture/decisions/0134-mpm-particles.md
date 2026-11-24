@@ -522,3 +522,65 @@ pinned fork and check closed forms. Under `Gridvel`, every particle inside the b
 is displaced by `v T`, and a body outside the box stays at rest, as both bodies do in a control deck
 without the gridvel. With `translate` and `profile`, the displacement is `v Φ(T)`. Under
 `GridvelAffine`, the particle velocity is `L (x − ref)`.
+
+## Amendment 4 (2026-11-23): the `Stage` member; Amendment 3's deferral is lifted
+
+**Status:** Proposed (#3120). It is accepted when the owner OKs the PR that adds it (`human-gate`).
+It adds one member under D8 and changes no other decision.
+
+**Why now.** Amendment 3 held `mpm stage` back in case WP-232l (fork #1116) gave it pore-pressure
+semantics. It did not. The pin (`ladruno-v20261123b`, 3eb195bbc) contains #1116 (`ae3e57ad6`), and
+there the `stage` branch of `OPS_LadrunoMPM.cpp::OPS_LadrunoMPM` and
+`LadrunoMPMSoil.cpp::LadrunoMPMPattern::stageWalk` are still WP-232k's walk. WP-232l adds one line to
+the walk, `pencilDt = -1`, which resets route S's cached pencil. The fork's
+`tests/mpm_twophase_interface.md` has no stage row.
+
+**The member.** `mpm.Stage(material, stage)`, declared with `ops.mpm.stage(material, stage)`,
+emits `mpm stage <matTag> <s>` on all five emitters; the fork answers the number of particles it
+reached. The walk reaches every particle whose material has the tag, through that material's own
+`materialState` parameter, and passes `s` through unchanged. `material` is a handle or a registered
+name, and its tag is resolved at emit, as `Body` resolves it (D6). The row is written in declaration
+order among the `Analyze` rows, and that order is the staging. `stage` leaves the fork-surface
+gate's `NOT_OFFERED` rows.
+
+**Admitted (owner ruling 1 on #3120).** `DruckerPrager` stages 0, 1 and 2 (0 elastic, 1 elastic
+with updated moduli, 2 elastoplastic, its default), and `LadrunoSANISAND` stages 0 and 1. The table
+is `mpm.STAGES`, keyed by the class itself. The fork also stages `LadrunoHS`, which has no apeGmsh
+class.
+
+**Refused by apeGmsh, by name.** At construction:
+
+- a material that is not an `NDMaterial`, or whose class (a subclass included) is not in `STAGES`;
+- a `stage` that is a bool, a float or a string, or outside its class's values.
+
+At emit (`mpm_block`):
+
+- a `Stage` whose material no `Body` uses (the fork refuses it: "no particle material has tag");
+- a `Stage` with no `Analyze` after it (owner ruling 2 on #3120: refused, not warned);
+- two `Stage`s of one material with no `Analyze` between them, since the first stages no step;
+- two `LadrunoSANISAND` materials staged to different values with no `Analyze` between them. The
+  fork's SANISAND flag is class-wide: staging one SANISAND tag stages every SANISAND particle.
+- a `LadrunoSANISAND` body. At `mpm analyze`, the fork refuses SANISAND particles in explicit mode F
+  on a gimp or linear grid ("... at particles in explicit mode F needs a B-spline basis", rule K0).
+  apeGmsh emits mode F only, and `Grid` admits gimp and linear only, so no apeGmsh deck can run one.
+  A test fails when a B-spline basis is admitted (Amendment 3's B10 pattern); the refusal is then
+  narrowed to gimp and linear in the same PR.
+
+A model with `ops.stage` blocks is still refused, unchanged (Amendment 1's `loadPattern` route
+stays a follow-up).
+
+**Oracles.** The parity test (D8) gains `Stage`'s fork line on all five emitters. The fork-surface
+gate moves `stage` to the members. A warrant row pairs the stock refusal with
+`tests/opensees/integration_ladruno/test_mpm_stage_live.py`, which runs a 2-D mode-F column on gimp
+on the pinned fork: a weak `DruckerPrager` body, its sides fixed, under gravity and local damping,
+staged 0, analyzed, staged 2 and analyzed. Each `mpm stage` reaches all 160 particles. At the end
+of stage 0 the deep particles hold `σxx/σyy = ν/(1−ν)` to 0.02 and lie outside the yield surface.
+After stage 2 every particle is on or inside it. A control deck with no `Stage` is elastoplastic
+from its first step, because `DruckerPrager`'s default stage is 2: at the end of each analyze it
+is inside the surface, with a lateral ratio above `ν/(1−ν) + 0.05` at depth.
+
+So the control ends in another state than the stage-0 run. It also ends in another state than
+the staged run, by its path rather than in closed form: a level, laterally confined column has
+one static state on the cone, and the two runs differ because the control yields under the
+dynamic overshoot of its suddenly applied weight and then unloads. At the pin the final stresses
+differ by up to 1.4 kPa, and the test asserts more than 1 % of the base stress.
