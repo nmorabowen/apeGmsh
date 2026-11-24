@@ -7,6 +7,7 @@ import type { ElementRef } from "../chain/resolve.ts";
 import { buildMesh, colourGroups, type MeshBuffers } from "../mesh/build.ts";
 import { opsOnlyNodes } from "../mesh/membrane.ts";
 import type { Group, ModelFile, OpsFamily, OpsObject, Param, SequenceZone } from "../model/types.ts";
+import { runOfTag } from "../model/tagRuns.ts";
 import { sourceOfRow, type ProvenanceZone } from "../reader/provenance.ts";
 import type { BlobStore } from "./blobs.ts";
 import { cellPath, elementLinks, objectDecl, objectPaths, opsRowPath, type Lookup } from "./decls.ts";
@@ -48,7 +49,7 @@ function archiveKeys(model: ModelFile, ids: ObjectIds): ObjectIds {
   const out: ObjectIds = new Map();
   const taken = new Set<DeclPath>();
   for (const [obj, id] of ids) {
-    const run = table.tags.find((t) => t.kind === obj.family && obj.tag >= t.first && obj.tag < t.first + t.count);
+    const run = runOfTag(table.tags, obj.family, obj.tag);
     if (!run) throw new Error(`${obj.path}: /opensees/decls/tags has no run for ${obj.family} ${obj.tag}`);
     const key = table.records[run.decl]!.key;
     const path = taken.has(key) ? `${key}@${obj.tag}` : key;

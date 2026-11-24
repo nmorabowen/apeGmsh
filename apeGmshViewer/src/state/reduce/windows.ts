@@ -2,7 +2,7 @@
 // open windows, the spotlight palette and the search window's query.
 
 import type { WindowsEvent } from "../types/events/windows.ts";
-import { WINDOW_KINDS, type State } from "../types.ts";
+import { MATERIALS_PAGE, WINDOW_KINDS, type State } from "../types.ts";
 
 /** The open windows, the spotlight and the search, each its own field of the state. */
 export type Windows = Pick<State, "windows" | "spotlight" | "search">;
@@ -13,9 +13,9 @@ export function reduceWindows(w: Windows, e: WindowsEvent): Windows {
     case "openWindow":
       if (!WINDOW_KINDS.includes(e.window)) throw new RangeError(`openWindow: ${JSON.stringify(e.window)} is not a window kind`);
       if (w.windows.open.includes(e.window)) return w;
-      return { ...w, windows: { open: [...w.windows.open, e.window] } };
+      return { ...w, windows: { ...w.windows, open: [...w.windows.open, e.window] } };
     case "closeWindow":
-      return { ...w, windows: { open: w.windows.open.filter((x) => x !== e.window) } };
+      return { ...w, windows: { ...w.windows, open: w.windows.open.filter((x) => x !== e.window) } };
     case "openSpotlight": {
       const mode = e.mode ?? "root";
       const query = e.query ?? w.spotlight.query;
@@ -44,6 +44,17 @@ export function reduceWindows(w: Windows, e: WindowsEvent): Windows {
     }
     case "clearSpotlightClauses":
       return w.spotlight.clauses.length === 0 ? w : { ...w, spotlight: { ...w.spotlight, clauses: [] } };
+    case "setMaterialsFilter": {
+      const cur = w.windows.materials;
+      if ((cur?.filter ?? "") === e.text) return w;
+      // A new filter starts every group at its first page.
+      return { ...w, windows: { ...w.windows, materials: { filter: e.text, shown: {} } } };
+    }
+    case "showMoreMaterials": {
+      const cur = w.windows.materials ?? { filter: "", shown: {} };
+      const shown = { ...cur.shown, [e.kind]: (cur.shown[e.kind] ?? MATERIALS_PAGE) + MATERIALS_PAGE };
+      return { ...w, windows: { ...w.windows, materials: { ...cur, shown } } };
+    }
     case "setSearchText":
       return w.search.text === e.text ? w : { ...w, search: { ...w.search, text: e.text } };
     case "addSearchClause": {

@@ -642,3 +642,77 @@ test("S5: the plot and legend name the drawn run's axes, not the form's; the reg
   assert.doesNotMatch(t.textContent, /-autoRegularization scales/);
   assert.match(testerOf(render(ndForm(ND)).root)!.textContent, /no element, so -autoRegularization scales this material's softening/);
 });
+
+// ---- #3133: a group of many rows (one material per soil spring) ----------------
+
+/** `state` with `n` more Elastic uniaxial materials (tags 1001..), each its own declaration with E = 10·k, as a spring model writes them. */
+function withSprings(n: number): State {
+  const defs = state.definitions!;
+  const table = defs.decls!;
+  const base = state.decls[M]!;
+  const decls = { ...state.decls };
+  const records = [...table.records];
+  const tags = [...table.tags];
+  for (let k = 1; k <= n; k++) {
+    const key = `opensees/uniaxialMaterial/spring_${k}`;
+    const row = records.length;
+    records.push({ row, key, family: "uniaxialMaterial", name: `spring_${k}`, synth: false, params: [{ row: 1000 + k, type: "Elastic", params: { E: 10 * k, eta: 0 }, paramsNames: null, refs: { transf: [], integration: [], section: [] } }] });
+    tags.push({ kind: "uniaxialMaterial", first: 1000 + k, count: 1, decl: row });
+    decls[key] = { ...base, path: key, type: "Elastic", tag: 1000 + k, name: `spring_${k}`, h5: `/opensees/materials/uniaxial/Elastic_${k}` };
+  }
+  return { ...state, decls, definitions: { ...defs, decls: { ...table, records, tags } } };
+}
+
+const springs = withSprings(250);
+const sectionOf = (root: FakeNode, title: string) => root.all((n) => n.className === "window-section" && n.textContent.startsWith(title))[0]?.textContent;
+
+test("#3133: a group of more than a page shows a summary by type, a filter and its first page of rows", () => {
+  const d = materialsOf(springs);
+  const uni = d.groups[0]!;
+  assert.equal(uni.rows.length, 251);
+  assert.deepEqual(uni.summary, [
+    { type: "Elastic", count: 250, ranges: [{ field: "E", min: 10, max: 2500 }, { field: "eta", min: 0, max: 0 }] },
+    { type: "ASDSteel1D", count: 1, ranges: [{ field: "E", min: 2e11, max: 2e11 }, { field: "fy", min: 3.75e8, max: 3.75e8 }, { field: "fu", min: 4.8e8, max: 4.8e8 }, { field: "eu", min: 0.2, max: 0.2 }] },
+  ]);
+  const { root, events } = render(springs);
+  assert.equal(root.all((n) => n.dataset["focusKey"] === "materials-filter").length, 1, "a filter, since a group is larger than a page");
+  assert.match(root.textContent, /Elastic × 250 · E 10 … 2500 · eta 0; ASDSteel1D × 1/);
+  const uniRows = rowsOf(root).filter((r) => r.dataset["decl"]!.startsWith("opensees/uniaxialMaterial/"));
+  assert.equal(uniRows.length, 100, "one page of the 251 materials");
+  assert.equal(rowsOf(root).length, 102, "the small groups (one section, one integration) show whole");
+  const more = root.all((n) => n.tagName === "BUTTON" && n.textContent.startsWith("show 100 more"))[0]!;
+  assert.match(more.textContent, /\(151 not shown\)/);
+  more.click();
+  assert.deepEqual(events, [{ type: "showMoreMaterials", kind: "uniaxialMaterial" }]);
+});
+
+test("#3133: show more adds a page; a filter matches handle, tag, key, type or HDF5 name and starts again at the first page", () => {
+  let s = reduce(springs, { type: "showMoreMaterials", kind: "uniaxialMaterial" });
+  const uni = (st: State) => rowsOf(render(st).root).filter((r) => r.dataset["decl"]!.startsWith("opensees/uniaxialMaterial/"));
+  assert.equal(uni(s).length, 200);
+  s = reduce(s, { type: "showMoreMaterials", kind: "uniaxialMaterial" });
+  assert.equal(uni(s).length, 251);
+  assert.equal(render(s).root.all((n) => n.tagName === "BUTTON" && n.textContent.startsWith("show")).length, 0, "nothing left to show");
+  s = reduce(s, { type: "setMaterialsFilter", text: "spring_12" });
+  assert.deepEqual(s.windows.materials, { filter: "spring_12", shown: {} });
+  assert.deepEqual(uni(s).map((r) => r.dataset["decl"]).sort(), ["opensees/uniaxialMaterial/spring_12", ...Array.from({ length: 10 }, (_, i) => `opensees/uniaxialMaterial/spring_12${i}`)].sort());
+  assert.equal(sectionOf(render(s).root, "uniaxial"), "uniaxial materials (11 of 251)");
+  assert.equal(uni(reduce(s, { type: "setMaterialsFilter", text: "1250" })).length, 1, "by tag");
+  assert.equal(uni(reduce(s, { type: "setMaterialsFilter", text: "asdsteel" })).length, 1, "by type, case-insensitively");
+  assert.equal(uni(reduce(s, { type: "setMaterialsFilter", text: "Elastic_250" })).length, 1, "by the HDF5 group name, as the file names it");
+  assert.equal(reduce(s, { type: "setMaterialsFilter", text: "spring_12" }), s, "the same filter changes nothing");
+});
+
+test("#3133: a small model shows no filter, no summary and every row, as before", () => {
+  const { root } = render(state);
+  assert.equal(root.all((n) => n.dataset["focusKey"] === "materials-filter").length, 0);
+  assert.doesNotMatch(root.textContent, / × /);
+  assert.equal(sectionOf(root, "uniaxial"), "uniaxial materials (1)");
+});
+
+test("#3133: the list is kept per read: a selection rebuilds the window from the same rows", () => {
+  const a = materialsOf(springs);
+  const selected = reduce(springs, { type: "select", pick: { decl: M, at: null, nodes: null } });
+  assert.notEqual(selected, springs);
+  assert.equal(materialsOf(selected), a, "same decls, definitions and model: the same list, not a rebuild");
+});
