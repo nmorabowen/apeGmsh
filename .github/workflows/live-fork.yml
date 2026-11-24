@@ -217,15 +217,20 @@ jobs:
           import os, xml.etree.ElementTree as ET
           path = os.path.join(os.environ["RUNNER_TEMP"], "viewer-fork.xml")
           cases = list(ET.parse(path).getroot().iter("testcase"))
-          fork = [c for c in cases if "materialTest" in (c.get("file") or "")]
+          # Node 22's JUnit writes no `file` attribute, so cases are told
+          # apart by the gate's skip message and by name.
           gated = [
-              c.get("name") for c in fork
+              c.get("name") for c in cases
               if (sk := c.find("skipped")) is not None and "APEGMSH_OPENSEES" in sk.get("message", "")
           ]
-          ran = [c for c in fork if c.find("skipped") is None]
-          print(f"viewer: {len(cases)} cases, {len(fork)} in materialTest, {len(ran)} ran, {len(gated)} skipped on the gate")
+          # live.test.ts: one "the fork runs <material>" case per material.
+          ran = [
+              c for c in cases
+              if (c.get("name") or "").startswith("the fork runs") and c.find("skipped") is None
+          ]
+          print(f"viewer: {len(cases)} cases, {len(ran)} 'the fork runs' cases ran, {len(gated)} skipped on the gate")
           if gated or not ran:
-              raise SystemExit(f"::error::fork tests skipped on $APEGMSH_OPENSEES: {gated}")
+              raise SystemExit(f"::error::fork tests skipped on $APEGMSH_OPENSEES: {gated}; ran {len(ran)}")
           PY
 
       # The pinned build carries MKL, so a `ladruno_mkl:` skip here means the
