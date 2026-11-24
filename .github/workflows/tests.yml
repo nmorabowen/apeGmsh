@@ -468,7 +468,11 @@ jobs:
     # spent 140 s each in a quadratic emit-index join (fixed in
     # opensees_model._emit_indices). "Runner hardware" below logs the CPU,
     # and --durations lists any test over 5 s, so the next drift is visible.
-    timeout-minutes: 40
+    # 55, not 40 (2026-11-24): the slow mode drifted up. Of 18 finished
+    # runs (2026-11-23/24), 11 took 34-39 min and two PRs (#3129, #3136)
+    # were cancelled at 40 min with no test failing. 55 leaves ~15 min over
+    # the slowest green run and still stops a hang well short of 6 h.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
         with:
