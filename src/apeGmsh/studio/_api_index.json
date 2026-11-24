@@ -4008,6 +4008,12 @@
       "skill": "references/opensees-bridge.md",
       "symbol": "ops.mpm.safety"
     },
+    "ops.mpm.stage": {
+      "doc": "``mpm stage``: stage every particle of the nDMaterial ``material``",
+      "signature": "stage(material: \"'NDMaterial | str'\", stage: 'int') -> 'Stage'",
+      "skill": "references/opensees-bridge.md",
+      "symbol": "ops.mpm.stage"
+    },
     "ops.mpm.timeSeries": {
       "doc": "``mpm timeSeries``: the factor on gravity (a series or its name).",
       "signature": "timeSeries(series: \"'_TimeSeriesPrimitive | str'\") -> 'TimeSeries'",
