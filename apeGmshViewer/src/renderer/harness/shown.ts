@@ -1,13 +1,14 @@
 // The capture and measure harness (VH1, #2865): whether the frame on screen shows what the state asks for.
 
 import { contourView, deformView } from "../../state/selectors.ts";
-import { contourKey, contourShownKey, elementContourKey } from "../contour.ts";
+import { combinationContourKey, contourKey, contourShownKey, elementContourKey } from "../contour.ts";
 import type { HarnessContext } from "./context.ts";
 
-/** The contour colours on screen are the step the state shows, at its range (renderer/contour.ts keys); V4c2a: an element field's too. */
+/** The contour colours on screen are the step the state shows, at its range (renderer/contour.ts keys); V4c2a: an element field's too; VU7b-2: a User Combination's. */
 export function contourShown(ctx: HarnessContext): boolean {
   const { store, viewport } = ctx;
   const v = contourView(store.get());
+  if (v.state === "combination") return viewport.contourApplied === combinationContourKey(v);
   if (v.state === "ready") return v.stepMeasured && viewport.contourApplied === contourKey(v);
   if (v.state === "element") return v.stepMeasured && viewport.contourApplied === elementContourKey(v);
   return false;

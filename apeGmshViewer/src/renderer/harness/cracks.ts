@@ -26,7 +26,7 @@ export async function captureCracks(ctx: HarnessContext, settle: (ms?: number) =
   if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
   const last = Math.max(0, s0.results.stages[stageIdx]!.time.length - 1);
   const still = async (name: string) => {
-    await until(() => store.get().resultStep?.status === "ready" && viewport.cracks.drawn.discs > 0, 15000);
+    await until(`capture ${name}: the step to read and the crack discs to draw`, () => store.get().resultStep?.status === "ready" && viewport.cracks.drawn.discs > 0, 15000);
     await settle(150);
     viewport.renderNow();
     await painted();
@@ -85,7 +85,7 @@ async function captureShellCracks(ctx: HarnessContext, settle: (ms?: number) => 
   if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
   const last = Math.max(0, s0.results!.stages[stageIdx]!.time.length - 1);
   const still = async (name: string) => {
-    await until(() => store.get().resultStep?.status === "ready" && (viewport.cracks.drawnShell.ticks > 0 || viewport.cracks.drawnLines.segments > 0), 15000);
+    await until(`capture ${name}: the step to read and the shell cracks to draw`, () => store.get().resultStep?.status === "ready" && (viewport.cracks.drawnShell.ticks > 0 || viewport.cracks.drawnLines.segments > 0), 15000);
     await settle(150);
     viewport.renderNow();
     await painted();
@@ -132,7 +132,7 @@ async function captureShellCracks(ctx: HarnessContext, settle: (ms?: number) => 
       if (!f) return;
       store.dispatch({ type: "setCamera", to: camera });
       store.dispatch({ type: "setContourField", field: f.name, component: f.components[0]!.key, source: "element" });
-      await until(() => {
+      await until(`capture ${name}: the damage contour to measure its step`, () => {
         const cv = contourView(store.get());
         return cv.state === "element" && cv.stepMeasured;
       }, 15000);

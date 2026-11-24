@@ -20,7 +20,7 @@ export async function captureHinges(ctx: HarnessContext, settle: (ms?: number) =
   if (sites.length === 0) return;
   if (typeof bridge.captureResize === "function") await bridge.captureResize(width, height);
   const still = async (name: string, ready: () => boolean) => {
-    await until(() => viewport.hinges.drawn.count > 0 && ready(), 15000);
+    await until(`capture ${name}: the hinge markers (and the chart) to draw`, () => viewport.hinges.drawn.count > 0 && ready(), 15000);
     await settle(150);
     viewport.renderNow();
     await painted();

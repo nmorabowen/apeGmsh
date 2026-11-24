@@ -9,6 +9,7 @@ import { addAt, placeAt, removePlanes } from "./planes.ts";
 import { clipMissTarget, marker, pointerAt, screenOf } from "./pointer.ts";
 import { contourShown, deformShown } from "./shown.ts";
 import { capsStillProblem } from "./verdicts.ts";
+import { pickStageDefault } from "./reset.ts";
 
 /**
  * The V4e3 cut-face stills (D7), by a fixed rule. On a model with volumetric
@@ -37,20 +38,18 @@ export async function captureCaps(ctx: HarnessContext, settle: (ms?: number) => 
   store.dispatch({ type: "clearSelection" });
   const still = async (name: string, caps: number) => {
     const ok = () => deformShown(ctx) && (store.get().visibility.colourBy !== "contour" || contourShown(ctx)) && viewport.capsSettled() && viewport.capCount === caps;
-    if (!(await until(ok))) {
+    await until(() => {
       const v = contourView(store.get());
-      throw new Error(
-        capsStillProblem(name, {
-          caps: viewport.capCount,
-          want: caps,
-          settled: viewport.capsSettled(),
-          deformShown: deformShown(ctx),
-          contourWanted: store.get().visibility.colourBy === "contour",
-          contourShown: contourShown(ctx),
-          contour: "reason" in v ? `${v.state}: ${v.reason}` : v.state,
-        }),
-      );
-    }
+      return capsStillProblem(name, {
+        caps: viewport.capCount,
+        want: caps,
+        settled: viewport.capsSettled(),
+        deformShown: deformShown(ctx),
+        contourWanted: store.get().visibility.colourBy === "contour",
+        contourShown: contourShown(ctx),
+        contour: "reason" in v ? `${v.state}: ${v.reason}` : v.state,
+      });
+    }, ok);
     await settle(150);
     viewport.renderNow();
     await painted();
@@ -81,6 +80,7 @@ export async function captureCaps(ctx: HarnessContext, settle: (ms?: number) => 
   store.dispatch({ type: "setClipFlipped", id: z, flipped: true });
   await still("caps-1-flat-fill", 1);
   store.dispatch({ type: "setColourBy", by: "contour" });
+  pickStageDefault(store);
   await still("caps-2-contour", 1);
   addAt(ctx, [1, 0, 0], 0.3);
   await still("caps-3-two-planes-trimmed", 2);
@@ -152,7 +152,7 @@ export async function captureClip(ctx: HarnessContext, settle: (ms?: number) => 
   if (last > 0) store.dispatch({ type: "setResultStep", step: last });
   store.dispatch({ type: "frameSelection" });
   const still = async (name: string) => {
-    if (!(await until(() => deformShown(ctx) && (store.get().visibility.colourBy !== "contour" || contourShown(ctx))))) throw new Error(`capture ${name}: the step did not show`);
+    await until(`capture ${name}: the step to show`, () => deformShown(ctx) && (store.get().visibility.colourBy !== "contour" || contourShown(ctx)));
     await settle(150);
     viewport.renderNow();
     await painted();

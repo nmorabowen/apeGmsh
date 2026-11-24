@@ -50,7 +50,7 @@ const runOf = (ctx: HarnessContext) => async (form: MaterialTestForm) => {
   store.dispatch({ type: "materialTestFormSet", form });
   const id = store.get().materialTest.nextId;
   document.querySelector<HTMLButtonElement>(`#windows .mt[data-material-test="${CSS.escape(form.decl)}"] .mt-run-button`)?.click();
-  await until(() => {
+  await until(`capture: the material tester run of ${form.decl} to answer`, () => {
     const r = store.get().materialTest.runs.find((x) => x.id === id);
     return r !== undefined && r.status !== "running";
   }, 15000);

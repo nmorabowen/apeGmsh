@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { contourKeysOf, gaussFields } from "../../state/contour.ts";
 import { chainOf, contourView, deformView, elementVerdictOf } from "../../state/selectors.ts";
 import type { GaussMode } from "../../state/types.ts";
-import { nextFrame, painted, until, type HarnessConfig, type HarnessContext } from "./context.ts";
+import { nextFrame, painted, poll, until, type HarnessConfig, type HarnessContext } from "./context.ts";
 import { addSixPlanes, removePlanes } from "./planes.ts";
 import { demoTarget, scriptedClick } from "./pointer.ts";
 import { contourShowsNow } from "./shown.ts";
@@ -193,7 +193,7 @@ export async function measureContour(ctx: HarnessContext, path: string, deform =
       return refusedSince !== null && performance.now() - refusedSince > 5000;
     };
     let scanned = false;
-    await until(() => (scanned = scanDone()) || refusalHeld(), 600000);
+    await poll(() => (scanned = scanDone()) || refusalHeld(), 600000);
     if (!scanned) {
       const why = refusal();
       if (why === null) throw new Error(scanProblem(store.get().contour.scan, want()));
@@ -219,7 +219,7 @@ export async function measureContour(ctx: HarnessContext, path: string, deform =
     if (planes && viewport.gizmoCount !== 6) throw new Error(`measure: ${viewport.gizmoCount} plane gizmos drawn, not 6`);
     // V4e3: and, capped, a cap on each of the six planes, sliced again at every step (the deformed solid, the step's field).
     // A plane that cuts nothing draws no cap (a hollow or open solid), so the count is what the model gives.
-    if (capped && !(await until(() => viewport.capsSettled()))) throw new Error("measure: the caps did not settle");
+    if (capped) await until("measure: the caps to settle", () => viewport.capsSettled());
     if (capped && viewport.capCount === 0) {
       skipped.push(`${path}: none of the six planes cuts a drawn cell; no caps row`);
       return null;
