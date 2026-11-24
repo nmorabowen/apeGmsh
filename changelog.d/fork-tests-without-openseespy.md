@@ -21,3 +21,13 @@ the fork. A new quirk rule, `openseespy-gates-fork`, flags an openseespy
 `importorskip` that can skip a `ladruno_fork` test. An `autouse` fixture now
 counts as reaching every test of its module, for this rule and for
 `openseespy-unmarked`.
+
+The two modules that now run on live-fork for the first time showed two
+things. On the `-increment` route the spectrum driver's base shear reads
+zero when a fixed node has free DOFs: `_TotalReaction` sums the imposed
+leg's out-of-balance forces on those DOFs along with the reactions. That
+is #3148; its two cases are `xfail(strict=True)` until it is fixed.
+`test_increment_route_equals_the_static_route[corotational]` now bounds the
+routes' gap by the Corotational round-off floor, `~eps / _PROBE_REL`
+(measured to scale as 1 / probe), and checks that the gap shrinks with a
+ten times larger probe.
