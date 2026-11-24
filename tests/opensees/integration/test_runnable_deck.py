@@ -380,6 +380,7 @@ def test_tied_contact_deck_analyzes() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.live
 def test_tcl_deck_contains_constraint_lines() -> None:
     """The Tcl emit path produces lines for every declared MP constraint
     in the correct order (after elements, before patterns)."""

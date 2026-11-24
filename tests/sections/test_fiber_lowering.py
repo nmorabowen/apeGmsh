@@ -252,6 +252,7 @@ def _points(sec):
     return list(zip(data.y, data.z, data.area, data.region)), data
 
 
+@pytest.mark.live
 def test_gd_elastic_slope_both_axes(g):
     """M–κ initial slope: Mz/κz = EIxx_c and My/κy = EIyy_c — the
     keystone identity, end-to-end through OpenSees (catches an axis
@@ -286,6 +287,7 @@ def test_gd_elastic_slope_both_axes(g):
         ops.wipe()
 
 
+@pytest.mark.live
 def test_gd_elasticpp_plateau_vs_mp(g):
     """ElasticPP fibers pushed deep past yield: |M| plateaus at the
     analyzer's ``Mp_xx`` in BOTH signs (an asymmetric-response mirror

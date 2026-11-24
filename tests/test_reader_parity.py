@@ -22,6 +22,7 @@ import pytest
 
 # Rehydrating the typed model needs the apeSees bridge.
 pytest.importorskip("openseespy.opensees", reason="apeSees bridge (readers)")
+pytestmark = pytest.mark.live
 
 
 def _fem_key(fem):

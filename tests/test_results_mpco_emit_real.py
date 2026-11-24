@@ -34,6 +34,8 @@ import pytest
 
 from tests.conftest import _stub_model_h5_path
 
+# apegmsh-lint: openseespy-skip-unmarked-ok no lane on purpose: stock openseespy has no MPCO
+# recorder, and the fork lane runs the same oracle in test_nodal_gauss_oracle_live.py.
 openseespy = pytest.importorskip(
     "openseespy.opensees", reason="openseespy required",
 )

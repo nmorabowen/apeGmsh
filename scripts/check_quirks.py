@@ -244,6 +244,14 @@ RULES: dict[str, str] = {
         "or subprocess. Lesson: #1242; tests/sections/test_builder_gui_b6.py at 8269206d "
         "crashed Linux CI; class history #1080, 3165568c, 47e20ca6"
     ),
+    "openseespy-skip-unmarked": (
+        "a test (or a module) skips through `importorskip(\"openseespy...\")` but carries no "
+        "`live` or `ladruno_fork` mark, so no CI lane runs it: `suite` installs no openseespy, "
+        "and `live-stock` selects `-m live`. It passes on a machine with openseespy and nowhere "
+        "else. Mark the test (or `pytestmark`) live, or ladruno_fork when it needs the fork. "
+        "Lesson: the 2026-11-24 viewer review found 13 files in no lane at 5685e046, "
+        "tests/viewers/test_every_door_opens.py among them"
+    ),
     "qt-worker-gc": (
         "a `Thread(target=...)` in a module that imports a Qt binding targets a bound method of "
         "self/cls, or a function that calls gc.enable()/gc.collect() (directly or through a "
@@ -1148,6 +1156,68 @@ def check_qt_process_isolation(tree: ast.AST, rel: str, root: Path) -> Iterator[
     yield started, RULES["qt-process-isolation"]
 
 
+# --- openseespy-skip-unmarked: an openseespy test no lane selects ----------
+
+#: The marks whose lanes install an OpenSees: `live` (live-stock) and `ladruno_fork` (live-fork).
+LANE_MARK = re.compile(r"\bmark\.(?:live|ladruno_fork)\b")
+
+
+def _is_openseespy_skip(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Attribute, ast.Name))
+        and getattr(node.func, "attr", getattr(node.func, "id", "")) == "importorskip"
+        and bool(node.args)
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and node.args[0].value.split(".")[0] == "openseespy"
+    )
+
+
+def _marked(decorators: list[ast.expr]) -> bool:
+    return any(LANE_MARK.search(ast.unparse(d)) for d in decorators)
+
+
+def check_openseespy_skip_unmarked(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """`importorskip("openseespy...")` in a test, or at module level, with no `live`/`ladruno_fork` mark.
+
+    `suite` installs no openseespy, so such a test skips there; `live-stock` selects `-m live`,
+    so it never runs there either. A call inside a helper or a fixture is left alone: the
+    tests that use it carry the mark, and this rule cannot follow the call."""
+    if not rel.startswith("tests/") or not isinstance(tree, ast.Module):
+        return
+    for stmt in _scope_statements(tree.body):
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and "pytestmark" in _bound_names(stmt):
+            if stmt.value is not None and LANE_MARK.search(ast.unparse(stmt.value)):
+                return
+
+    unmarked_tests = 0
+    module_skips: list[int] = []
+
+    def visit(body: list[ast.stmt], covered: bool, in_test: bool | None) -> Iterator[int]:
+        nonlocal unmarked_tests
+        for stmt in body:
+            if isinstance(stmt, ast.ClassDef):
+                yield from visit(stmt.body, covered or _marked(stmt.decorator_list), in_test)
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if in_test is None:  # the outermost def decides: a test, or a helper/fixture
+                    test, marked = stmt.name.startswith("test"), covered or _marked(stmt.decorator_list)
+                    unmarked_tests += test and not marked
+                    yield from visit(stmt.body, marked, test)
+                else:
+                    yield from visit(stmt.body, covered, in_test)
+            else:
+                skips = [n.lineno for n in ast.walk(stmt) if _is_openseespy_skip(n)]
+                if in_test is None and not covered:
+                    module_skips.extend(skips)  # fine when every test of the module is marked
+                elif in_test and not covered:
+                    yield from skips
+
+    yield from ((line, RULES["openseespy-skip-unmarked"]) for line in list(visit(tree.body, False, None)))
+    if unmarked_tests:
+        yield from ((line, RULES["openseespy-skip-unmarked"]) for line in module_skips)
+
+
 # --- qt-worker-gc: a worker thread that can run Qt finalizers (#1649) --------
 
 GC_SWITCH_CALLS = {"enable", "collect"}
@@ -1478,6 +1548,7 @@ PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]
     "getattr-undefined": check_getattr_undefined,
     "ratchet-baseline": check_ratchet_baseline,
     "qt-process-isolation": check_qt_process_isolation,
+    "openseespy-skip-unmarked": check_openseespy_skip_unmarked,
     "qt-worker-gc": check_qt_worker_gc,
     "stale-patch-target": check_stale_patch_target,
     "raw-meta-ndm": check_raw_meta_ndm,
@@ -1675,6 +1746,7 @@ def _may_apply(rel: str, lowered: str, text: str = "") -> bool:
             or RATCHET_TEXT.search(text) is not None
             or ("thread" in lowered and "qt" in lowered or "_properties" in lowered)
             or PATCH_TEXT.search(text) is not None
+            or ("importorskip" in lowered and "openseespy" in lowered)
         )
     if _is_carry_all(rel) or _in_swallow_scope(rel):
         return True

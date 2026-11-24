@@ -155,6 +155,7 @@ def test_areas_build_conformal_shell_and_beam_mesh():
     assert len(uniq) == coords.shape[0], "coincident duplicate nodes -> non-conformal"
 
 
+@pytest.mark.live
 def test_shell_beam_deck_solves(tmp_path):
     pytest.importorskip("openseespy")
     import runpy
@@ -182,6 +183,7 @@ def test_shell_beam_deck_solves(tmp_path):
     assert ops_mod.analyze(1) == 0
 
 
+@pytest.mark.live
 def test_self_mass_and_distributed_load_box(tmp_path):
     pytest.importorskip("openseespy")
     import math
@@ -205,6 +207,7 @@ def test_self_mass_and_distributed_load_box(tmp_path):
     assert lam > 0 and math.isfinite(2 * math.pi / math.sqrt(lam))
 
 
+@pytest.mark.live
 def test_frames_only_diaphragm_emits_and_solves(tmp_path):
     pytest.importorskip("openseespy")
     import runpy
@@ -296,6 +299,7 @@ def test_emitted_deck_contents(tmp_path):
     assert "0.16 25000000.0" in text
 
 
+@pytest.mark.live
 def test_deck_solves(tmp_path):
     pytest.importorskip("openseespy")
     import runpy
@@ -412,6 +416,7 @@ def test_area_winkler_one_ground_per_surface_node():
     assert len(fem.nodes.decoupled_ids) == n
 
 
+@pytest.mark.live
 def test_area_subgrade_deck_solves_settlement_is_q_over_k(tmp_path):
     pytest.importorskip("openseespy")
     import runpy
@@ -441,6 +446,7 @@ def test_area_subgrade_deck_solves_settlement_is_q_over_k(tmp_path):
     assert min(uz) == pytest.approx(-5.0 / 1.5e4, rel=1e-3)
 
 
+@pytest.mark.live
 def test_point_spring_deck_solves_and_translates(tmp_path):
     pytest.importorskip("openseespy")
     import runpy
@@ -560,6 +566,7 @@ def _tilted_mat(angle_deg=30.0):
     }
 
 
+@pytest.mark.live
 def test_tilted_mat_oriented_springs_emit_and_solve(tmp_path):
     pytest.importorskip("openseespy")
     import runpy

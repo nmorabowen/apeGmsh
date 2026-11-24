@@ -90,6 +90,7 @@ import pytest
 # the module imports ``apeGmsh._core`` which in turn pulls
 # ``openseespy.opensees`` on this Python.
 pytest.importorskip("openseespy.opensees")
+pytestmark = pytest.mark.live
 
 
 # Tokens proving the mesh-side ColorMode mechanism is NOT wired into

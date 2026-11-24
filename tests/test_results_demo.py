@@ -16,6 +16,7 @@ import pytest
 
 # apeSees model emit needs the opensees bridge; mesh needs gmsh (base dep).
 pytest.importorskip("openseespy.opensees", reason="apeSees bridge import")
+pytestmark = pytest.mark.live
 
 
 def test_make_demo_results_shape():

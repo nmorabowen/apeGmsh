@@ -1185,6 +1185,57 @@ def test_qt_process_isolation_passes_test_properties_from_main(tmp_path: Path) -
     assert quirks.scan(tmp_path) == []
 
 
+# --- openseespy-skip-unmarked: an openseespy test no lane selects -----------
+
+DOORS_BUG_COMMIT = "5685e046"
+DOORS = "tests/viewers/test_every_door_opens.py"
+
+
+def test_openseespy_skip_unmarked_flags_every_door_opens_at_the_commit_that_had_the_bug(tmp_path: Path) -> None:
+    _write(tmp_path, DOORS, _show(DOORS_BUG_COMMIT, DOORS))
+    assert [f.rule for f in quirks.scan(tmp_path)] == ["openseespy-skip-unmarked"]
+
+
+def test_openseespy_skip_unmarked_passes_every_door_opens_on_main(tmp_path: Path) -> None:
+    _write(tmp_path, DOORS, _real(DOORS))
+    assert quirks.scan(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("source", "flagged"),
+    [
+        ('import pytest\ndef test_it():\n    pytest.importorskip("openseespy.opensees")\n', True),
+        ('import pytest\n@pytest.mark.live\ndef test_it():\n    pytest.importorskip("openseespy.opensees")\n', False),
+        ('import pytest\n@pytest.mark.ladruno_fork\ndef test_it():\n    pytest.importorskip("openseespy")\n', False),
+        ('import pytest\n@pytest.mark.slow\ndef test_it():\n    pytest.importorskip("openseespy")\n', True),
+        ('import pytest\npytestmark = [pytest.mark.live]\ndef test_it():\n    pytest.importorskip("openseespy")\n', False),
+        (
+            'import pytest\n@pytest.mark.live\nclass TestIt:\n    def test_a(self):\n'
+            '        pytest.importorskip("openseespy.opensees")\n',
+            False,
+        ),
+        ('import pytest\ndef _ops():\n    return pytest.importorskip("openseespy.opensees")\n', False),  # a helper: not followed
+        ('import pytest\ndef test_it():\n    pytest.importorskip("numpy")\n', False),
+        # A module-level skip is fine while every test of the module carries the mark ...
+        ('import pytest\nops = pytest.importorskip("openseespy.opensees")\n@pytest.mark.live\ndef test_a():\n    pass\n', False),
+        # ... and hides an unmarked one, which then runs in no lane.
+        (
+            'import pytest\nops = pytest.importorskip("openseespy.opensees")\n@pytest.mark.live\ndef test_a():\n    pass\n'
+            'def test_b():\n    pass\n',
+            True,
+        ),
+    ],
+)
+def test_openseespy_skip_unmarked_cases(tmp_path: Path, source: str, flagged: bool) -> None:
+    _write(tmp_path, "tests/a.py", source)
+    assert [f.rule for f in quirks.scan(tmp_path)] == (["openseespy-skip-unmarked"] if flagged else [])
+
+
+def test_openseespy_skip_unmarked_is_scoped_to_tests(tmp_path: Path) -> None:
+    _write(tmp_path, "examples/a.py", 'import pytest\ndef test_it():\n    pytest.importorskip("openseespy")\n')
+    assert "openseespy-skip-unmarked" not in [f.rule for f in quirks.scan(tmp_path)]
+
+
 # --- qt-worker-gc: a worker thread that can run Qt finalizers (#1649) --------
 
 PROPERTIES = "src/apeGmsh/sections/_properties.py"

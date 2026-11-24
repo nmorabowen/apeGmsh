@@ -35,10 +35,13 @@ def _fork_has_bezier_tri6() -> bool:
         ops.wipe()
 
 
-pytestmark = pytest.mark.skipif(
-    not _fork_has_bezier_tri6(),
-    reason="live OpenSees build is not the Ladruno fork (no BezierTri6)",
-)
+pytestmark = [
+    pytest.mark.ladruno_fork,
+    pytest.mark.skipif(
+        not _fork_has_bezier_tri6(),
+        reason="live OpenSees build is not the Ladruno fork (no BezierTri6)",
+    ),
+]
 
 
 def test_run_gate_passes_on_fork_build() -> None:

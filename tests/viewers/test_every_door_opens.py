@@ -27,6 +27,7 @@ import pytest
 
 # Building the demo + rehydrating the typed model needs the apeSees bridge.
 pytest.importorskip("openseespy.opensees", reason="apeSees bridge (demo + readers)")
+pytestmark = pytest.mark.live
 
 
 # Each door: (composed_results_path, sibling_model_path) -> object-or-0.

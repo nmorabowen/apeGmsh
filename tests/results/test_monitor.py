@@ -209,11 +209,9 @@ def test_tail_survives_a_half_appended_frame(tmp_path: Path) -> None:
 # Live parity — run a monitored analysis and check the sink vs ops.nodeDisp
 # ---------------------------------------------------------------------------
 
-ops = pytest.importorskip("openseespy.opensees")
-
-
 @pytest.mark.live
 def test_monitor_live_parity(tmp_path: Path) -> None:
+    ops = pytest.importorskip("openseespy.opensees")
     sink = str(tmp_path / "mon.h5")
     try:
         ops.wipe()

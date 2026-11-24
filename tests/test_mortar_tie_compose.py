@@ -176,6 +176,7 @@ def _solve_stack_K(tmp_path, *, swap_master_slave: bool) -> float:
     return abs(r_z) / delta
 
 
+@pytest.mark.ladruno_fork
 def test_mortar_tied_stack_closed_form_and_order_swap(tmp_path: Path):
     """Acceptance #2 + #3: K = EA/L/2 to 0.1 %, and master/slave swap
     gives the same K — the symmetry collocation does not have, which is

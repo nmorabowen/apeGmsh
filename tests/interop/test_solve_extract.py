@@ -38,6 +38,7 @@ _SLAB = {
 }
 
 
+@pytest.mark.live
 def test_solve_and_extract_equilibrium():
     pytest.importorskip("openseespy")
     model = StructuralModel.from_dict(_SLAB)
@@ -62,6 +63,7 @@ def test_solve_and_extract_equilibrium():
     assert ry == pytest.approx(0.0, abs=1e-6)
 
 
+@pytest.mark.live
 def test_solve_and_extract_defaults_first_case_and_validates_case():
     pytest.importorskip("openseespy")
     model = StructuralModel.from_dict(_SLAB)

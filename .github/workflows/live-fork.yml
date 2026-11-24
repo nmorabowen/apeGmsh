@@ -205,6 +205,36 @@ jobs:
           raise SystemExit(1 if bad else 0)
           PY
 
+      # The viewer's material-tester tests against the pinned fork exe (ADR 0135).
+      # They skip without $APEGMSH_OPENSEES, which no other lane sets, so here a
+      # skip is a failure: the step needs every test in test/materialTest/ to run.
+      - uses: actions/setup-node@v4
+        if: ${{ !cancelled() }}
+        with:
+          node-version: '22.18'
+          cache: npm
+          cache-dependency-path: apeGmshViewer/package-lock.json
+
+      - name: Run the viewer's material-tester tests on the fork exe
+        if: ${{ !cancelled() }}
+        working-directory: apeGmshViewer
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          export APEGMSH_OPENSEES="$APEGMSH_OPENSEES_BIN/OpenSees"
+          node --test --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=junit --test-reporter-destination="$RUNNER_TEMP/viewer-fork.xml" \
+            "test/materialTest/*.test.ts"
+          python - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          cases = list(ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "viewer-fork.xml")).getroot().iter("testcase"))
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          for name in skipped:
+              print(f"::error::viewer fork test skipped: {name}")
+          if not cases or skipped:
+              raise SystemExit(f"::error::{len(skipped)} of {len(cases)} viewer fork tests skipped")
+          PY
+
       # Per-test outcomes (which FEAST / Pardiso cases passed), since -q
       # prints no passing ids.
       - name: Upload the junit XML

@@ -199,6 +199,7 @@ def test_analysis_commands_emitted_globally_not_inside_partition_block() -> None
     ),
     strict=False,
 )
+@pytest.mark.live
 def test_numberer_parallel_plain_does_not_raise_under_single_process() -> None:
     ops = pytest.importorskip("openseespy.opensees")
 
@@ -208,6 +209,7 @@ def test_numberer_parallel_plain_does_not_raise_under_single_process() -> None:
         ops.numberer("ParallelPlain")
 
 
+@pytest.mark.live
 def test_system_mumps_raises_under_single_process() -> None:
     """The ``system Mumps`` half of INV-5 DOES raise under
     single-process — verify it stays that way.
