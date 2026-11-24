@@ -94,6 +94,12 @@ function listen<T>(channel: "open" | "fileChanged", cb: (value: T) => void, onLi
   };
 }
 
+// ADR 0137 H1: the end of a tool window's MessagePort main hands this page, passed on to the page
+// (renderer/tools.ts) with the tool's id. The tool window's own preload is ./toolPreload.ts.
+ipcRenderer.on("tool:port", (e, meta: { tool: string }) => {
+  window.postMessage({ toolPort: { tool: meta.tool } }, "*", e.ports as unknown as Transferable[]);
+});
+
 contextBridge.exposeInMainWorld("viewer", {
   config: () => ipcRenderer.invoke("app:config"),
   openModel: (path: string) => ipcRenderer.invoke("model:open", path),
@@ -148,6 +154,22 @@ contextBridge.exposeInMainWorld("viewer", {
   // readUserCase, the path is the one `readUser` named; main reads only the open set's user file, and refuses a stale entry.
   readUserResult: (req: { path: string; name: string; component: string }) => ipcRenderer.invoke("user:readResult", req),
   // ADR 0137 D4 (#3057): main's memory reading for a model load, before it and every second during it (view mode).
+  // ADR 0137 H1: open a tool window (main checks the id and memory), and hear each window's status and the memory pause.
+  openTool: (tool: string) => ipcRenderer.invoke("tool:open", tool),
+  onToolStatus: (cb: (s: unknown) => void) => {
+    const handler = (_e: IpcRendererEvent, s: unknown) => cb(s);
+    ipcRenderer.on("tool:status", handler);
+    return () => {
+      ipcRenderer.removeListener("tool:status", handler);
+    };
+  },
+  onToolsPaused: (cb: (paused: boolean) => void) => {
+    const handler = (_e: IpcRendererEvent, paused: boolean) => cb(paused);
+    ipcRenderer.on("tool:paused", handler);
+    return () => {
+      ipcRenderer.removeListener("tool:paused", handler);
+    };
+  },
   onMemoryStatus: (cb: (m: unknown) => void) => {
     const handler = (_e: IpcRendererEvent, m: unknown) => cb(m);
     ipcRenderer.on("memory:status", handler);

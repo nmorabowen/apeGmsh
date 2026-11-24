@@ -2,6 +2,7 @@
 // from. A panel imports this module and store.ts, nothing else of the app.
 
 import { memoryNotice } from "./memory.ts";
+import { toolNotices } from "./tools.ts";
 import type { Chain, ChainNode, Field } from "../chain/resolve.ts";
 import { judgeDraft } from "../combination/author.ts";
 import { CombinationRefused, CombinationTable, isSigned } from "../combination/evaluate.ts";
@@ -586,6 +587,8 @@ export function noticesOf(s: State): string[] {
   // ADR 0137 D4 (#3057): memory short for the model on screen or being loaded.
   const mem = s.memory !== null && s.memory.path === s.artifacts.model?.path ? memoryNotice(s.memory) : null;
   if (mem) out.push(mem);
+  // ADR 0137 H1: tool windows that stopped, were refused or are paused.
+  out.push(...toolNotices(s));
   return out;
 }
 

@@ -471,6 +471,8 @@ function reduceEvent(s: State, e: Event): State {
         particles: s.particles,
         // ADR 0137 D4: the memory warning of the load stays with its path (selectors.ts `noticesOf` matches it).
         memory: s.memory,
+        // ADR 0137 H1: tool windows are the window's, not the model's.
+        tools: s.tools,
         contour: syncContourUnits(initialState.contour, s.results?.units ?? particleSystemOf(s.particles), false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
@@ -518,6 +520,8 @@ function reduceEvent(s: State, e: Event): State {
         particles: s.particles,
         // ADR 0137 D4: the memory warning of the load stays with its path (selectors.ts `noticesOf` matches it).
         memory: s.memory,
+        // ADR 0137 H1: tool windows are the window's, not the model's.
+        tools: s.tools,
         contour: syncContourUnits(initialState.contour, s.results?.units ?? particleSystemOf(s.particles), false),
         spotlight: { ...initialSpotlight, seq: s.spotlight.seq },
         search: { ...initialSearch, seq: s.search.seq },
@@ -549,6 +553,15 @@ function reduceEvent(s: State, e: Event): State {
     }
     case "memoryStatus":
       return { ...s, memory: e.status };
+    // ADR 0137 H1: the tool windows. The request is the effect's (renderer/tools.ts); the statuses and the pause are main's.
+    case "openTool":
+      return { ...s, tools: { ...s.tools, request: { tool: e.tool, seq: (s.tools.request?.seq ?? 0) + 1 } } };
+    case "toolStatus":
+      return { ...s, tools: { ...s.tools, windows: { ...s.tools.windows, [e.status.tool]: e.status } } };
+    case "toolsPaused":
+      return e.paused === s.tools.paused ? s : { ...s, tools: { ...s.tools, paused: e.paused } };
+    case "setPlaying":
+      return e.on === s.playing ? s : { ...s, playing: e.on };
     case "zoneRefused": {
       const prev = s.artifacts[e.artifact];
       if (!prev) throw new Error(`zoneRefused for ${e.artifact} before fileOpened`);

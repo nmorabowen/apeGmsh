@@ -71,6 +71,10 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   fileChanged: { kind: "system", reason: "dispatched by the file watcher when an artifact changes on disk" },
   zoneRefused: { kind: "system", reason: "dispatched by the loader when a schema zone version is refused" },
   memoryStatus: { kind: "system", reason: "dispatched by effects with main's memory reading for a model load (ADR 0137 D4)" },
+  openTool: { kind: "expose", command: "open-tool", description: "Open a tool window beside the model window (ADR 0137)" },
+  toolStatus: { kind: "system", reason: "dispatched by the tool links with main's report of a tool window's status" },
+  toolsPaused: { kind: "system", reason: "dispatched by the tool links when main pauses tool updates for memory (ADR 0137 D4)" },
+  setPlaying: { kind: "gesture", reason: "the step bar's play and pause button; playback itself is the step bar's clock" },
   sourceResult: { kind: "system", reason: "dispatched by effects with the outcome of a go-to-source request" },
   resultsLoaded: { kind: "system", reason: "dispatched by effects when results metadata finishes reading" },
   // ADR 0134 D5 (M2-S4 #2983): the particle points layer. The effects read the index and push each frame; the
@@ -508,6 +512,18 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
       s.windows.open.includes("search"),
     ),
     keywords: "search find query filter builder window",
+  });
+  // ADR 0137 H1: the tool host's first tool, in a window of its own beside the model window.
+  out.push({
+    item: commandItem(
+      "cmd:open-tool-step",
+      "tool",
+      s.tools.windows["step"]?.status === "open" ? "Focus Tool Window: Step Readout" : "Open Tool Window: Step Readout",
+      "A separate window showing the results stage, step and playback, with previous and next step",
+      [{ type: "openTool", tool: "step" }],
+      s.tools.windows["step"]?.status === "open",
+    ),
+    keywords: "tool window step readout separate monitor second screen",
   });
   out.push({
     item: drillDownItem(

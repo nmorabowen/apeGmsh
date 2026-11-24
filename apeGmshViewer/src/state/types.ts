@@ -35,5 +35,6 @@ export * from "./types/windows.ts";
 export * from "./types/offers.ts";
 export * from "./types/camera.ts";
 export * from "./types/materialTest.ts";
+export * from "./types/tools.ts";
 export * from "./types/state.ts";
 export * from "./types/event.ts";

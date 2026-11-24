@@ -10,6 +10,7 @@ import type { MaterialTestEvent } from "./events/materialTest.ts";
 import type { ModelEvent } from "./events/model.ts";
 import type { OffersEvent } from "./events/offers.ts";
 import type { OverlaysEvent } from "./events/overlays.ts";
+import type { ToolsEvent } from "./events/tools.ts";
 import type { ResultsEvent } from "./events/results.ts";
 import type { UserEvent } from "./events/user.ts";
 import type { VariantsEvent } from "./events/variants.ts";
@@ -39,6 +40,7 @@ export type Event =
   | WindowsEvent
   | OffersEvent
   | CameraEvent
-  | MaterialTestEvent;
+  | MaterialTestEvent
+  | ToolsEvent;
 
 export type EventType = Event["type"];

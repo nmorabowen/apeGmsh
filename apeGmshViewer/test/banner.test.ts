@@ -359,3 +359,29 @@ test("M2-S4: a particle set opened alone is drawn with its banner line, never an
     effects.dispose();
   }
 });
+
+test("ADR 0137: the banner follows a memory reading and a tool window's status when nothing else changes", () => {
+  const store = new Store();
+  store.dispatch({ type: "fileOpened", artifact: "model", path: "/m/s.h5" });
+  const b = mounted(store as never);
+  try {
+    const memory = () => b.lines().filter((l) => l.startsWith("Memory "));
+    const reading = (phase: "before" | "during", availableMB: number) =>
+      store.dispatch({
+        type: "memoryStatus",
+        status: { path: "/m/s.h5", phase, cells: 1000, estimateMB: 910, availableMB, commitHeadroomMB: null, reasons: availableMB < 2048 ? [`${(availableMB / 1024).toFixed(1)} GB of RAM is available, under 2.0 GB`] : [] },
+      });
+    reading("before", 4096);
+    assert.deepEqual(memory(), [], "memory to spare: no line");
+    // A reading during the load, with nothing else in the state changed (#3057 drew this only by chance).
+    reading("during", 1500);
+    assert.equal(memory().length, 1);
+    assert.match(memory()[0]!, /^Memory is short while the model loads: 1\.5 GB/);
+    store.dispatch({ type: "toolStatus", status: { tool: "step", title: "Step readout", status: "stopped", reason: "its renderer crashed" } });
+    assert.ok(b.lines().some((l) => l.startsWith('Tool window "Step readout" stopped: its renderer crashed.')), JSON.stringify(b.lines()));
+    store.dispatch({ type: "toolsPaused", paused: true });
+    assert.ok(b.lines().some((l) => l.startsWith("Tool windows are paused")));
+  } finally {
+    b.close();
+  }
+});
