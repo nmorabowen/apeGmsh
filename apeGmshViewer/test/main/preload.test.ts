@@ -60,3 +60,22 @@ test("VU7b-2: readUserCase asks main's user:readCase with the request as given, 
   await door.readUserCase(req);
   assert.deepEqual(sent, [{ how: "invoke", channel: "user:readCase", args: [req] }], "one invoke, and no viewer:dropped that would let main open the path");
 });
+
+test("#3130: openModel posts main's answer to the window as one structured clone and hands the page only its id", async () => {
+  const posted: { data: unknown; target: string }[] = [];
+  const g = globalThis as { window?: unknown };
+  const had = "window" in g;
+  const before = g.window;
+  g.window = { postMessage: (data: unknown, target: string) => posted.push({ data, target }) };
+  try {
+    sent.length = 0;
+    const id = await viewer.openModel("C:\work\mat.h5");
+    assert.equal(typeof id, "number");
+    assert.deepEqual(sent, [{ how: "invoke", channel: "model:open", args: ["C:\work\mat.h5"] }]);
+    // The stub's invoke answers { ok: true, channel }: that answer, under the id the bridge returned.
+    assert.deepEqual(posted, [{ data: { apegmshViewerBulk: id, value: { ok: true, channel: "model:open" } }, target: "*" }]);
+  } finally {
+    if (had) g.window = before;
+    else delete g.window;
+  }
+});

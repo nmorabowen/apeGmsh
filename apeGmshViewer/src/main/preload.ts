@@ -52,6 +52,7 @@
 // sending on it, so the P0 page (which reads the model from config) follows.
 
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
+import { BULK_KEY, type BulkMessage } from "../bulk.ts";
 
 interface OpenSet {
   model: string | null;
@@ -100,9 +101,26 @@ ipcRenderer.on("tool:port", (e, meta: { tool: string }) => {
   window.postMessage({ toolPort: { tool: meta.tool } }, "*", e.ports as unknown as Transferable[]);
 });
 
+let bulkSeq = 0;
+
+/**
+ * #3130: an answer too large for `contextBridge`'s copy goes to the page as one
+ * structured clone (../bulk.ts); the bridge returns only its id, which the page
+ * (renderer/app.ts) takes the answer by.
+ */
+function bulk(answer: Promise<unknown>): Promise<number> {
+  return answer.then((value) => {
+    const id = ++bulkSeq;
+    const message: BulkMessage = { [BULK_KEY]: id, value };
+    window.postMessage(message, "*");
+    return id;
+  });
+}
+
 contextBridge.exposeInMainWorld("viewer", {
   config: () => ipcRenderer.invoke("app:config"),
-  openModel: (path: string) => ipcRenderer.invoke("model:open", path),
+  // #3130: the model crosses as a bulk answer; the bridge returns its id (renderer/app.ts takes it).
+  openModel: (path: string) => bulk(ipcRenderer.invoke("model:open", path)),
   pathForFile: (f: File) => gestured(f),
   metrics: () => ipcRenderer.invoke("measure:metrics"),
   measureDone: (result: unknown) => ipcRenderer.invoke("measure:done", result),
