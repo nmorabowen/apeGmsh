@@ -408,13 +408,14 @@ def test_ladruno_projection_ic_tol_requires_project_ics():
 # measured in fresh interpreters in tests/test_meshable_part_route.py.
 @pytest.mark.ladruno_fork
 def test_equation_tie_enforced_in_live_solve():
-    ops = pytest.importorskip("openseespy.opensees")
     from apeGmsh.opensees.emitter.live import LiveOpsEmitter
     from apeGmsh.opensees._internal.build.constraints import _emit_equation_tie
 
     # Construct the live emitter FIRST (it wipes on construction); its
-    # ._ops is the openseespy singleton we build the model through.
+    # ._ops is the backend module we build the model through, and the one
+    # read below (openseespy by name is a second domain beside the fork).
     e = LiveOpsEmitter(wipe=True)
+    ops = e._ops
 
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     masters = {1: (0.0, 0.0, 0.0), 2: (1.0, 0.0, 0.0), 3: (0.0, 1.0, 0.0)}

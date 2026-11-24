@@ -1219,7 +1219,7 @@ OSP = 'pytest.importorskip("openseespy.opensees")'
         # module level: every test of the module must be covered
         (f"import pytest\n{OSP}\ndef test_a():\n    pass\n", True),
         (f"import pytest\npytestmark = pytest.mark.live\n{OSP}\ndef test_a():\n    pass\n", False),
-        (f"import pytest\npytestmark = [pytest.mark.slow, pytest.mark.ladruno_fork]\n{OSP}\n"
+        (f"import pytest\npytestmark = [pytest.mark.slow, pytest.mark.subprocess]\n{OSP}\n"
          "def test_a():\n    pass\n", False),
         (f"import pytest\n{OSP}\n@pytest.mark.live\ndef test_a():\n    pass\n"
          "def test_b():\n    pass\n", True),  # test_b skips in suite and is not in live-stock
@@ -1258,6 +1258,58 @@ def test_openseespy_unmarked_waiver(tmp_path: Path) -> None:
     source = f"import pytest\ndef test_a():\n    # apegmsh-lint: openseespy-unmarked-ok runs in the docs lane\n    {OSP}\n"
     _write(tmp_path, "tests/a.py", source)
     assert quirks.scan(tmp_path) == []
+
+
+# --- openseespy-gates-fork: a fork test behind an openseespy skip (2026-11-24) ---
+
+GATES_FORK_FILES = (
+    "tests/opensees/live/test_augment_sweep_live.py",   # module-level skip, fork tests
+    "tests/opensees/live/test_wipe_precision_live.py",  # autouse fixture, one fork test
+    "tests/opensees/stage/test_class_wide_stage_flag.py",  # in-test skips in fork tests
+    "tests/test_equation_tie_emission.py",               # in-test skip bound as `ops`
+)
+
+
+@pytest.mark.parametrize("rel", GATES_FORK_FILES)
+def test_openseespy_gates_fork_flags_the_files_at_the_commit_that_had_the_bug(tmp_path: Path, rel: str) -> None:
+    _write(tmp_path, rel, _show(UNMARKED_BUG_COMMIT, rel))
+    rules = [f.rule for f in quirks.scan(tmp_path)]
+    assert rules and set(rules) == {"openseespy-gates-fork"}
+
+
+@pytest.mark.parametrize("rel", GATES_FORK_FILES)
+def test_openseespy_gates_fork_passes_the_files_on_main(tmp_path: Path, rel: str) -> None:
+    _write(tmp_path, rel, _real(rel))
+    assert quirks.scan(tmp_path) == []
+
+
+_FORK = "pytest.mark." + "ladruno_fork"
+
+
+@pytest.mark.parametrize(
+    ("source", "rules"),
+    [
+        (f"import pytest\n@{_FORK}\ndef test_a():\n    {OSP}\n", ["openseespy-gates-fork"]),
+        (f"import pytest\npytestmark = {_FORK}\n{OSP}\ndef test_a():\n    pass\n", ["openseespy-gates-fork"]),
+        (f"import pytest\n{OSP}\npytestmark = pytest.mark.live\n@{_FORK}\ndef test_a():\n    pass\n"
+         "def test_b():\n    pass\n", ["openseespy-gates-fork"]),
+        (f"import pytest\npytestmark = pytest.mark.live\n@pytest.fixture(autouse=True)\n"
+         f"def _b():\n    {OSP}\n@{_FORK}\ndef test_a():\n    pass\n", ["openseespy-gates-fork"]),
+        # a skip only stock tests can hit is not this rule's
+        (f"import pytest\n@pytest.mark.live\ndef test_a():\n    {OSP}\n@{_FORK}\ndef test_b():\n    pass\n", []),
+        (f"import pytest\n@pytest.fixture\ndef ops():\n    return {OSP}\n"
+         f"@pytest.mark.live\ndef test_a(ops):\n    pass\n@{_FORK}\ndef test_b():\n    pass\n", []),
+        # an autouse fixture reaches every test, for the unmarked rule too
+        (f"import pytest\n@pytest.fixture(autouse=True)\ndef _b():\n    {OSP}\n"
+         "@pytest.mark.live\ndef test_a():\n    pass\ndef test_b():\n    pass\n", ["openseespy-unmarked"]),
+        # a fork test gated on the resolved backend
+        (f"import pytest\nfrom apeGmsh.opensees.emitter.live import get_ops\n@{_FORK}\n"
+         "def test_a():\n    ops = get_ops()\n", []),
+    ],
+)
+def test_openseespy_gates_fork_shapes(tmp_path: Path, source: str, rules: list[str]) -> None:
+    _write(tmp_path, "tests/a.py", source)
+    assert [f.rule for f in quirks.scan(tmp_path)] == rules
 
 
 # --- qt-worker-gc: a worker thread that can run Qt finalizers (#1649) --------

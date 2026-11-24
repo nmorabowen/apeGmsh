@@ -37,7 +37,12 @@ from apeGmsh.opensees.analysis.spectrum import (
     cqc_correlation,
 )
 
-openseespy = pytest.importorskip("openseespy.opensees")
+from apeGmsh.sections._mc import backend_available  # noqa: E402
+
+# Any backend, not openseespy by name: live-fork installs the fork as
+# `opensees` and has no openseespy, so an importorskip skipped the fork cases.
+if not backend_available():
+    pytest.skip("no OpenSees backend (openseespy or the Ladruno fork)", allow_module_level=True)
 
 from tests.opensees.fixtures.fem_stub import (  # noqa: E402
     FEMStub,
@@ -883,10 +888,32 @@ def test_increment_route_equals_the_static_route(
 
     fast = _route(monkeypatch, "increment", run)
     slow = _route(monkeypatch, "static", run)
+    # Round-off is not one number here. A leg moves the frame by
+    # _PROBE_REL (1e-8) of its extent, and the Corotational transformation
+    # works from total coordinates, so a leg's change sits that far below
+    # the values it is computed from: its floor is ~eps / _PROBE_REL. The
+    # gap between the routes scales as 1 / probe (displacement 3.7e-8,
+    # 3.7e-9, 3.7e-10 at probes 1e-9, 1e-8, 1e-7; column forces 8.2e-7 at
+    # 1e-8; 7.4e-9 displacement at FORK_PIN on Linux MKL). Linear and PDelta
+    # work in displacements and sit ~400x lower.
+    from apeGmsh.opensees.procedures import _gravity_modal as gm
+
+    eps = float(np.finfo(np.float64).eps)
+    tol = 200.0 * eps / gm._PROBE_REL if frame == "corotational" else 1e-9
     for name in names:
         rel = _per_mode_rel(fast, slow, name)
-        assert float(np.max(rel)) < 1e-9, (name, rel.tolist())
+        assert float(np.max(rel)) < tol, (name, tol, rel.tolist())
     assert max(fast.restore_drift) < 1e-12
+    if frame == "corotational":
+        # The wider bound is round-off only if the gap shrinks with the
+        # probe; a real difference between the routes would not.
+        monkeypatch.setattr(gm, "_PROBE_REL", 10.0 * gm._PROBE_REL)
+        fast10 = _route(monkeypatch, "increment", run)
+        slow10 = _route(monkeypatch, "static", run)
+        for name in ("disp", "cols"):
+            at1 = float(np.max(_per_mode_rel(fast, slow, name)))
+            at10 = float(np.max(_per_mode_rel(fast10, slow10, name)))
+            assert at10 < at1 / 5.0, (name, at1, at10)
 
 
 @pytest.mark.live

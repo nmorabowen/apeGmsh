@@ -26,13 +26,18 @@ import pytest
 
 from apeGmsh.opensees import apeSees
 
-openseespy = pytest.importorskip("openseespy.opensees")
+from apeGmsh.sections._mc import backend_available  # noqa: E402
+
+# Any backend, not openseespy by name: live-fork installs the fork as
+# `opensees` and has no openseespy, so an importorskip skipped the fork cases.
+if not backend_available():
+    pytest.skip("no OpenSees backend (openseespy or the Ladruno fork)", allow_module_level=True)
 
 from apeGmsh._kernel._coupling_control import CouplingControl  # noqa: E402
 from apeGmsh._kernel.records._constraints import (  # noqa: E402
     NodeGroupRecord,
 )
-from apeGmsh.opensees.emitter.live import LiveOpsEmitter  # noqa: E402
+from apeGmsh.opensees.emitter.live import LiveOpsEmitter, get_ops  # noqa: E402
 
 from tests.opensees.fixtures.fem_stub import (  # noqa: E402
     FEMStub,
@@ -115,11 +120,11 @@ def _run(al_update: str | None) -> tuple[LiveOpsEmitter, int]:
     ops.build().emit(emitter)
     assert emitter.analyze(steps=1) == 0, "the driving step failed"
     # The coupling is the last element the tag allocator handed out.
-    return emitter, max(int(t) for t in openseespy.getEleTags())
+    return emitter, max(int(t) for t in get_ops().getEleTags())
 
 
 def _violation(tag: int) -> float:
-    return float(openseespy.eleResponse(tag, "constraintViolation")[0])
+    return float(get_ops().eleResponse(tag, "constraintViolation")[0])
 
 
 @pytest.mark.live

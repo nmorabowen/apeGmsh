@@ -253,6 +253,17 @@ RULES: dict[str, str] = {
         "tests in no lane, beside the AGENTS.md line 'a live test that skips everywhere is not "
         "a passing test'"
     ),
+    "openseespy-gates-fork": (
+        "`pytest.importorskip(\"openseespy...\")` can skip a `ladruno_fork` test. A fork test "
+        "needs the backend the bridge resolves, not openseespy by name: beside a fork build "
+        "(stock openseespy installed too, as on the maintainer's venv) that name is the stock "
+        "binding, a second domain without the fork's features; without openseespy (live-fork "
+        "before its shim) the skip hid the test. Gate on "
+        "apeGmsh.sections._mc.backend_available(), or rely on the ladruno_fork hook in "
+        "tests/conftest.py, and take ops from apeGmsh.opensees.emitter.live.get_ops(). Lesson: "
+        "the 2026-11-24 viewer architecture review; 14 fork tests in 7 files sat behind such a "
+        "skip, and three of them read the stock domain on a fork machine"
+    ),
     "qt-worker-gc": (
         "a `Thread(target=...)` in a module that imports a Qt binding targets a bound method of "
         "self/cls, or a function that calls gc.enable()/gc.collect() (directly or through a "
@@ -1157,12 +1168,12 @@ def check_qt_process_isolation(tree: ast.AST, rel: str, root: Path) -> Iterator[
     yield started, RULES["qt-process-isolation"]
 
 
-# --- openseespy-unmarked ------------------------------------------------------
+# --- openseespy-unmarked / openseespy-gates-fork -------------------------------
 
-#: A mark that puts a test in a lane that has an OpenSees backend: `live` (live-stock),
+#: The marks that put a test in a lane with an OpenSees backend: `live` (live-stock),
 #: `ladruno_fork` (live-fork) or `subprocess` (subprocess-tests). `suite` has no
 #: openseespy, so an unmarked test skips there and live-stock deselects it.
-LIVE_MARK = re.compile(r"\bmark\.(?:live|ladruno_fork|subprocess)\b")
+LIVE_MARK = re.compile(r"\bmark\.(live|ladruno_fork|subprocess)\b")
 
 
 def _is_openseespy_importorskip(node: ast.AST) -> bool:
@@ -1179,14 +1190,16 @@ def _is_openseespy_importorskip(node: ast.AST) -> bool:
     )
 
 
-def _marked(decorators: list[ast.expr], aliases: set[str]) -> bool:
-    """A decorator list carries a lane mark, spelled out or through a module-level alias."""
+def _lane_marks(decorators: list[ast.expr], aliases: dict[str, set[str]]) -> set[str]:
+    """The lane marks a decorator list carries, spelled out or through a module-level alias."""
+    marks: set[str] = set()
     for dec in decorators:
         text = ast.unparse(dec)
+        marks |= set(LIVE_MARK.findall(text))
         head = re.match(r"\w+", text)
-        if LIVE_MARK.search(text) or (head is not None and head.group() in aliases):
-            return True
-    return False
+        if head is not None:
+            marks |= aliases.get(head.group(), set())
+    return marks
 
 
 def _references(func: ast.AST, name: str) -> bool:
@@ -1198,68 +1211,87 @@ def _references(func: ast.AST, name: str) -> bool:
     return any(isinstance(n, ast.Name) and n.id == name for n in ast.walk(func))
 
 
-def check_openseespy_unmarked(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
-    """`pytest.importorskip("openseespy...")` in tests/ that skips a test no lane mark covers.
+def _openseespy_skips(tree: ast.Module) -> Iterator[tuple[int, list[set[str]]]]:
+    """Each openseespy `importorskip` in a test module, with the lane marks of every test it can skip.
 
-    A test is covered by a `live`, `ladruno_fork` or `subprocess` mark in the module's
-    `pytestmark`, on its class, or on itself (spelled out, or through a module-level alias
-    such as `live = pytest.mark.live`). The call is flagged when it can skip an uncovered test:
-    at module level, any test of the module; in a test, that test; in a helper or fixture (a
-    mark on a fixture does nothing), any test in this module that names it. A helper no test
-    here names (a conftest fixture) is not read: the rule cannot see its users."""
-    if not rel.startswith("tests/") or not isinstance(tree, ast.Module):
-        return
-    aliases: set[str] = set()
+    A test's marks come from the module's `pytestmark`, its class and itself (spelled out, or
+    through a module-level alias such as `live = pytest.mark.live`). The call can skip: at
+    module level, every test of the module; in a test, that test; in a helper or fixture (a
+    mark on a fixture does nothing), every test in this module that names it, plus every test
+    of the class a method helper sits in, and every test of the module for a module-level
+    `autouse=True` fixture. A helper no test here names (a conftest fixture)
+    reaches no test: the rule cannot see its users."""
+    module_marks: set[str] = set()
+    aliases: dict[str, set[str]] = {}
     for stmt in _scope_statements(tree.body):
         if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and stmt.value is not None:
-            if LIVE_MARK.search(ast.unparse(stmt.value)):
-                if "pytestmark" in _bound_names(stmt):
-                    return
-                aliases |= _bound_names(stmt)
+            found = set(LIVE_MARK.findall(ast.unparse(stmt.value)))
+            if found:
+                names = _bound_names(stmt)
+                if "pytestmark" in names:
+                    module_marks |= found
+                for name in names - {"pytestmark"}:
+                    aliases[name] = found
 
-    # (test, covered, the class it sits in) for every test function pytest collects here.
-    tests: list[tuple[ast.AST, bool, ast.ClassDef | None]] = []
+    # (test, its lane marks, the class it sits in) for every test function pytest collects here.
+    tests: list[tuple[ast.AST, set[str], ast.ClassDef | None]] = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
-            tests.append((node, _marked(node.decorator_list, aliases), None))
+            tests.append((node, module_marks | _lane_marks(node.decorator_list, aliases), None))
         elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
-            on_class = _marked(node.decorator_list, aliases)
+            on_class = module_marks | _lane_marks(node.decorator_list, aliases)
             for item in node.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name.startswith("test"):
-                    tests.append((item, on_class or _marked(item.decorator_list, aliases), node))
+                    tests.append((item, on_class | _lane_marks(item.decorator_list, aliases), node))
 
-    def uncovered(scope: list[ast.AST]) -> bool:
-        """Whether the innermost def/class around a call lets it skip an uncovered test."""
+    def reached(scope: list[ast.AST]) -> list[set[str]]:
         if not scope:
-            return any(not covered for _, covered, _ in tests)
+            return [marks for _, marks, _ in tests]
         inner = scope[-1]
-        for test, covered, cls in tests:
-            if test is inner or (cls is not None and cls is inner):
-                if not covered:
-                    return True
-        if any(test is inner or cls is inner for test, _, cls in tests):
-            return False
-        # A helper or fixture: the tests that request or call it, plus, for a method of a
-        # test class (setup_method and the like), every test of that class.
+        own = [marks for test, marks, cls in tests if test is inner or cls is inner]
+        if own:
+            return own
         name = getattr(inner, "name", "")
         owner = next((s for s in reversed(scope[:-1]) if isinstance(s, ast.ClassDef)), None)
-        return any(
-            not covered and (_references(test, name) or (owner is not None and cls is owner))
-            for test, covered, cls in tests
+        autouse = any(
+            "fixture" in ast.unparse(d) and "autouse=True" in ast.unparse(d)
+            for d in getattr(inner, "decorator_list", [])
         )
+        return [
+            marks for test, marks, cls in tests
+            if _references(test, name)
+            or (owner is not None and cls is owner)
+            or (autouse and owner is None)
+        ]
 
-    def visit(node: ast.AST, scope: list[ast.AST]) -> Iterator[int]:
+    def visit(node: ast.AST, scope: list[ast.AST]) -> Iterator[tuple[int, list[set[str]]]]:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 yield from visit(child, scope + [child])
             elif _is_openseespy_importorskip(child):
-                if uncovered(scope):
-                    yield child.lineno
+                yield child.lineno, reached(scope)
             else:
                 yield from visit(child, scope)
 
-    for line in visit(tree, []):
-        yield line, RULES["openseespy-unmarked"]
+    yield from visit(tree, [])
+
+
+def check_openseespy_unmarked(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """An openseespy `importorskip` in tests/ that can skip a test with no lane mark."""
+    if not rel.startswith("tests/") or not isinstance(tree, ast.Module):
+        return
+    for line, marks in _openseespy_skips(tree):
+        if any(not m for m in marks):
+            yield line, RULES["openseespy-unmarked"]
+
+
+def check_openseespy_gates_fork(tree: ast.AST, rel: str, root: Path) -> Iterator[tuple[int, str]]:
+    """An openseespy `importorskip` in tests/ that can skip a `ladruno_fork` test."""
+    if not rel.startswith("tests/") or not isinstance(tree, ast.Module):
+        return
+    for line, marks in _openseespy_skips(tree):
+        if any("ladruno_fork" in m for m in marks):
+            yield line, RULES["openseespy-gates-fork"]
 
 
 # --- qt-worker-gc: a worker thread that can run Qt finalizers (#1649) --------
@@ -1593,6 +1625,7 @@ PYTHON_RULES: dict[str, Callable[[ast.AST, str, Path], Iterator[tuple[int, str]]
     "ratchet-baseline": check_ratchet_baseline,
     "qt-process-isolation": check_qt_process_isolation,
     "openseespy-unmarked": check_openseespy_unmarked,
+    "openseespy-gates-fork": check_openseespy_gates_fork,
     "qt-worker-gc": check_qt_worker_gc,
     "stale-patch-target": check_stale_patch_target,
     "raw-meta-ndm": check_raw_meta_ndm,
