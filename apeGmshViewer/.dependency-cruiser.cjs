@@ -46,9 +46,9 @@ module.exports = {
     {
       name: "tool-isolation",
       severity: "error",
-      comment: "ADR 0137 D10 (H1): a tool runs in its own renderer and sees only ToolContext, so src/tools/ imports src/tools/ and the theme tokens only: no store, renderer, reader or main",
+      comment: "ADR 0137 D10 (H1, H2): a tool runs in its own renderer and sees only ToolContext, so src/tools/ imports src/tools/, the theme tokens and the shared chart only: no store, renderer, reader or main",
       from: { path: "^src/tools/" },
-      to: { pathNot: ["^src/tools/", "^src/theme/tokens\.ts$"] },
+      to: { pathNot: ["^src/tools/", "^src/theme/tokens\.ts$", "^src/ui/chart\.ts$"] },
     },
     {
       name: "no-circular",

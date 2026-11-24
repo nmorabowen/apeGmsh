@@ -4,12 +4,12 @@
 // page, and the tool's id. Contexts arrive on the port and are drawn at most once per frame
 // (./host.ts); the tool's events go back on it. The page holds no store and reads no file.
 
-import type { ToolContext, ToolEvent } from "./contract.ts";
+import type { ToolAnswer, ToolContext, ToolEvent, ToolRequest } from "./contract.ts";
 import { ToolScheduler } from "./host.ts";
 import { TOOLS } from "./registry.ts";
 import { cssVariables } from "../theme/tokens.ts";
 
-const bridge = (window as unknown as { toolHost: { ready(): void } }).toolHost;
+const bridge = (window as unknown as { toolHost: { ready(): void; request(q: ToolRequest, seq: number): Promise<ToolAnswer> } }).toolHost;
 const root = document.getElementById("tool")!;
 
 window.addEventListener("message", (ev: MessageEvent) => {
@@ -22,7 +22,8 @@ window.addEventListener("message", (ev: MessageEvent) => {
     return;
   }
   document.title = `${def.title} - apeGmshViewer`;
-  const handle = def.mount({ root, send: (event: ToolEvent) => port.postMessage({ event }) });
+  let seq = 0;
+  const handle = def.mount({ root, send: (event: ToolEvent) => port.postMessage({ event }), request: (q) => bridge.request(q, ++seq) });
   const scheduler = new ToolScheduler(handle, { request: (fn) => requestAnimationFrame(() => fn()) }, () => document.visibilityState === "visible");
   document.addEventListener("visibilitychange", () => scheduler.shown());
   // The app's colour tokens, as the model window's page has them (not applyTheme: its font faces are

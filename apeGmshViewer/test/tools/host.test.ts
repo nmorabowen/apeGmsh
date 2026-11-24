@@ -72,7 +72,7 @@ function onResults(step: number): State {
   const s = reduce(initialState, { type: "fileOpened", artifact: "model", path: "C:\\work\\bridge.h5" });
   return {
     ...s,
-    results: { stages: [{ id: "stage_0", name: "push", time: [0, 1, 2, 3] }] } as unknown as State["results"],
+    results: { stages: [{ id: "stage_0", name: "push", time: [0, 1, 2, 3], nodal: ["displacement_x", "displacement_y"] }] } as unknown as State["results"],
     phase: { axis: [{ kind: "results", stage: 0, step: 0 }] as unknown as State["phase"]["axis"], at: { kind: "results", stage: 0, step } },
   };
 }
@@ -81,7 +81,7 @@ test("the context names the file, not its path, and carries the step with playba
   const s = { ...onResults(2), playing: true };
   const c = toolContextOf(s);
   assert.equal(c.model, "bridge.h5");
-  assert.deepEqual(c.step, { stage: "stage_0", stageName: "push", step: 2, steps: 4, playing: true });
+  assert.deepEqual(c.step, { stage: "stage_0", stageName: "push", step: 2, steps: 4, playing: true, components: ["displacement_x", "displacement_y"] });
   assert.equal(c.theme, "dark");
   assert.equal(toolContextOf(reduce(initialState, { type: "fileOpened", artifact: "model", path: "/m.h5" })).step, null, "no results stage, no step");
 });

@@ -227,6 +227,16 @@ export interface HingeHistoryRequest {
   seq: number;
 }
 
+/** ADR 0137 H2b: one node's history of one nodal component over a stage, for a tool (main.ts `tool:request`). */
+export interface NodeHistoryRequest {
+  path: string;
+  stage: string;
+  node: number;
+  component: string;
+}
+
+export type NodeHistoryAnswer = { ok: true; stage: string; node: number; component: string; values: Float64Array } | { ok: false; error: string; changed?: true };
+
 export type HingeHistoryAnswer = ({ ok: true; seq: number; stage: string } & LadrunoHingeHistory) | { ok: false; seq: number; error: string; changed?: true };
 
 export type StepAnswer =
@@ -851,6 +861,23 @@ export class ResultsHost {
       return { ok: true, seq: req.seq, stage: req.stage, ...rf.readHingeHistory(req.stage, req.element) };
     } catch (err) {
       return { ok: false, seq: req.seq, error: message(err) };
+    }
+  }
+
+  /**
+   * ADR 0137 H2b: node `req.node`'s whole history of one nodal component over a stage, read as one
+   * column (the readers' `readNodeHistory`). A partitioned `.ladruno` set is refused by name: its
+   * node lives in one part, and that read is not built yet.
+   */
+  readNodeHistory(req: NodeHistoryRequest): NodeHistoryAnswer {
+    try {
+      const rf = this.handle(req.path);
+      if (!rf) return { ok: false, changed: true, error: `${req.path} changed on disk since it was indexed; it is read again before any history` };
+      this.armIdle();
+      if (rf instanceof LadrunoPartSet) throw new Error(`${req.path} is a partitioned .ladruno set: a node's history is not read from one yet`);
+      return { ok: true, stage: req.stage, node: req.node, component: req.component, values: rf.readNodeHistory(req.stage, req.component, req.node) };
+    } catch (err) {
+      return { ok: false, error: message(err) };
     }
   }
 

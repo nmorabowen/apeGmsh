@@ -79,6 +79,7 @@ import { Loader } from "./loader/client.ts";
 import { forkLoader } from "./loader/fork.ts";
 import { readMemory, watchLoad } from "./memory.ts";
 import { toolWebPreferences, ToolWindows } from "./toolWindows.ts";
+import { checkToolRequest, ToolBroker } from "./toolBroker.ts";
 import { TOOLS } from "../tools/registry.ts";
 import { nodeDeps, registerWorkspace } from "./workspace.ts";
 import { combinationToken, nodeCombinationDeps, registerCombinations, sweepOnOpen, type CombinationH5 } from "./combinations.ts";
@@ -316,8 +317,8 @@ const toolWindows = new ToolWindows(
   {
     create: (_tool, title) => {
       const t = new BrowserWindow({
-        width: 520,
-        height: 340,
+        width: 560,
+        height: 600,
         title,
         backgroundColor: "#16181d",
         autoHideMenuBar: true,
@@ -342,6 +343,19 @@ ipcMain.handle("tool:open", (e, tool: unknown) => {
 });
 // D13 item 5: honoured only from a window main made for a tool (ToolWindows.ready checks the sender).
 ipcMain.on("tool:ready", (e) => void toolWindows.ready(e.sender));
+// ADR 0137 D10 (H2b): a tool's data, through the broker (./toolBroker.ts), from the window set's
+// results file only, read in the loader process. The sender and the request are checked first.
+const toolBroker = new ToolBroker((req) => resultsHost.readNodeHistory(req));
+ipcMain.handle("tool:request", (e, q: unknown, seq: unknown) => {
+  if (!toolWindows.isTool(e.sender)) return { ok: false, error: "tool:request: only a tool window asks for tool data" };
+  if (typeof seq !== "number") return { ok: false, error: `tool:request: malformed request number ${shown(seq)}` };
+  const c = checkToolRequest(q);
+  if (!c.ok) return c;
+  const set = windowSet();
+  if ("reason" in set) return { ok: false, error: `tool:request: ${set.reason}` };
+  if (set.results === null) return { ok: false, error: "tool:request: the open set has no results file" };
+  return toolBroker.request(e.sender, set.results, c.q, seq);
+});
 /** Renderer subscriptions ("open", "fileChanged"); a page load clears them. */
 const subscribed = new Set<string>();
 

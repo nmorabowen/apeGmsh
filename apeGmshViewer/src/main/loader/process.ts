@@ -16,7 +16,7 @@
 import * as h5wasm from "h5wasm/node";
 import { openModel } from "../../reader/node.ts";
 import type { ResultsH5 } from "../../reader/results.ts";
-import { readParticleSet, ResultsHost, type HingeHistoryRequest, type ParticleOutputRequest, type ScanRequest, type StepRequest } from "../results.ts";
+import { readParticleSet, ResultsHost, type HingeHistoryRequest, type NodeHistoryRequest, type ParticleOutputRequest, type ScanRequest, type StepRequest } from "../results.ts";
 import { openCellCount, openGeometry, openLineage, openProvenance, openStageElements } from "../zones.ts";
 import type { LoaderMessage, LoaderOps, LoaderRequest, ResultsCall, ResultsHostName, ScanOptions } from "./protocol.ts";
 
@@ -69,6 +69,8 @@ function call(host: ResultsHostName, name: ResultsCall, args: unknown[]): unknow
       return h.readStep(args[0] as StepRequest);
     case "readHingeHistory":
       return h.readHingeHistory(args[0] as HingeHistoryRequest);
+    case "readNodeHistory":
+      return h.readNodeHistory(args[0] as NodeHistoryRequest);
     case "scan":
       return h.scan(args[0] as ScanRequest, (progress) => port.post({ event: "scanProgress", host, progress }), args[1] as ScanOptions);
     case "cancelScan":
@@ -82,7 +84,7 @@ function call(host: ResultsHostName, name: ResultsCall, args: unknown[]): unknow
   }
 }
 
-const CALLS = new Set<string>(["open", "readStep", "readHingeHistory", "scan", "cancelScan", "particleIndex", "readParticleOutput", "close"]);
+const CALLS = new Set<string>(["open", "readStep", "readHingeHistory", "readNodeHistory", "scan", "cancelScan", "particleIndex", "readParticleOutput", "close"]);
 
 function isRequest(m: unknown): m is LoaderRequest {
   const r = m as LoaderRequest | null;
