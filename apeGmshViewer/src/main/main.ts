@@ -542,11 +542,22 @@ function ungestured(door: string, path: string): string | null {
   return `${door} opens only a file the user dropped or a path main sent the page; refused ${path}`;
 }
 
+/**
+ * The number of the latest `model:open` that passed the gesture check. Opens overlap (drop a
+ * large model, then a small one): the page keeps only its latest read (effects.ts `openToken`),
+ * so the set follows only the latest open, and an older one that finishes later leaves the set
+ * alone (architecture review 2026-11-24, finding 2). The read holds nothing open in main, so a
+ * superseded answer has nothing to release.
+ */
+let modelOpens = 0;
+
 ipcMain.handle("model:open", async (e, path: unknown) => {
   if (typeof path !== "string") return { ok: false, error: `model:open needs a path; got ${shown(path)}` };
   // A free string is refused before any read, so the set stays as it is (VU12).
   const refused = ungestured("model:open", path);
   if (refused !== null) return { ok: false, error: refused };
+  const ticket = ++modelOpens;
+  const latest = () => ticket === modelOpens;
   let opened;
   try {
     // The model and its zones, in the loader process (ADR 0137 D2). In view mode the page hears the
@@ -564,12 +575,13 @@ ipcMain.handle("model:open", async (e, path: unknown) => {
     // (a model still being written) becomes the open set, watched, so its
     // rewrite retries the read. Any other path (a `.user.h5`, a results file)
     // never becomes the set: the user doors would then read beside it (#2752 review F1).
-    if (mode === "view" && typeof path === "string") followModel(path);
+    if (mode === "view" && latest()) followModel(path);
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
   // A model the renderer opened on its own (a drop on the P0 page): the open
   // set follows what is on screen (./session.ts), by the same rule.
-  if (mode === "view" && typeof path === "string") followModel(path);
+  // A newer open has started: the page drops this answer, and the set stays with the newer one.
+  if (mode === "view" && latest()) followModel(path);
   // /provenance rides with the model; a refused or broken zone does not stop
   // the model from loading (the renderer shows why go-to-source is off). V4b: the
   // lineage is the results pairing key, and the stage elements the tags of the

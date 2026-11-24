@@ -225,3 +225,31 @@ test("a window with no door says so", async () => {
   await tick();
   assert.match(last(store.get())!.error!, /cannot run/);
 });
+
+test("F8: a failed or closed model keeps the run ids going, as another model does", () => {
+  const s = reduce(wrapped(), { type: "materialTestRequested", decl: "bar", protocol });
+  const failed = reduce(s, { type: "fileFailed", artifact: "model", path: "other.h5", error: "bad" }).materialTest;
+  assert.deepEqual([failed.runs, failed.nextId], [[], 2]);
+  const loaded = reduce(s, { type: "fileOpened", artifact: "model", path: "s.h5" });
+  const closed = reduce({ ...loaded, artifacts: { ...loaded.artifacts, model: { ...loaded.artifacts.model!, status: "ready" } } }, { type: "fileClosed", artifact: "model" }).materialTest;
+  assert.deepEqual([closed.runs, closed.nextId], [[], 2]);
+});
+
+test("F8: a run cancelled by a failed model open cannot finish the next run with its late answer", async () => {
+  const answers: ((a: ReturnType<typeof answered>) => void)[] = [];
+  const { store } = harness({ materialTestRun: (_j, _s) => new Promise((f) => answers.push(f)), materialTestCancel: async () => undefined });
+  store.dispatch({ type: "materialTestRequested", decl: "bar", protocol });
+  await tick();
+  store.dispatch({ type: "fileFailed", artifact: "model", path: "other.h5", error: "bad" });
+  // the model's declarations again (a later open), with the tester state the failure left
+  (store as unknown as { state: State }).state = { ...wrapped(), materialTest: store.get().materialTest };
+  store.dispatch({ type: "materialTestRequested", decl: "bar", protocol });
+  await tick();
+  assert.equal(last(store.get())?.id, 2, "the id is not reused");
+  answers[0]!(answered(1)); // the cancelled run's late answer
+  await tick();
+  assert.equal(last(store.get())?.status, "running", "the late answer finished nothing");
+  answers[1]!({ ...answered(2), seq: 7 }); // an answer for another seq
+  await tick();
+  assert.equal(last(store.get())?.status, "running", "an answer is matched on its seq");
+});
