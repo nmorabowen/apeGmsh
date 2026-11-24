@@ -3,8 +3,8 @@
 // coloured on a results step by rotation, moment or moment/capacity from the
 // `.ladruno` `hingeSummary`. For the element picked in the viewport (or chosen
 // here) it plots the hinge's moment-rotation curve with the step on screen marked.
-// The curve's data is prepared in state/ (`hingeViewOf`); `ui/xyPlot.ts` draws it,
-// until it moves to a shared chart. What the files do not hold is named.
+// The curve's data is prepared in state/ (`hingeViewOf`); the shared chart (`ui/chart.ts`,
+// ADR 0137 H2) draws it. What the files do not hold is named.
 //
 // Follows ADR 0112 D6 (`panel-allow-list`): imports only `store`, `selectors`,
 // `types`, and `ui/dom`.
@@ -13,7 +13,7 @@ import { hingeViewOf, NODE_SIZE_MAX, NODE_SIZE_MIN, type HingeChart } from "../s
 import type { State, Store } from "../state/store.ts";
 import type { Event, HingeAxis, HingeEnd, HingesState } from "../state/types.ts";
 import { byId, el, listen } from "../ui/dom.ts";
-import { fmt, xyPlot } from "../ui/xyPlot.ts";
+import { fmt, xyPlot } from "../ui/chart.ts";
 
 function charts(c: HingeChart): HTMLElement {
   const box = el("div", "hinges-charts");

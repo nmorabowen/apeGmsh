@@ -505,7 +505,9 @@ const withRuns = (runs: Run[], patch: Partial<State["materialTest"]> = {}): Stat
   const s = withForm();
   return { ...s, materialTest: { ...s.materialTest, runs, ...patch } };
 };
-const plotsOf = (n: FakeNode) => n.all((x) => x.tagName === "SVG" && x.all((y) => y.tagName === "POLYLINE").length > 0);
+/** The shared chart's canvases (ui/chart.ts), each with how many curves it draws (`data-curves`). */
+const plotsOf = (n: FakeNode) => n.all((x) => x.tagName === "CANVAS" && Number(x.dataset["curves"]) > 0);
+const curvesOf = (n: FakeNode) => Number(n.dataset["curves"]);
 const buttonsOf = (n: FakeNode, text: string) => n.all((x) => x.tagName === "BUTTON" && x.textContent === text) as (FakeNode & { disabled?: boolean })[];
 
 test("a run of this material: running, then its curves and the fork build, or the solver's message", () => {
@@ -525,8 +527,8 @@ test("A2: the material's ready runs overlay in both plots, newest last; the lege
   const runs = [aRun({ id: 1 }), aRun({ id: 2, decl: S }), aRun({ id: 3, points: pts([0, 200, 250, 260]) }), aRun({ id: 4, status: "failed", points: null, error: "no" })];
   const t = testerOf(render(withRuns(runs)).root)!;
   const [main, second] = plotsOf(t);
-  assert.equal(main!.all((x) => x.tagName === "POLYLINE").length, 2, "runs 1 and 3 of this material, not run 2 of the section");
-  assert.equal(second!.all((x) => x.tagName === "POLYLINE").length, 2);
+  assert.equal(curvesOf(main!), 2, "runs 1 and 3 of this material, not run 2 of the section");
+  assert.equal(curvesOf(second!), 2);
   const lines = t.all((x) => x.className === "mt-legend-text").map((x) => x.textContent);
   assert.deepEqual(lines.map((x) => x.split(" · ")[0]), ["run 4", "run 3", "run 1"]);
   assert.match(t.textContent, /peak stress 260/);
@@ -633,7 +635,9 @@ test("S5: the plot and legend name the drawn run's axes, not the form's; the reg
   const shear = { id: 1, decl: NS, type: "ElasticIsotropic", protocol: { kind: "monotonic", peak: 0.001, steps: 2, nd: { view: "ThreeDimensional", mode: "simpleShear", confinement: 0 } }, overrides: [], stopped: null, status: "ready", error: null, build: "abc", curves: null, points: { step: [0, 1], strain: [0, 1e-3], stress: [0, 12.5], tangent: [12500, 12500], energy: [0, 0] } } as unknown as State["materialTest"]["runs"][number];
   const s = ndForm(NS, { mode: "uniaxialStress" });
   const t = testerOf(render({ ...s, materialTest: { ...s.materialTest, runs: [shear] } }).root)!;
-  assert.match(t.textContent, /γ12τ12imposed γ12/, "the axis labels are the shear run's");
+  const [plot] = plotsOf(t);
+  assert.deepEqual([plot!.dataset["x"], plot!.dataset["y"]], ["γ12", "τ12"], "the axis labels are the shear run's");
+  assert.match(t.textContent, /imposed γ12/, "and the second plot's choice names the imposed γ12");
   assert.match(t.textContent, /peak τ12 12\.5/);
   assert.doesNotMatch(t.textContent, /-autoRegularization scales/);
   assert.match(testerOf(render(ndForm(ND)).root)!.textContent, /no element, so -autoRegularization scales this material's softening/);

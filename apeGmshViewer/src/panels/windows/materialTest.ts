@@ -29,7 +29,7 @@ import {
 } from "../../state/selectors.ts";
 import { MATERIAL_TEST_SLOTS_SHOWN, type DeclPath, type MaterialTestForm, type MaterialTestOverride, type MaterialTestRun, type MaterialTestSecond, type MaterialTestSlot } from "../../state/types.ts";
 import { el } from "../../ui/dom.ts";
-import { fmt, xyPlot, xySwatch } from "../../ui/xyPlot.ts";
+import { fmt, xyPlot, xySwatch } from "../../ui/chart.ts";
 
 const KINDS: readonly (readonly [MaterialTestForm["kind"], string])[] = [
   ["monotonic", "monotonic"],
