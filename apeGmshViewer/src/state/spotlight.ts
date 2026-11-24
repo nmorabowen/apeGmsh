@@ -159,6 +159,8 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   addSearchClause: { kind: "gesture", reason: "adding a filter chip in the Search window" },
   removeSearchClause: { kind: "gesture", reason: "removing a filter chip in the Search window" },
   clearSearch: { kind: "gesture", reason: "resetting the Search window filters" },
+  setMaterialsFilter: { kind: "gesture", reason: "typing into the Materials window filter" },
+  showMoreMaterials: { kind: "gesture", reason: "showing the next page of a Materials window group" },
 
   // Exposed user commands & viewer properties
   select: { kind: "expose", command: "select-decl", description: "Select a declaration in the 3D viewport and inspector" },

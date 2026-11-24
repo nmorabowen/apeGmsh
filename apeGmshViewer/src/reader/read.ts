@@ -38,6 +38,7 @@ import type {
 import { SIDE_CHANNEL_DECL_VERBS } from "../state/results.ts";
 import { equivalentRectProfile } from "./equivalentSection.ts";
 import { openH5, type H5FS } from "./h5open.ts";
+import { runOfTag } from "../model/tagRuns.ts";
 
 /** The parts of the h5wasm module this reader uses. */
 export interface H5Module {
@@ -532,7 +533,7 @@ class Reader {
     const table = definitions.decls;
     if (table) {
       for (const o of objects) {
-        if (!table.tags.some((r) => r.kind === o.family && o.tag >= r.first && o.tag < r.first + r.count)) {
+        if (!runOfTag(table.tags, o.family, o.tag)) {
           throw new SchemaError(`${o.path}: /opensees/decls/tags has no run for ${o.family} ${o.tag}; a 2.25+ file declares every tag`);
         }
       }

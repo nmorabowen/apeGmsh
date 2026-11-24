@@ -3,10 +3,16 @@
 // selectors.ts re-exports it unchanged.
 
 import type { DeclRecord, Definitions } from "../model/types.ts";
+import { elementsOfDecl, runOfTag } from "../model/tagRuns.ts";
 
 /** The `/opensees/decls` row that owns tag `tag` of allocator kind `kind`, or null. */
 export function declOfTag(defs: Definitions, kind: string, tag: number | null): DeclRecord | null {
   if (!defs.decls || tag === null) return null;
-  const run = defs.decls.tags.find((t) => t.kind === kind && tag >= t.first && tag < t.first + t.count);
+  const run = runOfTag(defs.decls.tags, kind, tag);
   return run ? (defs.decls.records[run.decl] ?? null) : null;
+}
+
+/** How many elements declaration `rec` owns (its `element` tag runs). */
+export function elementsOwned(defs: Definitions, rec: DeclRecord): number {
+  return defs.decls ? elementsOfDecl(defs.decls.tags, rec.row) : 0;
 }

@@ -1011,7 +1011,9 @@ function reduceEvent(s: State, e: Event): State {
     case "setSearchText":
     case "addSearchClause":
     case "removeSearchClause":
-    case "clearSearch": {
+    case "clearSearch":
+    case "setMaterialsFilter":
+    case "showMoreMaterials": {
       const cur = { windows: s.windows, spotlight: s.spotlight, search: s.search };
       const next = reduceWindows(cur, e);
       return next === cur ? s : { ...s, ...next };

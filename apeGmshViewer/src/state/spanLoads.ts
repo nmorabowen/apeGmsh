@@ -12,6 +12,7 @@
 //   exact span-load reconstruction contract, Slice E1).
 
 import { ELEMENT_SYNTAX } from "../chain/signatures.ts";
+import { runOfTag } from "../model/tagRuns.ts";
 import type { Param } from "../model/types.ts";
 import type { LadrunoLineStationStep, LadrunoProvenance, LineStationComponent } from "../reader/ladruno.ts";
 import type { ResultsPairing } from "./results.ts";
@@ -750,7 +751,7 @@ function evalTimeSeriesFromDefObject(ts: DefObject, time: number): TimeSeriesEva
 
 function findDeclRecordByTag(defs: Definitions | null | undefined, kind: string, tag: number | null): DeclRecord | null {
   if (!defs?.decls || tag === null) return null;
-  const run = defs.decls.tags.find((t) => t.kind === kind && tag >= t.first && tag < t.first + t.count);
+  const run = runOfTag(defs.decls.tags, kind, tag);
   return run ? (defs.decls.records[run.decl] ?? null) : null;
 }
 

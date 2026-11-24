@@ -29,8 +29,8 @@
 // `materialsOf` is the pure (state) -> data half; `view` turns it into DOM.
 
 import type { Event, State } from "../../state/store.ts";
-import { declOfTag } from "../../state/selectors.ts";
-import type { Decl, DeclPath, DeclRecord, DeclValue, Definitions } from "../../state/types.ts";
+import { declOfTag, elementsOwned } from "../../state/selectors.ts";
+import { MATERIALS_PAGE, type Decl, type DeclPath, type DeclRecord, type DeclValue, type Definitions } from "../../state/types.ts";
 import { el, isSelectAdd } from "../../ui/dom.ts";
 import { testButton, testerEl } from "./materialTest.ts";
 import type { WindowView } from "./view.ts";
@@ -79,6 +79,8 @@ export interface MaterialRow {
   h5: string;
   /** one entry per decl_params owner (one for a material or section) */
   owners: { type: string; fields: [string, Val][] }[];
+  /** #3133: the first owner's numeric parameters, by field name (the group summary's ranges) */
+  numbers: [string, number][];
   /** why there are no parameters by field name, or null */
   paramsNote: string | null;
   /** from the definition chain: elements and objects whose refs point here; `ties`, the embeddedRebar ties whose `-bond` tag is this material's */
@@ -89,8 +91,15 @@ export interface MaterialRow {
   referencedBy: { ref: Ref; type: string; elements: number }[];
 }
 
+/** #3133: one OpenSees type of a group: how many rows, and the range of each numeric parameter all of them have. */
+export interface TypeSummary {
+  type: string;
+  count: number;
+  ranges: { field: string; min: number; max: number }[];
+}
+
 export interface MaterialsData {
-  groups: { kind: string; title: string; rows: MaterialRow[] }[];
+  groups: { kind: string; title: string; rows: MaterialRow[]; summary: TypeSummary[] }[];
   /** a sentence for the whole window (nothing to list, or a zone not in this file); null when there is none */
   note: string | null;
 }
@@ -218,11 +227,6 @@ function tieUsersOf(s: State, defs: Definitions | null): TieUsers | null {
   return t;
 }
 
-/** How many elements a declaration owns (its `element` tag runs). */
-function elementsOwned(defs: Definitions, rec: DeclRecord): number {
-  return (defs.decls?.tags ?? []).filter((t) => t.decl === rec.row && t.kind === "element").reduce((n, t) => n + t.count, 0);
-}
-
 function opsVersion(s: State): string {
   const z = s.artifacts.model?.zones["opensees"];
   return z?.status === "ready" ? z.version : "?";
@@ -258,6 +262,7 @@ function rowOf(c: Ctx, defs: Definitions | null, d: Decl): MaterialRow {
     declKey: rec?.key ?? null,
     h5: d.h5,
     owners,
+    numbers: rec?.params[0] ? Object.entries(rec.params[0].params).filter((e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1])) : [],
     paramsNote,
     usedBy: { elements: chain?.elements ?? 0, objects, ties: tu?.byPath.get(d.path) ?? 0 },
     tiesUnknown,
@@ -265,8 +270,44 @@ function rowOf(c: Ctx, defs: Definitions | null, d: Decl): MaterialRow {
   };
 }
 
+/** #3133: each type of a group's rows, by count (most first), with the range of every numeric parameter all its rows have. */
+export function summaryOf(rows: readonly MaterialRow[]): TypeSummary[] {
+  const byType = new Map<string, { count: number; ranges: Map<string, { min: number; max: number; n: number }> }>();
+  for (const r of rows) {
+    const t = byType.get(r.type) ?? byType.set(r.type, { count: 0, ranges: new Map() }).get(r.type)!;
+    t.count++;
+    for (const [f, v] of r.numbers) {
+      const g = t.ranges.get(f);
+      if (g) {
+        if (v < g.min) g.min = v;
+        if (v > g.max) g.max = v;
+        g.n++;
+      } else t.ranges.set(f, { min: v, max: v, n: 1 });
+    }
+  }
+  return [...byType]
+    .map(([type, t]) => ({ type, count: t.count, ranges: [...t.ranges].filter(([, g]) => g.n === t.count).map(([field, g]) => ({ field, min: g.min, max: g.max })) }))
+    .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
+}
+
+// #3133: the list depends only on the decls, the definitions and the model's artifact, which change on a read; the
+// frame rebuilds the window on every selection and window event, so the list is kept per read, not rebuilt.
+const NO_DEFS = {};
+const listed = new WeakMap<object, WeakMap<object, WeakMap<object, MaterialsData>>>();
+
 /** What the window lists, from the state alone. */
 export function materialsOf(s: State): MaterialsData {
+  const model = s.artifacts.model;
+  if (!model) return materialsRead(s);
+  const byDefs = listed.get(s.decls) ?? listed.set(s.decls, new WeakMap()).get(s.decls)!;
+  const defsKey = s.definitions ?? NO_DEFS;
+  const byModel = byDefs.get(defsKey) ?? byDefs.set(defsKey, new WeakMap()).get(defsKey)!;
+  let data = byModel.get(model);
+  if (!data) byModel.set(model, (data = materialsRead(s)));
+  return data;
+}
+
+function materialsRead(s: State): MaterialsData {
   const model = s.artifacts.model;
   if (!model || model.status !== "ready") return { groups: [], note: "no model is open" };
   const defs = s.definitions;
@@ -276,7 +317,9 @@ export function materialsOf(s: State): MaterialsData {
     kind: g.kind,
     title: g.title,
     rows: decls.filter((d) => d.kind === g.kind).map((d) => rowOf(c, defs, d)),
-  })).filter((g) => g.rows.length > 0);
+  }))
+    .filter((g) => g.rows.length > 0)
+    .map((g) => ({ ...g, summary: summaryOf(g.rows) }));
   if (groups.length === 0) return { groups, note: defs ? "the model declares no material or section" : "the model has no /opensees zone: it declares no material or section" };
   const v = opsVersion(s);
   const note =
@@ -447,13 +490,61 @@ function rowEl(s: State, r: MaterialRow, act: (e: Event) => void): HTMLElement {
   return row;
 }
 
+/** #3133: whether a row matches the filter: its handle, tag, declaration key or type contains it, case-insensitively. */
+export function matchesFilter(r: MaterialRow, filter: string): boolean {
+  const f = filter.trim().toLowerCase();
+  if (!f) return true;
+  return r.handle.toLowerCase().includes(f) || (r.tag !== null && String(r.tag).includes(f)) || (r.declKey ?? "").toLowerCase().includes(f) || r.type.toLowerCase().includes(f);
+}
+
+function summaryEl(g: MaterialsData["groups"][number]): HTMLElement {
+  const e = el("div", "window-row-detail");
+  e.append(
+    muted(
+      g.summary
+        .map((t) => {
+          const ranges = t.ranges.map((r) => (r.min === r.max ? `${r.field} ${fmtNumber(r.min)}` : `${r.field} ${fmtNumber(r.min)} … ${fmtNumber(r.max)}`));
+          return [`${t.type} × ${t.count.toLocaleString()}`, ...ranges].join(" · ");
+        })
+        .join("; "),
+    ),
+  );
+  return e;
+}
+
 export const view: WindowView = (s, act) => {
   const data = materialsOf(s);
+  const list = s.windows.materials ?? { filter: "", shown: {} };
   const body = el("div", "window-list");
   if (data.note) body.append(el("div", "window-note", data.note));
+  // #3133: a filter, once some group has more rows than a page (19 512 spring materials, one per spring).
+  if (data.groups.some((g) => g.rows.length > MATERIALS_PAGE)) {
+    const input = el("input", "search-input");
+    input.type = "text";
+    input.placeholder = "filter by name, tag, key or type";
+    input.value = list.filter;
+    input.dataset["focusKey"] = "materials-filter";
+    input.addEventListener("input", () => act({ type: "setMaterialsFilter", text: input.value }));
+    body.append(input);
+  }
   for (const g of data.groups) {
-    body.append(el("div", "window-section", `${g.title} (${g.rows.length})`));
-    for (const r of g.rows) body.append(rowEl(s, r, act));
+    const large = g.rows.length > MATERIALS_PAGE;
+    const rows = large ? g.rows.filter((r) => matchesFilter(r, list.filter)) : g.rows;
+    const count = rows.length === g.rows.length ? `${g.rows.length.toLocaleString()}` : `${rows.length.toLocaleString()} of ${g.rows.length.toLocaleString()}`;
+    body.append(el("div", "window-section", `${g.title} (${count})`));
+    if (!large) {
+      for (const r of rows) body.append(rowEl(s, r, act));
+      continue;
+    }
+    body.append(summaryEl(g));
+    const shown = Math.min(rows.length, list.shown[g.kind] ?? MATERIALS_PAGE);
+    for (const r of rows.slice(0, shown)) body.append(rowEl(s, r, act));
+    if (shown < rows.length) {
+      const left = rows.length - shown;
+      const more = el("button", "pin", `show ${Math.min(MATERIALS_PAGE, left)} more (${left.toLocaleString()} not shown)`);
+      more.addEventListener("click", () => act({ type: "showMoreMaterials", kind: g.kind }));
+      body.append(more);
+    }
   }
   return body;
 };

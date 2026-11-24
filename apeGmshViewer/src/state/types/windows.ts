@@ -96,4 +96,17 @@ export interface WindowContent {
 
 export interface Layout {
   open: WindowKind[];
+  /** #3133: the Materials window's filter and how many rows each large group shows (absent: none, the first page) */
+  materials?: MaterialsList;
+}
+
+/** #3133: the Materials window shows a group's rows this many at a time once it has more. */
+export const MATERIALS_PAGE = 100;
+
+/** #3133: a group of more than a page of rows (19 512 spring materials) shows a filter and its rows a page at a time. */
+export interface MaterialsList {
+  /** rows whose handle, tag or declaration key contains it (case-insensitive); "" shows all */
+  readonly filter: string;
+  /** group kind -> rows shown (a page, plus each "show more"); absent: one page */
+  readonly shown: Readonly<Record<string, number>>;
 }

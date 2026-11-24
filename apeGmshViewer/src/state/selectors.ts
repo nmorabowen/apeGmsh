@@ -1345,7 +1345,7 @@ export function namedParams(d: DeclRecord | null): string {
   return Object.entries(p.params).map(([k, v]) => `${k}=${shortValue(v)}`).join(" · ");
 }
 
-export { declOfTag } from "./declTags.ts";
+export { declOfTag, elementsOwned } from "./declTags.ts";
 export { materialTestSlotsOf } from "./materialTest.ts";
 
 /**

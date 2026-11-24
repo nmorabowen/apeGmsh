@@ -9,6 +9,7 @@
 
 import { DARK_MAIN, hexToRgb, LIGHT_MAIN, themeTokens, type ThemeMode } from "../theme/tokens.ts";
 import { activationOf } from "./activation.ts";
+import { declOfTag } from "./declTags.ts";
 import { nodalFields, sampleCmap } from "./contour.ts";
 import type { BlobStore } from "./blobs.ts";
 import { beamLocalAxes, elementTransformVecxzFromState } from "./lineDiagram.ts";
@@ -28,12 +29,6 @@ export interface ResolvedUnits {
   readonly factor: number;
   readonly unit: string | null;
   readonly note: string;
-}
-
-function declOfTag(defs: Definitions, kind: string, tag: number | null): DeclRecord | null {
-  if (!defs.decls || tag === null) return null;
-  const run = defs.decls.tags.find((t) => t.kind === kind && tag >= t.first && tag < t.first + t.count);
-  return run ? (defs.decls.records[run.decl] ?? null) : null;
 }
 
 function inactiveElements(s: State): { mask: Uint8Array } | null {

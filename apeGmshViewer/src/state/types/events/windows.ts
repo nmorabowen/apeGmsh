@@ -18,4 +18,7 @@ export type WindowsEvent =
   | { type: "setSearchText"; text: string }
   | { type: "addSearchClause"; clause: Omit<SearchClause, "id"> }
   | { type: "removeSearchClause"; id: string }
-  | { type: "clearSearch" };
+  | { type: "clearSearch" }
+  /** #3133: the Materials window's filter, and one more page of a large group */
+  | { type: "setMaterialsFilter"; text: string }
+  | { type: "showMoreMaterials"; kind: string };
