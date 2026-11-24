@@ -13,7 +13,7 @@ import * as THREE from "three";
 import type { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import type { DisplacementData } from "../effects.ts";
 import type { BlobStore } from "../state/blobs.ts";
-import { deformedPositions, GHOST_OPACITY, missingMarkers } from "../state/deform.ts";
+import { collapseZeroLength, deformedPositions, GHOST_OPACITY, missingMarkers } from "../state/deform.ts";
 import { deformView } from "../state/selectors.ts";
 import type { MeshInfo, State } from "../state/types.ts";
 import { DARK, OFFICE, themeTokens, toHexNumber, type ThemeMode } from "../theme/tokens.ts";
@@ -80,10 +80,11 @@ export function positionsFor(s: State, info: MeshInfo, blobs: BlobStore, disp: D
  */
 export function deformFull(base: FullPositions, disp: DisplacementData, scale: number, key: string): FullPositions {
   return {
-    line: deformedPositions(base.line, disp.line.d, scale),
+    // #3138: a zero-length segment (a zeroLength spring) stays zero-length, as it draws undeformed.
+    line: collapseZeroLength(base.line, deformedPositions(base.line, disp.line.d, scale)),
     tri: deformedPositions(base.tri, disp.tri.d, scale),
     edge: deformedPositions(base.edge, disp.edge.d, scale),
-    ...(base.clearLine ? { clearLine: deformedPositions(base.clearLine, disp.line.d, scale) } : {}),
+    ...(base.clearLine ? { clearLine: collapseZeroLength(base.clearLine, deformedPositions(base.clearLine, disp.line.d, scale)) } : {}),
     ...(base.frameTri && disp.frameTri ? { frameTri: deformedPositions(base.frameTri, disp.frameTri.d, scale) } : {}),
     ...(base.frameEdge && disp.frameEdge ? { frameEdge: deformedPositions(base.frameEdge, disp.frameEdge.d, scale) } : {}),
     ...(base.offsetLine && disp.offsetLine ? { offsetLine: deformedPositions(base.offsetLine, disp.offsetLine.d, scale) } : {}),

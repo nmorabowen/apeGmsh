@@ -256,6 +256,27 @@ export function vertexDisplacements(
   return { d, missing, count };
 }
 
+/**
+ * #3138: segments of zero reference length stay zero-length when deformed. A
+ * zeroLength spring joins two coincident nodes; moving each end by its own
+ * node's displacement stretched it into a stub from the moved node to its
+ * fixed anchor, and 17 793 such stubs drew the piles of a soil-spring model as
+ * broken lines. Undeformed such a segment draws nothing, and so it does
+ * deformed: its J end is put on its deformed I end. `base` and `deformed` hold
+ * 6 floats per segment (I xyz, J xyz); `deformed` is written in place.
+ */
+export function collapseZeroLength(base: Float32Array, deformed: Float32Array): Float32Array {
+  if (base.length !== deformed.length || base.length % 6 !== 0) throw new RangeError(`collapseZeroLength: ${base.length} base and ${deformed.length} deformed coordinates, not 6 per segment`);
+  for (let o = 0; o < base.length; o += 6) {
+    if (base[o] === base[o + 3] && base[o + 1] === base[o + 4] && base[o + 2] === base[o + 5]) {
+      deformed[o + 3] = deformed[o]!;
+      deformed[o + 4] = deformed[o + 1]!;
+      deformed[o + 5] = deformed[o + 2]!;
+    }
+  }
+  return deformed;
+}
+
 /** `base + scale * d`, per coordinate, into `out` (allocated when absent). */
 export function deformedPositions(base: Float32Array, d: Float64Array, scale: number, out: Float32Array = new Float32Array(base.length)): Float32Array {
   if (d.length !== base.length) throw new RangeError(`deformedPositions: ${d.length} displacements for ${base.length} coordinates`);
