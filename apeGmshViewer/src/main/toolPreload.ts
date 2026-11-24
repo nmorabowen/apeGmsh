@@ -4,9 +4,10 @@
 // names no file and opens no window.
 
 import { contextBridge, ipcRenderer } from "electron";
+import type { ToolPortMessage, ToolPortMeta } from "../tools/contract.ts";
 
-ipcRenderer.on("tool:port", (e, meta: { tool: string }) => {
-  window.postMessage({ toolPort: { tool: meta.tool } }, "*", e.ports as unknown as Transferable[]);
+ipcRenderer.on("tool:port", (e, meta: ToolPortMeta) => {
+  window.postMessage({ toolPort: { tool: meta.tool } } satisfies ToolPortMessage, "*", e.ports as unknown as Transferable[]);
 });
 
 contextBridge.exposeInMainWorld("toolHost", {

@@ -80,9 +80,10 @@ export interface ScanOptions {
   progressMs?: number;
 }
 
-export type LoaderRequest =
-  | { id: number; op: LoaderOp; path: string }
-  | { id: number; op: "results"; host: ResultsHostName; call: ResultsCall; args: unknown[] };
+/** A call on a results host: a union keyed by `call`, so each call's arguments are typed (finding 9 of the 2026-11-24 review). */
+export type ResultsRequest = { [K in ResultsCall]: { id: number; op: "results"; host: ResultsHostName; call: K; args: ResultsCalls[K]["args"] } }[ResultsCall];
+
+export type LoaderRequest = { id: number; op: LoaderOp; path: string } | ResultsRequest;
 
 /** A failure is the reader's message, which main hands the page unchanged (a refusal names its zone). */
 export type LoaderReply = { id: number; ok: true; value: unknown } | { id: number; ok: false; error: string };

@@ -58,6 +58,7 @@
 // `app:config`.
 
 import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain } from "electron";
+import { handle, listen, push, type PageFeed } from "./ipc.ts";
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, unwatchFile, watchFile, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -338,12 +339,12 @@ const toolWindows = new ToolWindows(
   },
   Object.fromEntries(Object.values(TOOLS).map((t) => [t.id, t.title])),
 );
-ipcMain.handle("tool:open", (e, tool: unknown) => {
+handle(ipcMain, "tool:open")((e, tool) => {
   if (mode !== "view" || win === null || e.sender !== win.webContents) return { ok: false, reason: "tool:open: only the model window opens a tool window" };
   return toolWindows.openTool(e.sender, tool);
 });
 // D13 item 5: honoured only from a window main made for a tool (ToolWindows.ready checks the sender).
-ipcMain.on("tool:ready", (e) => void toolWindows.ready(e.sender));
+listen(ipcMain, "tool:ready", (e) => void toolWindows.ready(e.sender));
 // ADR 0137 D10 (H2b): a tool's data, through the broker (./toolBroker.ts), from the window set's
 // results file only, read in the loader process. The sender and the request are checked first.
 const toolBroker = new ToolBroker(async (path, q): Promise<ToolAnswer> => {
@@ -355,7 +356,7 @@ const toolBroker = new ToolBroker(async (path, q): Promise<ToolAnswer> => {
   const a = await resultsHost.stepRange({ path, stage: q.stage, step: q.step, component: q.component });
   return a.ok ? { ok: true, kind: "stepRange", stage: a.stage, step: a.step, component: a.component, min: a.min, max: a.max, nodes: a.nodes } : { ok: false, error: a.error };
 });
-ipcMain.handle("tool:request", (e, q: unknown, seq: unknown) => {
+handle(ipcMain, "tool:request")((e, q, seq) => {
   if (!toolWindows.isTool(e.sender)) return { ok: false, error: "tool:request: only a tool window asks for tool data" };
   if (typeof seq !== "number") return { ok: false, error: `tool:request: malformed request number ${shown(seq)}` };
   const c = checkToolRequest(q);
@@ -381,10 +382,13 @@ function fail(message: string): void {
 }
 
 /** The renderer hears `channel`; not subscribed, it reloads and re-reads config. */
-function deliver(channel: "open" | "fileChanged", payload: unknown): void {
+function deliver(feed: "open", payload: OpenSet): void;
+function deliver(feed: "fileChanged", payload: string): void;
+function deliver(feed: PageFeed, payload: OpenSet | string): void {
   if (!win) return;
-  if (subscribed.has(channel)) win.webContents.send(`viewer:${channel}`, payload);
-  else win.webContents.reload();
+  if (!subscribed.has(feed)) win.webContents.reload();
+  else if (feed === "open") push(win.webContents, "viewer:open", payload as OpenSet);
+  else push(win.webContents, "viewer:fileChanged", payload as string);
 }
 
 /** The open set and its watcher (view mode only). */
@@ -493,7 +497,7 @@ function pageLoading(): void {
 }
 
 let appReadyAt = 0;
-ipcMain.handle("app:config", () => ({
+handle(ipcMain, "app:config")(() => ({
   // ADR 0134 D5: a particle run's page runs as the human's window (it reads no model); its job comes from `particles:harness`.
   mode: particleRun ? "view" : mode,
   file: particleRun ? null : mode === "view" ? (session.set?.model ?? null) : file ? resolve(file) : null,
@@ -537,7 +541,7 @@ function followModel(path: string): void {
  * has since replaced is no gesture.
  */
 let dropped: string | null = null;
-ipcMain.on("viewer:dropped", (e, path: unknown) => {
+listen(ipcMain, "viewer:dropped", (e, path: unknown) => {
   if (typeof path === "string" && path !== "") dropped = path;
   e.returnValue = null;
 });
@@ -560,7 +564,7 @@ function ungestured(door: string, path: string): string | null {
  */
 let modelOpens = 0;
 
-ipcMain.handle("model:open", async (e, path: unknown) => {
+handle(ipcMain, "model:open")(async (e, path) => {
   if (typeof path !== "string") return { ok: false, error: `model:open needs a path; got ${shown(path)}` };
   // A free string is refused before any read, so the set stays as it is (VU12).
   const refused = ungestured("model:open", path);
@@ -576,7 +580,7 @@ ipcMain.handle("model:open", async (e, path: unknown) => {
     const sender = e.sender;
     opened =
       mode === "view"
-        ? await watchLoad(path, loader.cells(path), (m) => void (!sender.isDestroyed() && sender.send("memory:status", m)), read)
+        ? await watchLoad(path, loader.cells(path), (m) => void (!sender.isDestroyed() && push(sender, "memory:status", m)), read)
         : await read();
   } catch (err) {
     // The renderer takes the old model off screen (state/reduce.ts `fileFailed`),
@@ -644,13 +648,13 @@ function setFile(door: string, slot: "geometry" | "results", asked: string): { o
 // a file the set has left is refused too, though the host still indexes it.
 // ADR 0137 D2 (#3058): the host, with its open file, index and scans, lives in the loader process.
 const resultsHost = loader.results("window");
-ipcMain.handle("results:open", (_e, path: unknown) => {
+handle(ipcMain, "results:open")((_e, path) => {
   if (typeof path !== "string") return { ok: false, error: `results:open needs a path; got ${shown(path)}` };
   const f = setFile("results:open", "results", path);
   if (!f.ok) return f;
   return resultsHost.open(f.path);
 });
-ipcMain.handle("results:readStep", (_e, req: unknown) => {
+handle(ipcMain, "results:readStep")((_e, req) => {
   const r = req as StepRequest | null;
   if (
     !r ||
@@ -676,7 +680,7 @@ ipcMain.handle("results:readStep", (_e, req: unknown) => {
   if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
   return resultsHost.readStep({ ...r, path: f.path });
 });
-ipcMain.handle("results:hingeHistory", (_e, req: unknown) => {
+handle(ipcMain, "results:hingeHistory")((_e, req) => {
   const r = req as HingeHistoryRequest | null;
   if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || typeof r.element !== "number" || typeof r.seq !== "number") {
     return { ok: false, seq: -1, error: `results:hingeHistory: malformed request ${shown(req)}` };
@@ -685,12 +689,12 @@ ipcMain.handle("results:hingeHistory", (_e, req: unknown) => {
   if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
   return resultsHost.readHingeHistory({ ...r, path: f.path });
 });
-ipcMain.handle("results:close", () => resultsHost.close());
+handle(ipcMain, "results:close")(() => resultsHost.close());
 // V4c1 (#1756): the history-range scan of a contour's field; progress goes to
 // the asking page. In capture mode it reads one step per chunk, 2 s apart,
 // so a still can show the legend while the scan is still running (a hidden
 // window paints slowly; renderer/app.ts checks the scan was still running).
-ipcMain.handle("results:scan", (e, req: unknown) => {
+handle(ipcMain, "results:scan")((e, req) => {
   const r = req as ScanRequest | null;
   if (
     !r ||
@@ -709,24 +713,24 @@ ipcMain.handle("results:scan", (e, req: unknown) => {
   if (!f.ok) return { ok: false, scanId: r.scanId, error: f.error };
   const sender = e.sender;
   const progress = (p: { scanId: number; done: number; total: number }) => {
-    if (!sender.isDestroyed()) sender.send("results:scanProgress", p);
+    if (!sender.isDestroyed()) push(sender, "results:scanProgress", p);
   };
   return resultsHost.scan({ ...r, path: f.path }, progress, mode === "capture" ? { chunkSteps: 1, paceMs: 2000 } : {});
 });
-ipcMain.handle("results:scanCancel", (_e, scanId: unknown) => {
+handle(ipcMain, "results:scanCancel")((_e, scanId) => {
   if (typeof scanId === "number") resultsHost.cancelScan(scanId);
 });
 
 // ADR 0134 D5 (M2-S4 #2983): the particles. The index and one output of the window set's results file, through the
 // same `setFile` check as every `results:*` door (VU12): a `.ladruno` the set does not hold is refused. `particles:set`
 // takes no path: it reads the window set's own `<stem>.particles.h5`, and refuses when the set has none.
-ipcMain.handle("particles:index", (_e, path: unknown) => {
+handle(ipcMain, "particles:index")((_e, path) => {
   if (typeof path !== "string") return { ok: false, error: `particles:index needs a path; got ${shown(path)}` };
   const f = setFile("particles:index", "results", path);
   if (!f.ok) return f;
   return resultsHost.particleIndex(f.path);
 });
-ipcMain.handle("particles:readOutput", (_e, req: unknown) => {
+handle(ipcMain, "particles:readOutput")((_e, req) => {
   const r = req as ParticleOutputRequest | null;
   if (!r || typeof r.path !== "string" || typeof r.stage !== "string" || typeof r.output !== "number" || typeof r.seq !== "number" || (r.field !== null && typeof r.field !== "string")) {
     return { ok: false, seq: -1, error: `particles:readOutput: malformed request ${shown(req)}` };
@@ -735,7 +739,7 @@ ipcMain.handle("particles:readOutput", (_e, req: unknown) => {
   if (!f.ok) return { ok: false, seq: r.seq, error: f.error };
   return resultsHost.readParticleOutput({ path: f.path, stage: r.stage, output: r.output, field: r.field, seq: r.seq });
 });
-ipcMain.handle("particles:set", () => {
+handle(ipcMain, "particles:set")(() => {
   const set = windowSet();
   if ("reason" in set) return { ok: false, error: `particles:set reads only the open set's particle set, and ${set.reason}` };
   if (!set.particles) return { ok: false, error: "particles:set: the open set has no <stem>.particles.h5" };
@@ -745,14 +749,14 @@ ipcMain.handle("particles:set", () => {
 // ---------------------------------------------------------------------------
 // ADR 0135 D1: the material tester. The job is checked in main (materialTestScript.ts); it names no executable.
 const materialTests = new MaterialTestRunner();
-ipcMain.handle("materialTest:run", (_e, job: unknown, seq: unknown) => {
+handle(ipcMain, "materialTest:run")((_e, job, seq) => {
   if (typeof seq !== "number") return { ok: false, seq: -1, build: null, error: `materialTest:run: malformed request ${shown(seq)}` };
   return materialTests.run(job, seq);
 });
-ipcMain.handle("materialTest:cancel", () => materialTests.cancel());
+handle(ipcMain, "materialTest:cancel")(() => materialTests.cancel());
 // ADR 0135 D7: a run's CSV, written where the user picks in the save dialog. The page
 // sends the text and a suggested name only; the dialog is the gesture and names the path.
-ipcMain.handle("materialTest:saveCsv", (e, text: unknown, name: unknown) =>
+handle(ipcMain, "materialTest:saveCsv")((e, text, name) =>
   saveCsv(text, name, async (suggested) => {
     const options = { title: "Save the material test as CSV", defaultPath: suggested, filters: [{ name: "CSV", extensions: ["csv"] }] };
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -776,7 +780,7 @@ function studyView() {
 }
 
 function sendStudy(): void {
-  if (win) win.webContents.send("viewer:variants", studyView());
+  if (win) push(win.webContents, "viewer:variants", studyView());
 }
 
 function closeCompare(): void {
@@ -790,9 +794,9 @@ study.onChange = () => {
   sendStudy();
 };
 
-ipcMain.handle("variants:current", () => studyView());
+handle(ipcMain, "variants:current")(() => studyView());
 
-ipcMain.handle("variants:switch", (_e, index: unknown, label: unknown) => {
+handle(ipcMain, "variants:switch")((_e, index, label) => {
   const r = study.row(index, label);
   if (!r.ok) return { ok: false, reason: `variants:switch: ${r.reason}` };
   // VU18: a render draws a variant row only as a shot of its spec names one (`variant`, ./modes/render.ts), never as the page asks.
@@ -819,7 +823,7 @@ async function modelHashes(path: string): Promise<{ femHash: string; modelHash: 
   return { femHash: a.lineage.femHash, modelHash: a.lineage.modelHash };
 }
 
-ipcMain.handle("variants:compare", async (_e, index: unknown, label: unknown) => {
+handle(ipcMain, "variants:compare")(async (_e, index, label) => {
   const r = study.row(index, label);
   if (!r.ok) return { ok: false, reason: `variants:compare: ${r.reason}` };
   const row = r.row;
@@ -861,7 +865,7 @@ ipcMain.handle("variants:compare", async (_e, index: unknown, label: unknown) =>
 });
 
 // The compare set's step: the request names the stage, step and request number only; the file is the compare slot's.
-ipcMain.handle("compare:readStep", (_e, req: unknown) => {
+handle(ipcMain, "compare:readStep")((_e, req) => {
   const r = req as { stage?: unknown; step?: unknown; seq?: unknown } | null;
   const keys = r !== null && typeof r === "object" ? Object.keys(r).sort().join(",") : "";
   if (!r || keys !== "seq,stage,step" || typeof r.stage !== "string" || typeof r.step !== "number" || typeof r.seq !== "number") {
@@ -872,7 +876,7 @@ ipcMain.handle("compare:readStep", (_e, req: unknown) => {
   return compareHost.readStep({ path: c.set.results, stage: r.stage, step: r.step, seq: r.seq });
 });
 
-ipcMain.handle("compare:close", () => {
+handle(ipcMain, "compare:close")(() => {
   closeCompare();
   sendStudy();
 });
@@ -938,7 +942,7 @@ function compareModelKey(path: string, stat: { size: number; mtimeMs: number }, 
 
 // The compare set's model, read as main paired it: its mesh's identity, with the `fem_hash`
 // and `model_hash` checked again against the pairing main made at `variants:compare`.
-ipcMain.handle("compare:model", async (_e, req: unknown) => {
+handle(ipcMain, "compare:model")(async (_e, req) => {
   const bad = exactKeys("compare:model", req, []);
   if (bad !== null) return { ok: false, slot: null, reason: bad };
   const c = study.compare;
@@ -962,7 +966,7 @@ ipcMain.handle("compare:model", async (_e, req: unknown) => {
   if (own.femHash !== c.lineage.femHash || own.modelHash !== c.lineage.modelHash) {
     return { ok: false, slot, reason: `compare:model: ${path} no longer pairs with the compare results (fem_hash ${own.femHash}, model_hash ${own.modelHash}; paired by ${c.lineage.femHash}, ${c.lineage.modelHash})` };
   }
-  const answer = (n: { nodes: number; elements: number }) => ({ ok: true, slot, femHash: own.femHash, modelHash: own.modelHash, nodes: n.nodes, elements: n.elements });
+  const answer = (n: { nodes: number; elements: number }) => ({ ok: true as const, slot, femHash: own.femHash, modelHash: own.modelHash, nodes: n.nodes, elements: n.elements });
   const key = compareModelKey(path, stat, own);
   if (compareModelSeen !== null && compareModelSeen.key === key) return answer(compareModelSeen);
   let counts;
@@ -986,7 +990,7 @@ ipcMain.handle("compare:model", async (_e, req: unknown) => {
 
 // The compare set's `.user.h5` index, each zone and entry judged by A6 against the compare
 // set's own model and results; `path` is shown only, never sent back.
-ipcMain.handle("compare:userRead", async (_e, req: unknown) => {
+handle(ipcMain, "compare:userRead")(async (_e, req) => {
   const bad = exactKeys("compare:userRead", req, []);
   if (bad !== null) return { slot: null, path: null, read: { ok: false, error: bad } };
   await h5wasm.ready;
@@ -997,7 +1001,7 @@ ipcMain.handle("compare:userRead", async (_e, req: unknown) => {
 
 // One component of a state-free ON_NODES user result of the compare set's `.user.h5`, judged
 // against the compare set's own model and results (A6) before its DATA is read.
-ipcMain.handle("compare:userReadResult", async (_e, req: unknown) => {
+handle(ipcMain, "compare:userReadResult")(async (_e, req) => {
   const bad = exactKeys("compare:userReadResult", req, ["name", "component"]);
   const r = req as { name?: unknown; component?: unknown };
   if (bad !== null || typeof r.name !== "string" || typeof r.component !== "string") {
@@ -1010,7 +1014,7 @@ ipcMain.handle("compare:userReadResult", async (_e, req: unknown) => {
 });
 
 // A /geometry sibling (./zones.ts): only the window's set's (`setFile`, VU12).
-ipcMain.handle("geometry:open", (_e, path: unknown) => {
+handle(ipcMain, "geometry:open")((_e, path) => {
   if (typeof path !== "string") return { ok: false, error: `geometry:open needs a path; got ${shown(path)}` };
   const f = setFile("geometry:open", "geometry", path);
   if (!f.ok) return f;
@@ -1093,7 +1097,7 @@ registerCombinations(ipcMain, {
 // and each must be the window's set's (`pairedUser`); any other path is
 // refused (VU11, #2750). A file that cannot be read answers `ok: false` with
 // the reason, and raises nothing.
-ipcMain.handle("user:read", async (_e, req: unknown) => {
+handle(ipcMain, "user:read")(async (_e, req) => {
   const r = req as { path?: unknown; model?: unknown; results?: unknown } | null;
   const pathOrNull = (x: unknown) => x === null || typeof x === "string";
   if (!r || typeof r.path !== "string" || !pathOrNull(r.model) || !pathOrNull(r.results)) {
@@ -1117,7 +1121,7 @@ ipcMain.handle("user:read", async (_e, req: unknown) => {
 // (`confined`, VU11). A refused or missing case, a path outside the set, and a
 // file that cannot be read answer `ok: false` with the evaluator's reason;
 // nothing raises.
-ipcMain.handle("user:readCase", async (_e, req: unknown): Promise<CaseRead> => {
+handle(ipcMain, "user:readCase")(async (_e, req): Promise<CaseRead> => {
   const r = req as { path?: unknown; case?: unknown; target?: unknown; label?: unknown } | null;
   if (!r || typeof r.path !== "string" || typeof r.case !== "string" || typeof r.label !== "string" || typeof r.target !== "string" || !Object.hasOwn(SPECTRA_FAMILIES, r.target)) {
     return { ok: false, reason: "refused", detail: `user:readCase needs { path, case, target: ${Object.keys(SPECTRA_FAMILIES).join(" | ")}, label }; got ${shown(req)}` };
@@ -1140,7 +1144,7 @@ ipcMain.handle("user:readCase", async (_e, req: unknown): Promise<CaseRead> => {
 // read: a stale entry answers `stale` with its reason. A refused, absent,
 // per-state or non-nodal entry, a component it does not list, and a file that
 // cannot be read answer `ok: false` with the reason; nothing raises.
-ipcMain.handle("user:readResult", async (_e, req: unknown): Promise<UserColumnRead> => {
+handle(ipcMain, "user:readResult")(async (_e, req): Promise<UserColumnRead> => {
   const r = req as { path?: unknown; name?: unknown; component?: unknown } | null;
   if (!r || typeof r.path !== "string" || typeof r.name !== "string" || typeof r.component !== "string") {
     return { ok: false, reason: "refused", detail: `user:readResult needs { path, name, component }; got ${shown(req)}` };
@@ -1162,7 +1166,7 @@ registerWorkspace(ipcMain, {
 });
 
 for (const verb of ["subscribe", "unsubscribe"] as const) {
-  ipcMain.on(`viewer:${verb}`, (_e, channel: unknown) => {
+  listen(ipcMain, `viewer:${verb}`, (_e, channel: unknown) => {
     if (channel !== "open" && channel !== "fileChanged") {
       fail(`viewer:${verb}: unknown channel ${shown(channel)}`);
       return;
@@ -1173,9 +1177,9 @@ for (const verb of ["subscribe", "unsubscribe"] as const) {
 }
 
 // The set already open, for a new onOpen listener (the preload replays it).
-ipcMain.handle("viewer:currentSet", () => currentSet());
+handle(ipcMain, "viewer:currentSet")(() => currentSet());
 
-ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
+handle(ipcMain, "viewer:requestOpen")((_e, path) => {
   if (typeof path !== "string") return { ok: false, reason: `requestOpen needs a path; got ${shown(path)}` };
   const refused = ungestured("requestOpen", path);
   if (refused !== null) return { ok: false, reason: refused };
@@ -1185,7 +1189,7 @@ ipcMain.handle("viewer:requestOpen", (_e, path: unknown) => {
 // ADR 0128 D5: the click on an offer opens its set. Nothing an agent named raises a modal: a file that has gone refuses the offer in the list.
 // VU12 (#2753): the path and every one of `needs` (at least one) must be offerable (./modes/reach.ts `listedOffers`); any other is refused and the set stays.
 // VU13 (#2760): all of them one listed offer's files, or one set a listed offer left, so the set this open leaves goes with its offer.
-ipcMain.handle("viewer:offerOpen", (_e, path: unknown, needs: unknown) => {
+handle(ipcMain, "viewer:offerOpen")((_e, path, needs) => {
   if (typeof path !== "string" || !Array.isArray(needs) || needs.length === 0) return { ok: false, reason: `offerOpen needs a path and the files it needs; got ${shown(path)}, ${shown(needs)}` };
   const asked: unknown[] = [path, ...needs];
   const holds = (files: readonly string[]) => asked.every((f) => typeof f === "string" && files.some((o) => samePath(o, f)));
@@ -1216,7 +1220,7 @@ ipcMain.handle("viewer:offerOpen", (_e, path: unknown, needs: unknown) => {
 });
 
 // VU13 (#2760): the editor opens only a source file the window's set's model names in its /provenance (./source.ts).
-ipcMain.handle("source:goto", async (_e, path: unknown, line: unknown) => goToSource(path, line, await setSources()));
+handle(ipcMain, "source:goto")(async (_e, path, line) => goToSource(path, line, await setSources()));
 
 /** The source files the window's set's model names in its /provenance, read now (never the page's copy), or why there are none. */
 async function setSources(): Promise<SourceScope> {
@@ -1247,7 +1251,7 @@ registerRender({
   },
 });
 
-ipcMain.handle("app:fail", (_e, message: unknown) => {
+handle(ipcMain, "app:fail")((_e, message) => {
   // A mode that fails must say so in its exit code (ADR 0128 D2: never a silent 0). `app.quit()` exits 0
   // whatever process.exitCode says, which let a capture that threw at 38 of 59 stills exit 0 (#2665).
   if (headless) {

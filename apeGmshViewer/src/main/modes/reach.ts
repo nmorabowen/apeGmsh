@@ -15,6 +15,7 @@
 // `pageCommitted`.
 
 import { app, ipcMain, type BrowserWindow, type IpcMainEvent, type WebContents } from "electron";
+import { handle, listen, push } from "../ipc.ts";
 import { randomUUID } from "node:crypto";
 import { connect, createServer } from "node:net";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -208,7 +209,7 @@ export function heardFromAgent(reach: Reach): void {
       });
       offerRows = [...rows, ...offerRows].slice(0, PAGE_OFFERS);
       const win = h.window();
-      if (win && offersReady) win.webContents.send("viewer:offers", p.offers);
+      if (win && offersReady) push(win.webContents, "viewer:offers", p.offers);
       else offersWaiting.push({ offers: p.offers, rows });
       // The sender checked this file a moment ago. Changed since, it is listed as refused, and the sender hears why.
       sendAck(reach.ack, p.refused ? { ok: false, code: 2, reason: `the spec ${reach.spec} is refused: ${p.refused.key}: ${p.refused.reason}` } : { ok: true });
@@ -284,7 +285,7 @@ async function writeSnapshot(dir: string): Promise<void> {
       clearTimeout(timer);
       done(r);
     });
-    contents.send("viewer:snapshot", { id, image: [size.width, size.height] });
+    push(contents, "viewer:snapshot", { id, image: [size.width, size.height] });
   });
   if (!reply.ok) return refuse(reply.reason);
   writeFileSync(join(dir, SNAPSHOT_PNG), img.toPNG());
@@ -298,17 +299,20 @@ export function registerReach(h: ReachHost): void {
   reachHost = h;
   const { shown } = h;
 
-  ipcMain.on("viewer:offersReady", (e: IpcMainEvent) => {
+  listen(ipcMain, "viewer:offersReady", (e: IpcMainEvent) => {
     if (!fromCurrentPage(e)) {
       process.stderr.write(`apeGmshViewer: viewer:offersReady from a page that is not the window's current load (process ${shown(e.processId)}, frame ${shown(e.frameId)}) is ignored\n`);
       return;
     }
     offersReady = true;
-    for (const { offers } of offersWaiting) h.window()?.webContents.send("viewer:offers", offers);
+    for (const { offers } of offersWaiting) {
+      const w = h.window();
+      if (w) push(w.webContents, "viewer:offers", offers);
+    }
     offersWaiting = [];
   });
 
-  ipcMain.handle("viewer:snapshotReply", (_e, id: unknown, reply: unknown) => {
+  handle(ipcMain, "viewer:snapshotReply")((_e, id, reply) => {
     const done = typeof id === "number" ? snapshotReplies.get(id) : undefined;
     if (!done) throw new Error(`viewer:snapshotReply: no snapshot ${shown(id)} is waiting`);
     snapshotReplies.delete(id as number);

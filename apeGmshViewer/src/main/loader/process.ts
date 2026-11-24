@@ -16,9 +16,9 @@
 import * as h5wasm from "h5wasm/node";
 import { openModel } from "../../reader/node.ts";
 import type { ResultsH5 } from "../../reader/results.ts";
-import { readParticleSet, ResultsHost, type HingeHistoryRequest, type NodeHistoryRequest, type StepRangeRequest, type ParticleOutputRequest, type ScanRequest, type StepRequest } from "../results.ts";
+import { readParticleSet, ResultsHost } from "../results.ts";
 import { openCellCount, openGeometry, openLineage, openProvenance, openStageElements } from "../zones.ts";
-import type { LoaderMessage, LoaderOps, LoaderRequest, ResultsCall, ResultsHostName, ScanOptions } from "./protocol.ts";
+import type { LoaderMessage, LoaderOps, LoaderRequest, ResultsCall, ResultsCalls, ResultsHostName, ResultsRequest } from "./protocol.ts";
 
 interface Port {
   post(m: LoaderMessage): void;
@@ -59,54 +59,60 @@ const hosts: Record<ResultsHostName, ResultsHost> = {
 
 const port = parentPort();
 
-/** One call on a host. The arguments are main's, already checked there (main.ts validates every request's shape). */
-function call(host: ResultsHostName, name: ResultsCall, args: unknown[]): unknown {
-  const h = hosts[host];
-  switch (name) {
-    case "open":
-      return h.open(args[0] as string);
-    case "readStep":
-      return h.readStep(args[0] as StepRequest);
-    case "readHingeHistory":
-      return h.readHingeHistory(args[0] as HingeHistoryRequest);
-    case "readNodeHistory":
-      return h.readNodeHistory(args[0] as NodeHistoryRequest);
-    case "stepRange":
-      return h.stepRange(args[0] as StepRangeRequest);
-    case "stepCounts":
-      return h.stepCounts();
-    case "scan":
-      return h.scan(args[0] as ScanRequest, (progress) => port.post({ event: "scanProgress", host, progress }), args[1] as ScanOptions);
-    case "cancelScan":
-      return h.cancelScan(args[0] as number);
-    case "particleIndex":
-      return h.particleIndex(args[0] as string);
-    case "readParticleOutput":
-      return h.readParticleOutput(args[0] as ParticleOutputRequest);
-    case "close":
-      return h.close();
-  }
+/**
+ * Each results call, on a host. The one list of calls: the mapped type makes it name every call of
+ * protocol.ts `ResultsCalls` with that call's arguments, and `isRequest` reads its keys. The
+ * arguments are main's, already checked there (main.ts validates every request's shape).
+ */
+const CALLS: { [K in ResultsCall]: (h: ResultsHost, host: ResultsHostName, ...args: ResultsCalls[K]["args"]) => ResultsCalls[K]["answer"] | Promise<ResultsCalls[K]["answer"]> } = {
+  open: (h, _host, path) => h.open(path),
+  readStep: (h, _host, req) => h.readStep(req),
+  readHingeHistory: (h, _host, req) => h.readHingeHistory(req),
+  readNodeHistory: (h, _host, req) => h.readNodeHistory(req),
+  stepRange: (h, _host, req) => h.stepRange(req),
+  stepCounts: (h) => h.stepCounts(),
+  scan: (h, host, req, opts) => h.scan(req, (progress) => port.post({ event: "scanProgress", host, progress }), opts),
+  cancelScan: (h, _host, scanId) => h.cancelScan(scanId),
+  particleIndex: (h, _host, path) => h.particleIndex(path),
+  readParticleOutput: (h, _host, req) => h.readParticleOutput(req),
+  close: (h) => h.close(),
+};
+
+function call(r: ResultsRequest): unknown {
+  const run = CALLS[r.call] as (h: ResultsHost, host: ResultsHostName, ...args: unknown[]) => unknown;
+  return run(hosts[r.host], r.host, ...r.args);
 }
 
-const CALLS = new Set<string>(["open", "readStep", "readHingeHistory", "readNodeHistory", "stepRange", "stepCounts", "scan", "cancelScan", "particleIndex", "readParticleOutput", "close"]);
-
-function isRequest(m: unknown): m is LoaderRequest {
-  const r = m as LoaderRequest | null;
-  if (r === null || typeof r !== "object" || typeof r.id !== "number") return false;
-  if (r.op === "results") return (r.host === "window" || r.host === "compare") && CALLS.has(r.call) && Array.isArray(r.args);
-  return typeof r.path === "string" && Object.hasOwn(reads, r.op);
+/** Why `m` is not a request this loader serves, or null when it is one. */
+export function whyNotRequest(m: unknown): string | null {
+  const r = m as Record<string, unknown> | null;
+  if (r === null || typeof r !== "object" || typeof r["id"] !== "number") return "not a request";
+  if (r["op"] === "results") {
+    if (r["host"] !== "window" && r["host"] !== "compare") return `no results host ${JSON.stringify(r["host"])}`;
+    if (typeof r["call"] !== "string" || !Object.hasOwn(CALLS, r["call"])) return `the loader has no results call ${JSON.stringify(r["call"])}`;
+    return Array.isArray(r["args"]) ? null : "a results call takes an args array";
+  }
+  if (typeof r["op"] !== "string" || !Object.hasOwn(reads, r["op"])) return `the loader has no op ${JSON.stringify(r["op"])}`;
+  return typeof r["path"] === "string" ? null : `op ${r["op"]} takes a path`;
 }
 
 // h5wasm compiles its module on start, before the first request arrives (main starts the loader with its window).
 void h5wasm.ready;
 port.listen((m) => {
-  if (!isRequest(m)) return; // main sends only requests; anything else has no id to answer
+  const why = whyNotRequest(m);
+  if (why !== null) {
+    // Answer anything with an id, so main's promise settles with why; a message with no id has nothing to answer.
+    const id = (m as { id?: unknown } | null)?.id;
+    if (typeof id === "number") port.post({ id, ok: false, error: `loader: ${why}` });
+    return;
+  }
+  const req = m as LoaderRequest;
   void (async () => {
     try {
-      const value = m.op === "results" ? await call(m.host, m.call, m.args) : await reads[m.op](m.path);
-      port.post({ id: m.id, ok: true, value });
+      const value = req.op === "results" ? await call(req) : await reads[req.op](req.path);
+      port.post({ id: req.id, ok: true, value });
     } catch (err) {
-      port.post({ id: m.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+      port.post({ id: req.id, ok: false, error: err instanceof Error ? err.message : String(err) });
     }
   })();
 });

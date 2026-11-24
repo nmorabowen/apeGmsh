@@ -3,6 +3,7 @@
 // capture in ./harness/; ADR 0128's render and describe in ./agentRender.ts).
 
 import * as THREE from "three";
+import type { Invoke, PreloadApi } from "../main/ipc.ts";
 import { BulkInbox } from "../bulk.ts";
 import { checkCombinationDraft, Effects, saveCombinationEdit, userCombinationColumn, userResultColumn, type Bridge } from "../effects.ts";
 import { mountCombine } from "../panels/combine.ts";
@@ -50,11 +51,14 @@ import { Viewport } from "./viewport.ts";
 
 // #3130: the preload's openModel returns the id of a bulk answer (../bulk.ts), which the page takes here, so
 // Effects keeps the Bridge contract (an answer) and the model never crosses contextBridge's copy.
-const viewerDoor = (window as unknown as { viewer: Bridge }).viewer;
+// Review finding 5: `window.viewer` is the preload's object exactly (main/ipc.ts `PreloadApi`, which the preload
+// `satisfies`); every door below takes it without a cast, so a door that drifts from main's answers fails the typecheck.
+const viewerDoor = (window as unknown as { viewer: PreloadApi }).viewer;
 const inbox = new BulkInbox(window);
 const bridge: Bridge = {
   ...viewerDoor,
-  openModel: (path) => inbox.take(viewerDoor.openModel(path) as unknown as Promise<number>) as ReturnType<Bridge["openModel"]>,
+  // The bulk answer is main's `model:open` answer, sent as one structured clone (../bulk.ts).
+  openModel: (path) => inbox.take(viewerDoor.openModel(path)) as Promise<Invoke["model:open"]["res"]>,
 };
 
 const store = new Store();
@@ -81,7 +85,7 @@ const userResults = new UserResultFeed(store, (req) => userResultColumn(bridge, 
 // VU10 (ADR 0132 D9): main's study, a switch, the compare set and the difference, through main's variant doors
 // (preload.ts): a variant is named by row index and label, never a path. The difference is subtracted from the
 // window's own step (the effects'), and its column stays in renderer/contour.ts `differenceHeld`.
-const variantBridge = (window as unknown as { viewer: Partial<VariantDoor & StudyFeed> }).viewer;
+const variantBridge: Partial<VariantDoor & StudyFeed> = viewerDoor;
 // Fail closed: the preload of this build has every variant door, so a missing one is a broken build, never "no study".
 if (!isVariantDoor(variantBridge)) throw new Error("apeGmshViewer: the preload has no variant doors (variants, onVariants, variantsSwitch, variantsCompare, readCompareStep, compareClose)");
 const variantRunner = new VariantRunner(store, blobs, variantBridge, () => effects.currentStep());
@@ -105,7 +109,7 @@ const panels = [
   // VF2 (#2924 item 6): a derived contour's out-of-plane line needs the element-id blobs, which a panel never holds.
   mountBanner(store, (s) => derivedPlaneOf(s, blobs)?.warning ?? null),
   // ADR 0137 H1: the links to tool windows (opened from Spotlight).
-  mountToolLinks(store, bridge as unknown as ToolBridge),
+  mountToolLinks(store, viewerDoor satisfies ToolBridge),
   mountLineDiagram(store, (fn) => viewport.onViewChange(fn)),
   // ADR 0134 D5 (owner D7 on #2992): the particles' colour scale, in #scale-stack after the line diagram's.
   mountParticleScale(store),
@@ -229,7 +233,7 @@ interface UserTarget {
   known: boolean;
 }
 
-const userDoor = bridge as unknown as UserBridge;
+const userDoor: UserBridge = viewerDoor;
 /** Counts `user:read` requests: an answer that is not the latest request's is dropped. */
 let userSeq = 0;
 
@@ -327,7 +331,7 @@ interface OfferBridge {
  * and this reads the same view back as a spec and its manifest entry.
  */
 function mountOfferFlow(): void {
-  const door = bridge as unknown as OfferBridge;
+  const door: OfferBridge = viewerDoor;
   const runner = new OfferRunner({
     store,
     open: (path, needs) => door.offerOpen(path, needs),
@@ -392,7 +396,7 @@ async function main() {
   // ADR 0128 D4: the agent modes (render, describe) run their own flow; the config's mode union predates them.
   const mode: string = cfg.mode;
   if (mode === "render" || mode === "describe") {
-    const renderBridge = bridge as unknown as RenderBridge;
+    const renderBridge: RenderBridge = viewerDoor;
     if (mode === "render") {
       // ADR 0130: the spec's set has a `.user.h5` when one is beside its model; it is read before the shots, so every still states it.
       const job = await renderBridge.renderJob();

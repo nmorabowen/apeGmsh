@@ -10,6 +10,7 @@
 
 import { evaluateDraft } from "./combination/author.ts";
 import { CombinationRefused, evaluate, type CombinationTable, type Source } from "./combination/evaluate.ts";
+import type { AppConfig, ParticleHarnessJob } from "./main/ipc.ts";
 import type { ModelFile } from "./model/types.ts";
 import type { GeometryZone } from "./reader/geometry.ts";
 import type { LadrunoHingeHistory, LadrunoHingeStep, LadrunoLineStationStep, LadrunoSpringStep } from "./reader/ladruno.ts";
@@ -66,34 +67,13 @@ export interface OpenSet {
   particles?: string | null;
 }
 
-/** ADR 0134 D5: a measure or capture run of the particle layer, as main hands it (main/modes/measure.ts `particleHarnessJob`). */
-export interface ParticleHarnessJob {
-  op: "measure" | "capture";
-  set: OpenSet;
-  /** the colour to show, or null for the default (POSITION's vertical component) */
-  colour: { field: string; component: number } | null;
-  /** the output to show, or null for the default (the last) */
-  output: number | null;
-  /** draw the grid's wire box (capture) */
-  grid: boolean;
-  /** when the launcher started the app (Date.now()), for the time to first frame */
-  t0: number;
-  /** how long the scrub of outputs runs (measure) */
-  scrubMs: number;
-}
+/** ADR 0134 D5: a measure or capture run of the particle layer (main/ipc.ts, where main's answer is typed). */
+export type { ParticleHarnessJob } from "./main/ipc.ts";
 
 /** `window.viewer`, as preload.ts exposes it; the optional members arrive with V2f. */
 export interface Bridge {
-  config(): Promise<{
-    mode: "view" | "measure" | "capture";
-    file: string | null;
-    t0: number;
-    appReadyMs: number;
-    configMs: number;
-    pick: string | null;
-    /** V4b, capture mode: the results sibling of the captured model, or null */
-    results?: string | null;
-  }>;
+  /** How the page starts (main/ipc.ts `AppConfig`: every mode main runs in, the agent modes included). */
+  config(): Promise<AppConfig>;
   /** V2f: a successful answer also carries the model file's /provenance (absent from older builds); V4b its /meta/lineage and /sequence element tags. */
   openModel(path: string): Promise<
     | {

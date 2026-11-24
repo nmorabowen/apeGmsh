@@ -14,6 +14,7 @@
 // No Electron import: main.ts hands in how to make a window and a port pair, so a test drives this.
 
 import type { ToolStatus } from "../state/types.ts";
+import { push } from "./ipc.ts";
 
 /** D4: under this much available RAM, tool updates pause and no tool window opens. */
 export const TOOL_FLOOR_MB = 1024;
@@ -128,7 +129,7 @@ export class ToolWindows {
       o.win.webContents.postMessage("tool:port", { tool }, [port2]);
       o.page.postMessage("tool:port", { tool }, [port1]);
       this.status(o.page, tool, "open", null);
-      if (this.paused) o.page.send("tool:paused", true);
+      if (this.paused) push(o.page, "tool:paused", true);
       return true;
     }
     return false;
@@ -151,7 +152,7 @@ export class ToolWindows {
   }
 
   private status(page: ToolPage, tool: string, status: ToolStatus["status"], reason: string | null): void {
-    if (!page.isDestroyed()) page.send("tool:status", { tool, title: this.titles[tool] ?? tool, status, reason } satisfies ToolStatus);
+    if (!page.isDestroyed()) push(page, "tool:status", { tool, title: this.titles[tool] ?? tool, status, reason });
   }
 
   private startMemory(): void {
@@ -175,6 +176,6 @@ export class ToolWindows {
     if (on === this.paused) return;
     this.paused = on;
     const pages = new Set([...this.open.values()].map((o) => o.page));
-    for (const p of pages) if (!p.isDestroyed()) p.send("tool:paused", on);
+    for (const p of pages) if (!p.isDestroyed()) push(p, "tool:paused", on);
   }
 }

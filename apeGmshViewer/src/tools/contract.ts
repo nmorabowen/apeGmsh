@@ -61,6 +61,26 @@ export type ToolAnswer =
   /** `superseded`: the same tool asked again before this one was answered; the newest request wins */
   | { ok: false; error: string; superseded?: true };
 
+/**
+ * The envelopes around the contract (review finding 5): what a preload posts to its page with the
+ * MessagePort main linked (`window.postMessage`), and what crosses that port each way.
+ */
+export interface ToolPortMeta {
+  tool: string;
+}
+/** A preload's window message carrying the port (src/main/preload.ts, src/main/toolPreload.ts). */
+export interface ToolPortMessage {
+  toolPort: ToolPortMeta;
+}
+/** Model window → tool, on the port (src/renderer/tools.ts → src/tools/window.ts). */
+export interface ToolContextMessage {
+  context: ToolContext;
+}
+/** Tool → model window, on the port (src/tools/window.ts → src/renderer/tools.ts). */
+export interface ToolEventMessage {
+  event: ToolEvent;
+}
+
 /** What the host gives a tool when it mounts it. */
 export interface ToolHost {
   /** the element the tool draws into; the host owns it and its size */
