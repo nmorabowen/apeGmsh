@@ -106,7 +106,7 @@ BASES = ("gimp", "linear")
 OUTPUT_FIELDS = ("POSITION", "VELOCITY", "STRESS", "STRAIN", "VOLUME",
                  "GIMP_HALF_LENGTH", "DEFORMATION_GRADIENT")
 #: The nDMaterial classes :class:`Stage` admits, each with the stage values
-#: it reads (ADR 0134 Amendment 4; owner ruling on #3120). The fork's walk
+#: it reads (ADR 0134 Amendment 4). The fork's walk
 #: (``LadrunoMPMSoil.cpp::stageWalk``) passes the value through unchanged:
 #: DruckerPrager reads 0 (elastic), 1 (elastic with its moduli updated) and
 #: 2 (elastoplastic, its default); LadrunoSANISAND reads 0 and 1. Keyed by
@@ -934,7 +934,7 @@ def mpm_block(members: Sequence[MPM], *, ndm: int) -> tuple[MPM, ...]:
     (:class:`Gridvel` or :class:`GridvelAffine`) of one name.
 
     A :class:`Stage` is refused, by name, when no body uses its material,
-    when no analyze follows it (owner ruling on #3120), when a stage of the
+    when no analyze follows it (ADR 0134 Amendment 4), when a stage of the
     same material precedes it with no analyze between the two, and when a
     LadrunoSANISAND stage of another value precedes it with no analyze
     between (the fork's SANISAND flag is class-wide).
