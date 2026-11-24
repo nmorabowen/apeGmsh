@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!-- ADR 0137 D13 item 3: a tool window's content security policy. test/main/toolWindows.test.ts pins it. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'" />
+    <title>apeGmshViewer tool</title>
+    <!-- Colours and fonts are the app's tokens (src/theme/tokens.ts cssVariables), set by tool.js from the context's theme. -->
+    <style>
+      html, body { margin: 0; height: 100%; background: var(--bg-0); color: var(--text); font: 14px var(--font); }
+      #tool { padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+      .tool-model { font-weight: 600; font-size: 15px; }
+      .tool-step { font-size: 22px; font-variant-numeric: tabular-nums; }
+      .tool-picked { color: var(--muted); }
+      .tool-bar { display: flex; gap: 8px; margin-top: 8px; }
+      .tool-bar button { font: inherit; padding: 4px 12px; border-radius: 4px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+      .tool-bar button:disabled { opacity: 0.4; cursor: default; }
+    </style>
+  </head>
+  <body>
+    <div id="tool"></div>
+    <script src="tool.js"></script>
+  </body>
+</html>

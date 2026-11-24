@@ -172,3 +172,9 @@ export const utilityProcess = strict("utilityProcess", {
     });
   },
 });
+
+/** ADR 0137 H1: a port pair, as `MessageChannelMain` makes one; main.ts only links tool windows with it. */
+export class MessageChannelMain {
+  port1 = {};
+  port2 = {};
+}

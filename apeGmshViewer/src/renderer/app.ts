@@ -5,6 +5,7 @@
 import * as THREE from "three";
 import { checkCombinationDraft, Effects, saveCombinationEdit, userCombinationColumn, userResultColumn, type Bridge } from "../effects.ts";
 import { mountCombine } from "../panels/combine.ts";
+import { mountToolLinks, type ToolBridge } from "./tools.ts";
 import { mountBanner } from "../panels/banner.ts";
 import { mountEmpty } from "../panels/empty.ts";
 import { mountHeader } from "../panels/header.ts";
@@ -95,6 +96,8 @@ const panels = [
   mountHeader(store),
   // VF2 (#2924 item 6): a derived contour's out-of-plane line needs the element-id blobs, which a panel never holds.
   mountBanner(store, (s) => derivedPlaneOf(s, blobs)?.warning ?? null),
+  // ADR 0137 H1: the links to tool windows (opened from Spotlight).
+  mountToolLinks(store, bridge as unknown as ToolBridge),
   mountLineDiagram(store, (fn) => viewport.onViewChange(fn)),
   // ADR 0134 D5 (owner D7 on #2992): the particles' colour scale, in #scale-stack after the line diagram's.
   mountParticleScale(store),

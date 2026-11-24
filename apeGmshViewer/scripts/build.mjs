@@ -41,6 +41,24 @@ await Promise.all([
     target: "node22",
     external: ["electron"],
   }),
+  // ADR 0137 H1: the tool window's preload (CJS, sandboxed) and page (browser IIFE, no three.js).
+  build({
+    ...common,
+    entryPoints: ["src/main/toolPreload.ts"],
+    outfile: "dist/toolPreload.cjs",
+    platform: "node",
+    format: "cjs",
+    target: "node22",
+    external: ["electron"],
+  }),
+  build({
+    ...common,
+    entryPoints: ["src/tools/window.ts"],
+    outfile: "dist/tool.js",
+    platform: "browser",
+    format: "iife",
+    target: "chrome130",
+  }),
   build({
     ...common,
     entryPoints: ["src/renderer/app.ts"],
@@ -51,5 +69,6 @@ await Promise.all([
   }),
 ]);
 for (const f of ["index.html", "style.css"]) copyFileSync(join(root, "src/renderer", f), join(dist, f));
+copyFileSync(join(root, "src/tools/tool.html"), join(dist, "tool.html"));
 // The bundled Archivo Narrow files and their licence (src/theme/tokens.ts FONT_FILES).
 cpSync(join(root, "src/renderer/fonts"), join(dist, "fonts"), { recursive: true });

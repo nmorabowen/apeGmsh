@@ -92,3 +92,18 @@ test("dependency-cruiser fails when main reads a model outside the loader proces
   assert.doesNotMatch(r.out, /src\/main\/loader\/process\.ts → src\/reader\/node\.ts/, "the loader process may read a model");
   assert.match(r.out, /2 dependency violations/);
 });
+
+test("dependency-cruiser fails when a tool imports outside src/tools/ (ADR 0137 D10, H1)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agv-lint-tools-"));
+  cpSync(join(app, "src"), join(dir, "src"), { recursive: true });
+  cpSync(join(app, "tsconfig.json"), join(dir, "tsconfig.json"));
+  writeFileSync(
+    join(dir, "src", "tools", "planted.ts"),
+    ['import { Store } from "../state/store.ts";', 'import { Effects } from "../effects.ts";', 'import { stepTool } from "./step.ts";', "export const x = [Store, Effects, stepTool];", ""].join("\n"),
+  );
+  const r = cruise(dir);
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /tool-isolation: src\/tools\/planted\.ts → src\/state\/store\.ts/);
+  assert.match(r.out, /tool-isolation: src\/tools\/planted\.ts → src\/effects\.ts/);
+  assert.doesNotMatch(r.out, /planted\.ts → src\/tools\/step\.ts/, "a tool may import another tools/ module");
+});

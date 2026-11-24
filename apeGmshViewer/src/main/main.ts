@@ -57,7 +57,7 @@
 // subscribed (the P0 page) is reloaded instead, and reads the new model from
 // `app:config`.
 
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain } from "electron";
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, unwatchFile, watchFile, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,7 +77,9 @@ import { guardContents } from "./windowPolicy.ts";
 import { openLineage } from "./zones.ts";
 import { Loader } from "./loader/client.ts";
 import { forkLoader } from "./loader/fork.ts";
-import { watchLoad } from "./memory.ts";
+import { readMemory, watchLoad } from "./memory.ts";
+import { toolWebPreferences, ToolWindows } from "./toolWindows.ts";
+import { TOOLS } from "../tools/registry.ts";
 import { nodeDeps, registerWorkspace } from "./workspace.ts";
 import { combinationToken, nodeCombinationDeps, registerCombinations, sweepOnOpen, type CombinationH5 } from "./combinations.ts";
 import type { WorkspaceH5 } from "../reader/workspace.ts";
@@ -304,6 +306,42 @@ if (mode === "view" && !app.requestSingleInstanceLock()) app.exit(0);
 if (reachMode) await reachWindow();
 
 let win: BrowserWindow | null = null;
+
+// ---------------------------------------------------------------------------
+// ADR 0137 H1 (D9, D11, D13 items 3-5): tool windows, each a separate sandboxed renderer linked to
+// the model window's page by one MessagePort pair (./toolWindows.ts). Only the human's window opens
+// them; an agent mode never does.
+// ---------------------------------------------------------------------------
+const toolWindows = new ToolWindows(
+  {
+    create: (_tool, title) => {
+      const t = new BrowserWindow({
+        width: 520,
+        height: 340,
+        title,
+        backgroundColor: "#16181d",
+        autoHideMenuBar: true,
+        webPreferences: toolWebPreferences(join(here, "toolPreload.cjs")),
+      });
+      void t.loadFile(join(here, "tool.html"));
+      return t;
+    },
+    channel: () => new MessageChannelMain(),
+    availableMB: () => readMemory()?.availableMB ?? null,
+    every: (ms, fn) => {
+      const timer = setInterval(fn, ms);
+      timer.unref();
+      return () => clearInterval(timer);
+    },
+  },
+  Object.fromEntries(Object.values(TOOLS).map((t) => [t.id, t.title])),
+);
+ipcMain.handle("tool:open", (e, tool: unknown) => {
+  if (mode !== "view" || win === null || e.sender !== win.webContents) return { ok: false, reason: "tool:open: only the model window opens a tool window" };
+  return toolWindows.openTool(e.sender, tool);
+});
+// D13 item 5: honoured only from a window main made for a tool (ToolWindows.ready checks the sender).
+ipcMain.on("tool:ready", (e) => void toolWindows.ready(e.sender));
 /** Renderer subscriptions ("open", "fileChanged"); a page load clears them. */
 const subscribed = new Set<string>();
 
@@ -423,6 +461,8 @@ registerReach({ window: () => win, shown });
  * and a slot it never opened is not one it may read (#2817 review 4).
  */
 function pageLoading(): void {
+  // ADR 0137 H1: a new page holds none of the old page's tool ports; its tool windows close.
+  toolWindows.closeAll();
   materialTests.cancel();
   closeCompare();
   subscribed.clear();
@@ -1226,6 +1266,8 @@ app.whenReady().then(() => {
   w.webContents.on("did-navigate", () => pageCommitted(w.webContents));
   w.on("closed", () => {
     win = null;
+    // ADR 0137 H1: tool windows belong to the model window.
+    toolWindows.closeAll();
   });
   void w.loadFile(join(here, "index.html"));
 });

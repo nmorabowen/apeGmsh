@@ -3,6 +3,7 @@
 
 import type { Definitions, NeutralLoads, SequenceZone } from "../../model/types.ts";
 import type { ThemeMode } from "../../theme/tokens.ts";
+import type { ToolsState } from "./tools.ts";
 import type { CameraState } from "./camera.ts";
 import type { ClipState } from "./clip.ts";
 import type { ContourState } from "./contour.ts";
@@ -220,4 +221,8 @@ export interface State {
   particles: ParticlesState | null;
   /** ADR 0137 D4 (#3057): the last memory reading for a model load, or null (view mode only) */
   memory: MemoryStatus | null;
+  /** ADR 0137 H1: the tool windows the model window shows the status of */
+  tools: ToolsState;
+  /** the step bar's playback is running (a tool's context carries it, ADR 0137 D10) */
+  playing: boolean;
 }

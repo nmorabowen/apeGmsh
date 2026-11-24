@@ -268,7 +268,17 @@ export function mountPhase(store: Store, opts: { newCombination?: () => void } =
     if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id);
     else clearTimeout(id);
   };
+  // ADR 0137 D10: a tool's context says whether playback runs. Told after the current dispatch,
+  // since stop() also runs inside this panel's render, which is a store subscriber.
+  let playingSaid = false;
+  const sayPlaying = () => {
+    const on = clock !== null;
+    if (on === playingSaid) return;
+    playingSaid = on;
+    queueMicrotask(() => store.dispatch({ type: "setPlaying", on }));
+  };
   const syncPlay = () => {
+    sayPlaying();
     if (!live) return;
     live.play.textContent = clock !== null ? "❚❚" : "▶";
     live.play.title = clock !== null ? "pause" : "play";

@@ -8,6 +8,7 @@ import { initialSearch, initialSpotlight } from "../spotlight.ts";
 import type { ContourState, DeformState, LineDiagramState, SpatialNdm, State } from "../types.ts";
 import { initialCamera } from "./camera.ts";
 import { initialMaterialTest } from "./materialTest.ts";
+import { initialTools } from "../tools.ts";
 import { initialOffers } from "./offers.ts";
 import { initialCracks, initialHinges, initialLoads, initialPrincipal, initialReactions, initialSprings, initialSupports, initialVectors } from "./overlays.ts";
 import { initialVariants } from "./variants.ts";
@@ -99,4 +100,6 @@ export const initialState: State = {
   offers: initialOffers,
   particles: null,
   memory: null,
+  tools: initialTools,
+  playing: false,
 };

@@ -79,7 +79,11 @@ export function mountBanner(store: Store, planeLine?: PlaneLineOf): () => void {
       s.decls === prev.decls &&
       s.variants === prev.variants &&
       // ADR 0134 D5: the particle lines (selectors `noticesOf`) follow the particle slice.
-      s.particles === prev.particles
+      s.particles === prev.particles &&
+      // ADR 0137 D4 (#3057): the memory line follows each reading, which arrives during a load as well as with it.
+      s.memory === prev.memory &&
+      // ADR 0137 H1: a tool window that stopped, was refused, or is paused.
+      s.tools === prev.tools
     ) return;
     const refusals = refusalsOf(s);
     const notices = noticesOf(s);
