@@ -61,6 +61,7 @@ _FORCE_BEAM = "tests/opensees/live/test_ladruno_force_beam_column_live.py::"
 _MPM_STOCK = "tests/opensees/mpm/test_mpm_live_refusal.py::"
 _MPM_FORK = "tests/opensees/integration_ladruno/test_mpm_deck_fork.py::"
 _MPM_GRIDVEL = "tests/opensees/integration_ladruno/test_mpm_gridvel_live.py::"
+_MPM_STAGE = "tests/opensees/integration_ladruno/test_mpm_stage_live.py::"
 
 
 def _mpm_row(member: str, stock: str, fork: str,
@@ -126,6 +127,9 @@ ROWS: tuple[WarrantRow, ...] = (
     _mpm_row("Safety", "safety", "safety_admits_a_step_the_default_refuses"),
     _mpm_row("Units", "units", "units_reach_the_results"),
     _mpm_row("Output", "output", "output_writes_a_valid_ladruno"),
+    # ADR 0134 Amendment 4 (#3120): the fork's soil stage walk, mode F.
+    _mpm_row("Stage", "stage", "stage_walks_the_druckerprager_particles",
+             _MPM_STAGE),
     _mpm_row("Analyze", "analyze", "analyze_takes_every_step"),
 )
 
