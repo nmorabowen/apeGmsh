@@ -116,19 +116,6 @@ def _hand() -> dict[str, np.ndarray]:
             "moment": moment, "k": k}
 
 
-def _xfail_on_increment(request: pytest.FixtureRequest, route: str) -> None:
-    """#3148: on the -increment route the driver's base shear reads zero.
-    `_TotalReaction` sums every DOF of each fixed node, and these floors are
-    fixed in y and rotation only, so their free-x out-of-balance force (minus
-    the floor inertia, on an imposed leg) cancels the base reaction exactly
-    and the inertia balance fires at 1.000. The fork's reactions are right."""
-    if route == "increment":
-        request.applymarker(pytest.mark.xfail(
-            strict=True, raises=InertiaBalanceWarning,
-            reason="#3148: _TotalReaction sums the free-DOF residuals of "
-                   "partly fixed nodes on the -increment route"))
-
-
 def _cqc(values: np.ndarray, omega: np.ndarray) -> np.ndarray:
     return combine_modes(values, rule="CQC", omega=omega, damping=XI)
 
@@ -144,9 +131,8 @@ def _run() -> SpectrumModalResult:
 
 
 @pytest.mark.live
-def test_gate2_per_mode_drifts_and_storey_forces_meet_the_hand_cqc(
-        rsa_route: str, request: pytest.FixtureRequest) -> None:
-    _xfail_on_increment(request, rsa_route)
+@pytest.mark.usefixtures("rsa_route")
+def test_gate2_per_mode_drifts_and_storey_forces_meet_the_hand_cqc() -> None:
     res = _run()
     ref = _hand()
     np.testing.assert_allclose(res.omega, ref["omega"], rtol=1e-10)
@@ -181,9 +167,8 @@ def test_gate2_per_mode_drifts_and_storey_forces_meet_the_hand_cqc(
 
 
 @pytest.mark.live
-def test_gate3_base_storey_shear_from_inertia_equals_the_base_reaction(
-        rsa_route: str, request: pytest.FixtureRequest) -> None:
-    _xfail_on_increment(request, rsa_route)
+@pytest.mark.usefixtures("rsa_route")
+def test_gate3_base_storey_shear_from_inertia_equals_the_base_reaction() -> None:
     res = _run()
     assert res.inertia_nodes == tuple(range(2, N + 2))
     base = res.storey_forces([0.0]).shear[0, :, 0, :]          # (mode, ndm)

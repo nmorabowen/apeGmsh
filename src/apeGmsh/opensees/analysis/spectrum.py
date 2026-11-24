@@ -286,8 +286,14 @@ class ElementResponse:
 
 @dataclass(frozen=True, slots=True)
 class _TotalReaction:
-    """The driver's own extractor: the sum of every fixed node's reaction
-    along each translational direction (``ndm`` values)."""
+    """The driver's own extractor: the total support reaction along each
+    translational direction (``ndm`` values), summed over the restrained
+    DOFs of the fixed nodes only.
+
+    ``nodeReaction`` also reports a free DOF of a fixed node. In
+    equilibrium that is zero, but on an imposed ``-increment`` leg it is the
+    DOF's out-of-balance force, and on a floor fixed in y and rotation only
+    it is minus that floor's inertia, which would cancel the base shear."""
 
     ndm: int
 
@@ -296,8 +302,10 @@ class _TotalReaction:
         total = np.zeros(self.ndm)
         for n in ops.getFixedNodes():
             r = np.asarray(ops.nodeReaction(int(n)), dtype=np.float64)
-            k = min(self.ndm, r.size)
-            total[:k] += r[:k]
+            for dof in ops.getFixedDOFs(int(n)):
+                d = int(dof) - 1
+                if d < min(self.ndm, r.size):
+                    total[d] += r[d]
         return total
 
 

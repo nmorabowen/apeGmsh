@@ -230,3 +230,40 @@ def test_cancellation_reads_the_principal_axis_angles() -> None:
     rep = res.cancellation("disp", 1, rule="SRSS")
     np.testing.assert_allclose(rep.angles, [45.0, 90.0])   # modulo 180
     np.testing.assert_array_equal(rep.terms, [0.025, -0.003])
+
+
+class _PartlyFixedOps:
+    """A base node fixed in all three DOFs and a floor fixed in y and
+    rotation only, read at an imposed (``-increment``) leg: the floor's free
+    x DOF carries its out-of-balance force, minus its inertia, which
+    ``nodeReaction`` reports beside the true reactions (#3148)."""
+
+    def __init__(self) -> None:
+        self.reacted = False
+        self.fixed = {1: [1, 2, 3], 2: [2, 3]}
+        self.reaction = {1: [-100.0, 5.0, 7.0], 2: [100.0, 3.0, 1.0]}
+
+    def reactions(self) -> None:
+        self.reacted = True
+
+    def getFixedNodes(self) -> list[int]:
+        return list(self.fixed)
+
+    def getFixedDOFs(self, node: int) -> list[int]:
+        return self.fixed[node]
+
+    def nodeReaction(self, node: int, dof: int | None = None) -> Any:
+        r = self.reaction[node]
+        return r if dof is None else r[dof - 1]
+
+
+def test_total_reaction_sums_only_the_restrained_dofs() -> None:
+    """The base shear is the support reaction: the floor's free-x residual
+    (+100) is not one, so x totals the base's -100, not 0, and y adds both
+    nodes' restrained y (5 + 3)."""
+    from apeGmsh.opensees.analysis.spectrum import _TotalReaction
+
+    ops = _PartlyFixedOps()
+    total = _TotalReaction(2)(ops)
+    assert ops.reacted
+    np.testing.assert_array_equal(total, [-100.0, 8.0])
