@@ -47,7 +47,11 @@ RZ = -P_TIP * L_BEAM ** 2 / (2.0 * E * I_BEAM)
 
 @pytest.fixture(autouse=True)
 def _backend() -> None:
-    pytest.importorskip("openseespy.opensees")
+    # Any backend, not openseespy by name: live-fork has only the fork.
+    from apeGmsh.sections._mc import backend_available
+
+    if not backend_available():
+        pytest.skip("no OpenSees backend (openseespy or the Ladruno fork)")
 
 
 @pytest.fixture(scope="module")
@@ -106,6 +110,17 @@ def _subprocess_has_mpco(where: Path) -> bool:
     )
     proc = subprocess.run([sys.executable, "-c", probe], cwd=where,
                           capture_output=True, check=False)
+    return proc.returncode == 0
+
+
+def _subprocess_is_fork() -> bool:
+    """The deck's interpreter binds the fork under ``openseespy.opensees``.
+
+    A py deck imports openseespy by name. Beside a fork build that is often
+    stock pip openseespy, which has no ``ladruno`` recorder; live-fork
+    installs a shim that points the name at the fork."""
+    probe = "import openseespy.opensees as ops; ops.ladrunoBuild()"
+    proc = subprocess.run([sys.executable, "-c", probe], capture_output=True, check=False)
     return proc.returncode == 0
 
 
@@ -206,6 +221,10 @@ def test_ladruno_tip_deflection_matches_the_closed_form(
 ) -> None:
     """``recorder.Ladruno`` on the fork: the deck's own ``.ladruno`` is
     read with ``Results.from_ladruno`` (refused before ADR 0131 D11)."""
+    if not _subprocess_is_fork():
+        pytest.skip(
+            "the deck's `import openseespy.opensees` is not the fork in this "
+            "interpreter, so it has no ladruno recorder")
     ops = cantilever_bridge(cantilever)
     ops.recorder.Ladruno(file=str(run_dir / "r.ladruno"),
                          nodal_responses=("displacement",))

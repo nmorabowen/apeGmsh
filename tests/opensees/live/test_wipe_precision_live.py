@@ -57,7 +57,11 @@ A_BEAM = 1.0e-2
 
 @pytest.fixture(autouse=True)
 def _backend() -> None:
-    pytest.importorskip("openseespy.opensees")
+    # Any backend, not openseespy by name: live-fork has only the fork.
+    from apeGmsh.sections._mc import backend_available
+
+    if not backend_available():
+        pytest.skip("no OpenSees backend (openseespy or the Ladruno fork)")
 
 
 @pytest.fixture(scope="module")

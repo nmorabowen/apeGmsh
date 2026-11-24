@@ -110,6 +110,19 @@ jobs:
           echo "TCL_LIBRARY=$RUNNER_TEMP/fork/tcl8.6" >> "$GITHUB_ENV"
           # _resolve_fork_exe (test_solver_stats_live.py) finds the exe here.
           echo "APEGMSH_OPENSEES_BIN=$purelib" >> "$GITHUB_ENV"
+          # An emitted py deck runs `import openseespy.opensees as ops`, and this
+          # lane has no openseespy, so a fork test that runs a py deck could not.
+          # The shim binds that name to the fork's module itself (one domain).
+          mkdir -p "$purelib/openseespy"
+          : > "$purelib/openseespy/__init__.py"
+          printf '%s\n' \
+            '"""live-fork shim: openseespy.opensees is the fork module."""' \
+            'import sys' \
+            '' \
+            'import opensees' \
+            '' \
+            'sys.modules[__name__] = opensees' \
+            > "$purelib/openseespy/opensees.py"
 
       - name: Assert the installed build is the pinned one
         working-directory: ${{ runner.temp }}
@@ -121,6 +134,8 @@ jobs:
           got=$(python -c "import opensees; print(opensees.ladrunoBuild())" | tail -n1)
           echo "pin=$want build=$got"
           [ "$got" = "$want" ] || { echo "::error::build $got != pin $want"; exit 1; }
+          python -c "import openseespy.opensees as o, opensees; assert o is opensees, o" \
+            || { echo "::error::the openseespy shim does not bind the fork module"; exit 1; }
 
       # The Tcl exe is the pinned build too, and its Tcl initialises from the
       # shipped tcl8.6/. OpenSees can exit 0 on a Tcl error, and a missing

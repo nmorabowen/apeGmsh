@@ -465,7 +465,6 @@ def test_live_manzari_flip_switches_ladruno_sanisand(
 ) -> None:
     """Fork: both plastic, then ``-stage 0`` on tag 1 only.  Quad 2, of the
     other class, goes elastic exactly as if it had been named: one static."""
-    pytest.importorskip("openseespy.opensees")
     _assert_bridge_refuses(cls_a, cls_b, 0)
     code_1, ux_1, uy_1 = _run(cls_a, cls_b, (1,), start=1, flip=0, dev=8.0)
     code_b, ux_b, uy_b = _run(cls_a, cls_b, (1, 2), start=1, flip=0, dev=8.0)
@@ -1072,5 +1071,4 @@ def test_live_shared_manzari_flip_misses_the_second_element() -> None:
 @pytest.mark.live
 @pytest.mark.ladruno_fork
 def test_live_shared_ladruno_sanisand_flip_misses_the_second_element() -> None:
-    pytest.importorskip("openseespy.opensees")
     _assert_first_element_only("LadrunoSANISAND", 4.0)

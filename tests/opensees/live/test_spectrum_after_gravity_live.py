@@ -37,7 +37,12 @@ from apeGmsh.opensees.analysis.spectrum import (
     cqc_correlation,
 )
 
-openseespy = pytest.importorskip("openseespy.opensees")
+from apeGmsh.sections._mc import backend_available  # noqa: E402
+
+# Any backend, not openseespy by name: live-fork installs the fork as
+# `opensees` and has no openseespy, so an importorskip skipped the fork cases.
+if not backend_available():
+    pytest.skip("no OpenSees backend (openseespy or the Ladruno fork)", allow_module_level=True)
 
 from tests.opensees.fixtures.fem_stub import (  # noqa: E402
     FEMStub,

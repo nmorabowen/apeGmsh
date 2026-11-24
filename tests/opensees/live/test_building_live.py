@@ -13,7 +13,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-pytest.importorskip("openseespy.opensees")
+from apeGmsh.sections._mc import backend_available  # noqa: E402
+
+# Any backend, not openseespy by name: live-fork installs the fork as
+# `opensees` and has no openseespy, so an importorskip skipped the fork cases.
+if not backend_available():
+    pytest.skip("no OpenSees backend (openseespy or the Ladruno fork)", allow_module_level=True)
 
 from apeGmsh.opensees import building as B  # noqa: E402
 from apeGmsh.opensees._internal.build.errors import BridgeError  # noqa: E402
