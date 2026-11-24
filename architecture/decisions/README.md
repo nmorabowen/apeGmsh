@@ -151,5 +151,6 @@ An ADR over 40 KB has a decision summary of at most 60 lines in `summaries/` und
 | [0133](0133-fem-hash-pairing-for-femdata-archives.md) | A `.ladruno` pairs to a bare FEMData archive by `fem_hash` | Accepted |
 | [0134](0134-mpm-particles.md) | MPM in apeGmsh: the particle set beside the deck, particle results in `.ladruno`, a three.js points layer | Accepted |
 | [0135](0135-material-tester-runs-the-fork.md) | The material tester: apeGmshViewer runs the fork's `OpenSees.exe` on one declared material | Accepted |
+| [0136](0136-adaptive-mesh-convergence.md) | Adaptive mesh convergence: error estimate, size field, fresh-session rebuild | Proposed |
 | [0137](0137-apegmshviewer-large-models-and-tool-hosting.md) | apeGmshViewer: memory sets the supported model size, and tools run under one host with several placements | Accepted |
 | [0138](0138-apegmshviewer-selection.md) | apeGmshViewer selection: one selection per target kind, picked from an ID image | Accepted |
