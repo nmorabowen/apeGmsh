@@ -682,7 +682,7 @@ test("#3133: a group of more than a page shows a summary by type, a filter and i
   assert.deepEqual(events, [{ type: "showMoreMaterials", kind: "uniaxialMaterial" }]);
 });
 
-test("#3133: show more adds a page; a filter matches handle, tag, key or type and starts again at the first page", () => {
+test("#3133: show more adds a page; a filter matches handle, tag, key, type or HDF5 name and starts again at the first page", () => {
   let s = reduce(springs, { type: "showMoreMaterials", kind: "uniaxialMaterial" });
   const uni = (st: State) => rowsOf(render(st).root).filter((r) => r.dataset["decl"]!.startsWith("opensees/uniaxialMaterial/"));
   assert.equal(uni(s).length, 200);
@@ -695,6 +695,7 @@ test("#3133: show more adds a page; a filter matches handle, tag, key or type an
   assert.equal(sectionOf(render(s).root, "uniaxial"), "uniaxial materials (11 of 251)");
   assert.equal(uni(reduce(s, { type: "setMaterialsFilter", text: "1250" })).length, 1, "by tag");
   assert.equal(uni(reduce(s, { type: "setMaterialsFilter", text: "asdsteel" })).length, 1, "by type, case-insensitively");
+  assert.equal(uni(reduce(s, { type: "setMaterialsFilter", text: "Elastic_250" })).length, 1, "by the HDF5 group name, as the file names it");
   assert.equal(reduce(s, { type: "setMaterialsFilter", text: "spring_12" }), s, "the same filter changes nothing");
 });
 

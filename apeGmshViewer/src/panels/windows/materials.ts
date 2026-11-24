@@ -490,11 +490,11 @@ function rowEl(s: State, r: MaterialRow, act: (e: Event) => void): HTMLElement {
   return row;
 }
 
-/** #3133: whether a row matches the filter: its handle, tag, declaration key or type contains it, case-insensitively. */
+/** #3133: whether a row matches the filter: its handle, tag, declaration key, type or HDF5 path (`Elastic_1234`) contains it, case-insensitively. */
 export function matchesFilter(r: MaterialRow, filter: string): boolean {
   const f = filter.trim().toLowerCase();
   if (!f) return true;
-  return r.handle.toLowerCase().includes(f) || (r.tag !== null && String(r.tag).includes(f)) || (r.declKey ?? "").toLowerCase().includes(f) || r.type.toLowerCase().includes(f);
+  return r.handle.toLowerCase().includes(f) || (r.tag !== null && String(r.tag).includes(f)) || (r.declKey ?? "").toLowerCase().includes(f) || r.type.toLowerCase().includes(f) || r.h5.toLowerCase().includes(f);
 }
 
 function summaryEl(g: MaterialsData["groups"][number]): HTMLElement {
@@ -521,7 +521,7 @@ export const view: WindowView = (s, act) => {
   if (data.groups.some((g) => g.rows.length > MATERIALS_PAGE)) {
     const input = el("input", "search-input");
     input.type = "text";
-    input.placeholder = "filter by name, tag, key or type";
+    input.placeholder = "filter by name, tag, key, type or HDF5 name";
     input.value = list.filter;
     input.dataset["focusKey"] = "materials-filter";
     input.addEventListener("input", () => act({ type: "setMaterialsFilter", text: input.value }));
