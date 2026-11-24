@@ -122,6 +122,21 @@ def test_live_refuses_mpm_output_naming_the_fork() -> None:
         ops.run()
 
 
+def test_live_refuses_mpm_stage_naming_the_fork() -> None:
+    def stage(ops: apeSees) -> None:
+        ops.nDMaterial.DruckerPrager(
+            K=1.0e7, G=5.0e6, sigmaY=1.0e3, rho=0.1, rhoBar=0.1, Kinf=0.0,
+            Ko=0.0, delta1=0.0, delta2=0.0, H=0.0, theta=1.0, name="weak")
+        ops.mpm.body("Soil", material="weak", density=1000.0, ppc=2,
+                     name="weak_soil")
+        ops.mpm.stage("weak", 0)
+        ops.mpm.analyze(10, 1.0e-4)
+
+    ops = _with(stage)
+    with pytest.raises(RuntimeError, match="Stage.*the Ladruno fork's mpm engine"):
+        ops.run()
+
+
 def test_live_refuses_mpm_analyze_naming_the_fork() -> None:
     ops = _with(lambda ops: ops.mpm.analyze(10, 1.0e-4))
     with pytest.raises(RuntimeError, match="Analyze.*the Ladruno fork's mpm engine"):

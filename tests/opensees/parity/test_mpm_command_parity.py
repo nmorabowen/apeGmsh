@@ -1,5 +1,6 @@
 """Chain M link M3: every ``mpm`` member on all five emitters (ADR 0134 D8;
-``Gridvel`` / ``GridvelAffine`` by Amendment 3, at fork cfe478254).
+``Gridvel`` / ``GridvelAffine`` by Amendment 3, at fork cfe478254; ``Stage``
+by Amendment 4, at fork 3eb195bbc).
 
 Each member of :mod:`apeGmsh.opensees.mpm` reaches every emitter through
 ``command("mpm", ...)`` (ADR 0114 D2), so it states one fork command line
@@ -36,7 +37,11 @@ from apeGmsh.opensees.emitter.live import LiveOpsEmitter
 from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
-from apeGmsh.opensees.material.nd import ElasticIsotropic
+from apeGmsh.opensees.material.nd import (
+    DruckerPrager,
+    ElasticIsotropic,
+    LadrunoSANISAND,
+)
 from apeGmsh.opensees.time_series.time_series import Linear
 from tests.opensees.parity import mpm_fork_surface as surface
 
@@ -44,14 +49,20 @@ from tests.opensees.parity import mpm_fork_surface as surface
 ALL_MPM = [
     mpm.Grid, mpm.Body, mpm.Fix, mpm.Wall, mpm.Gridvel, mpm.GridvelAffine,
     mpm.Gravity, mpm.TimeSeries, mpm.Damping, mpm.Flip, mpm.MassCutoff,
-    mpm.Safety, mpm.Units, mpm.Output, mpm.Analyze,
+    mpm.Safety, mpm.Units, mpm.Output, mpm.Stage, mpm.Analyze,
 ]
 assert ALL_MPM == list(mpm.ALL_MPM)
 
 MAT = ElasticIsotropic(E=1.0e7, nu=0.3)
 SERIES = Linear()
+DP = DruckerPrager(K=1.0e7, G=5.0e6, sigmaY=1.0e3, rho=0.1, rhoBar=0.1,
+                   Kinf=0.0, Ko=0.0, delta1=0.0, delta2=0.0, H=0.0, theta=1.0)
+SAND = LadrunoSANISAND(
+    G0=264.32, nu=0.3129, e_init=0.6944, Mc=1.3309, c=0.71, lambda_c=0.027,
+    e0=0.83, ksi=0.45, P_atm=101.0, m=0.005, h0=1.3, Ch=0.968, nb=3.5,
+    A0=0.05, nd=5.75, z_max=12.5, cz=1100.0, rho=2.0)
 #: The tags the resolver hands the members' dependencies.
-TAGS = {id(MAT): 4, id(SERIES): 9}
+TAGS = {id(MAT): 4, id(SERIES): 9, id(DP): 5, id(SAND): 6}
 GRID_TAG = 7
 SET = "case1.particles.h5"
 TCL_SET_LINE = f"mpm particles -file [file join [file dirname [info script]] {{{SET}}}]"
@@ -123,6 +134,12 @@ CASES: list[tuple[Any, int, str, tuple[Any, ...]]] = [
       "STRESS", "-compress", 1, "-flush", 2.0)),
     (mpm.Output(path="r.ladruno", dt=0.01), 3, "mpm output {r.ladruno} -dt 0.01",
      ("output", "r.ladruno", "-dt", 0.01)),
+    # ``OPS_LadrunoMPM.cpp`` ``sub == "stage"`` at 3eb195bbc (slice #3120,
+    # ADR 0134 Amendment 4): ``mpm stage <matTag> <s>``, the tag the
+    # material's allocated one.
+    (mpm.Stage(material=DP, stage=0), 3, "mpm stage 5 0", ("stage", 5, 0)),
+    (mpm.Stage(material=DP, stage=2), 3, "mpm stage 5 2", ("stage", 5, 2)),
+    (mpm.Stage(material=SAND, stage=1), 3, "mpm stage 6 1", ("stage", 6, 1)),
     (mpm.Analyze(steps=5000, dt=2.0e-4), 3, "mpm analyze 5000 0.0002",
      ("analyze", 5000, 0.0002)),
 ]
@@ -271,15 +288,15 @@ def test_fork_surface_every_fork_subcommand_is_a_member_or_a_row() -> None:
 
 
 def test_fork_surface_members_and_rows_partition_the_fork() -> None:
-    """The partition at ladruno-v20261118b, spelled out so a review sees it.
+    """The partition at ladruno-v20261123b, spelled out so a review sees it.
     ``gridvel`` is a member since #3064 (``Gridvel`` and ``GridvelAffine``
-    both emit it); ``stage`` stays a row until WP-232l."""
+    both emit it); ``stage`` is a member since #3120 (``Stage``)."""
     assert MEMBER_SUBS == {
         "analyze", "body", "damping", "fix", "flip", "gravity", "grid",
-        "gridvel", "massCutoff", "output", "safety", "timeSeries", "units",
-        "wall"}
+        "gridvel", "massCutoff", "output", "safety", "stage", "timeSeries",
+        "units", "wall"}
     assert "gridvel" not in surface.NOT_OFFERED
-    assert "after WP-232l" in surface.NOT_OFFERED["stage"]
+    assert "stage" not in surface.NOT_OFFERED
     assert set(surface.NOT_OFFERED) == set(FORK_SUBS) - MEMBER_SUBS
 
 
@@ -291,7 +308,7 @@ def test_fork_surface_a_new_fork_subcommand_fails_by_name() -> None:
     assert len(got) == 1 and "'newThing' is neither" in got[0]
 
 
-@pytest.mark.parametrize("dropped", ["stage", "pforce", "particles"])
+@pytest.mark.parametrize("dropped", ["antiLocking", "pforce", "particles"])
 def test_fork_surface_a_dropped_row_fails_by_name(dropped: str) -> None:
     rows = {k: v for k, v in surface.NOT_OFFERED.items() if k != dropped}
     got = surface.surface_problems(FORK_SUBS, MEMBER_SUBS, rows)
@@ -312,6 +329,17 @@ def test_fork_surface_gridvel_without_its_members_fails_by_name() -> None:
     members = {s for s in MEMBER_SUBS if s != "gridvel"}
     got = surface.surface_problems(FORK_SUBS, members, surface.NOT_OFFERED)
     assert len(got) == 1 and "'gridvel' is neither" in got[0]
+
+
+def test_fork_surface_stage_without_its_member_fails_by_name() -> None:
+    """Slice #3120's mutation, offline: with ``Stage`` dropped from the
+    members, the fork's ``stage`` is neither a member nor a row."""
+    members = {s for s in MEMBER_SUBS if s != "stage"}
+    got = surface.surface_problems(FORK_SUBS, members, surface.NOT_OFFERED)
+    assert got == ["fork mpm subcommand 'stage' is neither an "
+                   "apeGmsh.opensees.mpm member nor a NOT_OFFERED row: add "
+                   "the member, or a row that says why apeGmsh does not "
+                   "offer it"]
 
 
 def test_fork_surface_a_member_the_fork_lost_fails_by_name() -> None:

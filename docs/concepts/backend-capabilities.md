@@ -334,6 +334,7 @@ It needs a fork release that carries `mpm` (`ladruno-v20261114`, build
 | `ops.mpm.safety(s)` | `mpm safety <s>` | |
 | `ops.mpm.units(L, F, T, system=)` | `mpm units <L> <F> <T> [-system ..]` | without it the particle set takes the bridge's `units=`; each symbol, and `system`, is one word |
 | `ops.mpm.output(path, ...)` | `mpm output <path> ...` | the particle results, a `.ladruno` file |
+| `ops.mpm.stage(material, stage)` | `mpm stage <matTag> <s>` | stages every particle of `material` for the analyses declared after it: `DruckerPrager` 0 / 1 / 2, `LadrunoSANISAND` 0 / 1 (class-wide: it stages every SANISAND particle); a stage needs an `analyze` after it and a body that uses the material. A `LadrunoSANISAND` body is refused, because the fork runs SANISAND particles in mode F on a B-spline grid only and `grid` admits gimp and linear |
 | `ops.mpm.analyze(steps, dt)` | `mpm analyze <n> <dt>` | |
 
 MPM is **deck-only**. `ops.tcl(path)` and `ops.py(path)` seed the bodies

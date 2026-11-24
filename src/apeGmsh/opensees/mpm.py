@@ -30,6 +30,7 @@ member                    fork line
 :class:`Units`            ``mpm units <L> <F> <T> [-system <id>]``
 :class:`Output`           ``mpm output <path> [-every N | -dt dt] [-fields ..]
                           [-compress k] [-flush s]``
+:class:`Stage`            ``mpm stage <matTag> <s>``
 :class:`Analyze`          ``mpm analyze <n> <dt>``
 ========================  ===================================================
 
@@ -60,6 +61,7 @@ from typing import TYPE_CHECKING, Any, cast
 from ._internal.tag_resolution import resolve_tag
 from ._internal.types import MPM, NDMaterial, Primitive
 from ._internal.types import TimeSeries as _TimeSeriesPrimitive
+from .material.nd import DruckerPrager, LadrunoSANISAND
 
 if TYPE_CHECKING:
     from ..mesh.FEMData import FEMData
@@ -84,11 +86,13 @@ __all__ = [
     "MassCutoff",
     "Output",
     "Safety",
+    "Stage",
     "TimeSeries",
     "Units",
     "Wall",
     "MPMError",
     "OUTPUT_FIELDS",
+    "STAGES",
 ]
 
 #: Grid faces, per spatial dimension, in the fork's ``faceIndex`` order.
@@ -101,6 +105,16 @@ BASES = ("gimp", "linear")
 #: "Commands"); no ``STATE_*`` token is admitted.
 OUTPUT_FIELDS = ("POSITION", "VELOCITY", "STRESS", "STRAIN", "VOLUME",
                  "GIMP_HALF_LENGTH", "DEFORMATION_GRADIENT")
+#: The nDMaterial classes :class:`Stage` admits, each with the stage values
+#: it reads (ADR 0134 Amendment 4). The fork's walk
+#: (``LadrunoMPMSoil.cpp::stageWalk``) passes the value through unchanged:
+#: DruckerPrager reads 0 (elastic), 1 (elastic with its moduli updated) and
+#: 2 (elastoplastic, its default); LadrunoSANISAND reads 0 and 1. Keyed by
+#: the class itself, so a subclass is refused rather than assumed to stage.
+STAGES: dict[type[NDMaterial], tuple[int, ...]] = {
+    DruckerPrager: (0, 1, 2),
+    LadrunoSANISAND: (0, 1),
+}
 
 
 class MPMError(ValueError):
@@ -814,6 +828,63 @@ class Output(MPM):
         return ()
 
 
+def _staged_classes() -> str:
+    return ", ".join(f"{cls.__name__} {'/'.join(map(str, s))}"
+                     for cls, s in STAGES.items())
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Stage(MPM):
+    """``mpm stage <matTag> <s>``: the fork's stage walk over every particle
+    whose material is ``material`` (fork WP-232k, D7-D9).
+
+    The walk reaches each such particle through the material's own
+    ``materialState`` parameter and hands it ``stage`` unchanged; the fork
+    answers the number of particles it reached. ``material`` is a
+    :data:`STAGES` class, and ``stage`` one of the values that class reads.
+    The tag is the material's allocated ``nDMaterial`` tag, resolved at emit
+    as :class:`Body` resolves it (ADR 0134 D6).
+
+    The row is written in declaration order among the :class:`Analyze` rows,
+    and that order is the staging: a stage applies to the analyses declared
+    after it. LadrunoSANISAND's stage flag is class-wide, so staging one
+    SANISAND material stages every SANISAND particle. :func:`mpm_block`
+    refuses, by name, a stage with no analyze after it, a material no body
+    uses, a second stage of one material with no analyze between the two,
+    and two SANISAND materials staged to different values between two
+    analyzes.
+    """
+
+    material: NDMaterial
+    stage: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.material, NDMaterial):
+            raise MPMError(f"Stage.material must be an nDMaterial, got "
+                           f"{type(self.material).__name__}")
+        stages = STAGES.get(type(self.material))
+        if stages is None:
+            raise MPMError(f"Stage.material: {type(self.material).__name__} has "
+                           f"no stage the fork's mpm stage walk reaches; it "
+                           f"stages {_staged_classes()} (ADR 0134 Amendment 4)")
+        if isinstance(self.stage, bool) or not isinstance(self.stage, int):
+            raise MPMError(f"Stage.stage must be an integer, got {self.stage!r}")
+        if self.stage not in stages:
+            raise MPMError(f"Stage.stage: {type(self.material).__name__} reads "
+                           f"stages {stages}, got {self.stage!r}")
+        object.__setattr__(self, "stage", int(self.stage))
+
+    def args(self, material_tag: int) -> tuple[int | float | str, ...]:
+        return ("stage", int(material_tag), self.stage)
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.command("mpm", *self.args(resolve_tag(emitter, self.material)))
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return (self.material,)
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Analyze(MPM):
     """``mpm analyze <n> <dt>``: ``n`` explicit steps of size ``dt``."""
@@ -842,7 +913,7 @@ class Analyze(MPM):
 #: The family's contract list (``tests/families.py``).
 ALL_MPM: tuple[type[MPM], ...] = (
     Grid, Body, Fix, Wall, Gridvel, GridvelAffine, Gravity, TimeSeries,
-    Damping, Flip, MassCutoff, Safety, Units, Output, Analyze,
+    Damping, Flip, MassCutoff, Safety, Units, Output, Stage, Analyze,
 )
 
 
@@ -861,6 +932,19 @@ def mpm_block(members: Sequence[MPM], *, ndm: int) -> tuple[MPM, ...]:
     z face or a gravity of the wrong length for the grid, two ``Units``,
     a gridvel box of another dimension than the grid's, and two gridvels
     (:class:`Gridvel` or :class:`GridvelAffine`) of one name.
+
+    A :class:`Stage` is refused, by name, when no body uses its material,
+    when no analyze follows it (ADR 0134 Amendment 4), when a stage of the
+    same material precedes it with no analyze between the two, and when a
+    LadrunoSANISAND stage of another value precedes it with no analyze
+    between (the fork's SANISAND flag is class-wide).
+
+    A LadrunoSANISAND body is refused, by name: the fork refuses SANISAND
+    particles in explicit mode F on a gimp or linear grid at ``mpm analyze``
+    (WP-232k, rule K0; :data:`FORK_SANISAND_BASIS_REFUSAL`), and those are
+    the only bases :class:`Grid` admits. ``tests/opensees/mpm/
+    test_mpm_stage.py`` fails when a B-spline basis is admitted, so the
+    refusal is narrowed to gimp and linear with it.
 
     The fork also refuses, on a B-spline grid, a gridvel box that reaches
     the ghost layer behind a ``fix`` face (fork WP-232i B10). No apeGmsh
@@ -918,7 +1002,63 @@ def mpm_block(members: Sequence[MPM], *, ndm: int) -> tuple[MPM, ...]:
     if gv_dup:
         raise MPMError(f"mpm gridvel names must be unique (the fork refuses a "
                        f"second gridvel of one name); repeated: {gv_dup}")
+    _refuse_stages(rest, bodies)
+    for b in bodies:
+        if type(b.material) is LadrunoSANISAND:
+            # Every basis Grid admits (BASES) is one the fork refuses here.
+            raise MPMError(
+                f"mpm body {b.name!r} is LadrunoSANISAND, and the fork refuses "
+                f"SANISAND particles in explicit mode F on a gimp or linear "
+                f"grid at mpm analyze ({FORK_SANISAND_BASIS_REFUSAL!r}; "
+                f"WP-232k rule K0). apeGmsh emits mode F and its Grid admits "
+                f"{BASES} only, so no apeGmsh deck can run it")
     return (grid, *bodies, *rest)
+
+
+#: The fork's refusal of SANISAND particles in mode F off a B-spline grid
+#: (``LadrunoMPMPattern::analyze`` at ``ladruno-v20261123b``, 3eb195bbc).
+FORK_SANISAND_BASIS_REFUSAL = (
+    "at particles in explicit mode F needs a B-spline basis")
+
+
+def _refuse_stages(rest: Sequence[MPM], bodies: Sequence[Body]) -> None:
+    """The :class:`Stage` refusals of :func:`mpm_block`, in declaration order."""
+    pending: list[Stage] = []          # the stages since the last analyze
+    for m in rest:
+        if isinstance(m, Analyze):
+            pending = []
+            continue
+        if not isinstance(m, Stage):
+            continue
+        cls = type(m.material).__name__
+        if not any(b.material is m.material for b in bodies):
+            raise MPMError(
+                f"mpm stage {cls} -> {m.stage}: no ops.mpm.body uses that "
+                f"material, so the fork's walk finds no particle and refuses "
+                f"the deck ('no particle material has tag')")
+        for prev in pending:
+            if prev.material is m.material:
+                raise MPMError(
+                    f"two mpm stages of one {cls} material ({prev.stage}, then "
+                    f"{m.stage}) with no ops.mpm.analyze between them: the "
+                    f"first stages no step")
+            if (type(prev.material) is LadrunoSANISAND
+                    and type(m.material) is LadrunoSANISAND
+                    and prev.stage != m.stage):
+                raise MPMError(
+                    f"two LadrunoSANISAND materials staged to different values "
+                    f"({prev.stage}, then {m.stage}) with no ops.mpm.analyze "
+                    f"between them: the fork's SANISAND stage flag is "
+                    f"class-wide, so the second walk restages every SANISAND "
+                    f"particle and the first value stages no step")
+        pending.append(m)
+    if pending:
+        what = ", ".join(f"{type(s.material).__name__} -> {s.stage}"
+                         for s in pending)
+        raise MPMError(
+            f"mpm stage ({what}) is declared after the last ops.mpm.analyze: "
+            f"no step would run at that stage. Declare each ops.mpm.stage "
+            f"before the analyze it applies to (ADR 0134 Amendment 4)")
 
 
 def host_tag(
@@ -1158,6 +1298,15 @@ class _MPMNS:
         prim = Output(path=path, every=every, dt=dt,
                       fields=None if fields is None else tuple(fields),
                       compress=compress, flush=flush)
+        self._add(prim)
+        return prim
+
+    def stage(self, material: "NDMaterial | str", stage: int) -> Stage:
+        """``mpm stage``: stage every particle of the nDMaterial ``material``
+        (a handle or its registered name) for the analyses declared after
+        it. See :class:`Stage` for the classes and values it admits."""
+        mat = self._bridge._resolve(material, base=NDMaterial)
+        prim = Stage(material=mat, stage=stage)
         self._add(prim)
         return prim
 
