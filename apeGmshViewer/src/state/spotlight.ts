@@ -516,16 +516,20 @@ function buildRootCommands(s: State): { item: SpotlightItem; keywords: string }[
     keywords: "search find query filter builder window",
   });
   // ADR 0137 H1: the tool host's first tool, in a window of its own beside the model window.
+  // ADR 0137 H4: tiles of the registered tools in a tool window; a tile goes to the newest window, or opens one.
+  const anyOpen = Object.values(s.tools.windows).some((w) => w.status === "open" || w.status === "opening" || w.status === "unresponsive");
+  for (const [tool, label, detail] of [
+    ["step", "Step Readout", "The results stage, step and playback, previous and next step, and a component's range over the nodes"],
+    ["history", "Node History", "The picked node's history of a nodal component over the stage, the step on screen marked"],
+  ] as const) {
+    out.push({
+      item: commandItem(`cmd:tool-${tool}`, "tool", anyOpen ? `Add Tile: ${label}` : `Open Tool Window: ${label}`, anyOpen ? `${detail}, as a tile in the newest tool window` : `${detail}, in a separate window`, [{ type: "openTool", tool }]),
+      keywords: `tool tile window ${label.toLowerCase()} separate monitor second screen`,
+    });
+  }
   out.push({
-    item: commandItem(
-      "cmd:open-tool-step",
-      "tool",
-      s.tools.windows["step"]?.status === "open" ? "Focus Tool Window: Step Readout" : "Open Tool Window: Step Readout",
-      "A separate window showing the results stage, step and playback, with previous and next step",
-      [{ type: "openTool", tool: "step" }],
-      s.tools.windows["step"]?.status === "open",
-    ),
-    keywords: "tool window step readout separate monitor second screen",
+    item: commandItem("cmd:tool-new-window", "tool", "New Tool Window", "Another tool window (for another monitor), starting with a Step Readout tile", [{ type: "openTool", tool: "step", newWindow: true }]),
+    keywords: "tool window new another second monitor screen tiles",
   });
   out.push({
     item: drillDownItem(

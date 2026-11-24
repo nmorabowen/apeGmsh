@@ -80,7 +80,7 @@ function setup() {
 test("a linked tool gets the context at once, then only when it changes", async () => {
   const h = setup();
   try {
-    h.win.deliver({ toolPort: { tool: "step" } }, h.port1 as never);
+    h.win.deliver({ toolPort: { window: "w1", tool: "step" } }, h.port1 as never);
     await settle();
     assert.equal(h.got.length, 1);
     assert.equal(h.got[0]!.context!.step!.step, 0);
@@ -97,7 +97,7 @@ test("a linked tool gets the context at once, then only when it changes", async 
 test("paused: nothing is sent; on resume the newest context is sent", async () => {
   const h = setup();
   try {
-    h.win.deliver({ toolPort: { tool: "step" } }, h.port1 as never);
+    h.win.deliver({ toolPort: { window: "w1", tool: "step" } }, h.port1 as never);
     h.paused(true);
     h.store.dispatch({ type: "setTheme", theme: "light" });
     h.store.dispatch({ type: "setTheme", theme: "dark" });
@@ -116,7 +116,7 @@ test("paused: nothing is sent; on resume the newest context is sent", async () =
 test("a tool's event reaches the store only when the state allows it", async () => {
   const h = setup();
   try {
-    h.win.deliver({ toolPort: { tool: "step" } }, h.port1 as never);
+    h.win.deliver({ toolPort: { window: "w1", tool: "step" } }, h.port1 as never);
     h.port2.postMessage({ event: { type: "setResultStep", step: 2 } });
     h.port2.postMessage({ event: { type: "setResultStep", step: 9 } });
     h.port2.postMessage({ event: { type: "fileOpened", artifact: "model", path: "/evil.h5" } });
@@ -136,9 +136,9 @@ test("an openTool request goes to main once; main's statuses and pauses reach th
     h.store.dispatch({ type: "setResultStep", step: 1 });
     await settle();
     assert.deepEqual(h.opened, ["step"]);
-    h.status({ tool: "step", title: "Step readout", status: "stopped", reason: "its renderer crashed" });
+    h.status({ window: "w1", title: "Tool window 1", status: "stopped", reason: "its renderer crashed" });
     h.paused(true);
-    assert.equal(h.store.get().tools.windows["step"]?.status, "stopped");
+    assert.equal(h.store.get().tools.windows["w1"]?.status, "stopped");
     assert.equal(h.store.get().tools.paused, true);
   } finally {
     h.off();
@@ -149,12 +149,58 @@ test("an openTool request goes to main once; main's statuses and pauses reach th
 test("a port that does not come from this window is ignored", async () => {
   const h = setup();
   try {
-    h.win.deliver({ toolPort: { tool: "step" } }, h.port1 as never, {});
+    h.win.deliver({ toolPort: { window: "w1", tool: "step" } }, h.port1 as never, {});
     await settle();
     assert.equal(h.got.length, 0);
   } finally {
     h.off();
     h.port1.close();
     h.port2.close();
+  }
+});
+
+test("H4: a tile goes to the newest linked tool window on its port; a new window, or none linked, goes to main", async () => {
+  const h = setup();
+  try {
+    // None linked: main opens a window with the tile as its first.
+    h.store.dispatch({ type: "openTool", tool: "history" });
+    await settle();
+    assert.deepEqual(h.opened, ["history"]);
+    // Linked: the tile goes to that window, over its port, and main is not asked.
+    h.win.deliver({ toolPort: { window: "w1", tool: "history" } }, h.port1 as never);
+    h.store.dispatch({ type: "openTool", tool: "step" });
+    await settle();
+    assert.deepEqual(h.opened, ["history"]);
+    assert.ok(h.got.some((m) => (m as { addTile?: string }).addTile === "step"), JSON.stringify(h.got));
+    // A new window is asked for: main opens one even though one is linked.
+    h.store.dispatch({ type: "openTool", tool: "step", newWindow: true });
+    await settle();
+    assert.deepEqual(h.opened, ["history", "step"]);
+  } finally {
+    h.off();
+    h.port2.close();
+  }
+});
+
+test("H4: tiles go to the newest window linked; a window that stopped drops out", async () => {
+  const h = setup();
+  const second = new MessageChannel();
+  const got2: unknown[] = [];
+  second.port2.on("message", (m) => got2.push(m));
+  try {
+    h.win.deliver({ toolPort: { window: "w1", tool: "step" } }, h.port1 as never);
+    h.win.deliver({ toolPort: { window: "w2", tool: "step" } }, second.port1 as never);
+    h.store.dispatch({ type: "openTool", tool: "history" });
+    await settle();
+    assert.ok(got2.some((m) => (m as { addTile?: string }).addTile === "history"), "the newest window, w2, takes the tile");
+    assert.ok(!h.got.some((m) => (m as { addTile?: string }).addTile !== undefined), "w1 takes none");
+    h.status({ window: "w2", title: "Tool window 2", status: "stopped", reason: "its renderer crashed" });
+    h.store.dispatch({ type: "openTool", tool: "step" });
+    await settle();
+    assert.ok(h.got.some((m) => (m as { addTile?: string }).addTile === "step"), "with w2 stopped, w1 takes it");
+  } finally {
+    h.off();
+    h.port2.close();
+    second.port2.close();
   }
 });

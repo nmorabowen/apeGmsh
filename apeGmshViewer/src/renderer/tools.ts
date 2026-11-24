@@ -1,7 +1,9 @@
 // The model window's links to its tool windows (ADR 0137 D10, H1).
 //
-// - An `openTool` request in the state goes to main (`tool:open`); main makes the window and,
-//   once its page is ready, hands this page one end of a MessagePort pair (`tool:port`).
+// - An `openTool` request in the state (H4) adds a tile to the newest linked tool window, over its
+//   port (`{ addTile }`). With none linked, or for a new window, it goes to main (`tool:open`), which
+//   makes the window and, once its page is ready, hands this page one end of a MessagePort pair
+//   (`tool:port`) with the window's id.
 // - Each state change sends every linked tool the new context, if it changed and tools are not
 //   paused (ADR 0137 D4). A tool draws at most one per frame (src/tools/host.ts).
 // - What a tool sends back is checked against the state (state/tools.ts `checkToolEvent`) and
@@ -11,7 +13,7 @@
 import type { Store } from "../state/store.ts";
 import { checkToolEvent, toolContextOf } from "../state/tools.ts";
 import type { ToolStatus } from "../state/types.ts";
-import type { ToolContext, ToolContextMessage, ToolEventMessage, ToolPortMessage } from "../tools/contract.ts";
+import type { AddTileMessage, ToolContext, ToolContextMessage, ToolEventMessage, ToolPortMessage } from "../tools/contract.ts";
 
 /** What this needs of the preload's `viewer` bridge. */
 export interface ToolBridge {
@@ -43,9 +45,11 @@ export function mountToolLinks(store: Store, bridge: ToolBridge, win: Window = w
     const meta = (ev.data as Partial<ToolPortMessage> | null)?.toolPort;
     const port = ev.ports[0];
     if (!meta || !port || ev.source !== win) return;
-    links.get(meta.tool)?.port.close();
+    // H4: by tool window, newest last (a Map keeps insertion order): "Add tile" goes to the newest.
+    links.get(meta.window)?.port.close();
+    links.delete(meta.window);
     const link: Link = { port, sent: null };
-    links.set(meta.tool, link);
+    links.set(meta.window, link);
     port.onmessage = (m: MessageEvent) => {
       // The tool is another process: its event is checked against the state before it is dispatched.
       const e = checkToolEvent(store.get(), (m.data as Partial<ToolEventMessage> | null)?.event);
@@ -58,14 +62,19 @@ export function mountToolLinks(store: Store, bridge: ToolBridge, win: Window = w
 
   off.push(
     store.subscribe((s, prev) => {
-      if (s.tools.request !== prev.tools.request && s.tools.request !== null && typeof bridge.openTool === "function") {
-        void bridge.openTool(s.tools.request.tool);
+      // H4: a tile goes to the newest linked tool window, on its port; a new window (asked for, or
+      // because none is linked) is main's to open, with that tile as its first.
+      const r = s.tools.request;
+      if (r !== prev.tools.request && r !== null) {
+        const newest = [...links.values()].at(-1);
+        if (!r.newWindow && newest) newest.port.postMessage({ addTile: r.tool } satisfies AddTileMessage);
+        else if (typeof bridge.openTool === "function") void bridge.openTool(r.tool);
       }
       // A window that is gone drops its link; a resume sends each tool the newest context.
-      for (const [tool, w] of Object.entries(s.tools.windows)) {
-        if ((w.status === "closed" || w.status === "stopped") && links.has(tool)) {
-          links.get(tool)!.port.close();
-          links.delete(tool);
+      for (const [id, w] of Object.entries(s.tools.windows)) {
+        if ((w.status === "closed" || w.status === "stopped") && links.has(id)) {
+          links.get(id)!.port.close();
+          links.delete(id);
         }
       }
       const resumed = prev.tools.paused && !s.tools.paused;

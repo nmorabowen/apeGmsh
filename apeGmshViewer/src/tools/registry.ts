@@ -3,6 +3,7 @@
 // when it is mounted, so main and the model window may import this for the ids and titles.
 
 import type { ToolDefinition } from "./contract.ts";
+import { historyTool } from "./history.ts";
 import { stepTool } from "./step.ts";
 
-export const TOOLS: Readonly<Record<string, ToolDefinition>> = { [stepTool.id]: stepTool };
+export const TOOLS: Readonly<Record<string, ToolDefinition>> = { [stepTool.id]: stepTool, [historyTool.id]: historyTool };

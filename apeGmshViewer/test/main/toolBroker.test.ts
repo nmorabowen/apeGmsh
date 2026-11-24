@@ -152,3 +152,23 @@ test("H3: newest wins per kind: a tool's step range never supersedes its history
   assert.equal(h.ok && h.kind, "nodeHistory", JSON.stringify(h));
   assert.equal(r.ok && r.kind, "stepRange", JSON.stringify(r));
 });
+
+test("H4: newest wins per tile: two Node history tiles of one window never supersede each other", async () => {
+  const finish: (() => void)[] = [];
+  const b = new ToolBroker(
+    (_path, q) =>
+      new Promise<ToolAnswer>((r) =>
+        finish.push(() => r(q.kind === "nodeHistory" ? { ok: true, kind: "nodeHistory", stage: q.stage, node: q.node, component: q.component, values: [q.node] } : { ok: false, error: "x" })),
+      ),
+  );
+  const window = {};
+  const tileA = b.request(window, "/r", { kind: "nodeHistory", stage: "s", node: 1, component: "ux" }, 1, 1);
+  const tileB = b.request(window, "/r", { kind: "nodeHistory", stage: "s", node: 1, component: "uy" }, 2, 2);
+  // Tile A asks again: its first request is superseded, tile B's is not.
+  const tileA2 = b.request(window, "/r", { kind: "nodeHistory", stage: "s", node: 1, component: "uz" }, 3, 1);
+  finish.forEach((f) => f());
+  const [a, bb, a2] = await Promise.all([tileA, tileB, tileA2]);
+  assert.ok(!a.ok && a.superseded, "tile A's older request");
+  assert.equal(bb.ok && bb.kind === "nodeHistory" && bb.component, "uy", "tile B is its own stream");
+  assert.equal(a2.ok && a2.kind === "nodeHistory" && a2.component, "uz");
+});

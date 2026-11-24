@@ -559,9 +559,9 @@ function reduceEvent(s: State, e: Event): State {
       return { ...s, memory: e.status };
     // ADR 0137 H1: the tool windows. The request is the effect's (renderer/tools.ts); the statuses and the pause are main's.
     case "openTool":
-      return { ...s, tools: { ...s.tools, request: { tool: e.tool, seq: (s.tools.request?.seq ?? 0) + 1 } } };
+      return { ...s, tools: { ...s.tools, request: { tool: e.tool, seq: (s.tools.request?.seq ?? 0) + 1, newWindow: e.newWindow === true } } };
     case "toolStatus":
-      return { ...s, tools: { ...s.tools, windows: { ...s.tools.windows, [e.status.tool]: e.status } } };
+      return { ...s, tools: { ...s.tools, windows: { ...s.tools.windows, [e.status.window]: e.status } } };
     case "toolsPaused":
       return e.paused === s.tools.paused ? s : { ...s, tools: { ...s.tools, paused: e.paused } };
     case "setPlaying":

@@ -91,7 +91,7 @@ function setup(mb: number | null = 8000) {
         return () => (tick = null);
       },
     },
-    { step: "Step readout" },
+    ["step", "history"],
   );
   return { tools, made, setMemory: (m: number | null) => (memory = m), tick: () => tick?.(), polling: () => tick !== null };
 }
@@ -113,15 +113,14 @@ test("D13 item 3: the tool page's content security policy is the ADR's, exactly"
   assert.doesNotMatch(html, /<script>[^<]/, "no inline script (script-src 'self' would refuse it)");
 });
 
-test("opening a tool makes one window, reports opening, and a second open focuses it", () => {
+test("H4: each open makes a new tool window with its own id, which its status names", () => {
   const { tools, made } = setup();
   const page = new FakePage();
-  assert.deepEqual(tools.openTool(page, "step"), { ok: true });
-  assert.equal(made.length, 1);
-  assert.deepEqual(page.statuses().map((s) => s.status), ["opening"]);
-  assert.deepEqual(tools.openTool(page, "step"), { ok: true });
-  assert.equal(made.length, 1, "no second window");
-  assert.equal(made[0]!.focused, 1);
+  assert.deepEqual(tools.openTool(page, "step"), { ok: true, window: "w1" });
+  assert.deepEqual(tools.openTool(page, "history"), { ok: true, window: "w2" }, "a second window, for another monitor; tiles are added over the port");
+  assert.equal(made.length, 2);
+  assert.deepEqual(page.statuses().map((s) => [s.window, s.title, s.status]), [["w1", "Tool window 1", "opening"], ["w2", "Tool window 2", "opening"]]);
+  assert.deepEqual(tools.openTools(), ["w1", "w2"]);
 });
 
 test("an unknown tool is refused before any window is made", () => {
@@ -139,12 +138,12 @@ test("D13 item 5: only the tool's own window is linked when it says it is ready"
   assert.equal(tools.ready({}), false, "a sender main did not make for a tool");
   assert.equal(page.posted.length, 0);
   assert.equal(tools.ready(made[0]!.webContents), true);
-  assert.deepEqual(made[0]!.webContents.posted, [{ channel: "tool:port", message: { tool: "step" }, transfer: ["tool-end"] }]);
-  assert.deepEqual(page.posted, [{ channel: "tool:port", message: { tool: "step" }, transfer: ["page-end"] }]);
+  assert.deepEqual(made[0]!.webContents.posted, [{ channel: "tool:port", message: { window: "w1", tool: "step" }, transfer: ["tool-end"] }], "the window learns its id and its first tile's tool");
+  assert.deepEqual(page.posted, [{ channel: "tool:port", message: { window: "w1", tool: "step" }, transfer: ["page-end"] }]);
   assert.deepEqual(page.statuses().map((s) => s.status), ["opening", "open"]);
 });
 
-test("D11: a renderer that dies or hangs is reported; the tool opens again in a new window", () => {
+test("D11: a renderer that dies or hangs is reported; the next tool window is a new one, and the dead one is closed", () => {
   const { tools, made } = setup();
   const page = new FakePage();
   tools.openTool(page, "step");
@@ -154,18 +153,15 @@ test("D11: a renderer that dies or hangs is reported; the tool opens again in a 
   made[0]!.webContents.fire("render-process-gone", {}, { reason: "crashed", exitCode: -1 });
   const after = page.statuses().slice(2);
   assert.deepEqual(after.map((s) => [s.status, s.reason]), [["unresponsive", null], ["open", null], ["stopped", "its renderer crashed"]]);
-  // Opening it again (Spotlight) replaces the dead window, never just focuses it.
-  assert.deepEqual(tools.openTool(page, "step"), { ok: true });
+  // Opening a tool window again (Spotlight) makes a new one and closes the dead one.
+  assert.deepEqual(tools.openTool(page, "step"), { ok: true, window: "w2" });
   assert.equal(made[0]!.destroyed, true, "the dead window is closed");
-  assert.equal(made[0]!.focused, 0);
   assert.equal(made.length, 2);
-  assert.equal(page.statuses().at(-1)!.status, "opening", "the replaced window reports no 'closed' over the new one");
-  assert.deepEqual(tools.openTools(), ["step"]);
+  assert.deepEqual(page.statuses().slice(-2).map((s) => [s.window, s.status]), [["w1", "closed"], ["w2", "opening"]]);
+  assert.deepEqual(tools.openTools(), ["w2"]);
   made[1]!.close();
   assert.equal(page.statuses().at(-1)!.status, "closed");
   assert.deepEqual(tools.openTools(), []);
-  tools.openTool(page, "step");
-  assert.equal(made.length, 3, "opened again in a new window after the user closed it");
 });
 
 test("D4: under 1 GB available a tool window is refused, with how much there is", () => {
@@ -176,7 +172,7 @@ test("D4: under 1 GB available a tool window is refused, with how much there is"
   assert.equal(made.length, 0);
   assert.deepEqual(page.statuses().map((s) => [s.status, s.reason]), [["refused", "1.0 GB of RAM is available, under 1.0 GB"]]);
   const at = setup(TOOL_FLOOR_MB);
-  assert.deepEqual(at.tools.openTool(new FakePage(), "step"), { ok: true }, "at the floor it opens");
+  assert.deepEqual(at.tools.openTool(new FakePage(), "step"), { ok: true, window: "w1" }, "at the floor it opens");
 });
 
 test("D4: open tools pause when memory falls under 1 GB and resume when it frees; polling stops with the last window", () => {
