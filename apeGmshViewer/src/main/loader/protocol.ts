@@ -10,6 +10,8 @@ import type { ModelFile } from "../../model/types.ts";
 import type {
   HingeHistoryAnswer,
   HingeHistoryRequest,
+  NodeHistoryAnswer,
+  NodeHistoryRequest,
   ParticleIndexAnswer,
   ParticleOutputAnswer,
   ParticleOutputRequest,
@@ -57,6 +59,7 @@ export interface ResultsCalls {
   open: { args: [path: string]; answer: ResultsOpenAnswer };
   readStep: { args: [req: StepRequest]; answer: StepAnswer };
   readHingeHistory: { args: [req: HingeHistoryRequest]; answer: HingeHistoryAnswer };
+  readNodeHistory: { args: [req: NodeHistoryRequest]; answer: NodeHistoryAnswer };
   scan: { args: [req: ScanRequest, opts: ScanOptions]; answer: ScanAnswer };
   cancelScan: { args: [scanId: number]; answer: void };
   particleIndex: { args: [path: string]; answer: ParticleIndexAnswer };

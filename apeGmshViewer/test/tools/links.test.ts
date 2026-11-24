@@ -53,7 +53,7 @@ function onResults(): State {
   const s = reduce(initialState, { type: "fileOpened", artifact: "model", path: "/m/bridge.h5" });
   return {
     ...s,
-    results: { stages: [{ id: "stage_0", name: "push", time: [0, 1, 2, 3] }] } as unknown as State["results"],
+    results: { stages: [{ id: "stage_0", name: "push", time: [0, 1, 2, 3], nodal: ["displacement_x"] }] } as unknown as State["results"],
     phase: { axis: [{ kind: "results", stage: 0, step: 0 }] as unknown as State["phase"]["axis"], at: { kind: "results", stage: 0, step: 0 } },
   };
 }

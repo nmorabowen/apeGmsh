@@ -12,6 +12,8 @@
 import type {
   HingeHistoryAnswer,
   HingeHistoryRequest,
+  NodeHistoryAnswer,
+  NodeHistoryRequest,
   ParticleIndexAnswer,
   ParticleOutputAnswer,
   ParticleOutputRequest,
@@ -40,6 +42,7 @@ export interface RemoteResults {
   open(path: string): Promise<ResultsOpenAnswer>;
   readStep(req: StepRequest): Promise<StepAnswer>;
   readHingeHistory(req: HingeHistoryRequest): Promise<HingeHistoryAnswer>;
+  readNodeHistory(req: NodeHistoryRequest): Promise<NodeHistoryAnswer>;
   scan(req: ScanRequest, progress: (p: ScanProgress) => void, opts?: ScanOptions): Promise<ScanAnswer>;
   cancelScan(scanId: number): void;
   particleIndex(path: string): Promise<ParticleIndexAnswer>;
@@ -114,6 +117,7 @@ export class Loader {
       },
       readStep: (req) => r("readStep", req).catch((err) => ({ ok: false as const, seq: req.seq, error: why(err) })),
       readHingeHistory: (req) => r("readHingeHistory", req).catch((err) => ({ ok: false as const, seq: req.seq, error: why(err) })),
+      readNodeHistory: (req) => r("readNodeHistory", req).catch((err) => ({ ok: false as const, error: why(err) })),
       scan: (req, progress, opts = {}) => {
         const key = `${host}:${req.scanId}`;
         this.progress.set(key, progress);

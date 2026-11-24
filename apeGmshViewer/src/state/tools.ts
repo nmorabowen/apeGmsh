@@ -21,7 +21,7 @@ export function toolContextOf(s: State): ToolContext {
     model: s.artifacts.model ? fileName(s.artifacts.model.path) : null,
     step:
       at?.kind === "results" && stage
-        ? { stage: stage.id, stageName: stage.name, step: at.step, steps: stage.time.length, playing: s.playing }
+        ? { stage: stage.id, stageName: stage.name, step: at.step, steps: stage.time.length, playing: s.playing, components: [...stage.nodal] }
         : null,
     targets: { elements: sel.decls.length, nodes: sel.nodes.length, decls: sel.decls.slice(0, TARGETS_SHOWN), nodeTags: sel.nodes.slice(0, TARGETS_SHOWN) },
     params: {},

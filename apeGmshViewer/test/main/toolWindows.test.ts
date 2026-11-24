@@ -205,7 +205,18 @@ test("a tool window linked while paused is told at once", () => {
   assert.deepEqual(page.pauses(), [true, true]);
 });
 
-test("D13 item 4: the tool preload exposes toolHost.ready only, and relays its port", () => {
+test("D13 item 5: isTool is true only for a live tool window main made, not for a dead one", () => {
+  const { tools, made } = setup();
+  const page = new FakePage();
+  tools.openTool(page, "step");
+  assert.equal(tools.isTool(made[0]!.webContents), true);
+  assert.equal(tools.isTool({}), false);
+  assert.equal(tools.isTool(page), false, "the model window's page is not a tool");
+  made[0]!.webContents.fire("render-process-gone", {}, { reason: "crashed", exitCode: -1 });
+  assert.equal(tools.isTool(made[0]!.webContents), false);
+});
+
+test("D13 item 4: the tool preload exposes toolHost.ready and request only, and relays its port", () => {
   const STUB = new URL("./electronStub.ts", import.meta.url).href;
   const PRELOAD = new URL("../../src/main/toolPreload.ts", import.meta.url).href;
   const out = execFileSync(
@@ -226,6 +237,6 @@ process.stdout.write(" " + JSON.stringify(stub.sent));`,
     { encoding: "utf8" },
   );
   const [exposed, sent] = out.split(" ");
-  assert.deepEqual(JSON.parse(exposed!), { keys: ["toolHost"], tool: ["ready"] });
+  assert.deepEqual(JSON.parse(exposed!), { keys: ["toolHost"], tool: ["ready", "request"] });
   assert.deepEqual(JSON.parse(sent!), [{ how: "send", channel: "tool:ready", args: [] }]);
 });

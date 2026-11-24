@@ -134,6 +134,12 @@ export class ToolWindows {
     return false;
   }
 
+  /** D13 item 5: whether `sender` is the page of a tool window main made and still holds. */
+  isTool(sender: unknown): boolean {
+    for (const o of this.open.values()) if (!o.win.isDestroyed() && !o.gone && o.win.webContents === sender) return true;
+    return false;
+  }
+
   /** Close every tool window (the model window closed, or its page reloaded and dropped its ports). */
   closeAll(): void {
     for (const o of [...this.open.values()]) if (!o.win.isDestroyed()) o.win.close();

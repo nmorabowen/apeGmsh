@@ -1,16 +1,23 @@
-// The placeholder tool of ADR 0137 H1: the model window's results step, read from `ToolContext`,
-// and buttons that ask the store for the previous or next step. It proves the host: a separate
-// sandboxed window, the one-way context, and an event back. Real tools (the material tester's
-// surface, H2's chart) replace it as the first tool.
+// The first tool of ADR 0137 (H1, H2b): the model window's results step, read from `ToolContext`,
+// buttons that ask the store for the previous or next step, and (H2b) the picked node's history of
+// one nodal component over the stage, asked of main's data broker and drawn by the shared chart
+// with the step on screen marked. A step change moves the mark only; a new stage, node or
+// component asks again, and the newest request wins.
 
-import type { ToolContext, ToolDefinition, ToolHost } from "./contract.ts";
+import { xyPlot } from "../ui/chart.ts";
+import type { ToolAnswer, ToolContext, ToolDefinition, ToolHost } from "./contract.ts";
+
+/** The component a new stage starts on: the first x displacement, else the first component. */
+export function defaultComponent(components: readonly string[]): string | null {
+  return components.find((c) => /(^|[_/])(displacement_x|Ux)$/i.test(c)) ?? components[0] ?? null;
+}
 
 function mount(host: ToolHost) {
   const doc = host.root.ownerDocument;
-  const line = (cls: string) => {
+  const line = (cls: string, parent: HTMLElement = host.root) => {
     const d = doc.createElement("div");
     d.className = cls;
-    host.root.append(d);
+    parent.append(d);
     return d;
   };
   const model = line("tool-model");
@@ -27,19 +34,96 @@ function mount(host: ToolHost) {
   };
   const prev = button("◀ Previous step", "ask the model window for the previous step");
   const next = button("Next step ▶", "ask the model window for the next step");
+  const history = line("tool-history");
+  const pickRow = line("tool-history-bar", history);
+  const select = doc.createElement("select");
+  select.title = "the nodal component to chart over the stage";
+  pickRow.append(select);
+  const note = line("tool-history-note", history);
+  const plotBox = line("tool-history-plot", history);
+
+  let ctx: ToolContext | null = null;
   let at: ToolContext["step"] = null;
+  let component: string | null = null;
+  /** what was asked last, and what came back for it */
+  let asked: string | null = null;
+  let data: { key: string; values: ArrayLike<number> } | null = null;
+  let error: string | null = null;
+
   prev.addEventListener("click", () => at && at.step > 0 && host.send({ type: "setResultStep", step: at.step - 1 }));
   next.addEventListener("click", () => at && at.step < at.steps - 1 && host.send({ type: "setResultStep", step: at.step + 1 }));
+  select.addEventListener("change", () => {
+    component = select.value;
+    if (ctx) draw(ctx);
+  });
+
+  const nodeOf = (c: ToolContext) => (c.targets.nodes > 0 ? c.targets.nodeTags[0]! : null);
+
+  /** Ask for the history the context and the chosen component name, when it is not the one asked last. */
+  const ask = (c: ToolContext) => {
+    const node = nodeOf(c);
+    if (!c.step || node === null || component === null) return;
+    const key = JSON.stringify([c.step.stage, node, component]);
+    if (key === asked) return;
+    asked = key;
+    error = null;
+    void host.request({ kind: "nodeHistory", stage: c.step.stage, node, component }).then((a: ToolAnswer) => {
+      if (key !== asked) return;
+      if (a.ok) data = { key, values: a.values };
+      else if (!a.superseded) error = a.error;
+      else return;
+      if (ctx) draw(ctx);
+    });
+  };
+
+  const draw = (c: ToolContext) => {
+    const s = c.step;
+    const node = nodeOf(c);
+    history.hidden = !s;
+    if (!s) return;
+    // A stage's components: keep the choice while the stage offers it.
+    const comps = s.components;
+    if (component === null || !comps.includes(component)) component = defaultComponent(comps);
+    if (select.options.length !== comps.length || [...select.options].some((o, i) => o.value !== comps[i])) {
+      select.replaceChildren(
+        ...comps.map((cName) => {
+          const o = doc.createElement("option");
+          o.value = cName;
+          o.textContent = cName;
+          return o;
+        }),
+      );
+    }
+    if (component !== null) select.value = component;
+    ask(c);
+    const key = node === null || component === null ? null : JSON.stringify([s.stage, node, component]);
+    if (node === null) {
+      note.textContent = "Pick a node in the model window (the selection bar's Nodes) to chart its history here.";
+      plotBox.replaceChildren();
+    } else if (error !== null) {
+      note.textContent = error;
+      plotBox.replaceChildren();
+    } else if (data === null || data.key !== key) {
+      note.textContent = `Reading node ${node}'s ${component} over the stage…`;
+    } else {
+      note.textContent = `Node ${node}, ${s.steps} steps; the step on screen is marked.`;
+      const xs = Array.from({ length: data.values.length }, (_, i) => i + 1);
+      plotBox.replaceChildren(xyPlot({ xs, ys: data.values, xName: "step", yName: `${component} at node ${node}`, title: `${component} at node ${node} over stage ${s.stageName}`, mark: s.step }));
+    }
+  };
+
   return {
-    update(ctx: ToolContext) {
-      at = ctx.step;
-      model.textContent = ctx.model ?? "No model open";
-      stage.textContent = ctx.step ? `Stage ${ctx.step.stageName}` : "No results stage shown";
-      step.textContent = ctx.step ? `Step ${ctx.step.step + 1} of ${ctx.step.steps}${ctx.step.playing ? " · playing" : ""}` : "";
-      const t = ctx.targets;
+    update(c: ToolContext) {
+      ctx = c;
+      at = c.step;
+      model.textContent = c.model ?? "No model open";
+      stage.textContent = c.step ? `Stage ${c.step.stageName}` : "No results stage shown";
+      step.textContent = c.step ? `Step ${c.step.step + 1} of ${c.step.steps}${c.step.playing ? " · playing" : ""}` : "";
+      const t = c.targets;
       picked.textContent = t.elements + t.nodes === 0 ? "Nothing picked" : `Picked: ${t.elements.toLocaleString("en-US")} elements, ${t.nodes.toLocaleString("en-US")} nodes`;
-      prev.disabled = !ctx.step || ctx.step.step === 0;
-      next.disabled = !ctx.step || ctx.step.step >= ctx.step.steps - 1;
+      prev.disabled = !c.step || c.step.step === 0;
+      next.disabled = !c.step || c.step.step >= c.step.steps - 1;
+      draw(c);
     },
   };
 }
