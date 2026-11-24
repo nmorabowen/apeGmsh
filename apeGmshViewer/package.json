@@ -6,6 +6,9 @@
   "license": "UNLICENSED",
   "type": "module",
   "main": "dist/main.mjs",
+  "bin": {
+    "apegmsh-viewer": "scripts/cli.mjs"
+  },
   "engines": {
     "node": ">=22.18"
   },
