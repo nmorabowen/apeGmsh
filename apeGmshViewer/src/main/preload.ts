@@ -51,18 +51,13 @@
 // Until the page subscribes to a channel, main reloads the page instead of
 // sending on it, so the P0 page (which reads the model from config) follows.
 
-import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { BULK_KEY, type BulkMessage } from "../bulk.ts";
+import type { ToolPortMessage, ToolPortMeta } from "../tools/contract.ts";
+import { hear, invoke, tell, type Invoke, type OpenSet, type PageFeed, type PreloadApi } from "./ipc.ts";
 
-interface OpenSet {
-  model: string | null;
-  geometry: string | null;
-  results: string | null;
-  /** ADR 0130: the `<stem>.user.h5` beside the model, or null */
-  user: string | null;
-  /** ADR 0132 D1: the `<stem>.workspace.h5` beside the model, or null */
-  workspace: string | null;
-}
+/** A one-argument request's argument, as main's map names it. */
+type Req<C extends keyof Invoke> = Invoke[C]["req"][0];
 
 /**
  * VU12 (#2753), owner ruling "option A": the path of a File the user dropped,
@@ -73,32 +68,34 @@ interface OpenSet {
  */
 function gestured(f: File): string {
   const path = webUtils.getPathForFile(f);
-  if (path) ipcRenderer.sendSync("viewer:dropped", path);
+  // Synchronously: main records the drop before any open names it (ipc.ts `Send`).
+  if (path) ipcRenderer.sendSync("viewer:dropped" satisfies keyof import("./ipc.ts").Send, path);
   return path;
 }
 
 const listeners = { open: 0, fileChanged: 0 };
 
-function listen<T>(channel: "open" | "fileChanged", cb: (value: T) => void, onLive: () => void): () => void {
-  const handler = (_e: IpcRendererEvent, value: T) => {
+/** Hear one of the two page feeds; the first listener subscribes, the last unsubscribes (main reloads an unsubscribed page instead). */
+function listen<F extends PageFeed>(feed: F, cb: (value: F extends "open" ? OpenSet : string) => void, onLive: () => void): () => void {
+  const heard = (value: OpenSet | string) => {
     onLive();
-    cb(value);
+    cb(value as F extends "open" ? OpenSet : string);
   };
-  ipcRenderer.on(`viewer:${channel}`, handler);
-  if (listeners[channel]++ === 0) ipcRenderer.send("viewer:subscribe", channel);
+  const off = feed === "open" ? hear(ipcRenderer, "viewer:open", heard) : hear(ipcRenderer, "viewer:fileChanged", heard);
+  if (listeners[feed]++ === 0) tell(ipcRenderer, "viewer:subscribe", feed);
   let live = true;
   return () => {
     if (!live) return;
     live = false;
-    ipcRenderer.removeListener(`viewer:${channel}`, handler);
-    if (--listeners[channel] === 0) ipcRenderer.send("viewer:unsubscribe", channel);
+    off();
+    if (--listeners[feed] === 0) tell(ipcRenderer, "viewer:unsubscribe", feed);
   };
 }
 
 // ADR 0137 H1: the end of a tool window's MessagePort main hands this page, passed on to the page
 // (renderer/tools.ts) with the tool's id. The tool window's own preload is ./toolPreload.ts.
-ipcRenderer.on("tool:port", (e, meta: { tool: string }) => {
-  window.postMessage({ toolPort: { tool: meta.tool } }, "*", e.ports as unknown as Transferable[]);
+ipcRenderer.on("tool:port", (e, meta: ToolPortMeta) => {
+  window.postMessage({ toolPort: { tool: meta.tool } } satisfies ToolPortMessage, "*", e.ports as unknown as Transferable[]);
 });
 
 let bulkSeq = 0;
@@ -117,29 +114,30 @@ function bulk(answer: Promise<unknown>): Promise<number> {
   });
 }
 
-contextBridge.exposeInMainWorld("viewer", {
-  config: () => ipcRenderer.invoke("app:config"),
+// Every member is checked against ipc.ts `PreloadApi`, whose requests and answers are main's map.
+const api = {
+  config: () => invoke(ipcRenderer, "app:config"),
   // #3130: the model crosses as a bulk answer; the bridge returns its id (renderer/app.ts takes it).
-  openModel: (path: string) => bulk(ipcRenderer.invoke("model:open", path)),
+  openModel: (path: string) => bulk(invoke(ipcRenderer, "model:open", path)),
   pathForFile: (f: File) => gestured(f),
-  metrics: () => ipcRenderer.invoke("measure:metrics"),
-  measureDone: (result: unknown) => ipcRenderer.invoke("measure:done", result),
-  captureStill: (suffix: string) => ipcRenderer.invoke("capture:still", suffix),
-  captureDone: () => ipcRenderer.invoke("capture:done"),
-  captureResize: (width: number, height: number) => ipcRenderer.invoke("capture:resize", width, height),
-  fail: (message: string) => ipcRenderer.invoke("app:fail", message),
+  metrics: () => invoke(ipcRenderer, "measure:metrics"),
+  measureDone: (result: unknown) => invoke(ipcRenderer, "measure:done", result),
+  captureStill: (suffix: string) => invoke(ipcRenderer, "capture:still", suffix),
+  captureDone: () => invoke(ipcRenderer, "capture:done"),
+  captureResize: (width: number, height: number) => invoke(ipcRenderer, "capture:resize", width, height),
+  fail: (message: string) => invoke(ipcRenderer, "app:fail", message),
   // V4a (#1707): one results step for --mode=measure-results; main answers only in that mode.
-  resultsStep: (req: { kind: "nodal" | "gauss"; step: number }) => ipcRenderer.invoke("results:step", req),
+  resultsStep: (req: { kind: "nodal" | "gauss"; step: number }) => invoke(ipcRenderer, "results:step", req),
 
   onOpen: (cb: (set: OpenSet) => void) => {
     // The set already open is replayed to this callback only, unless a live
     // open has reached it first.
     let heardLive = false;
     let removed = false;
-    const off = listen<OpenSet>("open", cb, () => {
+    const off = listen("open", cb, () => {
       heardLive = true;
     });
-    void ipcRenderer.invoke("viewer:currentSet").then((set: OpenSet | null) => {
+    void invoke(ipcRenderer, "viewer:currentSet").then((set: OpenSet | null) => {
       if (set && !heardLive && !removed) cb(set);
     });
     return () => {
@@ -147,131 +145,94 @@ contextBridge.exposeInMainWorld("viewer", {
       off();
     };
   },
-  onFileChanged: (cb: (path: string) => void) => listen<string>("fileChanged", cb, () => {}),
-  goToSource: (file: string, line: number) => ipcRenderer.invoke("source:goto", file, line),
+  onFileChanged: (cb: (path: string) => void) => listen("fileChanged", cb, () => {}),
+  goToSource: (file: string, line: number) => invoke(ipcRenderer, "source:goto", file, line),
   requestOpen: (f: File) => {
     const path = gestured(f);
-    return path ? ipcRenderer.invoke("viewer:requestOpen", path) : Promise.resolve({ ok: false, reason: "requestOpen opens a file dropped from disk; this one has no path" });
+    return path ? invoke(ipcRenderer, "viewer:requestOpen", path) : Promise.resolve({ ok: false, reason: "requestOpen opens a file dropped from disk; this one has no path" });
   },
-  openGeometry: (path: string) => ipcRenderer.invoke("geometry:open", path),
+  openGeometry: (path: string) => invoke(ipcRenderer, "geometry:open", path),
   // V4b (#1728): a results file's metadata, then one step at a time (./results.ts).
-  openResults: (path: string) => ipcRenderer.invoke("results:open", path),
-  readResultsStep: (req: { path: string; stage: string; step: number; seq: number; element?: string; lineDiagram?: string; tensor?: string[]; springs?: boolean; hinges?: boolean }) => ipcRenderer.invoke("results:readStep", req),
-  readHingeHistory: (req: { path: string; stage: string; element: number; seq: number }) => ipcRenderer.invoke("results:hingeHistory", req),
+  openResults: (path: string) => invoke(ipcRenderer, "results:open", path),
+  readResultsStep: (req: Req<"results:readStep">) => invoke(ipcRenderer, "results:readStep", req),
+  readHingeHistory: (req: { path: string; stage: string; element: number; seq: number }) => invoke(ipcRenderer, "results:hingeHistory", req),
   // V4c1 (#1756): the history-range scan of a contour field, its cancel, and its progress.
   // V4c2b: an element scan may carry a node-located topology's extrapolation plan (main checks it).
-  scanResults: (req: { path: string; stage: string; components: string[]; magnitude: boolean; scanId: number; source?: "element" | "line"; plan?: unknown }) => ipcRenderer.invoke("results:scan", req),
-  cancelResultsScan: (scanId: number) => ipcRenderer.invoke("results:scanCancel", scanId),
+  scanResults: (req: Req<"results:scan">) => invoke(ipcRenderer, "results:scan", req),
+  cancelResultsScan: (scanId: number) => invoke(ipcRenderer, "results:scanCancel", scanId),
   // ADR 0130 (VU3b, #2688): the `.user.h5` index, read on request after the first frame (renderer/app.ts).
-  readUser: (req: { path: string; model: string | null; results: string | null }) => ipcRenderer.invoke("user:read", req),
+  readUser: (req: { path: string; model: string | null; results: string | null }) => invoke(ipcRenderer, "user:read", req),
   // VU7b-2 (#2747): one result of one `/spectra` case with its values (`user:readCase`, VU7b-1). The path is the
   // one `readUser` named, which main gave the page; main reads only the open set's user file (VU11), so this door
   // opens nothing else.
-  readUserCase: (req: { path: string; case: string; target: string; label: string }) => ipcRenderer.invoke("user:readCase", req),
+  readUserCase: (req: Req<"user:readCase">) => invoke(ipcRenderer, "user:readCase", req),
   // VU16 (#2800): one component of a state-free ON_NODES user result, as a contour column (`user:readResult`). As
   // readUserCase, the path is the one `readUser` named; main reads only the open set's user file, and refuses a stale entry.
-  readUserResult: (req: { path: string; name: string; component: string }) => ipcRenderer.invoke("user:readResult", req),
+  readUserResult: (req: { path: string; name: string; component: string }) => invoke(ipcRenderer, "user:readResult", req),
   // ADR 0137 D4 (#3057): main's memory reading for a model load, before it and every second during it (view mode).
   // ADR 0137 H1: open a tool window (main checks the id and memory), and hear each window's status and the memory pause.
-  openTool: (tool: string) => ipcRenderer.invoke("tool:open", tool),
-  onToolStatus: (cb: (s: unknown) => void) => {
-    const handler = (_e: IpcRendererEvent, s: unknown) => cb(s);
-    ipcRenderer.on("tool:status", handler);
-    return () => {
-      ipcRenderer.removeListener("tool:status", handler);
-    };
-  },
-  onToolsPaused: (cb: (paused: boolean) => void) => {
-    const handler = (_e: IpcRendererEvent, paused: boolean) => cb(paused);
-    ipcRenderer.on("tool:paused", handler);
-    return () => {
-      ipcRenderer.removeListener("tool:paused", handler);
-    };
-  },
-  onMemoryStatus: (cb: (m: unknown) => void) => {
-    const handler = (_e: IpcRendererEvent, m: unknown) => cb(m);
-    ipcRenderer.on("memory:status", handler);
-    return () => {
-      ipcRenderer.removeListener("memory:status", handler);
-    };
-  },
-  onScanProgress: (cb: (p: { scanId: number; done: number; total: number }) => void) => {
-    const handler = (_e: IpcRendererEvent, p: { scanId: number; done: number; total: number }) => cb(p);
-    ipcRenderer.on("results:scanProgress", handler);
-    return () => {
-      ipcRenderer.removeListener("results:scanProgress", handler);
-    };
-  },
+  openTool: (tool: string) => invoke(ipcRenderer, "tool:open", tool),
+  onToolStatus: (cb: Parameters<PreloadApi["onToolStatus"]>[0]) => hear(ipcRenderer, "tool:status", cb),
+  onToolsPaused: (cb: Parameters<PreloadApi["onToolsPaused"]>[0]) => hear(ipcRenderer, "tool:paused", cb),
+  onMemoryStatus: (cb: Parameters<PreloadApi["onMemoryStatus"]>[0]) => hear(ipcRenderer, "memory:status", cb),
+  onScanProgress: (cb: Parameters<PreloadApi["onScanProgress"]>[0]) => hear(ipcRenderer, "results:scanProgress", cb),
   // V4c1 measure mode: the CPU load since the last call, and the working sets now.
-  measureCpu: () => ipcRenderer.invoke("measure:cpu"),
-  measureMemory: () => ipcRenderer.invoke("measure:memory"),
+  measureCpu: () => invoke(ipcRenderer, "measure:cpu"),
+  measureMemory: () => invoke(ipcRenderer, "measure:memory"),
   // ADR 0128 D4 (--mode=render / describe, renderer/agentRender.ts): the job, each still, and the run's result.
   // Main answers only in those modes, and writes a PNG only under a shot name of the spec.
-  renderJob: () => ipcRenderer.invoke("render:job"),
-  renderPng: (name: string, png: Uint8Array) => ipcRenderer.invoke("render:png", name, png),
-  renderCapture: (name: string) => ipcRenderer.invoke("render:capture", name),
-  renderDone: (result: unknown) => ipcRenderer.invoke("render:done", result),
+  renderJob: () => invoke(ipcRenderer, "render:job"),
+  renderPng: (name: string, png: Uint8Array) => invoke(ipcRenderer, "render:png", name, png),
+  renderCapture: (name: string) => invoke(ipcRenderer, "render:capture", name),
+  renderDone: (result: unknown) => invoke(ipcRenderer, "render:done", result),
   // VU18 (ADR 0132 D9.2): the set a render shot draws, a variant row by index and label (null: the spec's set), never a path.
-  renderVariant: (row: { index: number; label: string } | null) => ipcRenderer.invoke("render:variant", row === null ? null : { index: row.index, label: row.label }),
+  renderVariant: (row: { index: number; label: string } | null) => invoke(ipcRenderer, "render:variant", row === null ? null : { index: row.index, label: row.label }),
   // ADR 0128 D5 (--present): the offers main heard over the second-instance path. Main holds them until
   // this subscribes; it never reloads the page for one (INV-5), which is why they do not use `listen`.
-  onOffers: (cb: (offers: unknown[]) => void) => {
-    const handler = (_e: IpcRendererEvent, offers: unknown[]) => cb(offers);
-    ipcRenderer.on("viewer:offers", handler);
-    ipcRenderer.send("viewer:offersReady");
-    return () => {
-      ipcRenderer.removeListener("viewer:offers", handler);
-    };
+  onOffers: (cb: Parameters<PreloadApi["onOffers"]>[0]) => {
+    const off = hear(ipcRenderer, "viewer:offers", cb);
+    tell(ipcRenderer, "viewer:offersReady");
+    return off;
   },
   // ADR 0128 D6 (--snapshot): main asks for the view, and writes what the page replies with.
-  onSnapshotRequest: (cb: (req: { id: number; image: [number, number] }) => void) => {
-    const handler = (_e: IpcRendererEvent, req: { id: number; image: [number, number] }) => cb(req);
-    ipcRenderer.on("viewer:snapshot", handler);
-    return () => {
-      ipcRenderer.removeListener("viewer:snapshot", handler);
-    };
-  },
+  onSnapshotRequest: (cb: Parameters<PreloadApi["onSnapshotRequest"]>[0]) => hear(ipcRenderer, "viewer:snapshot", cb),
   // ADR 0128 D5: a click on an offer opens its set; refused with the reason, never with a dialog.
-  offerOpen: (path: string, needs: readonly string[]) => ipcRenderer.invoke("viewer:offerOpen", path, needs),
+  offerOpen: (path: string, needs: readonly string[]) => invoke(ipcRenderer, "viewer:offerOpen", path, needs),
   // VU10 (ADR 0132 D9): the study main holds, and its changes. A variant is named by its row index and label,
   // never by a path: main resolves the row. The compare set's step names a stage, a step and a request number only.
-  variants: () => ipcRenderer.invoke("variants:current"),
-  onVariants: (cb: (study: unknown) => void) => {
-    const handler = (_e: IpcRendererEvent, study: unknown) => cb(study);
-    ipcRenderer.on("viewer:variants", handler);
-    return () => {
-      ipcRenderer.removeListener("viewer:variants", handler);
-    };
-  },
-  variantsSwitch: (index: number, label: string) => ipcRenderer.invoke("variants:switch", index, label),
-  variantsCompare: (index: number, label: string) => ipcRenderer.invoke("variants:compare", index, label),
-  readCompareStep: (req: { stage: string; step: number; seq: number }) => ipcRenderer.invoke("compare:readStep", { stage: req.stage, step: req.step, seq: req.seq }),
-  compareClose: () => ipcRenderer.invoke("compare:close"),
+  variants: () => invoke(ipcRenderer, "variants:current"),
+  onVariants: (cb: Parameters<PreloadApi["onVariants"]>[0]) => hear(ipcRenderer, "viewer:variants", cb),
+  variantsSwitch: (index: number, label: string) => invoke(ipcRenderer, "variants:switch", index, label),
+  variantsCompare: (index: number, label: string) => invoke(ipcRenderer, "variants:compare", index, label),
+  readCompareStep: (req: { stage: string; step: number; seq: number }) => invoke(ipcRenderer, "compare:readStep", { stage: req.stage, step: req.step, seq: req.seq }),
+  compareClose: () => invoke(ipcRenderer, "compare:close"),
   // VU19 (ADR 0132 D9.5): the compare set's model and `.user.h5`, through doors of the compare slot. None names a
   // file or a row: main reads the set it holds in its compare slot, and each answer names the slot it read.
-  compareModel: () => ipcRenderer.invoke("compare:model", {}),
-  compareUserRead: () => ipcRenderer.invoke("compare:userRead", {}),
-  compareUserReadResult: (req: { name: string; component: string }) => ipcRenderer.invoke("compare:userReadResult", { name: req.name, component: req.component }),
-  snapshotReply: (id: number, reply: unknown) => ipcRenderer.invoke("viewer:snapshotReply", id, reply),
+  compareModel: () => invoke(ipcRenderer, "compare:model", {}),
+  compareUserRead: () => invoke(ipcRenderer, "compare:userRead", {}),
+  compareUserReadResult: (req: { name: string; component: string }) => invoke(ipcRenderer, "compare:userReadResult", { name: req.name, component: req.component }),
+  snapshotReply: (id: number, reply: unknown) => invoke(ipcRenderer, "viewer:snapshotReply", id, reply),
   // VU9a (ADR 0132 D6, D7; HG9 on #2803): the window set's workspace. Neither door names a file: main reads and writes
   // the set's own `<stem>.workspace.h5`, and refuses an edit with any key its op does not name (a path included).
-  workspaceRead: () => ipcRenderer.invoke("workspace:read"),
-  workspaceSave: (edit: unknown) => ipcRenderer.invoke("workspace:save", edit),
+  workspaceRead: () => invoke(ipcRenderer, "workspace:read"),
+  workspaceSave: (edit: Req<"workspace:save">) => invoke(ipcRenderer, "workspace:save", edit),
   // VU9b (ADR 0130 A4; HG9 on #2693): one combination edit (`{op: add, row, expect}` or `{op: revert, expect}`) into
   // the window set's own `<stem>.user.h5`; it never names a file, and main refuses any key the op does not name.
-  combinationsSave: (edit: unknown) => ipcRenderer.invoke("combinations:save", edit),
+  combinationsSave: (edit: Req<"combinations:save">) => invoke(ipcRenderer, "combinations:save", edit),
   // ADR 0134 D5 (M2-S4 #2983): the particles. The index and one output of the window set's results file (main checks the
   // path is that file, as for `results:*`), and the set's own `<stem>.particles.h5`, which the door names itself (no path).
-  particleIndex: (path: string) => ipcRenderer.invoke("particles:index", path),
+  particleIndex: (path: string) => invoke(ipcRenderer, "particles:index", path),
   readParticleOutput: (req: { path: string; stage: string; output: number; field: string | null; seq: number }) =>
-    ipcRenderer.invoke("particles:readOutput", { path: req.path, stage: req.stage, output: req.output, field: req.field, seq: req.seq }),
-  particleSet: () => ipcRenderer.invoke("particles:set"),
+    invoke(ipcRenderer, "particles:readOutput", { path: req.path, stage: req.stage, output: req.output, field: req.field, seq: req.seq }),
+  particleSet: () => invoke(ipcRenderer, "particles:set"),
   // The particle measure and capture run (main/modes/measure.ts): its job (null in every other run), its still, its end.
-  particleHarness: () => ipcRenderer.invoke("particles:harness"),
-  particleHarnessStill: () => ipcRenderer.invoke("particles:harnessStill"),
-  particleHarnessDone: (result: unknown) => ipcRenderer.invoke("particles:harnessDone", result),
+  particleHarness: () => invoke(ipcRenderer, "particles:harness"),
+  particleHarnessStill: () => invoke(ipcRenderer, "particles:harnessStill"),
+  particleHarnessDone: (result: unknown) => invoke(ipcRenderer, "particles:harnessDone", result),
   // ADR 0135: one material tester run. The job names no executable and no file; main validates all of it.
-  materialTestRun: (job: unknown, seq: number) => ipcRenderer.invoke("materialTest:run", job, seq),
-  materialTestCancel: () => ipcRenderer.invoke("materialTest:cancel"),
-  materialTestSaveCsv: (text: string, name: string) => ipcRenderer.invoke("materialTest:saveCsv", text, name),
-});
+  materialTestRun: (job: Invoke["materialTest:run"]["req"][0], seq: number) => invoke(ipcRenderer, "materialTest:run", job, seq),
+  materialTestCancel: () => invoke(ipcRenderer, "materialTest:cancel"),
+  materialTestSaveCsv: (text: string, name: string) => invoke(ipcRenderer, "materialTest:saveCsv", text, name),
+} satisfies PreloadApi;
+
+contextBridge.exposeInMainWorld("viewer", api);

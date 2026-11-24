@@ -4,7 +4,7 @@
 // page, and the tool's id. Contexts arrive on the port and are drawn at most once per frame
 // (./host.ts); the tool's events go back on it. The page holds no store and reads no file.
 
-import type { ToolAnswer, ToolContext, ToolEvent, ToolRequest } from "./contract.ts";
+import type { ToolAnswer, ToolContextMessage, ToolEvent, ToolEventMessage, ToolPortMessage, ToolRequest } from "./contract.ts";
 import { ToolScheduler } from "./host.ts";
 import { TOOLS } from "./registry.ts";
 import { cssVariables } from "../theme/tokens.ts";
@@ -13,7 +13,7 @@ const bridge = (window as unknown as { toolHost: { ready(): void; request(q: Too
 const root = document.getElementById("tool")!;
 
 window.addEventListener("message", (ev: MessageEvent) => {
-  const meta = (ev.data as { toolPort?: { tool: string } } | null)?.toolPort;
+  const meta = (ev.data as Partial<ToolPortMessage> | null)?.toolPort;
   const port = ev.ports[0];
   if (!meta || !port) return;
   const def = TOOLS[meta.tool];
@@ -23,14 +23,14 @@ window.addEventListener("message", (ev: MessageEvent) => {
   }
   document.title = `${def.title} - apeGmshViewer`;
   let seq = 0;
-  const handle = def.mount({ root, send: (event: ToolEvent) => port.postMessage({ event }), request: (q) => bridge.request(q, ++seq) });
+  const handle = def.mount({ root, send: (event: ToolEvent) => port.postMessage({ event } satisfies ToolEventMessage), request: (q) => bridge.request(q, ++seq) });
   const scheduler = new ToolScheduler(handle, { request: (fn) => requestAnimationFrame(() => fn()) }, () => document.visibilityState === "visible");
   document.addEventListener("visibilitychange", () => scheduler.shown());
   // The app's colour tokens, as the model window's page has them (not applyTheme: its font faces are
   // files, and the tool page's content security policy loads none).
   let theme: string | null = null;
   port.onmessage = (m: MessageEvent) => {
-    const ctx = (m.data as { context?: ToolContext } | null)?.context;
+    const ctx = (m.data as Partial<ToolContextMessage> | null)?.context;
     if (!ctx) return;
     if (ctx.theme !== theme) {
       theme = ctx.theme;

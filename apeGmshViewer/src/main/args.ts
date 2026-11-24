@@ -32,7 +32,10 @@ export const badArgs =
         : arg("capture-tries") !== undefined && !(/^[1-9][0-9]*$/.test(arg("capture-tries")!) && Number(arg("capture-tries")) >= 2)
           ? `--capture-tries=${arg("capture-tries")}: expected a whole number of captures, 2 or more`
           : null;
-export const mode = badArgs === null ? (arg("mode") ?? "view") : "refused";
+/** A mode the app runs in (`MODES`). */
+export type Mode = (typeof MODES)[number];
+/** The run's mode: one of `MODES` (badArgs refused any other), or "refused". */
+export const mode: Mode | "refused" = badArgs === null ? ((arg("mode") ?? "view") as Mode) : "refused";
 /** ADR 0128 D4: the two agent modes; `out` is a folder for them, and they write nothing outside it (INV-1). */
 export const agentMode = mode === "render" || mode === "describe";
 /** ADR 0128 D5, D6: these reach the window already running, and never open one. */

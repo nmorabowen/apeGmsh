@@ -12,6 +12,7 @@
 // folder is another one when it runs unbundled, VH3 #2868).
 
 import { app, BrowserWindow, ipcMain } from "electron";
+import { handle, listen, push } from "../ipc.ts";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -44,7 +45,7 @@ export function registerMeasure(host: MeasureHost): void {
   const { headlessEnd, errText, resultsHost, preload } = host;
   preloadPath = preload;
 
-  ipcMain.handle("measure:metrics", async () => {
+  handle(ipcMain, "measure:metrics")(async () => {
     const metrics = app.getAppMetrics();
     const kb = (type: string) =>
       metrics.filter((m) => m.type === type).reduce((s, m) => s + (m.memory?.workingSetSize ?? 0), 0);
@@ -57,7 +58,7 @@ export function registerMeasure(host: MeasureHost): void {
     };
   });
 
-  ipcMain.handle("measure:done", (_e, result: unknown) => {
+  handle(ipcMain, "measure:done")((_e, result) => {
     writeFileSync(out!, JSON.stringify(result, null, 2));
     // V4c1: the contour scrub (a model with a results sibling) prints its own ledger row.
     const contour = (result as { contour?: ContourMeasure | null } | null)?.contour;
@@ -88,7 +89,7 @@ export function registerMeasure(host: MeasureHost): void {
 
   let cpuMark = cpuTicks();
   /** V4c1 measure: the machine's CPU load (%) since the last call (a reviewer re-runs under other loads). */
-  ipcMain.handle("measure:cpu", () => {
+  handle(ipcMain, "measure:cpu")(() => {
     const now = cpuTicks();
     const d = now.total - cpuMark.total;
     const busy = d > 0 ? (100 * (d - (now.idle - cpuMark.idle))) / d : NaN;
@@ -96,7 +97,7 @@ export function registerMeasure(host: MeasureHost): void {
     return busy;
   });
   /** V4c1 measure: the main and renderer working sets now (MB). */
-  ipcMain.handle("measure:memory", () => {
+  handle(ipcMain, "measure:memory")(() => {
     const m = app.getAppMetrics();
     const mb = (type: string) => m.filter((x) => x.type === type).reduce((s, x) => s + (x.memory?.workingSetSize ?? 0), 0) / 1024;
     return { main: mb("Browser"), renderer: mb("Tab") };
@@ -356,7 +357,7 @@ async function measureOpen(rf: ResultsFile, path: string, sizeBytes: number, ope
 
   // Main → renderer → apply, 100 consecutive steps from step 0 (or all, if fewer).
   const SCRUB = Math.min(100, T);
-  ipcMain.handle("results:step", (_e, req: unknown) => {
+  handle(ipcMain, "results:step")((_e, req) => {
     const r = req as { kind: "nodal" | "gauss"; step: number };
     const [values, readMs] =
       r.kind === "gauss" ? timed(() => [rf.readGaussStep(s.id, g.id, comp, r.step)]) : timed(() => rf.readNodalStep(s.id, vec, r.step));
@@ -550,7 +551,7 @@ function colourArg(): { field: string; component: number } | null {
 /** Register the particle run's doors. `set` is the window's set (main.ts `windowSet`). */
 export function registerParticleHarness(host: { headlessEnd: (reason: string) => void; errText: (err: unknown) => string; set: () => OpenSet | { reason: string } }): void {
   const { headlessEnd, errText } = host;
-  ipcMain.handle("particles:harness", () => {
+  handle(ipcMain, "particles:harness")(() => {
     if (!particleRun) return null;
     try {
       const set = host.set();
@@ -561,13 +562,13 @@ export function registerParticleHarness(host: { headlessEnd: (reason: string) =>
       if (scrub !== undefined && !/^[1-9][0-9]*$/.test(scrub)) throw new Error(`--scrub-ms=${scrub}: expected milliseconds above 0`);
       const grid = arg("grid");
       if (grid !== undefined && grid !== "1") throw new Error(`--grid=${grid}: expected 1`);
-      return { op: mode, set, colour: colourArg(), output: output === undefined ? null : Number(output), grid: grid === "1", t0, scrubMs: scrub === undefined ? 6000 : Number(scrub) };
+      return { op: mode === "capture" ? "capture" : "measure", set, colour: colourArg(), output: output === undefined ? null : Number(output), grid: grid === "1", t0, scrubMs: scrub === undefined ? 6000 : Number(scrub) };
     } catch (err) {
       headlessEnd(`the particle run: ${errText(err)}`);
       return null;
     }
   });
-  ipcMain.handle("particles:harnessStill", async (e) => {
+  handle(ipcMain, "particles:harnessStill")(async (e) => {
     if (!particleRun || mode !== "capture" || !out) throw new Error("particles:harnessStill: only a particle capture run writes a still");
     const w = BrowserWindow.fromWebContents(e.sender);
     if (!w) throw new Error("particles:harnessStill: the page has no window");
@@ -576,7 +577,7 @@ export function registerParticleHarness(host: { headlessEnd: (reason: string) =>
     writeFileSync(out, png);
     return out;
   });
-  ipcMain.handle("particles:harnessDone", (_e, result: unknown) => {
+  handle(ipcMain, "particles:harnessDone")((_e, result) => {
     if (!particleRun || !out) throw new Error("particles:harnessDone: this is no particle run");
     if (mode === "measure") {
       writeFileSync(out, JSON.stringify(result, null, 2));

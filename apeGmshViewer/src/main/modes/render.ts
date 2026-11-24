@@ -14,6 +14,7 @@
 // read (`drawnSet`).
 
 import { app, BrowserWindow, ipcMain } from "electron";
+import { handle, listen, push } from "../ipc.ts";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { outRefusal, prepareRender, PROFILE_DIR, type RenderJobFiles } from "../../spec/job.ts";
@@ -230,9 +231,10 @@ export function registerRender(host: RenderHost): void {
    * why it failed), and a write that throws part way leaves no partial PNG
    * (#2736).
    */
-  ipcMain.handle("capture:still", async (e, suffix: string) => {
+  handle(ipcMain, "capture:still")(async (e, suffix) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win) throw new Error("capture: no window");
+    if (suffix !== undefined && typeof suffix !== "string") throw new Error(`capture:still: the suffix is a string; got ${typeof suffix}`);
     const safeSuffix = suffix ? suffix.replace(/[\\/]/g, "_") : "";
     const path = safeSuffix ? out!.replace(/\.png$/i, "") + `.${safeSuffix}.png` : out!;
     const img = await settledCapture(win);
@@ -252,10 +254,10 @@ export function registerRender(host: RenderHost): void {
     return path;
   });
 
-  ipcMain.handle("capture:done", () => app.quit());
+  handle(ipcMain, "capture:done")(() => app.quit());
 
   /** Capture only (V4b): resize the page to `width` x `height` CSS pixels, for a still at another window width. */
-  ipcMain.handle("capture:resize", (e, width: unknown, height: unknown) => {
+  handle(ipcMain, "capture:resize")((e, width, height) => {
     if (mode !== "capture") throw new Error("capture:resize: only in --mode=capture");
     if (typeof width !== "number" || typeof height !== "number") throw new Error("capture:resize needs a width and a height");
     BrowserWindow.fromWebContents(e.sender)?.setContentSize(Math.round(width), Math.round(height));
@@ -267,7 +269,7 @@ export function registerRender(host: RenderHost): void {
   // only into `--out` (INV-1), and only a PNG named by a shot of the spec.
   // -------------------------------------------------------------------------
 
-  ipcMain.handle("render:job", () => {
+  handle(ipcMain, "render:job")(() => {
     // The job names the spec's own set; a shot's variant row is asked for with `render:variant`.
     if (mode === "render" && renderJob) return { mode, ...renderJob };
     if (mode === "describe") {
@@ -287,7 +289,7 @@ export function registerRender(host: RenderHost): void {
    * is told which files to open. A row that does not answer leaves the drawn
    * set as it was and answers why, for the shot's refusal.
    */
-  ipcMain.handle("render:variant", (_e, asked: unknown) => {
+  handle(ipcMain, "render:variant")((_e, asked) => {
     if (mode !== "render" || !renderJob || !renderStudy) throw new Error("render:variant: only in --mode=render");
     const study = renderStudy;
     const job = renderJob;
@@ -316,7 +318,7 @@ export function registerRender(host: RenderHost): void {
   });
 
   /** A model-mode still the renderer composed (renderer/stillLayers.ts). */
-  ipcMain.handle("render:png", (_e, name: unknown, png: unknown) => {
+  handle(ipcMain, "render:png")((_e, name, png) => {
     if (!(png instanceof Uint8Array) || png.length < 8) throw new Error("render:png needs the PNG bytes");
     const path = stillPath(name);
     refuseIfEnding(path);
@@ -335,7 +337,7 @@ export function registerRender(host: RenderHost): void {
    * PNG is written. Two matching captures prove the frame stopped changing, not
    * that it is the latest frame.
    */
-  ipcMain.handle("render:capture", async (e, name: unknown) => {
+  handle(ipcMain, "render:capture")(async (e, name) => {
     const w = BrowserWindow.fromWebContents(e.sender);
     if (!w || !renderJob) throw new Error("render:capture: no render window");
     const path = stillPath(name);
@@ -354,7 +356,7 @@ export function registerRender(host: RenderHost): void {
     return { path, width: size.width, height: size.height };
   });
 
-  ipcMain.handle("render:done", (_e, result: unknown) => {
+  handle(ipcMain, "render:done")((_e, result) => {
     if (!agentMode) throw new Error("render:done: not an agent mode");
     const dir = resolve(out!);
     const r = result as { manifest?: { shots: { status: string }[]; timing: object }; describe?: unknown } | null;

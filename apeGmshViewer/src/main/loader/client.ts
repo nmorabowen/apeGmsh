@@ -170,7 +170,8 @@ export class Loader {
     const id = this.next++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { child, resolve, reject });
-      child.postMessage({ ...req, id });
+      // The call's arguments were typed where they were given (`results`'s ResultsCalls[K]["args"]).
+      child.postMessage({ ...req, id } as LoaderRequest);
     });
   }
 

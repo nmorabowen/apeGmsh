@@ -11,6 +11,7 @@
 import type { Store } from "../state/store.ts";
 import { checkToolEvent, toolContextOf } from "../state/tools.ts";
 import type { ToolStatus } from "../state/types.ts";
+import type { ToolContext, ToolContextMessage, ToolEventMessage, ToolPortMessage } from "../tools/contract.ts";
 
 /** What this needs of the preload's `viewer` bridge. */
 export interface ToolBridge {
@@ -35,18 +36,19 @@ export function mountToolLinks(store: Store, bridge: ToolBridge, win: Window = w
     const json = JSON.stringify(toolContextOf(s));
     if (!force && json === link.sent) return;
     link.sent = json;
-    link.port.postMessage({ context: JSON.parse(json) as unknown });
+    link.port.postMessage({ context: JSON.parse(json) as ToolContext } satisfies ToolContextMessage);
   };
 
   const onMessage = (ev: MessageEvent) => {
-    const meta = (ev.data as { toolPort?: { tool: string } } | null)?.toolPort;
+    const meta = (ev.data as Partial<ToolPortMessage> | null)?.toolPort;
     const port = ev.ports[0];
     if (!meta || !port || ev.source !== win) return;
     links.get(meta.tool)?.port.close();
     const link: Link = { port, sent: null };
     links.set(meta.tool, link);
     port.onmessage = (m: MessageEvent) => {
-      const e = checkToolEvent(store.get(), (m.data as { event?: unknown } | null)?.event);
+      // The tool is another process: its event is checked against the state before it is dispatched.
+      const e = checkToolEvent(store.get(), (m.data as Partial<ToolEventMessage> | null)?.event);
       if (e !== null) store.dispatch(e);
     };
     send(link, true);

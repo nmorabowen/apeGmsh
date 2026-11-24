@@ -73,7 +73,11 @@ const seen = (r: Opened) => ({
 });
 
 const out: Record<string, unknown> = {};
-if (which === "memory") {
+if (which === "channels") {
+  // Review finding 5: what main registers, against main/ipc.ts's map (test/main/ipc.test.ts).
+  out["handles"] = [...handlers.keys()].sort();
+  out["listens"] = [...listeners.keys()].sort();
+} else if (which === "memory") {
   listeners.get("viewer:dropped")!({ returnValue: undefined }, model);
   out["open"] = seen(await call("model:open", model));
   out["memory"] = memory;

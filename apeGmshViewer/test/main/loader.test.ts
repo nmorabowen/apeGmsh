@@ -305,3 +305,32 @@ test("an agent mode (describe) sends no memory status: a still never carries the
   const got = run("good", join(root, "good"));
   assert.equal(got["memorySent"], 0);
 });
+
+// ---------------------------------------------------------------------------
+// Review finding 9 (2026-11-24): a request the loader does not serve is answered, never left hanging.
+
+test("the loader answers an unknown call, an unknown op or a bad host with why; a message with no id gets nothing", async () => {
+  const { fork } = await import("node:child_process");
+  const entry = fileURLToPath(new URL("../../src/main/loader/process.ts", import.meta.url));
+  const child = fork(entry, [], { serialization: "advanced", execArgv: [], stdio: ["ignore", "inherit", "inherit", "ipc"] });
+  const replies: unknown[] = [];
+  child.on("message", (m) => replies.push(m));
+  try {
+    child.send({ id: 1, op: "results", host: "window", call: "deleteEverything", args: [] });
+    child.send({ id: 2, op: "formatDisk", path: "C:/x" });
+    child.send({ id: 3, op: "results", host: "elsewhere", call: "close", args: [] });
+    child.send({ op: "results", host: "window", call: "close", args: [] });
+    child.send({ id: 4, op: "results", host: "window", call: "stepCounts", args: [] });
+    const t = Date.now();
+    while (replies.length < 4 && Date.now() - t < 20_000) await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 200));
+    assert.deepEqual(replies, [
+      { id: 1, ok: false, error: 'loader: the loader has no results call "deleteEverything"' },
+      { id: 2, ok: false, error: 'loader: the loader has no op "formatDisk"' },
+      { id: 3, ok: false, error: 'loader: no results host "elsewhere"' },
+      { id: 4, ok: true, value: { hits: 0, reads: 0 } },
+    ]);
+  } finally {
+    child.kill();
+  }
+});
