@@ -1596,7 +1596,14 @@ class LoadsComposite(_DeclarationsMixin):
     def _resolve_surface_consistent(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
         faces = self._target_faces_full(defn.target, source=src)
-        return resolver.resolve_surface_consistent(defn, faces)
+        # Same orientation rule as the tributary path above.
+        outwards = (
+            self._face_outward_normals(faces)
+            if defn.mode == "pressure" else None
+        )
+        return resolver.resolve_surface_consistent(
+            defn, faces, outwards=outwards,
+        )
 
     def _resolve_surface_element(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
@@ -1811,7 +1818,9 @@ class _SurfaceLoads:
 
         Positive ``magnitude`` pushes *into* the face (opposite the
         outward normal).  The normal is computed from the mesh at
-        resolution time.
+        resolution time, and *outward* is away from the volume element
+        the face bounds, in both reductions; without volumes it is the
+        face's connectivity normal.
 
         With ``reduction="consistent"``, ``basis`` selects the shape
         functions the pressure is integrated against (ADR 0091): pass
