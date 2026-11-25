@@ -794,6 +794,28 @@ class LoadsComposite(_DeclarationsMixin):
             noun="load",
         )
 
+    def _resolve_entities(self, target, source: str = "auto", *,
+                          expected_dim: int | None = None) -> list:
+        """:meth:`_resolve_target`, refusing a mesh selection.
+
+        For the loads that integrate over elements: a selection stores
+        node ids only, so there is nothing to integrate.
+        """
+        dts = self._resolve_target(target, source=source,
+                                   expected_dim=expected_dim)
+        if dts and dts[0][0] == "__ms__":
+            raise ValueError(
+                f"Target {target!r} is a mesh selection, which stores "
+                f"nodes and no element connectivity, so a line, surface "
+                f"or body load (or a normal magnitude) has nothing to "
+                f"integrate over. Target a physical group (pg=...), a "
+                f"label (label=...) or a part; if {target!r} names one "
+                f"of those too, the selection shadows it and pg= or "
+                f"label= reaches it. g.loads.point accepts a mesh "
+                f"selection."
+            )
+        return dts
+
     def _target_nodes(self, target, node_map, all_nodes,
                       source: str = "auto", *,
                       expected_dim: int | None = None) -> set[int]:
@@ -846,9 +868,7 @@ class LoadsComposite(_DeclarationsMixin):
 
     def _target_edges(self, target, source: str = "auto") -> list[tuple[int, int]]:
         """Resolve target to a list of (n1, n2) line edges."""
-        dts = self._resolve_target(target, source=source, expected_dim=1)
-        if dts and dts[0][0] == "__ms__":
-            return []  # mesh selections don't expose edge connectivity
+        dts = self._resolve_entities(target, source=source, expected_dim=1)
         import gmsh
         from apeGmsh.mesh._element_types import element_topology
         edges: list[tuple[int, int]] = []
@@ -871,9 +891,7 @@ class LoadsComposite(_DeclarationsMixin):
 
     def _target_faces(self, target, source: str = "auto") -> list[list[int]]:
         """Resolve target to a list of node-id lists (one per face element)."""
-        dts = self._resolve_target(target, source=source, expected_dim=2)
-        if dts and dts[0][0] == "__ms__":
-            return []
+        dts = self._resolve_entities(target, source=source, expected_dim=2)
         import gmsh
         from apeGmsh.mesh._element_types import element_topology
         faces: list[list[int]] = []
@@ -900,9 +918,7 @@ class LoadsComposite(_DeclarationsMixin):
         (line2) or 3 (line3) depending on the mesh order.  Used for the
         consistent-reduction path where midside nodes participate.
         """
-        dts = self._resolve_target(target, source=source, expected_dim=1)
-        if dts and dts[0][0] == "__ms__":
-            return []
+        dts = self._resolve_entities(target, source=source, expected_dim=1)
         import gmsh
         from apeGmsh.mesh._element_types import element_topology
         edges: list[list[int]] = []
@@ -930,9 +946,7 @@ class LoadsComposite(_DeclarationsMixin):
         for tri3/quad4/tri6/quad8/quad9.  Used for the
         consistent-reduction path.
         """
-        dts = self._resolve_target(target, source=source, expected_dim=2)
-        if dts and dts[0][0] == "__ms__":
-            return []
+        dts = self._resolve_entities(target, source=source, expected_dim=2)
         import gmsh
         from apeGmsh.mesh._element_types import element_topology
         faces: list[list[int]] = []
@@ -1087,9 +1101,7 @@ class LoadsComposite(_DeclarationsMixin):
         per-volume (3D) or per-area (2D); a 3D target therefore keeps
         the volume path unchanged.
         """
-        dts = self._resolve_target(target, source=source, expected_dim=None)
-        if dts and dts[0][0] == "__ms__":
-            return [], [], None
+        dts = self._resolve_entities(target, source=source, expected_dim=None)
         cont = sorted({d for d, _ in dts if d in (2, 3)})
         if not cont:
             found = sorted({d for d, _ in dts})
@@ -1434,9 +1446,7 @@ class LoadsComposite(_DeclarationsMixin):
         """
         import gmsh
         from apeGmsh.mesh._element_types import element_topology
-        dts = self._resolve_target(defn.target, source=src, expected_dim=1)
-        if dts and dts[0] and dts[0][0] == "__ms__":
-            return
+        dts = self._resolve_entities(defn.target, source=src, expected_dim=1)
         for d, t in dts:
             if d != 1:
                 continue
@@ -1565,7 +1575,7 @@ class LoadsComposite(_DeclarationsMixin):
                 items.append(
                     (eid, (float(q[0]), float(q[1]), float(q[2]))))
             return resolver.resolve_line_element_varying(defn, items)
-        dts = self._resolve_target(defn.target, source=src, expected_dim=1)
+        dts = self._resolve_entities(defn.target, source=src, expected_dim=1)
         import gmsh
         eids: list[int] = []
         for d, t in dts:
@@ -1600,7 +1610,7 @@ class LoadsComposite(_DeclarationsMixin):
 
     def _resolve_surface_element(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
-        dts = self._resolve_target(defn.target, source=src, expected_dim=2)
+        dts = self._resolve_entities(defn.target, source=src, expected_dim=2)
         import gmsh
         eids: list[int] = []
         for d, t in dts:
