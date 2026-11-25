@@ -23,7 +23,9 @@ This ordering is what makes a load script durable. You can refine the mesh,
 swap a part, or rebuild the geometry, and the same declarations re-resolve
 against whatever mesh exists now — which is also why load targets are
 names (labels, physical groups, part labels, mesh selections), never raw
-Gmsh tags. A typo in a target name doesn't wait until resolution to bite:
+Gmsh tags. A mesh selection is a set of nodes, so it can carry a point load
+but not a line, surface or body load, which needs elements to integrate
+over; those refuse it by name. A typo in a target name doesn't wait until resolution to bite:
 targets are validated when `g.mesh.generation.generate(...)` runs, before
 any expensive mesh work.
 
