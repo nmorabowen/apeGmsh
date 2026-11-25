@@ -699,6 +699,7 @@ class LoadResolver:
         self,
         defn: SurfaceLoadDef,
         faces: list[list[int]],
+        outwards: list[ndarray] | None = None,
     ) -> list[NodalLoadRecord]:
         """Consistent surface load via shape-function integration.
 
@@ -710,6 +711,11 @@ class LoadResolver:
         For ``mode="pressure"`` the pressure follows the curved face
         normal evaluated at each Gauss point.  Any other node count
         raises :class:`NotImplementedError`.
+
+        ``outwards`` (per face, as in :meth:`resolve_surface_tributary`)
+        sets which way that normal points: a face whose connectivity
+        normal opposes its entry is integrated with the opposite sign.
+        ``None`` keeps the connectivity orientation.
 
         For ``mode="shear"`` the global reference vector is projected
         onto each face's average tangent plane (exact for flat faces;
@@ -730,10 +736,13 @@ class LoadResolver:
             d = np.asarray(defn.direction, dtype=float)
             d = d / (np.linalg.norm(d) + 1e-30)
         accum: dict[int, ndarray] = {}
-        for face in faces:
+        for k, face in enumerate(faces):
             face = list(face)
             coords = np.array([self.coords_of(n) for n in face])
             weights, normals = integrate_face(coords, len(face), basis=basis)
+            if outwards is not None and float(
+                    np.dot(np.sum(normals, axis=0), outwards[k])) < 0.0:
+                normals = -normals
             d_shear = None
             if defn.mode == "shear":
                 # Face-average normal (∫ n dA over the face), then the
