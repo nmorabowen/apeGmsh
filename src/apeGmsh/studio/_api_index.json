@@ -1262,7 +1262,7 @@
     },
     "g.loads.gravity": {
       "doc": "Body weight (``ρ · g``) over the continuum region(s) of *target*.",
-      "signature": "gravity(target=None, *, pg=None, label=None, tag=None, g=(0.0, 0.0, -9.81), density=None, reduction='tributary', target_form='nodal', name=None) -> 'GravityLoadDef'",
+      "signature": "gravity(target=None, *, pg=None, label=None, tag=None, g=(0.0, 0.0, -9.81), density=None, reduction='tributary', target_form='nodal', basis='lagrange', name=None) -> 'GravityLoadDef'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.loads.gravity"
     },
@@ -1340,7 +1340,7 @@
     },
     "g.loads.volume": {
       "doc": "Generic body force on the continuum region(s) of *target*.",
-      "signature": "volume(target=None, *, pg=None, label=None, tag=None, force_per_volume=(0.0, 0.0, 0.0), reduction='tributary', target_form='nodal', name=None) -> 'BodyLoadDef'",
+      "signature": "volume(target=None, *, pg=None, label=None, tag=None, force_per_volume=(0.0, 0.0, 0.0), reduction='tributary', target_form='nodal', basis='lagrange', name=None) -> 'BodyLoadDef'",
       "skill": "references/api-cheatsheet.md",
       "symbol": "g.loads.volume"
     },

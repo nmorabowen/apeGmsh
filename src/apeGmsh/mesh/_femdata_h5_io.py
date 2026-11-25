@@ -346,7 +346,7 @@ __all__ = [
 #: bridge can warn when e.g. a Lagrange-consistent surface load is
 #: imported onto Bézier control-value elements (the TIMs T2
 #: mechanism); ``""`` decodes to ``None`` (basis-insensitive record:
-#: point / tributary / resultant / gravity equal split).
+#: point / tributary / resultant / degree-1 body force).
 #: Presence-probed on read (``"basis" in p.dtype.names``); a 2.27.x
 #: file lacks the column and decodes ``basis=None``.  Per ADR 0023's
 #: two-version reader window, readers tolerate 2.27.x and 2.28.x.

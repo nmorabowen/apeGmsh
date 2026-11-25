@@ -73,7 +73,7 @@ _DISPATCH: dict[type, dict[tuple[str, str], str]] = {
     },
     BodyLoadDef: {
         ("tributary",  "nodal"):   "_resolve_body_tributary",
-        ("consistent", "nodal"):   "_resolve_body_tributary",
+        ("consistent", "nodal"):   "_resolve_body_consistent",
         ("tributary",  "element"): "_resolve_body_element",
         ("consistent", "element"): "_resolve_body_element",
     },
@@ -439,7 +439,7 @@ class LoadsComposite(_DeclarationsMixin):
     def gravity(self, target=None, *, pg=None, label=None, tag=None,
                 g=(0., 0., -9.81), density=None,
                 reduction="tributary", target_form="nodal",
-                name=None) -> GravityLoadDef:
+                basis="lagrange", name=None) -> GravityLoadDef:
         """Body weight (``ρ · g``) over the continuum region(s) of *target*.
 
         Convenience wrapper over :meth:`volume` for the common case of
@@ -454,12 +454,23 @@ class LoadsComposite(_DeclarationsMixin):
         Reduction and emission form
         ---------------------------
         * ``reduction="tributary"`` (default): split each element's
-          weight equally among its corner nodes. Requires
+          weight equally among **all** its nodes, mid-side nodes
+          included (1/10 to each node of a tet10). Requires
           ``density``.
-        * ``reduction="consistent"``: for tet4 / hex8 with constant
-          density, reduces to the same per-node share as tributary
-          (so behaviourally equivalent today, but the path is kept
-          separate for higher-order extensions).
+        * ``reduction="consistent"``: ``ρ·g·∫ N_i dΩ`` against the
+          element's shape functions, on its own (curved, distorted)
+          geometry. The same as tributary on tet4 / tri3 and
+          undistorted hex8 / wedge6 / quad4; different on every
+          quadratic element. A straight-sided tet10 gets ``-1/20`` of
+          its weight at each corner and ``+1/5`` at each mid-edge node
+          (hex20 and quad8 corners are negative too). Requires
+          ``density``.
+        * ``basis="bernstein"`` (consistent only): for the Ladruno
+          Bézier elements (BezierTri6 / BezierTet10), whose DOFs are
+          control values. The vector is then the equal split, which is
+          exact for straight-sided elements (ADR 0091). The session
+          cannot see which element the bridge will use, so a Bézier
+          region needs it spelled out; ``build()`` warns otherwise.
         * ``target_form="element"``: emit one
           ``ElementLoadRecord`` per volume element with
           ``load_type="bodyForce"`` carrying ``g`` and ``density``;
@@ -486,6 +497,9 @@ class LoadsComposite(_DeclarationsMixin):
         target_form : ``"nodal"`` or ``"element"``, default
             ``"nodal"``
             Output record type.
+        basis : ``"lagrange"`` or ``"bernstein"``, default
+            ``"lagrange"``
+            Shape functions of the consistent reduction (see above).
         name : str, optional
             Friendly name.
 
@@ -526,13 +540,13 @@ class LoadsComposite(_DeclarationsMixin):
             target=t, target_source=src,
             pattern=self._active_case, name=name,
             g=g, density=density,
-            reduction=reduction, target_form=target_form,
+            reduction=reduction, target_form=target_form, basis=basis,
         ))
 
     def volume(self, target=None, *, pg=None, label=None, tag=None,
                force_per_volume=(0., 0., 0.),
                reduction="tributary", target_form="nodal",
-               name=None) -> BodyLoadDef:
+               basis="lagrange", name=None) -> BodyLoadDef:
         """Generic body force on the continuum region(s) of *target*.
 
         General sibling of :meth:`gravity` — accepts an arbitrary
@@ -559,14 +573,18 @@ class LoadsComposite(_DeclarationsMixin):
             Body force vector in force per unit volume.
         reduction : ``"tributary"`` or ``"consistent"``, default
             ``"tributary"``
-            Lumping scheme. ``"consistent"`` falls back to
-            tributary for tet4/hex8 (same per-node share for
-            constant body force).
+            Lumping scheme, as in :meth:`gravity`: the equal split over
+            all the element's nodes, or ``∫ N_i dΩ`` against its shape
+            functions.
         target_form : ``"nodal"`` or ``"element"``, default
             ``"nodal"``
             Output record type. ``"element"`` emits one
             ``ElementLoadRecord`` per volume element with
             ``load_type="bodyForce"`` and ``params={"bf": ...}``.
+        basis : ``"lagrange"`` or ``"bernstein"``, default
+            ``"lagrange"``
+            Shape functions of the consistent reduction; as in
+            :meth:`gravity`, ``"bernstein"`` for Bézier regions.
         name : str, optional
             Friendly name.
 
@@ -593,7 +611,7 @@ class LoadsComposite(_DeclarationsMixin):
             target=t, target_source=src,
             pattern=self._active_case, name=name,
             force_per_volume=force_per_volume,
-            reduction=reduction, target_form=target_form,
+            reduction=reduction, target_form=target_form, basis=basis,
         ))
 
     def _face_load_def(self, target=None, *, pg=None, label=None, tag=None,
@@ -745,10 +763,10 @@ class LoadsComposite(_DeclarationsMixin):
                 "field is integrated against. Use "
                 "reduction='consistent', target_form='nodal' (got "
                 f"reduction={defn.reduction!r}, "
-                f"target_form={defn.target_form!r}). Note: gravity/"
-                "volume loads need no basis switch — the equal split "
-                "IS the Bernstein-consistent vector for a constant "
-                "body force."
+                f"target_form={defn.target_form!r}). Note: for gravity/"
+                "volume loads the tributary equal split already IS the "
+                "Bernstein-consistent vector of a constant body force "
+                "on straight-sided elements."
             )
         return self._declare(defn)
 
@@ -1633,6 +1651,11 @@ class LoadsComposite(_DeclarationsMixin):
         src = getattr(defn, 'target_source', 'auto')
         _, conns, dim = self._target_elements(defn.target, source=src)
         return resolver.resolve_body_tributary(defn, conns, dim or 3)
+
+    def _resolve_body_consistent(self, resolver, defn, node_map, all_nodes):
+        src = getattr(defn, 'target_source', 'auto')
+        _, conns, dim = self._target_elements(defn.target, source=src)
+        return resolver.resolve_body_consistent(defn, conns, dim or 3)
 
     def _resolve_body_element(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')

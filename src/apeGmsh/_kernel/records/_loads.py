@@ -43,9 +43,9 @@ class NodalLoadRecord(LoadRecord):
     ``"bernstein"`` — so the OpenSees bridge can warn when e.g. a
     Lagrange-consistent surface load is imported onto Bézier
     control-value elements (the TIMs T2 mechanism). ``None`` for every
-    basis-insensitive record: point loads, tributary lumping,
-    resultants, and the gravity/volume equal split (which is exact in
-    both bases for constant fields).
+    basis-insensitive record: point loads, tributary lumping (the
+    gravity/volume equal split included), resultants, and consistent
+    gravity/volume loads on degree-1 elements, where the bases coincide.
 
     ``source`` (#1338) is the ``kind`` of the pre-mesh definition the
     record was reduced from, one of

@@ -9,9 +9,14 @@ For surface elements, also returns ``n_i = ∫ N_i · (∂x/∂ξ × ∂x/∂η)
 which multiplied by a pressure magnitude gives the consistent pressure
 force on each node (oriented along the varying outward normal).
 
+For body forces, :func:`integrate_cells` returns ``∫ N_i dΩ`` over whole
+elements (faces of a 2-D model, cells of a 3-D one).
+
 Supported node counts:
     line:  2 (line2), 3 (line3)
     face:  3 (tri3), 4 (quad4), 6 (tri6), 8 (quad8), 9 (quad9)
+    cell:  4 (tet4), 6 (wedge6), 8 (hex8), 10 (tet10), 20 (hex20),
+           27 (hex27)
 
 Out-of-range node counts raise ``NotImplementedError`` — never silently
 fall back to a wrong rule.
@@ -471,7 +476,83 @@ def integrate_face(coords: ndarray, n_nodes: int, basis: str = "lagrange",
     return weights, normals
 
 
+#: Cell node count -> the :mod:`apeGmsh.fem._quadrature` rule that
+#: integrates ``N_i · |J|`` exactly on the *curved* element (per-variable
+#: or total degree in the comment).
+_CELL_RULES: dict[int, tuple[str, tuple[int, ...]]] = {
+    4:  ("gauss_tet_15", ()),      # total 1
+    6:  ("gauss_wedge", (2,)),     # total 2 in the triangle, 3 in ζ
+    8:  ("gauss_hex_3d", (2,)),    # 3 per variable
+    10: ("gauss_tet_15", ()),      # total 5
+    20: ("gauss_hex_3d", (4,)),    # 7 per variable
+    27: ("gauss_hex_3d", (4,)),    # 7 per variable
+}
+#: Elements per vectorized pass (bounds the Jacobian array's memory).
+_CELL_CHUNK = 20_000
+
+
+def integrate_cells(coords: ndarray, dim: int) -> ndarray:
+    """Per-node weights ``∫ N_i dΩ`` of many same-type elements.
+
+    The consistent nodal force of a constant body force ``b`` is
+    ``F_i = b · w_i``.  ``dΩ`` is volume for ``dim == 3`` and area for
+    ``dim == 2``; the isoparametric map is integrated as it is, so a
+    curved or distorted element gets its own weights.  The integral is
+    exact for every cell and for planar faces; on a non-planar face
+    ``|J|`` is a square root, integrated to quadrature order.
+
+    Lagrange basis only (see the module docstring for Bernstein).
+
+    Parameters
+    ----------
+    coords : (M, n_nodes, 3) physical coordinates, gmsh node order.
+    dim : 2 or 3 — with the node count, this names the element type.
+
+    Returns
+    -------
+    (M, n_nodes) array.
+    """
+    coords = np.asarray(coords, dtype=float)
+    m, n_nodes = coords.shape[:2]
+    out = np.empty((m, n_nodes))
+    if dim == 2:
+        w, N, dN = _face_shape(n_nodes, "lagrange")
+        for s in range(0, m, _CELL_CHUNK):
+            J = np.einsum("gnk,end->egkd", dN, coords[s:s + _CELL_CHUNK])
+            jac = np.linalg.norm(np.cross(J[:, :, 0], J[:, :, 1]), axis=-1)
+            out[s:s + _CELL_CHUNK] = (w * jac) @ N
+        return out
+    # Deferred: the module stays free of an eager _kernel -> fem edge
+    # (tests/test_import_dag_polarity.py).
+    from apeGmsh.fem import _quadrature as Q
+    from apeGmsh.fem._hrz import volume_code
+    from apeGmsh.fem._shape_functions import (
+        compute_jacobian_dets,
+        get_shape_functions,
+    )
+
+    code = volume_code(n_nodes)
+    if code is None or n_nodes not in _CELL_RULES:
+        raise NotImplementedError(
+            f"Consistent body-force reduction for {n_nodes}-node cells is "
+            f"not implemented.  Supported node counts: "
+            f"{tuple(_CELL_RULES)}."
+        )
+    catalog = get_shape_functions(code)
+    assert catalog is not None      # every volume_code is in the catalog
+    N_fn, dN_fn, geom_kind, _ = catalog
+    rule, rule_args = _CELL_RULES[n_nodes]
+    qp, w = getattr(Q, rule)(*rule_args)
+    N = N_fn(qp)
+    for s in range(0, m, _CELL_CHUNK):
+        jac = compute_jacobian_dets(
+            qp, coords[s:s + _CELL_CHUNK], dN_fn, geom_kind)
+        out[s:s + _CELL_CHUNK] = (w * jac) @ N
+    return out
+
+
 __all__ = [
+    "integrate_cells",
     "integrate_edge",
     "integrate_edge_scaled",
     "integrate_face",

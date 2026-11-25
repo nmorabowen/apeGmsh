@@ -339,9 +339,13 @@ Per-path math (all returning `list[LoadRecord]`):
 - `resolve_gravity_tributary(defn, elements)` — `ρ·V·g / N_nodes` per
   element (requires `defn.density` to be set; see warning below).
 - `resolve_body_tributary(defn, elements)` — `bf·V / N_nodes`.
-- `resolve_line_consistent`, `resolve_surface_consistent`,
-  `resolve_gravity_consistent` — for linear / tri3 / quad4 these
-  currently delegate to tributary (correct up to that order).
+- `resolve_line_consistent`, `resolve_surface_consistent` — shape-function
+  quadrature over the full edge / face connectivity (line2/line3,
+  tri3/quad4/tri6/quad8/quad9).
+- `resolve_gravity_consistent`, `resolve_body_consistent` — `∫ N_i dΩ` per
+  node on the element's own isoparametric map, for every type the target
+  walk accepts (tri3/quad4/tri6/quad8/quad9, tet4/hex8/wedge6/tet10/hex20/
+  hex27). `basis="bernstein"` (tri/tet only) is the tributary vector.
 - `resolve_line_element`, `resolve_surface_element`,
   `resolve_gravity_element`, `resolve_body_element` — emit
   `ElementLoadRecord`s (`beamUniform`, `surfacePressure`, `bodyForce`).

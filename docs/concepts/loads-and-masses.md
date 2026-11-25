@@ -86,11 +86,17 @@ g.loads.surface.pressure(
 )
 ```
 
-You do not need the knob for gravity or `g.loads.volume` — their equal
-split already *is* the Bernstein-consistent vector for a constant body
-force. And if you forget it, the bridge warns at `build()`
-(`WarnLoadBasisMismatch`) when an imported case's loads land on an
-element family whose basis disagrees. See ADR 0091.
+Gravity and `g.loads.volume` follow the same rule. The default tributary
+split gives every node of an element the same share, mid-side nodes
+included. `reduction="consistent"` integrates the body force against the
+Lagrange functions on the element's own geometry: a straight `tet10` takes
+−1/20 of its weight at each corner and +1/5 at each mid-edge node, and
+`hex20` and `quad8` corners are negative too. A Bézier region either keeps
+the tributary split, which already *is* its consistent vector on straight
+elements, or passes `basis="bernstein"`, which gives the same numbers. If
+you forget the basis, the bridge warns at `build()`
+(`WarnLoadBasisMismatch`) when an imported case's loads land on an element
+family whose basis disagrees. See ADR 0091.
 
 There are, deliberately, no element loads. You will not find an `eleLoad`
 anywhere in this pipeline — every `g.loads` verb resolves to nodal force
