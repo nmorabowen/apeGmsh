@@ -146,6 +146,45 @@ def gauss_tet() -> tuple[np.ndarray, np.ndarray]:
     return _TET_PTS.copy(), _TET_WTS.copy()
 
 
+# 15-point rule, degree 5 exact (Stroud T3:5-1 / Keast 15): centroid, two
+# vertex orbits, one edge orbit.  Closed-form abscissae, positive weights.
+_S15 = float(np.sqrt(15.0))
+
+
+def _tet_rule_15() -> tuple[np.ndarray, np.ndarray]:
+    bary: list[tuple[float, float, float, float]] = [(0.25,) * 4]
+    wts: list[float] = [8.0 / 405.0]
+    for s in (1.0, -1.0):
+        a = (7.0 + s * _S15) / 34.0
+        w = (2665.0 - s * 14.0 * _S15) / 226800.0
+        for i in range(4):
+            lam = [a] * 4
+            lam[i] = 1.0 - 3.0 * a
+            bary.append((lam[0], lam[1], lam[2], lam[3]))
+            wts.append(w)
+    c, d = (10.0 - 2.0 * _S15) / 40.0, (10.0 + 2.0 * _S15) / 40.0
+    for i in range(4):
+        for j in range(i + 1, 4):
+            lam = [c] * 4
+            lam[i] = lam[j] = d
+            bary.append((lam[0], lam[1], lam[2], lam[3]))
+            wts.append(5.0 / 567.0)
+    P = np.array(bary, dtype=np.float64)[:, 1:]   # L0 is the dependent one
+    return P, np.array(wts, dtype=np.float64)
+
+
+_TET15_PTS, _TET15_WTS = _tet_rule_15()
+
+
+def gauss_tet_15() -> tuple[np.ndarray, np.ndarray]:
+    """15-point rule on the reference tet, degree 5 exact.
+
+    The 11-point rule (degree 4) integrates ``N_I²`` and ``|J|`` of a
+    tet10, but not ``N_I · |J|`` of a curved one, which has degree 5.
+    """
+    return _TET15_PTS.copy(), _TET15_WTS.copy()
+
+
 # ------------------------------------------------------------------------
 # Wedge — tri × line tensor product
 # ------------------------------------------------------------------------

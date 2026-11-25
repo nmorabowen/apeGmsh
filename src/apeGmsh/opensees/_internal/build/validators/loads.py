@@ -218,7 +218,7 @@ def validate_load_basis_vs_elements(
     and a Lagrange region) from producing false positives — a load
     resolved for one region legitimately touches the other's boundary
     nodes there.  Records with ``basis=None`` (point / tributary /
-    resultant / gravity equal split) and nodes covered by no declared
+    resultant / degree-1 body force) and nodes covered by no declared
     element are skipped.  One aggregated warning
     (:class:`WarnLoadBasisMismatch`).
     """

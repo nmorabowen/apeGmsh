@@ -174,3 +174,44 @@ faces, that validates the Bernstein numbers by construction.
 - Ladruno fork `SRC/element/bezierTetrahedron/BezierTet10.cpp`,
   `SRC/element/bezierTriangle/BezierTri6.cpp` — the verified element
   conventions.
+
+## Amendment 1 (2026-11-24): gravity and volume loads take `basis=`
+
+Replaces Decision §4. It was right about Bézier elements and wrong about
+everything else: `reduction="consistent"` on `g.loads.gravity` /
+`g.loads.volume` returned the equal split for **every** element. On a
+Lagrange `tet10` that is `W/10` per node, where the consistent vector is
+`-W/20` per corner and `+W/5` per mid-edge node. `tri6`, `quad8`, `quad9`,
+`hex20` and `hex27` were wrong in the same way, and so were distorted
+`hex8`, `wedge6` and `quad4`. The user had asked for "consistent" by name
+and nothing said it was not.
+
+1. `reduction="consistent"` integrates `∫ N_i dΩ` against the Lagrange
+   functions on the element's own (curved, distorted) map, for every
+   element type the target walk accepts. Other types were already refused
+   by name there (`element_topology(integrable=True)`).
+2. `g.loads.gravity` and `g.loads.volume` take `basis="lagrange"`
+   (default) or `"bernstein"`, as the other field loads do.
+   `"bernstein"` is the equal split, bit-identical to before, and refuses
+   non-simplex elements.
+3. The records carry the basis when the target holds a quadratic element,
+   so §5's guard covers body forces. On degree-1 elements the bases
+   coincide and the tag stays `None`. No schema change.
+4. `reduction="tributary"` (the default) is unchanged.
+
+**What changes for a Bézier deck.** One that says
+`reduction="consistent"` on gravity or volume without a basis used to get
+the Bernstein vector and now gets the Lagrange one, with
+`WarnLoadBasisMismatch` at `build()`. The session cannot tell the two
+families apart (Context, above), so one of the two needs to be said. The
+default is the one the line and surface verbs already have. The cure is
+`basis="bernstein"`, or the default tributary reduction.
+
+This also closes the part of ADR 0054's deferral that asked for ramped
+*consistent* gravity on quadratic continuum: the nodal route now carries
+it. The equal split on a curved Bézier element remains exact only for
+straight sides, as §2 scopes it.
+
+Gate: `tests/test_consistent_body_force.py` (exact rational integrals for
+every type, straight and curved; gmsh's own basis on a curved mesh; a P2
+solve with a quadratic exact solution; the four guard quadrants).

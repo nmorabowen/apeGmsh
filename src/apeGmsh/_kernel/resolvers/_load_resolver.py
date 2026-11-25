@@ -523,9 +523,9 @@ class LoadResolver:
 
         *elements* is a list of connectivity rows (each is an array
         of node IDs).  Each element contributes ``ρ·measure·g`` total,
-        split equally among its nodes, where *measure* is the element
-        volume for ``dim == 3`` and its area for ``dim == 2`` (so
-        ``density`` is mass-per-volume in 3D, mass-per-area in 2D).
+        split equally among **all** its nodes (the ten of a tet10, not
+        its four corners), where *measure* is the element volume for
+        ``dim == 3`` and its area for ``dim == 2`` (so ``density`` is mass-per-volume in 3D, mass-per-area in 2D).
         """
         if defn.density is None:
             raise ValueError(
@@ -764,21 +764,122 @@ class LoadResolver:
         elements: list[ndarray],
         dim: int = 3,
     ) -> list[NodalLoadRecord]:
-        """Consistent gravity reduction.
+        """Consistent gravity: ``ρ·g·∫ N_i dΩ`` per element node.
 
-        For tet4 / hex8 with constant density, the consistent vector
-        equals the tributary vector (each node gets V/n × ρ × g).
-
-        The same equal split is **exact** for the quadratic Bernstein
-        simplex elements (``basis="bernstein"``, ADR 0091): every
-        BezierTet10 basis function integrates to V/10 and every
-        BezierTri6 one to A/6, so a constant body force lands equally
-        on all control points. For higher-order *Lagrange* elements
-        (tet10/hex20) the equal split remains an approximation with the
-        correct per-element resultant (the true Lagrange-consistent
-        vector puts negative shares on tet10 corners).
+        See :meth:`_resolve_body_force_consistent`.
         """
-        return self.resolve_gravity_tributary(defn, elements, dim)
+        if defn.density is None:
+            raise ValueError(
+                "GravityLoadDef requires explicit density for consistent "
+                "reduction. Either set density= or use target_form='element' "
+                "to defer to the solver."
+            )
+        if self._is_bernstein(defn, elements, dim):
+            return self._tag_basis(
+                defn, elements, dim,
+                self.resolve_gravity_tributary(defn, elements, dim))
+        return self._resolve_body_force_consistent(
+            defn, defn.density * np.asarray(defn.g, dtype=float),
+            elements, dim)
+
+    def resolve_body_consistent(
+        self,
+        defn: BodyLoadDef,
+        elements: list[ndarray],
+        dim: int = 3,
+    ) -> list[NodalLoadRecord]:
+        """Consistent body force: ``b·∫ N_i dΩ`` per element node.
+
+        See :meth:`_resolve_body_force_consistent`.
+        """
+        if self._is_bernstein(defn, elements, dim):
+            return self._tag_basis(
+                defn, elements, dim,
+                self.resolve_body_tributary(defn, elements, dim))
+        return self._resolve_body_force_consistent(
+            defn, np.asarray(defn.force_per_volume, dtype=float),
+            elements, dim)
+
+    def _resolve_body_force_consistent(
+        self,
+        defn: GravityLoadDef | BodyLoadDef,
+        intensity: ndarray,
+        elements: list[ndarray],
+        dim: int,
+    ) -> list[NodalLoadRecord]:
+        """``intensity · ∫ N_i dΩ`` against the Lagrange shape functions.
+
+        Integrated on each element's own isoparametric map, so curved
+        and distorted elements are covered.  The equal (tributary)
+        split is the same vector only on tet4 / tri3 and on
+        parallelepiped hex8 / wedge6 and parallelogram quad4.  On a
+        straight-sided tet10 the corners get ``-V/20`` and the
+        mid-edges ``+V/5``; hex20 and quad8 corners are negative too.
+
+        ``defn.basis == "bernstein"`` (ADR 0091) does not come here: on
+        the straight-sided Bézier simplices every control point's
+        function integrates to ``V/n``, which is the equal split.
+        """
+        from .._consistent_quadrature import integrate_cells
+
+        by_n: dict[int, list[int]] = {}
+        for i, row in enumerate(elements):
+            by_n.setdefault(len(row), []).append(i)
+        weights: list[ndarray] = [np.empty(0)] * len(elements)
+        for idxs in by_n.values():
+            conn_idx = np.array(
+                [[self._node_to_idx[int(t)] for t in elements[i]]
+                 for i in idxs], dtype=np.intp)
+            for i, w in zip(
+                    idxs, integrate_cells(self.node_coords[conn_idx], dim)):
+                weights[i] = w
+        accum: dict[int, ndarray] = {}
+        for conn_row, w in zip(elements, weights):
+            for nid, w_i in zip(conn_row, w):
+                f3 = intensity * w_i
+                _accumulate_nodal(
+                    accum, int(nid),
+                    np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0]))
+        return self._tag_basis(defn, elements, dim, _accum_to_records(
+            accum, pattern=defn.pattern, name=defn.name, source=defn.kind))
+
+    @staticmethod
+    def _is_bernstein(
+        defn: GravityLoadDef | BodyLoadDef,
+        elements: list[ndarray],
+        dim: int,
+    ) -> bool:
+        """Whether *defn* asks for the Bernstein vector; refuses non-simplices."""
+        if getattr(defn, "basis", "lagrange") != "bernstein":
+            return False
+        simplex = (3, 6) if dim == 2 else (4, 10)
+        bad = sorted({len(r) for r in elements} - set(simplex))
+        if bad:
+            raise NotImplementedError(
+                f"basis='bernstein' supports the simplex family only (node "
+                f"counts {simplex} in {dim}-D); target {defn.target!r} has "
+                f"{bad}-node elements. The Bézier elements are "
+                f"BezierTri6 and BezierTet10."
+            )
+        return True
+
+    @staticmethod
+    def _tag_basis(
+        defn: GravityLoadDef | BodyLoadDef,
+        elements: list[ndarray],
+        dim: int,
+        records: list[NodalLoadRecord],
+    ) -> list[NodalLoadRecord]:
+        """Stamp the basis where it matters: quadratic elements (ADR 0091).
+
+        On degree-1 elements the bases coincide and the records stay
+        basis-insensitive (``None``).
+        """
+        quadratic = (6, 8, 9) if dim == 2 else (10, 20, 27)
+        if any(len(r) in quadratic for r in elements):
+            for rec in records:
+                rec.basis = getattr(defn, "basis", "lagrange")
+        return records
 
     # ------------------------------------------------------------------
     # Element-form output (eleLoad-style commands)
