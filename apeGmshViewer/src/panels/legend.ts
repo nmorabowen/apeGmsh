@@ -14,7 +14,6 @@
 // holds the colour range controls.
 
 import {
-  CMAP_NAMES,
   contourFieldsOf,
   contourView,
   deformOf,
@@ -31,6 +30,7 @@ import {
   NODE_SIZE_MIN,
   fixedRangeFrom,
   rampCss,
+  rampParts,
   rangeKindOf,
   rangeOptionsOf,
   resolveFieldUnits,
@@ -40,10 +40,11 @@ import {
   type ContourView,
 } from "../state/selectors.ts";
 import type { State, Store } from "../state/store.ts";
-import type { ColourBy, ContourCmap, ContourRange, ContourSource, GaussMode, LegendEntry, UserResult } from "../state/types.ts";
+import type { ColourBy, ContourRange, ContourSource, GaussMode, LegendEntry, UserResult } from "../state/types.ts";
 import { isHeadingToggleTarget, toggleCardCollapse } from "../ui/collapse.ts";
 import { byId, el, listen } from "../ui/dom.ts";
 import { fillScale, mountScaleChrome, type ScaleChrome } from "../ui/scaleChrome.ts";
+import { mountColormaps } from "./legend/colormaps.ts";
 
 export { fmtValue, rampCss } from "../state/selectors.ts";
 
@@ -61,6 +62,22 @@ const css = (rgb: readonly number[]): string => `rgb(${rgb.map((c) => Math.round
  * Qt name and the averaging in words) and, when the component's name says so,
  * that its axes are local.
  */
+/** The most intervals between ticks the scale's width holds (9 ticks). */
+export const MAX_TICK_INTERVALS = 8;
+
+/**
+ * Where the scale's ticks sit, as fractions of the range. Banded: on band
+ * edges, every edge while they fit, else every s-th edge for the smallest s
+ * that divides the levels into at most MAX_TICK_INTERVALS steps (12 levels:
+ * every second). Levels no such s divides, and a continuous ramp: the quarters.
+ */
+export function tickFractions(levels: number): number[] {
+  for (let s = 1; levels >= 2 && s < levels; s++) {
+    if (levels % s === 0 && levels / s <= MAX_TICK_INTERVALS) return Array.from({ length: levels / s + 1 }, (_, k) => (k * s) / levels);
+  }
+  return [0, 0.25, 0.5, 0.75, 1];
+}
+
 export function contourLines(
   s: State,
   v: Extract<ContourView, { state: "ready" | "element" | "combination" | "difference" | "user" }>,
@@ -77,12 +94,13 @@ export function contourLines(
   // VU7b-2: a User Combination's scale names the combination, and says when it can be no deformed shape.
   // VU10: a difference's scale names the window variant and the compare variant it subtracts.
   const what = v.state === "combination" ? `${v.name} · ` : v.state === "difference" ? `${v.window} − ${v.compare} · ` : "";
+  const at = tickFractions(rampParts(v.cmap).levels);
   return {
     title: `${what}${v.field} · ${v.component.label}${unitSuffix}`,
     min: c.min === null ? "no finite value" : fmtValue(c.min * u.factor),
     max: c.max === null ? "" : constant ? "(constant)" : fmtValue(c.max * u.factor),
     // The scale is the only colour bar, so it also says when there is no range to show.
-    ticks: c.min === null || c.max === null ? ["no finite value"] : constant ? [fmtValue(c.min * u.factor), "(constant)"] : [0, 0.25, 0.5, 0.75, 1].map((f) => fmtValue((c.min! + (c.max! - c.min!) * f) * u.factor)),
+    ticks: c.min === null || c.max === null ? ["no finite value"] : constant ? [fmtValue(c.min * u.factor), "(constant)"] : at.map((f) => fmtValue((c.min! + (c.max! - c.min!) * f) * u.factor)),
     range: c.label,
     units: u.note,
     state:
@@ -129,6 +147,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
   const viewportScale = byId("viewport-scale");
   const contourCard = byId("contour");
   let scaleChrome: ScaleChrome | null = null;
+  const colormaps = mountColormaps(store);
   let refusalsOpen = false;
   let unlisten: (() => void)[] = [];
   // The Contour card and the scale have their own listeners: they rebuild on every step, the other cards do not.
@@ -173,7 +192,6 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
       s.visibility.showOffsets === prev.visibility.showOffsets &&
       s.nodes.on === prev.nodes.on &&
       s.supports === prev.supports &&
-      s.contour.cmap === prev.contour.cmap &&
       gaussSig === lastGauss
     ) {
       // (V4d) The cards follow the deformed shape's state in every mode, and the Contour card alone follows
@@ -318,16 +336,8 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     unlisten.push(listen(bc, "click", () => store.dispatch({ type: "setSupports", on: !store.get().supports.on })));
     supportsRow.append(bc);
     labelled("Supports", supportsRow);
-    const cm = el("select", "contour-cmap");
-    cm.title = "contour colormap";
-    for (const name of CMAP_NAMES) {
-      const o = el("option", undefined, name);
-      o.value = name;
-      o.selected = name === s.contour.cmap;
-      cm.append(o);
-    }
-    unlisten.push(listen(cm, "change", () => store.dispatch({ type: "setContourCmap", cmap: cm.value as ContourCmap })));
-    labelled("Contour", cm);
+    // The colormap control is mounted once and moved here on each rebuild, so an editor in use survives it.
+    labelled("Contour", colormaps.root);
     deformCard.hidden = !s.phase.axis.some((k) => k.kind === "results");
     renderContourCard(s);
     let rows: LegendEntry[];
@@ -660,6 +670,7 @@ export function mountLegend(store: Store, subscribeTheme?: (fn: () => void) => (
     for (const u of contourUnlisten) u();
     for (const u of deformUnlisten) u();
     scaleChrome?.dispose();
+    colormaps.dispose();
     for (const u of unlisten) u();
   };
 }

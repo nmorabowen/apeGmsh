@@ -15,7 +15,7 @@
 
 import { reduceClip } from "./clip.ts";
 import { particleSystemOf, reduceParticles } from "./results.ts";
-import { CMAP_NAMES, componentName, contourKeysOf, defaultPick, hasPick } from "./contour.ts";
+import { componentName, contourKeysOf, defaultPick, hasPick, isContourCmap, isLevels, MAX_LEVELS } from "./contour.ts";
 import { defaultLineDiagramComponent, lineDiagramKeysOf } from "./lineDiagram.ts";
 import { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
 import { initialCamera, reduceCamera } from "./reduce/camera.ts";
@@ -867,8 +867,11 @@ function reduceEvent(s: State, e: Event): State {
       return { ...s, contour: { ...s.contour, range: e.range, fixed } };
     }
     case "setContourCmap":
-      if (!CMAP_NAMES.includes(e.cmap)) throw new RangeError(`setContourCmap: ${JSON.stringify(e.cmap)}`);
+      if (!isContourCmap(e.cmap)) throw new RangeError(`setContourCmap: ${JSON.stringify(e.cmap)}`);
       return s.contour.cmap === e.cmap ? s : { ...s, contour: { ...s.contour, cmap: e.cmap } };
+    case "setContourLevels":
+      if (!isLevels(e.levels)) throw new RangeError(`setContourLevels: ${JSON.stringify(e.levels)} is not 0 or 2..${MAX_LEVELS}`);
+      return s.contour.levels === e.levels ? s : { ...s, contour: { ...s.contour, levels: e.levels } };
     case "setContourUnits": {
       const hasSource = e.source !== undefined || e.sourceUnits !== undefined;
       const rawSource = e.source !== undefined ? e.source : e.sourceUnits;

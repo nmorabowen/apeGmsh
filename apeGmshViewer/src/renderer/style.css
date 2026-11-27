@@ -148,7 +148,7 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 /* V4c1: the contour legend (field picker, ramp, range mode, colormap). The
    ramp's and the no-data chip's colours are data (state/contour.ts), set inline. */
 .contour-pick { display: flex; gap: 6px; margin: 0 0 8px; }
-.contour-pick select, .contour-cmap, .contour-fixed input {
+.contour-pick select, .contour-fixed input {
   font: 600 12px var(--font); color: var(--text);
   border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px;
 }
@@ -161,7 +161,6 @@ body:not([data-still-chrome="app"]) #banner:not([data-open]) > :not(.banner-summ
 .contour-modes { margin: 8px 0 6px; }
 .contour-fixed { display: flex; gap: 6px; margin: 0 0 6px; }
 .contour-fixed input { width: 50%; font-family: var(--mono); }
-.contour-cmap { width: 100%; }
 .refused-field { color: var(--error); }
 
 /* V4d: the deformed shape's section of the legend (toggle, ghost, scale, notes).
@@ -689,7 +688,56 @@ body:not([data-still-chrome="app"]) #display[data-collapsed="true"] > :not(:firs
   font: 600 12px var(--font); color: var(--text); background: var(--hover); border: 1px solid var(--line);
 }
 .node-auto.on { background: var(--accent); color: var(--accent-ink, var(--bg-0)); border-color: var(--accent); }
-.display-row > .contour-cmap { flex: 1; width: auto; margin: 0; }
+/* The colormap control (panels/legend/colormaps.ts): each map shown as its ramp, the levels, and the editor.
+   A swatch's colours are data (state/contour.ts), set inline. */
+.display-row > .cmap-control { flex: 1; min-width: 0; }
+/* The label stays beside the picker's first line while the menu or the editor opens below it. */
+.display-row:has(> .cmap-control) { align-items: flex-start; }
+.display-row:has(> .cmap-control) > .display-label { line-height: 24px; }
+.cmap-row { display: flex; gap: 6px; align-items: center; }
+.cmap-current, .cmap-pick {
+  display: flex; gap: 6px; align-items: center; min-width: 0; cursor: pointer;
+  font: 600 12px var(--font); color: var(--text); background: var(--hover);
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 6px;
+}
+.cmap-current { flex: 1; }
+.cmap-current.open { border-color: var(--accent); }
+.cmap-swatch { flex: none; width: 64px; height: 12px; border-radius: 3px; border: 1px solid var(--line); }
+.cmap-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmap-levels-label { font-size: 12px; color: var(--muted); }
+.cmap-levels-label.on { color: var(--text); }
+.contour-levels {
+  width: 44px; font: 600 12px var(--mono); color: var(--text); background: var(--hover);
+  border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px;
+}
+.contour-levels:invalid { border-color: var(--error); }
+.cmap-menu { margin: 6px 0 0; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); max-height: 320px; overflow-y: auto; }
+.cmap-group { font-size: 11px; color: var(--muted); margin: 6px 2px 2px; }
+.cmap-group:first-child { margin-top: 0; }
+.cmap-empty { font-size: 12px; color: var(--faint); margin: 0 2px 4px; }
+.cmap-option { display: flex; gap: 4px; align-items: center; margin: 1px 0; }
+.cmap-option .cmap-pick { flex: 1; background: none; border-color: transparent; }
+.cmap-option .cmap-pick:hover { background: var(--hover); }
+.cmap-option.on .cmap-pick { border-color: var(--accent); }
+.cmap-option .cmap-swatch { width: 96px; }
+.cmap-edit, .cmap-new, .cmap-actions button, .cmap-stop-drop {
+  flex: none; padding: 2px 8px; border-radius: 5px; cursor: pointer;
+  font: 600 12px var(--font); color: var(--text); background: var(--hover); border: 1px solid var(--line);
+}
+.cmap-new { margin: 6px 2px 2px; }
+.cmap-actions button:disabled, .cmap-stop-drop:disabled { opacity: 0.45; cursor: default; }
+.cmap-editor { margin: 6px 0 0; padding: 6px; border: 1px solid var(--line); border-radius: 6px; }
+.cmap-name-input, .cmap-stop-at {
+  font: 600 12px var(--font); color: var(--text); background: var(--hover);
+  border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px;
+}
+.cmap-name-input { width: 100%; box-sizing: border-box; }
+.cmap-stop-at { width: 72px; font-family: var(--mono); }
+.cmap-preview { height: 14px; margin: 6px 0; border-radius: 3px; border: 1px solid var(--line); }
+.cmap-stops { display: flex; flex-direction: column; gap: 3px; }
+.cmap-stop { display: flex; gap: 6px; align-items: center; }
+.cmap-stop-colour { width: 36px; height: 20px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: none; cursor: pointer; }
+.cmap-actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; }
 .legend-mode button:disabled { opacity: 0.45; cursor: default; }
 
 /* Right-rail side drawer toggle (#rail-toggle): always anchored on the right edge */

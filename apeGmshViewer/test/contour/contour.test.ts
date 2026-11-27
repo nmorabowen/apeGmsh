@@ -523,11 +523,11 @@ test("global Units control in #header renders Native (when undeclared) & Units d
     h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 0 } });
     assert.equal(rowOf(), row0, "the same row element after a step change");
     h.store.dispatch({ type: "setPhase", at: { kind: "results", stage: 2, step: 1 } });
-    // A colormap set elsewhere than its own select (Spotlight, the agent) still reaches the Display card's select.
+    // A colormap set elsewhere than its own control (Spotlight, the agent) still reaches the Display card's control.
     const other = CMAP_NAMES.find((n) => n !== h.store.get().contour.cmap)!;
     h.store.dispatch({ type: "setContourCmap", cmap: other });
-    const cmapShown = () => displayEl.all((e) => e.className === "contour-cmap")[0]!.children.find((o) => typeof o !== "string" && o.selected) as FakeDomEl | undefined;
-    assert.equal(cmapShown()?.value, other, "the Display card shows the colormap in use");
+    const cmapShown = () => displayEl.all((e) => e.className === "cmap-name")[0]?.textContent;
+    assert.equal(cmapShown(), other, "the Display card shows the colormap in use");
     // The switch: Physical groups has no contour button; off returns to the mode contour came from.
     assert.ok(!legendEl.all((e) => e.tagName === "BUTTON").some((b) => b.textContent === "contour"));
     const toggle = () => contourEl.all((e) => e.className.includes("contour-toggle"))[0]!;

@@ -31,7 +31,9 @@ import {
   fieldsOf,
   isNodeTopology,
   nodalFields,
+  rampParts,
   topologyLabel,
+  withLevels,
   type Clim,
   type ElementComponent,
   type ElementField,
@@ -46,7 +48,7 @@ import { shellCrackFieldOf as stageShellCrackField, type ShellCrackField } from 
 export type { CrackField } from "./cracks.ts";
 export type { ShellCrackField } from "./shellCracks.ts";
 export { CRACK_FACE } from "../theme/tokens.ts";
-import type { BlobRef, ContourCmap, ContourState, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
+import type { BlobRef, ContourState, RampId, StaleMark, UserRefusalIn, UserResult } from "./types.ts";
 import { displacementAxes } from "./deform.ts";
 import { hingeCapacityOf, hingeCurveOf, hingeMaterialDecl, hingeSitesOf, type HingeCurve, type HingeSite } from "./hinges.ts";
 import {
@@ -98,7 +100,31 @@ import {
 
 export type { Clim, ElementComponent, ElementField, FieldComponent, NodalField } from "./contour.ts";
 export { GHOST_OPACITY, scaleLabel } from "./deform.ts";
-export { CMAP_NAMES, CMAPS, fmtValue, MAGNITUDE, NO_DATA_RGB, rampCss, RANGE_MODES, sampleCmap } from "./contour.ts";
+export {
+  bandOf,
+  cmapLabel,
+  CMAP_NAMES,
+  CMAPS,
+  customCmapId,
+  customCmapProblem,
+  fmtValue,
+  isBuiltinCmap,
+  isContourCmap,
+  isLevels,
+  MAGNITUDE,
+  MAX_CMAP_NAME,
+  MAX_LEVELS,
+  MAX_STOPS,
+  NO_DATA_RGB,
+  parseCustomCmap,
+  rampCss,
+  rampParts,
+  RANGE_MODES,
+  sampleCmap,
+  stopsOf,
+  withLevels,
+  type Stops,
+} from "./contour.ts";
 // VF2-d (#2956): the one range rule the legend's scale and the command palette both offer.
 export { rangeKindOf, rangeOptionsOf, type RangeKind, type RangeOption } from "./contour.ts";
 export { NODE_SIZE_MAX, NODE_SIZE_MIN } from "./nodes.ts";
@@ -695,7 +721,7 @@ export type ContourView =
       /** selectors `elementJoinKey`: the join the colours go through */
       joinKey: string;
       clim: Clim;
-      cmap: ContourCmap;
+      cmap: RampId;
       stepMeasured: boolean;
       reads: number;
     }
@@ -706,7 +732,7 @@ export type ContourView =
       stageName: string;
       keys: { step: string; scan: string };
       clim: Clim;
-      cmap: ContourCmap;
+      cmap: RampId;
       /** the stage's `_ids` blob */
       nodeIds: BlobRef;
       /** the measured range is for the step shown (else it is still loading) */
@@ -728,7 +754,7 @@ export type ContourView =
       /** `combinationRequestOf(s).key`: the read whose values are drawn */
       key: string;
       clim: Clim;
-      cmap: ContourCmap;
+      cmap: RampId;
       /** whether it may draw as a deformed shape (an unsigned one is a contour only) */
       signed: boolean;
     }
@@ -756,7 +782,7 @@ export type ContourView =
       read: number;
       basis: UserResult["basis"];
       clim: Clim;
-      cmap: ContourCmap;
+      cmap: RampId;
       /** the node ids the column lists, and how many hold a finite value */
       nodes: number;
       finite: number;
@@ -778,7 +804,7 @@ export type ContourView =
       /** `differencePlanOf(s).key`: the read whose values are drawn */
       key: string;
       clim: Clim;
-      cmap: ContourCmap;
+      cmap: RampId;
       /** the window's nodes, and how many of them have no value on one side */
       nodes: number;
       missing: number;
@@ -897,6 +923,12 @@ function elementView(s: State, st: ResultsStage, label: string): ContourView {
 
 /** What the contour colours, or why it cannot (V4c1; V4c2a adds element fields). */
 export function contourView(s: State): ContourView {
+  const v = contourViewOf(s);
+  // The levels band whatever is drawn: the view carries the ramp as drawn (state/contour.ts `withLevels`).
+  return "cmap" in v && s.contour.levels > 0 ? { ...v, cmap: withLevels(rampParts(v.cmap).cmap, s.contour.levels) } : v;
+}
+
+function contourViewOf(s: State): ContourView {
   if (s.visibility.colourBy !== "contour") return { state: "off" };
   if (s.variants.difference) return differenceContour(s);
   // VU19: a compare user result has no state either, so it is shown whatever phase is on screen.

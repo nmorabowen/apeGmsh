@@ -169,7 +169,17 @@ Then:
   and **fixed** (your min and max) are the other modes, and the scale always
   says which is in use. The colormap, in the Display card, defaults to **jet**
   (or turbo, viridis, plasma, inferno, magma, coolwarm, RdBu_r, RdBu, bwr,
-  seismic, BrBG or Spectral). A
+  seismic, BrBG or Spectral); its menu shows each map as its ramp. **levels**
+  beside it bands the contour into 2 to 64 bands of equal width, each one
+  colour (the lowest band the map's first colour, the highest its last), with
+  a tick on the band edges; 0 is the continuous ramp. **new from current**
+  copies the map shown into an editor: its name, its stops (a position from 0
+  to 1 and a colour each; the end stops stay at 0 and 1), add stop, reverse.
+  The model draws the map as you edit it. **save** keeps it under **Yours** in
+  this profile's maps (localStorage, never a file), where **edit** reopens
+  it. A map you made is carried by the view itself, so it stays drawn after
+  you delete it from the list; a render spec names built-in maps only, so a
+  snapshot of the view says so and names jet. A
   node the field does not record (not in its `_ids`, or NaN) is **no data**,
   in the grey the legend names: every face or line that touches it is drawn
   in it, never as zero and never blended from its neighbours. The file

@@ -7,7 +7,7 @@ import type { UnitSystemId } from "./model.ts";
 /** How a contour's colour range is chosen (V4c1): the whole history of the stage (the default), the step shown, or a user's min and max. */
 export type ContourRange = "history" | "step" | "fixed";
 
-/** The contour colormaps (state/contour.ts `CMAPS`); jet is the default. */
+/** The built-in contour colormaps (state/contour.ts `CMAPS`); jet is the default. */
 export const CMAP_NAMES = [
   "jet",
   "turbo",
@@ -23,7 +23,20 @@ export const CMAP_NAMES = [
   "BrBG",
   "Spectral",
 ] as const;
-export type ContourCmap = (typeof CMAP_NAMES)[number];
+export type BuiltinCmap = (typeof CMAP_NAMES)[number];
+/**
+ * A user's colormap, self-contained: `custom:` and the JSON of its name and
+ * sRGB stops (state/contour.ts `customCmapId`), so every reader of the id can
+ * draw it without a registry, and an edit is a new id that no cache holds.
+ */
+export type CustomCmapId = `custom:${string}`;
+export type ContourCmap = BuiltinCmap | CustomCmapId;
+/**
+ * A colormap as drawn: a `ContourCmap`, banded into `N` levels when it ends in
+ * `|L<N>` (state/contour.ts `withLevels`). The textures, the scale bar and the
+ * stills key on it.
+ */
+export type RampId = ContourCmap | `${ContourCmap}|L${number}`;
 
 /** The history-range scan of the contour's field (main reads every step; the effects report it). */
 export interface ContourScan {
@@ -98,6 +111,8 @@ export interface ContourState {
   /** the user's min and max (`range: fixed`) */
   fixed: { min: number; max: number } | null;
   cmap: ContourCmap;
+  /** bands of equal width over the range (2..MAX_LEVELS), each one colour; 0 is a continuous ramp */
+  levels: number;
   /** the consistent unit system declared in the model or results file (`/meta/@units` or `INFO/PROVENANCE@units`), or null when undeclared */
   declaredUnits: UnitSystemId | null;
   /** the file's native `baseUnits` system (`declaredUnits` when declared; null when undeclared until the user selects `from <system>`) */

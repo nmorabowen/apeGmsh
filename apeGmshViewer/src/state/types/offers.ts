@@ -57,6 +57,7 @@ export interface ViewMemo {
     range: ContourRange;
     fixed: { min: number; max: number } | null;
     cmap: ContourCmap;
+    levels: number;
     sourceUnits: UnitSystemId | null;
     targetUnits: UnitDisplay;
   };

@@ -35,6 +35,7 @@ export const initialContour: ContourState = {
   range: "history",
   fixed: null,
   cmap: "jet",
+  levels: 0,
   declaredUnits: null,
   sourceUnits: null,
   targetUnits: "as_stored",

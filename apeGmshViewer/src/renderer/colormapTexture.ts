@@ -19,7 +19,7 @@
 
 import * as THREE from "three";
 import { NO_DATA_RGB, rampT, sampleCmap } from "../state/contour.ts";
-import type { ContourCmap } from "../state/types/contour.ts";
+import type { RampId } from "../state/types/contour.ts";
 
 /** sRGB (0..1) to linear, per channel (the sRGB transfer function); renderer/contour.ts re-exports it. */
 export const toLinear = (c: number): number => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
@@ -70,7 +70,7 @@ export function noDataRamp(n: number): Float32Array {
 }
 
 /** The texture's texels (RGBA, linear, 0..1): the ramp samples, then the no-data colour. */
-export function rampTexels(cmap: ContourCmap): Float32Array {
+export function rampTexels(cmap: RampId): Float32Array {
   const data = new Float32Array(TEXTURE_WIDTH * 4);
   for (let i = 0; i < RAMP_TEXELS; i++) {
     const c = sampleCmap(cmap, i / (RAMP_TEXELS - 1));
@@ -92,16 +92,31 @@ export function shownAt(texture: THREE.DataTexture, u: number): [number, number,
   return [data[4 * i]!, data[4 * i + 1]!, data[4 * i + 2]!];
 }
 
-const textures = new Map<ContourCmap, THREE.DataTexture>();
+const textures = new Map<RampId, THREE.DataTexture>();
+/**
+ * Textures kept: editing a custom colormap or its levels makes a new ramp id
+ * per change, so the oldest beyond this are disposed. three.js uploads a
+ * disposed texture again if a material still draws it.
+ */
+export const MAX_TEXTURES = 32;
 
 /**
- * The colormap's texture, one per colormap for the process (a few kB each,
+ * The ramp's texture, one per ramp id for the process (a few kB each,
  * shared by every surface that draws the contour: faces, frame fill, caps).
- * Nothing disposes it: three.js uploads it once per renderer.
  */
-export function colormapTexture(cmap: ContourCmap): THREE.DataTexture {
+export function colormapTexture(cmap: RampId): THREE.DataTexture {
   const held = textures.get(cmap);
-  if (held) return held;
+  if (held) {
+    // Most recently used last, so eviction takes the stalest.
+    textures.delete(cmap);
+    textures.set(cmap, held);
+    return held;
+  }
+  while (textures.size >= MAX_TEXTURES) {
+    const [oldest, t] = textures.entries().next().value!;
+    textures.delete(oldest);
+    t.dispose();
+  }
   const t = new THREE.DataTexture(rampTexels(cmap), TEXTURE_WIDTH, 1, THREE.RGBAFormat, THREE.FloatType);
   t.name = `colormap ${cmap}`;
   t.colorSpace = THREE.NoColorSpace; // the texels are linear already

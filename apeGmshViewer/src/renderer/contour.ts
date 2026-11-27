@@ -12,7 +12,7 @@
 import type { CombinationTable } from "../combination/evaluate.ts";
 import type { BlobStore } from "../state/blobs.ts";
 import { cellVertexValues, columnOf, differenceColumn, elementCellValues, gaussCellValues, isNodeTopology, joinElements, meshFemIds, NO_DATA_RGB, primitiveColours, vertexValues, type CombinedColumn } from "../state/contour.ts";
-import type { ContourCmap } from "../state/types/contour.ts";
+import type { RampId } from "../state/types/contour.ts";
 import { noDataRamp, primitiveRamp, toLinear } from "./colormapTexture.ts";
 import { applyPlan, cornerVertexValues, planFor, vertexCorners, type NodeTopology } from "../state/extrapolation.ts";
 import type { UserColumnRead } from "../reader/userFile.ts";
@@ -71,7 +71,7 @@ export interface ContourShades {
   /** linear RGB per drawn triangle vertex: the ramp at each vertex, made on first read (the faces draw `triU`) */
   readonly tri: Float32Array;
   /** the colormap the coordinates index */
-  cmap: ContourCmap;
+  cmap: RampId;
   key: string;
 }
 
@@ -82,7 +82,7 @@ function shades(
   lineMap: Int32Array,
   triMap: Int32Array,
   clim: { min: number | null; max: number | null },
-  cmap: ContourCmap,
+  cmap: RampId,
   key: string,
 ): ContourShades {
   let tri: Float32Array | null = null;

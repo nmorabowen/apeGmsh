@@ -24,7 +24,7 @@ import type { Combined } from "../combination/evaluate.ts";
 import { hexToRgb, OFFICE, type RGB } from "../theme/tokens.ts";
 import type { NodeTopology } from "./extrapolation.ts";
 import { DERIVED_SCALARS, derivedTensorOf, planeDigestOf, type DerivedName, type DerivedTensor, type TensorFamily } from "./tensor.ts";
-import { CMAP_NAMES, type ContourCmap, type ContourRange, type ContourScan, type ContourSource, type ContourState, type DeclPath, type Decl, type GaussGroup, type GaussMode, type ResultsStage, type State } from "./types.ts";
+import { CMAP_NAMES, type BuiltinCmap, type ContourCmap, type CustomCmapId, type RampId, type ContourRange, type ContourScan, type ContourSource, type ContourState, type DeclPath, type Decl, type GaussGroup, type GaussMode, type ResultsStage, type State } from "./types.ts";
 export { CMAP_NAMES };
 
 // -- fields -------------------------------------------------------------------
@@ -278,7 +278,7 @@ export const componentName = (key: string): string => (key === MAGNITUDE ? "magn
 
 // -- colormaps ----------------------------------------------------------------
 
-type Stops = readonly (readonly [number, number, number, number])[];
+export type Stops = readonly (readonly [number, number, number, number])[];
 type Segments = readonly (readonly [number, number])[];
 
 /** Stops `[t, r, g, b]` from per-channel piecewise-linear segments: at the union of their breakpoints, so the result is exact. */
@@ -306,7 +306,7 @@ function fromSegments(r: Segments, g: Segments, b: Segments): Stops {
  * seismic are the symmetric blue-white-red wavefield palettes: negative blue,
  * zero white, positive red).
  */
-export const CMAPS: Readonly<Record<ContourCmap, Stops>> = {
+export const CMAPS: Readonly<Record<BuiltinCmap, Stops>> = {
   jet: fromSegments(
     [[0, 0], [0.35, 0], [0.66, 1], [0.89, 1], [1, 0.5]],
     [[0, 0], [0.125, 0], [0.375, 1], [0.64, 1], [0.91, 0], [1, 0]],
@@ -440,11 +440,144 @@ export const CMAPS: Readonly<Record<ContourCmap, Stops>> = {
   ],
 };
 
+// -- custom colormaps and levels -------------------------------------------------
+
+/** The most bands a contour is drawn in; more is a continuous ramp in all but name. */
+export const MAX_LEVELS = 64;
+/** The longest custom colormap name, and the most stops one holds. */
+export const MAX_CMAP_NAME = 40;
+export const MAX_STOPS = 32;
+
+export const isBuiltinCmap = (x: unknown): x is BuiltinCmap => typeof x === "string" && (CMAP_NAMES as readonly string[]).includes(x);
+
+/**
+ * Why `name` and `stops` are not a custom colormap, or null when they are: a
+ * name of 1..MAX_CMAP_NAME characters with no control character and no `|`
+ * (the levels separator), and 2..MAX_STOPS stops `[t, r, g, b]` of finite
+ * numbers in [0, 1], `t` non-decreasing from 0 to 1.
+ */
+export function customCmapProblem(name: unknown, stops: unknown): string | null {
+  if (typeof name !== "string" || name.trim() !== name || name.length === 0 || name.length > MAX_CMAP_NAME) {
+    return `a colormap name has 1 to ${MAX_CMAP_NAME} characters and no leading or trailing space`;
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[|\u0000-\u001f\u007f]/.test(name)) return "a colormap name has no control character and no |";
+  if (!Array.isArray(stops) || stops.length < 2 || stops.length > MAX_STOPS) return `a colormap has 2 to ${MAX_STOPS} stops`;
+  let prev = -Infinity;
+  for (const [i, s] of stops.entries()) {
+    if (!Array.isArray(s) || s.length !== 4 || !s.every((x) => typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1)) {
+      return `stop ${i + 1} is not a position and a colour, each in 0..1`;
+    }
+    if (s[0] < prev) return `stop ${i + 1} sits before stop ${i}`;
+    prev = s[0];
+  }
+  if (stops[0][0] !== 0 || stops[stops.length - 1][0] !== 1) return "the first stop sits at 0 and the last at 1";
+  return null;
+}
+
+/** Four decimals: below a screen's 8-bit step, and short ids. */
+const r4 = (x: number): number => Math.round(x * 1e4) / 1e4;
+
+/** The id of a custom colormap; throws on a `customCmapProblem`. */
+export function customCmapId(name: string, stops: Stops): CustomCmapId {
+  const s = stops.map((st) => st.map(r4));
+  const why = customCmapProblem(name, s);
+  if (why) throw new RangeError(`custom colormap: ${why}`);
+  return `custom:${JSON.stringify({ name, stops: s })}`;
+}
+
+const parsedCustom = new Map<string, { name: string; stops: Stops } | null>();
+
+/** A custom id's name and stops, or null when `id` is not a valid custom colormap id. */
+export function parseCustomCmap(id: string): { name: string; stops: Stops } | null {
+  if (!id.startsWith("custom:")) return null;
+  const held = parsedCustom.get(id);
+  if (held !== undefined) return held;
+  let out: { name: string; stops: Stops } | null = null;
+  try {
+    const v = JSON.parse(id.slice("custom:".length)) as { name?: unknown; stops?: unknown };
+    if (v && typeof v === "object" && Object.keys(v).length === 2 && customCmapProblem(v.name, v.stops) === null) {
+      out = { name: v.name as string, stops: v.stops as Stops };
+    }
+  } catch {
+    out = null;
+  }
+  if (parsedCustom.size > 256) parsedCustom.clear();
+  parsedCustom.set(id, out);
+  return out;
+}
+
+/** Whether `x` names a colormap: a built-in one or a valid custom id. */
+export const isContourCmap = (x: unknown): x is ContourCmap => isBuiltinCmap(x) || (typeof x === "string" && parseCustomCmap(x) !== null);
+
+/** The name a person reads for a colormap. */
+export const cmapLabel = (cmap: ContourCmap): string => (isBuiltinCmap(cmap) ? cmap : parseCustomCmap(cmap)?.name ?? "custom");
+
+/** Whether `n` is a level count: 0 (continuous) or a whole number of bands in 2..MAX_LEVELS. */
+export const isLevels = (n: unknown): n is number => n === 0 || (Number.isInteger(n) && (n as number) >= 2 && (n as number) <= MAX_LEVELS);
+
+/** The ramp `cmap` drawn in `levels` bands (0: continuous, the map itself). */
+export function withLevels(cmap: ContourCmap, levels: number): RampId {
+  if (!isLevels(levels)) throw new RangeError(`levels: ${JSON.stringify(levels)} is not 0 or 2..${MAX_LEVELS}`);
+  return levels === 0 ? cmap : `${cmap}|L${levels}`;
+}
+
+const parts = new Map<string, { cmap: ContourCmap; levels: number }>();
+
+/** A ramp's colormap and level count (0: continuous); throws on an id that is neither. */
+export function rampParts(ramp: RampId): { cmap: ContourCmap; levels: number } {
+  const held = parts.get(ramp);
+  if (held) return held;
+  const out = parseRamp(ramp);
+  if (parts.size > 256) parts.clear();
+  parts.set(ramp, out);
+  return out;
+}
+
+function parseRamp(ramp: string): { cmap: ContourCmap; levels: number } {
+  const m = /\|L(\d+)$/.exec(ramp);
+  if (m) {
+    const levels = Number(m[1]);
+    const cmap = ramp.slice(0, m.index);
+    if (isLevels(levels) && levels > 0 && isContourCmap(cmap)) return { cmap, levels };
+  } else if (isContourCmap(ramp)) return { cmap: ramp, levels: 0 };
+  throw new RangeError(`unknown colormap ${JSON.stringify(ramp)}`);
+}
+
+/** A colormap's stops: the built-in table, or the custom id's own. */
+export function stopsOf(cmap: ContourCmap): Stops {
+  if (isBuiltinCmap(cmap)) return CMAPS[cmap];
+  const c = parseCustomCmap(cmap);
+  if (!c) throw new RangeError(`unknown colormap ${JSON.stringify(cmap)}`);
+  return c.stops;
+}
+
+/** The band a ramp position falls in (0..levels-1): [k/levels, (k+1)/levels), the last band closed at 1. */
+export const bandOf = (t: number, levels: number): number => Math.min(levels - 1, Math.max(0, Math.floor(t * levels)));
+
+/**
+ * The colour of band `k` of `levels`: the map at k / (levels - 1), so the
+ * lowest band shows the map's first colour and the highest its last, as a
+ * banded legend in Abaqus or ParaView does.
+ */
+export const bandT = (k: number, levels: number): number => k / (levels - 1);
+
 const cssRgb = (rgb: readonly number[]): string => `rgb(${rgb.map((c) => Math.round(c * 255)).join(",")})`;
 
-/** A CSS gradient through a colormap's stops (the same table the mesh colours from). */
-export const rampCss = (cmap: ContourCmap): string =>
-  `linear-gradient(to right, ${CMAPS[cmap].map(([t, r, g, b]) => `${cssRgb([r, g, b])} ${(100 * t).toFixed(1)}%`).join(", ")})`;
+/**
+ * A CSS gradient of a ramp: through the map's stops (the same table the mesh
+ * colours from), or, banded, one hard-edged block of colour per level.
+ */
+export function rampCss(ramp: RampId): string {
+  const { cmap, levels } = rampParts(ramp);
+  if (levels === 0) return `linear-gradient(to right, ${stopsOf(cmap).map(([t, r, g, b]) => `${cssRgb([r, g, b])} ${(100 * t).toFixed(1)}%`).join(", ")})`;
+  const parts: string[] = [];
+  for (let k = 0; k < levels; k++) {
+    const c = cssRgb(sampleCmap(cmap, bandT(k, levels)));
+    parts.push(`${c} ${((100 * k) / levels).toFixed(2)}%`, `${c} ${((100 * (k + 1)) / levels).toFixed(2)}%`);
+  }
+  return `linear-gradient(to right, ${parts.join(", ")})`;
+}
 
 /** A legend number: four significant digits, exponent form outside 1e-3..1e4. */
 export function fmtValue(v: number): string {
@@ -459,11 +592,12 @@ export function fmtValue(v: number): string {
  */
 export const NO_DATA_RGB: RGB = hexToRgb(OFFICE.muted);
 
-/** The ramp colour (sRGB, 0..1) at `t` in [0, 1] (clamped). */
-export function sampleCmap(cmap: ContourCmap, t: number): [number, number, number] {
-  const stops = CMAPS[cmap];
-  if (!stops) throw new RangeError(`unknown colormap ${JSON.stringify(cmap)}`);
-  const x = Math.min(1, Math.max(0, t));
+/** The ramp colour (sRGB, 0..1) at `t` in [0, 1] (clamped); a banded ramp gives its band's colour. */
+export function sampleCmap(ramp: RampId, t: number): [number, number, number] {
+  const { cmap, levels } = rampParts(ramp);
+  const stops = stopsOf(cmap);
+  const c = Math.min(1, Math.max(0, t));
+  const x = levels === 0 ? c : bandT(bandOf(c, levels), levels);
   for (let i = 1; i < stops.length; i++) {
     const b = stops[i]!;
     if (x <= b[0]) {
@@ -721,7 +855,7 @@ export function primitiveColours(
   map: Int32Array,
   perPrim: number,
   clim: { min: number | null; max: number | null },
-  cmap: ContourCmap,
+  cmap: RampId,
 ): { rgb: Float32Array; noData: number } {
   const rgb = new Float32Array(map.length * perPrim * 3);
   let noData = 0;
