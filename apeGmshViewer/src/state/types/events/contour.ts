@@ -18,6 +18,8 @@ export type ContourEvent =
   /** V4c1: the colour range mode; `fixed` takes the user's min and max */
   | { type: "setContourRange"; range: ContourRange; fixed?: { min: number; max: number } }
   | { type: "setContourCmap"; cmap: ContourCmap }
+  /** bands over the range: 0 (a continuous ramp) or 2..MAX_LEVELS (state/contour.ts) */
+  | { type: "setContourLevels"; levels: number }
   /** baseUnits: set the file's assumed native unit system and/or the display unit system */
   | {
       type: "setContourUnits";

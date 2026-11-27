@@ -10,7 +10,7 @@
 // tells its axes apart by their letters, not by hue (protanopia-safe).
 
 import { fmtValue, sampleCmap } from "../state/contour.ts";
-import type { ContourCmap } from "../state/types.ts";
+import type { RampId } from "../state/types.ts";
 import { FONT_FAMILY, themeTokens, type ThemeMode } from "../theme/tokens.ts";
 
 export interface ScaleBar {
@@ -20,7 +20,7 @@ export interface ScaleBar {
   max: number | null;
   /** the legend's sentence for the range in use (`range: whole history (12 steps)`) */
   rangeLabel: string;
-  cmap: ContourCmap;
+  cmap: RampId;
 }
 
 export interface StillInput {

@@ -186,6 +186,7 @@ export const SPOTLIGHT_EVENT_LEDGER: { readonly [K in EventType]: EventLedgerEnt
   setContourGauss: { kind: "expose", command: "set-contour-gauss", description: "Set the element (Gauss) contour topology mode" },
   setContourRange: { kind: "expose", command: "set-contour-range", description: "Set the contour colour range mode (history, step, or fixed)" },
   setContourCmap: { kind: "expose", command: "set-contour-cmap", description: "Set the contour colormap (viridis, coolwarm, turbo, etc.)" },
+  setContourLevels: { kind: "expose", command: "set-contour-levels", description: "Band the contour into levels (0 for a continuous ramp)" },
   setContourUnits: { kind: "expose", command: "set-contour-units", description: "Set the contour native or display unit system (baseUnits)" },
   setDeform: { kind: "expose", command: "toggle-deform", description: "Toggle the deformed shape on or off" },
   setDeformScale: { kind: "expose", command: "set-deform-scale", description: "Set the deformation scale factor" },

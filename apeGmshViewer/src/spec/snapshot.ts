@@ -25,7 +25,7 @@
 import type { ResolvedFiles } from "./files.ts";
 import { defaultOpacity } from "../state/reduce.ts";
 import type { BlobStore } from "../state/blobs.ts";
-import { MAGNITUDE } from "../state/contour.ts";
+import { cmapLabel, isBuiltinCmap, MAGNITUDE } from "../state/contour.ts";
 import { compareUserPickOf, compareUserRequestOf } from "../state/selectors.ts";
 import type { Store } from "../state/store.ts";
 import type { CameraPose, DeclPath, Event, Offer, OfferIn, State, Vec3, ViewMemo } from "../state/types.ts";
@@ -231,7 +231,7 @@ export function viewMemoOf(s: State, pose: CameraPose | null, model: string): Vi
     at: s.phase.at,
     picks: s.selection.picks,
     visibility: s.visibility,
-    contour: { source: c.source, field: c.field, component: c.component, gauss: c.gauss, range: c.range, fixed: c.fixed, cmap: c.cmap, sourceUnits: c.sourceUnits, targetUnits: c.targetUnits },
+    contour: { source: c.source, field: c.field, component: c.component, gauss: c.gauss, range: c.range, fixed: c.fixed, cmap: c.cmap, levels: c.levels, sourceUnits: c.sourceUnits, targetUnits: c.targetUnits },
     deform: { on: s.deform.on, scale: s.deform.scale, ghost: s.deform.ghost },
     clip: { planes: s.clip.planes, applyCuts: s.clip.applyCuts, showGizmos: s.clip.showGizmos, cutFace: s.clip.cutFace },
     lineDiagram: s.lineDiagram.on,
@@ -289,6 +289,7 @@ export function restoreView(store: Store, memo: ViewMemo): void {
   d({ type: "setContourGauss", mode: c.gauss });
   d(c.range === "fixed" && c.fixed ? { type: "setContourRange", range: "fixed", fixed: c.fixed } : { type: "setContourRange", range: c.range === "fixed" ? "history" : c.range });
   d({ type: "setContourCmap", cmap: c.cmap });
+  d({ type: "setContourLevels", levels: c.levels });
   d({ type: "setContourUnits", source: c.sourceUnits, target: c.targetUnits });
   d({ type: "setColourBy", by: v.colourBy });
   d({ type: "setDeform", on: memo.deform.on });
@@ -408,10 +409,13 @@ export function viewShotOf(s: State, pose: CameraPose): { shot: SpecShot; outsid
         component: c.component === MAGNITUDE ? SPEC_MAGNITUDE : c.component!,
         source: c.source,
         range: c.range === "fixed" && c.fixed ? { mode: "fixed", min: c.fixed.min, max: c.fixed.max } : { mode: c.range === "fixed" ? "history" : c.range },
-        cmap: c.cmap,
+        cmap: isBuiltinCmap(c.cmap) ? c.cmap : "jet",
         gauss: c.gauss,
       }
     : null;
+  // apegmsh-view/1 names a built-in colormap and draws it continuous.
+  if (drawsContour && !isBuiltinCmap(c.cmap)) outside.push(`the contour colormap is the custom ${cmapLabel(c.cmap)}; the spec names jet`);
+  if (drawsContour && c.levels > 0) outside.push(`the contour is drawn in ${c.levels} levels`);
 
   // Maintainer ruling on #2651: v1 refuses the reference ghost, so a snapshot cannot carry it.
   if (s.deform.on && s.deform.ghost) outside.push("the reference ghost is on; apegmsh-view/1 does not draw it");
